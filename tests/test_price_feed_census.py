@@ -127,7 +127,8 @@ The fifth round (2026-09-23), on the fork reviewer's ruling over the serial cell
 what they assert: every case keeps its name, its property and its M-number. What runs, per run of this module: one tree
 derivation (the listing and the table from one scan), one served pass (about 1 s, under half a scan), five shared runs (walk,
 shell, browser, credentials, clean) and twenty-two runs of their own (twenty-one until the eighth round's review added the ws
-arm's mutation case), each an in-process main over the copy, plus the two tiny roots: 28 full scans and the pass where 34 child
+arm's mutation case), each an in-process main over the copy, plus the two tiny roots (and since the landing round's review a third,
+TheServedFileReadsAreDecodedAsTheWalkRead's, scanned in process): 28 full scans and the pass where 34 child
 processes each ran a full scan before, and each scan about a third
 cheaper with the collector held off (2.4 s against 3.7 s on 3.10 on the box that measured it). The joins: the default-rule
 programs block (AnExternalProgramIsNeverLocalByDefault) in the credentials run; the unknown-import and socket blocks
@@ -461,10 +462,14 @@ BASH_HOOK_TEXT = "#!/usr/bin/env bash\ncurl https://example.invalid/probe\n"
 def _collector_off():
     """The collector held off for one in-process run of the script, the rule tests/parse_cache.py's derived applies to a
     build: disabled when found enabled and handed back on in a finally, never touched when found off (the state read inside
-    the try, so an interrupt between the read and the finally cannot leave it off). A run builds kernel.py's tree and drops
-    it before returning (an ast node holds no parent, so no cycle survives), so nothing is left for a collection after the
-    run and nothing is frozen here; with the collector on, its walks of the tree under construction were a third of a run
-    on 3.10 (3.7 s against 2.4 s on the box that measured the fifth round, 2026-09-23)."""
+    the try, so an interrupt between the read and the finally cannot leave it off). A run drops kernel.py's tree before
+    returning, but the script's nested functions that call themselves (_live_remainder's body, _re_compile's flag,
+    _namespace_flags's module and others, each a closure holding a cell bound to itself) leave reference cycles, and through
+    them the run leaves objects for the collector: 309,136 unreachable objects after a run of main over the tree on 3.10 and
+    3.12 (about 328 thousand on 3.14t), 122,983 of them scanned ast nodes, though no ast node is itself on a cycle (measured
+    2026-10-03). The collector frees them once this hands it back, and nothing is frozen here (a build parse_cache freezes
+    collects first: _collect_before_freeze). With the collector on, its walks of the tree under construction were a third of
+    a run on 3.10 (3.7 s against 2.4 s on the box that measured the fifth round, 2026-09-23)."""
     collecting = False
     try:
         collecting = gc.isenabled()
@@ -1308,8 +1313,26 @@ ECHO_RULE = ("An echo- or print-led shell line is skipped as a printed remedy on
              "inside quotes is not.")
 SERVED_PAGES = ("The pages the kernel serves and its service worker's script, from its own string constants (the dashboard shell, the seven pane "
                 "pages, the token login page, the too-large page and /sw.js, with the shim, the timeline boot and the shell scripts they inline),"
-                " are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM loads counted. A string constant is scanned whole; a bytes constant is scanned the same way, each byte its own character; and a name bound once, by one top-level plain assignment, to a call of `compile` handed a string or bytes constant (and at most a flags argument that is an int constant, an attribute of that name, or their `|`) on a name the module binds to the standard library's `re` by binding is read through its `.sub`, `.search`, `.match`, `.fullmatch` and `.findall`, which change nothing, so such a call's arguments are the page text and the compiled name holds none of its own; the proof by binding is the digest leaf's (below), with its limit, so a module object stored in sys.modules under that name before the import binds it, or a function of the module replaced by an attribute store, is not seen."
-                " The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a "
+                " are read from kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus tool, with the DOM "
+                "loads counted. A string constant is scanned whole; a bytes constant whose every byte is ASCII is scanned the same "
+                "way, each byte its own character, and one holding a byte past ASCII is refused by name (below); and a name bound "
+                "once, by one top-level plain assignment, to a call of `compile` handed a string or bytes constant (and at most a "
+                "flags argument that is an int constant, an attribute of that name, or their `|`) on a name the module binds to "
+                "the standard library's `re` by binding is read through its `.sub`, `.search`, `.match`, `.fullmatch` and "
+                "`.findall`, which change nothing, so such a call's arguments are the page text and the compiled name holds none "
+                "of its own; the proof by binding is the digest leaf's (below), with its limit, so a module object stored in "
+                "sys.modules under that name before the import binds it, or a function of the module replaced by an attribute "
+                "store, is not seen. The census reads a page only where the bytes a browser decodes are the text it scans, which "
+                "it reads as UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding a byte past ASCII (a "
+                "byte order mark, whole or split across constants, among them); page text holding U+FEFF, which the page's UTF-8 "
+                "bytes carry as a byte order mark; page text declaring a charset other than utf-8 (a `charset=` in any case, as a "
+                "meta element's charset attribute and a content attribute's parameter spell it, or an XML declaration's "
+                "`encoding=`, followed by any label but utf-8) in a string or bytes constant, an f-string's literal part or the "
+                "joined text of a join of string constants; a script-running content type whose parameters name a charset other "
+                "than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD or "
+                "U+FEFF or declares such a charset. A declaration split across texts the census reads apart, with a name's text "
+                "between them, is read as each text spells it. The routes are derived from the calls of `_send` the scan reads "
+                "(spelled `_send(...)` or `<x>._send(...)`; a call through a "
                 "name computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A "
                 "`_send` call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in "
                 "its file, direct in the call's own class body (a call through self: a call on a name that is self by binding, the first "
@@ -1350,8 +1373,13 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 " function that declares the name `global` (as the target of an assignment, an augmented assignment, a loop, a comprehension, a "
                 "with or a walrus, or by an import, a def or class statement or an except clause) or a module-level augmented assignment), "
                 "through a local whose every binding is read (a walrus in a nested def's, class's or lambda's header is a binding it does not "
-                "read) and through a dict literal's values (refused before its type is read, below: a call inside a lambda's body, a Content-Type write inside one that is no `_send` definition's own write, and a call whose definition binds the parameter one of its own writes names other than as that parameter); the part before any `;`, stripped and lower-cased, is compared with the types a "
-                "browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml` "
+                "read) and through a dict literal's values (refused before its type is read, below: a call inside a lambda's body, "
+                "a Content-Type write inside one that is no `_send` definition's own write, and a call whose definition binds the "
+                "parameter one of its own writes names other than as that parameter); a type holding a CR or LF is refused by name "
+                "before it is compared (its header line ends there, and what follows is another header or the body, which the "
+                "census does not read); the part before any `;`, stripped and lower-cased, is compared with the types a browser "
+                "runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a "
+                "`+xml` "
                 "suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript, "
                 "application/javascript among them). "
                 ""
@@ -1413,7 +1441,19 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "lambda."
                 ""
                 " The reader governs the definition's own text, and code the definition "
-                "runs from outside that text is not read: a header value is not scanned (a module constant used as one is read only for a CR or LF: each string or bytes constant in its value and in the value of each module constant that value names, followed by binding (a method call's receiver, as `T` in `T.lower()`, among the names followed), any other name there refusing it, save a bare name a call calls (`f` in `f(...)`); a CR or LF the value computes at run time, a call's return or a number formatted as a character, is not read, its witnesses a CR LF from chr and one from a `%c` of an int), and a response that a Content-Type in its headers "
+                "runs from outside that text is not read: a header value is not scanned (a module constant the definition uses as "
+                "one is read only for a CR or LF: each string or bytes constant in its value and in the value of each module "
+                "constant that value names, followed by binding (a method call's receiver, as `T` in `T.lower()`, among the names "
+                "followed), any other name there refusing it, save a bare name a call calls (`f` in `f(...)`); and so is each "
+                "argument a `_send` call hands its definition but the page body and the content type (read above), positional, "
+                "starred or keyword, a `**` among them: each string or bytes constant in it, a dict literal's keys and values "
+                "among them, and each name in it that one top-level plain assignment binds and no function scope around the call "
+                "binds, read through the module constants its value names, any other name there not read, one holding a CR or LF "
+                "refusing the call by name before it is typed; a CR or LF the value computes at run time, a call's return or a "
+                "number formatted as a character, is not read, nor is a header value held anywhere else, a local, a parameter, an "
+                "attribute, a call's return or an item, its witnesses a CR LF from chr and one from a `%c` of an int, and a header "
+                "value held in a local dict and a CR LF a call of chr computes at the call), and a response that a Content-Type in "
+                "its headers "
                 "argument, passed or defaulted, makes a page is outside the served pass, the call being typed by its content-type argument; nor is "
                 "code the definition runs through an object it is handed (a parameter's methods, its mapping's items, its __str__), code behind a "
                 "name the definition calls or reads on self (a header method, a property or `__getattr__`, however the class, a base or other code "
@@ -1449,7 +1489,45 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "module that holds no star import, a top-level import statement that is its name's one module-level binding and is not rebound, "
                 "or one of the seven builtins a page may name, each for what its result is (str, its argument's text or a value's printed form, a call of it with more than one positional argument, a starred argument or a keyword other than `object`, any of which may be an encoding or an errors argument that decodes its first, refused by name, an honest decode of bytes failing closed with it; int and float, a number, which carries no host, so a call of either that is the builtin is a leaf whose argument the pass does not read, save where the call is the base of a receiver, a container or an attribute, where the argument is read as any call's is (the leaf rests on the builtin's return, which the census does not read: an `__int__` or an `__index__` returning an int subclass, or a `__float__` returning a float subclass, whose `__str__` or `__format__` is overridden is the escape shape that could put text there, the stated limit, and the interpreters the census runs on copy such a return to an exact int or float, so its witness serves digits), and a call of either bound any other way is refused by name; dict, a mapping of its arguments' keys and values; max, one of its arguments (a call of it handed one iterable or a starred argument, which returns an element its argument holds, whose join with the text beside the call the census does not compute, is refused by name); getattr, an attribute of its first argument; and chr, the character a code point names: getattr and chr give text their arguments do not hold, so each falls under the call limit below, as its witness) that no module-level binding shadows and that is not rebound, any other builtin refused by name, and a call of super() refused by name as well, its methods being a base class's (the names the import system binds in every module, `__doc__`, "
                 "`__name__`, `__package__`, `__spec__` and "
-                "`__loader__`, are no builtins here: a page that reads one the file does not bind is refused by name wherever the pass reads it, as a bare name, the base of a receiver, a container or an attribute, a callee or a call's argument, but never inside the index of a subscript over a container whose text the pass does not read: below); a digest, which carries no host either, a leaf as int's and float's call is: a call, with no argument, of the `.digest()` or `.hexdigest()` method of a call of `hmac`'s `new` or of one of `hashlib`'s constructors, each module name the standard library's by binding, is a value the census reads none of what it is computed from, and a base64 encoding of such a leaf (one of base64's encoders on the name base64 so bound, handed the leaf alone), a `.decode()` of one with no argument, a slice of one, and a strip of one (`.strip`, `.lstrip` or `.rstrip` with no argument or one string constant) stay leaves, as do a name the census reads by binding whose every value is a leaf and a call of a function the census follows as a plain def every return of which is a leaf (whose arguments are then not read either); a base64 encoding alone is no leaf and is read as before, as is a `.decode()`, a slice or a strip of anything but a leaf, and a digest or base64 encoding through `hmac`, `hashlib` or `base64` bound other than to the standard library's module is refused by name, a module name a function rebinds under a `global` declaration or binds as its own local among them; the proof by binding reads the file's import statements and no more, so a digest or a constructor whose code is replaced at run time (by an assignment to a method of the module's class, or by an attribute store on the module object) and a module object stored in sys.modules under the standard library's name before the import binds it are the escape-only limit, a witness for each; a parameter, an except name, or a name the function binds from one of those, where no attribute is read on the path to it: `q.get(k)` passes, and `q.X` is refused, below), reading as text the arguments a call of such a base or of a method on one is handed, never the text it computes from them (a method whose return is not drawn from its receiver's text, called on such a base where it derives through a call handed arguments the pass reads, `str(X).lower()`, `int(X).bit_length()` and `base64.b64decode(X).decode()` among them, or on the bare name of one of the seven builtins, called unbound, `str.lower(X)`, is refused by name because the base's own text is not read, not because its return is undrawn (a `.strip`, whose return is a piece of that unread text, is refused the same way): at the call the page expression makes, save a `.replace`, `.join`, `.format`, `.format_map`, `.encode`, `.strip`, `.lstrip` or `.rstrip` there, which the text-method arm reads as its own shape (below); and at every call on the path below it with no exception by shape, the text-method arm's among them, under a method whose return is drawn from its receiver's text, a join or a subscript, `str(X).lower().removeprefix(p)`, `str(X).lower().split()[0]` and `str(X).strip().removeprefix(p)` among them): text a call computes from its arguments is not read, a stated limit (`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read X; the limit's witnesses are `chr(n)`, whose character is not n's text, `getattr(o, name)`, whose attribute is not its arguments' text, and a decoder, `base64.b64decode(X)` or zlib or gzip over an embedded bundle (`zlib.decompress(base64.b64decode(X))`), whose bytes the page serves, each read only as its arguments' own text; an encoded asset kept ASCII and decoded where the page is built is such a shape, and can be honest; and so is a method called on a parameter whose name no route class's body binds "
+                "`__loader__`, are no builtins here: a page that reads one the file does not bind is refused by name wherever the "
+                "pass reads it, as a bare name, the base of a receiver, a container or an attribute, a callee or a call's "
+                "argument, but never inside the index of a subscript over a container whose text the pass does not read: below); a "
+                "digest, which carries no host either, a leaf as int's and float's call is: a call, with no argument, of the "
+                "`.digest()` or `.hexdigest()` method of a call of one of `hashlib`'s constructors, or of `hmac`'s `new` handed "
+                "exactly one digestmod (its third positional argument or its digestmod keyword, with no starred argument and no "
+                "keyword but key, msg and digestmod) that is a string constant naming one of `hashlib`'s named constructors or "
+                "such a constructor as an attribute of `hashlib`, each module name the standard library's by binding, is a value "
+                "the census reads none of what it is computed from (`hmac`'s `new` hands its digest to the object its digestmod "
+                "names, so one handed any other digestmod is refused by name), and a base64 encoding of such a leaf (one of "
+                "base64's encoders on the name base64 so bound, handed the leaf alone), a `.decode()` of one with no argument, a "
+                "slice of one, and a strip of one (`.strip`, `.lstrip` or `.rstrip` with no argument or one string constant) stay "
+                "leaves, as do a name the census reads by binding whose every value is a leaf and a call of a function the census "
+                "follows as a plain def every return of which is a leaf (whose arguments are then not read either); a base64 "
+                "encoding alone is no leaf and is read as before, as is a `.decode()`, a slice or a strip of anything but a leaf, "
+                "and a digest or base64 encoding through `hmac`, `hashlib` or `base64` bound other than to the standard library's "
+                "module is refused by name, a module name a function rebinds under a `global` declaration or binds as its own "
+                "local among them; the proof by binding reads the file's import statements and no more, so a digest or a "
+                "constructor whose code is replaced at run time (by an assignment to a method of the module's class, or by an "
+                "attribute store on the module object) and a module object stored in sys.modules under the standard library's name "
+                "before the import binds it are the escape-only limit, a witness for each; a parameter, an except name, or a name "
+                "the function binds from one of those, where no attribute is read on the path to it: `q.get(k)` passes, and `q.X` "
+                "is refused, below), reading as text the arguments a call of such a base or of a method on one is handed, never "
+                "the text it computes from them (a method whose return is not drawn from its receiver's text, called on such a "
+                "base where it derives through a call handed arguments the pass reads, `str(X).lower()`, `int(X).bit_length()` and "
+                "`base64.b64decode(X).decode()` among them, or on the bare name of one of the seven builtins, called unbound, "
+                "`str.lower(X)`, is refused by name because the base's own text is not read, not because its return is undrawn (a "
+                "`.strip`, whose return is a piece of that unread text, is refused the same way): at the call the page expression "
+                "makes, save a `.replace`, `.join`, `.format`, `.format_map`, `.encode`, `.strip`, `.lstrip` or `.rstrip` there, "
+                "which the text-method arm reads as its own shape (below); and at every call on the path below it with no "
+                "exception by shape, the text-method arm's among them, under a method whose return is drawn from its receiver's "
+                "text, a join or a subscript, `str(X).lower().removeprefix(p)`, `str(X).lower().split()[0]` and "
+                "`str(X).strip().removeprefix(p)` among them): text a call computes from its arguments is not read, a stated limit "
+                "(`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read X; the limit's witnesses are `chr(n)`, whose character "
+                "is not n's text, `getattr(o, name)`, whose attribute is not its arguments' text, and a decoder, "
+                "`base64.b64decode(X)` or zlib or gzip over an embedded bundle (`zlib.decompress(base64.b64decode(X))`), whose "
+                "bytes the page serves, each read only as its arguments' own text; an encoded asset kept ASCII and decoded where "
+                "the page is built is such a shape, and can be honest; and so is a method called on a parameter whose name no "
+                "route class's body binds "
                 "and the file nowhere stores, deletes or names to a setter as an attribute (below), a method of a class that holds no route "
                 "among them), and over a bare module name that is such an import or one of the seven builtins a page may name; a top-level def "
                 "or class statement that is its name's one module-level binding, read as a value rather than called (a bare name or a call's "
@@ -2701,7 +2779,9 @@ PAINT_CLAUSE = ("in Chromium a `fill`, `stroke`, `clip-path`, `mask`, `marker-st
                 "carries no cookie and carries the page's origin (the dashboard's scheme, host and port, the port omitted when it is the "
                 "scheme's default) in its Origin header; in Chromium a `mask` request can also carry that origin as its Referer, from any page, "
                 "framed or bare; and a paint request can carry the full page address with the serve token in its Referer, but only when the "
-                "page's own address carries `?token=` (a pane page opened bare, such as `/chat?token=`; the shell drops the token from its "
+                "page's own address carries `?token=` (a pane page loaded on such an address by a load the kernel does not count "
+                "as a navigation, one whose Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch headers, "
+                "whose Accept does not name text/html; the shell drops the token from its "
                 "address before it frames its panes, and frames them without it); these paint requests are the one exception to the trust "
                 "model's sentence on `Referrer-Policy: same-origin` (the response is blocked as cross-origin; the request, with those headers, "
                 "has reached the host)")
@@ -2713,11 +2793,18 @@ CHAT_MEDIA_PAINT = ("an inline svg's paint references load at render too, with n
                     "at least a `mask` does, and a `filter` does in no engine; each such request carries no cookie and carries the page's origin "
                     "(the dashboard's scheme, host and port, the port omitted when it is the scheme's default) in its Origin header; in Chromium "
                     "a `mask` request can also carry that origin as its Referer, from any page, framed or bare; and a paint request can carry "
-                    "the full page address with the serve token in its Referer, but only when the page's own address carries `?token=` (a pane "
-                    "page opened bare, such as `/chat?token=`; the shell drops the token from its address before it frames its panes, and frames "
+                    "the full page address with the serve token in its Referer, but only when the page's own address carries "
+                    "`?token=` (a pane page loaded on such an address by a load the kernel does not count as a navigation, one "
+                    "whose Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch headers, whose Accept does "
+                    "not name text/html; the shell drops the token from its address before it frames its panes, and frames "
                     "them without it); these paint requests are the one exception to the trust model's sentence on `Referrer-Policy: "
                     "same-origin` (the response is blocked as cross-origin; the request, with those headers, has reached the host)")
 PAINT_TOKEN_CONDITION = "only when the page's own address carries `?token=`"
+# the clause's example of a page whose own address carries that parameter (the landing round's review, regression-1): a case that holds
+# at the head, which replaced "a pane page opened bare" (PAINT_EXAMPLE_WITHDRAWN); TheChatMediaRoadIsRowed holds both
+PAINT_CASE = ("a pane page loaded on such an address by a load the kernel does not count as a navigation, one whose Sec-Fetch-Dest names "
+              "neither a document nor an iframe or, with no Sec-Fetch headers, whose Accept does not name text/html")
+PAINT_EXAMPLE_WITHDRAWN = "a pane page opened bare"
 CHAT_MEDIA_NO_TOKEN_WITHDRAWN = "no serve token, key or login token rides"
 # extra6-4: the clicked-link sent cell no longer says the serve token travels only on the bundles' own URLs; it says what romp adds
 # to a link's URL and points at the paint reference's Referer with the paint clause's condition, and the old words are held absent,
@@ -3938,8 +4025,8 @@ B_KERNEL_SEND = ("    def _send(self, code, body, ctype, cache=None, headers=Non
 # through a call passing text/html, tg1h; its call passing application/json is no route at either head, its page outside the served
 # pass, a witness of the header limit); (qgc) the global-len plant's control with no rebinding, read; (rks) the kernel's shape, read;
 # and the limits' witnesses, each read or silent at both heads: an end_headers of the class's own writing more text through
-# self.wfile (lse), a `_send` replaced through a name no code spells (lsa), a header value a call passes through the headers argument
-# carrying a CR LF and a fetch (lhv), a second Content-Type a call passes through it (lct, the ct1 shape: application/json, no route),
+# self.wfile (lse), a `_send` replaced through a name no code spells (lsa), a second Content-Type a call passes through the headers
+# argument (lct, the ct1 shape: application/json, no route),
 # and a mapping handed in whose items() writes more text (lob, code run through an object the definition is handed); the witness of
 # the limit on a module namespace rewritten at run time by code outside the forms the census reads, a listed name reached any other way
 # or a name the list does not hold (through `__self__` of a builtin, a container or a copy of a namespace mapping other than the file's
@@ -8896,7 +8983,140 @@ AT_PLANTS = (("atlf", "page text holding a line feed", ((_AR_EXTRA, '           
     (("atts", "a t-string in the injection's value", ((_AT_INJ, 'extra + str(t"{extra}") + _PROBE_AWW_INJ, 1)'),),
       ("gate", 't"{extra}"', "a TemplateStr expression at line %d")),) if sys.version_info >= (3, 14) else ())
 AT_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AT_PLANTS)
-AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES + AT_FILES
+# The landing round's rulings on classes (the reviewer's 13:2xZ ruling of 2026-10-03), each a probe module of its own under kernel/,
+# read by the served pass beside the others (RD_FILES, part of AD_FILES), every refusal a SERVED line by name at its plant's line and
+# every plant red at the reviewed head for its reason (each read or silent there). (zb) and (zd), item 1, the decoding a page is read in:
+# a bytes constant holding a byte past ASCII refused (zbu, a UTF-16 byte order mark and a fetch encoded as UTF-16LE, silent at the
+# reviewed head, whose latin-1 reading found no fetch, while a browser decodes the page as UTF-16 and runs it; zbs, the same mark split
+# across two constants, each refused; zbe, a UTF-8 byte order mark before a fetch, read at the reviewed head); page text holding U+FEFF,
+# which its UTF-8 bytes carry as a byte order mark, refused (zbf, read at the reviewed head); page text declaring a charset other than
+# utf-8 refused, its text not read (zbm, an ASCII bytes constant's meta charset before a fetch, read at the reviewed head; zij, a meta
+# charset of iso-2022-jp with an escape inside fetch, which that decoder drops, silent there; zhe, a content attribute's charset before
+# a fetch, read there; zxe, an XML declaration's encoding, silent there; zjn, a declaration and a fetch its literals spell only together,
+# refused at their join, its fetch a site there; zfs, an f-string's literal part declaring one before a fetch, read there); a
+# script-running content type naming a charset other than utf-8 refused (zcs, silent at the reviewed head); and read, at both heads: a
+# page declaring utf-8 (zmu), an XML declaration of UTF-8 (zxu), a type with a charset parameter holding no `=` (zcn), with another
+# parameter (zcp) and with a quoted UTF-8 (zcq). The walked file a page reads, the file arm of item 1, is
+# TheServedFileReadsAreDecodedAsTheWalkRead's (a tiny root of its own). (cr) and (ch), item 2, a CR or LF in a header value the census
+# reads: in the content type, before it is typed (crx a CR LF and a fetch after it, cry the page's own fetch behind a type holding a CR
+# LF, crm a module constant so typed, crr a lone CR, crl a lone LF, each a route the reviewed head typed as not script-running and so
+# never read, and crd such a type written outside `_send`, silent there too); and in any other argument a `_send` call hands its
+# definition but the page body (chc a cache argument by its place, chk by its keyword, chy a headers dict's key, chb a bytes constant,
+# chq a lone CR, chn a lone LF, chm a module constant and cht a module constant whose value names one holding a CR LF, each read at the
+# reviewed head with its header text unread; and the eighth round's probe_lhv, a headers dict's value, which was that limit's witness
+# until this ruling and is refused since), with chg, a local that shadows a module constant holding a CR LF, and cho, a module constant
+# whose value reads a name the census does not follow and holds no CR or LF, each read, and the limit's two witnesses silent (chv, a
+# header value held in a local dict, and chp, a CR LF a call of chr computes at run time, each served by Python as a header line that
+# ends early). (hd), item 3, the digest leaf's digestmod: hmac's new refused by name where its digestmod is no hashlib constructor or
+# algorithm name (hdm a class the file defines, by its place, and hdd by its keyword, whose digest Python serves as the page, a fetch,
+# each silent at the reviewed head; hdn none, hdt two, hds a starred argument beside one, hdw a `**` beside one, hdc a string naming no
+# algorithm, hda an attribute of a class of the file, hdx hashlib's new and hdv an attribute of a call's return, each silent there),
+# hdl such a digest reached through a local and base64, refused where resolve meets it (by its undrawn .decode(), as agb is), and hdk
+# (a string naming sha256) and hde (key, msg and digestmod by their keywords) leaves, silent at both heads.
+def _rd_u16(tag):
+    """A plant's page encoded as UTF-16LE, as escapes in a bytes literal of the probe's source."""
+    return "".join("\\x%02x" % b for b in (FGH_PAGE % tag).encode("utf-16-le"))
+
+
+RD_ESC = "<script>fe\\x1b(Btch('https://example.invalid/%s')</script>"   # a fetch whose name an ISO-2022-JP escape splits, in the probe's source
+RD_ZB = (("zbu", 'return self._send(200, b"\\xff\\xfe%s", "text/html")' % _rd_u16("zbu")),
+         ("zbs", 'return self._send(200, b"\\xff" + b"\\xfe%s", "text/html")' % _rd_u16("zbs")),
+         ("zbe", 'return self._send(200, b"\\xef\\xbb\\xbf%s", "text/html")' % (FGH_PAGE % "zbe")),
+         ("zbf", 'return self._send(200, "\\ufeff%s", "text/html")' % (FGH_PAGE % "zbf")),
+         ("zbm", 'return self._send(200, b"<meta charset=iso-2022-jp>%s", "text/html")' % (FGH_PAGE % "zbm")))
+RD_ZD_HEAD = '_PROBE_ZFS = "x"'
+RD_ZD = (("zij", 'return self._send(200, "<meta charset=\\"iso-2022-jp\\">%s", "text/html")' % (RD_ESC % "zij")),
+         ("zhe", 'return self._send(200, "<meta http-equiv=\\"Content-Type\\" content=\\"text/html; charset=shift_jis\\">%s", "text/html")'
+                 % (FGH_PAGE % "zhe")),
+         ("zxe", 'return self._send(200, "<?xml version=\\"1.0\\" encoding=\\"iso-2022-jp\\"?><html xmlns=\\"http://www.w3.org/1999/xhtml\\">%s</html>", '
+                 '"application/xhtml+xml")' % (RD_ESC % "zxe")),
+         ("zjn", 'return self._send(200, "<meta char" + "set=iso-2022-jp><script>fe" + "tch(\'https://example.invalid/zjn\')</script>", "text/html")'),
+         ("zfs", 'return self._send(200, f"<meta charset=\\"iso-2022-jp\\">%s{_PROBE_ZFS}", "text/html")' % (FGH_PAGE % "zfs")),
+         ("zcs", 'return self._send(200, "<p>zcs</p>%s", "text/html; charset=iso-2022-jp")' % (RD_ESC % "zcs")),
+         ("zmu", 'return self._send(200, "<meta charset=\\"utf-8\\">%s", "text/html")' % (FGH_PAGE % "zmu")),
+         ("zxu", 'return self._send(200, "<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?><html xmlns=\\"http://www.w3.org/1999/xhtml\\">%s</html>", '
+                 '"application/xhtml+xml")' % (FGH_PAGE % "zxu")),
+         ("zcn", 'return self._send(200, "%s", "text/html; charset")' % (FGH_PAGE % "zcn")),
+         ("zcp", 'return self._send(200, "%s", "text/html; profile=probe")' % (FGH_PAGE % "zcp")),
+         ("zcq", 'return self._send(200, "%s", "text/html; charset=\\"UTF-8\\"")' % (FGH_PAGE % "zcq")))
+RD_CT_HEAD = '_PROBE_CRM = "text/html\\r\\nX-Probe: 1"'
+RD_CT = (("crx", 'return self._send(200, "<p>crx</p>", "text/html\\r\\n\\r\\n%s")' % (FGH_PAGE % "crx")),
+         ("cry", 'return self._send(200, "%s", "text/html\\r\\nX-Probe: 1")' % (FGH_PAGE % "cry")),
+         ("crm", 'return self._send(200, "%s", _PROBE_CRM)' % (FGH_PAGE % "crm")),
+         ("crr", 'return self._send(200, "%s", "text/html\\rX-Probe: 1")' % (FGH_PAGE % "crr")),
+         ("crl", 'return self._send(200, "%s", "text/html\\nX-Probe: 1")' % (FGH_PAGE % "crl")),
+         ("crd", 'self.send_response(200)\n            self.send_header("Content-Type", "text/html\\r\\nX-Probe: 1")\n            self.end_headers()\n'
+                 '            return self.wfile.write(b"%s")' % (FGH_PAGE % "crd")))
+RD_CH_HEAD = ('import os\n\n\n_PROBE_CHM = "no-cache\\r\\n\\r\\n%s"\n_PROBE_CHT_TAIL = "\\r\\n\\r\\n%s"\n_PROBE_CHT = "no-cache" + _PROBE_CHT_TAIL\n'
+              '_PROBE_CHG = "no-cache\\r\\n\\r\\n%s"\n_PROBE_CHO = "no-cache" + os.sep' % (FGH_PAGE % "chmx", FGH_PAGE % "chtx", FGH_PAGE % "chgx"))
+RD_CH = (("chc", 'return self._send(200, "<p>chc</p>", "text/html", "no-cache\\r\\n\\r\\n%s")' % (FGH_PAGE % "chcx")),
+         ("chk", 'return self._send(200, "<p>chk</p>", "text/html", cache="no-cache\\r\\n\\r\\n%s")' % (FGH_PAGE % "chkx")),
+         ("chy", 'return self._send(200, "<p>chy</p>", "text/html", headers={"X-Probe\\r\\n\\r\\n%s": "1"})' % (FGH_PAGE % "chyx")),
+         ("chb", 'return self._send(200, "<p>chb</p>", "text/html", headers={"X-Probe": b"1\\r\\n\\r\\n%s"})' % (FGH_PAGE % "chbx")),
+         ("chq", 'return self._send(200, "<p>chq</p>", "text/html", cache="no-cache\\r%s")' % (FGH_PAGE % "chqx")),
+         ("chn", 'return self._send(200, "<p>chn</p>", "text/html", cache="no-cache\\n%s")' % (FGH_PAGE % "chnx")),
+         ("chm", 'return self._send(200, "<p>chm</p>", "text/html", cache=_PROBE_CHM)'),
+         ("cht", 'return self._send(200, "<p>cht</p>", "text/html", cache=_PROBE_CHT)'),
+         ("cho", 'return self._send(200, "%s", "text/html", cache=_PROBE_CHO)' % (FGH_PAGE % "cho")),
+         ("chg", '_PROBE_CHG = "no-store"\n            return self._send(200, "%s", "text/html", cache=_PROBE_CHG)' % (FGH_PAGE % "chg")),
+         ("chv", '_h = {"X-Probe": "1\\r\\n\\r\\n%s"}\n            return self._send(200, "%s", "text/html", headers=_h)' % (FGH_PAGE % "chvx", FGH_PAGE % "chv")),
+         ("chp", 'return self._send(200, "%s", "text/html", cache="no-cache" + chr(13) + chr(10) + "%s")' % (FGH_PAGE % "chp", FGH_PAGE % "chpx")))
+RD_HD_HEAD = ('import base64\nimport hashlib\nimport hmac\n\n\nclass _ProbeHdm(object):\n    digest_size = 32\n    block_size = 64\n\n'
+              '    def __init__(self, d=b""):\n        pass\n\n    def update(self, m):\n        pass\n\n    def copy(self):\n        return self\n\n'
+              '    def digest(self):\n        return b"%s"\n\n    def hexdigest(self):\n        return "%s"\n\n\n'
+              'class _ProbeHdmMod(object):\n    sha256 = _ProbeHdm\n\n\ndef _probe_hdv():\n    return _ProbeHdmMod\n\n\n'
+              '_PROBE_HDS = (b"m",)\n_PROBE_HDW = {}' % (FGH_PAGE % "hdmx", FGH_PAGE % "hdmx"))
+RD_HD = (("hdm", 'hmac.new(b"k", b"m", _ProbeHdm).hexdigest()'),
+         ("hdd", 'hmac.new(b"k", b"m", digestmod=_ProbeHdm).digest().decode()'),
+         ("hdn", 'hmac.new(b"k", b"m").hexdigest()'),
+         ("hdt", 'hmac.new(b"k", b"m", hashlib.sha256, digestmod=_ProbeHdm).hexdigest()'),
+         ("hds", 'hmac.new(b"k", *_PROBE_HDS, hashlib.sha256).hexdigest()'),
+         ("hdw", 'hmac.new(b"k", b"m", hashlib.sha256, **_PROBE_HDW).hexdigest()'),
+         ("hdc", 'hmac.new(b"k", b"m", "probe").hexdigest()'),
+         ("hda", 'hmac.new(b"k", b"m", _ProbeHdmMod.sha256).hexdigest()'),
+         ("hdx", 'hmac.new(b"k", b"m", hashlib.new).hexdigest()'),
+         ("hdv", 'hmac.new(b"k", b"m", _probe_hdv().sha256).hexdigest()'),
+         ("hdk", 'hmac.new(b"k", b"m", "sha256").hexdigest()'),
+         ("hde", 'hmac.new(key=b"k", msg=b"m", digestmod=hashlib.sha256).hexdigest()'))
+RD_HDL = ("hdl", '_d = hmac.new(b"k", b"m", _ProbeHdm).digest()\n            return self._send(200, "<p>hdl</p>" + base64.b64encode(_d).decode(), "text/html")')
+RD_FILES = (("rdzb", _a_module("rdzb", A_SEND % "", branches=RD_ZB)),
+            ("rdzd", _a_module("rdzd", A_SEND % "", head=RD_ZD_HEAD, branches=RD_ZD)),
+            ("rdcr", _a_module("rdcr", A_SEND % "", head=RD_CT_HEAD, branches=RD_CT)),
+            ("rdch", _a_module("rdch", B_KERNEL_SEND, head=RD_CH_HEAD, branches=RD_CH)),
+            ("rdhd", _a_module("rdhd", A_SEND % "", head=RD_HD_HEAD, branches=tuple(_fo_page(t, e) for t, e in RD_HD) + (RD_HDL,))))
+_RD_LEAF = "a digest of hmac's new whose digestmod is no constructor or algorithm name of hashlib's, whose return may be any text"
+_RD_CTYPE = "serves a response whose content type holds a CR or LF ("
+_RD_ARG = "a constant holding a CR or LF"
+# each refused plant: (its module's tag, the plant, the line its SERVED line names as the lines past its branch's `if`, the text that
+# line holds, how many such lines; a page whose every text is so refused has one line more at that line, the route's own: "serves
+# <its type> from ..., text the census did not read", since its page then puts no text before the pass)
+RD_REFUSED = (("rdzb", "zbu", 1, "a bytes constant holding a byte past ASCII", 1),
+              ("rdzb", "zbs", 1, "a bytes constant holding a byte past ASCII", 2),
+              ("rdzb", "zbe", 1, "a bytes constant holding a byte past ASCII", 1),
+              ("rdzb", "zbf", 1, "text holding U+FEFF", 1),
+              ("rdzb", "zbm", 1, "text declaring charset=iso-2022-jp, a charset other than utf-8", 1),
+              ("rdzd", "zij", 1, "text declaring charset=iso-2022-jp, a charset other than utf-8", 1),
+              ("rdzd", "zhe", 1, "text declaring charset=shift_jis, a charset other than utf-8", 1),
+              ("rdzd", "zxe", 1, "text declaring encoding=iso-2022-jp, a charset other than utf-8", 1),
+              ("rdzd", "zjn", 1, "builds a served page from a join of string constants (text declaring charset=iso-2022-jp", 1),
+              ("rdzd", "zfs", 1, "text declaring charset=iso-2022-jp, a charset other than utf-8", 1),
+              ("rdzd", "zcs", 1, "serves a response whose content type names a charset other than utf-8 (charset=iso-2022-jp", 1),
+              ("rdcr", "crx", 1, _RD_CTYPE, 1), ("rdcr", "cry", 1, _RD_CTYPE, 1), ("rdcr", "crm", 1, _RD_CTYPE + "_PROBE_CRM in", 1),
+              ("rdcr", "crr", 1, _RD_CTYPE, 1), ("rdcr", "crl", 1, _RD_CTYPE, 1), ("rdcr", "crd", 2, _RD_CTYPE, 1),
+              ("rdch", "chc", 1, _RD_ARG, 1), ("rdch", "chk", 1, _RD_ARG, 1), ("rdch", "chy", 1, _RD_ARG, 1), ("rdch", "chb", 1, _RD_ARG, 1),
+              ("rdch", "chq", 1, _RD_ARG, 1), ("rdch", "chn", 1, _RD_ARG, 1),
+              ("rdch", "chm", 1, "the module constant _PROBE_CHM, whose bound text holds a CR or LF", 1),
+              ("rdch", "cht", 1, "the module constant _PROBE_CHT, whose bound text holds a CR or LF", 1)) + tuple(
+    ("rdhd", t, 1, _RD_LEAF, 1) for t in ("hdm", "hdd", "hdn", "hdt", "hds", "hdw", "hdc", "hda", "hdx", "hdv")) + (
+    ("rdhd", "hdl", 2, "a .decode() method called on a base whose own text the census does not read", 1),)
+RD_WHOLE = ("zbu", "zbs", "zbe", "zbf", "zbm", "zij", "zhe", "zxe")   # the plants whose every page text is refused
+# the plants read at the fix (and at the reviewed head), each page's fetch a site and no SERVED line at it
+RD_READ = ("zmu", "zxu", "zcn", "zcp", "zcq", "chg", "cho", "chv", "chp")
+# the texts no reader scans: each refused plant's page or what its header carries, the limit's witnesses' header text, and the
+# digestmod class's text
+RD_UNREAD = ("zbu", "zbs", "zbe", "zbf", "zbm", "zij", "zhe", "zxe", "zjn", "zfs", "zcs", "crx", "cry", "crm", "crr", "crl", "crd", "chcx", "chkx",
+             "chyx", "chbx", "chqx", "chnx", "chmx", "chtx", "chgx", "chvx", "chpx", "hdmx")
+AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES + AT_FILES + RD_FILES
 
 
 A_FILES = tuple((_a_rel(tag), text) for tag, text in (
@@ -10270,7 +10490,6 @@ B_READ = (("(q) len with nothing binding or rebinding it, the global-len plant's
           ("(t) the kernel's shape: the codec line, the loop over a headers argument and the getattr tests", "rks", _a_rel("rks")),
           ("limit: an end_headers of the class's own writing more text through self.wfile", "lse", _a_rel("lse")),
           ("limit: a _send replaced through a name no code spells", "lsa", _a_rel("lsa")),
-          ("limit: a header value a call passes through the headers argument, a CR LF and a fetch in it", "lhv", _a_rel("lhv")),
           ("limit: a mapping the call hands in whose items() writes more text", "lob", _a_rel("lob")))
 # read at the fix: a lambda's body standing in the page (vlm) and its defaults (vld), and a Div's operands (vdv, a path join), each
 # page text's fetch UNCLASSIFIED (vfm's `__file__`, which its module binds by one assignment, was read as that constant until the
@@ -10425,6 +10644,9 @@ def _served_build():
     # and the kind the walk scans each file as (layer v of the eleventh round's rulings: a file a page reads is covered only where the walk scanned it
     # as browser text), each probe module a walked Python file; a head whose Result keeps no kinds is handed none
     res.kinds = dict(getattr(base.res, "kinds", {}), **{rel: "py" for rel, _ in probes})
+    # and the walked browser-text files whose text, as the walk decoded it, is not what a browser decodes (the file arm of item 1 of
+    # the reviewer's 13:2xZ ruling of 2026-10-03: a page's read of one is refused); a head whose Result keeps none is handed none
+    res.undecoded = dict(getattr(base.res, "undecoded", {}))
     served = []
     for rel, tree in planted:   # the walk's order: each file's scan and its import gate, then the served pass over every file with routes
         sc = mod.Scan(rel, res)
@@ -11005,8 +11227,10 @@ class TheServedPagesAreScanned(_Scope):
         definition calls or reads on self, a header method, a property or `__getattr__` and any stream it writes (probe_lgs's
         module-global stream and probe_lse's own end_headers); a `_send` replaced at run time through a name no code spells
         (probe_lsa's `setattr(Handler, "_se" + "nd", ...)`); a header value, and a response that a Content-Type in its headers
-        argument, passed or defaulted, makes a page (probe_lhv's CR LF and fetch passed in `headers=`, probe_lct's Content-Type
-        passed there, and probe_tg1's call passing application/json beside a headers default holding text/html); code the
+        argument, passed or defaulted, makes a page (probe_lct's Content-Type passed in `headers=`, and probe_tg1's call passing
+        application/json beside a headers default holding text/html), a header value read only for a CR or LF where the census reads
+        it (the landing round's (ct) and (ch) plants: probe_lhv, a CR LF and a fetch passed in `headers=`, was this limit's witness
+        and is refused since, and chv and chp are the witnesses of a header value held where the census does not read it); code the
         definition runs through an object it is handed (probe_lob's mapping whose items() writes), each of these the eighth
         round's limits case; and a module namespace rewritten at run time by code outside the forms the census reads, a listed
         name reached any other way or a name the list does not hold (through `__self__` of a builtin, a container or a copy of a
@@ -11213,8 +11437,11 @@ class TheServedPagesAreScanned(_Scope):
         own end_headers, which writes more text through self.wfile, while its `_send` stands inside the table (the module-global
         stream, probe_lgs, is the seventh round's witness of the same limit). A `_send` replaced at run time through a name no
         code spells: probe_lsa's module sets the class's `_send` with `setattr(Handler, "_se" + "nd", ...)`, and the call is typed
-        through the class's own definition. A header value is not scanned: probe_lhv's call passes a CR LF and a fetch through the
-        headers argument. Code the definition runs through an object it is handed: probe_lob's call hands in a mapping whose
+        through the class's own definition. A header value is read only for a CR or LF: probe_lhv's call, which passes a CR LF and
+        a fetch through the headers argument, was this limit's witness until the reviewer's 13:2xZ ruling of 2026-10-03 and is
+        refused by that rule since (TheLandingRoundsClassesFailClosed), so it is no longer here; the landing round's chv and chp are
+        the witnesses of a header value held where the census does not read it. Code the definition runs through an object it is
+        handed: probe_lob's call hands in a mapping whose
         items() writes more text. Each of these routes is read, its page's fetch listed, and no line names the other text. A
         response that a Content-Type passed in a headers argument (probe_lct, the ct1 shape) or held in a headers default
         (probe_tg1's call passing application/json) makes a page is outside the served pass: typed through the call's own type,
@@ -11237,7 +11464,7 @@ class TheServedPagesAreScanned(_Scope):
             self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith((_a_rel("lct") + ":", "%s:%d " % (_a_rel("tg1"), self.at["tg1"])))], [],
                              "typed through the call's own type, application/json: no route, and no line names its page")
         with self.subTest(plant="limits: no SERVED line names a witness"):
-            self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith(tuple("SERVED %s:" % _a_rel(t) for t in ("lse", "lsa", "lhv", "lct", "lob")))], [])
+            self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith(tuple("SERVED %s:" % _a_rel(t) for t in ("lse", "lsa", "lct", "lob")))], [])
 
     def test_a_call_a_receiver_derives_through_has_its_arguments_read_as_text(self):
         """A receiver or a container that derives through a call of one of the seven builtins a page may call or of an import (a
@@ -14601,8 +14828,9 @@ class TheWalksExpandEachNameOnceAndStopNoChainResolveCompletes(unittest.TestCase
         no count moves and the module stays green) (its local arm's removal also stops the rotations' runs, resolve raising
         RecursionError on them); layer iv's local walk with its visited map dropped expands the list's locals 16371 times for 93 and
         loops until its step passes the count case's cap on the class rotations, the two-value rotations under a `.format` and the set
-        join's (not those read as a lookup key), on both fan-outs and on resolve's two comprehension shapes (over locals, and of two
-        generators); and its module walk expands the module
+        join's (not those read as a lookup key), on both fan-outs, on resolve's two comprehension shapes (over locals, and of two
+        generators) and on the digest leaf's walk over the two-value rotation of 24 locals (the leaf's rotation of module constants,
+        which that walk does not read, completes); and its module walk expands the module
         list's names 8191 times for 13. The set join's walk with its visited set dropped loops on the rotation until its step passes
         the count case's cap. Since the reviewer's 06:26Z ruling of 2026-10-01, the digest leaf's walk (_leaf) over the two-value
         rotation of 24 locals and over a rotation of 24 module constants, one query and 24 expansions each, and over module functions
@@ -14719,6 +14947,19 @@ class TheChatMediaRoadIsRowed(_Scope):
                       "when the page's own address carries ?token=, not from every framed dashboard page")
         self.assertEqual(cells[4], "none: no setting gates a message's media (the gear's Pictures from the web in files list gates a viewed file's figures, not the chat's)")
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "ui", "webview", "chat-media-loads-browser.test.ts")), "the executed witness is in the tree")
+
+    def test_the_paint_clauses_example_is_a_case_that_holds_at_the_head(self):
+        """The paint clause's example of a page whose own address carries the parameter its condition names (the landing round's
+        review, regression-1): a pane page loaded on such an address by a load the kernel does not count as a navigation (one whose
+        Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch headers, whose Accept does not name text/html, as
+        kernel/kernel.py's _is_navigation reads them), the case that holds at the head, as the build record measured by a run of the
+        kernel's handler; the example it replaced, a pane page opened bare, held absent. Held in the script's clause and in this
+        module's two copies, which the section, the sent cell, the paint row and the ledger carry word for word (the case above and
+        tests/test_security_price_feed.py). Red at the reviewed head, whose clause gave the example it replaced."""
+        for name, clause in (("the script's PAINT_CLAUSE", script_module(ROOT).PAINT_CLAUSE), ("PAINT_CLAUSE", PAINT_CLAUSE), ("CHAT_MEDIA_PAINT", CHAT_MEDIA_PAINT)):
+            with self.subTest(clause=name):
+                self.assertEqual(clause.count(PAINT_CASE), 1, "%s states the case that holds at the head" % name)
+                self.assertNotIn(PAINT_EXAMPLE_WITHDRAWN, clause, "%s no longer gives the example it replaced" % name)
 
     def test_the_ledger_entrys_census_paragraph_carries_the_paint_reference_clause(self):
         """The entry's census paragraph is the second home of the road's prose (the body quotes it byte for byte and the owner reads
@@ -15128,6 +15369,184 @@ class TheSendStatementsAreListedShapes(unittest.TestCase):
         self.assertEqual(sorted(mod._SEND_SHAPES.values()), sorted(set(LIVE_SHAPES)), "every listed shape is a live statement's, each listed once")
         self.assertEqual({n: LIVE_SHAPES.count(n) for n in LIVE_SHAPES}, {n: mod._SEND_TIMES.get(n, 1) for n in mod._SEND_SHAPES.values()},
                          "_SEND_TIMES lists each shape as many times as the kernel's definition holds it")
+
+
+class TheLandingRoundsClassesFailClosed(_Scope):
+    """The landing round's rulings on classes (the reviewer's 13:2xZ ruling of 2026-10-03), the census failing closed on each class
+    rather than modelling one more browser behaviour, over the shared served pass (RD_FILES, whose comment states each plant). Item 1,
+    the decoding a page is read in: the census reads a page only where the bytes a browser decodes are the text it scans, which it reads
+    as UTF-8, and refuses by name, as a page it cannot read, a bytes constant holding a byte past ASCII, page text holding U+FEFF, page
+    text declaring a charset other than utf-8 (a meta charset, a content attribute's charset or an XML declaration's encoding, in a
+    literal, an f-string's part or a join of string constants) and a script-running content type naming one. Item 2, a CR or LF in a
+    header value the census reads, refused by name: in the content type before it is typed, at a `_send` call and at a Content-Type
+    write outside `_send`; and in any argument the call hands the definition but the page body and the content type, a constant or a
+    module constant, followed through the module constants its value names; a header value held anywhere else is the stated limit, its
+    witnesses chv and chp silent. Item 3, the digest leaf's digestmod: hmac's new a leaf only where its one digestmod is a hashlib
+    constructor or algorithm name, every other shape refused by name where it stands, and through a name or a function where resolve
+    meets it. Each refusal is held at its line with its text and the count of its lines, each module's lines being its refused plants'
+    and no other; each read plant's fetch is a site and each refused text none. The reds of a mutant per conjunct of each mechanism
+    are in the build record."""
+
+    def setUp(self):
+        self.at, (self.rc, self.out) = served_pass()
+
+    def _served(self, mod):
+        pre = "SERVED %s:" % _a_rel(mod)
+        return [ln for ln in self.out.splitlines() if ln.startswith(pre)]
+
+    def _is_site(self, tag):
+        mark = _fgh_mark(tag)
+        return any(SITE_LINE.match(ln) and mark in ln for ln in self.out.splitlines())
+
+    def test_each_class_refuses_its_plants_by_name_at_their_lines(self):
+        files = dict(RD_FILES)
+        for mod, tag, off, shown, n in RD_REFUSED:
+            with self.subTest(plant="(%s) %s" % (mod, tag)):
+                line = _a_line(files[mod], '"/probe-%s"' % tag) + off
+                got = [ln for ln in self._served(mod) if ln.startswith("SERVED %s:%d " % (_a_rel(mod), line))]
+                whole = [ln for ln in got if re.match(r"SERVED \S+ serves \S+ from ", ln) and ln.endswith(", text the census did not read")]
+                self.assertEqual(sum(1 for ln in got if shown in ln), n, "%s refuses %d time(s) at line %d with %r: %r" % (tag, n, line, shown, got))
+                self.assertEqual(len(whole), 1 if tag in RD_WHOLE else 0, "the route's own line where its every text is refused: %r" % got)
+                self.assertEqual(len(got), n + len(whole), "no other line at %s's: %r" % (tag, got))
+        for mod in files:
+            with self.subTest(module=mod):
+                want = sum(n + (t in RD_WHOLE) for m, t, _o, _s, n in RD_REFUSED if m == mod)
+                self.assertEqual(len(self._served(mod)), want, "the module's refused plants and no other line: %r" % self._served(mod))
+
+    def test_the_read_plants_are_read_and_no_refused_text_is_scanned(self):
+        for tag in RD_READ:
+            with self.subTest(read=tag):
+                self.assertTrue(self._is_site(tag), "%s is read: its page's fetch is a site" % tag)
+        for tag in RD_UNREAD:
+            with self.subTest(unread=tag):
+                self.assertFalse(self._is_site(tag), "%s is no site: a refused page or a header value, which no reader scans" % tag)
+
+    def test_the_eighth_rounds_header_witness_is_refused_by_the_header_rule(self):
+        """probe_lhv, a headers dict holding a CR LF and a fetch passed at the call, was the eighth round's witness of the limit that a
+        header value is not scanned; the reviewer's 13:2xZ ruling of 2026-10-03 reads a constant a call hands its definition for a CR
+        or LF, so it is refused at the call by name, its page no longer read, the header text never a site."""
+        line = _a_line(B_TEXTS["lhv"], "headers={")
+        got = [ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel("lhv"))]
+        self.assertEqual(len(got), 1, "one line names probe_lhv: %r" % got)
+        self.assertTrue(got[0].startswith("SERVED %s:%d calls _send on self._send handing it " % (_a_rel("lhv"), line)) and _RD_ARG in got[0], got[0])
+        for tag in ("lhv", "lhvx"):
+            self.assertFalse(self._is_site(tag), "%s is no site: the call is refused before its page is read" % tag)
+
+
+class TheServedFileReadsAreDecodedAsTheWalkRead(unittest.TestCase):
+    """The file arm of item 1 of the reviewer's 13:2xZ ruling of 2026-10-03: a page's read of a walked browser-text file counts as
+    covered only where the file's text, as the walk decoded it, is what a browser decodes from its bytes; a file holding U+FFFD
+    (fdu, a UTF-16LE file behind its byte order mark, whose two leading bytes the walk cannot decode as UTF-8), U+FEFF (fdb, a UTF-8
+    byte order mark) or a declaration of another charset (fdm, a meta charset of iso-2022-jp) is refused by name at the read, and a
+    clean one (fdc) stays covered, no line. A tiny root of its own, scanned in process: the script's copy, the declared roots, a page
+    module under kernel/ reading each file under ui/ through `Path(__file__)`. At the reviewed head every read was covered."""
+
+    def test_a_page_reading_a_file_the_walk_decoded_otherwise_is_refused(self):
+        tiny = tempfile.mkdtemp(prefix="census-rdfd-")
+        self.addCleanup(shutil.rmtree, tiny, True)
+        for d in SCOPE_DIRS:
+            os.makedirs(os.path.join(tiny, d))
+        os.makedirs(os.path.join(tiny, "scripts"))
+        shutil.copy2(os.path.join(ROOT, INVENTORY), os.path.join(tiny, INVENTORY))
+        body = {"fdb": b"\xef\xbb\xbf" + (FGH_PAGE % "fdb").encode(), "fdu": b"\xff\xfe" + (FGH_PAGE % "fdu").encode("utf-16-le"),
+                "fdm": ('<meta charset="iso-2022-jp">' + FGH_PAGE % "fdm").encode(), "fdc": (FGH_PAGE % "fdc").encode()}
+        for tag, data in body.items():
+            with open(os.path.join(tiny, "ui", "probe-%s.js" % tag), "wb") as f:
+                f.write(data)
+        page = _a_module("rdfd", A_SEND % "", head="from pathlib import Path", branches=tuple(
+            (t, 'return self._send(200, (Path(__file__).resolve().parent.parent / "ui" / "probe-%s.js").read_text(), "text/html")' % t) for t in body))
+        rel = _a_rel("rdfd")
+        with open(os.path.join(tiny, rel), "w", encoding="utf-8") as f:
+            f.write(page)
+        mod = script_module(tiny)
+        res = mod.scan(tiny)
+        got = [p for p in res.problems if p.startswith("SERVED %s:" % rel)]
+        why = {"fdb": "U+FEFF, a byte order mark", "fdu": "U+FFFD, which may stand for a byte the walk could not decode as UTF-8",
+               "fdm": "a declaration of charset=iso-2022-jp"}
+        for tag, reason in sorted(why.items()):
+            with self.subTest(file=tag):
+                want = ("SERVED %s:%d reads ui/probe-%s.js for a served page, a walked browser-text file whose text, as the walk decoded "
+                        "it, holds %s, so a browser may decode the page other than as the text the walk scanned"
+                        % (rel, _a_line(page, '"probe-%s.js"' % tag), tag, reason))
+                self.assertIn(want, got, "the read is refused by name: %r" % got)
+        self.assertEqual(len(got), len(why), "the clean file's read stays covered, no line: %r" % got)
+
+
+class TheBuildsCollectBeforeTheirFreeze(unittest.TestCase):
+    """Both of this module's parse_cache builds end in one full collection (_collect_before_freeze), run after the build's own work
+    has returned and before derived() hands the value back to be frozen (tests-1 of the landing round's review). parse_cache's derived
+    is replaced by a stub that holds the collector off for the build as the real one does, the build's work by a stub that returns a
+    sentinel and arms a count of the collector's generation-2 starts (gc.callbacks), and the count stops when the build returns to the
+    stub: each build counts exactly one full collection and hands back the sentinel itself. Removing the collection from either
+    build reds its subtest. Every replacement is restored by a cleanup registered before it is made."""
+
+    def test_each_build_runs_one_full_collection_after_its_work_returns(self):
+        import types
+        g = globals()
+        state = {"armed": False, "done": False, "full": 0}
+
+        def hook(phase, info):
+            if phase == "start" and info.get("generation", 0) >= 2 and state["armed"] and not state["done"]:
+                state["full"] += 1
+
+        def derived(key, build):
+            on = gc.isenabled()
+            gc.disable()
+            try:
+                return build()
+            finally:
+                state["done"] = True
+                if on:
+                    gc.enable()
+
+        sentinel = object()
+
+        def work(*_a, **_k):
+            state["armed"] = True
+            return sentinel
+        for name in ("PC", "_run_of", "_served_build", "script_module"):
+            self.addCleanup(g.__setitem__, name, g[name])
+        self.addCleanup(lambda: hook in gc.callbacks and gc.callbacks.remove(hook))
+        g["PC"] = types.SimpleNamespace(derived=derived)
+        g["_run_of"] = work
+        g["_served_build"] = work
+        g["script_module"] = lambda root: types.SimpleNamespace(scan=lambda r: None)
+        gc.callbacks.append(hook)
+        for name, build in (("_tree", _tree), ("served_pass", served_pass)):
+            with self.subTest(build=name):
+                state.update(armed=False, done=False, full=0)
+                self.assertIs(build(), sentinel, "%s hands back what its build returned" % name)
+                self.assertEqual(state["full"], 1, "%s: full collections after the build's work returned and before derived() returned" % name)
+
+
+class TheKindTableIsHeldAgainstTheInterpretersKinds(unittest.TestCase):
+    """The _SEND_KINDS comment's claim, executed (tests-3 of the landing round's review): every statement kind the running
+    interpreter's syntax tree holds outside the table has a (k) plant, and every such expression kind but the three argued there (a
+    Slice, a FormattedValue and an Interpolation, each only inside another excluded kind) has an (at) plant. The kinds are derived
+    from the interpreter's ast (every concrete subclass of ast.stmt and of ast.expr, the deprecated Constant aliases excluded), and the
+    plants' kinds are read by parsing each plant's module, the nodes of its `_send` definition, never from their labels: the (k)
+    plants' statement kinds against the derived statement kinds, the (at) plants' expression kinds against the derived expression
+    kinds, apart, each side less the table and the three argued kinds; a kind the interpreter adds with no plant and no argument reds
+    here, and so does a plant deleted."""
+
+    ARGUED = ("Slice", "FormattedValue", "Interpolation")
+
+    @staticmethod
+    def _send_kinds(text, base):
+        tree = ast.parse(text)
+        d = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_send")
+        return {type(n).__name__ for n in ast.walk(d) if isinstance(n, base)}
+
+    def test_each_kind_outside_the_table_has_a_plant_or_its_argument(self):
+        table = set(script_module(ROOT)._SEND_KINDS) | set(self.ARGUED)
+        gone = ("Num", "Str", "Bytes", "NameConstant", "Ellipsis")
+        for base, plants in ((ast.stmt, [_a_h_module(t, extra, head) for t, _l, extra, head, _w in B_ROADS if t.startswith("k")]),
+                             (ast.expr, [text for _t, text in AT_FILES])):
+            with self.subTest(kinds=base.__name__):
+                derived = {c.__name__ for c in base.__subclasses__() if c.__name__ not in gone} - table
+                held = set().union(*(self._send_kinds(text, base) for text in plants)) - table
+                self.assertTrue(derived, "the interpreter's %s kinds outside the table, derived" % base.__name__)
+                self.assertEqual(held, derived, "the plants' %s kinds equal the interpreter's outside the table" % base.__name__)
 
 
 if __name__ == "__main__":

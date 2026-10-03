@@ -322,7 +322,9 @@ the seven pane pages, the token login page, the too-large page and /sw.js, with
 the shim, the timeline boot and the shell scripts they inline), are read from
 kernel.py's syntax tree and scanned as browser text keyed kernel/kernel.py plus
 tool, with the DOM loads counted. A string constant is scanned whole; a bytes
-constant is scanned the same way, each byte its own character; and a name bound
+constant whose every byte is ASCII is scanned the same way, each byte its own
+character, and one holding a byte past ASCII is refused by name (below); and a
+name bound
 once, by one top-level plain assignment, to a call of `compile` handed a string
 or bytes constant (and at most a flags argument that is an int constant, an
 attribute of that name, or their `|`) on a name the module binds to the standard
@@ -331,8 +333,21 @@ library's `re` by binding is read through its `.sub`, `.search`, `.match`,
 are the page text and the compiled name holds none of its own; the proof by
 binding is the digest leaf's (below), with its limit, so a module object stored
 in sys.modules under that name before the import binds it, or a function of the
-module replaced by an attribute store, is not seen. The routes are
-derived from the calls of
+module replaced by an attribute store, is not seen. The census reads a page only
+where the bytes a browser decodes are the text it scans, which it reads as
+UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding
+a byte past ASCII (a byte order mark, whole or split across constants, among
+them); page text holding U+FEFF, which the page's UTF-8 bytes carry as a byte
+order mark; page text declaring a charset other than utf-8 (a `charset=` in any
+case, as a meta element's charset attribute and a content attribute's parameter
+spell it, or an XML declaration's `encoding=`, followed by any label but utf-8)
+in a string or bytes constant, an f-string's literal part or the joined text of
+a join of string constants; a script-running content type whose parameters name
+a charset other than utf-8; and a page's read of a walked browser-text file
+whose text, as the walk decoded it, holds U+FFFD or U+FEFF or declares such a
+charset. A declaration split across texts the census reads apart, with a name's
+text between them, is read as each text spells it. The routes are derived from
+the calls of
 `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through
 a name computed at run time is not read) and every Content-Type header written
 outside `_send`, in every scanned Python file. A `_send` call's content type is
@@ -404,10 +419,11 @@ header is a binding it does not read) and through a dict literal's values
 (refused before its type is read, below: a call inside a lambda's body, a
 Content-Type write inside one that is no `_send` definition's own write, and a
 call whose definition binds the parameter one of its own writes names other than
-as that parameter); the part before any `;`, stripped and lower-cased, is
-compared
-with the types a
-browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
+as that parameter); a type holding a CR or LF is refused by name before it is
+compared (its header line ends there, and what follows is another header or the
+body, which the census does not read); the part before any `;`, stripped and
+lower-cased, is compared with the types a browser runs script from
+(SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and
 application/xhtml+xml among them; and text/javascript under each name a browser
 takes for JavaScript, application/javascript among them). A script-running
@@ -497,14 +513,23 @@ text holds a CR or LF or reads a name the census does not follow by binding (by
 name), a string constant holding a CR or LF in a header call (by name), a call
 in no listed shape, and a nested def, class or lambda. The reader governs the
 definition's own text, and code the definition runs from outside that text is
-not read: a header value is not scanned (a module constant used as one is read
-only for a CR or LF: each string or bytes constant in its value and in the value
-of each module constant that value names, followed by binding (a method call's
-receiver, as `T` in `T.lower()`, among the names followed), any other name there
-refusing it, save a bare name a call calls (`f` in `f(...)`); a CR or LF the
-value computes at run time, a call's return or a number formatted as a
-character, is not read, its witnesses a CR LF from chr and one from a `%c` of an
-int), and a response that a Content-Type in its headers argument, passed
+not read: a header value is not scanned (a module constant the definition uses
+as one is read only for a CR or LF: each string or bytes constant in its value
+and in the value of each module constant that value names, followed by binding
+(a method call's receiver, as `T` in `T.lower()`, among the names followed), any
+other name there refusing it, save a bare name a call calls (`f` in `f(...)`);
+and so is each argument a `_send` call hands its definition but the page body
+and the content type (read above), positional, starred or keyword, a `**` among
+them: each string or bytes constant in it, a dict literal's keys and values
+among them, and each name in it that one top-level plain assignment binds and no
+function scope around the call binds, read through the module constants its
+value names, any other name there not read, one holding a CR or LF refusing the
+call by name before it is typed; a CR or LF the value computes at run time, a
+call's return or a number formatted as a character, is not read, nor is a header
+value held anywhere else, a local, a parameter, an attribute, a call's return or
+an item, its witnesses a CR LF from chr and one from a `%c` of an int, and a
+header value held in a local dict and a CR LF a call of chr computes at the
+call), and a response that a Content-Type in its headers argument, passed
 or defaulted, makes a page is outside the served pass, the call being typed by
 its content-type argument; nor is code the definition runs through an object it
 is handed (a parameter's methods, its mapping's items, its __str__), code behind
@@ -811,9 +836,15 @@ receiver, a container or an attribute, a callee or a call's argument, but never
 inside the index of a subscript over a container whose text the pass does not
 read: below); a digest, which carries no host either, a leaf as int's and
 float's call is: a call, with no argument, of the `.digest()` or `.hexdigest()`
-method of a call of `hmac`'s `new` or of one of `hashlib`'s constructors, each
-module name the standard library's by binding, is a value the census reads none
-of what it is computed from, and a base64 encoding of such a leaf (one of
+method of a call of one of `hashlib`'s constructors, or of `hmac`'s `new` handed
+exactly one digestmod (its third positional argument or its digestmod keyword,
+with no starred argument and no keyword but key, msg and digestmod) that is a
+string constant naming one of `hashlib`'s named constructors or such a
+constructor as an attribute of `hashlib`, each module name the standard
+library's by binding, is a value the census reads none of what it is computed
+from (`hmac`'s `new` hands its digest to the object its digestmod names, so one
+handed any other digestmod is refused by name), and a base64 encoding of such a
+leaf (one of
 base64's encoders on the name base64 so bound, handed the leaf alone), a
 `.decode()` of one with no argument, a slice of one, and a strip of one
 (`.strip`, `.lstrip` or `.rstrip` with no argument or one string constant) stay
@@ -1858,8 +1889,11 @@ and port, the port omitted when it is the scheme's default) in its Origin
 header; in Chromium a `mask` request can also carry that origin as its Referer,
 from any page, framed or bare; and a paint request can carry the full page
 address with the serve token in its Referer, but only when the page's own
-address carries `?token=` (a pane page opened bare, such as `/chat?token=`; the
-shell drops the token from its address before it frames its panes, and frames
+address carries `?token=` (a pane page loaded on such an address by a load the
+kernel does not count as a navigation, one whose Sec-Fetch-Dest names neither a
+document nor an iframe or, with no Sec-Fetch headers, whose Accept does not name
+text/html; the shell drops the token from its address before it frames its
+panes, and frames
 them without it); these paint requests are the one exception to the trust
 model's sentence on `Referrer-Policy: same-origin` (the response is blocked as
 cross-origin; the request, with those headers, has reached the host); the
