@@ -115,7 +115,8 @@ is a change to this list):
   in a file read as text, a positional port beyond the call rule (nc -l 127.0.0.1 N, python3 -m http.server N,
   startServer(N)), and a port reached through a name that does not name a port (const P = N, then :${P});
   a %-template whose port's placeholder carries a mapping key, a flag or a width ("http://127.0.0.1:%(p)d/" % {"p": N},
-  "http://127.0.0.1:%5d/" % N), unless another rule reads the operand (a port-named key does);
+  "http://127.0.0.1:%-d/" % N, "http://127.0.0.1:%5d/" % N), unless another rule reads the operand (a port-named key
+  does);
   a format template, or the left side of a concatenation, that the module does not write as a literal or a name
   bound to one (a parameter, a call's result: t % N, base_url() + str(N));
   an option and its number that are not neighbours in one list or tuple display (["--port"] + [N], a flag built at run
@@ -1133,8 +1134,10 @@ class Plants(unittest.TestCase):
                 ("a positional port in JavaScript", "x.test.mjs", "const srv = startServer(%d);\n" % n),
                 ("a JavaScript name that does not name a port", "y.test.ts",
                  "const P = %d;\nawait fetch(`http://127.0.0.1:${P}/x`);\n" % n),
-                ("a %-template placeholder with a mapping key or a width", "test_x.py",
-                 'u = "http://127.0.0.1:%%(p)d/x" %% {"p": %d}\nv = "http://127.0.0.1:%%5d/x" %% %d\n' % (n, n)),
+                ("a %-template placeholder with a mapping key", "test_x.py", 'u = "http://127.0.0.1:%%(p)d/x" %% {"p": %d}\n' % n),
+                ("a %-template placeholder with a flag, each of the five", "test_x.py",
+                 "".join('w = "http://127.0.0.1:%%%sd/x" %% %d\n' % (flag, n) for flag in "-+ #0")),
+                ("a %-template placeholder with a width", "test_x.py", 'v = "http://127.0.0.1:%%5d/x" %% %d\n' % n),
                 ("a template or an address that is no literal", "test_x.py",
                  'def go(t, base):\n    return t %% %d, base + str(%d)\n' % (n, n)),
                 ("an option and its number apart, or a short option", "test_x.py",
