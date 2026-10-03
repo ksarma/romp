@@ -1791,8 +1791,9 @@ def make_checkout(repo, sha, shallow, main):
     common dir let a plain `git fetch` copy them). `main` is the commit the batcher's origin/main named when
     main_snapshot read it before the first leg (None: they had none, and the checkout holds no MAIN_REF); when it is not
     None it is written as the checkout's MAIN_REF, refs/remotes/origin/main, before the checkout, with `update-ref`
-    through run_git in the checkout and no reflog (core.logAllRefUpdates=false: a reflog line would carry the committer
-    identity git makes up from the machine's user and host names). update-ref rather than a write of the loose ref file,
+    through run_git in the checkout, which logs the write in the ref's reflog as git logs any ref it writes in a
+    repository with a work tree, and as the checkout below logs HEAD's move, so the ref reads as one a fetch made in a
+    clone, CI's included. update-ref rather than a write of the loose ref file,
     as the alternates and shallow files are written: git writes the ref in whichever ref storage its init chose, where a
     loose file is right only for the files backend, and refuses a commit it cannot find through the alternates rather
     than leave a ref naming nothing; it costs one git call per checkout. A leg that moves that ref, in its own checkout
@@ -1850,7 +1851,7 @@ def make_checkout(repo, sha, shallow, main):
         if p.returncode == 0 and main is not None:
             # the batcher's origin/main as main_snapshot read it before the first leg, the one ref of theirs a checkout
             # holds, so a test that reads main finds it; never re-read from their repository, where a leg can move it
-            ref = run_git(checkout_repo(path), "-c", "core.logAllRefUpdates=false", "update-ref", MAIN_REF, main)
+            ref = run_git(checkout_repo(path), "update-ref", MAIN_REF, main)
             if ref.returncode != 0:
                 raise Refused("could not write %s at %s into a private clone of %s: %s"
                               % (MAIN_REF, short(main), short(sha), (ref.stderr or ref.stdout).strip()))

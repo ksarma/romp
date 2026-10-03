@@ -4871,6 +4871,21 @@ class MainSnapshot(unittest.TestCase):
                 self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s cannot be read (%s: %s, not a "
                               "regular file)" % (self.repo.work_tree, ref_file, what), str(cm.exception))
 
+    def test_the_checkouts_origin_main_is_written_at_the_snapshot_with_its_reflog(self):
+        """make_checkout writes the snapshot as the checkout's refs/remotes/origin/main with update-ref, which logs it as
+        git logs any ref write in a repository with a work tree (one reflog entry, at the snapshot), as the checkout's
+        own `checkout --detach` logs HEAD; the ref then reads as one a fetch made, CI's checkout included. The write ran
+        with core.logAllRefUpdates=false at first, for a reason that held for that ref alone, since HEAD's reflog is
+        written either way (the verify pass on main_snapshot, its sixth item); red under that write."""
+        self.g("update-ref", "refs/remotes/origin/main", self.head)
+        main = sweep.main_snapshot(self.repo)
+        path, marker, _s = sweep.make_checkout(self.repo, self.head, None, main)
+        self.addCleanup(sweep.remove_checkout, path, marker)
+        self.assertEqual(self.g("rev-parse", "refs/remotes/origin/main", cwd=path), self.head)
+        self.assertEqual(self.g("reflog", "show", "--format=%H", "refs/remotes/origin/main", cwd=path).split(), [self.head],
+                         "one reflog entry, the write at the snapshot")
+        self.assertTrue(os.path.isfile(os.path.join(path, ".git", "logs", "HEAD")), "premise: HEAD's reflog is written")
+
     def test_a_git_without_show_ref_exists_is_refused_naming_the_version(self):
         """`git show-ref --exists` came in git 2.43; an older git exits 129 on the unknown option. With no origin/main,
         the read the runner makes on every run whose rev-parse fails, main_snapshot then refuses naming the git version it
@@ -5456,7 +5471,7 @@ except sweep.GitBound as e:
     # (the "no origin/main" case, its ref removed before the run), the checkout; the same calls of the first job's
     # checkout, before the plant, keep the runner's bound.
     CHECKOUT = "-c core.hooksPath=/dev/null checkout"
-    UPDATE_REF = "-c core.logAllRefUpdates=false update-ref"
+    UPDATE_REF = "update-ref"
     FRESH_CHECKOUT_BOUND = (r"the fresh checkout for .* cannot be used \(git %s in \S+ did not end within 3 s and was killed\); "
                             r"the legs after it did not run")
     BATCHER_FIFOS = (
@@ -5464,8 +5479,7 @@ except sweep.GitBound as e:
         ("HEAD", 0, None, DISCOVERY, (2, DISCOVERY)),
         ("index", 0, None, STATUS, (0, None)),
         ("info/exclude", 0, None, STATUS, (0, None)),
-        ("objects/info/alternates", 3, FRESH_CHECKOUT_BOUND % (r"-c core\.logAllRefUpdates=false update-ref "
-                                                               r"refs/remotes/origin/main [0-9a-f]{40}"),
+        ("objects/info/alternates", 3, FRESH_CHECKOUT_BOUND % r"update-ref refs/remotes/origin/main [0-9a-f]{40}",
          STATUS, (2, "rev-parse --verify HEAD^{commit}")),
         ("objects/info/alternates (no origin/main)", 3, FRESH_CHECKOUT_BOUND % r"-c core\.hooksPath=/dev/null checkout -q "
                                                                                r"--detach [0-9a-f]{40}",
