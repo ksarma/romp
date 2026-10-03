@@ -57,6 +57,9 @@ THE RULE. A number in the range counts when it is WRITTEN AS A PORT, in one of t
     the host included, then a colon right before the operand ("http://127.0.0.1:%d/" % N, "http://%s:%d/" % (h, N),
     f"http://127.0.0.1:{P}/", f"ws://{h}:{P}/", "http://127.0.0.1:{}/".format(N)); for %, the port's placeholder is
     %d, %i or %s, and the whole right operand is read, each element of a tuple;
+    a port concatenated onto an address: the right operand of a + whose left side (string literals, names bound to one,
+    f-strings, and sums of them) ends in a loopback or wildcard host, or // and any host, then a colon
+    ("http://127.0.0.1:" + str(N), "http://" + host + ":" + P);
     and one hop through a name: a value written in one of those positions as a bare name counts the literals the module
     binds that name to (P = N ... {"port": P}).
   An int counts (45_001 is 45001), and so does a string of the number's five digits, except as a positional argument
@@ -76,7 +79,8 @@ THE RULE. A number in the range counts when it is WRITTEN AS A PORT, in one of t
     decl  a port-named name declared and assigned (const port = N, local port=N, export ROMP_POSTAL_PORT=N);
     env   an upper-case port-named name, then : or = and the number, quoted or not (ROMP_POSTAL_PORT'] = 'N');
     flag  a --*port option (--port N, --port=N);
-    authority  host:N after a loopback or wildcard host or after // in a URL (http://127.0.0.1:N, //TESTHOST:N);
+    authority  host:N after a loopback or wildcard host or after // in a URL (http://127.0.0.1:N, //TESTHOST:N), the
+               number right after the colon or concatenated onto it ('http://127.0.0.1:' + N);
     address    a loopback or wildcard address tuple in text (("127.0.0.1", N));
     call  a number handed first to .listen(, .connect(, createConnection( or .bind(;
     pair  a port-named string and the number handed together ("ROMP_POSTAL_PORT", "N").
@@ -175,7 +179,8 @@ TEXT_RULES = (
     ("decl", re.compile(r"\b(?:const|let|var|local|export|readonly|declare(?:[ \t]+-\w+)?)[ \t]+(?P<name>[\w$]+)[ \t]*=[ \t]*" + _NUM)),
     ("env", re.compile(r"\b(?P<name>[A-Z][A-Z0-9_]*)[\"'`]?\]?[ \t]*[:=][ \t]*" + _NUM)),
     ("flag", re.compile(r"--(?P<name>[\w-]+)(?:=|[ \t]+)" + _NUM)),
-    ("authority", re.compile(r"(?:" + _HOST + r"|//[\w.-]+)[ \t]*:[ \t]*(?P<n>" + _D5 + r")(?![\w.])")),
+    ("authority", re.compile(r"(?:" + _HOST + r"|//[\w.-]+)[ \t]*:[ \t]*(?:[\"'`][ \t]*\+[ \t]*[\"'`]?)?(?P<n>" + _D5
+                             + r")(?![\w.])")),   # the number right after the colon, or concatenated onto it
     ("address", re.compile(r"\([ \t]*[\"'](?:127\.0\.0\.1|localhost|0\.0\.0\.0|::1?|)[\"'][ \t]*,[ \t]*(?P<n>" + _D5 + r")[ \t]*[,)]")),
     ("call", re.compile(r"(?:\.listen|\.connect|createConnection|\.bind)\([ \t]*(?P<n>" + _D5 + r")(?![\w.])")),
     ("pair", re.compile(r"\([ \t]*[\"'`](?P<name>[\w$.-]+)[\"'`][ \t]*,[ \t]*" + _NUM)),
@@ -452,6 +457,22 @@ class _Scan:
                 return lits[0].value
         return None
 
+    def _rendered(self, node):
+        """The text a string expression renders, each piece the census cannot read standing as \x00: a string literal, a
+        name the module binds to exactly one, an f-string's literal parts, and a sum (+) of them, walked without
+        recursion so a long chain of sums costs no stack."""
+        out, stack = [], [node]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, ast.BinOp) and isinstance(x.op, ast.Add):
+                stack.extend((x.right, x.left))
+            elif isinstance(x, ast.JoinedStr):
+                out.extend(p.value if isinstance(p, ast.Constant) and isinstance(p.value, str) else "\x00" for p in x.values)
+            else:
+                t = self._template(x)
+                out.append("\x00" if t is None else t)
+        return "".join(out)
+
     def _formatted(self, tmpl, args, keywords):
         """Each operand str.format places right after an address's colon in the template `tmpl`."""
         try:
@@ -586,6 +607,9 @@ class _Scan:
                 tmpl = self._template(n.left)
                 if tmpl is not None and _ADDR_PCT.search(tmpl):
                     self._value(n.right, "an operand formatted into an address")
+            elif isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add):
+                if _ADDR_END.search(self._rendered(n.left)):
+                    self._value(n.right, "a port concatenated onto an address")
             elif isinstance(n, ast.JoinedStr):
                 rendered = ""
                 for piece in n.values:
@@ -820,6 +844,12 @@ class Plants(unittest.TestCase):
                 ("formatted address with a placeholder host from an attribute, %s for the port",
                  'u = "ws://%%s:%%s/ws" %% (self.host, %d)\n' % n, "formatted into an address"),
                 ("formatted address, %i for the port", 'u = "http://localhost:%%i/x" %% %d\n' % n, "formatted into an address"),
+                ("a port concatenated onto an address", 'u = "http://127.0.0.1:" + str(%d) + "/peer"\n' % n,
+                 "concatenated onto an address"),
+                ("a port concatenated onto an address whose host is a name", 'u = "http://" + host + ":" + "%d"\n' % n,
+                 "concatenated onto an address"),
+                ("a port concatenated onto an f-string's address", 'P = %d\nu = f"ws://{h}:" + str(P)\n' % n,
+                 "concatenated onto an address, a constant expression"),
                 ("f-string address", 'P = %d\nurllib.request.urlopen(f"http://127.0.0.1:{P}/peer")\n' % n,
                  "formatted into an address, through the name P"),
                 ("f-string address with a formatted host", 'h = "x"\nu = f"ws://{h}:{%d}/ws"\n' % n, "formatted into an address"),
@@ -894,6 +924,8 @@ class Plants(unittest.TestCase):
                 ("shell local", "b.bats", "    local port=%d\n" % n, "rule decl"),
                 ("flag", "c.bats", "run romp serve --port %d\n" % n, "rule flag"),
                 ("URL", "d.test.mjs", "await fetch('http://localhost:%d/healthz');\n" % n, "rule authority"),
+                ("a port concatenated onto a URL", "d2.test.mjs", "await fetch('http://127.0.0.1:' + %d + '/x');\n" % n,
+                 "rule authority"),
                 ("address in shell python", "e.bats", "python3 -c \"s.bind(('127.0.0.1', %d))\"\n" % n, "rule address"),
                 ("listen", "f.test.js", "server.listen(%d, '127.0.0.1');\n" % n, "rule call"),
                 ("a name and its value handed together", "g.test.js", "setEnv('ROMP_POSTAL_PORT', '%d');\n" % n, "rule pair")):
