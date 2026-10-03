@@ -97,6 +97,7 @@ class _Base(_Seam):
         ps.PEERS.clear()
         ps.PEER_STATE.clear()
         ps._peer_pending.clear()
+        ps._inbound_links.clear()
         for d in (ps.READBOX, ps.MAILROOT):
             shutil.rmtree(d, ignore_errors=True)
         try:

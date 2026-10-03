@@ -76,6 +76,7 @@ class InboundTrustGate(_Seam):
         super().setUp()                              # OUR sessions seam, read live; a later-collected postal test would clobber it
         # fresh peer table + empty stores each test
         ps.PEERS.clear()
+        ps._inbound_links.clear()
         ps._REFUSAL_SAID.clear()                     # no refusal episode left open by an earlier test
         for d in (ps.QUARANTINE, ps.MAILROOT / "sess-web" / "new"):
             try:
@@ -302,6 +303,7 @@ class ExchangeHandleIsTokenProven(_Seam):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
         ps.PEERS.clear()
         ps.PEER_STATE.clear()
+        ps._inbound_links.clear()
         ps._seen_ids = None
         for d in (ps.QUARANTINE, ps.MAILROOT / "sess-web" / "new"):
             try:
@@ -357,6 +359,7 @@ class QuarantineDecide(_Seam):
     def setUp(self):
         super().setUp()                              # OUR sessions seam (see InboundTrustGate.setUp)
         ps.PEERS.clear()
+        ps._inbound_links.clear()
         ps.peer_update({"host": "TESTHOST", "port": 47101, "up": True, "trust": "directed"})
         self.addCleanup(_end_dialer, "TESTHOST")
         for d in (ps.QUARANTINE, ps.MAILROOT / "sess-web" / "new"):
