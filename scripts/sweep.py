@@ -23,7 +23,11 @@ private repository under <state dir>/sweeps/trees that reads the batcher's objec
 `git clone --shared` does, holds no branch or tag of theirs and names no remote (shallow where their repository was
 when the run started: the runner reads its shallow file before the first leg, and every checkout gets that copy, so a
 leg that writes the file changes no later job's checkout; the runner reads the file again after the last leg, below),
-checked out at the sha with hooks off (make_checkout),
+holds one ref, refs/remotes/origin/main, at the commit their origin/main named when the run started (the runner reads
+that ref once, before the first leg, and writes the commit it read into every checkout, so a leg that moves the ref in
+its own checkout or in their repository moves no later job's; with no origin/main there, no checkout holds one; the
+result records the commit, runner.checkout.main, null without one; main_snapshot), checked out at the sha with hooks off
+(make_checkout),
 every runner git call made with GIT_* removed, git's global and system configuration off and refs/replace ignored, and
 each call into a repository made with that repository named explicitly (GitRepo; the 02:43Z ruling, item 1(b)): GIT_DIR,
 GIT_COMMON_DIR and GIT_WORK_TREE set, and GIT_CEILING_DIRECTORIES at the directory above the work tree, so git looks for
@@ -36,8 +40,8 @@ first leg. A --tree must itself hold .git: one that does not exist, or whose .gi
 never resolved to a repository that encloses it (the closing check wf_3b100f5e-b38, its item 1); only with no --tree
 does the runner look up from the current directory for the nearest directory holding .git, so there, and only there, a
 tree whose .git is gone resolves to a repository that encloses it, when one does. It copies none of the batcher's
-repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or replace refs, so the legs see the
-sha's tree plus the tool installs, and
+repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or replace refs, origin/main's
+commit as read before the first leg aside, so the legs see the sha's tree plus the tool installs, and
 nothing from the checkout's parents. Before any leg the runner verifies the first checkout against `git ls-tree -r
 <sha>` (every path, executable bit, symlink target and blob), and refuses (exit 2, nothing recorded) on a
 difference or on node_modules, package.json, tsconfig.json or jsconfig.json in any ancestor directory, which
@@ -313,8 +317,11 @@ recorded under another; the hash covers what the runner itself sets, that the se
 block, and the shape each leg runs in (its own TMPDIR, HOME and state root; one checkout per ci.yml job, the steps it
 groups by), so a result written before round 2's fixes, whose legs shared one TMPDIR, HOME, state root and checkout,
 reads as recorded under another (decision 15), and so does one written before the pdf-smoke leg, since the hash names
-every leg's set values and step (the owner's build question 4); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
-in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups).
+every leg's set values and step (the owner's build question 4), and one written before each checkout held origin/main,
+since what a checkout holds is part of that shape (LEG_CHECKOUT); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
+in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups), nor
+the commit a checkout's origin/main names, which is the batcher's when the run started and is recorded
+(runner.checkout.main).
 The result also records the versions of node, npm, bats, git and gitleaks the legs found, and, per
 leg, the names it left in its private HOME (runner.home_left, {leg: names}; a setup's are in its own record), with
 home_empty true when no leg and no setup left anything; recorded only.
@@ -325,10 +332,18 @@ leaves there reaches a later leg. Nothing it leaves in its checkout reaches a le
 legs start from a fresh clone verified against the sha's tree: no file in the clone's .git (a hook, info/attributes,
 info/exclude, config, a ref or refs/replace, packed-refs, objects/info/alternates) and no ignored file (bytecode,
 node_modules, dist). Nor does a branch or tag a leg writes into the batcher's repository, which it can find through
-its clone's alternates: each clone holds the sha alone, no branch and no tag of that repository (make_checkout), as
-CI's checkout fetches the pushed sha alone, and names no remote, so a plain `git fetch` in a later job copies none. Nor
-does a shallow file a leg writes there: each clone gets the one the runner read before the first leg (shallow_snapshot;
-the narrow landing delta's ruling 8). That file does reach the next run, whose snapshot reads it, so every checkout of
+its clone's alternates: each clone holds no branch and no tag of that repository (make_checkout), as CI's checkout
+fetches the pushed sha alone, and names no remote, so a plain `git fetch` in a later job copies none. Nor does a move
+of origin/main, in the batcher's repository or in the leg's own clone: each clone's refs/remotes/origin/main is written
+at the commit the runner read from the batcher's origin/main before the first leg (main_snapshot), and no ref is read
+again for a later clone. A move in the batcher's repository does reach the next run, whose snapshot reads the ref as
+the leg left it, and, unlike a change to the shallow file (below), it marks no run invalid, since a fetch of origin
+into the batcher's repository during a run, theirs or another process's, moves it as a leg can, and a re-read after
+the last leg could not tell the two apart: such a mark would void sound runs. So a leg that moves it changes what the
+next run's checkouts hold (moved forward, it narrows what a test that reads main scans there), nothing marks that, and
+the next run's result records the commit its checkouts held (runner.checkout.main). Nor does a
+shallow file a leg writes into the batcher's repository: each clone gets the one the runner read before the first leg
+(shallow_snapshot; the narrow landing delta's ruling 8). That file does reach the next run, whose snapshot reads it, so every checkout of
 that run reads it as it now stands, cut where the leg's file says, or not shallow at all when the leg removed it, and
 the batcher's repository stays as the leg left it: the runner writes nothing there and does not restore it, and instead the run in which the file changed is invalid, naming it (shallow_moved; the
 owner's question 2 after the merge of main), unless that run ends before the re-read after its last leg (stopped, or
@@ -1706,16 +1721,89 @@ def shallow_moved(path, snapshot):
             "then, %s now); the next run's checkouts would read it" % (path, _shallow_words(snapshot), _shallow_words(now_)))
 
 
-def make_checkout(repo, sha, shallow):
+# The one ref of the batcher's repository whose commit a job's checkout holds, under the same name (main_snapshot). A test
+# that reads main finds it there as it would in the batcher's own clone: tests/gitleaks-config.bats' history case, as
+# fork PR 954 scopes it, scans the commits HEAD adds over origin/main where the clone has that ref, and all of HEAD's
+# history where it has no origin/main, whether or not it has a local main. In a checkout with no ref (each one before
+# this ref was written), that scan went past the 180 s the bats leg allows a test (BATS_TEST_TIMEOUT) over 13,766
+# commits: 208 s at a load of 47 to 56, and 364 s held to one core (a CPUQuota of 100%), measured 2026-10-03. In a
+# checkout holding the ref, the same case under PR 954's test scanned the 171 commits a branch added over origin/main
+# and ended in 2.4 s (measured 2026-10-03); under a test that reads no ref it scans all of HEAD's history either way.
+MAIN_REF = "refs/remotes/origin/main"
+
+
+def main_ref_checked(repo):
+    """Refused, naming the file and its type, when the batcher's repository holds MAIN_REF as a loose ref file,
+    <common dir>/refs/remotes/origin/main, that cannot_read says cannot be read: a FIFO, a symlink (to /dev/zero, or to
+    anything else), a directory or a device. git reads that file with no check of its type: a symlink whose target is
+    not a ref name it opens and reads to the end, so with one to /dev/zero git's memory grows until the read fails
+    (git 2.43, measured 2026-10-03), and GIT_BOUND bounds a git call's time, not its memory; a FIFO it waits on until
+    GIT_BOUND. A leg can leave such a file there, finding the batcher's repository through its clone's alternates, and
+    the next run's main_snapshot reads it. cmd_run calls this beside shallow_checked, before any git call but
+    find_repo's discovery, and main_snapshot calls it again before its own reads. No file there (the ref packed, or
+    absent, or a ref storage other than loose files) passes."""
+    path = os.path.join(repo.common_dir, *MAIN_REF.split("/"))
+    why = cannot_read(path)
+    if why is not None:
+        raise Refused("the batcher's %s in the repository at %s cannot be read (%s: %s); remove it (a fetch of origin "
+                      "writes it again) and sweep again" % (MAIN_REF, repo.work_tree, path, why))
+
+
+def main_snapshot(repo):
+    """The commit the batcher's origin/main (MAIN_REF) names now, or None when their repository has no such ref. The
+    runner reads it once, before the first leg, and writes that commit into every job's checkout as the checkout's own
+    MAIN_REF (make_checkout), never the live ref: a leg can find the batcher's repository through its clone's alternates
+    and move the ref there, and a checkout that read it again would hold what the leg wrote. It is read with run_git in
+    `repo` (`rev-parse --verify --quiet MAIN_REF^{commit}`); when that fails, `show-ref --exists MAIN_REF` (git 2.43 and
+    later) tells an absent ref (exit 2: None) from one that is there and names no commit (exit 0: at a missing object, a
+    blob or a tree) or cannot be read (exit 1: a ref file git cannot parse). Those two refuse the run, naming the ref and
+    both answers, and so does any other answer: reading such a ref as absent would quietly give
+    every checkout no main, and a test that reads main would then read something else than it does in the batcher's
+    clone. `rev-parse --verify --quiet` alone exits 1 with nothing on stderr both for an absent ref and for one at a
+    missing object, and `show-ref --verify --quiet` exits 1 both for an absent ref and for one git cannot parse (git
+    2.43, measured 2026-10-03), so neither tells them apart. Before either read, main_ref_checked refuses a loose ref
+    file that is not a regular file, which git would read without end or wait on. A git older than 2.43 has no
+    --exists and exits 129 (a usage error), so every run whose rev-parse failed, an absent ref included, is refused
+    then, naming the git version the runner needs rather than the ref."""
+    main_ref_checked(repo)
+    p = run_git(repo, "rev-parse", "--verify", "--quiet", MAIN_REF + "^{commit}")
+    out = p.stdout.strip()
+    if p.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", out):
+        return out
+    q = run_git(repo, "show-ref", "--exists", MAIN_REF)
+    if p.returncode != 0 and q.returncode == 2:
+        return None
+    if q.returncode == 129:
+        raise Refused("the runner tells an absent %s from one it cannot read with `git show-ref --exists`, which this git "
+                      "does not have (show-ref exited 129: %s); sweep with git 2.43 or later"
+                      % (MAIN_REF, (q.stderr.strip() or q.stdout.strip() or "no output")))
+    raise Refused("the batcher's %s in the repository at %s names no commit the runner can read (rev-parse exited %d: %s; "
+                  "show-ref exited %d: %s); fetch origin or remove the ref, and sweep again"
+                  % (MAIN_REF, repo.work_tree, p.returncode, (p.stderr.strip() or out or "no output"), q.returncode,
+                     (q.stderr.strip() or q.stdout.strip() or "no output")))
+
+
+def make_checkout(repo, sha, shallow, main):
     """(path, marker, seconds): a private repository at <state dir>/sweeps/trees/<sha12>-<random> that reads the
     batcher's objects (their common dir's objects, named in its objects/info/alternates, as `git clone --shared` names
-    them) and holds none of their refs, with no remote, then `checkout -q --detach <sha>` there with hooks off: the sha
-    alone among refs, with no branch and no tag, as CI's checkout fetches the pushed sha alone (its history is the
+    them) and holds none of their refs, with no remote (its one ref, MAIN_REF, is written from the snapshot `main`
+    below), then `checkout -q --detach <sha>` there with hooks off: no branch and no tag, as CI's checkout fetches the
+    pushed sha alone (its history is the
     batcher's repository's, not CI's depth 1: whole through the alternates, or cut at the shallow file below), so a
     branch or tag a leg writes
     into the batcher's repository reaches no later job's checkout (the focused re-check's ruling 4: a clone copied every
     branch and tag, and such refs crossed to every later job; and its land check, finding 1: an `origin` naming their
-    common dir let a plain `git fetch` copy them). `shallow` is the batcher's shallow file as shallow_snapshot read it
+    common dir let a plain `git fetch` copy them). `main` is the commit the batcher's origin/main named when
+    main_snapshot read it before the first leg (None: they had none, and the checkout holds no MAIN_REF); when it is not
+    None it is written as the checkout's MAIN_REF, refs/remotes/origin/main, before the checkout, with `update-ref`
+    through run_git in the checkout, which logs the write in the ref's reflog as git logs any ref it writes in a
+    repository with a work tree, and as the checkout below logs HEAD's move, so the ref reads as one a fetch made in a
+    clone, CI's included. update-ref rather than a write of the loose ref file,
+    as the alternates and shallow files are written: git writes the ref in whichever ref storage its init chose, where a
+    loose file is right only for the files backend, and refuses a commit it cannot find through the alternates rather
+    than leave a ref naming nothing; it costs one git call per checkout. A leg that moves that ref, in its own checkout
+    or in the batcher's repository, moves no later job's, since each checkout gets the snapshot and no checkout's ref is
+    read again. `shallow` is the batcher's shallow file as shallow_snapshot read it
     before the first leg (None: their repository was not shallow then); when it is not None it becomes the checkout's
     shallow file, so the checkout is shallow as a `git clone --shared` of their repository would have been when the run
     started (the land check, finding 2), and a shallow file a leg writes there later reaches no job's checkout of this
@@ -1765,6 +1853,13 @@ def make_checkout(repo, sha, shallow):
             if shallow is not None:
                 with open(os.path.join(path, ".git", "shallow"), "wb") as f:
                     f.write(shallow)
+        if p.returncode == 0 and main is not None:
+            # the batcher's origin/main as main_snapshot read it before the first leg, the one ref of theirs a checkout
+            # holds, so a test that reads main finds it; never re-read from their repository, where a leg can move it
+            ref = run_git(checkout_repo(path), "update-ref", MAIN_REF, main)
+            if ref.returncode != 0:
+                raise Refused("could not write %s at %s into a private clone of %s: %s"
+                              % (MAIN_REF, short(main), short(sha), (ref.stderr or ref.stdout).strip()))
         if p.returncode == 0:
             p = git(checkout_repo(path), "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
         if p.returncode != 0:
@@ -2557,10 +2652,13 @@ def _tokenized(name, leg, value, ctx):
 # at the narrow landing delta's ruling 8 (that shallow file as it stood when the run started, since a leg's write to it
 # no longer reaches a later job): each is a change in what a job's checkout holds. The re-read of that file after the last
 # leg (shallow_moved) changes no leg's environment and no checkout, only which runs read invalid, so it left the hash.
+# It moved again, under the same rule, when each clone came to hold refs/remotes/origin/main at the commit the batcher's
+# origin/main named when the run started (main_snapshot), the clone no longer the sha alone among refs.
 LEG_SCRATCH = "each leg: a fresh TMPDIR of its own, HOME and XDG_STATE_HOME under it, removed when the leg ends"
-LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone of the sha alone, no branch, no "
-                "tag and no remote, shallow where the batcher's repository was when the run started, in the job's step "
-                "order, npm ci where the job runs it; each job's legs their own")
+LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone of the sha, no branch, no tag "
+                "and no remote, holding refs/remotes/origin/main at the commit the batcher's origin/main named when the "
+                "run started (none when it had none), shallow where the batcher's repository was when the run started, "
+                "in the job's step order, npm ci where the job runs it; each job's legs their own")
 
 
 def leg_env_doc(ctx):
@@ -4471,6 +4569,9 @@ def cmd_run(args):
     # The batcher's shallow file, checked here, before any git call that parses commits, since git reads it first (the
     # closing check's item 1): one that is not a regular file refuses the run, naming it.
     shallow_checked(batcher)
+    # The batcher's origin/main, the same way: a loose ref file there that is not a regular file refuses the run, naming
+    # it, before any git call could read it (main_ref_checked; main_snapshot reads the ref before the first leg).
+    main_ref_checked(batcher)
     sha = git(batcher, "rev-parse", "HEAD")
     branch = git(batcher, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
     wraps = parse_wraps(args.wrap)
@@ -4723,7 +4824,11 @@ def _run_locked(args, batcher, sha, branch, python, wraps, only, path, flakes=No
         # after the last leg it is read again at the same path against this snapshot (shallow_moved).
         shallow_file = shallow_path(batcher)
         shallow = shallow_snapshot(batcher)
-        checkout, marker, create_s = make_checkout(batcher, sha, shallow)
+        # The batcher's origin/main, read once here, the same way: every job's checkout holds this commit as its own
+        # refs/remotes/origin/main (None: no checkout holds one), so a leg that moves the ref, in its checkout or in the
+        # batcher's repository, moves no later job's (main_snapshot).
+        main_sha = main_snapshot(batcher)
+        checkout, marker, create_s = make_checkout(batcher, sha, shallow, main_sha)
         _plant_for_tests(checkout)
         t0 = time.monotonic()
         entries = tree_entries(checkout, sha)
@@ -4776,7 +4881,7 @@ def _run_locked(args, batcher, sha, branch, python, wraps, only, path, flakes=No
         grecs = [{"job": g["job"], "legs": list(g["legs"]), "path": None, "create_s": None, "verify_s": None, "setup": None}
                  for g in groups]
         grecs[0].update(path=checkout, create_s=create_s, verify_s=verify_s)
-        run["runner"]["checkout"] = {"form": "clone", "per": "ci.yml job", "files": len(entries), "groups": grecs}
+        run["runner"]["checkout"] = {"form": "clone", "per": "ci.yml job", "main": main_sha, "files": len(entries), "groups": grecs}
         if not only:
             run["order"] = [n for g in groups for n in g["legs"]]
         os.makedirs(logdir, mode=0o700, exist_ok=True)
@@ -4843,7 +4948,7 @@ def _run_locked(args, batcher, sha, branch, python, wraps, only, path, flakes=No
                     # rewrote an object of the sha in the batcher's repository, whose objects the clone reads) makes the run
                     # invalid rather than refusing it.
                     try:
-                        checkout, marker, create_s = make_checkout(batcher, sha, shallow)
+                        checkout, marker, create_s = make_checkout(batcher, sha, shallow, main_sha)
                         t0 = time.monotonic()
                         faults = verify_checkout(checkout, sha, entries)
                         if faults:

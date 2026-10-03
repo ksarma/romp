@@ -341,12 +341,28 @@ subject; `verify` refuses the branch otherwise.
    of your other processes, your shell and sessions included. Nothing a leg leaves in its checkout
    reaches a leg of another job: no file in the clone's `.git` (a hook, an attributes file, a
    replace ref) and no ignored file (bytecode, `node_modules`). Nor does a branch or tag a leg
-   writes into your repository: each job's clone holds the sha alone, with no branch and no tag of
-   yours, as CI's checkout fetches the pushed sha alone, and names no remote, so a `git fetch` in
-   a later job copies nothing. When your repository is shallow as the sweep starts, each clone is
-   shallow the same way: the sweep reads your shallow file before the first leg and gives every
-   clone that copy, so a leg that writes the file changes no later job's clone. After the last leg
-   the sweep reads the file again, and when it differs from that copy (a leg wrote or removed it,
+   writes into your repository: each job's clone holds no branch and no tag of yours, as CI's
+   checkout fetches the pushed sha alone, and names no remote, so a `git fetch` in a later job
+   copies nothing. Each clone holds one ref, `refs/remotes/origin/main`, at the commit your
+   `origin/main` named as the sweep started, so a test that reads main finds it as it would in
+   your clone; the sweep reads your `origin/main` once, before the first leg, and writes that
+   commit into every clone, so a leg that moves the ref, in its clone or in your repository,
+   moves no later job's. With no `origin/main` in your repository, no clone holds one. The result
+   records the commit (`runner.checkout.main`, null without one). The sweep tells an absent
+   `origin/main` from one it cannot read with `git show-ref --exists`, so it needs git 2.43 or
+   later; an older git refuses the sweep, saying so. An `origin/main` kept as a
+   loose ref file that is not a regular file (a FIFO, a device, a directory or a symlink), which
+   `git` would wait on or read without end, refuses the sweep before its first `git` call that
+   would read it, naming the file; one a leg leaves there marks nothing in its own run, which read
+   the ref before the first leg, and refuses the next sweep. A move of your `origin/main`
+   during a sweep marks no run invalid, unlike a change to your shallow file (below), since a
+   fetch of origin during the sweep moves it as a leg can and the sweep cannot tell the two
+   apart: the next sweep's clones hold the ref as it then stands, and its result records that
+   commit. When your repository is shallow as the sweep
+   starts, each clone is shallow the same way: the sweep reads your shallow file before the first
+   leg and gives every clone that copy, so a leg that writes the file changes no later job's clone.
+   After the last leg the sweep reads the file again, and when it differs from that copy (a leg
+   wrote or removed it,
    or anything else did during the run) the run is invalid, naming the file: the sweep does not
    restore it, so the next sweep's clones read it as it now stands: cut where the file now says,
    or, when a leg removed it, not shallow at all. A shallow file that is not a regular file (a
