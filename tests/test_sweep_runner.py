@@ -2654,6 +2654,47 @@ class Checkout(_Base):
         self.assertEqual(w.calls(), [], "no leg ran")
         self.assertFalse(os.path.exists(w.result_path()), "nothing was recorded")
 
+    def test_an_origin_main_a_leg_leaves_not_a_regular_file_refuses_the_next_run_before_any_git_reads_it(self):
+        """The verify pass on main_snapshot, its second finding: the pytest leg finds the batcher's repository through its
+        clone's alternates and makes its loose refs/remotes/origin/main a FIFO, a symlink to /dev/zero, a symlink to a
+        regular file holding the commit the ref held, or a directory. The planting run read the ref before its first
+        leg, so it ends with every leg run and no mark (no re-read after the legs; the residual the texts state). The next
+        run checks that file with os.lstat beside the shallow file, before any git call but find_repo's discovery
+        (main_ref_checked), and refuses: exit 2, naming the ref, the file and its type, no leg run, the result left as
+        the planting run wrote it, no git call but the discovery (logging_git). Before, git read the file: main_snapshot's
+        rev-parse waited on the FIFO until GIT_BOUND (this case then fails at its watchdog), read /dev/zero until it
+        ran out of memory (at the case's address cap; the real runner has none), read through the symlink to a regular
+        file and swept, and read the directory as no ref and swept with no main. The "zero" case runs on Linux alone
+        (ZERO_SKIP)."""
+        for kind, what in self.SPECIAL_KINDS:
+            with self.subTest(kind=kind):
+                if kind == "zero" and not ZERO_CAPPED:
+                    self.skipTest(ZERO_SKIP)
+                w = World()
+                self.addCleanup(w.close)
+                tree = os.path.realpath(w.tree)
+                path = os.path.join(tree, ".git", "refs", "remotes", "origin", "main")
+                self.assertTrue(os.path.isfile(path) and not os.path.islink(path),
+                                "premise: the batcher holds origin/main as a loose ref file")
+                w.ctl({"action": {PYTEST_LEG: "special"}, "special": {"where": "batcher:refs/remotes/origin/main", "kind": kind}})
+                rc, out, err = self.run_bounded(w)
+                self.assertEqual((rc, w.result()["invalid"]), (0, None), out + err)
+                self.assertEqual(w.legs_called(), SEED_ORDER, "every leg of the planting run ran")
+                self.assertTrue(os.path.lexists(path) and not (os.path.isfile(path) and not os.path.islink(path)),
+                                "premise: the leg left the ref file not a regular file")
+                with open(w.result_path(), "rb") as f:
+                    recorded = f.read()
+                before = len(w.calls())
+                env, calls = self.logging_git(w)
+                rc, out, err = self.run_bounded(w, env=env)
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s cannot be read (%s: %s, not a "
+                              "regular file)" % (tree, path, what), err)
+                self.assertEqual(calls(), [self.DISCOVERY_CALL], "refused before any git call but find_repo's")
+                self.assertEqual(len(w.calls()), before, "the next run ran no leg")
+                with open(w.result_path(), "rb") as f:
+                    self.assertEqual(f.read(), recorded, "the next run recorded nothing")
+
     def test_a_shallow_file_a_leg_writes_into_the_batchers_repository_reaches_no_later_job(self):
         """The narrow landing delta's ruling 8: the pytest leg, the first job's, finds the batcher's repository through its
         clone's objects/info/alternates and writes its shallow file there, at the sha, so the batcher's repository is then
@@ -4807,6 +4848,28 @@ class MainSnapshot(unittest.TestCase):
                     sweep.main_snapshot(self.repo)
                 self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s names no commit"
                               % self.repo.work_tree, str(cm.exception))
+
+    def test_an_origin_main_ref_file_that_is_not_a_regular_file_is_refused_before_git_reads_it(self):
+        """main_snapshot checks the loose ref file with main_ref_checked before its own reads, as cmd_run does at the top
+        of a run: a symlink to a regular file holding the commit (which git reads through) and a directory (which git
+        reads as no ref) are refused, naming the file and its type. The FIFO and the symlink to /dev/zero are pinned
+        through a run, under the address cap (Checkout's test_an_origin_main_a_leg_leaves_not_a_regular_file_...)."""
+        ref_file = os.path.join(self.repo.common_dir, "refs", "remotes", "origin", "main")
+        for kind, what in (("link", "a symlink"), ("dir", "a directory")):
+            with self.subTest(kind=kind):
+                if os.path.isdir(ref_file) and not os.path.islink(ref_file):
+                    shutil.rmtree(ref_file)
+                elif os.path.lexists(ref_file):
+                    os.remove(ref_file)
+                if kind == "link":
+                    self.write(ref_file + ".real", self.head + "\n")
+                    os.symlink(ref_file + ".real", ref_file)
+                else:
+                    os.makedirs(ref_file)
+                with self.assertRaises(sweep.Refused) as cm:
+                    sweep.main_snapshot(self.repo)
+                self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s cannot be read (%s: %s, not a "
+                              "regular file)" % (self.repo.work_tree, ref_file, what), str(cm.exception))
 
     @staticmethod
     def write(path, text):

@@ -348,7 +348,11 @@ subject; `verify` refuses the branch otherwise.
    your clone; the sweep reads your `origin/main` once, before the first leg, and writes that
    commit into every clone, so a leg that moves the ref, in its clone or in your repository,
    moves no later job's. With no `origin/main` in your repository, no clone holds one. The result
-   records the commit (`runner.checkout.main`, null without one). A move of your `origin/main`
+   records the commit (`runner.checkout.main`, null without one). An `origin/main` kept as a
+   loose ref file that is not a regular file (a FIFO, a device, a directory or a symlink), which
+   `git` would wait on or read without end, refuses the sweep before its first `git` call that
+   would read it, naming the file; one a leg leaves there marks nothing in its own run, which read
+   the ref before the first leg, and refuses the next sweep. A move of your `origin/main`
    during a sweep marks no run invalid, unlike a change to your shallow file (below): the next
    sweep's clones hold the ref as it then stands. When your repository is shallow as the sweep
    starts, each clone is shallow the same way: the sweep reads your shallow file before the first

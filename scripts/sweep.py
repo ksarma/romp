@@ -1727,6 +1727,23 @@ def shallow_moved(path, snapshot):
 MAIN_REF = "refs/remotes/origin/main"
 
 
+def main_ref_checked(repo):
+    """Refused, naming the file and its type, when the batcher's repository holds MAIN_REF as a loose ref file,
+    <common dir>/refs/remotes/origin/main, that cannot_read says cannot be read: a FIFO, a symlink (to /dev/zero, or to
+    anything else), a directory or a device. git reads that file with no check of its type: a symlink whose target is
+    not a ref name it opens and reads to the end, so with one to /dev/zero git's memory grows until the read fails
+    (git 2.43, measured 2026-10-03), and GIT_BOUND bounds a git call's time, not its memory; a FIFO it waits on until
+    GIT_BOUND. A leg can leave such a file there, finding the batcher's repository through its clone's alternates, and
+    the next run's main_snapshot reads it. cmd_run calls this beside shallow_checked, before any git call but
+    find_repo's discovery, and main_snapshot calls it again before its own reads. No file there (the ref packed, or
+    absent, or a ref storage other than loose files) passes."""
+    path = os.path.join(repo.common_dir, *MAIN_REF.split("/"))
+    why = cannot_read(path)
+    if why is not None:
+        raise Refused("the batcher's %s in the repository at %s cannot be read (%s: %s); remove it (a fetch of origin "
+                      "writes it again) and sweep again" % (MAIN_REF, repo.work_tree, path, why))
+
+
 def main_snapshot(repo):
     """The commit the batcher's origin/main (MAIN_REF) names now, or None when their repository has no such ref. The
     runner reads it once, before the first leg, and writes that commit into every job's checkout as the checkout's own
@@ -1739,7 +1756,9 @@ def main_snapshot(repo):
     every checkout no main, and a test that reads main would then read something else than it does in the batcher's
     clone. `rev-parse --verify --quiet` alone exits 1 with nothing on stderr both for an absent ref and for one at a
     missing object, and `show-ref --verify --quiet` exits 1 both for an absent ref and for one git cannot parse (git
-    2.43, measured 2026-10-03), so neither tells them apart."""
+    2.43, measured 2026-10-03), so neither tells them apart. Before either read, main_ref_checked refuses a loose ref
+    file that is not a regular file, which git would read without end or wait on."""
+    main_ref_checked(repo)
     p = run_git(repo, "rev-parse", "--verify", "--quiet", MAIN_REF + "^{commit}")
     out = p.stdout.strip()
     if p.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", out):
@@ -4538,6 +4557,9 @@ def cmd_run(args):
     # The batcher's shallow file, checked here, before any git call that parses commits, since git reads it first (the
     # closing check's item 1): one that is not a regular file refuses the run, naming it.
     shallow_checked(batcher)
+    # The batcher's origin/main, the same way: a loose ref file there that is not a regular file refuses the run, naming
+    # it, before any git call could read it (main_ref_checked; main_snapshot reads the ref before the first leg).
+    main_ref_checked(batcher)
     sha = git(batcher, "rev-parse", "HEAD")
     branch = git(batcher, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
     wraps = parse_wraps(args.wrap)
