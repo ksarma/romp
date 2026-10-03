@@ -166,7 +166,7 @@ class Harness(unittest.TestCase):
     def env(self, root, **extra):
         env = dict(os.environ, XDG_STATE_HOME=root, CLAUDE_CONFIG_DIR=self.claude_root, ROMP_CLAUDE_BIN=self.fake,
                    SERVE_TEST_ENVELOPE=ENVELOPE, SERVE_TEST_CLAUDE_LOG=os.path.join(root, "claude-calls.log"),
-                   ROMP_POSTAL_PORT=str(20000 + os.getpid() % 20000), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1")
+                   ROMP_POSTAL_PORT="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1")
         for k in ("ROMP_STATE_DIR", "ROMP_MANAGER_PID", "ROMP_KERNEL_PORT", "ROMP_JUDGE_SERVE_FAULT"):
             env.pop(k, None)
         env.update(extra)

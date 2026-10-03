@@ -38,7 +38,7 @@ PEER = "TESTHOST"
 
 
 def _row(**over):
-    r = {"host": PEER, "checkin_peer": True, "kernel_port": 52025, "local_port": 52025,
+    r = {"host": PEER, "checkin_peer": True, "kernel_port": 1, "local_port": 1,
          "token": "peertok", "kernel_sha": REMOTE, "status": "up", "trust": "trusted"}
     r.update(over)
     return r
