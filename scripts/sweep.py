@@ -317,8 +317,11 @@ recorded under another; the hash covers what the runner itself sets, that the se
 block, and the shape each leg runs in (its own TMPDIR, HOME and state root; one checkout per ci.yml job, the steps it
 groups by), so a result written before round 2's fixes, whose legs shared one TMPDIR, HOME, state root and checkout,
 reads as recorded under another (decision 15), and so does one written before the pdf-smoke leg, since the hash names
-every leg's set values and step (the owner's build question 4); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
-in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups).
+every leg's set values and step (the owner's build question 4), and one written before each checkout held origin/main,
+since what a checkout holds is part of that shape (LEG_CHECKOUT); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
+in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups), nor
+the commit a checkout's origin/main names, which is the batcher's when the run started and is recorded
+(runner.checkout.main).
 The result also records the versions of node, npm, bats, git and gitleaks the legs found, and, per
 leg, the names it left in its private HOME (runner.home_left, {leg: names}; a setup's are in its own record), with
 home_empty true when no leg and no setup left anything; recorded only.
@@ -336,8 +339,8 @@ at the commit the runner read from the batcher's origin/main before the first le
 again for a later clone. A move in the batcher's repository does reach the next run, whose snapshot reads the ref as
 the leg left it, and, unlike a change to the shallow file (below), it marks no run invalid: that ref changes what a
 test that reads main compares the sha with, not the sha's tree, which every checkout is verified against. Nor does a
-shallow file a leg writes there: each clone gets the one the runner read before the first leg (shallow_snapshot;
-the narrow landing delta's ruling 8). That file does reach the next run, whose snapshot reads it, so every checkout of
+shallow file a leg writes into the batcher's repository: each clone gets the one the runner read before the first leg
+(shallow_snapshot; the narrow landing delta's ruling 8). That file does reach the next run, whose snapshot reads it, so every checkout of
 that run reads it as it now stands, cut where the leg's file says, or not shallow at all when the leg removed it, and
 the batcher's repository stays as the leg left it: the runner writes nothing there and does not restore it, and instead the run in which the file changed is invalid, naming it (shallow_moved; the
 owner's question 2 after the merge of main), unless that run ends before the re-read after its last leg (stopped, or
@@ -1719,8 +1722,8 @@ def shallow_moved(path, snapshot):
 # that reads main finds it there as it would in the batcher's own clone: tests/gitleaks-config.bats' history case, as
 # fork PR 954 scopes it, scans the commits HEAD adds over origin/main where the clone has that ref, and all of HEAD's
 # history where it has neither origin/main nor main. In a checkout with neither (each one before this ref was written),
-# that scan went past the 180 s the bats leg allows a test (BATS_TEST_TIMEOUT): 208 s at a load of 47 to 56 and 364 s
-# alone on one core over 13,766 commits, measured 2026-10-03.
+# that scan went past the 180 s the bats leg allows a test (BATS_TEST_TIMEOUT) over 13,766 commits: 208 s at a load of
+# 47 to 56, and 364 s held to one core (a CPUQuota of 100%), measured 2026-10-03.
 MAIN_REF = "refs/remotes/origin/main"
 
 
