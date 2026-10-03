@@ -3312,6 +3312,20 @@ NOW+=100;open();NOW+=100;recv({type:"feed",asks:[]});snap('fresh');   // the pan
         self.assertEqual([s["line"] for s in r["snaps"]], [_CUE_WAIT, "", ""], "the Log line lived from the return to the link-up")
         self.assertEqual(r["holds"], 0, "the fresh frame cancelled the hold")
 
+    # ruling B of round 1 (2026-10-03), composed: in a pane that hears the real shell's link word, neither the link-up word nor the
+    # pane's own reopen arms a failsafe, so a painted badge waits for the pane's first fresh frame however long it takes
+    def test_after_the_link_up_and_the_panes_reopen_the_badge_waits_for_the_fresh_frame_however_long(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;
+shShow();show();holdFires();snap('hold');               // painted at the hold
+NOW+=3000;shOpen();snap('linkup');                     // the shell's socket opens: its link word reaches the pane
+open();snap('paneopen');                               // the pane's own socket opens, and no frame comes yet
+NOW+=40000;failsafeFires();snap('later');              // 40 s on: a failsafe armed at either event would fire here
+NOW+=50;recv({type:"feed",asks:[]});snap('fresh');""")
+        self.assertEqual([s["badge"] for s in r["snaps"]], [True, True, True, True, False],
+                         "painted from the hold through the link-up and the reopen and 40 s past them; the fresh frame clears it")
+
     # fresh-1 of round 1, composed: a quick switch away and back with both sockets standing goes through the shim's and the shell's
     # keep paths, which dispatch no drop; the loader's visibility listener sees the page turn visible and must hold nothing
     def test_a_quick_switch_over_standing_sockets_paints_nothing(self):
