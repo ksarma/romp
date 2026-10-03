@@ -263,7 +263,13 @@ const flip = (hidden) => page.evaluate((h) => {
 // 2026-10-03: the subagent viewer's sticky header and its pin, and the Feed's sticky column heads and their drag chips, sit inside
 // the container, and the recorder skipped them). A control is a link, button, form field, label, summary, an element with a button
 // role, an action (data-act), a tabindex or draggable=true, the strip's resize handle, or anything drawn with a pointer or grab
-// cursor (the Feed's drag chip and the chat's landing notice have their cursor and nothing else). While the badge is painted, a
+// cursor (the Feed's drag chip and the chat's landing notice have their cursor and nothing else). Each control's box is the part a
+// person can see (round 2 of the review, 2026-10-03, correctness-1): cut by every ancestor whose overflow clips it, along its chain
+// of containing blocks (a fixed control escapes every ancestor that is not its containing block, an absolute one the ancestors
+// between it and its positioned containing block), so a tab the desktop strip scrolls out of view, or a pinned-notes row below that
+// strip's cap, is not chrome; a control wholly clipped is listed apart (`hidden`, its unclipped box) when it reaches the badge's
+// column, so a leg can show that such controls lay under the badge's first place. Each painted record also carries the content
+// container's top (`ctop`) and the view's width (`vw`), from which the first place is read. While the badge is painted, a
 // change to the page (a MutationObserver on the body) or to the badge's box adds a record to `moves` at the next frame, with the
 // badge's box and the chrome then, so a control that appears under a painted badge (the landing notice shown during the wait) is
 // measured as well as the badge's place at its paint.
@@ -292,8 +298,30 @@ const cueRec = () => {
   // the pane's content container, the id each pane page hands _pane_spin: the chat's transcript, else the pane's list (<pane>-list)
   const content = document.getElementById(location.pathname === "/chat" ? "content" : location.pathname.slice(1) + "-list");
   const CONTROL = "button, a[href], [role=button], [data-act], input, textarea, select, [tabindex], #tabbar-resize, [draggable=true], summary, label";
+  // the part of an element's box its overflow ancestors leave in view, [left, top, width, height] rounded, or null when none is
+  const seen = (el, cs) => {
+    const r = el.getBoundingClientRect(); let l = r.left, t = r.top, rt = r.right, bt = r.bottom, pos = cs.position;
+    for (let a = el.parentElement; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+      const s = getComputedStyle(a), ct = s.contain || "";
+      const cb = s.transform !== "none" || s.filter !== "none" || s.perspective !== "none" || /paint|layout|strict|content/.test(ct) || /transform|perspective|filter/.test(s.willChange || "");
+      if (pos === "fixed" && !cb) continue;
+      if (pos === "absolute" && s.position === "static" && !cb) continue;
+      let cx = s.overflowX !== "visible", cy = s.overflowY !== "visible";
+      if (/paint|strict|content/.test(ct)) cx = cy = true;
+      if ((cx || cy) && s.display !== "inline" && s.display !== "contents") {
+        const q = a.getBoundingClientRect(), x0 = q.left + a.clientLeft, y0 = q.top + a.clientTop;
+        if (cx) { l = Math.max(l, x0); rt = Math.min(rt, x0 + a.clientWidth); }
+        if (cy) { t = Math.max(t, y0); bt = Math.min(bt, y0 + a.clientHeight); }
+      }
+      pos = s.position;
+    }
+    return rt > l && bt > t ? [Math.round(l), Math.round(t), Math.round(rt - l), Math.round(bt - t)] : null;
+  };
+  let hiddenNow = [];   // the controls the last chrome() read found wholly clipped, in the badge's column
   const chrome = () => {
-    const out = [], b = document.getElementById("pane-reconn"), stuck = [];
+    const out = [], hid = [], b = document.getElementById("pane-reconn"), stuck = [];
+    // the badge's column: from its left edge, or from where its left edge is at the first place (8 px from the view's right) if that is further left
+    const bb = b ? b.getBoundingClientRect() : null, colR = bb ? document.documentElement.clientWidth - 8 : 0, colL = bb ? Math.min(bb.left, colR - bb.width) : 0;
     for (const el of Array.from(document.body.getElementsByTagName("*"))) {
       if (el === b || (b && b.contains(el)) || el === content) continue;
       const cs = getComputedStyle(el);
@@ -305,21 +333,25 @@ const cueRec = () => {
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height || cs.visibility === "hidden" || cs.display === "none") continue;
       const cls = typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split(/\s+/)[0] : "";
-      out.push({ el: el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + cls, label: (el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "").trim().slice(0, 30), box: box(el), inContent: within });
+      const name = el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + cls;
+      const vis = seen(el, cs);
+      if (!vis) { if (bb && r.right > colL && r.left < colR) hid.push({ el: name, box: box(el), inContent: within }); continue; }
+      out.push({ el: name, label: (el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "").trim().slice(0, 30), box: vis, inContent: within });
     }
+    hiddenNow = hid;
     return out;
   };
   let dirty = false, lastBox = "", lastSig = "";
   const sig = (bx, ch) => JSON.stringify(bx) + JSON.stringify(ch.map((x) => x.box));
   try { new MutationObserver(() => { dirty = true; }).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true }); } catch (e) { /* no observer */ }
   const loop = () => { c.frames++; c.lastT = Date.now(); const v = read(), k = v.on + "|" + v.text; if (k !== last) { const e = { t: c.lastT, on: v.on, text: v.text };
-    if (v.on) { e.box = box(document.getElementById("pane-reconn")); e.chrome = chrome(); e.content = !!content; lastBox = JSON.stringify(e.box); lastSig = sig(e.box, e.chrome); }
+    if (v.on) { e.box = box(document.getElementById("pane-reconn")); e.chrome = chrome(); e.hidden = hiddenNow; e.content = !!content; e.ctop = content ? Math.round(content.getBoundingClientRect().top) : null; e.vw = document.documentElement.clientWidth; lastBox = JSON.stringify(e.box); lastSig = sig(e.box, e.chrome); }
     c.badge.push(e); last = k; dirty = false; }
     else if (v.on) {
       // a move is recorded only while the badge is drawn (a pane hidden by another tab draws nothing: a zero box) and only when its
       // box or the chrome's boxes changed, so a page that keeps mutating without moving anything adds no record
       const bb = box(document.getElementById("pane-reconn")), bx = JSON.stringify(bb);
-      if (bb[2] && bb[3] && (dirty || bx !== lastBox) && c.moves.length < 200) { const ch = chrome(), sg = sig(bb, ch); if (sg !== lastSig) { c.moves.push({ t: c.lastT, on: true, box: bb, chrome: ch, content: !!content }); lastSig = sg; } }
+      if (bb[2] && bb[3] && (dirty || bx !== lastBox) && c.moves.length < 200) { const ch = chrome(), sg = sig(bb, ch); if (sg !== lastSig) { c.moves.push({ t: c.lastT, on: true, box: bb, chrome: ch, hidden: hiddenNow, content: !!content, ctop: content ? Math.round(content.getBoundingClientRect().top) : null, vw: document.documentElement.clientWidth }); lastSig = sg; } }
       lastBox = bx; dirty = false; }
     requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
@@ -704,6 +736,33 @@ try {
     }).catch((e) => ({ err: String(e).slice(0, 120) })) : { err: "no-chat-frame" };
     await sleep(800);
   }
+  // THE OVERFLOWING STRIPS (round 2 of the review, 2026-10-03, correctness-1): cfg.overflowStrip fills one of the chat's two strips
+  // that scroll what does not fit out of view until it hides about 150 px of rows, which then lie over the transcript's top, where
+  // the badge's first place is: "tabs" adds synthetic tabs (the strip's own .tab class, whose cursor is a pointer; each grows to fill
+  // its row, so every row reaches the badge's column at the strip's right end) to the desktop tab strip (#tabs in #tabbar, capped at
+  // 150 px), and "notes" fills the pinned-notes strip (#pinned-notes, capped at min(11em, 30vh))
+  // with rows built as pinned-notes.ts builds them, each with its details and unpin buttons, and shows it. Synthetic labels only.
+  // Read back: the strip's visible and scrolled heights and the rows it holds; the rows are counted again when the leg ends.
+  const stripRows = (kind) => frameOf("chat").evaluate((k) => document.querySelectorAll(k === "tabs" ? ".lab-tab" : ".lab-note").length, kind).catch(() => -1);
+  if (cfg.overflowStrip) {
+    out.overflowStrip = await frameOf("chat").evaluate((kind) => {
+      const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+      const strip = document.getElementById(kind === "tabs" ? "tabbar" : "pinned-notes"), into = kind === "tabs" ? document.getElementById("tabs") : strip;
+      if (!strip || !into) return { kind, err: "no-strip" };
+      if (kind === "notes") { strip.textContent = ""; strip.style.display = ""; }
+      for (let i = 0; i < 200 && strip.scrollHeight - strip.clientHeight < 150; i++) {
+        if (kind === "tabs") { const t = mk("div", "tab lab-tab"); t.style.flexGrow = "1"; t.appendChild(mk("span", "", "notes-api-" + ["web", "api", "tests", "docs"][i % 4] + "-tokenizer-" + (10 + i))); into.appendChild(t); continue; }
+        const item = mk("div", "pn-item pn-with-detail lab-note"), line = mk("div", "pn-line");
+        line.appendChild(mk("span", "pn-text", "notes-api: check the tokenizer fixture " + (i + 1) + " before the rebuild"));
+        const more = mk("button", "ut-more", "details"); more.type = "button"; line.appendChild(more);
+        const un = mk("button", "pn-unpin", "unpin"); un.type = "button"; line.appendChild(un);
+        item.appendChild(line); into.appendChild(item);
+      }
+      strip.scrollTop = 0;
+      return { kind, clientH: strip.clientHeight, scrollH: strip.scrollHeight, rows: document.querySelectorAll(kind === "tabs" ? ".lab-tab" : ".lab-note").length };
+    }, cfg.overflowStrip).catch((e) => ({ err: String(e).slice(0, 120) }));
+    await sleep(600);
+  }
   out.cueArm = {
     pane: cueChat ? await cueChat.evaluate(cueRec).catch((e) => "ERR:" + String(e).slice(0, 80)) : "no-pane-frame",
     shell: await page.evaluate(() => {
@@ -815,6 +874,7 @@ try {
     ...(cueChat ? await cueChat.evaluate(() => { const c = window.__labCue || {}; return { badge: c.badge || [], moves: c.moves || [], fresh: c.fresh || [], hold: c.hold || [], frames: c.frames || 0, lastT: c.lastT || 0 }; }).catch((e) => ({ err: String(e).slice(0, 80) })) : {}),
     log: await page.evaluate(() => window.__labCueLog || []).catch(() => null),
   };
+  if (cfg.overflowStrip) out.overflowStripEnd = await stripRows(cfg.overflowStrip);
   out.liveAtEnd = live.size;
   await result({});
 } catch (e) {

@@ -415,12 +415,12 @@ class ReturnFromBackground(unittest.TestCase):
 
     # ---- the driver ----
     def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False, post_tap=None,
-               cue_app=None, sub_view=False, notice_after_paint=False):
+               cue_app=None, sub_view=False, notice_after_paint=False, overflow_strip=None):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds%s%s%s%s%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "", "-posttap-" + post_tap if post_tap else "",
-                                                     "-cue-" + cue_app if cue_app else "", "-subview" if sub_view else "", "-notice" if notice_after_paint else "")
+        name = "%s-%s-%s-%ds%s%s%s%s%s%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "", "-posttap-" + post_tap if post_tap else "",
+                                                       "-cue-" + cue_app if cue_app else "", "-subview" if sub_view else "", "-notice" if notice_after_paint else "", "-strip-" + overflow_strip if overflow_strip else "")
         eager = _eager(shell, None if unmarked else tap)   # a tapped pane's document is loaded before the suspend (on the re-tap, under abort or denied); an unmarked document runs no shim, so the tapped pane never joins the eager set (pass 5, the author's label, taking the reviewer's round-4 finding tests-1)
         # a derived set that came out empty would hand the driver a boot wait and a fresh wait that end at once with nothing witnessed
         # (review round 2, 2026-09-19: every derived expectation must fail when the derivation yields nothing)
@@ -443,7 +443,8 @@ class ReturnFromBackground(unittest.TestCase):
                "activeSid": active_sid if active_sid is not None else (SESSIONS[0][0] if (boot_tab or hold_active_full_ms) else ""),
                "holdActiveFullMs": hold_active_full_ms,   # fresh-2 (review round 3): the driver's proxy holds the boot chat dial's frames naming the active tab for this long
                "postTap": post_tap or "", "postTapMs": 2000, "cueHoldMs": cue_hold_ms() if post_tap else 0,
-               "cueApp": cue_app or "chat", "subView": bool(sub_view), "noticeAfterPaint": bool(notice_after_paint),   # round 1 of the review (2026-10-03): the pane whose badge is read, the subagent viewer opened before the suspend, the landing notice shown over the painted badge   # iOS item 4: the tap after the return, 2 s on (inside the badge's 30 s failsafe, where the off-screen paint showed)
+               "cueApp": cue_app or "chat", "subView": bool(sub_view), "noticeAfterPaint": bool(notice_after_paint),
+               "overflowStrip": overflow_strip or "",   # round 2 of the review (2026-10-03, correctness-1): the chat strip filled past its cap before the suspend ("tabs" or "notes")   # round 1 of the review (2026-10-03): the pane whose badge is read, the subagent viewer opened before the suspend, the landing notice shown over the painted badge   # iOS item 4: the tap after the return, 2 s on (inside the badge's 30 s failsafe, where the off-screen paint showed)
                "showFilesControl": tap == "files",   # extra9-2 (review round 3): the Files tab exists only with the gear's Files control on (romp:settings.showFilesControl, the literal true); the install seeds it before the shell parses
                "shots": os.path.join(self.lab, "return-harness-" + name) if os.environ.get("RETURN_HARNESS_SHOTS") else ""}
         cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the full result; the RESULT: line is a compact copy
@@ -575,7 +576,9 @@ class ReturnFromBackground(unittest.TestCase):
         content container, and the sticky or fixed elements inside it with what they hold (round 1 of the review, 2026-10-03: the
         subagent viewer's header and pin, the Feed's column heads and drag chips); `moves` are the records a change to the page or
         to the badge's box added while it was painted (the recorder's), each checked the same way, so a control that appears under
-        a painted badge is measured too."""
+        a painted badge is measured too. Each control's box is the part its overflow ancestors leave in view (round 2 of the review,
+        2026-10-03, correctness-1), so a control a strip scrolls out of view is not counted, and only controls count, never the boxes
+        that hold them or a scrollbar (open calls 2 and 9)."""
         painted = [b for b in badge if b["on"]] + list(moves or [])
         for b in painted:
             self.assertIn("box", b, where + "the painted badge's box was read: %r" % (b,))
@@ -1210,6 +1213,46 @@ class ReturnFromBackground(unittest.TestCase):
         self._cue(name, r, "hung", 4)
         self._chrome_witness(where, r, lambda c: c.get("inContent") and c["el"].startswith("span.feed-col-name"), "a column head's drag chip, inside the list")
         self._surface(name, r)
+
+    # Round 2 of the review (2026-10-03, correctness-1): the chat's two strips that scroll what does not fit out of view, each filled
+    # before the suspend until it hides about 150 px of rows, which lie over the transcript's top, where the badge's first place is.
+    # At a4262a94d the badge counted those hidden rows and stepped down past them. Each record of the painted badge is read against
+    # the controls the strip hides in the badge's column (the recorder's `hidden`, their unclipped boxes): where some lie under the
+    # first place (8 px below the transcript's top), the badge must sit above the bottom of the first of them, and some record must
+    # have had them there, the witness that the leg reached the case (and that the rows were in the strip while the badge was painted).
+    # _cue's chrome check (visible parts only) still runs.
+    def _strip(self, name, r, kind):
+        where = name + ": "
+        st = r.get("overflowStrip") or {}
+        self.assertEqual(st.get("kind"), kind, where + "the strip was filled: %r" % (st,))
+        self.assertGreaterEqual(st.get("scrollH", 0) - st.get("clientH", 0), 150, where + "...until it hides about 150 px of rows: %r" % (st,))
+        self._cue(name, r, "hung", 4)
+        cue = r.get("cue") or {}
+        recs = [b for b in (cue.get("badge") or []) if b["on"]] + list(cue.get("moves") or [])
+        witnessed = []
+        for b in recs:
+            x, y, w, h = b["box"]
+            self.assertIsNotNone(b.get("ctop"), where + "the record carries the transcript's top: %r" % (b,))
+            y0, right = max(b["ctop"], 0) + 8, b["vw"] - 8
+            under = [c for c in (b.get("hidden") or []) if c["box"][0] < right and c["box"][0] + c["box"][2] > right - w and c["box"][1] < y0 + h and c["box"][1] + c["box"][3] > y0]
+            if under:
+                low = min(c["box"][1] + c["box"][3] for c in under)
+                witnessed.append((y0, low, b["box"]))
+                self.assertLess(y, low, where + "the controls the strip hides under the first place (%d px) did not push the badge below them: the badge is at %r and the "
+                                "first of them ends at %d px: %r" % (y0, b["box"], low, under[:3]))
+        self.assertTrue(witnessed, where + "some record of the painted badge had controls the strip hides under its first place: %r" % ([(b["box"], b.get("ctop"), len(b.get("hidden") or [])) for b in recs[:3]],))
+        # the strip's rows at the leg's end, for the record only: the return's resync repaints the tab strip after the outage, past the
+        # painted wait the records above read
+        type(self).measurements.setdefault(name, {})["strip"] = {"filled": st, "rowsAtEnd": r.get("overflowStripEnd"), "firstPlaceAndHidden": witnessed[:4]}
+        self._surface(name, r)
+
+    def test_desktop_hung_4s_tabs_the_strip_scrolls_out_of_view_do_not_move_the_badge(self):
+        name, r = self._drive("desktop", "hung", 4, "chromium", overflow_strip="tabs")
+        self._strip(name, r, "tabs")
+
+    def test_phone_hung_4s_pinned_notes_the_strip_scrolls_out_of_view_do_not_move_the_badge(self):
+        name, r = self._drive("phone", "hung", 4, "chromium", overflow_strip="notes")
+        self._strip(name, r, "notes")
 
     def test_phone_hung_12s(self):
         self._leg("phone", "hung", 12)

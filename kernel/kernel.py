@@ -70038,11 +70038,15 @@ def _pane_spin(cid, ignore_id=""):
             # The first place alone still covered controls that do not scroll with the content (round 1): the subagent viewer's
             # sticky header and its 'keep this tab' pin, the chat's landing notice (the only cancel for a jump), and the Feed's
             # sticky column heads with their drag chips. So while the badge is painted it moves to the nearest place that covers
-            # nothing that stays put when the content scrolls and holds a control (rfit, robs): a control outside the container
-            # (the chrome, and what is drawn over the container from outside it, such as the landing notice and the scroll marks),
-            # and inside it the whole box of a sticky or fixed element that is or holds a control (the viewer's header, a Feed
-            # column head), so the badge goes below such a header, never onto it. From the first place it steps down below what it
-            # would cover, or left of it when that is the shorter move (a narrow control at the right edge, a scroll mark). If no
+            # no control that stays put when the content scrolls (rfit, robs): a control outside the container (the chrome, and
+            # what is drawn over the container from outside it, such as the landing notice and the scroll marks), and inside it a
+            # control that is or sits in a sticky or fixed element (the viewer's pin, a Feed column head's drag chip). The controls
+            # count, not the boxes that hold them (round 2, open call 2), so the badge may sit over a sticky header's text as it
+            # may over the chrome's. And each control counts only by the part a person can see: its box clipped by every ancestor
+            # whose overflow clips it, along its chain of containing blocks (rclip; round 2, correctness-1: the desktop chat's tab
+            # strip and the pinned-notes strip scroll what does not fit out of view, and the rows they hid below them still pushed
+            # the badge down the transcript or, on a short pane, onto a visible tab). From the first place it steps down below what
+            # it would cover, or left of it when that is the shorter move (a narrow control at the right edge, a scroll mark). If no
             # place above the container's visible bottom is clear (a list shorter than the badge), it takes the place in the pane's
             # view, at the right edge and 8 px above or below one of those controls, that covers the least of them, the nearest
             # the first place among equals: a clear one wherever the view's right edge has room for the badge with 8 px to spare
@@ -70068,23 +70072,41 @@ def _pane_spin(cid, ignore_id=""):
             "function rscroll(){try{return /^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){return false;}}"
             "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true]',rmo=null,rsc=false,rob=null;"
             "function rctl(e,s){return (e.matches&&e.matches(RCTL))||/^(pointer|grab|grabbing)$/.test(s.cursor);}"
-            # what the badge must not cover, as elements: each control outside the container, and inside it each sticky or fixed
-            # element (the outermost, when they nest) that is or holds a control, whole: a header the badge goes below, not onto
-            "function robs(){var o=[],d=document.body,pin=[];if(!d||!d.getElementsByTagName)return o;var a=d.getElementsByTagName('*');"
-            "for(var i=0;i<a.length;i++){var e=a[i];if(e===c||e===rb||rb.contains(e))continue;var s=getComputedStyle(e);"
-            "if(c.contains(e)){if(s.position==='sticky'||s.position==='fixed')pin.push(e);for(var j=0;j<pin.length;j++){if(pin[j].contains(e)){if(o.indexOf(pin[j])<0&&rctl(e,s))o.push(pin[j]);break;}}continue;}"
-            "if(rctl(e,s)&&s.visibility!=='hidden'&&s.display!=='none')o.push(e);}return o;}"
+            # what the badge must not cover: each shown control outside the container, and inside it each shown control that is
+            # or sits in a sticky or fixed element, as [the control, the ancestors that clip it (rclip)]. Each element's style is
+            # kept for the scan (M), so rclip reads its ancestors' from there: document order puts an ancestor before its children
+            "function robs(){var o=[],d=document.body,pin=[],M=typeof Map==='function'?new Map():null;if(!d||!d.getElementsByTagName)return o;var a=d.getElementsByTagName('*');"
+            "for(var i=0;i<a.length;i++){var e=a[i];if(e===rb||rb.contains(e))continue;var s=getComputedStyle(e);if(M)M.set(e,s);if(e===c)continue;"
+            "if(c.contains(e)){if(s.position==='sticky'||s.position==='fixed')pin.push(e);for(var j=0;j<pin.length&&!pin[j].contains(e);j++);if(j===pin.length)continue;}"
+            "if(rctl(e,s)&&s.visibility!=='hidden'&&s.display!=='none')o.push([e,rclip(e,s,M)]);}return o;}"
+            # the ancestors whose overflow clips e, each as [element, clips across, clips down]. Overflow clips along the chain of
+            # containing blocks, not the chain of parents: a fixed element escapes every ancestor but one that is its containing
+            # block (a transform, filter, perspective or containment makes one), and an absolute one escapes every ancestor
+            # between it and its positioned containing block; a sticky one stays in its scroll area, the container included.
+            # overflow clip and contain:paint clip as hidden does; an inline box and display:contents clip nothing; the body and the
+            # root clip only as the view does, which rfit's bounds read
+            "function rclip(e,s,M){var k=[],p=s.position;for(var a=e.parentElement;a&&a!==document.body&&a!==document.documentElement;a=a.parentElement){"
+            "var t=(M&&M.get(a))||getComputedStyle(a),ct=t.contain||'',cb=(!!t.transform&&t.transform!=='none')||(!!t.filter&&t.filter!=='none')||(!!t.perspective&&t.perspective!=='none')||/paint|layout|strict|content/.test(ct)||/transform|perspective|filter/.test(t.willChange||'');"
+            "if(p==='fixed'&&!cb)continue;if(p==='absolute'&&t.position==='static'&&!cb)continue;"
+            "var x=!!t.overflowX&&t.overflowX!=='visible',y=!!t.overflowY&&t.overflowY!=='visible';if(/paint|strict|content/.test(ct))x=y=true;"
+            "if((x||y)&&t.display!=='inline'&&t.display!=='contents')k.push([a,x,y]);p=t.position;}return k;}"
+            # the part of a control a person can see: its box cut to each clipping ancestor's padding box (inside its border and
+            # scrollbar), read at each call, a scroll's included (a scroll of the strip changes which rows show); null when none is
+            "function rvis(t){var r=t[0].getBoundingClientRect(),l=r.left,u=r.top,g=r.right,d=r.bottom;"
+            "for(var j=0;j<t[1].length;j++){var a=t[1][j],p=a[0],q=p.getBoundingClientRect(),x0=q.left+(p.clientLeft||0),y0=q.top+(p.clientTop||0);"
+            "if(a[1]){if(x0>l)l=x0;if(x0+p.clientWidth<g)g=x0+p.clientWidth;}if(a[2]){if(y0>u)u=y0;if(y0+p.clientHeight<d)d=y0+p.clientHeight;}}"
+            "return g>l&&d>u?{left:l,top:u,right:g,bottom:d}:null;}"
             # the nearest clear place from the first one: past the boxes it would cover, down below them or left of them, whichever
             # is the shorter move. When none is clear above the container's visible bottom (a list shorter than the badge: a
             # landscape phone with the keyboard up and a long pinned note), the place in the pane's view, at the right edge and 8 px
             # above or below the edge of one of those boxes, that covers the least of them, the nearest the first place among
             # equals: a clear one wherever the view's right edge has room for it with 8 px to spare above and below, and the first
             # place when every place covers as much (the rehearsed check of round 1: before this the first place stood, over the
-            # composer's buttons below a list 20 px tall). `again` (a scroll) re-reads the boxes of the elements the last scan
-            # found: a scroll of the container moves only what is inside it
+            # composer's buttons below a list 20 px tall). `again` (a scroll) re-reads the boxes of the controls the last scan
+            # found and of the ancestors that clip them: a scroll moves only what is inside the scrolled element
             "function rfit(y0,again){var b=rb.getBoundingClientRect(),w=b.width,h=b.height,de=document.documentElement,W=de.clientWidth,H,o=[],y=y0,x=8;"
             "if(!w||!h||!W)return [y0,8];H=Math.min(de.clientHeight||1e9,c.getBoundingClientRect().bottom);if(!again||!rob)rob=robs();"
-            "for(var i=0;i<rob.length;i++){var q=rob[i].getBoundingClientRect();if(q.width>0&&q.height>0)o.push(q);}"
+            "for(var i=0;i<rob.length;i++){var q=rvis(rob[i]);if(q)o.push(q);}"
             "for(var k=0;k<64;k++){var L=W-x-w,R=W-x,n=0,hl=W,hb=y;"
             "for(i=0;i<o.length;i++){var r=o[i];if(r.left<R&&r.right>L&&r.top<y+h&&r.bottom>y){n++;if(r.left<hl)hl=r.left;if(r.bottom>hb)hb=r.bottom;}}"
             "if(!n)return [y,x];var nx=Math.ceil(W-hl)+8,ny=Math.ceil(hb)+8;if(W-nx-w>=8&&nx-x<=ny-y)x=nx;else y=ny;if(y+h>H-8)break;}"

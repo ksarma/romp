@@ -741,20 +741,31 @@ out({ atLoad, atPaint: { painted: painted(), top: topOf() } });""", pre=self._PL
     # The clear place (round 1, 2026-10-03: regression-1, extra5-1, correctness-1, correctness-2). The first place alone covered
     # controls that stay put when the content scrolls: the subagent viewer's sticky header and its pin, the chat's landing notice,
     # the Feed's sticky column heads and their drag chips. While painted the badge moves to the nearest place that covers none:
-    # a control outside the list, or a sticky or fixed element in the list that is or holds a control, whole (rfit, robs). These
-    # cases run the search over a page of fake elements: each has a box, a computed style, a parent, and answers matches() for the
-    # one selector entry it carries (so the product's RCTL list must name it) or its cursor. The served legs measure real engines.
+    # a control outside the list, or a control that is or sits in a sticky or fixed element in the list (rfit, robs). Since round 2
+    # (2026-10-03) the controls count, not the sticky boxes that hold them (open call 2), and each counts by the part of it that
+    # its overflow ancestors leave in view (correctness-1). These cases run the search over a page of fake elements: each has a
+    # box, a computed style (its position, cursor, overflow and containment), a parent, a padding box (clientLeft, clientTop,
+    # clientWidth, clientHeight: its whole box, no border or scrollbar, unless a case sets them) and answers matches() for the one
+    # selector entry it carries (so the product's RCTL list must name it) or its cursor. The served legs measure real engines.
     _FIT_PRE = r"""
 document.documentElement = { id: 'html', clientWidth: 390, clientHeight: 844 };
 const ALL = [CONTENT];                                                // the body's elements in document order
 document.body = { getElementsByTagName: (t) => (t === '*' ? ALL : []) };
 let STYLE_READS = 0;
-global.getComputedStyle = (el) => { STYLE_READS++; return el === CONTENT ? { overflowY: COVER, position: 'static', cursor: 'auto', visibility: 'visible', display: 'block' } : el.cs; };
+global.getComputedStyle = (el) => { STYLE_READS++; return el === CONTENT ? { overflowY: COVER, overflowX: COVER === 'visible' ? 'visible' : 'auto', position: 'static', cursor: 'auto', visibility: 'visible', display: 'block' } : el.cs; };
+// the list's padding box is its whole box (no border; a scrollbar is not drawn in these cases)
+Object.defineProperties(CONTENT, { clientLeft: { get: () => 0 }, clientTop: { get: () => 0 }, clientWidth: { get: () => { const r = CONTENT.getBoundingClientRect(); return r.right - r.left; } },
+  clientHeight: { get: () => { const r = CONTENT.getBoundingClientRect(); return r.bottom - r.top; } } });
 const inside = (anc, n) => { for (let e = n; e; e = e.parent) if (e === anc) return true; return false; };
 CONTENT.contains = (n) => inside(CONTENT, n);
-// add(parent, box [left, top, width, height], { position, cursor, sel }): an element under `parent` (null: the body, outside the list)
-const add = (parent, box, o) => { const e = { parent, box: box.slice(), sel: (o && o.sel) || '',
-  cs: { position: (o && o.position) || 'static', cursor: (o && o.cursor) || 'auto', visibility: 'visible', display: 'block', overflowY: 'visible' },
+// add(parent, box [left, top, width, height], { position, cursor, sel, overflow, overflowX, overflowY, contain, transform, display }):
+// an element under `parent` (null: the body, outside the list); `overflow` sets both axes
+const add = (parent, box, o) => { o = o || {}; const e = { parent, box: box.slice(), sel: o.sel || '',
+  cs: { position: o.position || 'static', cursor: o.cursor || 'auto', visibility: 'visible', display: o.display || 'block',
+        overflowX: o.overflowX || o.overflow || 'visible', overflowY: o.overflowY || o.overflow || 'visible', contain: o.contain || 'none',
+        transform: o.transform || 'none', filter: 'none', perspective: 'none', willChange: 'auto' },
+  get parentElement() { return this.parent || null; },
+  get clientLeft() { return 0; }, get clientTop() { return 0; }, get clientWidth() { return this.box[2]; }, get clientHeight() { return this.box[3]; },
   getBoundingClientRect() { const [l, t, w, h] = this.box; return { left: l, top: t, right: l + w, bottom: t + h, width: w, height: h }; },
   contains(n) { return inside(this, n); }, matches(list) { return !!this.sel && list.split(',').indexOf(this.sel) >= 0; } };
   const at = parent ? ALL.lastIndexOf(ALL.filter((x) => inside(parent, x)).pop()) + 1 : ALL.length; ALL.splice(at, 0, e); return e; };
@@ -770,8 +781,10 @@ const shortList = (viewH, bottom) => { document.documentElement.clientHeight = v
     def _fit(self, scenario):
         return self._run(scenario, pre=self._PLACE_PRE + self._FIT_PRE)
 
-    def test_a_painted_badge_goes_below_a_sticky_header_in_the_list_that_holds_a_control(self):
-        # the subagent viewer: a sticky line at the list's top (#sub-head, 8 px down) with its pin, a role=button, at the right end
+    def test_a_painted_badge_moves_off_a_control_in_a_sticky_header_in_the_list_and_may_sit_over_its_text(self):
+        # the subagent viewer: a sticky line at the list's top (#sub-head, 8 px down) with its pin, a role=button, at the right end.
+        # Round 2 (open call 2, 2026-10-03): the pin counts, not the header's box, so the badge stays on the header's line, left of
+        # the pin and over the header's text; round 1 sent it below the whole header (91 px)
         o = self._fit(r"""
 const head = add(CONTENT, [0, 52, 390, 31], { position: 'sticky' });
 add(head, [360, 58, 20, 20], { sel: '[role=button]' });
@@ -779,7 +792,8 @@ const atLoad = at();
 fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
 out({ atLoad, atPaint, watching: mo() });""")
         self.assertEqual(o["atLoad"], {"top": "52px", "right": "8px", "painted": False}, "unpainted, the first place: no search on a healthy page")
-        self.assertEqual(o["atPaint"], {"top": "91px", "right": "8px", "painted": True}, "painted below the header (52 + 31 + 8), not on it")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "38px", "painted": True},
+                         "painted left of the pin (390 - 360 + 8), over the header's text: 30 px left is a shorter move than 34 px down (58 + 20 + 8)")
         self.assertEqual(o["watching"], 1, "and watching the page for what could move it")
 
     def test_a_control_drawn_over_the_list_from_outside_it_moves_the_badge_below_it_when_it_appears(self):
@@ -804,7 +818,8 @@ out({ atPaint: at() });""")
 
     def test_the_feed_column_heads_send_the_badge_below_their_row(self):
         # the desktop Feed: no header above the list (its top is the page's), three sticky column heads at its top, each with a drag
-        # chip that has a grab cursor and nothing else; the badge's first place (8 px) is on the second and third heads
+        # chip that has a grab cursor and nothing else; the badge's first place (8 px) is on the second and third heads, and on the
+        # third head's chip
         o = self._fit(r"""
 resize(0);
 for (const [l, w] of [[12, 120], [140, 120], [268, 110]]) { const h = add(CONTENT, [l, 12, w, 29], { position: 'sticky' }); add(h, [l + 2, 14, 68, 20], { cursor: 'grab' }); }
@@ -812,7 +827,9 @@ const atLoad = at();
 fire('romp:wsdown'); after(RHOLD_T);
 out({ atLoad, atPaint: at() });""")
         self.assertEqual(o["atLoad"], {"top": "8px", "right": "8px", "painted": False})
-        self.assertEqual(o["atPaint"], {"top": "49px", "right": "8px", "painted": True}, "below the heads' row (12 + 29 + 8): left of them would not fit")
+        self.assertEqual(o["atPaint"], {"top": "42px", "right": "8px", "painted": True},
+                         "below the chips' row (14 + 20 + 8): the chips count, not the heads' boxes (round 1 went below the heads, 49 px); the step left "
+                         "past the third chip (120 px) is longer than the step down (34 px)")
 
     def test_what_scrolls_with_the_list_or_holds_no_control_is_not_avoided(self):
         # a button in a message (content: it scrolls out from under the badge, ruling 9 of round 0) and a sticky element in the list
@@ -826,7 +843,7 @@ out({ atPaint: at() });""")
 
     def test_a_scroll_while_painted_moves_the_badge_off_a_sticky_header_scrolling_into_its_place(self):
         o = self._fit(r"""
-const head = add(CONTENT, [0, 300, 390, 29], { position: 'sticky' }); add(head, [10, 304, 60, 20], { sel: 'button' });
+const head = add(CONTENT, [0, 300, 390, 29], { position: 'sticky' }); add(head, [300, 304, 80, 20], { sel: 'button' });   // its button at the right end
 fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
 head.box[1] = 60; ALL[2].box[1] = 64;                                 // the list scrolls: the header comes up under the badge
 scroll(); const scrolled = at();
@@ -835,10 +852,109 @@ fire('romp:wsfresh'); const cleared = { painted: painted(), watching: mo(), scro
 change(head); const afterChange = { watching: mo(), scrollListeners: (DOCL.scroll || []).length };
 out({ atPaint, scrolled, rereads, cleared, afterChange });""")
         self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True})
-        self.assertEqual(o["scrolled"], {"top": "97px", "right": "8px", "painted": True}, "the scroll moves it below the header (60 + 29 + 8)")
+        self.assertEqual(o["scrolled"], {"top": "92px", "right": "8px", "painted": True}, "the scroll moves it below the header's button (64 + 20 + 8)")
         self.assertLessEqual(o["rereads"], 1, "a scroll re-reads the boxes the last scan found; it does not scan the page's styles again")
         self.assertIs(o["cleared"]["painted"], False)
         self.assertEqual(o["afterChange"], {"watching": 0, "scrollListeners": 0}, "with the badge down, the next change ends the watch: no observer, no scroll listener")
+
+    # What an overflow container hides does not count (round 2, correctness-1, 2026-10-03). The desktop chat's tab strip (#tabbar,
+    # max-height 150 px, overflow-y auto) and the pinned-notes strip (max-height min(11em, 30vh), overflow-y auto) scroll what does
+    # not fit out of view; the rows they hide lie below them, over the list's top, and at a4262a94d they still counted: the badge
+    # stepped down past controls nobody could see, and on a short pane it took the fallback onto a visible one. Each control now
+    # counts by its box clipped by the ancestors whose overflow clips it (rclip, rvis). `strip(...)` builds such a strip: rows of
+    # controls at the right end, every 22 px from `top`, inside a box `h` tall; with `overflow` 'visible' the same rows show, the
+    # case's witness that the hidden rows do lie over the badge's first place.
+    _STRIP = r"""
+const strip = (top, h, rows, overflow, row) => { const s = add(null, [0, top, 390, h], { overflowY: overflow, overflowX: overflow === 'visible' ? 'visible' : 'hidden' });
+  for (let i = 0; i < rows; i++) { const y = top + 4 + 22 * i; row(s, y); } return s; };
+const tabRow = (s, y) => { add(s, [12, y, 220, 20], { cursor: 'pointer' }); add(s, [236, y, 150, 20], { cursor: 'pointer' }); };   // two tabs, the second reaching the badge's column (248 to 382)
+const noteRow = (s, y) => { const line = add(s, [24, y, 342, 20]); add(line, [270, y + 2, 44, 16], { sel: 'button' }); add(line, [318, y + 2, 46, 16], { sel: 'button' }); };   // a note's details and unpin buttons
+"""
+
+    def _strip_fit(self, scenario):
+        return self._run(scenario, pre=self._PLACE_PRE + self._FIT_PRE + self._STRIP)
+
+    def test_tabs_the_desktop_tab_strip_scrolls_out_of_view_do_not_count(self):
+        # the tab strip across the pane's top, 44 px tall here (its cap), with eight rows of tabs: the first two show, the six below
+        # it are hidden by its overflow and lie over the transcript from 48 px down, the badge's first place (52 px) among them
+        for overflow in ("auto", "visible"):
+            with self.subTest(overflow=overflow):
+                o = self._strip_fit(r"""
+strip(0, 44, 8, '%s', tabRow);
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""" % overflow)
+                if overflow == "auto":
+                    self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True},
+                                     "the first place, 8 px below the transcript's top: every tab under it is hidden by the strip (a4262a94d stepped it "
+                                     "down past all six hidden rows, to 186 px)")
+                else:
+                    self.assertEqual(o["atPaint"]["top"], "186px", "the witness: the same rows shown (overflow visible) do lie over the first place, and "
+                                     "the badge steps below the last (4 + 7 x 22 + 20 + 8)")
+
+    def test_notes_the_pinned_notes_strip_scrolls_out_of_view_do_not_count(self):
+        # the phone: the header (44 px), then the pinned-notes strip, 60 px tall here, with eight rows; two and a half show, and the
+        # rest lie over the transcript, which starts at 104 px, each with its details and unpin buttons in the badge's column
+        o = self._strip_fit(r"""
+resize(104);
+add(null, [0, 0, 390, 44], { sel: 'button' });                        // the header's session picker
+strip(44, 60, 8, 'auto', noteRow);
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "112px", "right": "8px", "painted": True},
+                         "the first place, 8 px below the transcript's top (104 + 8): the rows below the strip's bottom are hidden by it")
+
+    def test_hidden_rows_on_a_short_pane_leave_the_badge_at_its_clear_first_place_not_on_a_visible_control(self):
+        # a short chat pane: the tab strip shows two tabs at the right end and hides the rows below them, which lie over the whole
+        # transcript (44 to 120 px) and past it; the composer's text field is below. At a4262a94d the walk found no clear place,
+        # since it counted the hidden rows, and the fallback put the badge over the two tabs that show
+        o = self._strip_fit(r"""
+shortList(200, 120);
+const s = add(null, [0, 0, 390, 44], { overflowY: 'auto', overflowX: 'hidden' });
+add(s, [300, 4, 60, 14], { cursor: 'pointer' }); add(s, [300, 30, 60, 12], { cursor: 'pointer' });   // the two tabs that show
+for (let y = 48; y < 140; y += 22) add(s, [236, y, 150, 22], { cursor: 'pointer' });                  // the rows the strip hides
+add(null, [0, 124, 390, 60], { sel: 'textarea' });
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True},
+                         "the first place, which covers nothing a person can see (a4262a94d took 15 px, over both visible tabs)")
+
+    def test_overflow_clips_along_the_containing_blocks_so_a_fixed_or_escaping_absolute_control_still_counts(self):
+        # overflow clips an element only through the chain of its containing blocks: a fixed control escapes every ancestor that
+        # is not its containing block, and an absolute one escapes the ancestors between it and its positioned containing block.
+        # Each scenario puts one control over the first place (52 to 77 px) inside a box whose overflow is hidden and which ends
+        # at 44 px
+        cases = [
+            ("a fixed control inside the strip escapes it", "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden' }); add(s, [300, 54, 60, 20], { position: 'fixed', sel: 'button' });", "82px"),
+            ("an absolute control whose containing block is outside the strip escapes it",
+             "const w = add(null, [0, 0, 390, 300], { position: 'relative' }); const s = add(w, [0, 0, 390, 44], { overflow: 'hidden' }); add(s, [300, 54, 60, 20], { position: 'absolute', sel: 'button' });", "82px"),
+            ("an absolute control in a positioned strip is clipped by it",
+             "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden', position: 'relative' }); add(s, [300, 54, 60, 20], { position: 'absolute', sel: 'button' });", "52px"),
+            ("a fixed control in a transformed strip is clipped by it (the transform makes the strip its containing block)",
+             "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden', transform: 'translateZ(0)' }); add(s, [300, 54, 60, 20], { position: 'fixed', sel: 'button' });", "52px"),
+            ("contain:paint clips as overflow does", "const s = add(null, [0, 0, 390, 44], { contain: 'paint' }); add(s, [300, 54, 60, 20], { sel: 'button' });", "52px"),
+            ("a strip clipping across only leaves a control below it counted", "const s = add(null, [0, 0, 390, 44], { overflowX: 'clip', overflowY: 'visible' }); add(s, [300, 54, 60, 20], { sel: 'button' });", "82px"),
+            ("an inline box clips nothing", "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden', display: 'inline' }); add(s, [300, 54, 60, 20], { sel: 'button' });", "82px"),
+        ]
+        for what, page, top in cases:
+            with self.subTest(what):
+                o = self._strip_fit(page + r"""
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+                self.assertEqual(o["atPaint"], {"top": top, "right": "8px", "painted": True},
+                                 what + (": counted, the badge goes 8 px below it (54 + 20 + 8)" if top == "82px" else ": not counted, the first place"))
+
+    def test_a_scroll_re_reads_the_clip_of_the_controls_the_last_scan_found(self):
+        # a panel outside the list whose overflow hides all but the top 10 px of a control that reaches over the first place; a scroll
+        # (the panel growing as its own content scrolls, say) shows the control whole, and the scroll's re-read, which scans no style,
+        # moves the badge off it
+        o = self._strip_fit(r"""
+const panel = add(null, [200, 40, 190, 10], { overflow: 'hidden' }); add(panel, [300, 40, 60, 40], { sel: 'button' });
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+panel.box[3] = 40; const reads = STYLE_READS; scroll(); const scrolled = at();
+out({ atPaint, scrolled, reads: STYLE_READS - reads });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True}, "the control's visible 10 px (40 to 50) does not reach the first place")
+        self.assertEqual(o["scrolled"], {"top": "88px", "right": "8px", "painted": True}, "shown whole by the panel's new box, the control moves the badge below it (80 + 8)")
+        self.assertLessEqual(o["reads"], 1, "the scroll re-read the boxes and the clip, and scanned no style")
 
     # The list too short for the badge (the rehearsed check of round 1, 2026-10-03): with no clear place above the list's visible
     # bottom the search kept the first place, and a landscape phone with the keyboard up and a long pinned note left a list 20 px
@@ -909,11 +1025,11 @@ out({ atPaint: at() });""")
         o = self._fit(r"""
 const head = add(CONTENT, [0, 52, 390, 31], { position: 'sticky' }); add(head, [360, 58, 20, 20], { sel: '[role=button]' });
 let reads = STYLE_READS; resize(44); const unpainted = { reads: STYLE_READS - reads, top: topOf() };
-fire('romp:wsdown'); after(RHOLD_T); const painted1 = topOf();
+fire('romp:wsdown'); after(RHOLD_T); const painted1 = at();
 fire('romp:wsfresh'); reads = STYLE_READS; resize(44); const after1 = { reads: STYLE_READS - reads, top: topOf() };
 out({ unpainted, painted1, after1 });""")
         self.assertEqual(o["unpainted"], {"reads": 1, "top": "52px"}, "a resize event on a healthy page reads the list's own style alone (the scroll-area test) and writes the first place")
-        self.assertEqual(o["painted1"], "91px")
+        self.assertEqual(o["painted1"], {"top": "52px", "right": "38px", "painted": True}, "painted, the search moves it left of the header's pin")
         self.assertEqual(o["after1"], {"reads": 1, "top": "52px"}, "after the fresh frame the badge is down, and the next resize event goes back to the first place without a search")
 
     def test_an_auto_overflow_list_counts_as_a_scroll_area(self):
