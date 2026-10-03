@@ -275,8 +275,10 @@ FOREIGN_ROADS = ("http.server", "os", "subprocess", "unittest.mock", "uuid")
 # errno, fcntl, select, sys, time), as {module: (member, ...)}, held EQUAL to the derived reads by the allow-list cell: a member of
 # such a module is a name the census cannot resolve (its source is not there to read), so one outside the tuple (`sys._getframe`,
 # `sys.meta_path`, `sys.modules`) is refused until it is read, the rule the parsed census's KNOWN_MEMBERS states for the driver.
-UNREAD_MEMBERS = {"errno": ("EADDRINUSE",), "fcntl": ("LOCK_EX", "flock"), "select": ("select",), "sys": ("path", "platform"),
-                  "time": ("gmtime", "monotonic", "sleep", "strftime", "time")}
+# The kernel instance lock (2026-10-01) added fcntl's LOCK_NB and LOCK_UN and sys.executable: test_ship_reship_served.py's
+# relaunch_cfg names the interpreter of its waitFree program, and RelaunchEnv takes and drops the lock that program waits on.
+UNREAD_MEMBERS = {"errno": ("EADDRINUSE",), "fcntl": ("LOCK_EX", "LOCK_NB", "LOCK_UN", "flock"), "select": ("select",),
+                  "sys": ("executable", "path", "platform"), "time": ("gmtime", "monotonic", "sleep", "strftime", "time")}
 LAB_MODULE = "test_federated_linkdrop_served"
 PACKAGE = os.path.basename(HERE)   # this directory is a package (tests/__init__.py), so a sibling is importable as tests.x and as .x too
 OTHER_NAMES = tuple(sorted({n for names in OTHER_SPAWNERS.values() for n in names}))

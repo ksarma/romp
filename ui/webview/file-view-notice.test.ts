@@ -11,8 +11,13 @@
 // The fork's replace path also drops the replaced viewer's keydown handler (dropOnKey), so the last case pins
 // that the replace dropped the first viewer's handlers, runs those DROPPED handlers directly (the stale
 // exitEdit, editing still true in its closure), which the document would never run, then runs the live card's
-// handlers in the order the document would run them, oldest first, and reads back that only the old viewer's
-// own notice went while the live card's still stands.
+// handlers in the order the document would run them, and reads back that only the old viewer's own notice went
+// while the live card's still stands.
+// An open registers more than one document keydown handler: the viewer's Escape handler (onKey, bubbling), the
+// comments panel's re-place Escape and, since the link-navigation follow-on, the trail's chord listener (onNavKey;
+// both in the capture phase). A key pressed in the page therefore runs through pressKey below, which runs THIS
+// open's handlers in the document's order (capture first, then bubbling, each oldest first), never a handler
+// picked by its position in the registration list: the newest registration is no longer the Escape handler.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
@@ -118,7 +123,22 @@ function findById(n: El, id: string): El | null {
   for (const c of n.childNodes) if (c instanceof El) { const hit = findById(c, id); if (hit) return hit; }
   return null;
 }
-const docKeys: Array<(ev: any) => void> = [];   // the viewer's keydown handlers, one per open
+const docKeys: Array<(ev: any) => void> = [];   // the document's keydown handlers, in registration order (several per open: see pressKey)
+const docKeyCapture: boolean[] = [];             // aligned with docKeys: registered for the capture phase (the third argument)
+/** The capture flag of an addEventListener/removeEventListener third argument: a boolean, or an options object's `capture`. */
+const captureOf = (o: unknown): boolean => (typeof o === "boolean" ? o : !!(o && typeof o === "object" && (o as { capture?: unknown }).capture));
+/** A key pressed in the page, run the way the document runs it over the handlers registered since `before` (this open's):
+ *  the capture-phase listeners first (the comments panel's re-place Escape, the trail's chord listener onNavKey), then the
+ *  bubbling ones (the viewer's Escape handler onKey), each set oldest first. The event carries the modifier fields the
+ *  chord table reads (file-trail.ts navChord) and records preventDefault, as defaultPrevented, for the listeners after
+ *  the one that took the key. Returns whether any handler took it. */
+function pressKey(before: Set<(ev: any) => void>, ev: Record<string, unknown>): boolean {
+  const mine = docKeys.map((fn, i) => ({ fn, capture: docKeyCapture[i] })).filter((r) => !before.has(r.fn));
+  let prevented = false;
+  const e = { altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, preventDefault() { prevented = true; }, get defaultPrevented() { return prevented; }, ...ev };
+  for (const r of [...mine.filter((r) => r.capture), ...mine.filter((r) => !r.capture)]) r.fn(e);
+  return prevented;
+}
 const win: any = new EventTarget();              // window: a save's reply arrives as a message event
 win.parent = win;
 win.confirm = () => true;                       // the discard ask, when a dirty buffer is about to go
@@ -131,8 +151,13 @@ win.confirm = () => true;                       // the discard ask, when a dirty
   createTextNode: (s: string) => s,
   getElementById: (id: string) => findById(docBody, id),
   querySelectorAll: () => [],                   // no bundle <script src>: the editor chunk cannot be derived
-  addEventListener: (type: string, fn: (ev: any) => void) => { if (type === "keydown") docKeys.push(fn); },
-  removeEventListener: (type: string, fn: (ev: any) => void) => { const i = docKeys.indexOf(fn); if (i >= 0) docKeys.splice(i, 1); },
+  addEventListener: (type: string, fn: (ev: any) => void, o?: unknown) => { if (type === "keydown") { docKeys.push(fn); docKeyCapture.push(captureOf(o)); } },
+  // as the DOM does, the flag names WHICH registration goes: a listener added for the capture phase and removed without the
+  // flag stays registered, so the close hooks' removal of the trail's chord listener must carry the flag its add did
+  removeEventListener: (type: string, fn: (ev: any) => void, o?: unknown) => {
+    const i = docKeys.findIndex((f, k) => f === fn && docKeyCapture[k] === captureOf(o));
+    if (i >= 0) { docKeys.splice(i, 1); docKeyCapture.splice(i, 1); }
+  },
   body: docBody,
 };
 const store = new Map<string, string>();
@@ -226,10 +251,16 @@ test("Cancel leaves edit mode with the notice gone, and the read view has the bo
 });
 
 test("Escape peels edit mode the same way: the notice goes with it", async () => {
+  const before = new Set(docKeys);              // the document's handlers before this open (an earlier case's viewer, the module's own)
   const c = await openInFallbackEditor();
   assertAboveBody(noteEl(), c, ["fileview-editor"]);
-  // each open registers its own keydown handler; the newest is this viewer's
-  docKeys[docKeys.length - 1]({ key: "Escape", preventDefault() {} });
+  // Escape runs through every document keydown handler this open registered, in the document's order: the capture-phase
+  // ones first (the comments panel's re-place Escape, the trail's chord listener, which stands aside for a key that is
+  // not a chord) and the viewer's Escape handler after them. Never a handler picked by position: since the trail's
+  // listener the newest registration of an open is not the Escape handler, and a pick of it would peel nothing.
+  const mine = docKeys.map((fn, i) => ({ fn, capture: docKeyCapture[i] })).filter((r) => !before.has(r.fn));
+  assert.ok(mine.some((r) => r.capture) && mine.some((r) => !r.capture), "this open registered both a capture-phase and a bubbling keydown handler");
+  assert.ok(pressKey(before, { key: "Escape" }), "the viewer took Escape");
   assert.equal(noteEl(), null, "the notice went with edit mode");
   assert.ok(c.wrap.isConnected, "Escape left the viewer itself up");
   assert.deepEqual(c.card.children.map((x) => x.className), ["fileview-bar", "fileview-main"]);
@@ -297,7 +328,7 @@ test("a replaced viewer's Escape handler leaves the live card's notice alone", a
   // answers Escape. The old card's notice goes with the old card, never detached by anyone else's exit.
   const before = new Set(docKeys);              // the document's handlers before this case (an earlier case's viewer)
   const a = await openInFallbackEditor();
-  const aKeys = docKeys.filter((fn) => !before.has(fn));   // the first viewer's handlers (its onKey, the comments panel's Escape)
+  const aKeys = docKeys.filter((fn) => !before.has(fn));   // the first viewer's handlers (its onKey, the comments panel's Escape, the trail's chord listener)
   assert.ok(aKeys.length >= 1, "the first viewer registered its Escape handler");
   a.ta.value = TEXT + "a\n";
   a.ta.dispatch("input");
@@ -317,11 +348,11 @@ test("a replaced viewer's Escape handler leaves the live card's notice alone", a
   ta.value = TEXT + "b\n";
   ta.dispatch("input");                          // dirty: Escape must ask, and the answer is no
   win.confirm = () => false;
-  assert.ok(aKeys.every((fn) => !docKeys.includes(fn)), "the replace dropped every handler of the first viewer (dropOnKey, the panel's close hooks)");
-  const mine = docKeys.filter((fn) => !before.has(fn));   // what the document would run now: the live card's handlers, oldest first
+  assert.ok(aKeys.every((fn) => !docKeys.includes(fn)), "the replace dropped every handler of the first viewer (dropOnKey, the close hooks: the panel's and the trail's, each removed with the flag its add carried)");
+  const mine = docKeys.filter((fn) => !before.has(fn));   // what the document would run now: the live card's handlers
   assert.ok(mine.length >= 1, "the live viewer's Escape handler is registered");
-  for (const fn of aKeys) fn({ key: "Escape", preventDefault() {} });   // the dropped handlers, run directly: the stale exitEdit runs (editing true in its closure, dirty cleared by the Reload click) and must reach only its own card's notice
-  for (const fn of mine) fn({ key: "Escape", preventDefault() {} });
+  for (const fn of aKeys) fn({ key: "Escape", altKey: false, metaKey: false, ctrlKey: false, shiftKey: false, preventDefault() {} });   // the dropped handlers, run directly: the stale exitEdit runs (editing true in its closure, dirty cleared by the Reload click) and must reach only its own card's notice
+  pressKey(before, { key: "Escape" });         // the live card's handlers in the document's order (capture first, then bubbling)
   win.confirm = () => true;
   const note = assertAboveBody(noteEl(), b, ["fileview-editor"]);
   assert.match(note.textContent, /editing in the plain fallback editor\.$/, "the live card's own notice, still up");
