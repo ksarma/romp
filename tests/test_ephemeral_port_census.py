@@ -60,6 +60,8 @@ THE RULE. A number in the range counts when it is WRITTEN AS A PORT, in one of t
     a port concatenated onto an address: the right operand of a + whose left side (string literals, names bound to one,
     f-strings, and sums of them) ends in a loopback or wildcard host, or // and any host, then a colon
     ("http://127.0.0.1:" + str(N), "http://" + host + ":" + P);
+    an element of a list or tuple display right after a string element that spells a --*port option whole (an argv:
+    ["romp", "serve", "--port", "N"], ("--bus-port", N));
     and one hop through a name: a value written in one of those positions as a bare name counts the literals the module
     binds that name to (P = N ... {"port": P}).
   An int counts (45_001 is 45001), and so does a string of the number's five digits, except as a positional argument
@@ -78,7 +80,8 @@ THE RULE. A number in the range counts when it is WRITTEN AS A PORT, in one of t
           ({ port: N }, "busPort": N, , port=N);
     decl  a port-named name declared and assigned (const port = N, local port=N, export ROMP_POSTAL_PORT=N);
     env   an upper-case port-named name, then : or = and the number, quoted or not (ROMP_POSTAL_PORT'] = 'N');
-    flag  a --*port option (--port N, --port=N);
+    flag  a --*port option (--port N, --port=N), or one quoted in a list with the number as the next element
+          ('--port', 'N');
     authority  host:N after a loopback or wildcard host or after // in a URL (http://127.0.0.1:N, //TESTHOST:N), the
                number right after the colon or concatenated onto it ('http://127.0.0.1:' + N);
     address    a loopback or wildcard address tuple in text (("127.0.0.1", N));
@@ -113,6 +116,10 @@ is a change to this list):
   startServer(N)), and a port reached through a name that does not name a port (const P = N, then :${P});
   a %-template whose port's placeholder carries a mapping key, a flag or a width ("http://127.0.0.1:%(p)d/" % {"p": N},
   "http://127.0.0.1:%5d/" % N), unless another rule reads the operand (a port-named key does);
+  a format template, or the left side of a concatenation, that the module does not write as a literal or a name
+  bound to one (a parameter, a call's result: t % N, base_url() + str(N));
+  an option and its number that are not neighbours in one list or tuple display (["--port"] + [N], a flag built at run
+  time), and a short option (-p N), in Python and in text;
   a value under a key spelled other than as a word (a computed key, {K: N});
   code text that does not parse on its own (an indented fragment, a %-template), which the text rules read instead, so
   its positional ports are not resolved;
@@ -178,7 +185,7 @@ TEXT_RULES = (
     ("key", re.compile(r"(?:^|[{,(\[;])[ \t]*[\"'`]?(?P<name>[\w$.-]+)[\"'`]?[ \t]*[:=][ \t]*" + _NUM, re.M)),
     ("decl", re.compile(r"\b(?:const|let|var|local|export|readonly|declare(?:[ \t]+-\w+)?)[ \t]+(?P<name>[\w$]+)[ \t]*=[ \t]*" + _NUM)),
     ("env", re.compile(r"\b(?P<name>[A-Z][A-Z0-9_]*)[\"'`]?\]?[ \t]*[:=][ \t]*" + _NUM)),
-    ("flag", re.compile(r"--(?P<name>[\w-]+)(?:=|[ \t]+)" + _NUM)),
+    ("flag", re.compile(r"--(?P<name>[\w-]+)(?:=|[ \t]+|[\"'`][ \t]*,[ \t]*)" + _NUM)),   # or quoted, the number the next element
     ("authority", re.compile(r"(?:" + _HOST + r"|//[\w.-]+)[ \t]*:[ \t]*(?:[\"'`][ \t]*\+[ \t]*[\"'`]?)?(?P<n>" + _D5
                              + r")(?![\w.])")),   # the number right after the colon, or concatenated onto it
     ("address", re.compile(r"\([ \t]*[\"'](?:127\.0\.0\.1|localhost|0\.0\.0\.0|::1?|)[\"'][ \t]*,[ \t]*(?P<n>" + _D5 + r")[ \t]*[,)]")),
@@ -304,6 +311,15 @@ def _target_name(t):
         return t.attr
     if isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant) and isinstance(t.slice.value, str):
         return t.slice.value
+    return None
+
+
+def _port_flag(node):
+    """The --*port option a string literal spells whole (--port, --bus-port), else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        m = re.fullmatch(r"--([\w-]+)", node.value)
+        if m and names_a_port(m.group(1)):
+            return node.value
     return None
 
 
@@ -603,6 +619,10 @@ class _Scan:
                 h = self._host(n.elts[0])
                 if h is not None:
                     self._value(n.elts[1], "the port of the address (%r, ...)" % h, strings=False)
+                for i in range(len(n.elts) - 1):
+                    flag = _port_flag(n.elts[i])
+                    if flag and not isinstance(n.elts[i + 1], ast.Starred):
+                        self._value(n.elts[i + 1], "the argument after the flag %s" % flag)
             elif isinstance(n, ast.BinOp) and isinstance(n.op, ast.Mod):
                 tmpl = self._template(n.left)
                 if tmpl is not None and _ADDR_PCT.search(tmpl):
@@ -850,6 +870,8 @@ class Plants(unittest.TestCase):
                  "concatenated onto an address"),
                 ("a port concatenated onto an f-string's address", 'P = %d\nu = f"ws://{h}:" + str(P)\n' % n,
                  "concatenated onto an address, a constant expression"),
+                ("an argv list", 'subprocess.run(["romp", "serve", "--port", "%d"])\n' % n, "argument after the flag --port"),
+                ("an argv tuple, the number an int", 'ARGS = ("--bus-port", %d)\n' % n, "argument after the flag --bus-port"),
                 ("f-string address", 'P = %d\nurllib.request.urlopen(f"http://127.0.0.1:{P}/peer")\n' % n,
                  "formatted into an address, through the name P"),
                 ("f-string address with a formatted host", 'h = "x"\nu = f"ws://{h}:{%d}/ws"\n' % n, "formatted into an address"),
@@ -926,6 +948,8 @@ class Plants(unittest.TestCase):
                 ("URL", "d.test.mjs", "await fetch('http://localhost:%d/healthz');\n" % n, "rule authority"),
                 ("a port concatenated onto a URL", "d2.test.mjs", "await fetch('http://127.0.0.1:' + %d + '/x');\n" % n,
                  "rule authority"),
+                ("a flag and its number as list elements", "c2.test.mjs", "spawn(bin, ['serve', '--port', '%d']);\n" % n,
+                 "rule flag"),
                 ("address in shell python", "e.bats", "python3 -c \"s.bind(('127.0.0.1', %d))\"\n" % n, "rule address"),
                 ("listen", "f.test.js", "server.listen(%d, '127.0.0.1');\n" % n, "rule call"),
                 ("a name and its value handed together", "g.test.js", "setEnv('ROMP_POSTAL_PORT', '%d');\n" % n, "rule pair")):
@@ -945,6 +969,8 @@ class Plants(unittest.TestCase):
                 ("an expected value", "test_x.py", 'self.assertEqual((snap["port"], snap["up"]), (%d, True))\n' % n),
                 ("a timeout", "test_x.py", 'page.goto(url, timeout=%d)\n' % n),
                 ("a word that only contains port", "test_x.py", 'row = {"report": %d, "transport": %d}\n' % (n, n)),
+                ("an argv element after an option that does not name a port", "test_x.py",
+                 'subprocess.run(["x", "--report", "%d"])\n' % n),
                 ("an id", "test_x.py", 'MID = "1700000001.%d_44444.TESTHOST"\n' % n),
                 ("an empty string before a number in a call", "test_x.py", 'row = make_row("id", "", %d)\n' % n),
                 ("a comment inside code text", "test_x.py", 'subprocess.run([sys.executable, "-c", "x = 1  # was {port: %d}"])\n' % n),
@@ -983,6 +1009,11 @@ class Plants(unittest.TestCase):
                  "const P = %d;\nawait fetch(`http://127.0.0.1:${P}/x`);\n" % n),
                 ("a %-template placeholder with a mapping key or a width", "test_x.py",
                  'u = "http://127.0.0.1:%%(p)d/x" %% {"p": %d}\nv = "http://127.0.0.1:%%5d/x" %% %d\n' % (n, n)),
+                ("a template or an address that is no literal", "test_x.py",
+                 'def go(t, base):\n    return t %% %d, base + str(%d)\n' % (n, n)),
+                ("an option and its number apart, or a short option", "test_x.py",
+                 'subprocess.run(["romp", "--port"] + ["%d"])\nsubprocess.run(["romp", "-p", "%d"])\n' % (n, n)),
+                ("a short option in shell", "z.bats", "    romp serve -p %d\n" % n),
                 ("a computed key", "test_x.py", 'K = "port"\nrow = {K: %d}\n' % n),
                 ("code text that does not parse", "test_x.py", 'FRAG = "    km._notify_bus_peer(\'h\', %d, True)"\n' % n)):
             with self.subTest(label):
