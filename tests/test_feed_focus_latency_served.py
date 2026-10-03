@@ -181,6 +181,13 @@ const runLayout = async (tag, width) => {
           if (m.type === "activeChat" && ((window.__holdKernelFrame && !window.__frameGate) || releasing)) { heldFrames.push({ ws: this, fn, ev, m }); note("held:activeChat", { id: m.id || null }); return; }
           note("recv:" + m.type, { id: m.id || null, reaffirm: !!m.reaffirm });
         }
+        // THE KERNEL'S FEED FRAMES DROPPED once the lab's board is delivered (deliver sets __labBoard), closing a race: the
+        // page applies every kernel feed or feedDelta frame by REPLACING its cards, and the kernel sends deltas on its own
+        // schedule (after a tab change, and each time it rebuilds the feed), one of them a few hundred ms after a settle's
+        // deliver. On a loaded machine that delta landed before a road's click found its synthetic card, the card left the
+        // page, and the click timed out (road c, in a full local run on a saturated machine, 2026-10-02). The roads read
+        // the section and the chat and click the lab's own cards, never the kernel's
+        if (m && (m.type === "feed" || m.type === "feedDelta") && window.__labBoard) return;
       } catch (e) {}
       return fn.call(this, ev);
     };
@@ -365,6 +372,7 @@ const runLayout = async (tag, width) => {
     order: [cfg.web, cfg.api, cfg.tests, cfg.old] });
   const deliver = (m) => page.evaluate((m) => new Promise((res) => {
     const w = document.getElementById("f-feed").contentWindow;
+    w.__labBoard = true;   // from here wrapIn (above) drops the kernel's feed and feedDelta frames, so none replaces this board
     w.dispatchEvent(new w.MessageEvent("message", { data: m }));
     w.requestAnimationFrame(() => res(null));
   }), m);

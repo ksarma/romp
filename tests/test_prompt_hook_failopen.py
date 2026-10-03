@@ -22,6 +22,7 @@ import asyncio
 import json
 import os
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -335,21 +336,42 @@ class TimeoutFailsOpen(_Gate):
     def test_a_stalled_blocking_cron_delivered_write_is_cut_too(self):
         """The cron-prompt path's OTHER file touch: recording the slot is _update_reg, a lock wait plus a
         read plus a write, and the cap can only interrupt at an await, so the write runs off the loop
-        thread as the read does. Pinned by a BLOCKING sleep in write_reg (which _update_reg reaches
-        by module name); the cut write still lands, so the slot the prompt ran is on file."""
+        thread as the read does. Pinned by a write_reg that BLOCKS until the hook has answered (which
+        _update_reg reaches by module name); the cut write still lands, so the slot the prompt ran is on file."""
         self._write([_armed()])
         s = self._session()
-        os.environ["ROMP_PROMPT_HOOK_TIMEOUT_S"] = "0.05"
+        # The race this narrows: the body makes two thread hops, the reg read and then the write, and with a 0.05 s cap
+        # a loaded machine was still in the READ when the cap fired, so the body was cancelled before it called
+        # _update_reg and cronDelivered was never written (a full local run on a saturated machine, 2026-10-02). So
+        # the read gets 1 s (a wall-clock budget still, twenty times the old one), and the write blocks on an event
+        # instead of a fixed sleep until the hook has answered: the hook returning while the write is still held shows
+        # it did not wait for the write, with no time bound on the write.
+        os.environ["ROMP_PROMPT_HOOK_TIMEOUT_S"] = "1.0"
         real = sb.write_reg
+        entered, release, landed = threading.Event(), threading.Event(), threading.Event()
 
         def stalled(state_dir, sid, reg):
-            time.sleep(0.6)
-            return real(state_dir, sid, reg)
+            entered.set()
+            release.wait(30)
+            try:
+                return real(state_dir, sid, reg)
+            finally:
+                landed.set()
         sb.write_reg = stalled
         self.addCleanup(setattr, sb, "write_reg", real)
-        out, took = self._timed_fire(s)
+        self.addCleanup(release.set)
+
+        async def run():
+            try:
+                out = await s._prompt_submit_hook({"prompt": PROMPT}, None, None)
+                reached, held = entered.is_set(), not landed.is_set()
+            finally:
+                release.set()     # asyncio.run's executor drain then lets the held write land, on an error too
+            return out, reached, held
+        out, reached, held = asyncio.run(run())
         self.assertEqual(out, {}, "the cron prompt is allowed rather than refused at the SDK's deadline")
-        self.assertLess(took, 0.5, "the hook did not wait for the stalled write")
+        self.assertTrue(reached, "the cap cut the held write, not the read before it")
+        self.assertTrue(held, "the hook answered while the write was still held: it did not wait for the stalled write")
         self.assertTrue(any("ran past its" in m for m in self.logs))
         self.assertTrue(self._reg().get("cronDelivered"),
                         "the worker finished the write the cap cut: the delivered slot is recorded")

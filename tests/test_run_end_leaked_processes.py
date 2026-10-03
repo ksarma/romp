@@ -495,7 +495,13 @@ class Scanner(unittest.TestCase):
         """The wait covers a process listed as not judged as it covers a holder: one that is exiting at session end (here
         a non-dumpable child that sleeps a second) is not listed once it has gone."""
         p = self._non_dumpable("1.0")
-        self.assertIn(p.pid, [u["pid"] for u in self._scan()[1]["listed"]], "listed before the wait")
+        # The race this closes: the child lives one second after its ready file, and a scan of every process on the
+        # machine could take longer than that under load, so the child had exited before the scan reached it and
+        # `listed` came back empty (a full local run on a saturated machine, 2026-10-02). So the child is scanned alone
+        # (`pids`), as the wait below scans it: the scan then walks only the child's /proc entries (it still lists /proc
+        # and reads the scanner's own stat and cgroup).
+        self.assertIn(p.pid, [u["pid"] for u in self.conftest._processes_holding([self.root], pids=[p.pid])[1]["listed"]],
+                      "listed before the wait")
         t0 = time.monotonic()
         _leaked, unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=15.0, pids=[p.pid])
         self.assertLess(time.monotonic() - t0, 5.0,
