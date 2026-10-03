@@ -4871,6 +4871,26 @@ class MainSnapshot(unittest.TestCase):
                 self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s cannot be read (%s: %s, not a "
                               "regular file)" % (self.repo.work_tree, ref_file, what), str(cm.exception))
 
+    def test_a_git_without_show_ref_exists_is_refused_naming_the_version(self):
+        """`git show-ref --exists` came in git 2.43; an older git exits 129 on the unknown option. With no origin/main,
+        the read the runner makes on every run whose rev-parse fails, main_snapshot then refuses naming the git version it
+        needs, where before it refused with the remedy for a ref it cannot read (fetch origin or remove the ref), for a
+        ref that is not there (the verify pass on main_snapshot, its fourth finding). A git first on PATH answers
+        show-ref --exists as such a git does and passes every other call to the real git."""
+        shim = os.path.join(os.path.dirname(self.tree), "old-git")
+        os.makedirs(shim)
+        with open(os.path.join(shim, "git"), "w") as f:
+            f.write('#!/bin/sh\nif [ "$1" = show-ref ] && [ "$2" = --exists ]; then\n'
+                    '  echo "error: unknown option \\`exists\'" >&2; exit 129\nfi\nexec "$OLD_GIT_REAL" "$@"\n')
+        os.chmod(os.path.join(shim, "git"), 0o755)
+        self.assertIsNone(sweep.main_snapshot(self.repo), "premise: no origin/main, read as absent by this git")
+        with unittest.mock.patch.dict(os.environ, PATH=shim + os.pathsep + os.environ["PATH"],
+                                      OLD_GIT_REAL=shutil.which("git")):
+            with self.assertRaises(sweep.Refused) as cm:
+                sweep.main_snapshot(self.repo)
+        self.assertIn("which this git does not have (show-ref exited 129: error: unknown option `exists'); sweep with git "
+                      "2.43 or later", str(cm.exception))
+
     @staticmethod
     def write(path, text):
         os.makedirs(os.path.dirname(path), exist_ok=True)

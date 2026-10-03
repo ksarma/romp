@@ -1752,12 +1752,14 @@ def main_snapshot(repo):
     `repo` (`rev-parse --verify --quiet MAIN_REF^{commit}`); when that fails, `show-ref --exists MAIN_REF` (git 2.43 and
     later) tells an absent ref (exit 2: None) from one that is there and names no commit (exit 0: at a missing object, a
     blob or a tree) or cannot be read (exit 1: a ref file git cannot parse). Those two refuse the run, naming the ref and
-    both answers, and so does any other answer (a git without --exists): reading such a ref as absent would quietly give
+    both answers, and so does any other answer: reading such a ref as absent would quietly give
     every checkout no main, and a test that reads main would then read something else than it does in the batcher's
     clone. `rev-parse --verify --quiet` alone exits 1 with nothing on stderr both for an absent ref and for one at a
     missing object, and `show-ref --verify --quiet` exits 1 both for an absent ref and for one git cannot parse (git
     2.43, measured 2026-10-03), so neither tells them apart. Before either read, main_ref_checked refuses a loose ref
-    file that is not a regular file, which git would read without end or wait on."""
+    file that is not a regular file, which git would read without end or wait on. A git older than 2.43 has no
+    --exists and exits 129 (a usage error), so every run whose rev-parse failed, an absent ref included, is refused
+    then, naming the git version the runner needs rather than the ref."""
     main_ref_checked(repo)
     p = run_git(repo, "rev-parse", "--verify", "--quiet", MAIN_REF + "^{commit}")
     out = p.stdout.strip()
@@ -1766,6 +1768,10 @@ def main_snapshot(repo):
     q = run_git(repo, "show-ref", "--exists", MAIN_REF)
     if p.returncode != 0 and q.returncode == 2:
         return None
+    if q.returncode == 129:
+        raise Refused("the runner tells an absent %s from one it cannot read with `git show-ref --exists`, which this git "
+                      "does not have (show-ref exited 129: %s); sweep with git 2.43 or later"
+                      % (MAIN_REF, (q.stderr.strip() or q.stdout.strip() or "no output")))
     raise Refused("the batcher's %s in the repository at %s names no commit the runner can read (rev-parse exited %d: %s; "
                   "show-ref exited %d: %s); fetch origin or remove the ref, and sweep again"
                   % (MAIN_REF, repo.work_tree, p.returncode, (p.stderr.strip() or out or "no output"), q.returncode,
