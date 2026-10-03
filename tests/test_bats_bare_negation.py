@@ -379,11 +379,11 @@ the bats-backed pins since the tenth commit among them, the child pytest 67 s an
 those two pins alone, against `41 passed, 17 skipped, 1 warning in 36.01s` without, the skip count's child run the one cost added
 to a cell since that commit), on cells whose margin under their 25-minute cap was 4 to 8 minutes in fork PR #871's own CI run at
 the ninth commit (3.10 in 20m42s, 3.11 in 20m13s, 3.12 in 17m07s, 3.13 in 18m20s, 3.14t in 20m45s, read off that run's job times),
-for a bats install of 4 s; the shell job carries the validation inside its 35 minutes (11m02s in that run). The polluted shape,
-pytest over the whole tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the eleventh commit
-the wrapper runs the routes pin too (seconds; bash and bats are all it needs), and not the child pytest pin, which needs pytest
-importable by the runner's python3, which the shell job does not install: it skips there saying so, and a skipping test in the
-wrapper would pin nothing (a pytest install in that job is a workflow change, not made here).
+for a bats install of 4 s; the shell job carries the validation inside the 35 minutes it had then (11m02s in that run). The
+polluted shape, pytest over the whole tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the
+eleventh commit the wrapper runs the routes pin too (seconds; bash and bats are all it needs), and not the child pytest pin, which
+needs pytest importable by the runner's python3, which the shell job does not install: it skips there saying so, and a skipping
+test in the wrapper would pin nothing (a pytest install in that job is a workflow change, not made here).
 
 Deleted here, not fixed: the line scanner's frame model (the brace-depth walk, its block ends and the coverage pin over them), its
 heredoc classification (introducers, delimiter words, the skip) and its status-read grammar (`_plain_call`, `_helper_read`,

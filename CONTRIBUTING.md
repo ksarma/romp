@@ -104,9 +104,20 @@ is 8.25.0 because the hook's flags need 8.24.0 and this repository's
 from 8.25.0 on; CI pins 8.28.0, above that floor. Under an older gitleaks the
 hook refuses a push that has something to scan and names the version it found.
 
-The Python and shell suites are also the CI gate, across Python 3.10 to 3.13 on
-Linux; the macOS cells run on demand from the Actions tab (they are billed even
-on a public repo, so they are not part of the per-push matrix).
+On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
+each batch head, and GitHub's CI runs once per batch, on the push of the batch
+branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux; member PRs
+and merges to main run none of it (`docs/batching.md`). The macOS cells run on the
+weekly schedule and on demand from the Actions tab, not on a batch push. CI's
+secret scan alone runs on every push of a branch or a tag whose commit carries
+`.github/workflows/secret-scan.yml`, and on every push to an open pull
+request's branch. Among the pushes that start no run of it: a push to a branch
+cut from main before that file landed that has no open pull request, until the
+branch merges main; a tag on such a commit; and a push whose commit lacks the
+file because it or an earlier commit on its branch deleted it. A pull request
+that conflicts with its base gets no run of its own until the conflict is
+resolved, and a first-time contributor's run may wait for a maintainer to
+approve it. CLAUDE.md, "Credentials", lists these and GitHub's other limits.
 
 ## Measuring dashboard pane performance
 
@@ -239,8 +250,12 @@ without it a relation that did not hold is a diagnostic line in the output.
 Three things about the test environment are worth knowing, because all have
 produced confusing failures:
 
-- The bats suite takes about a minute on Linux and about fifteen on macOS. That
-  is expected, not a hang.
+- The bats suite is slow. In CI, among the finished runs on main, the batch
+  branches and the open PRs whose tests will land (read at 14:44 UTC on
+  2026-10-02), the slowest Run bats step on Linux took 34 min 7 s (run
+  36998140007) and the slowest macOS Shell job took 47 min 39 s (run
+  36998141959). Those are CI's slowest runs, not its typical ones. A run that
+  long is expected, not a hang.
 - On macOS, run the bats suite with a modern bash (`brew install bash`; bats
   picks it up via `env bash` when `/opt/homebrew/bin` precedes `/bin` on PATH).
   The stock `/bin/bash` 3.2 does not fail a test on a mid-test `[[ ]]`

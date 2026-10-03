@@ -17,9 +17,14 @@
 #                 the repo's .gitleaks.toml, over the lines the pushed commits
 #                 add, which the hook reads itself and hands to gitleaks as
 #                 files. With no gitleaks binary the scan prints a notice and
-#                 stands down; CI runs gitleaks over the full history in its
+#                 stands down. CI runs gitleaks over the full history in its
 #                 git mode, with the path exemptions the hook's scan cannot
-#                 apply, so nothing goes unscanned for long.
+#                 apply, on each push to this repository, of a branch or a
+#                 tag, whose commit carries .github/workflows/secret-scan.yml
+#                 and on each push to an open pull request's branch
+#                 (CLAUDE.md, "Credentials", names the pushes that start no
+#                 run and GitHub's own limits), so such a push made without
+#                 the hook's scan is scanned by CI in a run of that push.
 #
 # The identifier scan makes four checks per pushed ref, all about what THIS
 # push changes on the remote:
@@ -6511,7 +6516,10 @@ scan_credentials() {
         [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0     # a skip asked for: silent
         # No binary. Loud rather than silent, but not a blocker: requiring an
         # install to push would break every clone that never wanted the
-        # scanner, and CI scans the full history regardless.
+        # scanner. On a push to this repository whose commit carries
+        # .github/workflows/secret-scan.yml, or to an open pull request's
+        # branch, CI scans the full history in a run of this push (CLAUDE.md,
+        # "Credentials", names the pushes that start none).
         echo "romp pre-push: gitleaks not installed, pushing WITHOUT a secret scan." >&2
         echo "  Install gitleaks 8.25.0 or later (brew install gitleaks, or the release .github/workflows/ci.yml pins)." >&2
         echo "  ROMP_GITLEAKS names a binary that is not on PATH; ROMP_NO_GITLEAKS=1 silences this." >&2

@@ -8,7 +8,9 @@ ffab236bd (run 36308512751) the step took 67 s. The growth is fork PR #780's tra
 a file's tests one after another, and the tests of one file, tools/romp-track-bash-guard.test.mjs, add up to about 1100 s
 in that run's log (the slowest single test 222 s). With the step inside the Shell job, a PR that added more than about three
 minutes of bats time (the job's margin at 1d591384e was 190 s) ran the job past its cap. Raising the Shell cap was declined,
-since it would hide the growth; the step moved to its own job instead.
+since it would hide the growth; the step moved to its own job instead. The Shell cap was raised later, on 2026-10-01, for the
+bats suite's own growth (Run bats alone took 1850 s on Linux in run 36716348831), and check 4 holds the new line; ci.yml's
+comment above that line carries the current figure.
 
 THE PIN IS EXACT EQUALITY, read as text: CI's Python cells install no YAML library, as the other tests/test_ci_*.py modules
 note. This module first held the job through a closed line reader that enumerated the shapes a line could take and the
@@ -38,32 +40,37 @@ literal, and any change to it is red until the literal changes with it, on purpo
    make node skip every test, and a defaults: run: working-directory moves where the command runs. The ruling allowed either
    a check that those two keys are absent or an equality; the list is compared, so a quoted or spaced spelling of either, a
    merge key, a second YAML document (`---`) and any key added later are red with no spelling listed here. The on: block
-   (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES too, since a paths,
-   paths-ignore, branches or types filter there starts no run for the PRs it filters, and a PR with no CI run reads green
-   to scripts/batch.py when its only checks are the label workflows' (ci_of reads success and skipped as success). The
-   value of name and the concurrency block stay free (tests/test_ci_workflow_concurrency.py reads concurrency).
+   (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES too. CI runs on a push to
+   a batch branch, by hand and on the schedule, and on nothing else (the workflow's header): a paths or paths-ignore
+   filter added to push, or its branch pattern narrowed, starts no run for the batch pushes it filters, and
+   scripts/batch.py land then finds no CI run of the batch head and refuses the batch; an added trigger (a pull_request,
+   a tags pattern on push, or main back on push) runs the whole matrix where no landing reads it. The value of name and
+   the concurrency block stay free (tests/test_ci_workflow_concurrency.py reads concurrency, and its CiTriggers reads the
+   triggers and the push filter).
    tests/test_ci_macos_schedule.py still reads the schedule and the dispatch: this equality refuses any change to the block,
    and that module says what the values held must mean (one weekly cron at a quiet hour Pacific, the manual dispatch kept)
    and ties them to every matrix expression's events, so a change made on purpose updates ON_LINES here and must still
    pass that module.
-4. The Shell job's cap line EQUALS SHELL_CAP_LINE (35 minutes): it is the only line at four spaces in that job holding
-   "timeout", so a second copy, bare, quoted or as an explicit key, is red too (one whose quoted key spells the word through
-   an escape is not read here; actionlint and tests/test_ci_sdk_pin.py refuse it). And the Shell job's lines that name
-   node as a word or hold --test EQUAL SHELL_NODE_LINES, the manager handshake step's name line and run line. The ruling
-   asked that the Shell job hold no node --test step, exactly; this module reads that as no node test there but the manager
-   handshake's, whose step stays for T224's reason (it runs inside a check upstream's ruleset requires, so a red handshake
-   blocks the merge there). Here too a `#` line inside a block scalar is read as text, so a node command written into a run
-   block's heredoc counts. And the Shell job's last two steps, its node setup and the manager handshake step, EQUAL
-   SHELL_TAIL, from the job's one setup-node line to its end: with working-directory: tools on the handshake step, node
-   --test matches no file, runs no test and exits 0, and a step's shell:, env: (NODE_OPTIONS), with:, if: or
-   continue-on-error: hides a red the same way, so the two steps are held whole (what a step before them does is not:
-   see "Not held here" below). The node lines are read one line at a time, so among the forms they do not read are a run
-   value in a quoted scalar continued over a line that starts with `#` (content() drops that line as a comment, where
-   YAML reads it as the scalar's text) and a double-quoted run value that spells node or --test through a backslash
-   escape (`\\x6eode -\\x2dtest`, or a word split over an escaped line break); tests/test_ci_sdk_pin.py refuses both
-   forms in ci.yml (a quoted scalar continued past its line; a backslash escape in a double-quoted scalar). Nor is
-   anything bash assembles from the run text read (a backslash-newline, quotes inside a word, a variable): the lines are
-   read as text, and no module reads the shell's result.
+4. The Shell job's cap line EQUALS SHELL_CAP_LINE (60 minutes on macOS, 45 on Linux, in the python job's per-OS form, set
+   on 2026-10-01 with 55 on macOS and moved to 60 on 2026-10-02, each from the measurement in ci.yml's comment above the
+   line, the slowest finished job of its OS; a flat 35 until 2026-10-01): it is the only line at four spaces in that job
+   holding "timeout", so a second copy, bare, quoted or as an explicit key, is red too (one whose quoted key spells the
+   word through an escape is not read here; actionlint and tests/test_ci_sdk_pin.py refuse it). And the Shell job's lines
+   that name node as a word or hold --test EQUAL SHELL_NODE_LINES, the manager handshake step's name line and run line. The
+   ruling asked that the Shell job hold no node --test step, exactly; this module reads that as no node test there but the
+   manager handshake's, whose step stays for T224's reason (it runs inside a check upstream's ruleset requires, so a red
+   handshake blocks the merge there). Here too a `#` line inside a block scalar is read as text, so a node command written
+   into a run block's heredoc counts. And the Shell job's last two steps, its node setup and the manager handshake step,
+   EQUAL SHELL_TAIL, from the job's one setup-node line to its end: with working-directory: tools on the handshake step,
+   node --test matches no file, runs no test and exits 0, and a step's shell:, env: (NODE_OPTIONS), with:, if: or
+   continue-on-error: hides a red the same way, so the two steps are held whole (what a step before them does is not: see
+   "Not held here" below). The node lines are read one line at a time, so among the forms they do not read are a run value
+   in a quoted scalar continued over a line that starts with `#` (content() drops that line as a comment, where YAML reads
+   it as the scalar's text) and a double-quoted run value that spells node or --test through a backslash escape (`\\x6eode
+   -\\x2dtest`, or a word split over an escaped line break); tests/test_ci_sdk_pin.py refuses both forms in ci.yml (a
+   quoted scalar continued past its line; a backslash escape in a double-quoted scalar). Nor is anything bash assembles
+   from the run text read (a backslash-newline, quotes inside a word, a variable): the lines are read as text, and no
+   module reads the shell's result.
 5. The macOS cap, 90, is inside the literal (check 2), so it is pinned by equality with everything else.
 6. Each moved job's name, the text of its name line before the first expression (`Vendored tooling (node --test, ` here;
    tests/test_ci_served_job.py reads the served-pages job's name up to its runner label, `Served pages (pytest, `, since that
@@ -177,15 +184,19 @@ TOP_KEYS = ["name", "on", "concurrency", "jobs"]
 ON_LINES = (
     "on:",
     "  push:",
-    "    branches: [main]",
-    "  pull_request:",
+    "    branches: ['batch/**']",
     "  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)",
     "  schedule:",
     '    - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the same matrix a manual dispatch does',
     "",
 )
-# The Shell job's cap: the only line at four spaces in that job that holds "timeout".
-SHELL_CAP_LINE = "    timeout-minutes: 35"
+# The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
+# the slowest measured or projected job plus 10 minutes, rounded up to a multiple of 5 (ci.yml's comment above the line
+# carries the measurement: Linux 34 min 20 s in run 36998140007, job 110809463925, the slowest among the finished runs on
+# main, the batch branches and the open PRs whose tests will land, its Run bats step 2047 s, so 45; macOS 47 min 39 s in
+# run 36998141959, job 110809474598, the slowest macOS job among those runs, its Run bats step 2840 s, so 60). Fork PR
+# 940 sets the same line.
+SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 45 }}"
 # The Shell job's lines that name node as a word or hold --test: the manager handshake step's name and run lines (T224).
 SHELL_NODE_LINES = (
     "      - name: Manager handshake tests (node --test)",
@@ -559,18 +570,21 @@ class VendoredToolingJob(unittest.TestCase):
     def test_3_the_workflow_triggers_equal_the_expected_literal(self):
         self.assertNoFaults(check_on_block(raw()), (
             "The workflow's on: block, comment-only lines aside, is not ON_LINES (above: the diff and the block as ci.yml has "
-            "it, or the reason it could not be read). A paths, paths-ignore, branches or types filter there starts no CI run "
-            "for the PRs it filters, and scripts/batch.py reads a PR whose only checks are the label workflows' as green, so "
-            "the whole block is held. If the change is meant, replace ON_LINES in tests/test_ci_vendored_job.py with the lines "
-            "printed above, check that tests/test_ci_macos_schedule.py still passes, and say in the commit why the triggers "
-            "changed."))
+            "it, or the reason it could not be read). A paths or paths-ignore filter added to push, or its branch pattern "
+            "narrowed, starts no CI run for the batch pushes it filters (scripts/batch.py land then finds no CI run of the "
+            "batch head and refuses the batch), and an added trigger runs the whole matrix where no landing reads it, so the "
+            "whole block is held. If the change is meant, replace ON_LINES in tests/test_ci_vendored_job.py with the lines "
+            "printed above, check that tests/test_ci_macos_schedule.py and tests/test_ci_workflow_concurrency.py still pass, "
+            "and say in the commit why the triggers changed."))
 
-    def test_4_the_shell_cap_stays_35(self):
+    def test_4_the_shell_cap_is_60_on_macos_and_45_on_linux(self):
         self.assertNoFaults(check_shell_cap(raw()), (
-            "The Shell job's cap changed (above). The vendored tooling step left that job so its 35-minute cap could stay: "
-            "raising it would hide the growth the move was meant to show, and a lower cap can cut a passing macOS cell (Run "
-            "bats alone took about 16 minutes there, the Shell job's comment says). If the change is meant, update "
-            "SHELL_CAP_LINE in tests/test_ci_vendored_job.py and say why in the commit."))
+            "The Shell job's cap changed (above). It is set per OS from a measurement, the slowest measured or projected "
+            "job plus 10 minutes rounded up to a multiple of 5 (ci.yml's comment above the line: Linux 34 min 20 s in run "
+            "36998140007, the slowest among the finished runs on main, the batch branches and the open PRs whose tests "
+            "will land, so 45; macOS 47 min 39 s in run 36998141959, so 60). A higher cap hides growth the vendored "
+            "tooling move was meant to show, and a lower one cuts a passing cell. If the change is meant, measure the job "
+            "again, update SHELL_CAP_LINE in tests/test_ci_vendored_job.py and ci.yml's comment, and say why in the commit."))
 
     def test_4_the_shell_job_runs_no_node_test_but_the_handshake(self):
         self.assertNoFaults(check_shell_node(raw()), (
@@ -718,17 +732,26 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
              ["defaults:", "  run:", "    working-directory: tools", "concurrency:"]),
             (check_top_keys, "a quoted workflow env:", "top", "concurrency:", ["\"env\": {NODE_OPTIONS: x}", "concurrency:"]),
             (check_top_keys, "a second YAML document", None, None, ["---", "env:", "  NODE_OPTIONS: x"]),
-            (check_on_block, "a paths-ignore filter on pull_request", "top", "  pull_request:",
-             ["  pull_request:", "    paths-ignore: [tools/**, vendor/**, hooks/**]"]),
-            (check_on_block, "a paths filter on pull_request", "top", "  pull_request:", ["  pull_request:", "    paths: [kernel/**]"]),
-            (check_on_block, "a branches filter on pull_request", "top", "  pull_request:",
-             ["  pull_request:", "    branches: [release]"]),
-            (check_on_block, "a types filter on pull_request", "top", "  pull_request:", ["  pull_request:", "    types: [closed]"]),
-            (check_on_block, "pull_request dropped", "top", "  pull_request:", []),
-            (check_on_block, "a branches filter on push widened", "top", "    branches: [main]", ["    branches: [main, 'x/**']"]),
+            (check_on_block, "a paths-ignore filter on push", "top", "  push:",
+             ["  push:", "    paths-ignore: [tools/**, vendor/**, hooks/**]"]),
+            (check_on_block, "a paths filter on push", "top", "  push:", ["  push:", "    paths: [kernel/**]"]),
+            (check_on_block, "a tags filter on push", "top", "  push:", ["  push:", "    tags: ['v*']"]),
+            (check_on_block, "the push branch pattern narrowed", "top", "    branches: ['batch/**']", ["    branches: ['batch/x']"]),
+            (check_on_block, "a pull_request trigger added", "top", "  push:", ["  pull_request:", "  push:"]),
+            (check_on_block, "push replaced by pull_request", "top", "  push:", ["  pull_request:"]),
+            (check_on_block, "the push branch filter widened to main", "top", "    branches: ['batch/**']",
+             ["    branches: ['batch/**', main]"]),
             (check_top_keys, "a second, quoted on key", "top", "concurrency:", ["\"on\": [workflow_dispatch]", "concurrency:"]),
-            (check_shell_cap, "the Shell cap 35 to 12", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 12"]),
-            (check_shell_cap, "the Shell cap 35 to 40", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 40"]),
+            (check_shell_cap, "the Shell cap back to the flat 35", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 35"]),
+            (check_shell_cap, "the Shell cap a flat 45", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 45"]),
+            (check_shell_cap, "the macOS Shell cap 60 to 65", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 60", "&& 65")]),
+            (check_shell_cap, "the macOS Shell cap 60 to 55", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 60", "&& 55")]),
+            (check_shell_cap, "the Linux Shell cap 45 to 35", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 45", "|| 35")]),
+            (check_shell_cap, "the Linux Shell cap 45 to 50", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 45", "|| 50")]),
+            (check_shell_cap, "the two Shell caps swapped", "shell", SHELL_CAP_LINE,
+             ["    timeout-minutes: ${{ matrix.os == 'macos-latest' && 45 || 60 }}"]),
+            (check_shell_cap, "the Shell caps keyed on the other OS", "shell", SHELL_CAP_LINE,
+             ["    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 60 || 45 }}"]),
             (check_shell_cap, "a second Shell cap after the steps", "shell", SHELL_NODE_LINES[1],
              [SHELL_NODE_LINES[1], "    \"timeout-minutes\": 90"]),
             (check_shell_node, "the step put back in the Shell job", "shell", SHELL_NODE_LINES[1],

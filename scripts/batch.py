@@ -2,8 +2,8 @@
 """scripts/batch.py: land many PRs as one batch PR with one merge commit.
 
 Member PRs stay ordinary PRs against main. This tool merges their heads, in dependency order, into
-a fresh branch `batch/<name>`, the batcher runs one full sweep at the batch head, and one PR to main
-carries a generated digest. When that PR is merged with a merge commit, GitHub marks every member
+a fresh branch `batch/<name>`, the batcher runs the local sweep (scripts/sweep.py) at the batch head,
+and one PR to main carries a generated digest. When that PR is merged with a merge commit, GitHub marks every member
 merged on its own (a PR is marked merged when its head commits become reachable from its base
 branch through another merge: "indirect merges"). No member is ever merged into another PR's
 branch, and nothing here squashes or rebases: a squash or rebase of the batch would rewrite the
@@ -11,25 +11,42 @@ SHAs, leave every member open, and break retargeting.
 
 Subcommands, in the order a batch goes through them:
 
-  plan       [--labeled] [--name N]   pick the members, order them, predict conflicts, write the plan
+  plan       [--labeled] [--only N]... [--name N]
+                                      pick the members, order them, predict conflicts, write the plan
+                                      (--only N: a single PR lands as a one-member batch)
   assemble   <name> [--without N] [--resolve N] [--repin N|all] [--continue|--abort] [--merge-main]
                                       merge the pinned heads into ../romp-batch-<name> (the branch
                                       is the mutex: refuses if another origin/batch/* exists)
-  verify     <name> [--sweep TEXT]    provenance, pinned heads, bases, ledger check, sweep, own CI
+  verify     <name>                   provenance, pinned heads, bases, main contained, ledger check,
+                                      the sweep result at the batch head's full sha
   summarize  <name>                   create or update the batch PR body; comment on each member
   pull       <name> N [--reason ..]   rebuild without N (and N's dependents), push, re-summarize
-  land       <name> [--auto]          verify again, then merge the batch PR with a merge commit
+  land       <name> [--auto]          verify again, read the batch head's CI run (green or refused),
+                                      then merge the batch PR with a merge commit
   finish     <name>                   confirm members read MERGED, retarget, delete branches, orphans
   bisect     <name> -- <cmd...>       first-parent bisect of the batch chain; names the member
 
-State lives in `<git common dir>/batch/<name>.json` (shared by every worktree of the clone). The
-tool needs git and the GitHub CLI (`gh`, or the binary named by ROMP_GH); it imports nothing beyond
-the standard library. It acts on the clone it lives in (or ROMP_BATCH_REPO), never on the shell's
-cwd, so a misnamed cwd cannot make it assemble the wrong repository.
+State lives in `<git common dir>/batch/<name>.json` (shared by every worktree of the clone), read only as a
+regular file and without waiting (read_state: a FIFO or a symlink there, which a sweep's leg can leave through its
+checkout's alternates, stops the command, naming the file). The tool needs git and the GitHub CLI (`gh`, or the
+binary named by ROMP_GH); it imports nothing beyond the standard library and its sibling scripts/sweep.py, whose reader
+verify uses for the sweep result
+(`<state dir>/sweeps/<full sha>.json`, written by `scripts/sweep.py run`). It acts on the clone it
+lives in, the directory above its scripts/ directory (or ROMP_BATCH_REPO), never on the shell's cwd, so a
+misnamed cwd cannot make it assemble the wrong repository; that directory must hold the clone's .git, and
+one that does not (a mistyped ROMP_BATCH_REPO, a .git removed) stops the command, naming it, rather than
+being resolved to a repository that encloses it.
 
 Contracts the tests hold this file to (tests/test_batch_tool.py):
   - plan orders dependents after their bases and excludes drafts, `major-feature` and `hold`; a
-    `Depends-on` cycle excludes its members (and their dependents), not the plan;
+    `Depends-on` cycle excludes its members (and their dependents), not the plan; plan --only N plans N
+    alone (a single PR lands as a one-member batch), refusing a number that is not an open PR;
+  - plan excludes a candidate whose pinned head has no passing sweep result of its own (read through the
+    reader verify uses, so a member's head owes every leg, the webview legs, pdf-smoke and the served leg
+    included, as a batch head does),
+    naming the case, and its dependents with it; assemble --repin refuses a re-read head without one; both record
+    on the member the pass they read, and the body's members table shows that record, never the author's trailer
+    (a member recorded without one reads "not recorded");
   - assemble refuses when any other `batch/*` ref exists on origin;
   - provenance fails on an undeclared commit and passes on a `batch:` commit;
   - every merge on the chain (a member's or origin/main's) equals the clean merge of its parents,
@@ -39,17 +56,84 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
   - a resolution that took one side wholesale says so, in the digest line and above its diff, which
     runs from the clean merge of the parents to the merge;
   - verify fails when a pinned head moved, and when an assembly did not finish; so does finish;
+  - verify refuses a missing, stale, unfinished, red, invalid, incomplete or unreadable sweep result
+    for the batch head's full sha, one that marks a leg not owed for having no vscode-extension/package.json
+    while the head's tree holds one, or the ledger not owed for having no scripts/upstream-ledger.py while the
+    head's tree holds that script (plan and --repin refuse the same at a member's head), and a batch head
+    that does not contain main as origin has it now (ci.yml does not run on the merge to main, so the tree that
+    lands must be the tree the sweep and the batch branch's CI ran on); a result that marks deps, a webview
+    leg, pdf-smoke or the served leg not owed for any other reason reads invalid, whatever the diff (every head
+    owes the webview legs, pdf-smoke and the served leg), and so does one that marks the ledger not owed for any
+    reason but a missing ledger script;
+    land re-runs verify and refuses the same. The reader reads the result's whole history (append-only
+    runs): a failed run that no later run excused with --flake naming the leg reads red, naming the run and
+    its logs, and a result recorded under another leg environment (the allowlist hash) reads invalid; verify
+    and the body name each invalid run the history holds, with each leg it failed: invalidity voids a run's
+    passes, never its failures, so such a failure needs --flake naming the leg like any other;
+  - land reads main on origin before it retargets any member and once more right before the merge call, and
+    refuses if it moved since verify, naming any member it had retargeted and how to restore its base; what
+    no read can stop, a move between the last read and GitHub's merge (the merge pins the head, not the
+    base) or before an --auto merge fires later (--auto is refused until the repository allows auto-merge
+    and a rule on main gates a merge; the fork had neither on 2026-09-27), finish reports: it fails loudly,
+    after its cleanup, when the merge commit's first parent is not the main verify read, or its second parent
+    not the batch head verify read (a commit pushed after verify and merged by the button), naming both shas
+    and the sweep at the merge commit that is owed;
+  - finish names the batch head's CI run with land's own filtered read (the push run at the landed head, the
+    merge commit's second parent), and reports a read that fails after the merge as unread;
+  - land requires the batch head's CI run green, read from GitHub at land time before anything changes:
+    the newest run of ci.yml from a push to the batch branch at exactly the verified head, whose success counts only
+    when every job of ci.yml at the head has a job run in its latest attempt that passed (the coordinator's decision
+    18: a success over the label checks alone, or over no job run, is not a green run) (by createdAt,
+    then databaseId; a matching row with either, or its attempt, missing or malformed, the zero time
+    included, is refused by name, and so is a list as long as land's limit); a missing, pending or red
+    run, a failed read, or an answer that is not a JSON list of run records (round 2, extra8-3), is refused by name, and a run at another sha, from another event or on another
+    branch does not count. Every other attempt of a push run at that head, the newest run's earlier
+    attempts and every attempt of an older push run of the same sha, that did not pass is refused unless
+    land's --flake names it (a red is not erased by a GitHub re-run or a second push either; one attempt
+    across the runs at the head is excused), and land records the excused attempt in the state for finish;
   - pull N drops N's dependents, unless N already merged into main;
+  - every git process this tool starts itself goes through run_git (tests/test_git_call_census.py holds every place this
+    file starts a process to a named allowlist, on which run_git is the one that starts git), which names the repository
+    the call means, GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE set and GIT_CEILING_DIRECTORIES at the directory above the
+    work tree (but for find_repo's discovery call, which sets the ceiling alone, at the parent of the directory holding
+    .git: repo_root makes it once for the clone, and repo_for before every call made in a batch worktree, each at a
+    directory that must itself hold .git and be git's work tree there, never walked up from), so a .git that git does
+    not recognize fails the call instead of sending git up to an
+    enclosing repository (the 02:43Z ruling, item 1(b)), and bounds its wait at GIT_BOUND, 600 s (item
+    1(a)): a git still running then (waiting on a FIFO at the clone's shallow file, config or HEAD, which a sweep's leg
+    can plant through its checkout's alternates, say) is killed with its process group, and the command stops there with
+    GitBound, a Fail (exit 1) naming the call, except in finish's read of the landed head's CI run, which, the merge
+    having happened, reports any Fail there, GitBound included, as unread after the merge and carries on. The bound is far above the slowest call
+    measured (a member's merge, under a second; the comment at GIT_BOUND gives the figures), and larger than
+    scripts/sweep.py's because a push runs the pre-push hook and a fetch can bring new commits, neither measured.
+    verify's read of the excuse rule runs its git through scripts/sweep.py, at that script's bound. The two processes
+    the tool starts that run git in the clone, scripts/pr-orphans.sh (finish) and the ledger script (verify's check,
+    assemble's row import), start through run_tool, each with the GIT_DIR, GIT_COMMON_DIR, GIT_WORK_TREE and ceiling of
+    the tree it runs in in its environment (the clone for pr-orphans.sh; the batch worktree, or the ledger check's
+    temporary worktree, for the ledger script) and GIT_BOUND with the process-group kill, as run_git's calls have (the
+    closing check wf_3b100f5e-b38, its item 5); finish reports a pr-orphans.sh killed at the bound as unread, the merge
+    having happened, and carries on. Not bounded: bisect's test command, which it runs at the tip, at the base and at
+    each step, and gh, with anything it starts (gh reads the clone's remotes with a git of its own). SIGTERM, SIGHUP
+    and SIGINT (Ctrl-C) stop the tool (but a SIGHUP or SIGINT the tool was started with ignored, as by nohup or as a
+    shell's background job, stays ignored): any process it is waiting on is ended with its process group (a git, a
+    run_tool process, gh or bisect's command, each started in a session of its own, so what it started goes too), each
+    step of the cleanup runs to its end (_cleanup_steps), the cleanup runs for a stop during any step it undoes
+    (bisect's checkout of the base and its git bisect start included), and it exits 128 plus the signal's number
+    (Stopped);
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
 """
 import argparse
 import datetime as _dt
+import errno
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -58,12 +142,21 @@ import time
 BODY_CAP = 65_536          # GitHub's PR body limit, in characters
 RESOLUTION_LINES = 300     # per conflicted merge, in the "Conflict resolutions" details block
 PR_LIST_LIMIT = 200
+CI_WORKFLOW = "ci.yml"     # the workflow whose run of the push to the batch branch land requires green,
+CI_WORKFLOW_NAME = "CI"    # and its `name:`, which gh reports as a run's workflowName
+# The fields land reads of each run gh lists (attempt: the run's latest attempt, whose earlier ones land reads too).
+CI_RUN_FIELDS = "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt,attempt"
 MAIN = "main"
+# What the merge-commit remedies say of `scripts/sweep.py run --python <python>` (round 2, extra9-8): the same text as
+# scripts/sweep.py's PYTHON_REMEDY, which the reader's missing line prints (tests/test_batch_tool.py holds the two equal).
+PYTHON_REMEDY = ("<python>: a Python of the version CI's served step runs, or pass --served-python one as well; "
+                 "docs/batching.md, batcher step 3")
 REMOTE = "origin"
 LABEL_MAJOR = "major-feature"
 LABEL_HOLD = "hold"
 LABEL_LAND = "land"
 LABEL_BATCH = "batch"
+NOT_ONLY = "not named by plan --only"
 # `docs` is upstream's name for tier 0 (renamed from tests-only on 2026-09-08; upstream's
 # scripts/ci/tier_policy.py still reads tests-only as an alias), so a PR labeled either way is tier 0.
 # The fork's .github/workflows/pr-tier.yml counts the same labels (plus LABEL_BATCH).
@@ -81,7 +174,8 @@ _DEPENDS_ON = re.compile(r"^\s*Depends-on:\s*(.*)$", re.IGNORECASE)
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _PR_TRAILER = re.compile(r"<!--\s*romp-pr:\s*(\{.*?\})\s*-->", re.DOTALL)
 _BATCH_TRAILER = re.compile(r"<!--\s*romp-batch:\s*(\{.*?\})\s*-->", re.DOTALL)
-_FIRST_BAD = re.compile(r"^([0-9a-f]{40}) is the first '?bad'? commit", re.MULTILINE)  # git 2.43 says bad; 2.4x+ says 'bad'
+# git 2.43.0 writes "is the first bad commit"; 2.55.0, CI's runner's in run 36934414430, "is the first 'bad' commit"
+_FIRST_BAD = re.compile(r"^([0-9a-f]{40}) is the first '?bad'? commit", re.MULTILINE)
 # A conflict marker line in a file's content. `=======` alone is not one: a Markdown heading underline
 # is a legitimate line of exactly that; the `<<<<<<<`, `|||||||` and `>>>>>>>` lines are not.
 _CONFLICT_MARKER = re.compile(r"^(?:<{7}|>{7}|\|{7})(?: |$)", re.MULTILINE)
@@ -98,19 +192,419 @@ class Fail(Exception):
 # ── process helpers ──────────────────────────────────────────────────────────
 
 def _run(cmd, cwd=None, check=True, env=None, input_text=None):
-    proc = subprocess.run(cmd, cwd=cwd, env=env, input=input_text, text=True,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    """A process that is not git, run without a bound (gh, which reads the clone's remotes with a git of its own), its
+    output read; every git call goes through run_git, and the two processes this tool starts that run git in the clone,
+    scripts/pr-orphans.sh and the ledger script, through run_tool. It starts under the stop hold, as run_git's git does
+    (the closing check wf_fb19febe-36b, its item 4), and in a session of its own, as run_tool's process does, so any
+    exception while it runs ends it with its process group, gh's git included (_held_wait)."""
+    _hold_stops()
+    try:
+        p = subprocess.Popen(cmd, cwd=cwd, env=env, text=True, start_new_session=True,
+                             stdin=None if input_text is None else subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+    except BaseException:
+        _release_stops()
+        raise
+    out, err = _held_wait(p, input_text)
+    proc = subprocess.CompletedProcess(cmd, p.returncode, out, err)
     if check and proc.returncode != 0:
         raise Fail("%s failed (%d):\n%s%s" % (" ".join(cmd), proc.returncode, proc.stdout, proc.stderr))
     return proc
 
 
+def run_command(cmd, cwd):
+    """The exit status of `cmd` run in `cwd`, bisect's command: with this tool's stdin, stdout and stderr, and without a
+    bound, since a test command can rightly take longer than any git call. It starts under the stop hold, as _run's
+    process does (the closing check wf_fb19febe-36b, its item 4), and in a session of its own, so any exception while it
+    runs ends it with its process group, what it started included (_held_wait). A session, not only a group: a group of
+    its own in this tool's session would be a background job of the terminal there, stopped (SIGTTIN) at its first read
+    of it. In a session of its own the terminal is not its controlling terminal: it reads and writes the descriptors it
+    inherits without job control, a prompt it opens /dev/tty for fails (run_git's git has no terminal either), and a
+    Ctrl-C at the terminal reaches this tool, whose stop then ends the command's group."""
+    _hold_stops()
+    try:
+        p = subprocess.Popen(cmd, cwd=cwd, start_new_session=True)
+    except BaseException:
+        _release_stops()
+        raise
+    _held_wait(p)
+    return p.returncode
+
+
+def _held_wait(p, input_text=None):
+    """(stdout, stderr) of `p`, a process _run or run_command started in a session of its own, once it ends. Any
+    exception while it waits ends it with its process group first (_end_group: SIGTERM to the group, SIGKILL to what is
+    left of it GIT_TERM_GRACE seconds later, `p` reaped and its pipes closed unread; its stdin, when it has one, is
+    closed too), then propagates: a stop held while `p` started among them, which _release_stops raises here, inside the
+    try, and a stop (Ctrl-C among them) that arrives while it runs. The group goes, as run_tool's does, so what `p`
+    started goes with it: when `p` was started in this tool's own group and killed alone, as subprocess.run kills its
+    child, gh's git or a child of bisect's command waiting on a FIFO ran on after the stop (the focused re-check
+    wf_e3f48b16-6ec; the 13:24Z ruling of 2026-10-02 on PR 926, its item 2)."""
+    try:
+        _release_stops()
+        return p.communicate(input_text)
+    except BaseException:
+        try:
+            _end_group(p)
+        finally:
+            if p.stdin is not None:
+                try:
+                    p.stdin.close()
+                except OSError:
+                    pass
+        raise
+
+
+# The 02:43Z ruling, item 1(a): every git process this tool starts has a bounded wait, GIT_BOUND seconds, and starts
+# through run_git, the one helper that starts one. A git that has not ended by then is killed with its process group
+# (each starts in a session of its own, so it has no terminal to prompt on: a credential prompt fails at once instead of
+# waiting; the group gets SIGTERM first, so git removes its own lock files, and SIGKILL GIT_TERM_GRACE seconds later if
+# anything of it is left: _end_group) and the call raises GitBound, a Fail naming the call, so plan, assemble, verify, land and finish refuse there
+# rather than hang on a file a leg left in the batcher's repository (a FIFO at its config, HEAD, index, info/exclude,
+# shallow file or objects/info/alternates), except finish's read of the landed head's CI run, which reports any Fail
+# there, GitBound included, as unread after the merge, and carries on.
+# The bound is far above the slowest call measured on this project's clone on 2026-10-01: a member's merge in the batch
+# worktree 0.74 s, a detached worktree add (the ledger check's) 0.58 s, ls-remote of origin 0.39 to 0.49 s, a fetch with
+# nothing new 0.22 s, merge-tree of a batch chain's merges at most 0.12 s, every other read 0.02 s or less. It is larger
+# than scripts/sweep.py's GIT_BOUND, whose calls are all local, because this tool's include a push through the clone's
+# pre-push hook, which scans the pushed commits, and a fetch that brings new commits, neither measured here.
+# tests/test_git_call_census.py holds every place this file starts a process to a named allowlist, run_git first.
+GIT_BOUND = 600
+# The 02:43Z ruling, item 1(b): the variables that tell git where a repository is (git's own list of the repository's
+# local variables, less the configuration and replace-ref ones, plus the discovery ones). Each git call drops the inherited ones and
+# names the repository it means: GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE explicit, GIT_CEILING_DIRECTORIES above it.
+GIT_LOCATION_ENV = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_INDEX_FILE",
+                    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX", "GIT_SHALLOW_FILE",
+                    "GIT_GRAFT_FILE", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM")
+
+
+class GitBound(Fail):
+    """A git call that did not end within GIT_BOUND seconds, killed with its process group: a refusal naming the call."""
+
+
+# The signals that stop the tool (the closing check wf_3b100f5e-b38, its item 4): each raises Stopped, a BaseException
+# as scripts/sweep.py's Stopped is, so the except path of run_git, run_tool, _run and run_command ends the process it
+# started, which runs in a session of its own that no signal sent to batch.py or to its terminal's process group
+# reaches, with that process's group (_bounded_wait, _held_wait; _run and run_command started gh and bisect's command in
+# batch.py's own group and killed that process alone until the 13:24Z ruling of 2026-10-02 on PR 926, its item 2), and
+# every finally block runs (the ledger check's temporary worktree is removed); main prints the signal and exits 128 plus
+# its number. SIGINT is one of them (the 05:30Z ruling of 2026-10-02 on PR 926, its item 3), as in scripts/sweep.py, so
+# Ctrl-C runs the same cleanup as SIGTERM and SIGHUP.
+# Before, a Ctrl-C raised Python's KeyboardInterrupt, which _cleanup_steps did not catch, so one that landed inside a
+# cleanup step ended the cleanup there. A SIGHUP or SIGINT that batch.py was started with ignored (IGNORE_INHERITED:
+# nohup ignores SIGHUP, a non-interactive shell starts a background job with SIGINT ignored) stays ignored, as in
+# scripts/sweep.py, since its caller chose not to have the command stopped by it.
+# Every process the tool starts is started under the stop hold (the closing check wf_fb19febe-36b, its item 4; the
+# census in tests/test_git_call_census.py holds every launch site to it): a stop that arrives while run_git, run_tool,
+# _run or run_command starts its process is held until that process is started and the call is inside the try that ends
+# it (_hold_stops, _release_stops), and raised there: raised as it arrived, between the start and that try, it ended the
+# tool with the process running on, never ended (the verify pass at the wf_3b100f5e-b38 build, its code finding 2: 9 of
+# 60 SIGTERMs sent in the first 6 ms of a run_git, at 217 to 579 microseconds, left the git running after batch.py
+# exited 143; the closing check wf_fb19febe-36b found the same of gh and bisect's command, which subprocess.run
+# started). The git of the excuse rule, which scripts/sweep.py's run_git starts in this process, is held the same way:
+# sweep_reader binds that module's hold to this one.
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+# The stop signals batch.py leaves ignored when its caller started it with them ignored; SIGTERM always stops it.
+IGNORE_INHERITED = (signal.SIGHUP, signal.SIGINT)
+# Whether a process start is in progress (_hold_stops), and the first stop signal that arrived meanwhile, or None.
+_holding = False
+_held = None
+
+
+class Stopped(BaseException):
+    """A stop signal (STOP_SIGNALS) reached the tool: any process it was waiting on is killed and its cleanup runs on the
+    way out, each step of it to its end (_cleanup_steps)."""
+
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _on_stop(signum, _frame):
+    # the first stop signal wins: one that arrives during the cleanup it started is ignored, so the cleanup runs to its end
+    for s in STOP_SIGNALS:
+        signal.signal(s, signal.SIG_IGN)
+    _stop(signum)
+
+
+def _stop(signum):
+    """Raise Stopped for `signum`, or, while a process is being started (_hold_stops), hold it for _release_stops; a later
+    one held meanwhile is dropped, the first wins."""
+    global _held
+    if _holding:
+        if _held is None:
+            _held = signum
+        return
+    raise Stopped(signum)
+
+
+def _hold_stops():
+    """Hold every stop signal from here until _release_stops: called just before each process this tool starts
+    (run_git's git, run_tool's script, _run's gh, run_command's bisect command; tests/test_git_call_census.py's
+    unheld_launches finds a start without it), and before the git of scripts/sweep.py's run_git in this process, whose
+    hold sweep_reader binds to this one."""
+    global _holding
+    _holding = True
+
+
+def _release_stops():
+    """End the hold, and raise the stop held during it, if one was: called inside the try that ends the process once it is
+    started, so that process is ended as on any other stop (or, when the start failed, on the way out of it)."""
+    global _holding, _held
+    _holding = False
+    held, _held = _held, None
+    if held is not None:
+        raise Stopped(held)
+
+
+def _cleanup_steps(*steps):
+    """Run each cleanup step (a function of no arguments) to its end, in order, then raise the stop that arrived during
+    them, if one did. A stop (SIGTERM, SIGHUP or SIGINT) that lands inside a step (as the step's git starts, say, which
+    the stop then ends with its group) raises Stopped there; the step runs again from its start, now with the stop
+    signals ignored (_on_stop ignores every one after the first), and so do the steps after it. Before this, such a
+    stop ended the cleanup there: bisect left the batch worktree detached at the base or mid-bisect, and the ledger
+    check left its temporary worktree registered, while main said the cleanup ran (the verify pass at the closing check
+    wf_fb19febe-36b's build, its code finding 4). scripts/sweep.py's _finish runs its cleanup the same way."""
+    stopped = []
+    for step in steps:
+        try:
+            step()
+        except Stopped as e:
+            stopped.append(e)
+            step()
+    if stopped:
+        raise stopped[0]
+
+
+def install_stop_handlers(replaced):
+    """Give SIGCHLD its default action, and make STOP_SIGNALS raise Stopped, leaving a SIGHUP or SIGINT the process was
+    started with ignored (IGNORE_INHERITED) as it is; each handler it replaces is recorded in `replaced` ({signal:
+    handler}) before it is replaced, and main puts them back when the command ends. An ignored SIGCHLD survives exec,
+    and under it the kernel reaps each child as it exits, so a wait finds no exit status to read and subprocess reports
+    0 whatever the process returned: started so, batch.py read every failing git, script, gh or bisect command as one
+    that passed (the focused re-check wf_e3f48b16-6ec: verify read its git cat-file -e of the ledger script as finding
+    it, and the failed git worktree add that followed as done; the 13:24Z ruling of 2026-10-02 on PR 926, its item 3).
+    scripts/sweep.py's main sets the same default (install_stop_signals)."""
+    replaced[signal.SIGCHLD] = signal.getsignal(signal.SIGCHLD)
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    for s in STOP_SIGNALS:
+        current = signal.getsignal(s)
+        if s in IGNORE_INHERITED and current == signal.SIG_IGN:
+            continue
+        replaced[s] = current
+        signal.signal(s, _on_stop)
+
+
+class GitRepo:
+    """The repository a git call means, named explicitly (the 02:43Z ruling, item 1(b)): its work tree, git dir and common
+    dir, each absolute, and the ceiling above it. A .git git does not recognize (refs/ removed, objects/ a file, HEAD
+    removed, .git removed) then fails the call as "not a git repository" instead of sending git up to an enclosing
+    repository. The ceiling alone stops that walk at the work tree, for a call made there; the explicit names, beside it,
+    keep each call on the repository find_repo found: git reads no .git file again (so one rewritten after repo_root's
+    discovery, in a clone that is a linked worktree, does not move a call to another repository: BatchGitBound's
+    git-file pin, red when the three are dropped), and a core.worktree in the repository's config moves no call's work
+    tree (one present at the discovery, naming another directory than the one holding .git, is refused by find_repo, so
+    the work tree named is that directory). They do not keep every read off a commondir file: git 2.43 reads the git
+    dir's commondir file when a call reads a ref, whatever GIT_COMMON_DIR says (measured on 2026-10-01), so in a linked
+    worktree's git dir that file is read by such a call, and a FIFO there ends it at GIT_BOUND, naming it. git_dir None
+    is the discovery call (find_repo), which sets only the ceiling."""
+
+    def __init__(self, work_tree, git_dir, common_dir, ceiling):
+        self.work_tree, self.git_dir, self.common_dir, self.ceiling = work_tree, git_dir, common_dir, ceiling
+
+
+# The repositories repo_root found, by the real path it returned: the batcher's clone, read once per process.
+_REPOS = {}
+
+
+def _git_env(repo, extra=None):
+    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION_ENV}
+    env.update(extra or {})
+    env["GIT_CEILING_DIRECTORIES"] = repo.ceiling
+    if repo.git_dir is not None:
+        env.update(GIT_DIR=repo.git_dir, GIT_COMMON_DIR=repo.common_dir, GIT_WORK_TREE=repo.work_tree)
+    return env
+
+
+def run_git(args, cwd, repo=None, env=None, text=True):
+    """`git <args>` in `cwd`, in the repository `repo` names (default: repo_for(cwd)), as a CompletedProcess: the one way
+    this tool starts git. stdin is closed, `env` is added to the environment, and the process starts in a session of its
+    own and has GIT_BOUND seconds to end; one that has not is killed with its process group and reaped, and GitBound is
+    raised naming the call. Any other exception while it runs (Stopped, which SIGTERM, SIGHUP and SIGINT raise, among
+    them) kills it the same way first."""
+    repo = repo or repo_for(cwd)
+    argv = ["git", *args]
+    _hold_stops()
+    try:
+        p = subprocess.Popen(argv, cwd=cwd, env=_git_env(repo, env), text=text, start_new_session=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except BaseException:
+        _release_stops()
+        raise
+    out, err = _bounded_wait(p, "git " + " ".join(args), cwd)
+    return subprocess.CompletedProcess(argv, p.returncode, out, err)
+
+
+def run_tool(cmd, cwd, repo=None):
+    """`cmd` in `cwd`, a process that is not git but runs git in the clone (scripts/pr-orphans.sh, the ledger script),
+    as a CompletedProcess, started as run_git starts git (the closing check wf_3b100f5e-b38, its item 5): the repository
+    `repo` names (default: repo_for(cwd)) explicit in its environment, GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE set and
+    GIT_CEILING_DIRECTORIES above it, so every git it starts reads that repository and none walks up from its cwd;
+    stdin closed; in a session of its own; and GIT_BOUND seconds to end, after which it is killed with its process
+    group, the git it is waiting on included, and GitBound is raised naming it. Any other exception while it runs
+    (Stopped among them) kills it the same way first."""
+    repo = repo or repo_for(cwd)
+    _hold_stops()
+    try:
+        p = subprocess.Popen(cmd, cwd=cwd, env=_git_env(repo), text=True, start_new_session=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except BaseException:
+        _release_stops()
+        raise
+    out, err = _bounded_wait(p, " ".join(cmd), cwd)
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
+def _bounded_wait(p, what, cwd):
+    """(stdout, stderr) of `p`, a process run_git or run_tool started in a session of its own, once it ends within
+    GIT_BOUND seconds; one that has not is ended with its process group (_end_group), and GitBound is raised naming
+    `what` and `cwd`. Any other exception while it waits ends it the same way first, then propagates: a stop held while
+    `p` started among them, which _release_stops raises here, inside the try."""
+    try:
+        _release_stops()
+        return p.communicate(timeout=GIT_BOUND)
+    except BaseException as e:
+        _end_group(p)
+        if isinstance(e, subprocess.TimeoutExpired):
+            raise GitBound("%s in %s did not end within %d s and was killed" % (what, cwd, GIT_BOUND)) from None
+        raise
+
+
+# How long a process run_git or run_tool ends (at the bound, or on a stop), or one _run or run_command ends (on a stop;
+# neither has a bound), has after SIGTERM to its process group before what is left of the group gets SIGKILL. SIGTERM
+# comes first because git's own handlers for it remove what the git had made and not finished: its lock files, and a
+# worktree it was adding with that worktree's registration. A SIGKILL leaves them: the next git that wants the lock
+# fails on it ("index.lock: File exists"; assemble's next run did, after its worktree add was killed at the bound), and
+# a registration stays locked ("initializing"), which neither git worktree prune nor git worktree remove --force clears
+# (the verify pass at the wf_3b100f5e-b38 build, its code finding 1). Measured on 2026-10-01 (git 2.43.0): a git
+# worktree add waiting on a FIFO at info/exclude exited on SIGTERM with its registration and its half-made tree removed;
+# under SIGKILL both stayed.
+GIT_TERM_GRACE = 10
+
+
+def _end_group(p):
+    """End `p`, started in a session of its own, with its process group: SIGTERM to the group, then wait until the group
+    is gone (`p` exited and reaped and no process left in its group), at most GIT_TERM_GRACE seconds, and SIGKILL what
+    is left of it then; `p` is reaped and its pipes closed unread (a child still holding one would keep a read
+    waiting). Any exception during the wait (a stop that arrives then, say) still gets the SIGKILL and the reap."""
+    _signal_group(p.pid, signal.SIGTERM)
+    try:
+        end = time.monotonic() + GIT_TERM_GRACE
+        while _group_left(p) and time.monotonic() < end:
+            time.sleep(0.01)
+    finally:
+        if _group_left(p):
+            _signal_group(p.pid, signal.SIGKILL)
+        p.wait()
+        for f in (p.stdout, p.stderr):
+            if f is not None:
+                f.close()
+
+
+def _signal_group(pgid, sig):
+    try:
+        os.killpg(pgid, sig)
+    except OSError:
+        pass
+
+
+def _group_left(p):
+    """Whether anything of `p`'s process group is left: `p` still running, or, once it has exited and been reaped, any
+    other process in its group (one this process adopted that has exited is reaped here, so it does not count)."""
+    if p.poll() is None:
+        return True
+    try:
+        while os.waitpid(-p.pid, os.WNOHANG)[0]:
+            pass
+    except ChildProcessError:
+        pass
+    try:
+        os.killpg(p.pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def find_repo(start):
+    """The GitRepo of the repository whose work tree is the directory `start`, whose real path must exist and hold a .git
+    entry (os.path.lexists, nothing opened): the clone (ROMP_BATCH_REPO, or the directory above the scripts/ directory
+    this file is in), a batch worktree, the ledger check's tree. None of them is walked up from, so one that does not
+    exist, or whose .git is gone, is a Fail naming it and is never resolved to a repository that encloses it: the clone
+    since the closing check wf_3b100f5e-b38, its item 1; a batch worktree and the ledger check's tree were read without
+    a walk before it, since the 02:43Z ruling, item 1(b), and a removed batch worktree is pinned (the closing check
+    wf_fb19febe-36b, its item 6). git reads it there, `rev-parse --show-toplevel --absolute-git-dir --git-common-dir`
+    with GIT_CEILING_DIRECTORIES at its parent, so a .git git does not recognize is a Fail naming the directory and
+    never sends git on to an enclosing repository; and the directory is a Fail unless git's work tree
+    there is that directory itself (same_dir, by identity), so a core.worktree in the repository's config that names
+    another directory is refused here rather than taken as the work tree of every later call."""
+    d = os.path.realpath(start)
+    if not os.path.lexists(os.path.join(d, ".git")):
+        why = ("there is no such directory" if not os.path.lexists(d) else "it is not a directory" if not os.path.isdir(d)
+               else "no .git in it")
+        raise Fail("%s is not a git working tree: %s" % (start, why))
+    p = run_git(["rev-parse", "--path-format=absolute", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"], d,
+                repo=GitRepo(d, None, None, os.path.dirname(d)))
+    found = p.stdout.splitlines() if p.returncode == 0 else []
+    if len(found) != 3:
+        raise Fail("%s is not a git working tree that git recognizes (%s)" % (d, (p.stderr or p.stdout).strip()))
+    top, git_dir, common = found
+    if not same_dir(top, d):
+        raise Fail("%s is not the work tree git reads for the .git in it: git's work tree there is %s (a core.worktree in "
+                   "the repository's config names it); give the directory that holds .git and is its work tree" % (d, top))
+    return GitRepo(top, git_dir, common, os.path.dirname(top))
+
+
+def same_dir(a, b):
+    """Whether the paths `a` and `b` name one directory, compared by identity (os.path.samefile: the same device and
+    inode), not by their real paths' text: git prints its work tree as getcwd gives it, which on a case-insensitive
+    filesystem is the case on disk, not the case the path was given in, and os.path.realpath does not change a path's
+    case (the closing check wf_fb19febe-36b, its item 9). False when either cannot be stat'ed."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def repo_for(cwd):
+    """The GitRepo a call in `cwd` means: the batcher's clone as repo_root found it, else find_repo(cwd), read again on
+    every call, since this tool adds and removes worktrees as it goes."""
+    return _REPOS.get(os.path.realpath(cwd)) or find_repo(cwd)
+
+
+def git_proc(*args, cwd=None, check=True):
+    """run_git's CompletedProcess, and with `check` a Fail naming the call when it exits nonzero."""
+    proc = run_git(args, cwd)
+    if check and proc.returncode != 0:
+        raise Fail("git %s failed (%d):\n%s%s" % (" ".join(args), proc.returncode, proc.stdout, proc.stderr))
+    return proc
+
+
 def git(*args, cwd=None, check=True):
-    return _run(["git", *args], cwd=cwd, check=check).stdout.strip()
+    return git_proc(*args, cwd=cwd, check=check).stdout.strip()
 
 
 def git_ok(*args, cwd=None):
-    return _run(["git", *args], cwd=cwd, check=False).returncode == 0
+    """Whether `git <args>` exits 0; False too when `cwd` holds no repository git recognizes. A git that does not end
+    within GIT_BOUND still raises GitBound: a call that was killed is not an answer."""
+    try:
+        repo = repo_for(cwd)
+    except GitBound:
+        raise
+    except Fail:
+        return False
+    return run_git(args, cwd, repo=repo).returncode == 0
 
 
 def gh_bin():
@@ -135,16 +629,17 @@ def gh_json(*args, cwd=None):
 # ── repository layout ────────────────────────────────────────────────────────
 
 def repo_root():
-    """The clone this script acts on: ROMP_BATCH_REPO, else the clone the script file lives in."""
+    """The clone this script acts on: ROMP_BATCH_REPO, else the clone the script file lives in, the directory above its
+    scripts/ directory; each must be the directory holding the clone's .git (find_repo: neither is walked up from)."""
     override = os.environ.get("ROMP_BATCH_REPO")
-    if override:
-        return os.path.realpath(override)
-    here = os.path.dirname(os.path.realpath(__file__))
-    return git("rev-parse", "--show-toplevel", cwd=here)
+    repo = find_repo(override if override else os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    root = repo.work_tree
+    _REPOS[root] = repo
+    return root
 
 
 def common_dir(root):
-    return git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=root)
+    return repo_for(root).common_dir
 
 
 def state_dir(root):
@@ -157,12 +652,56 @@ def state_path(root, name):
     return os.path.join(state_dir(root), name + ".json")
 
 
+# How read_state opens a state file: no symlink followed (O_NOFOLLOW), no wait for a FIFO's writer (O_NONBLOCK), and
+# no terminal made this process's controlling terminal (O_NOCTTY), as scripts/sweep.py's open_regular opens.
+_STATE_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY
+
+
+def read_state(path):
+    """The bytes of the batch state file at `path`, or None when nothing is there: os.lstat first, and anything but a
+    regular file (a FIFO, a symlink, a directory) is a Fail naming the path and what is there, never opened; then an open
+    with _STATE_READ_FLAGS, read only when fstat finds a regular file, so one swapped in after the lstat is refused the
+    same way. The state lives in the clone's common dir, which a sweep's leg reaches through its checkout's alternates:
+    a FIFO there, opened by name, held verify and assemble without end (the verify pass at PR 926's build head, its code
+    finding 1)."""
+    kinds = {stat.S_IFIFO: "a FIFO", stat.S_IFLNK: "a symlink", stat.S_IFDIR: "a directory", stat.S_IFCHR: "a character device",
+             stat.S_IFBLK: "a block device", stat.S_IFSOCK: "a socket"}
+
+    def refuse(mode):
+        raise Fail("the batch state %s cannot be read (%s, not a regular file); move it aside and plan again"
+                   % (path, kinds.get(stat.S_IFMT(mode), "a file of another type")))
+    try:
+        st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        refuse(st.st_mode)
+    try:
+        fd = os.open(path, _STATE_READ_FLAGS)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            refuse(stat.S_IFLNK)
+        raise
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            refuse(mode)
+        f = os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+    with f:
+        return f.read()
+
+
 def load_state(root, name):
     p = state_path(root, name)
-    if not os.path.exists(p):
+    data = read_state(p)
+    if data is None:
         raise Fail("no plan named %s (%s); run `scripts/batch.py plan` first" % (name, p))
-    with open(p) as f:
-        return json.load(f)
+    return json.loads(data.decode("utf-8"))
 
 
 def save_state(root, state):
@@ -211,7 +750,7 @@ def short(sha):
 
 # ── PR data ──────────────────────────────────────────────────────────────────
 
-PR_FIELDS = "number,title,body,labels,baseRefName,headRefName,headRefOid,isDraft,mergeable,statusCheckRollup,url,state"
+PR_FIELDS = "number,title,body,labels,baseRefName,headRefName,headRefOid,isDraft,mergeable,url,state"
 
 
 def label_names(pr):
@@ -261,31 +800,6 @@ def parse_depends_on(body):
             nums = re.findall(r"\d+", rest)
         out.update(int(x) for x in nums)
     return sorted(out)
-
-
-def ci_of(pr):
-    """One word for the PR's own CI at its head: success, failure, pending, or none.
-
-    `statusCheckRollup` mixes CheckRun entries (status/conclusion) with StatusContext entries
-    (state); both spellings are read. An empty rollup on a CONFLICTING PR is the plan's "none (was
-    conflicting)": GitHub starts no run for a PR it cannot merge."""
-    rollup = pr.get("statusCheckRollup") or []
-    if not rollup:
-        return "none (was conflicting)" if pr.get("mergeable") == "CONFLICTING" else "none"
-    words = set()
-    for c in rollup:
-        if c.get("__typename") == "StatusContext" or "state" in c:
-            words.add((c.get("state") or "").upper())
-        else:
-            if (c.get("status") or "").upper() != "COMPLETED":
-                words.add("PENDING")
-            else:
-                words.add((c.get("conclusion") or "").upper())
-    if words & {"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}:
-        return "failure"
-    if words & {"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED", ""}:
-        return "pending"
-    return "success"
 
 
 def sensitive_paths(paths):
@@ -401,7 +915,7 @@ def predict_conflicts(root, base_sha, ordered, cands):
     acc = base_sha
     for n in ordered:
         m = cands[n]
-        proc = _run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", acc, m["head"]], cwd=root, check=False)
+        proc = git_proc("merge-tree", "--write-tree", "--name-only", "--no-messages", acc, m["head"], cwd=root, check=False)
         lines = proc.stdout.splitlines()
         if proc.returncode == 0 and lines:
             tree = lines[0]
@@ -432,6 +946,10 @@ def cmd_plan(args):
                        % (name, ", ".join("#%d" % n for n in old.get("pulled", [])) or "none"), code=2)
     prs = gh_json("pr", "list", "--state", "open", "--limit", str(PR_LIST_LIMIT), "--json", PR_FIELDS, cwd=root)
     by_n = {pr["number"]: pr for pr in prs}
+    only = sorted(set(args.only or []))
+    absent = [n for n in only if n not in by_n]
+    if absent:
+        raise Fail("--only %s: not an open PR" % ", ".join("#%d" % n for n in absent), code=2)
 
     excluded = {}   # n -> reason
     cands = {}
@@ -447,6 +965,8 @@ def cmd_plan(args):
             excluded[n] = "a batch PR"
         elif args.labeled and LABEL_LAND not in labels:
             excluded[n] = "not labeled %s (plan --labeled)" % LABEL_LAND
+        elif only and n not in only:
+            excluded[n] = NOT_ONLY
         else:
             trailer, terr = parse_trailer(pr.get("body"))
             cands[n] = {
@@ -455,7 +975,7 @@ def cmd_plan(args):
                 "labels": labels, "tier": tier_of(labels),
                 "depends_on": parse_depends_on(pr.get("body")),
                 "trailer": trailer, "trailer_error": terr,
-                "mergeable": pr.get("mergeable"), "ci": ci_of(pr),
+                "mergeable": pr.get("mergeable"),
                 "touches": [], "predicted_conflict": None,
             }
     # A base that is another open PR's branch is a dependency on that PR (and if that PR is not a
@@ -481,6 +1001,15 @@ def cmd_plan(args):
         else:
             excluded[n] = "base %s is neither %s nor a candidate's branch" % (b, MAIN)
         del cands[n]
+    # A member owes a passing sweep of its own head before its review and its closing check, so plan reads it
+    # through the reader verify uses: a candidate without one is left out with the case named (and its dependents
+    # with it, through the fixpoint below).
+    sweep = sweep_reader()
+    for n, m in list(cands.items()):
+        why, m["sweep"] = member_sweep(root, sweep, m)
+        if why:
+            excluded[n] = "no passing sweep at its head (%s)" % why
+            del cands[n]
     # A dependency that is not a candidate takes its dependents out too (failure mode 7), unless it
     # already merged into main: then it is satisfied by the base every batch starts from, and the
     # dependent stays (docs tell authors to leave `Depends-on` in the body; it must not strand them).
@@ -553,8 +1082,12 @@ def cmd_plan(args):
                                                          (" with " + ", ".join("#%d" % k for k in pc["with"])) if pc["with"] else ""))
         print("  #%d %s @%s [%s]%s" % (n, m["title"], short(m["head"]), m["tier"] or "unlabeled",
                                      ("  " + "; ".join(flags)) if flags else ""))
+    others = [row["n"] for row in state["excluded"] if row["reason"] == NOT_ONLY]
     for row in state["excluded"]:
-        print("  excluded #%d: %s" % (row["n"], row["reason"]))
+        if row["reason"] != NOT_ONLY:
+            print("  excluded #%d: %s" % (row["n"], row["reason"]))
+    if others:
+        print("  excluded, %s: %s" % (NOT_ONLY, ", ".join("#%d" % n for n in others)))
     missing = [n for n in ordered if cands[n]["trailer"] is None]
     if missing:
         print("message the authors once (trailer missing): %s" % ", ".join("#%d" % n for n in missing))
@@ -610,7 +1143,7 @@ def member_rows_added(root, base_sha, head, path=UPSTREAM_MD):
     """The table rows a member ADDS to UPSTREAM.md against its merge base, and whether that is all
     it does to the file. (added_rows, only_rows)."""
     mb = git("merge-base", base_sha, head, cwd=root)
-    diff = _run(["git", "--literal-pathspecs", "diff", "--unified=0", mb, head, "--", path], cwd=root, check=False).stdout
+    diff = git_proc("--literal-pathspecs", "diff", "--unified=0", mb, head, "--", path, cwd=root, check=False).stdout
     rows, other = [], False
     for line in diff.splitlines():
         if line.startswith(("+++", "---", "@@", "diff ", "index ")):
@@ -642,7 +1175,7 @@ def convert_ledger_rows(root, wt, state, m):
     if not rows or not only_rows:
         return None
     for row in rows:
-        proc = _run([sys.executable, LEDGER_SCRIPT, "import", "--row", row], cwd=wt, check=False)
+        proc = run_tool([sys.executable, LEDGER_SCRIPT, "import", "--row", row], wt)
         if proc.returncode != 0:
             log(state, "#%d: import --row failed: %s" % (m["n"], (proc.stderr or proc.stdout).strip()[:300]))
             return None
@@ -664,7 +1197,7 @@ def staged_paths(wt, paths):
     if not paths:
         return []
     wanted, out = set(paths), []
-    for entry in _run(["git", "--literal-pathspecs", "ls-files", "--stage", "-z", "--", *paths], cwd=wt).stdout.split("\0"):
+    for entry in git_proc("--literal-pathspecs", "ls-files", "--stage", "-z", "--", *paths, cwd=wt).stdout.split("\0"):
         meta, _, path = entry.partition("\t")
         if path in wanted and meta.split()[2] == "0":
             out.append(path)
@@ -693,7 +1226,7 @@ def resolution_diff(cwd, merge, paths):
     if mt is None:
         return None
     # --literal-pathspecs: a resolution path with [ * ? in its name is a file name, not a pattern.
-    return _run(["git", "--literal-pathspecs", "diff", "--no-color", mt, merge + "^{tree}", "--", *paths], cwd=cwd, check=False).stdout
+    return git_proc("--literal-pathspecs", "diff", "--no-color", mt, merge + "^{tree}", "--", *paths, cwd=cwd, check=False).stdout
 
 
 def resolution_hunks(cwd, merge, paths):
@@ -713,8 +1246,7 @@ def hunk_lines(cwd, mt, tree, path):
     assemblies; each conflict marker line is cut back to the marker, since its label names a parent
     by SHA and the batch side is a different commit in each assembly. None when the diff has no text
     hunk (a binary file, an unchanged path), where the lines would identify nothing."""
-    proc = subprocess.run(["git", "--literal-pathspecs", "diff-tree", "-r", "-p", mt, tree, "--", path],
-                          cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = run_git(["--literal-pathspecs", "diff-tree", "-r", "-p", mt, tree, "--", path], cwd, text=False)
     if proc.returncode != 0:
         return None
     out, in_hunk, after_change = [], False, False
@@ -771,7 +1303,7 @@ def marker_paths(tree, paths, cwd):
     """The paths among `paths` whose blob in `tree` (a tree or commit) holds a conflict marker line."""
     out = []
     for p in paths:
-        proc = subprocess.run(["git", "cat-file", "-p", "%s:%s" % (tree, p)], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = run_git(["cat-file", "-p", "%s:%s" % (tree, p)], cwd, text=False)
         if proc.returncode == 0 and _CONFLICT_MARKER.search(proc.stdout.decode("utf-8", "replace")):
             out.append(p)
     return out
@@ -952,9 +1484,7 @@ def merge_member(root, wt, state, m, resolve_set):
             % (n, by, short(m["head"]), "; add Depends-on or reorder" if by != remote_main() else ""))
         return "contained"
     msg = "Merge #%d: %s" % (n, m["title"])
-    env = dict(os.environ, GIT_MERGE_AUTOEDIT="no")
-    proc = subprocess.run(["git", "merge", "--no-ff", "--no-edit", "-m", msg, m["head"]], cwd=wt, env=env,
-                          text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = run_git(["merge", "--no-ff", "--no-edit", "-m", msg, m["head"]], wt, env={"GIT_MERGE_AUTOEDIT": "no"})
     if proc.returncode == 0:
         sha = git("rev-parse", "HEAD", cwd=wt)
         if sha == before or parents_of(sha, wt) != [before, m["head"]]:
@@ -1053,6 +1583,7 @@ def continue_after_resolution(root, wt, state, reviewed):
         state["assembly"].setdefault("main_merges", []).append({"merge": sha, "main": cur["main"], "resolved": resolved})
         state["assembly"]["head"] = sha
         state["verified"] = None
+        state["ci"] = None           # land's CI record belongs to the head it read
     else:
         state["assembly"]["merged"].append({"n": cur["n"], "merge": sha, "resolved": resolved})
     state["assembly"]["cursor"] = None
@@ -1095,9 +1626,7 @@ def merge_main(root, wt, state):
         print("%s (%s) is already in %s" % (remote_main(), short(main_sha), branch_of(state["name"])))
         return True
     msg = "Merge %s into %s" % (remote_main(), branch_of(state["name"]))
-    env = dict(os.environ, GIT_MERGE_AUTOEDIT="no")
-    proc = subprocess.run(["git", "merge", "--no-ff", "--no-edit", "-m", msg, main_sha], cwd=wt, env=env,
-                          text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = run_git(["merge", "--no-ff", "--no-edit", "-m", msg, main_sha], wt, env={"GIT_MERGE_AUTOEDIT": "no"})
     resolved = None
     if proc.returncode == 0:
         sha = git("rev-parse", "HEAD", cwd=wt)
@@ -1129,6 +1658,7 @@ def merge_main(root, wt, state):
     state["assembly"].setdefault("main_merges", []).append({"merge": sha, "main": main_sha, "resolved": resolved})
     state["assembly"]["head"] = sha
     state["verified"] = None
+    state["ci"] = None
     log(state, "merged %s (%s) into %s -> %s%s" % (remote_main(), short(main_sha), branch_of(state["name"]), short(sha),
                                                    (" with " + resolved["how"]) if resolved else ""))
     save_state(root, state)
@@ -1162,6 +1692,7 @@ def run_assembly(root, state, resolve_set, resume):
     state["assembly"]["pending"] = []
     state["assembly"]["cursor"] = None
     state["verified"] = None
+    state["ci"] = None
     log(state, "assembled %s at %s: %d merged, %d already contained, %d held back"
         % (branch_of(state["name"]), short(state["assembly"]["head"]), len(state["assembly"]["merged"]),
            len(state["assembly"].get("contained", [])), len(state["assembly"].get("held", []))))
@@ -1198,19 +1729,25 @@ def cmd_assemble(args):
             raise Fail("stopped at the merge of %s for a hand resolution (see above)" % remote_main(), code=3)
         return
     members = members_by_n(state)
+    sweep = sweep_reader() if args.repin else None
     for n in args.repin or []:
         targets = list(members) if n == "all" else [int(n)]
         for k in targets:
             if k not in members:
                 raise Fail("#%d is not a member of %s" % (k, args.name))
-            pr = gh_json("pr", "view", str(k), "--json", "headRefOid,title,body,labels,statusCheckRollup,mergeable,baseRefName", cwd=root)
+            pr = gh_json("pr", "view", str(k), "--json", "headRefOid,title,body,labels,baseRefName", cwd=root)
+            # The re-read head is taken in like plan's: it owes a passing sweep of its own. Refused before anything
+            # is re-pinned or rebuilt (nothing is saved until the assembly runs).
+            why, record = member_sweep(root, sweep, dict(members[k], head=pr["headRefOid"]))
+            if why:
+                raise Fail("#%d's head %s has no passing sweep of its own (%s); nothing re-pinned" % (k, short(pr["headRefOid"]), why))
             old = members[k]["head"]
             members[k]["head"] = pr["headRefOid"]
+            members[k]["sweep"] = record
             members[k]["title"] = pr["title"]
             members[k]["labels"] = label_names(pr)
             members[k]["tier"] = tier_of(members[k]["labels"])
             members[k]["trailer"], members[k]["trailer_error"] = parse_trailer(pr.get("body"))
-            members[k]["ci"] = ci_of(pr)
             if pr.get("baseRefName") and pr["baseRefName"] != members[k]["base_ref"]:
                 log(state, "re-pinned #%d: base %s -> %s" % (k, members[k]["base_ref"], pr["baseRefName"]))
                 members[k]["base_ref"] = pr["baseRefName"]
@@ -1289,7 +1826,7 @@ def merge_tree_of(p1, p2, cwd):
     the conflicted files. (None, "unsupported", None) when this git lacks `merge-tree --write-tree`
     (added in git 2.38). The markers are labeled with the identifiers given, so two callers get the
     same tree for the same merge only when both name the parents the same way: pass SHAs."""
-    proc = _run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", p1, p2], cwd=cwd, check=False)
+    proc = git_proc("merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", p1, p2, cwd=cwd, check=False)
     fields = proc.stdout.split("\0")
     if proc.returncode in (0, 1) and fields and fields[0].strip():
         if proc.returncode == 0:
@@ -1451,19 +1988,121 @@ def ledger_check_on_branch(root, br):
     tree = os.path.join(holder, "tree")
     try:
         git("worktree", "add", "--quiet", "--detach", tree, br, cwd=root)
-        return _run([sys.executable, LEDGER_SCRIPT, "check"], cwd=tree, check=False)
+        return run_tool([sys.executable, LEDGER_SCRIPT, "check"], tree)
     finally:
-        git("worktree", "remove", "--force", tree, cwd=root, check=False)
-        shutil.rmtree(holder, ignore_errors=True)
+        # -f twice: a registration a killed worktree add left locked is removed too, where one --force refuses it
+        _cleanup_steps(lambda: git("worktree", "remove", "-f", "-f", tree, cwd=root, check=False),
+                       lambda: shutil.rmtree(holder, ignore_errors=True))
+
+
+def sweep_reader():
+    """scripts/sweep.py, loaded from beside this file: its reader (assess) is the one place the result's
+    path, its leg roster and the verdict rule live, so the runner and verify cannot disagree about them."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "sweep.py")
+    if not os.path.exists(path):
+        raise Fail("scripts/sweep.py is missing beside batch.py (%s); verify reads sweep results through it" % path)
+    spec = importlib.util.spec_from_file_location("romp_batch_sweep_reader", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    # The module's run_git starts its git under this tool's stop hold, not its own (the closing check wf_fb19febe-36b, its
+    # item 4(b)): this tool's handlers, not the module's, are the ones installed, and they hold a stop only while this
+    # module's hold is on, so with the module's own a stop raised inside the git's start and the git ran on. Both names
+    # are read at the call, so the module's run_git holds and releases here and raises this tool's Stopped inside the try
+    # that ends the git.
+    mod._hold_stops, mod._release_stops = _hold_stops, _release_stops
+    return mod
+
+
+def remote_ref_sha(root, ref):
+    """The sha of exactly `ref` on origin now, or None. `git ls-remote <remote> <pattern>` matches the
+    pattern against the tail of every ref name, so a branch named aaa/refs/heads/main answers
+    refs/heads/main too (and sorts first); only the line naming `ref` itself counts."""
+    for line in git("ls-remote", REMOTE, ref, cwd=root).splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == ref:
+            return parts[0]
+    return None
+
+
+def main_on_origin(root):
+    """main's head on origin now, read with ls-remote (never the tracking ref, which --no-fetch or a
+    stale fetch leaves behind); None when origin has no main."""
+    return remote_ref_sha(root, "refs/heads/" + MAIN)
+
+
+def check_contains_main(root, name, head, lines):
+    """The batch head must contain main as origin has it NOW. ci.yml does not run on the merge to main: a
+    batch lands with a merge commit whose tree is the batch head's only when main is already in the
+    head, and that tree is the one the sweep and the batch branch's CI ran on. Returns the main sha it
+    compared with when the head contains it, else None."""
+    live = main_on_origin(root)
+    if not live:
+        lines.append("FAIL behind: %s has no %s branch to compare the batch head with" % (REMOTE, MAIN))
+        return None
+    if is_ancestor(live, head, root):
+        lines.append("ok   main: %s at %s is in the batch head" % (remote_main(), short(live)))
+        return live
+    known = git_ok("cat-file", "-e", live + "^{commit}", cwd=root)
+    lines.append("FAIL behind: %s is at %s%s, which the batch head %s does not contain, so the tree that would land is not "
+                 "the tree the sweep and CI ran on; `scripts/batch.py assemble %s --merge-main`, then sweep and verify again"
+                 % (remote_main(), short(live), "" if known else " (not fetched here)", short(head), name))
+    return None
+
+
+def excuse_contradiction(root, sweep, result, head, subject="the batch head"):
+    """Round 1's excuse rule, read against the head's tree: scripts/sweep.py's excuse_contradiction, which its own
+    check applies too, so check prints what verify reads. Its git call is sweep.py's, bounded by that script's GIT_BOUND
+    in the repository its find_repo reads at `root`; a refusal there (sweep.py's Refused, its GitBound included) is a Fail
+    naming it."""
+    try:
+        return sweep.excuse_contradiction(root, result, head, subject=subject)
+    except sweep.Refused as e:
+        raise Fail("the sweep result's excuse rule could not be read: %s" % e)
+
+
+def sweep_record(sweep, a, head):
+    """The pass a reader read (`a`, from assess), as the state records it: verify's state['sweep'] for the batch head
+    and each member's 'sweep' for its own head. The head, the result's path and finish, each leg's rc or "not owed",
+    the runner's display summaries, the failed runs the history excused with a known flake, and its invalid runs with
+    the legs each failed."""
+    legs = a["result"]["legs"]
+    return {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
+            "legs": [[n, legs[n].get("rc") if sweep.is_owed(n, legs[n]) else "not owed"] for n in sweep.LEGS],
+            "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(n, legs[n]) and legs[n].get("summary")},
+            # the result's whole history as the reader read it: each failed run a later run's known flake excused, and
+            # each invalid run with the legs it failed, whose failures count (one that failed no leg needs no flake, but
+            # it is named)
+            "reruns": list(a["result"].get("flake_notes") or []),
+            "invalid_runs": list(a["result"].get("invalid_notes") or [])}
+
+
+def member_sweep(root, sweep, m):
+    """A member PR owes a passing sweep of its own head before its review round and before its closing check
+    (docs/batching.md), so the steps that take a member in (plan, assemble --repin) read it. Returns (fault, record):
+    (None, the pass as sweep_record has it) when the result at the member's pinned head is a pass (every leg owed, the
+    webview legs, pdf-smoke and the served leg included, as at a batch head: the reader refuses one of them marked not owed for
+    any reason but a missing extension, and the ledger for any reason but a missing ledger script) and any leg it marks
+    not owed for a missing vscode-extension/package.json or ledger script is one the head's tree lacks, else (the reader's line naming the case, None). The caller records the pass on the member, and the
+    body's members table shows that record (round 1, fresh-3). The result is read from this machine's state dir; one
+    recorded on another machine is missing here."""
+    subject = "#%d's head" % m["n"]
+    a = sweep.assess(m["head"], subject=subject, branch=m["head_ref"])
+    if a["case"] != "pass":
+        return a["line"], None
+    ensure_object(root, m["head"], m["head_ref"])
+    fault = excuse_contradiction(root, sweep, a["result"], m["head"], subject=subject)
+    return (fault, None) if fault else (None, sweep_record(sweep, a, m["head"]))
 
 
 def cmd_verify(args, quiet=False):
     root = repo_root()
     state = load_state(root, args.name)
+    sweep = sweep_reader()
     # The earlier verdict is cleared first: a verify that dies half-way (a gh error) must not leave
     # a green verification behind for summarize to publish.
-    if state.get("verified"):
+    if state.get("verified") or state.get("ci"):
         state["verified"] = None
+        state["ci"] = None            # and land's CI record, which belongs to the head a verify read
         save_state(root, state)
     fetch(root, args.no_fetch)
     lines, ok = [], True
@@ -1489,7 +2128,7 @@ def cmd_verify(args, quiet=False):
     in_batch_refs = {members[e["n"]]["head_ref"] for e in landing}
     for e in landing:
         m = members[e["n"]]
-        pr = gh_json("pr", "view", str(m["n"]), "--json", "headRefOid,state,baseRefName,isDraft,statusCheckRollup,mergeable", cwd=root)
+        pr = gh_json("pr", "view", str(m["n"]), "--json", "headRefOid,state,baseRefName,isDraft", cwd=root)
         if pr["headRefOid"] != m["head"]:
             ok = False
             lines.append("FAIL head moved: #%d pinned %s, now %s (assemble --repin %d, then re-assemble)"
@@ -1510,8 +2149,6 @@ def cmd_verify(args, quiet=False):
             else:
                 ok = False
                 lines.append("FAIL base: #%d is based on %s, which is neither in the batch nor in %s" % (m["n"], b, MAIN))
-        m["ci"] = ci_of(pr)
-        lines.append("ci   #%d: %s" % (m["n"], m["ci"]))
         state["members"][str(m["n"])] = m
     proc = ledger_check_on_branch(root, br)
     if proc is None:
@@ -1524,18 +2161,26 @@ def cmd_verify(args, quiet=False):
         ok = False
         lines.append("FAIL ledger: %s" % (proc.stdout + proc.stderr).strip()[:500])
         state["ledger"] = "failed"
-    if args.sweep:
-        state["sweep"] = {"text": args.sweep, "head": head, "at": now()}
-    sw = state.get("sweep")
-    if not sw:
+    main_seen = check_contains_main(root, args.name, head, lines)
+    ok = bool(main_seen) and ok
+    # The sweep result the runner wrote for this exact sha (scripts/sweep.py), read through its own reader;
+    # every case but a pass names itself (missing, stale, unfinished, red, invalid, incomplete, unreadable).
+    a = sweep.assess(head, subject="the batch head", branch=br, tree_hint=worktree_dir(root, args.name))
+    contradiction = None
+    if a["case"] == "pass":
+        contradiction = excuse_contradiction(root, sweep, a["result"], head)
+    if contradiction:
         ok = False
-        lines.append("FAIL sweep: none recorded; run the full sweep at %s and pass --sweep '<counts>'" % short(head))
-    elif sw["head"] != head:
-        ok = False
-        lines.append("FAIL sweep: recorded at %s, the batch is at %s; sweep again" % (short(sw["head"]), short(head)))
+        state["sweep"] = None
+        lines.append("FAIL " + contradiction)
+    elif a["case"] == "pass":
+        state["sweep"] = sweep_record(sweep, a, head)
+        lines.append("ok   " + a["line"])
     else:
-        lines.append("ok   sweep at %s: %s" % (short(head), sw["text"]))
-    state["verified"] = {"head": head, "at": now(), "ok": ok, "lines": lines}
+        ok = False
+        state["sweep"] = None
+        lines.append("FAIL " + a["line"])
+    state["verified"] = {"head": head, "at": now(), "ok": ok, "lines": lines, "main": main_seen}
     save_state(root, state)
     if not quiet:
         print("\n".join(lines))
@@ -1551,19 +2196,17 @@ def _cell(s):
     return str(s if s is not None else "").replace("|", "\\|").replace("\n", " ")
 
 
-def sweep_cell(trailer):
-    if not trailer:
-        return "not stated"
-    sw = trailer.get("sweep")
-    if not isinstance(sw, dict):
-        return "not stated"
-    parts = []
-    for k in ("pytest", "bats", "npm", "typecheck"):
-        if k in sw:
-            parts.append("%s %s" % (k, sw[k]))
-    if trailer.get("sweep_head"):
-        parts.append("@%s" % short(str(trailer["sweep_head"])))
-    return ", ".join(parts) if parts else "not stated"
+def member_sweep_cell(m):
+    """The members table's "Sweep at own head" cell: the pass plan (or assemble --repin) read at the member's pinned
+    head and recorded on the member (member_sweep), never the author's trailer, whose sweep fields are self-reported
+    and may name another sha (round 1, fresh-3); the trailer still gives the Rounds column. A member recorded by a plan
+    from before this record existed, or one whose record is for another head, renders "not recorded"."""
+    rec = m.get("sweep")
+    if not (isinstance(rec, dict) and rec.get("verdict") == "pass" and isinstance(rec.get("legs"), list)):
+        return "not recorded"
+    if rec.get("head") != m.get("head"):
+        return "not recorded (the pass read was at %s, the pinned head is %s)" % (short(rec.get("head")), short(m.get("head")))
+    return "pass @%s: %s" % (short(rec["head"]), pass_legs_phrase(rec))
 
 
 def resolution_reason(resolved):
@@ -1588,8 +2231,8 @@ def read_first_reasons(m, resolved, contained_by=None):
     """The computed rule: a member is listed under "Read these first" when its merge needed a
     resolution, when it was already contained by an earlier member (no merge of its own, so a
     missing `Depends-on`), when its tier is `feature` or unlabeled, when it touches kernel/,
-    .github/, .githooks/, install.sh or uninstall.sh, when its trailer is missing, or when its own
-    CI never ran because it was conflicting."""
+    .github/, .githooks/, install.sh or uninstall.sh, or when its trailer is missing. A member PR
+    runs no ci.yml of its own (the sweep at the batch head gates it), so there is no CI reason."""
     reasons = []
     if resolved:
         reasons.append(resolution_reason(resolved))
@@ -1604,9 +2247,38 @@ def read_first_reasons(m, resolved, contained_by=None):
         reasons.append("touches " + ", ".join(sens))
     if m.get("trailer") is None:
         reasons.append("trailer not stated" if not m.get("trailer_error") else m["trailer_error"])
-    if (m.get("ci") or "").startswith("none"):
-        reasons.append("own CI: %s" % m["ci"])
     return reasons
+
+
+def sweep_phrase(sw):
+    """The first block's words for the sweep verify read: every owed leg with its rc (and the runner's
+    display summary), then the legs not owed, then any leg re-run after a known flake, with its first
+    failure and the flake, then any invalid run in the result's history, with the legs it failed. A record
+    from before the result file (free text passed to verify) is shown as it was written."""
+    if not sw:
+        return "sweep not recorded"
+    if sw.get("verdict") == "pass" and isinstance(sw.get("legs"), list):
+        return "sweep pass: " + pass_legs_phrase(sw)
+    return sw.get("text") or "sweep not recorded"
+
+
+def pass_legs_phrase(sw):
+    """A recorded pass's legs in words (sweep_record's shape): every owed leg with its rc and the runner's display
+    summary, the legs not owed, each failed run a known flake excused, and each invalid run with the legs it failed."""
+    summary = sw.get("summary") or {}
+    ran = ["%s rc %s%s" % (n, rc, (" (%s)" % summary[n]) if summary.get(n) else "") for n, rc in sw["legs"] if rc != "not owed"]
+    skipped = [n for n, rc in sw["legs"] if rc == "not owed"]
+    notes = list(sw.get("reruns") or []) + ["an earlier " + t for t in sw.get("invalid_runs") or []]
+    return "%s%s%s" % (", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "",
+                       ("; " + "; ".join(notes)) if notes else "")
+
+
+def land_line(name):
+    """The body's first words: how this batch lands, and what `land` checks that the button and `gh pr merge` do not:
+    main read again right before the merge (round 1, extra7-4: it states the check, not that the merged tree is
+    always the batch head's; a move between that read and GitHub's merge is finish's loud report)."""
+    return ("Land with `scripts/batch.py land %s`: it reads main again right before the merge and refuses if the batch "
+            "head no longer contains it." % name)
 
 
 def gather_body_inputs(root, state):
@@ -1651,7 +2323,7 @@ def gather_body_inputs(root, state):
             status, path = parts[0][0], parts[-1]
             title, st = "", ""
             if status != "D":
-                text = _run(["git", "show", "%s:%s" % (br, path)], cwd=root, check=False).stdout
+                text = git_proc("show", "%s:%s" % (br, path), cwd=root, check=False).stdout
                 hdr = {}
                 if text.startswith("---"):
                     for l in text.split("\n")[1:]:
@@ -1710,11 +2382,19 @@ def render_body(state, inputs, cap=BODY_CAP):
     title = "# Batch %s: %d PR%s%s" % (name, len(landing), "" if len(landing) == 1 else "s", (" (%s)" % ", ".join(extra)) if extra else "")
     if v.get("ok") and v.get("head") == head:
         ledger = {"clean": "ledger check clean", "pre-migration": "ledger: pre-migration, not checked", "failed": "ledger check FAILED"}.get(state.get("ledger"), "ledger: not checked")
-        verified = ("Merge with \"Create a merge commit\". Verified at %s: %s; provenance clean; %s. CI on this PR: see checks."
-                    % (short(head), sw.get("text", "sweep not recorded"), ledger))
+        # The main verify saw, named: "contained" is true at verify time only, and a merge by the button or
+        # `gh pr merge` after main moved lands a tree no sweep or ci.yml run tested (none runs on main).
+        seen = short(v["main"]) if v.get("main") else "its head then"
+        # Round 1, extra7-5: that the push run's checks show on the batch PR's head is an expectation the first batch
+        # confirms (docs/batching.md, "Checked on the first batch"), so the body says so rather than stating it.
+        verified = ("%s Verified at %s: %s; provenance clean; main at %s contained at verify time; %s. CI on this PR: the run "
+                    "of the push to %s, expected among the checks on its head (the first batch confirms that). No ci.yml "
+                    "run follows the merge to main, so if main has moved past %s, do not merge with the button or `gh pr merge`: the "
+                    "batch needs main merged in, a new sweep and verify first."
+                    % (land_line(name), short(head), sweep_phrase(sw), seen, ledger, branch_of(name), seen))
     else:
-        verified = "Merge with \"Create a merge commit\". NOT VERIFIED at %s: run `scripts/batch.py verify %s` (verification is %s)." % (
-            short(head), name, "stale" if v else "missing")
+        verified = "%s NOT VERIFIED at %s: run `scripts/batch.py verify %s` (verification is %s)." % (
+            land_line(name), short(head), name, "stale" if v else "missing")
 
     read_first = []
     for e in landing:
@@ -1730,10 +2410,10 @@ def render_body(state, inputs, cap=BODY_CAP):
             short(d["sha"]), d["subject"], d.get("stat") or "no diffstat",
             ("; touches " + ", ".join(d["files"])) if d.get("files") else ""))
     read_first_block = "\n".join(read_first) if read_first else \
-        "- none: every member is labeled, carries a trailer, touches no sensitive path, merged clean and had its own CI; the batch adds no commit of its own."
+        "- none: every member is labeled, carries a trailer, touches no sensitive path and merged clean; the batch adds no commit of its own."
 
-    rows = ["| # | Title | Tier | Rounds | Sweep at own head | Own CI | Flags | Ledger |",
-            "|---|---|---|---|---|---|---|---|"]
+    rows = ["| # | Title | Tier | Rounds | Sweep at own head | Flags | Ledger |",
+            "|---|---|---|---|---|---|---|"]
     entries = inputs.get("entries") or []
     for e in landing:
         m = members[e["n"]]
@@ -1749,10 +2429,10 @@ def render_body(state, inputs, cap=BODY_CAP):
         if m.get("trailer") is None:
             flags.append("no trailer")
         ledger_n = sum(1 for x in entries if e["n"] in x["members"])
-        rows.append("| #%d | %s | %s | %s | %s | %s | %s | %s |" % (
+        rows.append("| #%d | %s | %s | %s | %s | %s | %s |" % (
             m["n"], _cell(m["title"]), _cell(m.get("tier") or "unlabeled"),
             _cell(t.get("rounds", "not stated")) if t else "not stated",
-            _cell(sweep_cell(m.get("trailer"))), _cell(m.get("ci") or "unknown"),
+            _cell(member_sweep_cell(m)),
             _cell(", ".join(flags) or "-"), ("+%d" % ledger_n) if ledger_n else "-"))
     members_table = "\n".join(rows)
 
@@ -1973,8 +2653,8 @@ def main_protection(root):
     there instead, for the refusal. A rules read that fails, or a protection read that fails with
     anything but a 404 (GitHub's answer for an unprotected branch), raises Fail with gh's error: a
     failed read is not "none". `gh pr merge --auto` is only useful with a gating rule: with nothing
-    required, auto-merge merges at once. This detects, it never assumes (scripts/land.sh applies the
-    same gate)."""
+    required, auto-merge merges at once. This detects, it never assumes (scripts/land.sh runs land, so
+    the same gate)."""
     proc = gh("api", "repos/{owner}/{repo}/rules/branches/%s" % MAIN, cwd=root, check=False)
     if proc.returncode != 0:
         raise Fail("--auto, and could not read the rules on %s: %s" % (MAIN, (proc.stderr + proc.stdout).strip()))
@@ -2011,6 +2691,304 @@ def main_protection(root):
     return None, ", and ".join(found)
 
 
+# A run's createdAt as gh prints it (RFC 3339: a date, T, a time with an optional fraction, then Z or an offset).
+_RFC3339 = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|([+-])(\d{2}):(\d{2}))")
+# A creation time before this is a placeholder, not a run's: gh renders a time GitHub did not give as the zero time
+# 0001-01-01T00:00:00Z, and the Unix epoch is the other conventional zero; both would sort oldest.
+RUN_TIME_FLOOR = _dt.datetime(2000, 1, 1, tzinfo=_dt.timezone.utc)
+
+
+def run_time(value):
+    """(a run's createdAt as an aware datetime, None), or (None, why it is not a time GitHub set): not a string or not
+    RFC 3339, RFC 3339 in form but not a real date or time (a February 30th), or before RUN_TIME_FLOOR (the zero time
+    among them)."""
+    m = _RFC3339.fullmatch(value) if isinstance(value, str) else None
+    if m is None:
+        return None, "not an RFC 3339 time"
+    y, mo, d, h, mi, s, frac, _tz, sign, oh, om = m.groups()
+    try:
+        off = _dt.timedelta(hours=int(oh), minutes=int(om)) * (-1 if sign == "-" else 1) if sign else _dt.timedelta(0)
+        t = _dt.datetime(int(y), int(mo), int(d), int(h), int(mi), int(s), int((frac or "0")[:6].ljust(6, "0")),
+                         tzinfo=_dt.timezone(off))
+    except ValueError:
+        return None, "RFC 3339 in form but not a real date and time"
+    if t < RUN_TIME_FLOOR:
+        return None, ("a placeholder before %d (the zero time 0001-01-01T00:00:00Z is one), not a time GitHub set"
+                      % RUN_TIME_FLOOR.year)
+    return t, None
+
+
+def run_created(value):
+    """A run's createdAt as an aware datetime, or None when it is not a time GitHub set (run_time says why)."""
+    return run_time(value)[0]
+
+
+def run_row_fault(row):
+    """Why a matching `gh run list` row cannot be ordered among the others, or None: its databaseId is not a positive
+    integer, its createdAt is not a time GitHub set (run_time), or its attempt is not a positive integer. The newest run decides, and a row that cannot be
+    placed by time and id would decide by accident, so it is refused rather than guessed at."""
+    rid = row.get("databaseId")
+    if "databaseId" not in row or rid is None:
+        return "no databaseId"
+    if type(rid) is not int or rid <= 0:
+        return "databaseId %r, not a positive integer" % (rid,)
+    created = row.get("createdAt")
+    if "createdAt" not in row or created is None:
+        return "no createdAt"
+    when, why = run_time(created)
+    if when is None:
+        return "createdAt %r, %s" % (created, why)
+    attempt = row.get("attempt")
+    if "attempt" not in row or attempt is None:
+        return "no attempt"
+    if type(attempt) is not int or attempt <= 0:
+        return "attempt %r, not a positive integer" % (attempt,)
+    return None
+
+
+def run_attempts(root, run):
+    """[(n, record)] for each earlier attempt of `run` (1 to its attempt - 1), read from GitHub now with
+    `gh api repos/{owner}/{repo}/actions/runs/<id>/attempts/<n>`. A read that fails, one that is not JSON, or a record
+    that is not that run's attempt n (its id and run_attempt) raises Fail: an attempt not read is not one that passed."""
+    out = []
+    for n in range(1, run["attempt"]):
+        what = "attempt %d of the batch head's CI run %s" % (n, run.get("url"))
+        proc = gh("api", "repos/{owner}/{repo}/actions/runs/%d/attempts/%d" % (run["databaseId"], n), cwd=root, check=False)
+        if proc.returncode != 0:
+            raise Fail("could not read %s (gh api): %s; nothing merged" % (what, (proc.stderr + proc.stdout).strip()))
+        try:
+            rec = json.loads(proc.stdout or "")
+        except json.JSONDecodeError as e:
+            raise Fail("%s read as something that is not JSON (%s); nothing merged" % (what, e))
+        rid, num = (rec.get("id"), rec.get("run_attempt")) if isinstance(rec, dict) else (None, None)
+        if not (type(rid) is int and rid == run["databaseId"] and type(num) is int and num == n):
+            raise Fail("%s read as another record (id %r, run_attempt %r); nothing merged" % (what, rid, num))
+        out.append((n, rec))
+    return out
+
+
+def attempt_passed(rec):
+    return rec.get("status") == "completed" and rec.get("conclusion") == "success"
+
+
+def parse_ci_flakes(values):
+    """{(run id, attempt): known-flake entry} from land's --flake RUN/ATTEMPT=TEXT values; a malformed value or one
+    naming an attempt twice is a usage refusal."""
+    out = {}
+    for v in values or []:
+        key, sep, text = v.partition("=")
+        m = re.fullmatch(r"(\d+)/(\d+)", key.strip())
+        if not (sep and m and text.strip()):
+            raise Fail("--flake %r: expected RUN/ATTEMPT=TEXT, the run id and the failed attempt as land's refusal names them, "
+                       "then the failing test and where it is recorded as a known flake" % v, code=2)
+        k = (int(m.group(1)), int(m.group(2)))
+        if k in out:
+            raise Fail("--flake names run %d attempt %d twice" % k, code=2)
+        out[k] = text.strip()
+    return out
+
+
+def ci_attempt_gate(root, run, older, flakes):
+    """Round 1, decision 13: a red is not erased by a re-run, locally or on GitHub. Every attempt of a push run at the
+    head but the newest run's latest is read: the newest run's earlier attempts (run_attempts), and each older matching
+    push run at the same head (`older`, from batch_ci_run: the same sha pushed again, after the branch was deleted and
+    pushed back or pushed elsewhere and back), its latest attempt from its row and its earlier ones read like the newest
+    run's. One that did not pass (any status or conclusion but completed and success, cancelled included) is refused
+    unless land's --flake names it (RUN/ATTEMPT=TEXT), as a --leg re-run needs --flake naming the failed leg. A known
+    flake is excused once across every run at the head, as the local sweep's is: two attempts that did not pass are
+    refused whatever --flake says. A --flake that names no failed attempt of a run at the head is refused. Returns the
+    excused attempts, [{"run", "attempt", "status", "conclusion", "url", "flake"}], which land records in the state and
+    finish reports."""
+    rid = run["databaseId"]
+    failed = [(rid, n, rec, "attempt %d" % n) for n, rec in run_attempts(root, run) if not attempt_passed(rec)]
+    for o in older:
+        latest = {"status": o.get("status"), "conclusion": o.get("conclusion"), "html_url": o.get("url")}
+        for n, rec in run_attempts(root, o) + [(o["attempt"], latest)]:
+            if not attempt_passed(rec):
+                failed.append((o["databaseId"], n, rec, "an earlier run at this head, %s, attempt %d," % (o.get("url"), n)))
+    keys = {(r, n) for r, n, _rec, _what in failed}
+    stray = sorted(k for k in flakes if k not in keys)
+    if stray:
+        raise Fail("--flake names %s, which %s no failed attempt of a run at the batch head (its CI run %s, attempt %d, run "
+                   "%d%s); nothing merged" % (", ".join("run %d attempt %d" % k for k in stray), "is" if len(stray) == 1 else "are",
+                                              run.get("url"), run["attempt"], rid,
+                                              "".join(", and run %d" % o["databaseId"] for o in older)))
+
+    def said(what, rec):
+        return "%s concluded %s (%s)" % (what, rec.get("conclusion") or "nothing, status %s" % rec.get("status"),
+                                         rec.get("html_url") or run.get("url"))
+    if len(failed) > 1:
+        raise Fail("the batch head's CI run %s is green on attempt %d, but %s; a known flake is excused once, as the local "
+                   "sweep's is, so this head cannot land: fix it and push a new head; nothing merged"
+                   % (run.get("url"), run["attempt"], " and ".join(said(what, rec) for _r, _n, rec, what in failed)))
+    for r, n, rec, what in failed:
+        if (r, n) not in flakes:
+            raise Fail("the batch head's CI run %s is green on attempt %d, but %s, and a red is not erased by a re-run: if that "
+                       "attempt failed on a known flake, land again with --flake %d/%d='<the failing test, and where it is "
+                       "recorded as a known flake>'; otherwise fix it and push a new head; nothing merged"
+                       % (run.get("url"), run["attempt"], said(what, rec), r, n))
+    return [{"run": r, "attempt": n, "status": rec.get("status"), "conclusion": rec.get("conclusion"),
+             "url": rec.get("html_url") or run.get("url"), "flake": flakes[(r, n)]} for r, n, rec, _what in failed]
+
+
+# The rows land asks gh for. A read that returns this many may have cut the older runs at the head, which the attempt
+# gate must read, so it is refused rather than read short.
+RUN_LIST_LIMIT = 20
+# Round 2, the coordinator's decision 18: a run is read green only when its jobs are ci.yml's. Its conclusion alone reads
+# success from a run whose jobs never ran (a skipped job reports success), and a read of the checks on a head (the
+# per-PR read this landing gate replaced) reads success from the label checks alone. So the jobs of the run's latest
+# attempt are read, and every job of ci.yml at the head must have a job run there that concluded success, told by the
+# name GitHub renders for it (ci_jobs).
+CI_WORKFLOW_PATH = ".github/workflows/" + CI_WORKFLOW
+JOBS_PER_PAGE = 100
+_EXPRESSION = re.compile(r"\$\{\{.*?\}\}")
+
+
+def ci_jobs(root, head, tail):
+    """[(job id, the name GitHub renders for it as ci.yml writes it, a regex that matches that rendering)] for every job
+    of ci.yml at `head`, read from git with scripts/sweep.py's line reader (workflow_jobs, workflow_job). A job's name
+    is its `name:` value, quotes and a trailing comment off, or its id when it has none; each `${{ ... }}` in it matches
+    any text, and a job with a strategy: whose name holds none matches with or without the ` (<matrix values>)` GitHub
+    appends. Raises Fail (a read that cannot be made is not a green run) when the file cannot be read at the head, holds
+    no job, or a name is written in a form this reads no further (a block scalar, an empty value)."""
+    sweep = sweep_reader()
+    proc = git_proc("show", "%s:%s" % (head, CI_WORKFLOW_PATH), cwd=root, check=False)
+    if proc.returncode != 0:
+        raise Fail("could not read %s at %s to read which jobs the batch head's CI run must hold (%s)%s"
+                   % (CI_WORKFLOW_PATH, short(head), (proc.stderr or proc.stdout).strip(), tail))
+    text, where = proc.stdout, "%s at %s" % (CI_WORKFLOW_PATH, short(head))
+    out = []
+    try:
+        for job in sweep.workflow_jobs(text):
+            spec = sweep.workflow_job(text, job, where)
+            raw = spec["values"].get("name")
+            name = job if raw is None else raw
+            if raw is not None:
+                if name[:1] in "\"'" and name[-1:] == name[:1] and len(name) > 1:
+                    name = name[1:-1]
+                elif " #" in name:
+                    name = name.split(" #", 1)[0].rstrip()
+            if not name or name[:1] in "|>":
+                raise Fail("%s names its %s job %r, a form this read does not take (a quoted or plain one-line name); the CI "
+                           "read tells the run's job runs by name%s" % (where, job, raw, tail))
+            parts = _EXPRESSION.split(name)
+            pattern = ".*".join(re.escape(x) for x in parts)
+            if len(parts) == 1 and "strategy" in spec["keys"]:
+                pattern += r"(?: \(.*\))?"
+            out.append((job, name, re.compile(pattern)))
+    except sweep.Refused as e:
+        raise Fail("%s%s" % (e, tail))
+    if not out:
+        raise Fail("%s holds no job, so no CI run of it tested the batch head%s" % (where, tail))
+    return out
+
+
+def run_jobs(root, run, tail):
+    """[{"name", "status", "conclusion"}] of every job of `run`'s latest attempt, read from GitHub now with `gh api
+    repos/{owner}/{repo}/actions/runs/<id>/attempts/<attempt>/jobs`. A read that fails, an answer that is not a jobs
+    listing, a job that is not a record, or a listing shorter than its total_count (cut) raises Fail: a job not read is
+    not one that passed."""
+    what = "the jobs of the batch head's CI run %s (attempt %d)" % (run.get("url"), run["attempt"])
+    proc = gh("api", "repos/{owner}/{repo}/actions/runs/%d/attempts/%d/jobs?per_page=%d"
+              % (run["databaseId"], run["attempt"], JOBS_PER_PAGE), cwd=root, check=False)
+    if proc.returncode != 0:
+        raise Fail("could not read %s (gh api): %s%s" % (what, (proc.stderr + proc.stdout).strip(), tail))
+    try:
+        doc = json.loads(proc.stdout or "")
+    except json.JSONDecodeError as e:
+        raise Fail("%s read as something that is not JSON (%s)%s" % (what, e, tail))
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    total = doc.get("total_count") if isinstance(doc, dict) else None
+    if not isinstance(jobs, list) or type(total) is not int or any(not isinstance(j, dict) for j in jobs):
+        raise Fail("%s read as something that is not a jobs listing (%s)%s" % (what, json.dumps(doc)[:120], tail))
+    if total > len(jobs):
+        raise Fail("%s listed %d of %d jobs, so the rest may be cut%s" % (what, len(jobs), total, tail))
+    return [{"name": j.get("name"), "status": j.get("status"), "conclusion": j.get("conclusion")} for j in jobs]
+
+
+def unmet_ci_jobs(expected, jobs):
+    """The (job id, name) of each job of ci.yml (ci_jobs) that no job run of `jobs` (run_jobs) matches by name with the
+    conclusion success."""
+    return [(job, name) for job, name, rx in expected
+            if not any(isinstance(j["name"], str) and rx.fullmatch(j["name"]) and j["conclusion"] == "success" for j in jobs)]
+
+
+def batch_ci_run(root, name, head, tail="; nothing merged"):
+    """The batch head's one GitHub run, read from GitHub now: the newest run of ci.yml that a push to
+    batch/<name> started at exactly `head`. Returns (case, run, older): case is green (completed, success, and ci.yml's jobs
+    passed in it), incomplete (completed, success, but a job of ci.yml has no passing job run there), pending (not
+    completed), red (completed with any other conclusion) or missing (no such run; run None); older is every other
+    matching run, newest first, which land's attempt gate reads (a red is not erased by pushing the same sha again). gh's
+    filters are asked for and then checked on every row (the workflow by its name), so a run of another
+    sha, event, branch or workflow never stands in for it. The newest is the latest createdAt, then the highest
+    databaseId, whatever order gh lists the rows in; a matching row with no valid databaseId, createdAt (the zero time
+    included) or attempt raises Fail naming it (round 1, extra4-4), and so does a list as long as RUN_LIST_LIMIT, which
+    may have cut older runs. A run that concluded success is green only when every job of ci.yml at `head` has a job run
+    in its latest attempt that concluded success (the coordinator's decision 18: ci_jobs, run_jobs); otherwise the case is
+    incomplete, with the run's `jobs` and `jobs_unmet` (the jobs of ci.yml with none) in the run it returns. A read that fails raises Fail with gh's error: a failed read is not a missing run. So does
+    an answer that is not a JSON list of run records (round 2, extra8-3): nothing at all, JSON of another type (an error
+    object, a string, null), or a list holding a row that is not an object; only an empty list is no run. `tail`
+    ends each Fail's text: land's says nothing merged, and finish, which reads the same run after the merge, passes its
+    own."""
+    br = branch_of(name)
+    proc = gh("run", "list", "--workflow", CI_WORKFLOW, "--branch", br, "--event", "push", "--commit", head, "--limit",
+              str(RUN_LIST_LIMIT), "--json", CI_RUN_FIELDS, cwd=root, check=False)
+    if proc.returncode != 0:
+        raise Fail("could not read the batch head's CI run (gh run list): %s%s" % ((proc.stderr + proc.stdout).strip(), tail))
+    if not proc.stdout.strip():
+        raise Fail("gh run list returned nothing, not a JSON list of runs; a read that returns no run records is not a "
+                   "missing run%s" % tail)
+    try:
+        rows = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        raise Fail("gh run list returned something that is not JSON (%s)%s" % (e, tail))
+    if not isinstance(rows, list):
+        raise Fail("gh run list returned JSON that is not a list of runs (%s: %s); a read that returns no run records is "
+                   "not a missing run%s" % (type(rows).__name__, json.dumps(rows)[:120], tail))
+    stray = [r for r in rows if not isinstance(r, dict)]
+    if stray:
+        raise Fail("gh run list returned %d row%s that %s not a run record (%s); a read that returns no run records is "
+                   "not a missing run%s" % (len(stray), "" if len(stray) == 1 else "s", "is" if len(stray) == 1 else "are",
+                                           json.dumps(stray[0])[:120], tail))
+    if len(rows) >= RUN_LIST_LIMIT:
+        raise Fail("gh run list returned %d rows, its limit, so older runs at the batch head may be cut, and every run at "
+                   "the head is read (a red is not erased by pushing the same sha again)%s" % (len(rows), tail))
+    runs = [r for r in rows if r.get("headSha") == head
+            and r.get("event") == "push" and r.get("headBranch") == br and r.get("workflowName") == CI_WORKFLOW_NAME]
+    if not runs:
+        return "missing", None, []
+    for r in runs:
+        fault = run_row_fault(r)
+        if fault:
+            raise Fail("the batch head's CI run cannot be chosen: gh run list gave a matching run (%s) with %s; the newest run "
+                       "decides, and a row that cannot be ordered by time and id is refused, not guessed at%s"
+                       % (r.get("url") or "no url", fault, tail))
+    ordered = sorted(runs, key=lambda r: (run_created(r["createdAt"]), r["databaseId"]), reverse=True)
+    run, older = ordered[0], ordered[1:]
+    if run.get("status") != "completed":
+        return "pending", run, older
+    if run.get("conclusion") != "success":
+        return "red", run, older
+    # decision 18: a success is read only over ci.yml's jobs, each with a passing job run in the run's latest attempt
+    jobs = run_jobs(root, run, tail)
+    unmet = unmet_ci_jobs(ci_jobs(root, head, tail), jobs)
+    run = dict(run, jobs=jobs, jobs_unmet=unmet)
+    if unmet:
+        return "incomplete", run, older
+    return "green", run, older
+
+
+def jobs_text(unmet):
+    """ci.yml's jobs a run lacks, for a message: `the python job (Python ${{ ... }})` for each."""
+    return ", ".join("the %s job (%s)" % (job, name) if name != job else "the %s job" % job for job, name in unmet)
+
+
+def run_jobs_text(jobs):
+    """A run's job runs, for a message: each name and conclusion, or that it lists none."""
+    return ("its job runs: " + "; ".join("%s: %s" % (j["name"], j["conclusion"] or j["status"]) for j in jobs)
+            if jobs else "it lists no job run")
+
+
 def retarget_stacked_members(root, state):
     """A member based on another member's branch is retargeted to main right before the merge.
 
@@ -2018,23 +2996,28 @@ def retarget_stacked_members(root, state):
     main, so a member whose base is a sibling branch would stay open (its base never moves) even
     though its content is in main. Against main, the documented indirect-merge rule applies to it
     like every other member. Done here and not at plan time so the member keeps its stacked diff
-    and review until the moment it lands."""
+    and review until the moment it lands. Returns [(n, old base)] for each member retargeted, so a
+    refusal after it can name what it changed on GitHub."""
     members = members_by_n(state)
     landing = in_batch(state)
     in_batch_refs = {members[e["n"]]["head_ref"] for e in landing}
+    done = []
     for e in landing:
         m = members[e["n"]]
         if m["base_ref"] != MAIN and m["base_ref"] in in_batch_refs:
             gh("pr", "edit", str(m["n"]), "--base", MAIN, cwd=root)
             log(state, "retargeted #%d from %s to %s before the merge, so the indirect merge marks it" % (m["n"], m["base_ref"], MAIN))
+            done.append((m["n"], m["base_ref"]))
             m["base_ref"] = MAIN
             state["members"][str(m["n"])] = m
     save_state(root, state)
+    return done
 
 
 def cmd_land(args):
     root = repo_root()
-    state = cmd_verify(argparse.Namespace(name=args.name, sweep=None, no_fetch=args.no_fetch), quiet=False)
+    flakes = parse_ci_flakes(args.flake)
+    state = cmd_verify(argparse.Namespace(name=args.name, no_fetch=args.no_fetch), quiet=False)
     b = find_batch_pr(root, state)
     if not b:
         raise Fail("no open batch PR for %s; run summarize first" % branch_of(args.name))
@@ -2045,12 +3028,38 @@ def cmd_land(args):
         if settings.get(k):
             print("warning: %s is on; a squash or rebase of a batch leaves every member open" % k)
     head = state["verified"]["head"]
-    remote_head = git("ls-remote", REMOTE, "refs/heads/" + branch_of(args.name), cwd=root).split()
-    if not remote_head or remote_head[0] != head:
-        raise Fail("%s on %s is at %s, verified %s; push the batch first" % (branch_of(args.name), REMOTE, short(remote_head[0]) if remote_head else "nothing", short(head)))
+    br = branch_of(args.name)
+    remote_head = remote_ref_sha(root, "refs/heads/" + br)
+    if remote_head != head:
+        raise Fail("%s on %s is at %s, verified %s; push the batch first" % (br, REMOTE, short(remote_head) if remote_head else "nothing", short(head)))
+    # The one GitHub run per batch, required green as well as the local sweep: ci.yml's run of the push to the batch
+    # branch at the verified head, read from GitHub here and now, before anything is changed (--auto does not wait
+    # for it either: auto-merge waits only for what a rule on main requires).
+    case, run, older = batch_ci_run(root, args.name, head)
+    if case == "missing":
+        raise Fail("the batch head's CI run is missing: GitHub lists no run of %s from a push to %s at %s; push the batch "
+                   "and wait for its run, then land again; nothing merged" % (CI_WORKFLOW, br, head))
+    if case == "pending":
+        raise Fail("the batch head's CI run is pending (status %s): %s; wait for it to finish, then land again; nothing merged"
+                   % (run.get("status"), run.get("url")))
+    if case == "red":
+        raise Fail("the batch head's CI run is red (conclusion %s): %s; `scripts/batch.py bisect %s -- <failing test>` names "
+                   "the member to pull; nothing merged" % (run.get("conclusion"), run.get("url"), args.name))
+    if case == "incomplete":
+        raise Fail("the batch head's CI run %s concluded success, but %s at the head has %s with no job run that passed "
+                   "in it (%s); a success is read only over ci.yml's own jobs, so this run did not test the head: push the "
+                   "batch again and wait for its run, then land again; nothing merged"
+                   % (run.get("url"), CI_WORKFLOW_PATH, jobs_text(run["jobs_unmet"]), run_jobs_text(run["jobs"])))
+    excused = ci_attempt_gate(root, run, older, flakes)
+    state["ci"] = {"run": run.get("url"), "id": run["databaseId"], "attempt": run["attempt"], "head": head, "excused": excused}
+    save_state(root, state)
+    print("ok   CI: the run of the push to %s at %s is green: %s%s" % (
+        br, short(head), run.get("url"), "".join("; %sattempt %d concluded %s and is excused as a known flake (%s): %s"
+                                                 % ("" if e["run"] == run["databaseId"] else "an earlier run's ", e["attempt"],
+                                                    e["conclusion"] or e["status"], e["url"], e["flake"]) for e in excused)))
     cmd = ["pr", "merge", str(b), "--merge", "--match-head-commit", head]
     if args.auto:
-        # Both preconditions are read, never assumed (scripts/land.sh applies the same two), and
+        # Both preconditions are read, never assumed (scripts/land.sh runs this land, so it has them too), and
         # before anything is changed: GitHub refuses auto-merge until the repository setting is on,
         # and with nothing required on main --auto merges at once and protects nothing.
         allowed = auto_merge_allowed(root)
@@ -2064,7 +3073,39 @@ def cmd_land(args):
                        "with nothing required, auto-merge merges at once and protects nothing. Merge without --auto." % (MAIN, found))
         print("merging with --auto: auto-merge is allowed and %s" % gating)
         cmd.append("--auto")
-    retarget_stacked_members(root, state)
+    # main may have moved since verify read it (a merge by hand). It is read twice more: once here, before anything on
+    # GitHub is changed, so a move already made refuses with nothing changed (round 1, correctness-6), and once right
+    # before the merge call, so the tree that lands is still the batch head's. GitHub's merge pins the head
+    # (--match-head-commit), not the base, so the gap left is the one between that last read and the call; finish
+    # reports it loudly when the merge commit's first parent is not the main verify read (pre-round item 4).
+    seen = state["verified"].get("main")
+
+    def moved_text(now_sha):
+        return "%s moved on %s to %s after verify read %s; nothing merged" % (MAIN, REMOTE, short(now_sha) if now_sha else "nothing",
+                                                                          short(seen))
+    again = "Run land again: its verify reads the new %s and says whether the batch still contains it" % MAIN
+    main_now = main_on_origin(root)
+    if main_now != seen:
+        raise Fail("%s, and nothing on GitHub was changed. %s" % (moved_text(main_now), again))
+    retargeted = retarget_stacked_members(root, state)
+    main_now = main_on_origin(root)
+    if main_now != seen:
+        if not retargeted:
+            raise Fail("%s. %s" % (moved_text(main_now), again))
+        # The members are based on main on GitHub now; the state takes back their old bases, so the next land
+        # retargets them again, whether or not they are restored by hand first.
+        members = members_by_n(state)
+        for n, old in retargeted:
+            members[n]["base_ref"] = old
+            state["members"][str(n)] = members[n]
+        log(state, "land refused after retargeting %s: %s moved; the state keeps the old base%s"
+            % (", ".join("#%d" % n for n, _old in retargeted), MAIN, "" if len(retargeted) == 1 else "s"))
+        save_state(root, state)
+        raise Fail("%s, but land had already retargeted %s on GitHub: restore %s with %s, or run land again, which retargets "
+                   "%s again: its verify reads the new %s and says whether the batch still contains it"
+                   % (moved_text(main_now), ", ".join("#%d from %s to %s" % (n, old, MAIN) for n, old in retargeted),
+                      "it" if len(retargeted) == 1 else "them", " and ".join("`gh pr edit %d --base %s`" % (n, old) for n, old in retargeted),
+                      "it" if len(retargeted) == 1 else "them", MAIN))
     gh(*cmd, cwd=root)
     poll = float(os.environ.get("ROMP_BATCH_POLL", "3"))
     for _ in range(20):
@@ -2112,6 +3153,21 @@ def cmd_finish(args):
     merge_sha = (bpr.get("mergeCommit") or {}).get("oid")
     if merge_sha and not is_ancestor(merge_sha, remote_main(), root):
         raise Fail("batch PR #%d's merge commit %s is not an ancestor of %s; was it squashed or rebased?" % (b, short(merge_sha), remote_main()))
+    # Pre-round item 4: the merge commit's first parent must be the main verify read. land reads main once more right
+    # before the merge call, but GitHub's merge pins the head, not the base, and the button or `gh pr merge` reads
+    # nothing; a first parent that is another commit means main moved before the merge, so the tree on main is not the
+    # batch head's tree and no sweep or ci.yml run tested it (none runs on main). Read here and reported loudly at the end,
+    # after the cleanup, which does not depend on it.
+    merge_parents = parents_of(merge_sha, root) if merge_sha else []
+    first_parent = {"merge": merge_sha, "first_parent": (merge_parents or [None])[0],
+                    "verified_main": (state.get("verified") or {}).get("main")}
+    first_parent["ok"] = bool(first_parent["first_parent"]) and first_parent["first_parent"] == first_parent["verified_main"]
+    # The same for the head that landed: the merge commit's second parent must be the batch head verify read. A commit
+    # pushed to the batch branch after verify and merged by the button lands a head no sweep read (land pins the head
+    # with --match-head-commit; the button and a bare `gh pr merge` do not). Reported with the first parent's check.
+    landed = {"merge": merge_sha, "second_parent": merge_parents[1] if len(merge_parents) > 1 else None,
+              "verified_head": (state.get("verified") or {}).get("head")}
+    landed["ok"] = bool(landed["second_parent"]) and landed["second_parent"] == landed["verified_head"]
     members = members_by_n(state)
     landing = in_batch(state)
     member_refs = {members[e["n"]]["head_ref"] for e in landing} | {branch_of(args.name)}
@@ -2204,33 +3260,110 @@ def cmd_finish(args):
         git("worktree", "remove", "--force", wt, cwd=root)
     if git_ok("rev-parse", "--verify", "--quiet", branch_of(args.name), cwd=root) and not args.keep_worktree:
         git("branch", "-D", branch_of(args.name), cwd=root)
-    orphans = _run([os.path.join(root, "scripts", "pr-orphans.sh")], cwd=root, check=False)
-    report["orphans"] = {"exit": orphans.returncode, "out": (orphans.stdout + orphans.stderr).strip()}
-    run_url = "none yet"
-    runs = gh("run", "list", "--branch", MAIN, "--limit", "1", "--json", "url", cwd=root, check=False)
-    if runs.returncode == 0:
-        try:
-            rows = json.loads(runs.stdout or "[]")
-            if rows:
-                run_url = rows[0].get("url") or run_url
-        except json.JSONDecodeError:
-            pass
+    try:
+        orphans = run_tool([os.path.join(root, "scripts", "pr-orphans.sh")], root)
+        report["orphans"] = {"exit": orphans.returncode, "out": (orphans.stdout + orphans.stderr).strip()}
+    except GitBound as e:
+        # The merge has happened, so a pr-orphans.sh that did not end within the bound is reported, as the CI read
+        # below reports a read that fails, and finish carries on.
+        report["orphans"] = {"exit": None, "out": str(e)}
+    # ci.yml does not run on the merge to main: the run that tested the batch head's tree is ci.yml's run of the push to
+    # the batch branch at the head that landed, read with batch_ci_run, the filtered read land gated on (the push
+    # event, batch/<name>, ci.yml by its name, the sha checked on every row), so a manual or scheduled run at the same
+    # commit never stands in for it. The merge has happened, so a read that fails is reported as unread, not raised.
+    # The head that landed is the merge commit's second parent; verify's head (or the assembly's) only when GitHub
+    # reported no merge commit to read it from.
+    landed_head = landed["second_parent"] or (state.get("verified") or {}).get("head") or state["assembly"].get("head")
+    try:
+        ci_case, ci_found, _older = batch_ci_run(root, args.name, landed_head, tail="")
+        ci_error = None
+    except Fail as e:
+        ci_case, ci_found, ci_error = "unread", None, str(e)
+    ci_found = ci_found or {}
+    report["ci"] = {"case": ci_case, "url": ci_found.get("url"), "status": ci_found.get("status"),
+                    "conclusion": ci_found.get("conclusion"), "error": ci_error}
+    ci_text = {"green": "green, %s" % ci_found.get("url"),
+               "red": "red (conclusion %s), %s" % (ci_found.get("conclusion"), ci_found.get("url")),
+               "pending": "pending (status %s), %s" % (ci_found.get("status"), ci_found.get("url")),
+               "incomplete": "incomplete: it concluded success, but %s at the head has %s with no job run that passed in it "
+                             "(%s), %s" % (CI_WORKFLOW_PATH, jobs_text(ci_found.get("jobs_unmet") or []),
+                                           run_jobs_text(ci_found.get("jobs") or []), ci_found.get("url")),
+               "missing": "missing: GitHub lists no run of %s from a push to %s at %s" % (CI_WORKFLOW, branch_of(args.name), landed_head),
+               "unread": "unread after the merge: %s" % ci_error}[ci_case]
+    # land's excused attempts are reported only when they belong to the run finish read (a run's id names its sha too):
+    # the state's CI record is land's last, and a land refused after it (main moved), then another push run, leaves
+    # another run's there. A new assembly and verify clear it.
+    ci_rec = state.get("ci") or {}
+    same_run = ci_found.get("databaseId") is not None and ci_rec.get("id") == ci_found.get("databaseId")
+    for e in (ci_rec.get("excused") or []) if same_run else []:
+        rerun = e.get("run", ci_found.get("databaseId")) == ci_found.get("databaseId")
+        report["observations"].append("the batch head's CI run was green %s: attempt %d%s concluded %s (%s) and land "
+                                      "excused it as a known flake: %s" % (
+                                          "on a re-run" if rerun else "after an earlier run at the same head",
+                                          e["attempt"], "" if rerun else " of run %s" % e.get("run"),
+                                          e.get("conclusion") or e.get("status"), e.get("url"), e.get("flake")))
+    report["first_parent"] = first_parent
+    report["landed_head"] = landed
     state["finished"] = {"at": now(), "report": report}
     save_state(root, state)
-    print("batch #%d landed, %d member(s) marked merged, %s CI run: %s" % (b, len(report["merged"]), MAIN, run_url))
+    print("batch #%d landed, %d member(s) marked merged; no ci.yml run follows the merge to %s; the batch head's CI run: %s"
+          % (b, len(report["merged"]), MAIN, ci_text))
     if report["open"]:
         print("STILL OPEN (told on the PR): %s" % ", ".join("#%d" % n for n in report["open"]))
     if report["retargeted"]:
         print("retargeted to %s: %s" % (MAIN, ", ".join("#%d" % n for n in report["retargeted"])))
     for o in report["observations"]:
         print("observed: %s" % o)
-    if report["orphans"]["exit"] != 0:
+    if report["orphans"]["exit"] is None:
+        print("pr-orphans.sh: unread: %s" % report["orphans"]["out"])
+    elif report["orphans"]["exit"] != 0:
         print("pr-orphans.sh: exit %d\n%s" % (report["orphans"]["exit"], report["orphans"]["out"]))
     else:
         print("pr-orphans.sh: clean")
     if report["merged"]:
         print("postal (kind: coordinate) to the owners of %s: batch %s merged; remove your worktree and local branch (%s); the remote branch is gone."
               % (", ".join("#%d" % n for n in report["merged"]), args.name, ", ".join(members[n]["head_ref"] for n in report["merged"])))
+    loud = ([first_parent_report(args.name, b, first_parent)] if not first_parent["ok"] else []) + \
+        ([landed_head_report(args.name, b, landed)] if merge_sha and not landed["ok"] else [])
+    if loud:
+        raise Fail("\n".join(loud))
+
+
+def landed_head_report(name, b, lh):
+    """finish's loud report when the merge commit's second parent is not the batch head verify read: both shas, what it
+    means, and the remedy, a sweep at the merge commit (as for the first parent)."""
+    merge, second, seen = lh.get("merge"), lh.get("second_parent"), lh.get("verified_head")
+    remedy = ("Sweep the merge commit now: `git worktree add --detach ../romp-merge-%s %s`, then `scripts/sweep.py run --tree "
+              "../romp-merge-%s --python <python>` (%s; it owes every leg there), and tell the maintainer what it finds."
+              % (name, merge, name, PYTHON_REMEDY))
+    if not second or not seen:
+        return ("HEAD NOT CHECKED: batch PR #%d's merge commit %s has %s, and verify recorded %s, so no one checked that the "
+                "head that landed is the one the sweep read. %s" % (b, merge, "second parent %s" % second if second else
+                                                                      "no second parent", "head %s" % seen if seen else "no head",
+                                                                      remedy))
+    return ("HEAD MISMATCH: batch PR #%d's merge commit %s has second parent %s, not %s, the batch head verify read: a commit "
+            "reached %s after verify, so the tree on %s is not the tree the sweep read. %s"
+            % (b, merge, second, seen, branch_of(name), MAIN, remedy))
+
+
+def first_parent_report(name, b, fp):
+    """finish's loud report when the merge commit's first parent is not the main verify read (pre-round item 4): both
+    shas, what it means, and the remedy, a sweep at the merge commit, which owes every leg as any head does."""
+    merge, parent, seen = fp.get("merge"), fp.get("first_parent"), fp.get("verified_main")
+    remedy = ("Sweep the merge commit now: `git worktree add --detach ../romp-merge-%s %s`, then `scripts/sweep.py run --tree "
+              "../romp-merge-%s --python <python>` (%s; it owes every leg there), and tell the maintainer what it finds."
+              % (name, merge or "<merge>", name, PYTHON_REMEDY))
+    if not merge:
+        return ("FIRST PARENT NOT CHECKED: GitHub reports no merge commit for batch PR #%d, so finish cannot say that the tree "
+                "on %s is the batch head's (verify read %s at %s). Find the merge commit on %s, then: %s"
+                % (b, MAIN, MAIN, seen or "nothing", MAIN, remedy))
+    if not seen:
+        return ("FIRST PARENT NOT CHECKED: batch PR #%d's merge commit %s has first parent %s, and verify recorded no %s for "
+                "batch %s to compare it with, so no one checked that the tree on %s is the batch head's. %s"
+                % (b, merge, parent, MAIN, name, MAIN, remedy))
+    return ("FIRST PARENT MISMATCH: batch PR #%d's merge commit %s has first parent %s, not %s, the %s verify read: %s moved "
+            "before the merge, so the tree on %s is not the batch head's tree, and no sweep or CI run tested it (none runs "
+            "on the merge to %s). %s" % (b, merge, parent, seen, MAIN, MAIN, MAIN, MAIN, remedy))
 
 
 def cmd_bisect(args):
@@ -2249,25 +3382,62 @@ def cmd_bisect(args):
     base = git("merge-base", remote_main(), tip, cwd=wt)
     if git("rev-parse", "HEAD", cwd=wt) != tip:
         raise Fail("%s is not checked out at %s (HEAD is %s)" % (wt, br, short(git("rev-parse", "HEAD", cwd=wt))))
-    if subprocess.run(args.cmd, cwd=wt).returncode == 0:
+    if run_command(args.cmd, wt) == 0:
         raise Fail("the command passes at the batch tip %s; nothing to bisect (does it run the failing test?)" % short(tip))
-    git("checkout", "--quiet", "--detach", base, cwd=wt)
+    # Each setup step is inside the try whose finally undoes it (the 13:24Z ruling of 2026-10-02 on PR 926, its item 1),
+    # so a stop that ends the step's git after it has moved HEAD (a post-checkout hook still running, say) still runs
+    # the cleanup: outside it, such a stop left the worktree detached at the base, or mid-bisect at the midpoint, while
+    # main said the cleanup ran. A bisect reset with no bisect in progress changes nothing (git says it is not
+    # bisecting, and the cleanup's check=False takes any exit). A checkout of the branch the worktree is already on keeps
+    # what its index and files hold, and a checkout's git writes the other commit's files and index before it moves
+    # HEAD: a stop between the two (git waiting on a FIFO planted at the worktree's logs/HEAD, which it writes in
+    # between) left the worktree on the branch with the base's or the midpoint's tree staged, and the next bisect
+    # refused, saying the command passes at the tip (the verify pass at the build of the 13:24Z ruling, its code finding
+    # 1). So when the worktree has no changes to tracked files before these steps, the cleanup's checkout of the branch
+    # is forced, putting the branch's tree back in the index and the files, and the bisect's cleanup runs that forced
+    # checkout before its reset, whose own checkout of the branch keeps them too. A worktree that had changes to
+    # tracked files keeps the unforced checkout and the reset alone, so the cleanup discards none of them. The batch
+    # worktree is this tool's own, and these cleanups run whenever bisect ends, stopped or not: with the worktree clean
+    # here, the forced checkout discards every change the test command made to tracked files at the base and at each
+    # commit the bisect tested (kept, the 21:31Z ruling of 2026-10-02 on PR 926, its item (a); docs/batching.md says
+    # so). A change the command made in its run at the tip is already in the worktree here, so nothing is forced.
+    force = ["--force"] if git("status", "--porcelain", "--untracked-files=no", cwd=wt) == "" else []
     try:
-        at_base = subprocess.run(args.cmd, cwd=wt).returncode
+        git("checkout", "--quiet", "--detach", base, cwd=wt)
+        at_base = run_command(args.cmd, wt)
     finally:
-        git("checkout", "--quiet", br, cwd=wt)
+        _cleanup_steps(lambda: git("checkout", "--quiet", *force, br, cwd=wt))
     if at_base != 0:
         raise Fail("the command fails at the base %s (%s) too; no member made it fail. Check the command and the environment before blaming a member"
                    % (short(base), remote_main()))
-    git("bisect", "start", "--first-parent", tip, base, cwd=wt)
+    # The steps `git bisect run` would take are driven here, with its rules for the command's exit (0 good, 125 skip, any
+    # other from 1 to 127 bad, anything else stops the bisect): bisect run runs the command inside git, so the bound on
+    # every git call (GIT_BOUND, the 02:43Z ruling, item 1(a)) would bound the command too, and a test command can rightly
+    # take longer.
+    # Each git step is bounded; the command is not, as the runs at the tip and the base above are not. Each step tests
+    # another commit of the chain, so there are at most as many as it has commits, plus one.
+    steps = int(git("rev-list", "--first-parent", "--count", "%s..%s" % (base, tip), cwd=wt)) + 1
     try:
-        proc = _run(["git", "bisect", "run", *args.cmd], cwd=wt, check=False)
-        m = _FIRST_BAD.search(proc.stdout + proc.stderr)
-        if not m:
-            raise Fail("bisect did not name a first bad commit:\n%s" % (proc.stdout + proc.stderr)[-2000:])
+        proc = git_proc("bisect", "start", "--first-parent", tip, base, cwd=wt)
+        out = proc.stdout + proc.stderr
+        m = _FIRST_BAD.search(out)
+        while not m:
+            steps -= 1
+            if steps < 0:
+                raise Fail("bisect took more steps than the chain has commits, at %s" % short(git("rev-parse", "HEAD", cwd=wt)))
+            rc = run_command(args.cmd, wt)
+            if rc not in range(0, 128):
+                raise Fail("bisect stopped at %s: the command exited %d, and git bisect run stops on an exit of 128 or more, or "
+                           "a signal" % (short(git("rev-parse", "HEAD", cwd=wt)), rc))
+            proc = git_proc("bisect", "skip" if rc == 125 else "good" if rc == 0 else "bad", cwd=wt, check=False)
+            out = proc.stdout + proc.stderr
+            m = _FIRST_BAD.search(out)
+            if not m and proc.returncode != 0:
+                raise Fail("bisect did not name a first bad commit:\n%s" % out[-2000:])
         bad = m.group(1)
     finally:
-        git("bisect", "reset", cwd=wt, check=False)
+        back = [lambda: git("checkout", "--quiet", "--force", br, cwd=wt)] if force else []
+        _cleanup_steps(*back, lambda: git("bisect", "reset", cwd=wt, check=False))
     members = members_by_n(state)
     hit = next((e for e in state["assembly"].get("merged", []) if e["merge"] == bad), None)
     if hit:
@@ -2293,11 +3463,16 @@ def main(argv=None):
 
     p = sub.add_parser("plan", help="pick and order the members, predict conflicts, write the plan",
                        description="Pick the members: open, non-draft PRs against %s or against another candidate's branch, not labeled "
-                                   "`%s` or `%s`. Order them dependencies first (a base that is another candidate's branch, or "
+                                   "`%s` or `%s`, whose head has a passing sweep result of its own (scripts/sweep.py, read from "
+                                   "this machine's state dir; a candidate without one is left out with the case named). Order "
+                                   "them dependencies first (a base that is another candidate's branch, or "
                                    "`Depends-on: #N` in the body's first lines), then by number; predict conflicts read-only "
                                    "against the accumulating tree; pin every head SHA; write the plan. Nothing is merged."
                                    % (MAIN, LABEL_MAJOR, LABEL_HOLD))
     p.add_argument("--labeled", action="store_true", help="only PRs labeled `%s`" % LABEL_LAND)
+    p.add_argument("--only", type=int, action="append", metavar="N",
+                   help="only PR N (repeatable): a single PR lands as a one-member batch; a dependency not named is "
+                        "not taken in, so its dependent is left out with it")
     p.add_argument("--name", help="batch name (default: today's date plus the first free letter)")
     p.add_argument("--force", action="store_true", help="overwrite a plan that was already assembled")
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
@@ -2314,7 +3489,8 @@ def main(argv=None):
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--without", type=int, action="append", metavar="N", help="leave N (and its dependents) out")
     p.add_argument("--resolve", type=int, action="append", metavar="N", help="stop at N's conflict for a hand resolution")
-    p.add_argument("--repin", action="append", metavar="N|all", help="re-read N's head, title, labels, trailer and base from GitHub before assembling")
+    p.add_argument("--repin", action="append", metavar="N|all", help="re-read N's head, title, labels, trailer and base from GitHub before assembling; "
+                                                                    "refused when the new head has no passing sweep result of its own")
     p.add_argument("--continue", dest="cont", action="store_true", help="commit the resolved merge and go on")
     p.add_argument("--abort", action="store_true", help="abandon the stopped resolution; hold that member back")
     p.add_argument("--reviewed", metavar="NOTE", help="with --continue: who reviewed the resolution and the verdict")
@@ -2324,15 +3500,18 @@ def main(argv=None):
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
     p.set_defaults(func=cmd_assemble)
 
-    p = sub.add_parser("verify", help="provenance, pinned heads, bases, ledger, sweep, own CI",
+    p = sub.add_parser("verify", help="provenance, pinned heads, bases, main contained, ledger, sweep result",
                        description="The gate `land` re-runs. Provenance: every commit the batch adds is a member merge, a `batch:` "
                                    "commit or a merge of %s, and every merge equals the clean merge of its parents unless it "
                                    "carries a recorded resolution (then only the resolution's files may differ). Every member's "
                                    "live head still equals the pinned SHA, is OPEN, and has its base in the batch or in %s. "
-                                   "The ledger check runs on the branch's tree. The sweep must be recorded at the current head."
-                                   % (remote_main(), MAIN))
+                                   "The batch head contains %s as %s has it now (ci.yml does not run on the merge, so the tree that "
+                                   "lands must be the tree the sweep and the batch branch's CI ran on); `assemble --merge-main` "
+                                   "catches it up. The ledger check runs on the branch's tree. The sweep result that "
+                                   "`scripts/sweep.py run` wrote for the batch head's full sha must be a pass; a missing, stale, "
+                                   "unfinished, red, invalid, incomplete or unreadable result fails by that name."
+                                   % (remote_main(), MAIN, MAIN, REMOTE))
     p.add_argument("name", help=HELP_NAME)
-    p.add_argument("--sweep", metavar="TEXT", help="record the full sweep's counts at the current batch head")
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
     p.set_defaults(func=cmd_verify)
 
@@ -2357,23 +3536,49 @@ def main(argv=None):
     p.set_defaults(func=cmd_pull)
 
     p = sub.add_parser("land", help="verify, merge the batch PR with a merge commit, finish",
-                       description="On the maintainer's word for this batch: run verify again (the last drift check), retarget "
-                                   "stacked members to %s, `gh pr merge --merge --match-head-commit <verified sha>`, then run "
-                                   "finish. Never squash or rebase: that would leave every member open." % MAIN)
+                       description="On the maintainer's word for this batch: run verify again (pinned heads, main contained, "
+                                   "the sweep result at the verified head), read the batch head's CI run from GitHub (the "
+                                   "newest run of ci.yml from a push to the batch branch at the verified head; missing, "
+                                   "pending or red is refused, --auto or not, and so is a success in which a job of the "
+                                   "head's ci.yml has no job run that passed, and any other attempt of a push run at "
+                                   "that head that did not pass, the newest run's earlier attempts and every attempt of an "
+                                   "older run of the same sha, unless --flake names it), read %s on %s and refuse if it moved since verify, "
+                                   "retarget stacked members to %s, read %s once more and refuse if it moved (naming each "
+                                   "member it retargeted and how to restore its base), then `gh pr merge --merge "
+                                   "--match-head-commit <verified sha>` and finish. The merge pins the head, not the base, so "
+                                   "a merge to %s between that last read and GitHub's merge is not stopped: finish then fails "
+                                   "loudly, naming the merge commit's first parent and the main verify read. With --auto the "
+                                   "merge happens later, when a rule on %s is met, and main is not read again then (--auto "
+                                   "is refused until the repository allows auto-merge and a rule gates a merge; the fork had "
+                                   "neither on 2026-09-27). scripts/land.sh runs this subcommand. Never squash or rebase: that "
+                                   "would leave every member open." % (MAIN, REMOTE, MAIN, MAIN, MAIN, MAIN))
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--auto", action="store_true",
                    help="arm auto-merge instead (lands when the required checks pass; needs the repository's \"Allow auto-merge\" "
                         "setting and a rule on %s that gates a merge: a ruleset rule such as required_status_checks or "
                         "pull_request, or classic protection with required checks or reviews)" % MAIN)
+    p.add_argument("--flake", action="append", metavar="RUN/ATTEMPT=TEXT",
+                   help="an attempt of a push run at the batch head, other than the newest run's latest, that failed on a "
+                        "known flake (the run id and attempt number as land's refusal names them, then the failing test and "
+                        "where it is recorded as a known flake); without it land refuses a head where such an attempt did not "
+                        "pass, an earlier attempt of the newest run or any attempt of an older run of the same sha; one "
+                        "attempt across the runs at the head can be excused; repeatable")
     p.add_argument("--no-notify", action="store_true", help=HELP_NO_NOTIFY + " (passed on to finish)")
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
     p.set_defaults(func=cmd_land)
 
     p = sub.add_parser("finish", help="after the merge: member states, retargets, branch deletion, orphans",
-                       description="After the batch PR merged (by land or by hand): confirm each member reads MERGED and comment "
-                                   "on any that does not, retarget still-open dependents to %s, delete the member branches and "
-                                   "`batch/<name>`, remove the worktree, run scripts/pr-orphans.sh, report one line. Safe to "
-                                   "re-run: what it observed the first time is kept." % MAIN)
+                       description="After the batch PR merged (by land, or by hand): confirm each member reads MERGED and "
+                                   "comment on any that does not, retarget still-open dependents to %s, delete the member "
+                                   "branches and `batch/<name>`, remove the worktree, run scripts/pr-orphans.sh, and report one "
+                                   "line naming the batch head's CI run (the push run land gated on, and its case). Then it "
+                                   "checks that the merge commit's first parent is the %s verify read, and its second parent "
+                                   "the batch head verify read (a commit pushed after verify and merged by the button): no ci.yml "
+                                   "run follows the merge to %s, so a batch merged after %s moved, or with a head the sweep did not "
+                                   "read, lands a tree nothing tested, and finish cannot undo that; it exits 1 naming both shas "
+                                   "and the sweep at the merge commit that is owed. It exits 1 too when it cannot tell: no "
+                                   "merge commit reported, or no %s or head recorded by verify. Safe to re-run: what it "
+                                   "observed the first time is kept." % (MAIN, MAIN, MAIN, MAIN, MAIN))
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--no-notify", action="store_true", help=HELP_NO_NOTIFY + " (members that did not read merged)")
     p.add_argument("--keep-worktree", action="store_true", help="leave ../romp-batch-<name> and the local batch branch in place")
@@ -2383,7 +3588,8 @@ def main(argv=None):
     p = sub.add_parser("bisect", help="first-parent bisect over the batch chain; names the member",
                        description="When the batch's CI is red: run the command at the tip and at the base first (a command that "
                                    "never fails, or fails everywhere, is reported instead of a member), then `git bisect "
-                                   "--first-parent` over the member merges with `git bisect run`, and name the member to pull.")
+                                   "--first-parent` over the member merges, each step taken as `git bisect run` takes it (exit "
+                                   "0 good, 125 skip, any other from 1 to 127 bad), and name the member to pull.")
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("cmd", nargs=argparse.REMAINDER, help="-- <command that fails on the bad tree>, run in the batch worktree")
     p.set_defaults(func=cmd_bisect)
@@ -2391,11 +3597,22 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.subcommand == "bisect" and args.cmd[:1] == ["--"]:
         args.cmd = args.cmd[1:]
+    replaced = {}
     try:
+        install_stop_handlers(replaced)
         args.func(args)
     except Fail as e:
         print("batch: %s" % e, file=sys.stderr)
         return e.code
+    except Stopped as e:
+        # "any": a stop can land between two processes, with none running (the verify pass at the closing check
+        # wf_fb19febe-36b's build, the class of its code finding 3, which scripts/sweep.py's check line had too)
+        print("batch: stopped by signal %d; any process it was waiting on was killed and its cleanup ran" % e.signum,
+              file=sys.stderr)
+        return 128 + e.signum
+    finally:
+        for s, handler in replaced.items():
+            signal.signal(s, handler)
     return 0
 
 
