@@ -433,6 +433,48 @@ out({ pending, atFirstDeadline, stays, runs: runs() });""")
         self.assertIs(o["stays"], True)
         self.assertEqual([r["on"] for r in o["runs"]], [True, False], "painted once and cleared once: no flicker across the repeat drops")
 
+    # tests-1 of round 1: the fresh frame ends a PENDING hold too (rpend=false in the fork's wsfresh listener). Without it the next
+    # drop, on a visible page after a healthy return, found the stale pending flag, pulled the badge back and armed no hold, so the
+    # whole outage showed nothing; and a later switch away and back with no drop re-held a badge nothing had raised
+    def test_a_drop_after_a_healthy_return_is_held_and_paints_at_its_own_hold(self):
+        o = self._run(r"""
+fire('romp:wsdown'); after(400); fire('romp:wsfresh');                // a healthy return: the fresh frame inside the hold
+after(5000);
+fire('romp:wsdown');                                                  // a second drop, the page visible
+const atDrop = { painted: painted(), holds: live(RHOLD_T) };
+after(RHOLD_T - 1); const justBefore = painted();
+after(1);
+out({ atDrop, justBefore, atHold: painted(), runs: runs() });""")
+        self.assertEqual(o["atDrop"], {"painted": False, "holds": 1}, "the second drop is held: one hold armed (with a stale pending flag it armed none)")
+        self.assertIs(o["justBefore"], False)
+        self.assertIs(o["atHold"], True, "and the badge paints at that hold: the outage is cued")
+        self.assertEqual(o["runs"], [{"t": 400 + 5000 + self.HOLD, "on": True}])
+
+    def test_after_a_healthy_return_a_switch_away_and_back_with_no_drop_paints_nothing(self):
+        o = self._run(r"""
+fire('romp:wsdown'); after(400); fire('romp:wsfresh');                // a healthy return
+after(5000);
+vis('hidden'); after(2000); vis('visible');                           // a quick switch over the live socket: no drop
+const atReturn = { painted: painted(), live: live() };
+after(RHOLD_T + 500);
+out({ atReturn, runs: runs(), liveEnd: live() });""")
+        self.assertEqual(o["atReturn"], {"painted": False, "live": 0}, "nothing is held: no drop raised the badge (a stale pending flag re-held it here)")
+        self.assertEqual(o["runs"], [], "never painted")
+        self.assertEqual(o["liveEnd"], 0)
+
+    # fresh-1 of round 1: turning visible re-holds only a badge that is pending or painted. A quick switch away and back over a
+    # standing socket (no drop: the shim's keep path) must hold and paint nothing; an unconditional re-hold painted
+    # 'reconnecting…' a second after every such switch, over a healthy page
+    def test_a_quick_switch_over_a_standing_socket_paints_nothing(self):
+        o = self._run(r"""
+vis('hidden'); after(3000); vis('visible');
+const atReturn = { painted: painted(), live: live() };
+after(RHOLD_T + 500);
+out({ atReturn, runs: runs(), liveEnd: live() });""")
+        self.assertEqual(o["atReturn"], {"painted": False, "live": 0}, "turning visible with nothing pending or painted arms no hold")
+        self.assertEqual(o["runs"], [], "never painted")
+        self.assertEqual(o["liveEnd"], 0)
+
     def test_a_page_with_no_shell_keeps_upstreams_failsafe_from_the_paint(self):
         # standalone: no link word ever arrives, so the failsafe is armed per show (the paint) and hides the badge 30 s on
         o = self._run(r"""
@@ -672,6 +714,21 @@ render(45, true); const shown = { painted: painted(), top: topOf() };
 out({ hidden, shown });""", pre=self._unrendered_pre())
         self.assertEqual(o["hidden"], {"painted": True, "top": None}, "painted while nothing can be read: no place written")
         self.assertEqual(o["shown"], {"painted": True, "top": "53px"}, "the show's resize event places the painted badge")
+
+    # tests-5 of round 1: the clamp. A container whose top is above the viewport's (the pane's document scrolled, a negative top)
+    # keeps the badge 8 px below the viewport's top, never above it: at a resize event, and at the paint from the box it reads then
+    def test_a_container_above_the_viewport_top_keeps_the_badge_8px_below_the_top(self):
+        o = self._run(r"""
+resize(-30);
+out({ atResize: topOf() });""", pre=self._PLACE_PRE)
+        self.assertEqual(o["atResize"], "8px", "a resize event with the container's top at -30 px: 8 px, not -22 px")
+        o = self._run(r"""
+const atLoad = topOf();
+render(-30, false);                                                   // the box moves with no resize event before the drop
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atLoad, atPaint: { painted: painted(), top: topOf() } });""", pre=self._PLACE_PRE)
+        self.assertEqual(o["atLoad"], "52px")
+        self.assertEqual(o["atPaint"], {"painted": True, "top": "8px"}, "the paint reads the -30 px top and clamps it: 8 px")
 
     def test_an_auto_overflow_list_counts_as_a_scroll_area(self):
         # the Outline's, the Feed's and the Waiting pane's lists are overflow-y:auto; the chat's transcript is scroll

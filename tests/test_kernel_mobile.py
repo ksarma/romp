@@ -6,6 +6,7 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -3168,6 +3169,52 @@ shOut({seq:seq});""")
                                     ["open", False, ""], ["tick", False, ""]],
                          "each change at a link event (abandon, close, open); every tick between leaves the line as it was")
 
+    # tests-2 of round 1: the count is zeroed whenever the line is off (shCue's reset), which covers two readers. A try counted
+    # before an open must not carry into the wait after that socket drops: the refused try of a return, and the refused BOOT dial
+    # (counted while the page had never opened, when the line cannot show), each followed by an open and a drop of the open socket
+    def test_a_return_refused_then_opened_counts_the_next_drop_from_zero(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // a return to a dead socket: the fast path dials
+shRefuseNow();var refused=cueText();                         // the return's first try is refused: one try counted
+SHNOW+=1000;shFireDials();shOpen();var opened=cueLine();     // the next try opens: the line goes, and its count with it
+SHNOW+=5000;shRecv({type:'ka'});
+shSock().readyState=3;shSock().onclose({code:1006});         // the opened socket drops: a new wait
+shOut({refused:refused,opened:opened,drop:cueText()});""")
+        self.assertEqual(r["refused"], _CUE_REFUSED1)
+        self.assertEqual((r["opened"]["shown"], r["opened"]["text"]), (False, ""))
+        self.assertEqual(r["drop"], _CUE_WAIT, "the drop after the open is a new wait with no tries yet (a stale count read 'the first try could not connect')")
+
+    def test_a_refused_boot_dial_counts_nothing_toward_the_first_drop_after_the_open(self):
+        r = self._run(r"""
+shRefuseNow();                                               // the boot dial is refused: the page has never had a link
+SHNOW+=1000;shFireDials();shOpen();                          // the next boot dial opens
+SHNOW+=5000;shRecv({type:'ka'});
+shSock().readyState=3;shSock().onclose({code:1006});         // the first drop after that open
+shOut({drop:cueText()});""")
+        self.assertEqual(r["drop"], _CUE_WAIT, "the boot's refused dial is not counted into the first wait after the open")
+
+    # tests-4 of round 1: the cut's boundary. shCueCuts counts a never-opened close at least SH_CONNECT_MS after its dial, the
+    # complement of the redial ladder's refused test, so both readers agree on a close at exactly the cut (delivered directly: the
+    # watchdog's own close comes only past the cut) and on one a millisecond sooner
+    def test_a_close_at_exactly_the_connect_cut_is_a_cut_and_one_a_millisecond_sooner_is_a_refusal(self):
+        js = _mobile_js()
+        cut = int(re.search(r"SH_CONNECT_MS=(\d+)", js).group(1))
+        rung = int(re.search(r"SH_LADDER=\[(\d+)", js).group(1))
+        got = {}
+        for k, dt in (("sooner", cut - 1), ("at", cut)):
+            got[k] = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials now
+var T=SHNOW,s=shSock();
+SHNOW=T+%d;s.readyState=3;s.onclose({code:1006});            // that dial's close, %d ms after it
+shOut({line:cueText(),redial:shDialTimers().map(function(t){return t.ms;})});""" % (dt, dt))
+        self.assertEqual(got["sooner"]["line"], _CUE_REFUSED1, "a close inside the cut is a refusal")
+        self.assertEqual(got["at"]["line"], _CUE_HUNG1, "a close at exactly the cut is the cut's: 'got no response'")
+        self.assertEqual(got["sooner"]["redial"], [rung], "the ladder reads the sooner close as a refusal too: its first rung")
+        self.assertEqual(len(got["at"]["redial"]), 1)
+        self.assertNotEqual(got["at"]["redial"], [rung], "...and the close at the cut as a cut, off the ladder: the two readers agree")
+
     def test_the_lines_are_the_drafted_copy_and_the_count_never_reaches_the_glance(self):
         js = _mobile_js()
         for text in (_CUE_WAIT, _CUE_HUNG1, _CUE_REFUSED1, "' tries got no response.'", "' tries could not connect to the kernel.'"):
@@ -3264,6 +3311,18 @@ NOW+=100;open();NOW+=100;recv({type:"feed",asks:[]});snap('fresh');   // the pan
         self.assertEqual([s["badge"] for s in r["snaps"]], [False, False, False], "no badge at any point of a return that links inside the hold")
         self.assertEqual([s["line"] for s in r["snaps"]], [_CUE_WAIT, "", ""], "the Log line lived from the return to the link-up")
         self.assertEqual(r["holds"], 0, "the fresh frame cancelled the hold")
+
+    # fresh-1 of round 1, composed: a quick switch away and back with both sockets standing goes through the shim's and the shell's
+    # keep paths, which dispatch no drop; the loader's visibility listener sees the page turn visible and must hold nothing
+    def test_a_quick_switch_over_standing_sockets_paints_nothing(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=2000;shShow();show();snap('return');   // a quick switch: both sockets stand, the fast paths keep them
+holdFires();snap('hold');
+NOW+=40000;failsafeFires();snap('later');""")
+        self.assertEqual([s["badge"] for s in r["snaps"]], [False, False, False], "no badge at the return, at a hold or later")
+        self.assertEqual(r["holds"], 0)
+        self.assertEqual([s["line"] for s in r["snaps"]], ["", "", ""], "and no Log line: the link never went down")
 
     def test_a_link_that_opens_and_drops_before_any_fresh_frame_keeps_the_badge_up_without_a_flap(self):
         r = self._run(r"""

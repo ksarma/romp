@@ -452,13 +452,14 @@ class ReturnFromBackground(unittest.TestCase):
         return m
 
     # ---- the reconnect cue (iOS item 4, 2026-10-02): the glance and its detail in a real engine ----
-    def _cue(self, name, r, regime, outage_s):
+    def _cue(self, name, r, regime, outage_s, require_no_paint=False):
         """The visible chat's corner badge, read once per frame (the driver's requestAnimationFrame loop), and the shell's Log line,
         read at each of its mutations. The badge: nothing painted between the suspend and the return (the drop while hidden is held);
         after the return it paints ONCE, no sooner than the hold after the return, and clears ONCE, at or after the chat's first
         fresh frame (the clearing event); with an outage that is during the outage and after its end (the link up). With no outage
         (the healthy leg) the outcome is keyed on the hold's own events, never on elapsed time (_hold_outcome): one paint when the
-        hold's timer fired before the chat's first fresh frame, none when that frame came first.
+        hold's timer fired before the chat's first fresh frame, none when that frame came first; a leg whose name claims no paint
+        passes require_no_paint, and a run whose return was slow enough to paint fails, named (_hold_outcome).
         The Log line: shown with the wait line when the page returns, never hidden while the outage holds, hidden at the end, at or
         after the outage's end; in a hung outage past the connect cut it shows the cut's line; in a refused one the connect line."""
         where = name + ": "
@@ -490,7 +491,7 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertGreaterEqual(offs[0], rel_end, where + "cleared only after the outage ended: %r (end %d ms)" % (offs, rel_end))
             self.assertGreaterEqual(offs[0], rel_fresh, where + "cleared at the chat's first fresh frame after the link came up, not before: %r (fresh %d ms)" % (offs, rel_fresh))
         else:
-            self._hold_outcome(where + "a healthy return: ", badge, cue.get("hold"), ret, "the return", hold)
+            self._hold_outcome(where + "a healthy return: ", badge, cue.get("hold"), ret, "the return", hold, require_no_paint)
         log = [e for e in (cue.get("log") or []) if e["t"] >= sus]
         self.assertTrue(log, where + "the Log line was recorded from the suspend on: %r" % (cue.get("log"),))
         entering = [e for e in log if e["t"] <= ret]
@@ -538,7 +539,7 @@ class ReturnFromBackground(unittest.TestCase):
                     hits.append((c["el"], c["label"], round(ix * iy / float(w * h), 2)))
             self.assertEqual(hits, [], where + "the painted badge at %r covers none of the header's controls: %r" % (b["box"], hits))
 
-    def _tapcue(self, name, r, need_controls=False):
+    def _tapcue(self, name, r, need_controls=False, require_no_paint=False):
         """The pane the return parked, tapped after the return (iOS item 4, finding of 2026-10-02): its corner badge read once per frame
         from the tap through its first fresh frame and a hold past it. The tap is that pane's return for the badge: no frame paints it
         sooner than the hold after the tap, and whether one paints it at all is keyed on the hold's own events (_hold_outcome): once
@@ -564,9 +565,9 @@ class ReturnFromBackground(unittest.TestCase):
         type(self).measurements.setdefault(name, {})["postTapCue"] = {"pane": pt.get("pane"), "holdMs": hold, "armedOn": (rec.get("armed") or {}).get("on"),
                                                                      "paintMs": ons, "clearMs": [b["t"] - tap for b in badge if not b["on"] and b["t"] >= tap], "freshMs": rel_fresh,
                                                                      "holdEvents": [{"k": e.get("k"), "ms": e["t"] - tap, "f": e.get("f")} for e in (rec.get("hold") or []) if e.get("t", 0) >= tap]}
-        self._hold_outcome(where + "a tap into a pane the return parked: ", badge, rec.get("hold"), tap, "the tap", hold)
+        self._hold_outcome(where + "a tap into a pane the return parked: ", badge, rec.get("hold"), tap, "the tap", hold, require_no_paint)
 
-    def _hold_outcome(self, where, badge, events, t0, label, hold):
+    def _hold_outcome(self, where, badge, events, t0, label, hold, require_no_paint=False):
         """Whether the badge painted after `t0` (the return, or the tap into a parked pane), keyed on the page's own events and never
         on elapsed time. `events` is the recorder's `hold` log (return_from_background_browser.mjs, cueRec): each arm and each run of
         the hold's timer (setTimeout(rpaint, RHOLD) in _pane_spin) and each romp:wsfresh, in the order they ran, each with the frame
@@ -578,7 +579,12 @@ class ReturnFromBackground(unittest.TestCase):
         `t0` to the fresh frame against the nominal hold is not the key: a timer delayed under load fires after a fresh frame that came
         past the nominal second (the full sweep of 2026-10-02: 1015 ms after the tap, no paint, correctly, and the old comparison
         expected one). Whatever the branch: no paint sooner than the hold after `t0` (the defect of 2026-10-02: a hold run off screen
-        painted before the tap), and the badge is off at the end of the record (it never stays up after the fresh frame)."""
+        painted before the tap), and the badge is off at the end of the record (it never stays up after the fresh frame).
+        require_no_paint (tests-3 of round 1): the healthy legs, whose names say no badge paints, accept only the no-paint branch. A run
+        whose hold's timer ran before the fresh frame with a frame drawn between FAILS, naming the slow lab return (the fresh frame's
+        time and the timer's), instead of passing on the paint branch: the leg measured no healthy return on that run, whether a
+        loaded box or a regression made the return slow. It is a failure, not a skip, so CI's served job cannot turn a slower return
+        into a quiet skip."""
         ons = [b["t"] - t0 for b in badge if b["on"] and b["t"] >= t0]
         self.assertEqual([x for x in ons if x < hold - 20], [], where + "no paint sooner than the %d ms hold after %s: on %r: %r" % (hold, label, ons, badge))
         events = events or []
@@ -594,6 +600,10 @@ class ReturnFromBackground(unittest.TestCase):
         fires = [e for e in before if e.get("k") == "fire" and e.get("t", 0) >= t0]
         shown = [e for e in fires if fresh.get("f", 0) > e.get("f", 0)]
         rel = lambda es: [e["t"] - t0 for e in es]
+        if shown and require_no_paint:
+            self.fail(where + "the return was too slow for this leg: the hold's timer ran at %r ms after %s and the first fresh frame came at %d ms, "
+                      "with a frame drawn between, so the badge painted (on %r ms); this leg measures a healthy return, which needs the fresh frame first, "
+                      "and this run measured none" % (rel(shown), label, rel_fresh, ons))
         if shown:
             self.assertEqual(len(ons), 1, where + "the hold's timer fired at %r ms after %s, before the fresh frame at %d ms, with a frame drawn between: one paint: %r" % (rel(shown), label, rel_fresh, badge))
             self.assertGreaterEqual(ons[0] + t0, shown[0]["t"], where + "...painted at or after the hold's timer ran (%d ms), not on another road: on %r" % (shown[0]["t"] - t0, ons))
@@ -1043,7 +1053,7 @@ class ReturnFromBackground(unittest.TestCase):
     # here (the shape checks of _leg assume an outage that held a dial).
     def _healthy(self, engine):
         name, r = self._drive("phone", "hung", 0, engine)
-        self._cue(name, r, "hung", 0)
+        self._cue(name, r, "hung", 0, require_no_paint=True)
         Path(os.path.join(self.lab, "return-harness-%s.json" % name)).write_text(json.dumps(type(self).measurements.get(name, {}), indent=1, sort_keys=True))
 
     def test_phone_healthy_return_paints_no_badge(self):
@@ -1054,8 +1064,8 @@ class ReturnFromBackground(unittest.TestCase):
     # badge must not show when its content lands inside the hold.
     def _healthy_post_tap(self, engine):
         name, r = self._drive("phone", "hung", 0, engine, tap="waiting", post_tap="waiting")
-        self._cue(name, r, "hung", 0)
-        self._tapcue(name, r)
+        self._cue(name, r, "hung", 0, require_no_paint=True)
+        self._tapcue(name, r, require_no_paint=True)
         Path(os.path.join(self.lab, "return-harness-%s.json" % name)).write_text(json.dumps(type(self).measurements.get(name, {}), indent=1, sort_keys=True))
 
     def test_phone_healthy_return_then_a_parked_tab_tapped_paints_no_badge(self):
