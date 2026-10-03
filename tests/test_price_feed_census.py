@@ -1319,11 +1319,14 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "once, by one top-level plain assignment, to a call of `compile` handed a string or bytes constant (and at most a "
                 "flags argument that is an int constant, an attribute of that name, or their `|`) on a name the module binds to "
                 "the standard library's `re` by binding is read through its `.search`, `.match`, `.fullmatch` and `.findall`, and "
-                "through its `.sub` where the replacement is a string or bytes constant holding no backslash, which change nothing, so "
-                "such a call's arguments are the page text and the compiled name holds none of its own; a `.sub` with any other "
-                "replacement (one holding a backslash, which `re` may expand as a template escape or a group reference into text the "
-                "replacement does not spell, a name, a callable, a starred argument or a `**`) is refused by name, since the census "
-                "does not model template expansion; the proof by binding is the digest leaf's (below), with its limit, so a module "
+                "through its `.sub` where the replacement is a string or bytes constant holding no backslash and no argument is "
+                "starred or a `**`, which change nothing, so such a call's arguments are the page text and the compiled name holds "
+                "none of its own; any other `.sub` (one whose replacement holds a backslash, which `re` may expand as a template "
+                "escape or a group reference into text the replacement does not spell, or is a name or a callable, and one handed "
+                "a starred argument or a `**`, whatever its replacement) is refused by name, since the census does not model "
+                "template expansion; `re`'s own `sub` and `subn`, and a pattern's method called unbound on `re.Pattern`, are no "
+                "such read but calls under the call limit (below), their arguments read as spelled and the text `re` makes of them "
+                "not read; the proof by binding is the digest leaf's (below), with its limit, so a module "
                 "object stored in sys.modules under that name before the import binds it, or a function of the module replaced by an "
                 "attribute store, is not seen. The census reads a page only where the bytes a browser decodes are the text it scans, "
                 "which it reads as UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding a byte past ASCII "
@@ -1335,9 +1338,11 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "`encoding=`, followed by any label but utf-8) in a string or bytes constant, an f-string's literal part or the "
                 "joined text of a join of string constants; a script-running content type whose parameters name a charset other "
                 "than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD, "
-                "U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (any part but a "
-                "string constant among its pieces, between two literals or as one half: a name's text, a call, a conditional expression "
-                "or a bytes constant, which the census reads each on its own) is read as each text spells it. The routes are derived "
+                "U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (at any join "
+                "but the joins of string constants it folds, below: a part other than a string constant among its pieces, between "
+                "two literals or as one half, such as a name's text, a call, a conditional expression or a bytes constant, which "
+                "the census reads each on its own, or a compiled pattern's `.sub`, whose replacement it reads apart from the "
+                "subject even where both are string constants) is read as each text spells it. The routes are derived "
                 "from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a "
                 "name computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A "
                 "`_send` call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in "
@@ -2800,8 +2805,8 @@ PAINT_CLAUSE = ("in Chromium a `fill`, `stroke`, `clip-path`, `mask`, `marker-st
                 "scheme's default) in its Origin header; in Chromium a `mask` request can also carry that origin as its Referer, from any page, "
                 "framed or bare; and a paint request can carry the full page address with the serve token in its Referer, but only when the "
                 "page's own address carries `?token=` (a pane page loaded on such an address by a load the kernel does not count "
-                "as a navigation, one whose Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch-Dest header, "
-                "whose Accept does not name text/html; the shell drops the token from its "
+                "as a navigation, one whose Sec-Fetch-Dest holds a value that names neither a document nor an iframe or, with that "
+                "header absent or blank, whose Accept does not name text/html; the shell drops the token from its "
                 "address before it frames its panes, and frames them without it); these paint requests are the one exception to the trust "
                 "model's sentence on `Referrer-Policy: same-origin` (the response is blocked as cross-origin; the request, with those headers, "
                 "has reached the host)")
@@ -2815,15 +2820,17 @@ CHAT_MEDIA_PAINT = ("an inline svg's paint references load at render too, with n
                     "a `mask` request can also carry that origin as its Referer, from any page, framed or bare; and a paint request can carry "
                     "the full page address with the serve token in its Referer, but only when the page's own address carries "
                     "`?token=` (a pane page loaded on such an address by a load the kernel does not count as a navigation, one "
-                    "whose Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch-Dest header, whose Accept does "
-                    "not name text/html; the shell drops the token from its address before it frames its panes, and frames "
-                    "them without it); these paint requests are the one exception to the trust model's sentence on `Referrer-Policy: "
-                    "same-origin` (the response is blocked as cross-origin; the request, with those headers, has reached the host)")
+                    "whose Sec-Fetch-Dest holds a value that names neither a document nor an iframe or, with that header absent or "
+                    "blank, whose Accept does not name text/html; the shell drops the token from its address before it frames its "
+                    "panes, and frames them without it); these paint requests are the one exception to the trust model's sentence on "
+                    "`Referrer-Policy: same-origin` (the response is blocked as cross-origin; the request, with those headers, has reached "
+                    "the host)")
 PAINT_TOKEN_CONDITION = "only when the page's own address carries `?token=`"
 # the clause's example of a page whose own address carries that parameter (the landing round's review, regression-1): a case that holds
 # at the head, which replaced "a pane page opened bare" (PAINT_EXAMPLE_WITHDRAWN); TheChatMediaRoadIsRowed holds both
-PAINT_CASE = ("a pane page loaded on such an address by a load the kernel does not count as a navigation, one whose Sec-Fetch-Dest names "
-              "neither a document nor an iframe or, with no Sec-Fetch-Dest header, whose Accept does not name text/html")
+PAINT_CASE = ("a pane page loaded on such an address by a load the kernel does not count as a navigation, one whose Sec-Fetch-Dest "
+              "holds a value that names neither a document nor an iframe or, with that header absent or blank, whose Accept does "
+              "not name text/html")
 PAINT_EXAMPLE_WITHDRAWN = "a pane page opened bare"
 CHAT_MEDIA_NO_TOKEN_WITHDRAWN = "no serve token, key or login token rides"
 # extra6-4: the clicked-link sent cell no longer says the serve token travels only on the bundles' own URLs; it says what romp adds
@@ -9051,7 +9058,9 @@ AT_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AT_PLANTS)
 # re refuses as a bad escape at run time, refused here all the same. Each was silent at the reviewed head (sz1 read there with no
 # refusal) and is refused at its line; nsc and sbn (an empty str and bytes replacement), psfa (a .findall's return joined) and psse (a
 # .search's return) are read at both heads, their fetches sites, and sz1's subject fetch is a site beside its refusal (RD_SB_SUBJECT);
-# snb and srq, an f put in place of a Q by place and by keyword, are the join limit's witnesses (RD_SB_LIMIT).
+# snb and srq, an f put in place of a Q by place and by keyword, and sdl, the Q of feQtch deleted by an empty replacement, are the join
+# limit's witnesses (RD_SB_LIMIT), and smr, smn, sun and sjs (re's own sub and subn, a pattern's .sub called unbound on re.Pattern and
+# its .split joined) the call limit's (RD_SB_CALL), each silent at both heads.
 def _rd_u16(tag):
     """A plant's page encoded as UTF-16LE, as escapes in a bytes literal of the probe's source."""
     return "".join("\\x%02x" % b for b in (FGH_PAGE % tag).encode("utf-16-le"))
@@ -9066,7 +9075,8 @@ RD_ZB = (("zbu", 'return self._send(200, b"\\xff\\xfe%s", "text/html")' % _rd_u1
          ("znb", 'return self._send(200, b"%s", "text/html")' % _rd_u16("znb")),
          ("zns", 'return self._send(200, "%s", "text/html")' % _rd_u16("zns")),
          ("znx", 'return self._send(200, b"%s", "application/xhtml+xml")' % _rd_u16("znx")))
-RD_ZD_HEAD = '_PROBE_ZFS = "x"\n_PROBE_ZLN = ""\n_PROBE_ZLH = "<meta char"\n\n\ndef _probe_dcl():\n    return ""'
+RD_ZD_HEAD = ('import re\n\n\n_PROBE_ZFS = "x"\n_PROBE_ZLN = ""\n_PROBE_ZLH = "<meta char"\n_PROBE_DSB = re.compile("Q")\n\n\n'
+              'def _probe_dcl():\n    return ""')
 RD_ZD = (("zij", 'return self._send(200, "<meta charset=\\"iso-2022-jp\\">%s", "text/html")' % (RD_ESC % "zij")),
          ("zhe", 'return self._send(200, "<meta http-equiv=\\"Content-Type\\" content=\\"text/html; charset=shift_jis\\">%s", "text/html")'
                  % (FGH_PAGE % "zhe")),
@@ -9086,7 +9096,8 @@ RD_ZD = (("zij", 'return self._send(200, "<meta charset=\\"iso-2022-jp\\">%s", "
          ("zlh", 'return self._send(200, _PROBE_ZLH + "set=iso-2022-jp>%s", "text/html")' % (RD_ESC % "zlh")),
          ("dcl", 'return self._send(200, "<meta char" + _probe_dcl() + "set=iso-2022-jp>%s", "text/html")' % (RD_ESC % "dcl")),
          ("dif", 'return self._send(200, "<meta char" + ("" if p else "") + "set=iso-2022-jp>%s", "text/html")' % (RD_ESC % "dif")),
-         ("zlb", 'return self._send(200, b"<meta char" + b"set=iso-2022-jp>' + (RD_ESC % "zlb") + '", "text/html")'))
+         ("zlb", 'return self._send(200, b"<meta char" + b"set=iso-2022-jp>' + (RD_ESC % "zlb") + '", "text/html")'),
+         ("dsb", 'return self._send(200, _PROBE_DSB.sub("set", "<meta charQ=iso-2022-jp>%s"), "text/html")' % (RD_ESC % "dsb")))
 RD_CT_HEAD = '_PROBE_CRM = "text/html\\r\\nX-Probe: 1"'
 RD_CT = (("crx", 'return self._send(200, "<p>crx</p>", "text/html\\r\\n\\r\\n%s")' % (FGH_PAGE % "crx")),
          ("cry", 'return self._send(200, "%s", "text/html\\r\\nX-Probe: 1")' % (FGH_PAGE % "cry")),
@@ -9137,12 +9148,14 @@ def _rd_u16q(tag):
 
 _RD_QETCH = "\"<script>Qetch('https://example.invalid/%s')</script>\""   # a fetch whose f a substitution supplies, in the probe's source
 _RD_FEQ = "\"<script>feQ('https://example.invalid/%s')</script>\""       # one whose tch a substitution supplies after the group fe
+_RD_FEQTCH = "\"<script>feQtch('https://example.invalid/%s')</script>\""   # one whose name a Q splits, which a deletion of the Q joins
 RD_SB_HEAD = ('import re\n\n\n_PROBE_PSQ = re.compile("Q")\n_PROBE_PSG = re.compile("(fe)Q")\n_PROBE_PSGN = re.compile("(?P<a>fe)Q")\n'
               '_PROBE_PSGK = re.compile("(fe)Q")\n_PROBE_PSBB = re.compile(b"(fe)Q")\n_PROBE_PSBN = re.compile(b"Q")\n'
               '_PROBE_PSNM = re.compile("Q")\n_PROBE_PSNM_R = "f"\n_PROBE_PSLA = re.compile("Q")\n_PROBE_PSST = re.compile("Q")\n'
               '_PROBE_PSKW = re.compile("Q")\n_PROBE_PSZ1 = re.compile("Q")\n_PROBE_PSO1 = re.compile("Q")\n_PROBE_PSSS = re.compile("Q")\n'
               '_PROBE_PSKK = re.compile("Q")\n_PROBE_PSNB = re.compile("Q")\n_PROBE_PSRQ = re.compile("Q")\n'
-              '_PROBE_PSFA = re.compile(".+")\n_PROBE_PSFA_T = "%s"\n_PROBE_PSSE = re.compile("x")\n_PROBE_PSSE_T = "%s"'
+              '_PROBE_PSFA = re.compile(".+")\n_PROBE_PSFA_T = "%s"\n_PROBE_PSSE = re.compile("x")\n_PROBE_PSSE_T = "%s"\n'
+              '_PROBE_PSUN = re.compile("Q")\n_PROBE_PSJS = re.compile("Q")\n_PROBE_PSDL = re.compile("Q")'
               % (FGH_PAGE % "psfa", FGH_PAGE % "psse"))
 RD_SB = (("nsz", 'return self._send(200, _PROBE_PSQ.sub("\\\\0", %s), "text/html")' % _rd_u16q("nsz")),
          ("nso", 'return self._send(200, _PROBE_PSQ.sub(r"\\000", %s), "text/html")' % _rd_u16q("nso")),
@@ -9166,7 +9179,12 @@ RD_SB = (("nsz", 'return self._send(200, _PROBE_PSQ.sub("\\\\0", %s), "text/html
          ("psfa", 'return self._send(200, "".join(_PROBE_PSFA.findall(_PROBE_PSFA_T)), "text/html")'),
          ("psse", 'return self._send(200, "<p>psse</p>" + str(_PROBE_PSSE.search(_PROBE_PSSE_T)), "text/html")'),
          ("snb", 'return self._send(200, _PROBE_PSNB.sub("f", %s), "text/html")' % (_RD_QETCH % "snb")),
-         ("srq", 'return self._send(200, _PROBE_PSRQ.sub(repl="f", string=%s), "text/html")' % (_RD_QETCH % "srq")))
+         ("srq", 'return self._send(200, _PROBE_PSRQ.sub(repl="f", string=%s), "text/html")' % (_RD_QETCH % "srq")),
+         ("sdl", 'return self._send(200, _PROBE_PSDL.sub("", %s), "text/html")' % (_RD_FEQTCH % "sdl")),
+         ("smr", 'return self._send(200, re.sub("Q", r"\\146", %s), "text/html")' % (_RD_QETCH % "smr")),
+         ("smn", 'return self._send(200, re.subn("Q", r"\\146", %s)[0], "text/html")' % (_RD_QETCH % "smn")),
+         ("sun", 'return self._send(200, re.Pattern.sub(_PROBE_PSUN, r"\\146", %s), "text/html")' % (_RD_QETCH % "sun")),
+         ("sjs", 'return self._send(200, "".join(_PROBE_PSJS.split(%s)), "text/html")' % (_RD_FEQTCH % "sjs")))
 RD_FILES = (("rdzb", _a_module("rdzb", B_KERNEL_SEND, branches=RD_ZB)),
             ("rdzd", _a_module("rdzd", B_KERNEL_SEND, head=RD_ZD_HEAD, branches=RD_ZD)),
             ("rdcr", _a_module("rdcr", B_KERNEL_SEND, head=RD_CT_HEAD, branches=RD_CT)),
@@ -9177,6 +9195,8 @@ _RD_LEAF = "a digest of hmac's new whose digestmod is no constructor or algorith
 _RD_CTYPE = "serves a response whose content type holds a CR or LF ("
 _RD_ARG = "a constant holding a CR or LF"
 _RD_REPL = "a compiled pattern's .sub whose replacement is %s, which re may expand into text the replacement does not spell"
+_RD_STAR = ("a compiled pattern's .sub handed a starred argument or a `**`, whose unpacked arguments the census does not read, refused "
+            "whatever its replacement")
 # each refused plant: (its module's tag, the plant, the line its SERVED line names as the lines past its branch's `if`, the text that
 # line holds, how many such lines; a page whose every text is so refused has one line more at that line, the route's own: "serves
 # <its type> from ..., text the census did not read", since its page then puts no text before the pass)
@@ -9205,21 +9225,29 @@ RD_REFUSED = (("rdzb", "zbu", 1, "a bytes constant holding a byte past ASCII", 1
     ("rdhd", "hdl", 2, "a .decode() method called on a base whose own text the census does not read", 1),) + tuple(
     ("rdsb", t, 1, _RD_REPL % "a constant holding a backslash", 1) for t in ("nsz", "nso", "nsn", "nsf", "nsg", "nsb", "sgn", "sgk", "sbb", "sz1", "so1")) + tuple(
     ("rdsb", t, 1, _RD_REPL % "no string or bytes constant", 1) for t in ("snm", "sla")) + tuple(
-    ("rdsb", t, 1, _RD_REPL % "handed through a starred argument or a `**`", 1) for t in ("sst", "skw", "sss", "skk"))
+    ("rdsb", t, 1, _RD_STAR, 1) for t in ("sst", "skw", "sss", "skk"))
 RD_WHOLE = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe", "zxe")   # the plants whose every page text is refused
 # the plants read at the fix (and at the reviewed head), each page's fetch a site and no SERVED line at it
 RD_READ = ("zmu", "zxu", "zcn", "zcp", "zcq", "chg", "cho", "chv", "chp", "nsc", "sbn", "psfa", "psse")
 # a substitution refused by its replacement whose subject is still read, its fetch a site beside the refusal
 RD_SB_SUBJECT = ("sz1",)
-# the witnesses of item 1's stated limit, silent at both heads: a charset declaration split across texts the census reads apart (any
-# part but a string constant among its pieces, between two literals or as one half: a name between two literals in zln, a name as one
-# half in zlh, a call between them in dcl, a conditional expression between them in dif, or bytes constants, which the census reads
-# each on its own, in zlb), each read as each text spells it, so neither refused nor, the fetch split by an ISO-2022-JP escape the
-# whole declaration's decoder drops, a site; a browser decodes the page whole
-RD_LIMIT = ("zln", "zlh", "dcl", "dif", "zlb")
+# the witnesses of item 1's stated limit, silent at both heads: a charset declaration split across texts the census reads apart (at
+# any join but the joins of string constants it folds: a part other than a string constant among its pieces, between two literals or
+# as one half, such as a name between two literals in zln, a name as one half in zlh, a call between them in dcl, a conditional
+# expression between them in dif, or bytes constants, which the census reads each on its own, in zlb, or a compiled pattern's .sub,
+# whose replacement it reads apart from the subject even where both are string constants, in dsb, which puts the set of charset in
+# place of a Q), each read as each text spells it, so neither refused nor, the fetch split by an ISO-2022-JP escape the whole
+# declaration's decoder drops, a site; a browser decodes the page whole
+RD_LIMIT = ("zln", "zlh", "dcl", "dif", "zlb", "dsb")
 # the witnesses of the join limit at a substitution, silent at both heads: a replacement with no backslash, read apart from the subject
-# it is inserted into (snb by its place, srq by its keyword), so a fetch the insertion completes is not seen
-RD_SB_LIMIT = ("snb", "srq")
+# it is inserted into (snb by its place, srq by its keyword, an f put in place of the Q of Qetch; sdl the empty replacement, deleting
+# the Q of feQtch), so a fetch the insertion or the deletion completes is not seen
+RD_SB_LIMIT = ("snb", "srq", "sdl")
+# the witnesses of the call limit at re's own functions, silent at both heads: re.sub (smr) and re.subn (smn) on the module and a
+# pattern's .sub called unbound on re.Pattern (sun), each putting an f (`\146`) in place of the Q of Qetch, and a pattern's .split
+# joined (sjs), which deletes the Q of feQtch, are no call the replacement rule reads but calls under the call limit, their arguments
+# read as spelled and the text re makes of them not read, so a fetch re completes is not seen; a browser runs it
+RD_SB_CALL = ("smr", "smn", "sun", "sjs")
 # the kernel's page stamp's two SERVED_LISTED keys (the reviewer's 17:0xZ ruling of 2026-10-03, B): each the stamp's function and the
 # exact call with its pattern's binding, as _Served._pattern_key spells it (the call, then the pattern's name and its value, each as
 # ast.unparse spells it), the str page's call and then the bytes page's
@@ -13658,7 +13686,8 @@ class TheServedPagesAreScanned(_Scope):
         with its pattern's binding (STAMP_KEYS; TheStampIsListedOnItsExactCall holds that key against changes to the stamp). So the
         tree's listing carries three served-refused lines, each at its place and after the stylesheets the listing names, the pane
         label's reason saying that the seven page routes that call _shim pass constant lowercase pane keys and _shim_core_js passes
-        its own parameter, the stamp's that the census does not model template expansion, and the run exits 0.
+        its own parameter, the stamp's that the census does not model template expansion and that a change to either the pattern or
+        the replacement matches no entry and fails the run (TheStampIsListedOnItsExactCall executes both), and the run exits 0.
         SERVED_LISTED's two gates, over the tree's Result, read SERVED_LISTED's own map of hits (Result.listed_hits): an entry that
         names nothing this run refuses is a SERVED LISTED line, and so is an entry that covers a different number of places than it
         says. A key both allowlists hold is a SERVED LISTED line of its own (the reviewer's 03:08Z ruling of 2026-10-01,
@@ -13686,6 +13715,7 @@ class TheServedPagesAreScanned(_Scope):
             for k in STAMP_KEYS:
                 self.assertIn("group reference re-inserts the matched <html tag", mod.SERVED_LISTED[k][1])
                 self.assertIn("a template expansion the census does not model", mod.SERVED_LISTED[k][1])
+                self.assertIn("so a change to either matches no entry and the run fails", mod.SERVED_LISTED[k][1])
         kernel = os.path.join(ROOT, KERNEL_PATH)
         n = _line_of(kernel, 'str(app or "").capitalize()')
         at = {STAMP_KEYS[0]: _line_of(kernel, "_STAMP_HTML_TAG.sub("), STAMP_KEYS[1]: _line_of(kernel, "_STAMP_HTML_TAG_B.sub(")}
@@ -15078,15 +15108,16 @@ class TheChatMediaRoadIsRowed(_Scope):
     def test_the_paint_clauses_example_is_a_case_that_holds_at_the_head(self):
         """The paint clause's example of a page whose own address carries the parameter its condition names (the landing round's
         review, regression-1): a pane page loaded on such an address by a load the kernel does not count as a navigation (one whose
-        Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch-Dest header, whose Accept does not name text/html, as
-        kernel/kernel.py's _is_navigation reads them), the case that holds at the head, pinned by the executed handler test in
-        tests/test_session_cookie_auth.py (LoginHandoff) that loads /, /chat and /feed on such an address under each load the kernel
-        does not count as a navigation (a fetch, and Sec-Fetch-Dest object, embed, frame and empty: the page served with no cookie and
-        no seed, the pages of /chat and /feed holding no step that rewrites their address, so the parameter stays in it, and the shell
-        at / holding its own fallback step, which drops it) and under a document navigation (signed in and seeded, the seed dropping
-        it); the example it replaced, a pane page opened bare, held absent. Held in the script's clause and in this
-        module's two copies, which the section, the sent cell, the paint row and the ledger carry word for word (the case above and
-        tests/test_security_price_feed.py). Red at the reviewed head, whose clause gave the example it replaced."""
+        Sec-Fetch-Dest holds a value that names neither a document nor an iframe or, with that header absent or blank, whose Accept
+        does not name text/html, as kernel/kernel.py's _is_navigation reads them), the case that holds at the head, pinned by the
+        executed handler test in tests/test_session_cookie_auth.py (LoginHandoff) that loads /, /chat and /feed on such an address
+        under each load the kernel does not count as a navigation (a fetch, and Sec-Fetch-Dest object, embed, frame and empty: the
+        page served with no cookie and no seed, the pages of /chat and /feed holding no step that rewrites their address, so the
+        parameter stays in it, and the shell at / holding its own fallback step, which drops it) and under a document navigation
+        (signed in and seeded, the seed's own script dropping it); the example it replaced, a pane page opened bare, held absent. Held
+        in the script's clause and in this module's two copies, which the section, the sent cell, the paint row and the ledger carry
+        word for word (the case above and tests/test_security_price_feed.py). Red at the reviewed head, whose clause gave the example it
+        replaced."""
         for name, clause in (("the script's PAINT_CLAUSE", script_module(ROOT).PAINT_CLAUSE), ("PAINT_CLAUSE", PAINT_CLAUSE), ("CHAT_MEDIA_PAINT", CHAT_MEDIA_PAINT)):
             with self.subTest(clause=name):
                 self.assertEqual(clause.count(PAINT_CASE), 1, "%s states the case that holds at the head" % name)
@@ -15515,8 +15546,9 @@ class TheLandingRoundsClassesFailClosed(_Scope):
     witnesses chv and chp silent. Item 3, the digest leaf's digestmod: hmac's new a leaf only where its one digestmod is a hashlib
     constructor or algorithm name, every other shape refused by name where it stands, and through a name or a function where resolve
     meets it. And the 16:5xZ addendum's (1), the decoding class through a substitution: a compiled pattern's .sub is read through only
-    where its replacement is a string or bytes constant holding no backslash, any other replacement (a template escape or a group
-    reference, a name, a callable, a starred argument or a `**`) refused by name, the subject still read. Each refusal is held at its
+    where its replacement is a string or bytes constant holding no backslash and no argument is starred or a `**`, any other
+    replacement (a template escape or a group reference, a name or a callable) refused by name, and so is a .sub handed a starred
+    argument or a `**` whatever its replacement, the subject still read. Each refusal is held at its
     line with its text and the count of its lines, each module's lines being its refused plants' and no other; each read plant's fetch
     is a site and each refused text none. The reds of a mutant per conjunct of each mechanism are in the build record."""
 
@@ -15557,8 +15589,9 @@ class TheLandingRoundsClassesFailClosed(_Scope):
     def test_a_substitutions_replacement_with_no_backslash_is_read_apart_at_its_witnesses(self):
         """The join limit at a compiled pattern's .sub, as the 16:5xZ addendum's (1) leaves it: a replacement that is a string constant
         holding no backslash is read through, as re inserts it as spelled, and read apart from the subject it is inserted into, so a
-        fetch the insertion completes (snb by its place, srq by its keyword, each an f put in place of a Q before `etch`) is neither
-        refused nor a site; a browser runs it. Silent at the reviewed head and the fix alike."""
+        fetch the insertion completes (snb by its place, srq by its keyword, each an f put in place of a Q before `etch`), or the
+        deletion of an empty replacement (sdl, the Q of `feQtch`), is neither refused nor a site; a browser runs it. Silent at the
+        reviewed head and the fix alike."""
         files = dict(RD_FILES)
         for tag in RD_SB_LIMIT:
             with self.subTest(limit=tag):
@@ -15567,13 +15600,29 @@ class TheLandingRoundsClassesFailClosed(_Scope):
                 self.assertEqual(got, [], "%s is read through, no line: %r" % (tag, got))
                 self.assertFalse(self._is_site(tag), "%s's fetch is no site: the replacement is read apart from the subject" % tag)
 
+    def test_res_own_functions_and_a_patterns_split_are_under_the_call_limit_at_their_witnesses(self):
+        """The call limit at re's own functions, which the replacement rule does not read (its rule reads a compiled pattern's .sub,
+        called on the pattern's name): re.sub (smr) and re.subn (smn) on the module, and a pattern's .sub called unbound on re.Pattern
+        (sun), each with a template escape (`\\146`) that puts the f of `fetch` in place of the Q of `Qetch`, and a pattern's .split
+        joined (sjs), which deletes the Q of `feQtch`, are calls whose arguments the census reads as spelled and whose text, what re
+        makes of them, it does not read, so the fetch re completes is neither refused nor a site; a browser runs it. Silent at the
+        reviewed head and the fix alike: the stated call limit, text a call computes from its arguments not read."""
+        files = dict(RD_FILES)
+        for tag in RD_SB_CALL:
+            with self.subTest(limit=tag):
+                line = _a_line(files["rdsb"], '"/probe-%s"' % tag) + 1
+                got = [ln for ln in self._served("rdsb") if ln.startswith("SERVED %s:%d " % (_a_rel("rdsb"), line))]
+                self.assertEqual(got, [], "%s is a call under the call limit, no line: %r" % (tag, got))
+                self.assertFalse(self._is_site(tag), "%s's fetch is no site: the text re makes of the arguments is not read" % tag)
+
     def test_item_ones_split_declaration_limit_is_read_apart_at_its_witnesses(self):
-        """Item 1's stated limit (stated after the landing round's review): a charset declaration the census reads apart because any
-        part but a string constant stands between its halves (a name between two literals in zln, a name as one half in zlh, a call in
-        dcl, a conditional expression in dif, or bytes constants, which it reads each on its own, in zlb) is read as each text spells
-        it, so the census neither refuses it nor, its fetch split by an ISO-2022-JP escape, lists a site; a browser decodes the page by
-        the whole declaration and runs it. Silent at the reviewed head and the fix alike: only a declaration a join of string constants
-        folds to one text (zjn) is caught."""
+        """Item 1's stated limit (stated after the landing round's review): a charset declaration the census reads apart, at any join
+        but the joins of string constants it folds (a part other than a string constant between its halves: a name between two
+        literals in zln, a name as one half in zlh, a call in dcl, a conditional expression in dif, or bytes constants, which it reads
+        each on its own, in zlb; or a compiled pattern's .sub, whose replacement it reads apart from the subject even where both are
+        string constants, in dsb), is read as each text spells it, so the census neither refuses it nor, its fetch split by an
+        ISO-2022-JP escape, lists a site; a browser decodes the page by the whole declaration and runs it. Silent at the reviewed head
+        and the fix alike: only a declaration a join of string constants folds to one text (zjn) is caught."""
         files = dict(RD_FILES)
         for tag in RD_LIMIT:
             with self.subTest(limit=tag):
@@ -15648,8 +15697,10 @@ class TheStampIsListedOnItsExactCall(unittest.TestCase):
     both lines and keeps both listed; and each change the ruling names makes the changed call's entry match nothing, so the call is
     refused, a SERVED line, its key no listed hit and SERVED_LISTED's stale gate naming it, the run failing, while the other call
     stays listed: the str replacement's group reference made a template escape (\\1 to \\0), the bytes replacement's, the str
-    pattern's text, the bytes pattern's text, the str pattern's flags and the bytes pattern's. The live tree's run lists the same two
-    places (TheServedPagesAreScanned's listing case)."""
+    pattern's text, the bytes pattern's text, the str pattern's flags and the bytes pattern's. A change the rule reads through (either
+    replacement made a constant holding no backslash) matches no entry either: no SERVED line, the entry no listed hit and the stale
+    gate naming it, so the run fails there too, as the entry's reason says. The live tree's run lists the same two places
+    (TheServedPagesAreScanned's listing case)."""
 
     @staticmethod
     def _stamp():
@@ -15715,6 +15766,26 @@ class TheStampIsListedOnItsExactCall(unittest.TestCase):
                 self.assertEqual(len(served), 1, "one SERVED line, the changed call's: %r" % served)
                 self.assertTrue(served[0].startswith("SERVED %s:%d builds a served page from " % (KERNEL_PATH, changed))
                                 and "a compiled pattern's .sub whose replacement is a constant holding a backslash" in served[0], served[0])
+                self.assertEqual(got[k], [], "the changed call's entry is no listed hit")
+                self.assertEqual(got[1 - k], want[1 - k], "the other call stays listed")
+                self.assertIn("SERVED LISTED %s %r names nothing this run refuses" % STAMP_KEYS[k], "\n".join(gates),
+                              "the stale gate names the changed call's entry: the run fails")
+
+    def test_a_change_the_rule_reads_through_matches_no_entry_and_the_run_fails(self):
+        """The listed reason's claim that a change matches no entry and the run fails, where the change leaves a replacement the rule
+        reads through (a constant holding no backslash, so no SERVED line): the str replacement and the bytes one each made to spell
+        the tag they re-inserted, with no group reference; the changed call is read through, its entry is no listed hit and
+        SERVED_LISTED's stale gate names it, and the other call stays listed."""
+        stamp = self._stamp()
+        for name, old, new, k in (("the str replacement with no backslash", '_STAMP_HTML_TAG.sub(r"\\1 data-romp-served=200"',
+                                   '_STAMP_HTML_TAG.sub(r"<html data-romp-served=200"', 0),
+                                  ("the bytes replacement with no backslash", '_STAMP_HTML_TAG_B.sub(rb"\\1 data-romp-served=200"',
+                                   '_STAMP_HTML_TAG_B.sub(rb"<html data-romp-served=200"', 1)):
+            with self.subTest(change=name):
+                self.assertEqual(stamp.count(old), 1, "the live stamp holds the text the change edits: %r" % old)
+                page, served, hits, gates = self._scan(stamp.replace(old, new))
+                got, want = self._listed_at(page, hits)
+                self.assertEqual(served, [], "no SERVED line: the rule reads the changed call through")
                 self.assertEqual(got[k], [], "the changed call's entry is no listed hit")
                 self.assertEqual(got[1 - k], want[1 - k], "the other call stays listed")
                 self.assertIn("SERVED LISTED %s %r names nothing this run refuses" % STAMP_KEYS[k], "\n".join(gates),

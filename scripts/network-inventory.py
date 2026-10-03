@@ -198,10 +198,13 @@ and one holding a byte past ASCII is refused by name (below); and a name bound o
 one top-level plain assignment, to a call of `compile` handed a string or bytes constant (and at most a flags argument that is an
 int constant, an attribute of that name, or their `|`) on a name the module binds to the standard library's `re` by binding is
 read through its `.search`, `.match`, `.fullmatch` and `.findall`, and through its `.sub` where the replacement is a string or
-bytes constant holding no backslash, which change nothing, so such a call's arguments are the page text and the compiled name
-holds none of its own; a `.sub` with any other replacement (one holding a backslash, which `re` may expand as a template escape or
-a group reference into text the replacement does not spell, a name, a callable, a starred argument or a `**`) is refused by name,
-since the census does not model template expansion; the proof by binding is the digest leaf's (below), with its limit, so a
+bytes constant holding no backslash and no argument is starred or a `**`, which change nothing, so such a call's arguments are the
+page text and the compiled name holds none of its own; any other `.sub` (one whose replacement holds a backslash, which `re` may
+expand as a template escape or a group reference into text the replacement does not spell, or is a name or a callable, and one
+handed a starred argument or a `**`, whatever its replacement) is refused by name, since the census does not model template
+expansion; `re`'s own `sub` and `subn`, and a pattern's method called unbound on `re.Pattern`, are no such read but calls under
+the call limit (below), their arguments read as spelled and the text `re` makes of them not read; the proof by binding is the
+digest leaf's (below), with its limit, so a
 module object stored in sys.modules under that name before the import binds it, or a function of the module replaced by an
 attribute store, is not seen. The census reads a page only where the bytes a browser decodes are the text it scans, which it reads
 as UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding a byte past ASCII (a byte order mark, whole or
@@ -211,9 +214,11 @@ declaring a charset other than utf-8 (a `charset=` in any case, as a meta elemen
 parameter spell it, or an XML declaration's `encoding=`, followed by any label but utf-8) in a string or bytes constant, an
 f-string's literal part or the joined text of a join of string constants; a script-running content type whose parameters name a
 charset other than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD,
-U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (any part but a string
-constant among its pieces, between two literals or as one half: a name's text, a call, a conditional expression or a bytes
-constant, which the census reads each on its own) is read as each text spells it. The routes are derived from the calls of `_send`
+U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (at any join but the joins of
+string constants it folds, below: a part other than a string constant among its pieces, between two literals or as one half, such
+as a name's text, a call, a conditional expression or a bytes constant, which the census reads each on its own, or a compiled
+pattern's `.sub`, whose replacement it reads apart from the subject even where both are string constants) is read as each text
+spells it. The routes are derived from the calls of `_send`
 the scan reads (spelled `_send(...)` or
 `<x>._send(...)`; a call through a name
 computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A `_send`
@@ -1292,8 +1297,8 @@ PAINT_CLAUSE = (PAINT_LIST + "; each such request carries no cookie and carries 
                 "port omitted when it is the scheme's default) in its Origin header; in Chromium a `mask` request can also carry that origin as its Referer, from any page, framed or bare; and "
                 "a paint request can carry the full page address with the serve token in its Referer, but only when the page's own address "
                 "carries `?token=` (a pane page loaded on such an address by a load the kernel does not count as a navigation, one "
-                "whose Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch-Dest header, whose Accept does not "
-                "name text/html; the shell drops the token from its address before it "
+                "whose Sec-Fetch-Dest holds a value that names neither a document nor an iframe or, with that header absent or "
+                "blank, whose Accept does not name text/html; the shell drops the token from its address before it "
                 "frames its panes, and frames them without it); these paint requests are the one exception to the trust model's sentence on "
                 "`Referrer-Policy: same-origin` (the response is blocked as cross-origin; the request, with those headers, has reached the host)")
 
@@ -3485,10 +3490,12 @@ def _declared_charset(text):
     past spaces, by `=`, as a meta element's charset attribute and a content attribute's parameter spell it, and an XML declaration's
     encoding (`encoding=` inside one `<?xml ...>`); the label read after the `=` past spaces, quotes and backslashes, as far as it
     runs in letters, digits, `_`, `.`, `:` and `-`. Any label but utf-8, in any case (another label of UTF-8 and the empty one, where
-    something else follows, among them), is returned. A declaration split across texts the census reads apart (any part but a string
-    constant among its pieces, between two literals or as one half: a name's text, a call, a conditional expression or a bytes constant,
-    which the census reads each on its own and does not fold) is read as each text spells it, the literal match's limit; only a
-    declaration a join of string constants folds to one text (served_texts) is caught there."""
+    something else follows, among them), is returned. A declaration split across texts the census reads apart (at any join but the
+    joins of string constants served_texts folds: a part other than a string constant among its pieces, between two literals or as one
+    half, such as a name's text, a call, a conditional expression or a bytes constant, which the census reads each on its own, or a
+    compiled pattern's .sub, whose replacement it reads apart from the subject even where both are string constants) is read as each
+    text spells it, the literal match's limit; only a declaration a join of string constants folds to one text (served_texts) is
+    caught there."""
     for m in _DECLARED_RX.finditer(text):
         if m.group(2).lower() != "utf-8": return "%s=%s" % ("charset" if m.group(1).lower() == "charset" else "encoding", m.group(2))
     return None
@@ -3606,7 +3613,7 @@ SERVED_ALLOW = {
 # too (a place is excused or listed, never both).
 _STAMP_LISTED = ("a compiled pattern's .sub whose replacement's group reference re-inserts the matched <html tag, the pattern's one "
                  "group, in any case, a template expansion the census does not model; listed on the exact call, the pattern's text with "
-                 "its flags and the replacement's bytes, so a change to either is refused again")
+                 "its flags and the replacement's bytes, so a change to either matches no entry and the run fails")
 SERVED_LISTED = {
  ("kernel/kernel.py:_pane_label", "str(app or '').capitalize()"): (1,
   "a .capitalize() method whose return is not drawn from its receiver's text, on str() of the pane label's parameter: the seven "
@@ -3856,9 +3863,12 @@ _LEAF_DIGESTMOD = "a digest of hmac's new whose digestmod is no constructor or a
 # spelled, so a .sub is read through only where its replacement is a string or bytes constant holding no backslash (the reviewer's
 # 13:2xZ ruling of 2026-10-03, its 16:5xZ addendum (1)): re expands a backslash in a replacement as a template escape (\0, an octal
 # escape, \n) or a group reference (\1, \g<name>) into text the replacement does not spell, and calls a replacement that is a
-# function, so a .sub handed any other replacement (a backslash anywhere, a name, a callable, a starred argument or a `**`) is refused
-# by name (_pattern_repl, _PATTERN_REPL), the census modelling no template expansion, unless SERVED_LISTED lists the exact call with
-# its pattern's binding (_Served._pattern_key). Scan's module side takes those methods on such a name for no change of it
+# function, so a .sub handed any other replacement (a backslash anywhere, a name, a callable) is refused by name (_pattern_repl,
+# _PATTERN_REPL), and so is a .sub handed a starred argument or a `**`, whatever its replacement, since the census does not read what
+# such an argument unpacks (_PATTERN_STAR), the census modelling no template expansion, unless SERVED_LISTED lists the exact call with
+# its pattern's binding (_Served._pattern_key). re's own sub and subn, and a pattern's method called unbound on re.Pattern, are no
+# such read: each is a call under the call limit, its arguments read as text and what re makes of them not read (the census module's
+# witnesses smr, smn and sun). Scan's module side takes those methods on such a name for no change of it
 # (Scan._pattern_call), and receiver reads the call through where no scope around it binds the name and the file changes the name no
 # other way (_Served._pattern).
 # The proof by binding reads the import statements alone: a module object stored in sys.modules under the name re before the import
@@ -3866,6 +3876,8 @@ _LEAF_DIGESTMOD = "a digest of hmac's new whose digestmod is no constructor or a
 # module object stored in sys.modules under re, and lsra, re's compile replaced by an attribute store on the module object).
 _PATTERN_READS = ("sub", "search", "match", "fullmatch", "findall")
 _PATTERN_REPL = "a compiled pattern's .sub whose replacement is %s, which re may expand into text the replacement does not spell"
+_PATTERN_STAR = ("a compiled pattern's .sub handed a starred argument or a `**`, whose unpacked arguments the census does not read, "
+                 "refused whatever its replacement")
 # The text-method arm's shapes (the eleventh round's rulings: the reviewer's 14:42Z item 2, and his 16:33Z E1 and E3): a .replace,
 # .format, .join, .format_map or .encode in a shape _const_text does not fold is refused by name (_text_shape gives the clause), never
 # read as its receiver's text
@@ -4117,11 +4129,12 @@ def _pattern_repl(call):
     its replacement, or None where it reads the call through: a .sub only where its replacement, the first positional argument or the
     repl keyword, is a string or bytes constant holding no backslash, with no starred argument and no `**` (the reviewer's 13:2xZ
     ruling of 2026-10-03, its 16:5xZ addendum (1)), since re expands a backslash in a replacement as a template escape or a group
-    reference, and calls a replacement that is a function, into text the replacement does not spell; the other methods of
+    reference, and calls a replacement that is a function, into text the replacement does not spell; a starred argument or a `**`
+    anywhere refuses the call whatever its replacement (_PATTERN_STAR), the census not reading what it unpacks; the other methods of
     _PATTERN_READS take no replacement."""
     if call.func.attr != "sub": return None
     if any(isinstance(a, ast.Starred) for a in call.args) or any(k.arg is None for k in call.keywords):
-        return _PATTERN_REPL % "handed through a starred argument or a `**`"
+        return _PATTERN_STAR
     r = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == "repl"), None)
     if not (isinstance(r, ast.Constant) and type(r.value) in (str, bytes)): return _PATTERN_REPL % "no string or bytes constant"
     return _PATTERN_REPL % "a constant holding a backslash" if ("\\" if type(r.value) is str else b"\\") in r.value else None
@@ -7543,8 +7556,8 @@ class _Served(object):
         name the module binds to re by binding (_re_compile, _std_module), and the file changes it no other way (a write
         Result.writes records, or a change Scan's module side records, the methods of _PATTERN_READS being none: self.memos,
         self.cmemos). receiver reads such a call through, its arguments read as text, a .sub only where its replacement is a string or
-        bytes constant holding no backslash, any other refused by name (_pattern_repl) unless SERVED_LISTED lists the exact call
-        (_pattern_key)."""
+        bytes constant holding no backslash and no argument is starred or a `**`, any other refused by name (_pattern_repl) unless
+        SERVED_LISTED lists the exact call (_pattern_key)."""
         if name in self.memos or name in self.cmemos: return False
         m = _re_compile(self.consts.get(name))
         return m is not None and self._std_module(m, None) == "re"
@@ -8320,7 +8333,9 @@ class _Served(object):
         (the reviewer's 17:0xZ ruling of 2026-10-03, B): the exact call, as ast.unparse spells it (its replacement's exact text or
         bytes among it), then `; `, the name, ` = ` and the pattern constant's value as ast.unparse spells it (the pattern's text and
         its flags), so a change to the call, its replacement, the pattern's text or its flags makes the entry match nothing and the
-        call is refused again; no line number is part of it, so code inserted above the call keeps the entry matching."""
+        run fails: the call is refused by _pattern_repl, or, where the change leaves a replacement it reads through, the entry is a
+        SERVED LISTED line naming nothing this run refuses; no line number is part of it, so code inserted above the call keeps the
+        entry matching."""
         return "%s; %s = %s" % (ast.unparse(call), name, ast.unparse(self.consts[name]))
 
     @staticmethod

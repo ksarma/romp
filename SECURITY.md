@@ -330,12 +330,16 @@ or bytes constant (and at most a flags argument that is an int constant, an
 attribute of that name, or their `|`) on a name the module binds to the standard
 library's `re` by binding is read through its `.search`, `.match`, `.fullmatch`
 and `.findall`, and through its `.sub` where the replacement is a string or
-bytes constant holding no backslash, which change nothing, so such a call's
-arguments are the page text and the compiled name holds none of its own; a
-`.sub` with any other replacement (one holding a backslash, which `re` may
-expand as a template escape or a group reference into text the replacement does
-not spell, a name, a callable, a starred argument or a `**`) is refused by name,
-since the census does not model template expansion; the proof by
+bytes constant holding no backslash and no argument is starred or a `**`, which
+change nothing, so such a call's arguments are the page text and the compiled
+name holds none of its own; any other `.sub` (one whose replacement holds a
+backslash, which `re` may expand as a template escape or a group reference into
+text the replacement does not spell, or is a name or a callable, and one handed
+a starred argument or a `**`, whatever its replacement) is refused by name,
+since the census does not model template expansion; `re`'s own `sub` and `subn`,
+and a pattern's method called unbound on `re.Pattern`, are no such read but
+calls under the call limit (below), their arguments read as spelled and the text
+`re` makes of them not read; the proof by
 binding is the digest leaf's (below), with its limit, so a module object stored
 in sys.modules under that name before the import binds it, or a function of the
 module replaced by an attribute store, is not seen. The census reads a page only
@@ -350,10 +354,13 @@ in a string or bytes constant, an f-string's literal part or the joined text of
 a join of string constants; a script-running content type whose parameters name
 a charset other than utf-8; and a page's read of a walked browser-text file
 whose text, as the walk decoded it, holds U+FFFD, U+FEFF or a NUL, or declares such a
-charset. A declaration split across texts the census reads apart (any part but a
-string constant among its pieces, between two literals or as one half: a name's
+charset. A declaration split across texts the census reads apart (at any join
+but the joins of string constants it folds, below: a part other than a string
+constant among its pieces, between two literals or as one half, such as a name's
 text, a call, a conditional expression or a bytes constant, which the census
-reads each on its own) is read as each text spells it. The routes are derived
+reads each on its own, or a compiled pattern's `.sub`, whose replacement it
+reads apart from the subject even where both are string constants) is read as
+each text spells it. The routes are derived
 from
 the calls of
 `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through
@@ -1903,9 +1910,10 @@ header; in Chromium a `mask` request can also carry that origin as its Referer,
 from any page, framed or bare; and a paint request can carry the full page
 address with the serve token in its Referer, but only when the page's own
 address carries `?token=` (a pane page loaded on such an address by a load the
-kernel does not count as a navigation, one whose Sec-Fetch-Dest names neither a
-document nor an iframe or, with no Sec-Fetch-Dest header, whose Accept does not
-name text/html; the shell drops the token from its address before it frames its
+kernel does not count as a navigation, one whose Sec-Fetch-Dest holds a value
+that names neither a document nor an iframe or, with that header absent or
+blank, whose Accept does not name text/html; the shell drops the token from its
+address before it frames its
 panes, and frames
 them without it); these paint requests are the one exception to the trust
 model's sentence on `Referrer-Policy: same-origin` (the response is blocked as

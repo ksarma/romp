@@ -728,7 +728,7 @@ class LoginHandoff(_Server):
         # cookie and no seed. The pages of /chat and /feed then hold no step that rewrites their address (no
         # replaceState), so the parameter stays in it: the paint clause's case, which the census's paint pin names
         # this test for. The shell at / holds its own fallback step, which drops it. A document navigation signs
-        # the browser in and drops it through the seed.
+        # the browser in and seeds the key, and the seed's own script drops the parameter and writes the address back.
         for path in ("/", "/chat", "/feed"):
             for what, kw in (("a fetch", {"accept": "*/*"}),
                              ("an empty-dest load", {"accept": "text/html", "sec_fetch": "empty"}),
@@ -747,7 +747,13 @@ class LoginHandoff(_Server):
                     self.assertNotIn("replaceState", text, "%s of %s gets a page with no step that rewrites its address" % (what, path))
             status, body, headers = self._req(path + "?token=" + TOK, accept="text/html", sec_fetch="document")
             self.assertTrue(km._session_ok(self._session_cookie_value(headers) or ""), "a navigation to %s signs in" % path)
-            self.assertIn(SEED_SET, body.decode("utf-8", "replace"), "and seeds the key")
+            text = body.decode("utf-8", "replace")
+            self.assertIn(SEED_SET, text, "and seeds the key")
+            seed = text[text.index(SEED_SET):]
+            seed = seed[:seed.index("</script>")]
+            # (compared as booleans: the seed holds the page key, which is never printed)
+            self.assertTrue(DROP_STEP in seed, "the seed's own script drops the parameter from the address of %s" % path)
+            self.assertTrue("history.replaceState(" in seed, "and writes the address back without it")
 
     def test_a_signed_in_browser_keeps_its_session_on_a_second_login(self):
         status, _, headers = self._req("/?token=" + TOK, cookie=SESS, accept="text/html", sec_fetch="document")
