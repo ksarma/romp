@@ -4,7 +4,7 @@ status: candidate
 where: kernel/kernel.py (_pane_spin's badge placement: rplace, rfit, robs, rwatch and their observers); tests/test_pane_loader_reconnect.py (ReconnectBadgeHold's placement and clear-place cases); tests/test_return_from_background_served.py and tests/return_from_background_browser.mjs (the painted badge's box against every control that stays put when the content scrolls, sticky and fixed elements inside the content container included, and the three surface legs: the subagent viewer, the landing notice, the Feed's column heads); tests/test_kernel_mobile.py and tests/test_pane_shim_return.py (the same PR's Log line and park events, fork-only, not offered with this entry); docs/guide.md (the phone section); upstream/2026-10-02-reconnect-badge-no-flash.md (the sibling entry, the hold); upstream/2026-10-02-reconnect-badge-below-pane-header.md (this entry)
 added: 2026-10-02
 pr: 950
-tier: feature
+tier: fix
 offered:
 closed:
 ---

@@ -301,7 +301,7 @@ class ReconnectBadgeHold(unittest.TestCase):
         return o
 
     def test_the_constant_is_one_second_and_the_badge_markup_carries_no_count(self):
-        self.assertEqual(self.HOLD, 1000, "the hold proposed for the user's word (1 s): healthy lab returns end at 386 ms (phone) and 620 ms (desktop)")
+        self.assertEqual(self.HOLD, 1000, "the approved 1 s hold (ruling 1, 2026-10-03): healthy lab returns end at 386 ms (phone) and 620 ms (desktop)")
         js = km._pane_spin("content", "live-ask")
         self.assertIn("<div id=pane-reconn><img src=/media/romp-swirl-glyph.svg alt=''>reconnecting…</div>", js,
                       "the glance's one line, upstream's bytes: no count, no cause")
