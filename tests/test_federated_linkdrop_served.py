@@ -709,7 +709,11 @@ const quiet = async (what) => {
   out.quietGaveUp.push(what);
 };
 const provText = () => pages.fleet ? budget.bounded(pages.fleet.evaluate((sel) => { const e = document.querySelector(sel); return e ? e.textContent : null; }, cfg.provSel), "provText", null) : Promise.resolve(null);
-const cardSel = (ch, n) => '[data-key="a:notice:' + cfg.sid + ':' + ch.noticeKeys[n] + ':' + ch.noticeRevs[n] + '"]';
+// a card's id on the hub's feed page: a remote NOTICE card's id wears its host (federation.ts prefixNoticeId, the project's PR 1831,
+// taken in fold 4), and the old hub bundle shows the bare id; either form is the card, so a read that the card is absent (phase D
+// while the link is down, the old bundle's frozen phases) still reads the form the page's bundle mints
+const cardSel = (ch, n) => { const bare = 'notice:' + cfg.sid + ':' + ch.noticeKeys[n] + ':' + ch.noticeRevs[n];
+  return '[data-key="a:' + cfg.host + ':' + bare + '"], [data-key="a:' + bare + '"]'; };
 const visible = async (ch) => {
   const v = { cards: [] };
   for (let n = 0; n < ch.noticeKeys.length; n++) v.cards.push((await pages.feed.locator(cardSel(ch, n)).count()) > 0);

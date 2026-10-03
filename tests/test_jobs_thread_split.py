@@ -29,12 +29,13 @@ PUSHER_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "tu
 HOUSEKEEPING = ("liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
                 "unreadableStores",   # this fork's unreadable-store warn, a stage of the jobs pass since the 2026-09-15 pull-in (the rulings' item 9)
                 "autoNudge", "interruptBlock",
-                "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll", "autoPauseOnSpend",
-                "spendGuard", "autoResumeRetry", "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes")
+                "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll", "retryUpgrade", "autoPauseOnSpend",
+                "spendGuard", "autoResumeRetry", "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes",
+                "heldWorking")
 QUIET = ("_lift_spent_awaiting", "_death_sweep_tick", "_end_on_idle_sweep", "_deferral_sweep_tick", "_unreadable_store_warns", "_interrupt_block_tick",
          "_persist_tick_seen", "_persist_intr_marks", "_persist_spend_trees", "_auto_pause_on_limit", "_usage_poll_tick",
          "_auto_pause_on_spend_limit", "_spend_guard_tick", "_auto_resume_retry", "_auto_resume_session_retry",
-         "_auto_retry_tick", "_idle_queue_drive_tick", "_clear_done_working_notes", "_turn_notify_tick", "_apply_pending_ops",
+         "_auto_retry_tick", "_idle_queue_drive_tick", "_clear_done_working_notes", "_held_working_pass", "_turn_notify_tick", "_apply_pending_ops",
          "_persist_checkpoints", "_converge_checkpoints", "_kernel_sample_tick", "_api_health_push")
 
 
@@ -53,7 +54,8 @@ class Partition(unittest.TestCase):
         self.assertFalse(set(pusher) & set(jobs), "no job on both threads")
         self.assertEqual(set(pusher) | set(jobs), set(km._PerfStats.JOBS), "together they are the JOBS census")
         # the collector keeps the two lists by thread since 2026-09-18 (stage attribution: the pusher's nine are seeded under
-        # pusher.cycleJobsMs, the jobs thread's nineteen as flat `jobs.<job>` rows), so each must be the source's, in order
+        # pusher.cycleJobsMs, the jobs thread's as flat `jobs.<job>` rows: nineteen at the change, twenty-one since retryUpgrade
+        # and heldWorking joined), so each must be the source's, in order
         self.assertEqual(km._PerfStats.CYCLE_JOBS, PUSHER_JOBS, "CYCLE_JOBS is _pusher_cycle_jobs's list")
         self.assertEqual(km._PerfStats.PASS_JOBS, HOUSEKEEPING, "PASS_JOBS is _jobs_pass's list")
         self.assertEqual(km._PerfStats.JOBS, PUSHER_JOBS + HOUSEKEEPING, "JOBS is the census as CYCLE_JOBS + PASS_JOBS")
@@ -292,7 +294,7 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
 
     def test_a_run_of_both_loops_keeps_each_threads_job_rows_apart(self):
         """The real _pusher_cycle and _jobs_cycle, every job quiet: the nine cycle jobs' walls land under pusher.cycleJobsMs
-        and sum to at most the pusher's `jobs` container, the nineteen housekeeping jobs' land in the flat `jobs.<job>` rows
+        and sum to at most the pusher's `jobs` container, the twenty-one housekeeping jobs' land in the flat `jobs.<job>` rows
         and sum to at most `jobsPass`, no cycle job's key is in stages_ms, and nothing is foreign. Each sum is a set of
         disjoint intervals inside its container's, so the bound is exact, not a ratio (the ratio tests here were coin
         tosses under load)."""

@@ -230,19 +230,23 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   push did; and a row in the dashboard's Log (at most five drop rows, none older
   than an hour, so they never crowd out a backend problem). Every close the
   browser reports for a socket that opened leaves a `wsclose` breadcrumb (code,
-  reason, socket age, and `bundleReady`: whether the bundle had said ready when
-  the socket closed) in `client-diag.jsonl` (rotated to `.1` at 8 MB), and the
-  kernel stamps every client-diag row with `reconnect`: whether the socket that
-  carried the row declared the redial term. Every client-diag row from a
-  browser stops while that browser's gear switch "Stop all timing rows from
-  this browser" (`perfMute` under `romp:settings`) is on, the rows the shim
-  queued for a redial included, so a browser that leaves no breadcrumbs may
-  have the switch on, not a broken sink. The queued `wsclose` row rides the
-  redial, so the pair names the redial's kind: both true is a declared redial of
-  a page that was live; both false is a socket that died before the bundle said
-  ready and redialed as a fresh page; `reconnect` false with `bundleReady` true
-  is a ready that reached the shim while its socket was going down and rode the
-  redial as the page's own, so the redial carried no term. A socket
+  reason, socket age, and the shim's ready state at the close: `bundleReady`,
+  `readyAcked`, `readyQueued`) in `client-diag.jsonl` (rotated to `.1` at 8 MB).
+  The kernel stamps every row a page posts through its socket (the `clientDiag`
+  rows) with `reconnect`, whether the socket that carried the row declared the
+  redial term (`?reconnect=1`), so the queued `wsclose` row, which rides the
+  redial, names the redial's kind: `reconnect` true, a declared redial of a
+  page the kernel had served whole; false with `bundleReady` false, the socket
+  died before the bundle said ready (or the ready landed after the close) and
+  the redial dialed as a fresh page; false with `readyQueued` true, the ready
+  reached the shim while the socket was going down and rode the redial as the
+  bundle's own; false with `bundleReady` true, `readyAcked` false and
+  `readyQueued` false, the ready left on the socket and no caps frame answered
+  it, so the redial dialed fresh and re-posted the ready. Every client-diag row
+  from a browser stops while that browser's gear switch "Stop all timing rows
+  from this browser" (`perfMute` under `romp:settings`) is on, the rows the
+  shim queued for a redial included, so a browser that leaves no breadcrumbs
+  may have the switch on, not a broken sink. A socket
   the shim abandons leaves none — the watchdog's own `watchdog-close` row went
   down the quiet socket before the abandon (the foreground path's abandon sends
   none, but its `return` row queues for the redial), so an armed socket's raise,
@@ -491,8 +495,11 @@ is caught by the maildir claim/retry and stuck-mail warnings either way.
      input), continuously refreshed as the session gains turns. The index + the
      TOC header.
 2. **A thin real-time live-state read**: `states/<sid>.jsonl` (working / permission /
-   compacting / idle / closed transitions) + the event tree's open turn. Drives the
-   chip, the timeline stripes, the hard-block floor, and the mid-turn pulse.
+   idle / closed transitions) + the event tree's open turn + the backend's own
+   compacting bracket (set when romp delivers a `/compact` or the CLI's stream says a
+   compaction started, automatic or manual; cleared by the stream's compaction result,
+   the `compact_boundary` or the turn's result). Drives the chip, the timeline stripes,
+   the hard-block floor, and the mid-turn pulse.
 
 ## The three panes (each a thin projection)
 
