@@ -27,8 +27,9 @@ What each leg asserts. Healthy: the return put a pane socket down (the event the
 back, yet no connection-lost entry was written, the Log holds what it held, and the digit and the red cue are as before.
 An outage: one entry per shown pane whose socket was down, written no earlier than the first failed dial, unread, the digit
 counting them, and still unread after the sockets come back; in the hung leg nothing is written before the cut. Red at the
-fork's main 591436b2e on every healthy leg (the transition wrote the entries) and on the hung leg's before-the-cut read and
-the outage legs' written-at-a-failure check.
+fork's main 591436b2e on every leg in all three engines: each healthy leg on its no-entry check (the transition wrote one
+entry per shown pane), each outage leg, the hung one included, on its written-after-a-failing-dial check (the entries were
+written at the drop, before any dial had failed).
 
 Engines: Chromium runs every leg (CI's served-pages job); Firefox and WebKit run the healthy phone and desktop legs, the
 kernel-down phone leg and the pane-dials-refused leg, as optional legs that skip with "optional:" where the runner does
