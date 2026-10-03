@@ -65,8 +65,8 @@ THE RULE. A number in the range counts when it is WRITTEN AS A PORT, in one of t
     and one hop through a name: a value written in one of those positions as a bare name counts the literals the module
     binds that name to (P = N ... {"port": P}).
   An int counts (45_001 is 45001), and so does a string of the number's five digits, except as a positional argument
-  (by its parameter or after a host): a string handed to a function by position is that function's input text (a
-  parser's, km._manager_port("65535")), not a setting.
+  (by its parameter or after a host): a string handed to a function by position is that function's input text, not a
+  setting (km._notify_bus_peer("h", "N", True) is not counted, where km._notify_bus_peer("h", N, True) is).
   An expression counts when it is bounded and can reach the range: interval() reads constants, + - * // and % over
   them, an unknown operand of % by a constant as 0 to the constant less one, and a call to randint(a, b), randrange(stop),
   randrange(start, stop[, step]) or randbelow(n) (random's and secrets', by the callee's name) as the values it can
@@ -964,7 +964,6 @@ class Plants(unittest.TestCase):
                 ("ssh error line", "test_x.py", 'LINES = ("Error: remote port forwarding failed for listen port %d",\n'
                                                 '         "channel_setup_fwd_listener_tcpip: cannot listen to port: %d")\n' % (n, n)),
                 ("ps line", "test_x.py", 'PS = "  12345 /usr/bin/ssh -N -T -L %d:127.0.0.1:29855 TESTHOST"\n' % n),
-                ("parser input by position", "test_x.py", 'self.assertEqual(km._manager_port("%d"), %d)\n' % (n, n)),
                 ("a string by position after a host", "test_x.py", 'self.assertEqual(split_line("127.0.0.1", "%d"), 1)\n' % n),
                 ("an expected value", "test_x.py", 'self.assertEqual((snap["port"], snap["up"]), (%d, True))\n' % n),
                 ("a timeout", "test_x.py", 'page.goto(url, timeout=%d)\n' % n),
@@ -980,6 +979,18 @@ class Plants(unittest.TestCase):
                 ("bats size", "i.bats", '[[ "$output" == *"dom %d"* ]]\n' % n)):
             with self.subTest(label):
                 self.assertGreen(name, src)
+
+    def test_a_digit_string_by_position_to_a_port_named_parameter_is_not_counted(self):
+        """The excluded class's string by position, where the resolver does find a port-named parameter: each call below
+        resolves in the scratch index (kernel/k.py, or the module's own function), as its int form, red, shows, and the
+        same call with the number as a digit string is green."""
+        n = _n()
+        for label, call in (("a product function", 'km._notify_bus_peer("TESTHOST", %s, True)\n'),
+                            ("a product method", 'r.ring(%s)\n'),
+                            ("the module's own function", 'def rec(port, pid=None):\n    pass\n\n\nrec(%s)\n')):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", call % n, "argument port of")
+                self.assertGreen("test_x.py", call % ('"%d"' % n))
 
     def test_the_stated_blind_spots_stay_unread(self):
         """Each shape WHAT IT CANNOT SEE names, planted green: a change that reads one turns its subtest red, and the
