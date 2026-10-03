@@ -17,16 +17,15 @@ Synthetic only: placeholder uuids, the notes-api world. Skips LOUDLY without the
 and for nothing else (ROMP_SERVED_TESTS_REQUIRE=1 turns the skips red where the browser is installed)."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,14 +39,6 @@ import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environm
 RING = 6   # the grab ring's px (pane-dock.ts RING): every iframe is its pane inset by this much
 SID_WEB = "11111111-2222-4333-8444-0000000000d1"
 SID_API = "11111111-2222-4333-8444-0000000000d2"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _iso(t):
@@ -494,19 +485,14 @@ class ServedPaneDocking(unittest.TestCase):
                 {"sid": sid, "name": sname, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid, "alive": True,
                  "model": "claude-opus-5", "liveModel": "Opus 5"}))
             Path(proj, sid + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in _turns(sid, tag, now - 3000, 4)))
-        cls.port, cls.token = _free_port(), "testtok-panedock"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-panedock"
         env = _lab.kernel_env(sub, claude, os.path.join(cls.lab, "dist"), cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "a"), stderr=subprocess.STDOUT, env=env)
         cls.procs.append(proc)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(proc, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         cls._drive()
 
     @classmethod
@@ -535,6 +521,7 @@ class ServedPaneDocking(unittest.TestCase):
                 pr.kill(); pr.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     # ── helpers ──────────────────────────────────────────────────────────────────────────────────────

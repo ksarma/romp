@@ -25,6 +25,7 @@ two-kernel relay harness of test_federated_history_scroll_served.
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import subprocess
@@ -38,7 +39,7 @@ ROOT = os.path.dirname(HERE)
 EXT = os.path.join(ROOT, "vscode-extension")
 BIN = os.path.join(ROOT, "bin")
 sys.path.insert(0, HERE)
-import test_federated_history_scroll_served as _fed   # noqa: E402  reuse _kernel/_transcript/_free_port/HOST
+import test_federated_history_scroll_served as _fed   # noqa: E402  reuse _kernel/_transcript/HOST
 
 SID_R = "11111111-2222-4333-8444-000000000d01"   # the watched remote session
 HOST = _fed.HOST
@@ -177,13 +178,13 @@ class RelayVanishGuards(unittest.TestCase):
         import tempfile
         cls.lab = tempfile.mkdtemp(prefix="relay-vanish-guards-")
         lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
-        cls.rport, cls.rtoken = _fed._free_port(), "testtok-vanish-remote"
-        cls.hport, cls.htoken = _fed._free_port(), "testtok-vanish-hub"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-vanish-remote"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-vanish-hub"
         rp, cls.rlog = _fed._kernel(cls.lab, "testhost", cls.rport, cls.rtoken, [(SID_R, "api", "api", PAIRS)])
         cls.procs.append(rp)
         hp, cls.hlog = _fed._kernel(cls.lab, "hub", cls.hport, cls.htoken, [])
         cls.procs.append(hp)
-        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": _fed._free_port(), "token": cls.rtoken}).encode()
+        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": lab_ports.reserve(cls.lab), "token": cls.rtoken}).encode()
         req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (cls.hport, cls.htoken), data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -295,6 +296,7 @@ class RelayVanishGuards(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         import shutil
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
