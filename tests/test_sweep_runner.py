@@ -6493,6 +6493,21 @@ class LegEnvironment(_Base):
         which gives that hash again."""
         self.assert_reads_as_another(self.LANDING_HEAD_HASH, "the runner at the landing head")
 
+    # The leg environment hash the runner recorded from the narrow landing delta's ruling 8 until each job's checkout came
+    # to hold refs/remotes/origin/main (main_snapshot): what policy_hash gives at PR 926's head as held for the user's
+    # decision page, and what every run of the owner's sweeps at PR 926's heads from 2026-10-01 to 2026-10-02 records.
+    BEFORE_MAIN_REF_HASH = "a7701f5a206cb2866731105fcdd7fd9d43b2cd4f1131780275ea9bcab627fffa"
+
+    def test_a_result_recorded_before_the_checkouts_held_origin_main_reads_as_another(self):
+        """Decision 15's rule, as the ruling on the owner's question 3 after the merge of main restated it (any further
+        LEG_CHECKOUT change moves the hash and is pinned the same way): each job's checkout now holds
+        refs/remotes/origin/main at the commit the batcher's origin/main named when the run started, a change in what a
+        checkout holds, so LEG_CHECKOUT's text and the hash moved: a result recorded under the hash before it, the
+        literal BEFORE_MAIN_REF_HASH, reads as recorded under another leg environment. Red under the LEG_CHECKOUT text
+        before it, which gives that hash again."""
+        self.assertIn("refs/remotes/origin/main", sweep.LEG_CHECKOUT, "the hashed text names the ref the checkout holds")
+        self.assert_reads_as_another(self.BEFORE_MAIN_REF_HASH, "the runner before the checkouts held origin/main")
+
     def test_the_hash_names_the_pdf_smoke_leg(self):
         """The owner's build question 4 added the pdf-smoke leg, and the leg environment hash names every leg's set values
         and step, so it changed with it: the document without the leg hashes to another value, the one the runner before
