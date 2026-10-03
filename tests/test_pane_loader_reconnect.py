@@ -497,6 +497,24 @@ out({ s1, after30: painted(), runs: runs() });""")
         self.assertEqual(o["s1"], {"painted": True, "failsafe": 1, "timers": 1}, "painted at the hold with upstream's 30 s failsafe, and no other timer")
         self.assertIs(o["after30"], False, "30 s after the paint the failsafe hides it, as upstream's does")
 
+    def test_on_a_page_with_no_shell_a_repeat_drop_over_the_painted_badge_restarts_upstreams_failsafe(self):
+        # round 2, tests-1: a pane page opened on its own (no link word) keeps upstream's failsafe, restarted by a repeat drop as
+        # upstream's own wsdown line restarts it, so the guide's "takes the badge down after 30 seconds" counts from the last drop.
+        # Read at the paint's deadline (a restart moved it), 1 ms before the repeat drop's, and at it
+        o = self._run(r"""
+fire('romp:wsdown'); after(RHOLD_T);                                  // painted at the hold, the failsafe due 30 s on
+after(10000); fire('romp:wsdown');                                    // a repeat drop 10 s after the paint
+const atRepeat = { painted: painted(), failsafe: live(30000), timers: live() };
+after(20000); const atPaintDeadline = painted();                      // 30 s after the paint
+after(10000 - 1); const justBefore = painted();                       // 1 ms before 30 s after the repeat drop
+after(1); const atRepeatDeadline = painted();
+out({ atRepeat, atPaintDeadline, justBefore, atRepeatDeadline, runs: runs() });""")
+        self.assertEqual(o["atRepeat"], {"painted": True, "failsafe": 1, "timers": 1}, "the repeat drop leaves one failsafe of 30 s, and no other timer")
+        self.assertIs(o["atPaintDeadline"], True, "30 s after the paint the badge is still painted: the repeat drop moved the deadline")
+        self.assertIs(o["justBefore"], True, "1 ms before 30 s after the repeat drop: painted")
+        self.assertIs(o["atRepeatDeadline"], False, "30 s after the repeat drop the failsafe takes it down")
+        self.assertEqual(o["runs"], [{"t": self.HOLD, "on": True}, {"t": self.HOLD + 40000, "on": False}])
+
     def test_on_a_page_with_a_shell_the_panes_own_reopen_under_a_down_link_arms_nothing(self):
         # a dead shell loop: the pane's 25 s link backstop dials on its own. Before ruling B of round 1 (2026-10-03) its reopen
         # restarted the failsafe, so a timer took the badge down 30 s later with no fresh frame; now only the fresh frame clears it
@@ -858,6 +876,44 @@ out({ atLoad, atPaint: at() });""")
         self.assertEqual(o["atPaint"], {"top": "42px", "right": "8px", "painted": True},
                          "below the chips' row (14 + 20 + 8): the chips count, not the heads' boxes (round 1 went below the heads, 49 px); the step left "
                          "past the third chip (120 px) is longer than the step down (34 px)")
+
+    # round 2, tests-2: every kind of control ruling A names, each alone (cursor auto, the one selector entry) at the badge's first
+    # place where the search counts it, outside the list; the list is spelled here from the body's definition, not read from the
+    # kernel's RCTL, so an entry dropped there fails here. And the fixed half of the test for what stays put inside the list: a
+    # fixed element in the list holding a control
+    CONTROLS = ["a[href]", "button", "input", "select", "textarea", "summary", "label", "[role=button]", "[data-act]", "[tabindex]", "[draggable=true]"]
+
+    def test_each_kind_of_control_alone_moves_the_badge_off_it(self):
+        for sel in self.CONTROLS:
+            with self.subTest(sel):
+                o = self._fit(r"""
+add(null, [300, 54, 60, 20], { sel: %s });
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""" % json.dumps(sel))
+                self.assertEqual(o["atPaint"], {"top": "82px", "right": "8px", "painted": True}, sel + ": counted, the badge goes below it (54 + 20 + 8)")
+        o = self._fit(r"""
+add(null, [300, 54, 60, 20]);
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True}, "the witness: the same element with no selector entry and no cursor is not a control")
+
+    def test_a_control_in_a_fixed_element_in_the_list_moves_the_badge_off_it(self):
+        o = self._fit(r"""
+const pop = add(CONTENT, [200, 50, 190, 40], { position: 'fixed' }); add(pop, [300, 54, 60, 20], { sel: 'button' });
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "82px", "right": "8px", "painted": True}, "a fixed element in the list stays put: its button counts (54 + 20 + 8)")
+
+    def test_a_control_shown_by_a_style_change_alone_while_painted_moves_the_badge_off_it(self):
+        # round 2, tests-3: the watch observes attributes (class, style, hidden), not only added elements: a control outside the list,
+        # display:none at the paint, is shown by a style write and nothing else
+        o = self._fit(r"""
+const btn = add(null, [300, 54, 60, 20], { sel: 'button', display: 'none' });
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+btn.cs.display = 'block'; attr(btn, 'style'); frame();
+out({ atPaint, shown: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True}, "hidden at the paint: not counted")
+        self.assertEqual(o["shown"], {"top": "82px", "right": "8px", "painted": True}, "shown by its style alone: the badge goes below it (54 + 20 + 8)")
 
     def test_what_scrolls_with_the_list_or_holds_no_control_is_not_avoided(self):
         # a button in a message (content: it scrolls out from under the badge, ruling 9 of round 0) and a sticky element in the list
