@@ -1184,8 +1184,8 @@ class ReturnFromBackground(unittest.TestCase):
 
     # the subagent viewer's sticky header (#sub-head) inside the transcript's container, its pin (role=button) at the right end:
     # opened before the suspend from the Agent head of the `tests` session (_subagent)
-    def test_phone_hung_4s_the_subagent_viewers_header_and_its_pin_stay_clear_of_the_badge(self):
-        name, r = self._drive("phone", "hung", 4, "chromium", active_sid=SUB_SID, sub_view=True)
+    def _subview_surface(self, engine):
+        name, r = self._drive("phone", "hung", 4, engine, active_sid=SUB_SID, sub_view=True)
         where = name + ": "
         self.assertEqual(r.get("subView"), {"opened": True, "pin": True}, where + "the viewer opened and its header holds the pin: %r" % (r.get("subView"),))
         self._cue(name, r, "hung", 4)
@@ -1194,8 +1194,8 @@ class ReturnFromBackground(unittest.TestCase):
 
     # the chat's landing notice ("Going to the message from ..., click to stay here", the only cancel for a jump), drawn over the
     # transcript's top from outside its container, shown after the badge has painted (its on-demand hook): the badge must move off it
-    def test_phone_hung_4s_a_landing_notice_shown_under_the_painted_badge_moves_it_clear(self):
-        name, r = self._drive("phone", "hung", 4, "chromium", notice_after_paint=True)
+    def _notice_surface(self, engine):
+        name, r = self._drive("phone", "hung", 4, engine, notice_after_paint=True)
         where = name + ": "
         self.assertNotIn("noticeError", r, where + "the notice step ran: %r" % (r.get("noticeError"),))
         self.assertEqual(r.get("notice"), {"hook": True, "shown": True}, where + "the notice was shown during the wait: %r" % (r.get("notice"),))
@@ -1207,12 +1207,41 @@ class ReturnFromBackground(unittest.TestCase):
     # the desktop Feed: no header above its list, three column heads sticky at the list's top, each with its drag chip (a grab cursor
     # and nothing else); the badge's first place, 8 px down at the right, was on the third head's chip at this width (the Feed pane at
     # 636 px in the 1600 px window, three columns)
-    def test_desktop_hung_4s_the_feeds_column_heads_and_drag_chips_stay_clear_of_the_badge(self):
-        name, r = self._drive("desktop", "hung", 4, "chromium", cue_app="feed")
+    def _feed_surface(self, engine):
+        name, r = self._drive("desktop", "hung", 4, engine, cue_app="feed")
         where = name + ": "
         self._cue(name, r, "hung", 4)
         self._chrome_witness(where, r, lambda c: c.get("inContent") and c["el"].startswith("span.feed-col-name"), "a column head's drag chip, inside the list")
         self._surface(name, r)
+
+    # Each surface in Chromium (CI's served engine), and in WebKit and Firefox (round 2 of the review, 2026-10-03, open call 5: the
+    # Firefox defect fixed at d5bdcf19e showed in one engine only), which run where the runner declares them (the local sweep)
+    def test_phone_hung_4s_the_subagent_viewers_header_and_its_pin_stay_clear_of_the_badge(self):
+        self._subview_surface("chromium")
+
+    def test_webkit_phone_hung_4s_the_subagent_viewers_header_and_its_pin_stay_clear_of_the_badge(self):
+        self._subview_surface("webkit")
+
+    def test_firefox_phone_hung_4s_the_subagent_viewers_header_and_its_pin_stay_clear_of_the_badge(self):
+        self._subview_surface("firefox")
+
+    def test_phone_hung_4s_a_landing_notice_shown_under_the_painted_badge_moves_it_clear(self):
+        self._notice_surface("chromium")
+
+    def test_webkit_phone_hung_4s_a_landing_notice_shown_under_the_painted_badge_moves_it_clear(self):
+        self._notice_surface("webkit")
+
+    def test_firefox_phone_hung_4s_a_landing_notice_shown_under_the_painted_badge_moves_it_clear(self):
+        self._notice_surface("firefox")
+
+    def test_desktop_hung_4s_the_feeds_column_heads_and_drag_chips_stay_clear_of_the_badge(self):
+        self._feed_surface("chromium")
+
+    def test_webkit_desktop_hung_4s_the_feeds_column_heads_and_drag_chips_stay_clear_of_the_badge(self):
+        self._feed_surface("webkit")
+
+    def test_firefox_desktop_hung_4s_the_feeds_column_heads_and_drag_chips_stay_clear_of_the_badge(self):
+        self._feed_surface("firefox")
 
     # Round 2 of the review (2026-10-03, correctness-1): the chat's two strips that scroll what does not fit out of view, each filled
     # before the suspend until it hides about 150 px of rows, which lie over the transcript's top, where the badge's first place is.
