@@ -6301,19 +6301,33 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                              the host's dials carry (one busId per dialer process); a dialer past the token
 #                                              gate can grow them, the same trust class as PEER_STATE's own growth. The
 #                                              arrival then SUPERSEDES every other entry whose `declared` holds the name it
-#                                              declares, whatever the busIds (that entry's bus, a newer process of it, or a
-#                                              namesake dials under another name now: a second dialable name for the same
-#                                              bus, or an alias the kernel pointed at another machine while the machine it
-#                                              reached keeps dialing under the name it declares), and every other entry whose
-#                                              `busIds` hold its busId, when it carries one (the same process declares
-#                                              another name now: a rename while it runs, since self_host reads the hostname
-#                                              live), so its dials stop carrying that entry's outbox. A restarted process
-#                                              whose busId no longer resolves to the alias its old process was filed under
-#                                              (the alias held down, so no dial of this bus refreshed its row) is filed under
-#                                              the name it declares, and its dials never carry the alias's outbox, so the
-#                                              alias's link must stop reading open on the old process's last exchange or its
-#                                              parked dial (2026-10-03). A namesake's arrival supersedes too, though the
-#                                              entry's own bus may still dial (THE NAMESAKE COST below).
+#                                              declares, whatever the busIds and wherever the two are filed, and every
+#                                              other entry whose `busIds` hold its busId, when it carries one, so its dials
+#                                              stop carrying that entry's outbox. By the declared name: filed under the
+#                                              name it declares, it supersedes each alias's entry whose arrivals declared
+#                                              that name (a restarted process of the alias's bus, the same bus under a
+#                                              second dialable name, or an alias the kernel pointed at another machine
+#                                              while the machine it reached keeps dialing under the name it declares);
+#                                              filed under an alias, it supersedes the entry filed under the name it
+#                                              declares (that entry's bus, a newer process of it, or a namesake, dialing
+#                                              under an alias now) and each other alias's entry whose arrivals declared
+#                                              that name (a restarted process filed under a second alias whose row carries
+#                                              its new busId, or a namesake under an alias of its own). By the busId: the
+#                                              same process declares another name now (a rename while it runs, since
+#                                              self_host reads the hostname live). A restarted process whose busId no
+#                                              longer resolves to the alias its old process was filed under (the alias held
+#                                              down, so no dial of this bus refreshed its row) is filed under the name it
+#                                              declares, unless a second alias's row carries its new busId and it is filed
+#                                              under that alias; either way its dials never carry the first alias's outbox,
+#                                              and its arrival, declaring a name the alias's arrivals declared, supersedes
+#                                              the alias's link, which must stop reading open on the old process's last
+#                                              exchange or its parked dial (2026-10-03). A namesake's arrival supersedes
+#                                              too, though the entry's own bus may still dial: two different machines that
+#                                              share a short hostname, each filed under its own alias by busId (two
+#                                              PEER_STATE rows, not a collision), supersede each other's link at every
+#                                              arrival, so each link reads closed from the other's arrival until its own
+#                                              next one and /send says unreachable while that machine's parked dial still
+#                                              carries the mail (THE NAMESAKE COST below).
 #                                            - PRE-WRITE: the route, after the handler returned and before its write, probes
 #                                              the socket (_peer_conn_closed). The dialer's EOF or reset is a close; else
 #                                              the exchange is marked writing and never probed again, since after the write
@@ -6380,44 +6394,52 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                            host's next exchange filed under the same name. It stays recallable, except mail
 #                                            a parked exchange took in the first two shapes: that write returned, so the
 #                                            record is marked carried and the recall refuses it (the false carried mark, a
-#                                            listed follow-up). When the host's dials move to another name, the first arrival
-#                                            there supersedes the link (ARRIVAL above) if it declares a name the link's
-#                                            arrivals declared, as for a link filed under an alias whose host restarted under
-#                                            the name it declares, the same bus under a second dialable name, or an alias
-#                                            pointed at another machine while the machine it reached keeps dialing; or if it
-#                                            carries a busId the link holds, as for a process renamed while it runs.
-#                                            From then the mail reads unreachable; it waits for a dial filed under that
-#                                            name again, or for that name's own tunnel when it has a port row (the /send
-#                                            relay leg posts /redial for every port row, whatever the link says). Two
-#                                            moves share neither: a host whose next process declares another name under
-#                                            a new busId (renamed and restarted), and an older peer that sends no busId
-#                                            and declares another name.
-#                                            Either is filed under the new name, and when its old process left no EOF this
-#                                            side saw (the first shape above) or the move came between exchanges, no event
-#                                            reaches the link it left, which reads open on the last exchange there, so /send
-#                                            says queued while the mail waits for a dial filed under the link's name again,
-#                                            or for that name's own tunnel when it has a port row (each send asks the kernel
-#                                            to redial it).
+#                                            listed follow-up). When the host's dials move to another name, the first
+#                                            arrival there supersedes the link (ARRIVAL above) if it declares a name the
+#                                            link's arrivals declared, as for a link filed under an alias whose host
+#                                            restarted under the name it declares or under a second alias whose row carries
+#                                            its new busId, the same bus under a second dialable name, or an alias pointed
+#                                            at another machine while the machine it reached keeps dialing; or if it
+#                                            carries a busId the link holds, as for a process renamed while it runs. From
+#                                            then the mail reads unreachable; it waits for a dial filed under that name
+#                                            again, or for that name's own tunnel when it has a port row (the /send relay
+#                                            leg posts /redial for every port row, whatever the link says). Two moves share
+#                                            neither: a host whose next process declares another name under a new busId
+#                                            (renamed and restarted), and an older peer that sends no busId and declares
+#                                            another name. Either is filed under the new name, and when its old process
+#                                            left no EOF this side saw (the first shape above) or the move came between
+#                                            exchanges, no event reaches the link it left, which reads what the old
+#                                            process's last exchange there left: open after an ok exchange or while a
+#                                            parked dial shows no EOF, and then /send says queued while the mail waits for
+#                                            a dial filed under the link's name again, or for that name's own tunnel when
+#                                            it has a port row (each send asks the kernel to redial it).
 #                                            THE NAMESAKE COST, disclosed: the other way round, the link can read closed
 #                                            while a dial carries the mail, when a second bus declares the same name as the
 #                                            name's own bus. Refused, the namesake's dial supersedes that bus's link, filed
 #                                            under the name or under an alias whose arrivals declared it, until that bus's
 #                                            next dial arrives, and again at each refused dial (its drift wait is a minute).
 #                                            Dialing with success under another name than that bus's (the namesake under
-#                                            the name and the bus under an alias, or the other way round), each arrival of
-#                                            either supersedes the other's link, so each reads closed from the other's
-#                                            arrival until its own next one. Either way /send says unreachable while that
-#                                            bus's parked dial still carries the mail. A namesake's dial under the same name
-#                                            that leaves (EOF, reset or a raised write) while that bus is between exchanges
-#                                            reads the link closed until that bus's next arrival, which its dialer makes at
-#                                            once after an ok exchange (READ above). A namesake that dialed under the name
-#                                            leaves its busId in the link's set, since that bus's arrivals re-declare a name
-#                                            already there and reset nothing; after the namesake dials under another name
-#                                            (its machine renamed while its process runs), each of its arrivals supersedes
-#                                            the link through that busId, that bus's parked dial included, until that bus's
-#                                            next arrival, one way only and for as long as the namesake's process runs. Two
-#                                            buses under one name already collide in PEER_STATE, which keeps one row per
-#                                            name. The table is in memory only, gone with the process
+#                                            the name and the bus under an alias, the other way round, or each under an
+#                                            alias of its own), each arrival of either supersedes the other's link, so each
+#                                            reads closed from the other's arrival until its own next one. Either way /send
+#                                            says unreachable while that bus's parked dial still carries the mail. That
+#                                            covers two different machines that share a short hostname, each filed under
+#                                            its own alias by busId (two PEER_STATE rows, not a collision): they supersede
+#                                            each other's link at every arrival, and a send to either says unreachable
+#                                            while that machine's parked dial still carries the mail. A namesake's dial
+#                                            under the same name that leaves (EOF, reset or a raised write) while that bus
+#                                            is between exchanges reads the link closed until that bus's next arrival,
+#                                            which its dialer makes at once after an ok exchange (READ above). A namesake
+#                                            that dialed under the name leaves its busId in the link's set, since that
+#                                            bus's arrivals re-declare a name already there and reset nothing; after the
+#                                            namesake dials under another name (its machine renamed while its process
+#                                            runs), each of its arrivals supersedes the link through that busId, that bus's
+#                                            parked dial included, until that bus's next arrival, one way only and for as
+#                                            long as the namesake's process runs. So an arrival supersedes exactly these
+#                                            links: each other link whose arrivals declared the name it declares, wherever
+#                                            the two are filed (the link filed under that name and an alias's link, either
+#                                            way round, or two aliases' links), and each other link that holds the busId it
+#                                            carries. The table is in memory only, gone with the process
 _inbound_links_lock = threading.Lock()     # _inbound_links' own LEAF lock: every read and write of the table and of
 #                                            _inbound_seq holds it, and its holder takes no other lock (it reads and writes
 #                                            the table and probes a socket without blocking, nothing else). Lock order:
@@ -7514,14 +7536,21 @@ def _inbound_arrived(host, link, declared, bus_id):
     `declared`, the name the dial declared before the canonicalization, and `bus_id`, the busId it carried, in the
     entry's declared names and busIds, both reset to this arrival's first when it brings a name the entry has not seen
     and a busId the entry has not seen, or none (an alias the kernel pointed elsewhere, or a machine renamed and
-    restarted). Then it supersedes
-    every OTHER entry whose declared names hold `declared`, whatever the busIds (that entry's bus, a newer process of it,
-    or a namesake dials under another name now), and every OTHER entry whose busIds hold a non-empty `bus_id` (the same
-    process declares another name now: a rename while it runs). Last it hands `host` and the number back in `link`, so
-    the route ends the exchange even if the handler raises later. Called in the handler, in the hold that stores the row,
-    just before the store, so a /send that routes on the new row reads the link open; takes the leaf lock inside that
-    hold (the order is _PEER_STATE_LOCK, then the leaf). A `link` carrying no socket files nothing and hands nothing
-    back: an entry with no socket could not be probed."""
+    restarted). Then it supersedes every OTHER entry whose declared names hold `declared`, whatever the busIds and
+    wherever the two are filed. Filed under the name it declares, it supersedes each alias's entry whose arrivals
+    declared that name (a restarted process of the alias's bus, the same bus under a second dialable name, or the
+    machine an alias reached before the kernel pointed it at another). Filed under an alias, it supersedes the entry
+    filed under the name it declares (that entry's bus, a newer process of it, or a namesake, dialing under an alias
+    now) and each other alias's entry whose arrivals declared that name (a restarted process filed under a second alias
+    whose row carries its new busId, or a namesake under an alias of its own). So two different machines that share a
+    short hostname, each filed under its own alias by busId, supersede each other's entry at every arrival: each reads
+    closed from the other's arrival until its own next one, and a send to it says unreachable while its parked dial
+    still carries the mail (THE NAMESAKE COST at _inbound_links). It also supersedes every OTHER entry whose busIds hold
+    a non-empty `bus_id` (the same process declares another name now: a rename while it runs). Last it hands `host` and
+    the number back in `link`, so the route ends the exchange even if the handler raises later. Called in the handler,
+    in the hold that stores the row, just before the store, so a /send that routes on the new row reads the link open;
+    takes the leaf lock inside that hold (the order is _PEER_STATE_LOCK, then the leaf). A `link` carrying no socket
+    files nothing and hands nothing back: an entry with no socket could not be probed."""
     if link.get("conn") is None:
         return
     with _inbound_links_lock:

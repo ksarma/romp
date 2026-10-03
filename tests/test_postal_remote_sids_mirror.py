@@ -4319,9 +4319,11 @@ class PeerStateLock(unittest.TestCase):
         self.assertIn("_exchange_peer_name", got["protected"],
                       "the ruled reader: the canonicalization reads every row, and every call site of _exchange_peer_name "
                       "(the handler, and the /peer-exchange route before and after the handler) holds the lock")
-        self.assertGreaterEqual(got["callSites"].get("_exchange_peer_name", 0), 2,
-                                "the census derived the call sites of _exchange_peer_name (the handler, and the "
-                                "/peer-exchange route before and after the handler), at least two: %r" % got)
+        # by equality, against the count derived at 29cde65ae (fork PR 958): a change that adds or drops a call site
+        # re-derives it here
+        self.assertEqual(got["callSites"].get("_exchange_peer_name", 0), 3,
+                         "the census derived the call sites of _exchange_peer_name, exactly three (the handler, and the "
+                         "/peer-exchange route before and after the handler), the count derived at 29cde65ae: %r" % got)
         self.assertIn("_canon_peer_name", got["protected"], "reached only through _exchange_peer_name")
         self.assertEqual(sorted({fn for fn, _, _ in got["answered"]}), ["_heard_answering", "_via_held"],
                          "THE ANSWERED SET's population, derived from the source: the recorders' note and the release's "
