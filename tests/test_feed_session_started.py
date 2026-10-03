@@ -493,9 +493,11 @@ class FeedCaptureHoldsTheBuildAlone(_Feed):
 
     def test_a_stderr_write_from_inside_build_feed_reaches_err(self):
         self._ask_only()
-        line, n, real = "feed: a line the feed path wrote (synthetic)\n", [0], km._alive_sessions
+        line, n, me, real = "feed: a line the feed path wrote (synthetic)\n", [0], threading.get_ident(), km._alive_sessions
 
         def writes_then_reads(now, live_map):
+            if threading.get_ident() != me:
+                return real(now, live_map)
             n[0] += 1
             sys.stderr.write(line)
             return real(now, live_map)
