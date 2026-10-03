@@ -23,6 +23,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { FederationManager, REMOTE_STALE_MS, REMOTE_REDIAL_MS } from "./federation";
+import { heldCreateFor, newCommentCreate, commentCreateFrame, CREATE_ID_ECHO_CAP } from "./comments";
 
 const U = "11111111-2222-3333-4444-555555555555";
 
@@ -474,6 +475,102 @@ test("a gesture to a down host keeps the toast: sendMessage (routed by id) and c
     assert.match(warns[1], /TESTHOSTA is unreachable .*“createSession” was not delivered/);
     assert.deepEqual(diags(localSends, "senddrop").map((d) => d.data.msgType), ["sendMessage", "createSession"]);
     assert.equal(fm.conns.get("TESTHOSTA").pending.size, 0, "a gesture is never held for a later replay");
+  });
+});
+
+test("a chat comment's create to a down host is also answered on this page as a transient refusal naming the create, which an echo-mode hold settles by", () => {
+  withFed((fm, winEvents, localSends) => {
+    const s1 = attach(fm, "TESTHOSTA");
+    s1.open();
+    s1.readyState = 3;
+    // the popover's hold for this create, as an echo-mode send gesture built it (the page's sid carries the host)
+    const held = newCommentCreate({ sid: "TESTHOSTA:" + U, uuid: "u2", exact: "p95 latency" }, "First note: say which cache.", "");
+    fm.outbound(commentCreateFrame(held));
+    const warns = winEvents.filter((m) => m.type === "warn").map((m) => m.text);
+    assert.equal(warns.length, 1, "the drop keeps its toast");
+    assert.match(warns[0], /TESTHOSTA is unreachable .*“commentCreate” was not delivered/);
+    const nacks = winEvents.filter((m) => m.type === "commentCreateFailed");
+    assert.deepEqual(nacks, [{ type: "commentCreateFailed", id: "TESTHOSTA:" + U, uuid: "u2", transient: true, text: "TESTHOSTA is unreachable",
+                               createId: held.createId, relayDrop: true }],
+      "one transient refusal, naming the create, under the page's own id for the session, and marked as this page's own answer, not the host kernel's");
+    assert.equal(heldCreateFor(new Map([[held.createId, held]]), nacks[0]), held,
+      "the popover settles its own create by it: a transient refusal keeps the hold, which the relay's next connection posts again once its "
+      + "connect push shows the echo");
+    assert.deepEqual(diags(localSends, "senddrop").map((d) => d.data.msgType), ["commentCreate"], "and the drop is journaled as before");
+    fm.outbound({ type: "commentReply", id: held.sid, tid: "t-0002", text: "and the p99?" });
+    assert.equal(winEvents.filter((m) => m.type === "commentCreateFailed").length, 1, "another gesture's drop is answered by its toast alone");
+    const s2 = redial(fm, "TESTHOSTA");
+    s2.open();
+    assert.deepEqual(s2.types(), [], "the relay replays nothing: the popover's hold re-posts the create itself");
+  });
+});
+
+test("a chat comment's create with no createId, or an empty one (an older page's), to a down host gets the drop's warn alone", () => {
+  withFed((fm, winEvents) => {
+    const s1 = attach(fm, "TESTHOSTA");
+    s1.open();
+    s1.readyState = 3;
+    const held = newCommentCreate({ sid: "TESTHOSTA:" + U, uuid: "u2", exact: "p95 latency" }, "First note: say which cache.", "");
+    const { createId: _id, ...unstamped } = commentCreateFrame(held);
+    fm.outbound(unstamped);
+    assert.deepEqual(winEvents.map((m) => m.type), ["warn"], "the warn alone: no refusal is made up for a create no id names");
+    fm.outbound({ ...commentCreateFrame(held), createId: "" });
+    assert.deepEqual(winEvents.map((m) => m.type), ["warn", "warn"], "nor for one whose id is empty");
+  });
+});
+
+test("a remote host's caps frame is handed to the page under that host's name (romp:hostCaps), in its frame order, and never as a caps frame", () => {
+  withFed((fm, winEvents) => {
+    const w = (globalThis as any).window, handed: { host: string; caps: unknown }[] = [];
+    const plain = w.dispatchEvent;
+    w.dispatchEvent = (ev: any) => { if (ev && ev.type === "romp:hostCaps") handed.push(ev.detail); return plain(ev); };
+    const a = attach(fm, "TESTHOSTA");
+    const b = attach(fm, "TESTHOSTB");
+    a.open();
+    b.open();
+    a.onmessage!({ data: JSON.stringify({ type: "caps", caps: ["tagEdit", "chatProto2", CREATE_ID_ECHO_CAP], viewsSeq: null }) });
+    b.onmessage!({ data: JSON.stringify({ type: "caps", caps: ["tagEdit", "chatProto2", 7], viewsSeq: null }) });
+    // a host's caps frame answers the ready its relay's first open posts, so it comes again only once the host is
+    // detached and attached again, on a new relay whose open posts the ready again
+    fm.closeRemote("TESTHOSTA");
+    const a2 = attach(fm, "TESTHOSTA");
+    a2.open();
+    a2.onmessage!({ data: JSON.stringify({ type: "caps", caps: ["tagEdit"], viewsSeq: null }) });
+    assert.deepEqual(handed, [{ host: "TESTHOSTA", caps: ["tagEdit", "chatProto2", CREATE_ID_ECHO_CAP] }, { host: "TESTHOSTB", caps: ["tagEdit", "chatProto2"] },
+                             { host: "TESTHOSTA", caps: ["tagEdit"] }],
+                     "each caps frame as it arrives, naming its host, its list's strings alone: the page keeps each host's latest");
+    assert.equal(winEvents.filter((m) => m.type === "caps").length, 0, "a remote caps frame still never reaches the panes, which read a caps frame as the local kernel's");
+    const uiSrc = fs.readFileSync(path.join(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
+    assert.match(uiSrc, /window\.addEventListener\("romp:hostCaps", \(e\) => \{\n  const d = [^\n]*\n  if \(typeof d\.host === "string" && d\.host\) noteHostEcho\(d\.host, capsAnnounceEcho\(d\.caps\)\);/,
+      "the page keeps it as evidence from that host (where the code lives; executed in comment-create-gesture-browser.test.ts: 'the "
+      + "fail-safe: a caps frame without the cap hands back the comment still out on its host, local or relayed, with its dialog open or "
+      + "closed, and turns an unsent echo-mode dialog there main mode, the page posting nothing, played ahead of the connection's connect "
+      + "push, an order no kernel sends', whose relayed case with its dialog open is not handed back without this line, the caps frame "
+      + "played ahead of the connect push so that it alone decides; and the host's own evidence, never the local kernel's, over the real "
+      + "federation bundle: 'a remote host's dialog takes its mode from that host's own connect push and caps frame, never the local "
+      + "kernel's, and a main-mode create its relay drops gets main's warn and hand-back alone')");
+  });
+});
+
+test("each host's own strip hands the page that host's createIdEcho on its fresh emission, and a re-emit carries none", () => {
+  withFed((fm, winEvents) => {
+    const a = attach(fm, "TESTHOSTA");
+    const b = attach(fm, "TESTHOSTB");
+    a.open();
+    b.open();
+    fm.inbound("", { type: "tabOrder", order: [U], tabs: [], live: [U], createIdEcho: true });   // the local kernel's strip, marked
+    a.onmessage!({ data: JSON.stringify({ type: "tabOrder", order: [U], tabs: [], live: [U] }) });   // a kernel from before the echo
+    b.onmessage!({ data: JSON.stringify({ type: "tabOrder", order: [U], tabs: [], live: [U], createIdEcho: true }) });
+    fm.emitMergedOrder();                                            // a synthetic re-emit (a view-order write, a host's drop)
+    const strips = winEvents.filter((m) => m.type === "tabOrder").map((m) => [m.reemit === true ? "re-emit" : m.freshHost, "createIdEcho" in m ? m.createIdEcho : "none"]);
+    assert.deepEqual(strips, [["", true], ["TESTHOSTA", "none"], ["TESTHOSTB", true], ["re-emit", "none"]],
+      "each fresh emission carries the marker of the host whose own strip drove it, and only when that strip had it; a re-emit, which "
+      + "re-serves every host's slice, is no host's connect push and carries none");
+    const uiSrc = fs.readFileSync(path.join(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
+    assert.match(uiSrc, /\n  if \(m\.type === "tabOrder"\) noteConnectPush\(m\);\n/,
+      "the page reads it per host on each connection's first strip (where the code lives; executed in comment-create-gesture-browser.test.ts, "
+      + "over the real federation bundle: 'with the real federation bundle, a relay's connect push carrying the marker posts again the comment "
+      + "a drop left held, and one without it hands that comment back with no post')");
   });
 });
 

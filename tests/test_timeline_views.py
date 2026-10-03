@@ -267,8 +267,11 @@ class TimelineViews(unittest.TestCase):
         # every tabOrder frame is built by ONE helper (2026-09-06: the frame also carries selfHost; 2026-09-07: it is
         # built per client through _send_tab_order, so a reconnecting client's skeleton list can ride it; 2026-09-08:
         # the views ride the one carrier, which marks a blob a read fault left unproved or sends the marker alone)
-        self.assertIn('fr = {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
-                      '          **_views_payload(), "live": sorted({str(x) for x in live})}', src, "tabOrder frames carry it")
+        self.assertIn('fr = {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(), "createIdEcho": True,\n'
+                      '          **_views_payload(), "live": sorted({str(x) for x in live})}', src,
+                      "tabOrder frames carry it (and createIdEcho, the comment create echo's marker, rides the same builder: "
+                      "executed in tests/test_comment_create_idempotent.py ConnectPushMarker, which drives every connection's first "
+                      "strip carrying it)")
         self.assertIn('**_views_payload(), "live":', src, "…which carries the blob")
         # the connect-time tabOrder IS the push's (the ready handler's own frame is gone, 2026-09-03, and stays
         # gone under #1017's per-client builder by the 2026-09-09 ruling; upstream's T258 spelling of that frame,

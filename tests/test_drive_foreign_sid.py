@@ -256,10 +256,18 @@ class RefusesForeignDriveOps(_ForeignDriveFixture):
                           ("commentCreate", THEIRS, typed["commentCreate"], ""),
                           ("commentCreate", THEIRS, "the comment I typed", "")],
                          "the typed name is the row's text and never its target; a create's text outranks its title")
-        self.assertEqual([m["copy"] for m in self.sent],
+        modals = [m for m in self.sent if m["type"] == "err"]
+        self.assertEqual([m["copy"] for m in modals],
                          [typed["forkSession"], typed["commentPromote"], typed["commentCreate"], "the comment I typed"],
                          "the typed name is offered back")
-        for m in self.sent:
+        # each refused create is also answered as the create door answers a refusal, so the popover hands back an
+        # echo-mode dialog, a main-mode dialog staying busy until it is closed, as on main
+        # (tests/test_comment_create_idempotent.py drives that answer's createId)
+        self.assertEqual([m["type"] for m in self.sent],
+                         ["err", "err", "err", "commentCreateFailed", "err", "commentCreateFailed"])
+        self.assertEqual([(m["uuid"], m["transient"]) for m in self.sent if m["type"] == "commentCreateFailed"],
+                         [("u1", False), ("u2", False)])
+        for m in modals:
             self.assertEqual(m["type"], "err")
             self.assertEqual(m["sid"], THEIRS)
             self.assertIn("Your text is saved verbatim", m["text"])
@@ -476,7 +484,10 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
                                             (op, "the op did not reach the gate: its front-door keys are missing from FRONT_DOOR"))
                             new = rows()[before:]
                             self.assertEqual(len(new), 1, (op, msg, "one refusal, one row"))
-                            self.assertEqual(len(self.sent), 1, (op, msg, self.sent))
+                            # one modal; a refused create is also answered with its typed refusal, after the modal
+                            self.assertEqual([f["type"] for f in self.sent],
+                                             ["err"] + (["commentCreateFailed"] if op == "commentCreate" else []),
+                                             (op, msg, self.sent))
                             row, modal = new[0], self.sent[0]
                             expect_text = text if text is not None else (self.NAME if op in self.TYPED else "")
                             expect_target = self.NAME if op in self.TARGET else ""

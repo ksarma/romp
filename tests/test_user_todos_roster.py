@@ -157,8 +157,10 @@ class UserTodosRoster(_ColdTabFixture):
         km._push([c])
         to = self._frames(c, "tabOrder")
         self.assertEqual(len(to), 1)
-        self.assertEqual(set(to[0]), {"type", "order", "tabs", "views", "live", "selfHost"},
-                         "today's frame, key for key: the count rides the rows, not a new top-level key")
+        self.assertEqual(set(to[0]), {"type", "order", "tabs", "views", "live", "selfHost", "createIdEcho"},
+                         "today's frame, key for key (createIdEcho, the comment create echo's marker, on every strip: "
+                         "tests/test_comment_create_idempotent.py ConnectPushMarker): the count rides the rows, not a new "
+                         "top-level key")
         self.assertEqual(sorted(self.built), sorted(TAB_ORDER), "a page that declared no diet is served whole, as today")
         self.assertEqual({sid: _row(c, sid)["userTodos"] for sid in TAB_ORDER}, {S1: 0, S2: 0, S3: 1, S4: 0},
                          "every listed row carries the count, 0 included")

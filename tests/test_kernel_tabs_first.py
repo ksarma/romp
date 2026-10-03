@@ -117,7 +117,9 @@ class TabsFirst(unittest.TestCase):
         # + liveness to _send_tab_order, which builds the frame per client
         self.assertIn('_send_tab_order(c, tab_order, tab_meta, live_map)', src,
                       "and ships it as the tabs field alongside the sid order, through the one strip builder")
-        self.assertIn('fr = {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
+        # (createIdEcho, the comment create echo's marker, rides the one builder: tests/test_comment_create_idempotent.py
+        # ConnectPushMarker drives every connection's first strip carrying it)
+        self.assertIn('fr = {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(), "createIdEcho": True,\n'
                       '          **_views_payload(), "live": sorted({str(x) for x in live})}',
                       inspect.getsource(km._tab_order_frame), "the builder's frame keeps today's shape")
 
@@ -133,7 +135,7 @@ class TabsFirst(unittest.TestCase):
         self.assertEqual(frame["type"], "tabOrder")
         self.assertEqual(frame["selfHost"], km._self_host())
         self.assertEqual(frame["live"], ["11111111-2222-3333-4444-555555555555"], "the live set rides the same frame (T258)")
-        self.assertEqual(sorted(frame), ["live", "order", "selfHost", "tabs", "type", "views"])
+        self.assertEqual(sorted(frame), ["createIdEcho", "live", "order", "selfHost", "tabs", "type", "views"])
         # the three senders share the one spelling: the pusher's tabs-first send (the connect push a `ready`
         # triggers included), the off-cycle session push and the close confirmation all hand their order + meta +
         # liveness to _send_tab_order, the builder's ONE caller (2026-09-07: it builds the frame per client,

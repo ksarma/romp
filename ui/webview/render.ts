@@ -127,6 +127,8 @@ import { setTip, pruneTip } from "./tip";
 import { MetaKind, MetaHooks, metaButton as buildMetaButton, syncMetaControls as syncMetaControlsWith, ctxBar as buildCtxBar, setCtxBar as setCtxBarWith,
   metaColor, modeIconSvg, riskyMode, prettyMode, prettyFast, fastAvailable, metaCurrent, metaDots, rampOn } from "./status-controls";   // the status line's controls, one renderer for the chat's line, the popovers and the settings card's preview (T415 part two)
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, newCommentCreate, commentCreateFrame,
+         createDraftKey, createNameKey, heldCreateFor, echoAnswer, hostEchoMode, carryMainDraft, capsAnnounceEcho, answerEchoEvidence,
+         refusedCreateToast, handedBackToast, savedAfterAllToast, frameExact, passageLabel,
          pickMarkToOpen, type CommentThread, type CommentCreate, markSkipsParent } from "./comments";
 import { isReplyReady, placeMark, placeWindowed, readyChips, replyLine, chipLabel, chipTip, chipAria, type Dir, type ReadyMark, type ReadyChip } from "./reply-ready";
 import { dragSlotIndex } from "./dragslot";
@@ -801,6 +803,17 @@ let viewsWrites: InflightWrite[] = [];   // this page's views writes in flight, 
 let viewsWriteSeq = 0;
 let legacyViewsAge = 0;           // LEGACY kernels only (no `seq`, no acks): frames since the write — the old three-frame yield (captureViews)
 let kernelCaps = new Set<string>();   // what the LOCAL kernel announced at `ready` ({type:"caps"}); "tagEdit" = targeted ops, acks, seq
+// Each host's latest evidence of whether its kernel echoes a comment create's createId in its answers, by host name ("" the
+// local kernel), for the page's life: the connect push of its latest connection (the first strip the kernel sends on
+// each connection, whose createIdEcho marker says so: noteConnectPush), its last caps frame (the local kernel's, a remote
+// host's through federation's romp:hostCaps), or its last create answer, which carries the key only from a kernel with
+// the echo (comments.ts answerEchoEvidence). A chat comment dialog takes its mode from it when it opens
+// (openCommentComposer, hostEchoMode). Kept across a relay drop and a detach. A pane gets the local caps frame once per
+// load, and a remote host's with the first relay open whose ready it answers (a later open posts the ready again only
+// while no caps frame has answered it: federation's redial gate) and again only when the host is detached and attached
+// again, while every connection brings a connect push: so a kernel changed under the page is known at the first
+// connection that reaches it, before the page posts anything again there.
+const createIdEcho = new Map<string, boolean>();
 let allHiddenBlanked = false;   // the active transcript was blanked because EVERY session is view-hidden
 let staleViewsDiagSent = false; // one breadcrumb per page load for an out-of-order views blob (below)
 let rejectedViews: SessionViews | null = null;   // the last blob the gate turned away since it last adopted one — what the caps frame adopts (onKernelCaps)
@@ -11080,6 +11093,59 @@ function cmtLatchReleased(t: CommentThread, base: CmtLatch): boolean {
 // send; a TRANSIENT nack keeps the optimistic mark + latch alive and the create RE-POSTS when the
 // next session frame for the sid arrives (frames are built from the kernel's parse — a new frame IS
 // the parse catching up). Bounded by attempts, not time; a real refusal or the ack drops the hold.
+// Two modes (the user 2026-09-25). A create dialog takes its mode when it opens (pendingCommentAnchor.echo): ECHO mode
+// when its session's host is last known to echo the createId in its create answers (createIdEcho: that host's latest
+// connection's connect push, its last caps frame or its last create answer; hostEchoMode), MAIN mode otherwise, a host
+// with no evidence yet included. It keeps that mode for its life and its create's, but for the fail-safe (the user
+// 2026-09-28): evidence that a host does not echo hands back every echo-mode create still out on it, with no retry, no
+// re-post and no conversion to main's handling (handBackEchoCreates: its dialog closes, and its words wait in the note,
+// which says it may or may not have been saved), and an echo-mode dialog open there that has not sent turns main mode
+// (leaveEchoModeWithoutEcho). Echo mode posts a held create again only on a connection whose connect push carries the
+// kernel's marker (noteConnectPush), and on the page's own socket only while that socket is open (sockOpen). Main mode
+// is main's handling, kept as main had it, including the same-message collision this change fixes (the user's
+// decision): its hold, drafts, retry, synthetic thread, answers, warn hand-back, adoption and Enter are main's lines,
+// each marked "main mode" where it starts. Beside an open echo-mode dialog, each of main's handlers runs all of main's
+// bookkeeping as main does (the working marks, the latches, commentSeen, the prune, the name numbering, the drafts) and
+// skips only what would swap, hand back or close that dialog. The dialog's mode is read on main's paths in five places:
+// main's warn hand-back (its drop of the working mark of the main-mode comment out on the dialog's message runs; its
+// rebuild, the hand-back, does not, and echo mode's rebuild runs instead); adoptCommentThread, which main's ack and the
+// comments frame's adoption of main's parked ack both reach (its echo-mode branch skips the swap or the close alone: the
+// anchor cleared, the thread opened over the dialog, and the delete of main's draft of the dialog's message; main's ack
+// still deletes the drafts of the message it answers); renderCommentPopover's in-place key, which main's
+// openCommentComposer reaches: it compares the open dialog's mode, so a dialog of the other mode is rebuilt where main
+// would refresh it in place, which changes what shows and skips none of main's bookkeeping; commentSendFromPop, which
+// main's Enter and Comment reach: an echo-mode dialog sends by echo mode's send (sendEchoCreate), a main-mode one by
+// main's; and main's attachment handler (the droppedPath frame), which puts the path into the open dialog's box: an
+// echo-mode sent dialog's box is read-only, since a sent box takes no path, so the path goes to the chat's composer as
+// it does with no dialog open, where it can fire a send held for that upload, the ship's bookkeeping running either
+// way, while an unsent dialog's box of either mode takes it as main's does. Main's refusals, its busy nack, its session
+// frame's retry, and its comments frame's supersede and prune read no mode. The other reads of echo-mode state on
+// main's paths are not about the dialog beside them: an answer naming an echo-mode create goes by the answer (the routing
+// below); main's adoption leaves an echo-mode create's latch, which that create's own ack carries; and a working mark of
+// an echo-mode comment opens the create dialog on its passage. Each line echo
+// mode adds or changes among them carries a comment saying it is echo mode's: in main's retry, its run of the echo-mode
+// retry and its record of a create it gives up on (retryCmtCreates); the mode in the dialog's opening line, the carry
+// of main's draft with its record for main's late landing, and the release of a sent dialog around it
+// (openCommentComposer); that release in closeCommentPop and openCommentPopover, and the latter's redirect of an
+// echo-mode working mark; in main's adoption, its guard on an echo-mode create's latch and its branch for an open
+// echo-mode dialog, which skips the dialog swap (adoptCommentThread); the send's check of the mode (commentSendFromPop);
+// in the popover's build, the sent create it reads, the mode check in the in-place key, an echo-mode dialog's stamp of
+// its mode, passage and sent create, the draft keys' ternaries, the sent dialog's name box, box and Comment button, the
+// syncHeldBack calls in the two draft listeners, the drag exemption for the note's words, the note (in a main-mode
+// dialog only while it has entries, so a main-mode dialog with nothing waiting has main's DOM), and the resize
+// observer's .sized arm
+// base, kept per popover (cmtPopArmBase) so the page's own writes to the note move it with the size the page set
+// (cmtPopOwnWrite) (renderCommentPopover); the relay's return clearing that host's connection for its connect push (the
+// romp:hostRelayUp listener); in the frame handler, echo mode's steps before the chain (each host's evidence and
+// connect push), the supersede of echo-mode marks, the prune's keep of an echo-mode typed name, the frame's echo-mode
+// adoption, the routing of an echo-mode answer, the warn's guard on main's rebuild and the
+// echo-mode warn rebuild, the note's repaint after the answers, the attachment's check for a read-only box, and the
+// fail-safe's turn of an unsent echo-mode dialog to main mode once the frame is handled (leaveEchoModeWithoutEcho); the
+// note's two delegated buttons; and the create dialog's anchor (pendingCommentAnchor), whose declaration gains echo
+// mode's two fields. Echo mode is the rest. An answer goes by its createId (echoAnswer): an id this page minted in echo
+// mode goes to the echo-mode code, which settles the create it names; any other answer goes to main's code, which reads
+// and writes main-mode state alone, and echo mode's own step for each answer runs beside it (echoSideOfAnswer).
+// ── main mode: main's handling ──────────────────────────────────────────────────────────────────────────────────────
 // Keyed by the anchor: one create at a time per passage on this viewer. The held create carries the id
 // the send gesture minted, and every re-post sends it again (commentCreateFrame): the kernel answers a
 // repeat of a create it completed with the same thread, and tells a repeat from a fresh comment in the
@@ -11092,6 +11158,7 @@ function retryCmtCreates(sid: string): void {
     if (c.sid !== sid || c.tries < 1) continue;            // tries starts counting after the first transient nack
     if (c.tries > CMT_CREATE_MAX_TRIES) {                  // the can't-trap bound: give up honestly
       cmtCreateInFlight.delete(u);
+      cmtMainGivenUp.set(c.createId, c);                   // echo mode's: kept for its late landing in an echo-mode box (echoSideOfAnswer)
       dropSynthThread(c.sid, u);
       warnToast("couldn't anchor the comment — the message never appeared in the kernel's transcript.");
       continue;
@@ -11099,8 +11166,10 @@ function retryCmtCreates(sid: string): void {
     c.tries++;
     vscodeApi?.postMessage(commentCreateFrame(c));         // the same gesture again: the same id
   }
+  retryEchoCreates(sid);                                   // echo mode's: the echo-mode creates held on the session (below)
 }
 
+// (a main-mode create's synth is keyed by its message's uuid, an echo-mode one's by its createId, which its callers pass)
 /** Drop a refused create's optimistic synth thread + latch + mark — the honest retreat. */
 function dropSynthThread(sid: string, uuid: string): void {
   const tid = "pending:" + uuid;
@@ -11109,6 +11178,738 @@ function dropSynthThread(sid: string, uuid: string): void {
   cmtAwaitBase.delete(tid);
   applyCommentMarks(sid);
 }
+
+// ── echo mode: a create dialog whose host is last known to echo the createId ──────────────────────────────────────
+// Keyed by the id the send gesture minted (createId): two creates on one message are two holds. The held create carries
+// that id, and every re-post sends it again (commentCreateFrame): the kernel answers a repeat of a create it completed
+// with the same thread, tells a repeat from a fresh comment in the same words by that id, and echoes it in every
+// answer, so an answer settles the create it names. A connection whose connect push shows the echo posts again every
+// create still held on its host, whatever its attempts (noteConnectPush, repostHeldCreates), and echo mode posts a create
+// again on no other connection.
+const cmtEchoCreates = new Map<string, CommentCreate>();
+// every createId this page minted in echo mode, for the page's life, whether its create is held, settled, given up or
+// handed back at a downgrade (handBackEchoCreates): an answer naming one goes to the echo-mode code, a late one
+// included, and never to main's (echoAnswer)
+const cmtEchoMinted = new Set<string>();
+// the echo-mode creates this page stopped handling, by createId, for the page's life, each with the words it handed
+// back: those it gave up on past the retry bound (the kernel keeps a parked create for more pusher cycles than the page
+// retries it, so its pusher can still land one), and those it handed back when their host showed it has no echo
+// (handBackEchoCreates). A later acknowledgment naming one settles it as main's late ack does (lateEchoLanding)
+const cmtEchoGivenUp = new Map<string, CommentCreate>();
+
+function retryEchoCreates(sid: string): void {
+  // only on a connection whose connect push showed the echo (cmtConnPush, noteConnectPush): before a connection's connect
+  // push, and on the page's own socket from its drop to the next one's, a post would reach a kernel that has not said it
+  // echoes the id; and on the page's own socket only while it is open (sockOpen): a post the shim queues goes out first
+  // on the next socket, whose kernel may not echo it
+  const host = hostOf(sid);
+  if (cmtConnPush.get(host) === true && (host || sockOpen())) for (const [cid, c] of Array.from(cmtEchoCreates.entries())) {
+    if (c.sid !== sid || c.tries < 1) continue;            // tries starts counting after the first transient nack
+    if (c.tries > CMT_CREATE_MAX_TRIES) {                  // the can't-trap bound: give up honestly
+      cmtEchoCreates.delete(cid);
+      cmtEchoGivenUp.set(cid, c);                          // a late landing of it still settles it (lateEchoLanding)
+      dropSynthThread(c.sid, cid);
+      warnToast("The comment could not be anchored: its message never appeared in the kernel's transcript.");
+      refusedCreateBack(c);                                // its words to its own dialog, an empty box on its passage, or the note
+      continue;
+    }
+    c.tries++;
+    vscodeApi?.postMessage(commentCreateFrame(c));         // the same gesture again: the same id
+  }
+  paintOpenNote();                                         // main's retry, just run, may have ended main's create on a message (main's draft in the note)
+}
+
+// Each host's current connection, as its connect push read it (noteConnectPush), by host name: "" the page's own
+// socket, a host's name that host's relay. true once the connection's first strip carried the kernel's createIdEcho
+// marker, false once it came without it; no entry while the connection is open and its first strip is still to come,
+// the page's first connection included; and, for the page's own socket, "down" while a frame handed on is a dropped
+// socket's, not the current one's: from each reopen (romp:wsup) until the socket-flip frame of the socket that opened
+// last ({type: "wsup", gen}, cmtFlipGen). Echo mode posts a held create again only on a host whose entry is true. From
+// the page's socket's drop to its reopen the entry is still the dropped connection's, and nothing is posted all the
+// same: noteConnectPush reads only a connection's first strip, and retryEchoCreates posts on the page's own socket only
+// while it is open (sockOpen), which it is not from its drop (the shim fires romp:wsdown with its socket closed or
+// gone) to the next socket's open, whose romp:wsup marks the entry down.
+const cmtConnPush = new Map<string, boolean | "down">();
+// The page's own socket's generation, as the shim assigns it (kernel.py's shim, sockGen): 0 for the first socket, one
+// more at each reopen, published as window.__rompSockGen before that reopen's romp:wsup and stamped on its socket-flip
+// frame ({type: "wsup", gen}). The shim hands frames on through one queue in the order they arrived: a socket's frames
+// after its own flip frame and before the next socket's (a newer strip replaces a queued one and goes to the end,
+// behind every flip frame queued before it). So a frame belongs to the socket that opened last only once the last flip
+// frame handed on carries the current generation; until then it is a dropped socket's, even from a socket that opened
+// and dropped before any of its frames was handed on, with the next socket already open, and whether or not the page
+// heard that reopen's romp:wsup (a page that loaded between a reopen's open and its flip frame did not). Without it, such
+// a dropped socket's strip, marked by the kernel that had the echo, would be read as the next socket's connect push and
+// post the held creates again to a kernel that may not have it. The page reads the generation and never writes it. The
+// last flip frame's generation (cmtFlipGen): 0 until one comes (the first socket's frames need none), and null for a
+// flip frame that carries none, or on a page whose shim published none, which fails safe: the next strip is read as a
+// connect push without the marker, handing the host's echo-mode creates back with nothing posted again
+// (noteConnectPush, handBackEchoCreates)
+let cmtFlipGen: number | null = 0;
+/** The shim's generation of the page's own current socket (window.__rompSockGen); undefined on a page without the
+ *  shim (a VS Code pane, which has one connection per page). */
+const sockGen = (): number | undefined => { const g = (window as any).__rompSockGen; return typeof g === "number" ? g : undefined; };
+/** Whether the page's own socket is open now, as the shim reads it (kernel.py's shim, window.__rompSockOpen: its socket's
+ *  readyState): a post made while it is not (down, or CLOSING, when the page's netState still reads up) waits in the
+ *  shim's queue and goes out first on the next socket, whose kernel may not echo the createId. Echo mode's re-post and
+ *  retry read it and post nothing then (repostHeldCreates, retryEchoCreates). A page without the shim (a VS Code pane,
+ *  which has one connection per page) has none, and posts. */
+const sockOpen = (): boolean => { const f = (window as any).__rompSockOpen; return typeof f !== "function" || f() === true; };
+
+/** A connection's connect push: the first strip the kernel sends on it (a tabOrder frame, sent to every chat connection,
+ *  local or relayed, a fresh page's, a redial's or a relay's, ahead of its sessions and of any caps frame, by whichever
+ *  of the kernel's three strip senders reaches it first: kernel.py _tab_order_frame), read once per connection, per
+ *  host. A merged strip names the host whose own frame drove it (freshHost); federation's re-emit, which re-serves
+ *  every host's slice, is no host's push; and a bare one, on a page without federation, is the local kernel's. Its
+ *  createIdEcho marker says the kernel echoes the createId, and is the host's latest evidence of the echo
+ *  (noteHostEcho). On a connection that carries it, echo mode posts again every echo-mode create still held on that
+ *  host (repostHeldCreates): the answer the dropped connection owed never comes. On one that lacks it (a kernel from
+ *  before the echo), every echo-mode create still out on the host is handed back at that moment, with nothing posted
+ *  (handBackEchoCreates). Between a connection's open and its connect push the page posts nothing again on that host
+ *  (retryEchoCreates reads the same entry) and leaves every dialog as it is. A comment sent in that moment goes out once
+ *  from its send, on that connection; if the connect push carries the marker, it posts that comment a second time on
+ *  the same connection, and the kernel's repeat memo, keyed on its createId, answers the second post from the first, so
+ *  the one gesture makes one thread; if the push lacks the marker, or that comment's own answer lacks the key, the
+ *  comment is handed back with nothing posted again. A strip handed on from a socket that dropped is not read: for the
+ *  page's own socket, one handed on while the socket is down, or before the socket-flip frame carrying the current
+ *  generation (cmtFlipGen), whose connection's entry reads "down" until then. After a flip frame without a generation,
+ *  the strip that follows is read as one without the marker, whatever it carries: it could be a dropped socket's, and
+ *  a re-post on the wrong connection could reach a kernel without the echo, so the host's echo-mode creates are handed
+ *  back with nothing posted again. */
+function noteConnectPush(m: { reemit?: unknown; freshHost?: unknown; createIdEcho?: unknown }): void {
+  if (m.reemit === true) return;
+  const host = typeof m.freshHost === "string" ? m.freshHost : "";
+  if (cmtConnPush.has(host)) return;                       // not this connection's first strip, or a dropped socket's
+  if (!host && (window as any).__rompLocalUp === false) return;   // delivered after the page's own socket dropped: that socket's (the shim's netState)
+  const marked = m.createIdEcho === true && (!!host || cmtFlipGen !== null);
+  cmtConnPush.set(host, marked);
+  noteHostEcho(host, marked);                              // unmarked: every echo-mode create still out there handed back, none posted
+  if (marked) repostHeldCreates(host);
+}
+
+/** A marked connection's connect push posts again every echo-mode create still held on its host, whatever its tries
+ *  (noteConnectPush): the answer the dropped connection owed (the kernel restarted, or the socket dropped, before
+ *  answering) never arrives, and the frame-keyed retry above waits for a transient refusal that never came, so without
+ *  this the comment would wait in the note, not saved yet, until a reload. Once per connection, and only on one whose
+ *  connect push shows the echo: that kernel answers the re-post from its repeat memo, keyed on the createId
+ *  (_reserve_create), with that thread's ack when the create landed, or with a transient refusal while it is still
+ *  being made or is parked, so the one gesture lands once. The memo has three limits, and past each the re-post of a
+ *  create that did land makes it a second time, a thread the user sees and can delete; a create with a typed name is
+ *  refused instead while its landed thread still holds that name, as a name clash, so its words go back to its open
+ *  dialog, or wait in the note as not saved with Bring it back, beside the kernel's warning that the name is taken. The
+ *  limits: it answers a repeat only while that thread is open (_repeat_create_tid: a thread resolved, merged, promoted
+ *  or deleted before the reconnect), it keeps the latest 256 creates (_RECENT_CREATES_MAX), and it is in memory (a
+ *  kernel restart forgets it). A connection whose connect push lacks the marker gets no re-post: every echo-mode create
+ *  still out on that host is handed back instead (handBackEchoCreates). Scoped to the host whose connection it is: the
+ *  page's own socket carries this kernel's sessions (host ""), and a host's relay that host's. On the page's own socket
+ *  it posts nothing while that socket is not open (sockOpen: one CLOSING as its push is handed on), since the shim
+ *  would send the post first on the next socket, whose kernel may not echo it; the next connection's connect push
+ *  decides instead. A relay's post needs no such read: federation sends a comment create only on an open relay and
+ *  drops it otherwise. A VS Code pane has one connection per page, since its extension replaces the page on a
+ *  reconnect. A main-mode create is never posted again at a connect push, as on main (main's own frame-keyed retry
+ *  re-posts it at a session frame once a transient refusal armed it). */
+function repostHeldCreates(host: string): void {
+  if (!host && !sockOpen()) return;
+  for (const c of Array.from(cmtEchoCreates.values())) if (hostOf(c.sid) === host) vscodeApi?.postMessage(commentCreateFrame(c));
+}
+
+/** A host's latest evidence of the createId echo (createIdEcho): its connection's connect push (noteConnectPush), its
+ *  caps frame, or its answer to a create (echoSideOfAnswer). Evidence that it does not echo hands back every echo-mode
+ *  create still out on it at that moment (handBackEchoCreates), and an echo-mode dialog open on it that has not sent
+ *  turns main mode once the frame or event that brought the evidence has been handled (leaveEchoModeWithoutEcho). */
+function noteHostEcho(host: string, echoes: boolean): void {
+  createIdEcho.set(host, echoes);
+  if (!echoes) handBackEchoCreates(host);
+}
+
+// the echo-mode creates the page handed back when their host showed it has no echo (handBackEchoCreates), by createId,
+// for the page's life: their note entries say the comment may or may not have been saved
+const cmtHandedBack = new Set<string>();
+// the lead of a handed-back comment's note entry, after its passage (paintHeldNotes)
+const HANDED_BACK_LEAD = " may or may not have been saved, because the kernel restarted as an older version:";
+
+/** The fail-safe (the user 2026-09-28, who chose it over matching main's handling in this case): the page finds that a
+ *  host does not echo the createId (a connect push without the marker, an answer without the key, or a caps frame
+ *  without the cap: noteHostEcho), so its kernel restarted as a build from before the echo, answers no create by its
+ *  id, and may or may not have saved a create the page sent before. Each echo-mode create still out on that host stops
+ *  being handled at that moment: no retry, no re-post, no conversion to main's handling. Its hold ends, its working
+ *  mark and latch go (dropSynthThread), and its words and typed name go to the note (cmtHeldRefusals), which a create
+ *  dialog shows on any passage of its message, saying the comment may or may not have been saved because the kernel
+ *  restarted as an older version, with Bring it back enabled at once on its own passage (while the box is empty, as
+ *  every entry's) and a dismiss; its sent dialog, if open, closes; and a toast names its passage and says where its
+ *  words are. Nothing the page does after the downgrade is seen posts it. The comment may be saved already, if the
+ *  kernel with the echo saved it before it restarted and its acknowledgment was lost with the socket. The older kernel
+ *  may still save it if it had received it: a create sent between the connection's open and its connect push, or one
+ *  the shim queued while the socket was down or closing and sent first on the new socket. A comment no kernel saved is
+ *  saved only when the person brings it back and sends it. A comment a kernel saved shows its thread once a comments
+ *  frame lists it, beside the note entry, until the person dismisses the entry; if the person brings back and sends a
+ *  comment a kernel saved, whether or not its thread shows yet, that makes a second thread, which the person can
+ *  delete. The older kernel's acknowledgment of a comment it saved carries no createId, so main's handling takes it, as
+ *  on any kernel that never announced the echo (the user 2026-09-25): it deletes main's draft of the message and swaps
+ *  a main-mode create dialog open on that session for the comment's thread (every dialog opened on that host after the
+ *  hand-back is main mode). Words the person brought back from the note and then changed are cleared, and no toast says
+ *  the comment was saved; main's handling clears a create dialog's words the same way when another comment's
+ *  acknowledgment arrives. A later acknowledgment naming it (only a kernel with the echo sends one) settles it as a
+ *  late landing (cmtEchoGivenUp, lateEchoLanding): its note entry goes, or, when its words were brought back into a
+ *  box of either mode (and from main's draft on into an echo-mode dialog's, once the host showed the echo again:
+ *  cmtBroughtCarried), they are cleared where they are if unchanged and kept with a toast if changed; a refusal naming
+ *  it changes nothing, the entry staying as it is. Main-mode creates and every other host are untouched. */
+function handBackEchoCreates(host: string): void {
+  const pa = pendingCommentAnchor;
+  let closeOwn = false;
+  for (const c of Array.from(cmtEchoCreates.values())) {
+    if (hostOf(c.sid) !== host) continue;
+    cmtEchoCreates.delete(c.createId);                     // no retry and no re-post from now on
+    cmtEchoGivenUp.set(c.createId, c);                     // a landing that names it still settles it (lateEchoLanding)
+    cmtHandedBack.add(c.createId);
+    dropSynthThread(c.sid, c.createId);
+    if (!cmtHeldRefusals.some((h) => h.createId === c.createId)) cmtHeldRefusals.push(c);   // the entry its closed dialog made, or a new one
+    if (pa && pa.createId === c.createId) closeOwn = true;
+    warnToast(handedBackToast(c.exact));
+  }
+  if (closeOwn) closeCommentPop();                         // its words wait in the note (releaseSentDialog finds nothing out)
+  else paintOpenNote();                                    // a dialog open on its message shows the entry now
+}
+
+/** An echo-mode create dialog that has not sent, open on a host whose latest evidence shows no echo, turns main mode for
+ *  the rest of its life, so no echo-mode create is sent to a kernel that answers none by its id: it is rebuilt as a
+ *  main-mode dialog (main's box, from main's draft of the message), and the words and typed name typed in it, which its
+ *  passage's own draft keeps, wait in its note with Bring it back while its box is empty (otherModeDraft), as they do in
+ *  any main-mode dialog opened there. Run once the frame or event that brought the evidence has been handled (the frame
+ *  handler's last line, the romp:hostCaps listener), so main's handling of that frame, an answer without the key among
+ *  them, runs beside the echo-mode dialog, which it never swaps or closes. A dialog whose create was out has been handed
+ *  back by then (handBackEchoCreates), and one whose create an acknowledgment settled, waiting for its thread's frame,
+ *  has nothing out and stays as it is. */
+function leaveEchoModeWithoutEcho(): void {
+  const pa = pendingCommentAnchor;
+  if (!pa || !pa.echo || pa.createId || createIdEcho.get(hostOf(pa.sid)) !== false) return;
+  pa.echo = false;                                         // a main-mode dialog from now on, for its life
+  if (!holdNoteRepaint("rebuild")) { document.getElementById("cmt-pop")?.remove(); renderCommentPopover(); }
+}
+
+/** An echo-mode ack's settle of the create it answers: the hold retires (the frame-keyed retry never re-posts it after
+ *  this), its own gesture latch carries onto the real thread (another create's on the message stays with that create's
+ *  synthetic thread), and the note entry its dialog's close made while it was out (releaseSentDialog) goes, since the
+ *  comment landed. */
+function settleAckedCreate(held: CommentCreate, tid: string): void {
+  cmtEchoCreates.delete(held.createId);                // the ack retires the retry hold
+  const k = "pending:" + held.createId, base = cmtAwaitBase.get(k);   // its gesture latch carries onto the real thread
+  if (base) { cmtAwaitBase.delete(k); cmtAwaitBase.set(tid, base); }
+  spendLandedWords(held);
+}
+
+/** An open create dialog's own draft keys, by its mode: an echo-mode dialog's are its passage's (createDraftKey,
+ *  createNameKey), a main-mode one's main's, the message's. */
+function dialogDraftKeys(pa: { uuid: string; exact: string; echo?: boolean }): { dk: string; nk: string } {
+  return pa.echo ? { dk: createDraftKey(pa), nk: createNameKey(pa) } : { dk: "new:" + pa.uuid, nk: "newname:" + pa.uuid };
+}
+
+/** An echo-mode create's refused words go back to their own passage, never onto another: the send spent the draft and
+ *  the hold carried the words. Into the create's own dialog when it is still open (unsent again: the words editable,
+ *  its Comment button live); the send spent the passage's drafts, and nothing writes them while that dialog is out, so
+ *  this replaces nothing. Otherwise into the box of an unsent echo-mode dialog open on the passage when it is empty (a
+ *  main-mode dialog's box and drafts are main's, which no echo-mode answer writes); the words then leave the note,
+ *  where the close of their sent dialog put them while they were out (releaseSentDialog). A box holding other typed
+ *  words, or a name typed there that the refused comment's own typed name would replace, keeps them, and the refused
+ *  comment waits in the note, quoted whole, with Bring it back and a dismiss (as fork PR 915 does for the file viewer's
+ *  comments; the user 2026-09-24); a note entry it already had turns from not saved yet into refused. With no unsent
+ *  echo-mode dialog of its passage open, the words wait in that note too, never in the passage's draft: a create dialog
+ *  shows the note on any passage of the message (paintHeldNotes), where a draft opens only on that exact selection. A
+ *  dialog open on another passage of the message, or a main-mode one, shows it at once, and a toast names the passage
+ *  and says where the words are. */
+function refusedCreateBack(c: CommentCreate): void {
+  const pa = pendingCommentAnchor;
+  const pop = document.getElementById("cmt-pop");
+  if (pa && pa.sid === c.sid && pa.createId === c.createId) {
+    const { dk, nk } = dialogDraftKeys(pa);
+    commentDrafts.set(dk, c.text);                         // the rebuild reads the drafts
+    if (c.name) commentDrafts.set(nk, c.name);
+    pa.createId = undefined;                               // unsent again: the box takes typing, its Comment button is live
+    pop?.remove();
+    renderCommentPopover();
+    return;
+  }
+  const inNote = cmtHeldRefusals.findIndex((h) => h.createId === c.createId);   // its sent dialog closed while it was out
+  if (pa && pop && pa.echo && pa.sid === c.sid && !pa.createId && pa.uuid === c.uuid && pa.exact === c.exact) {
+    const box = pop.querySelector(".cmt-input") as HTMLTextAreaElement | null;
+    if (box && !box.value.trim() && nameFits(c.name, typedNameIn(pop))) {
+      const { dk, nk } = dialogDraftKeys(pa);
+      box.value = c.text;
+      commentDrafts.set(dk, c.text);
+      restoreTypedName(pop, nk, c.name);
+      if (inNote >= 0) cmtHeldRefusals.splice(inNote, 1);  // in the box now, so out of the note
+    } else if (inNote < 0) cmtHeldRefusals.push(c);       // what is typed there stays; the refused comment waits beside it
+    if (!holdNoteRepaint("paint")) paintHeldNotes(pop, pa);
+    return;
+  }
+  if (inNote < 0) cmtHeldRefusals.push(c);                 // the note, shown on any passage of its message
+  if (pop && pa && !holdNoteRepaint("paint")) paintHeldNotes(pop, pa);   // a dialog open on another passage of that message shows it now
+  warnToast(refusedCreateToast(c.exact));
+}
+
+/** A comment's typed name fits a box where `other` is typed: it has none, none is typed there, or the same one is.
+ *  Otherwise putting the comment there would drop one of the two names, so it waits in the note, its name with it. */
+const nameFits = (name: string, other: string): boolean => !name || !other.trim() || other === name;
+/** The name typed in the dialog's name box: none while the box shows its suggestion. */
+function typedNameIn(pop: HTMLElement): string {
+  const nb = pop.querySelector(".cmt-name") as HTMLInputElement | null;
+  return nb && nb.value.trim() && nb.value !== nb.dataset.prefill ? nb.value : "";
+}
+
+/** An echo-mode sent dialog closing while its create is still out (no answer yet: a slow one, or one a dropped
+ *  connection owed, which the next connection re-posts once its connect push shows the echo (repostHeldCreates)) puts
+ *  the held words and typed name in the note, never its passage's box: the note says the comment is not saved yet,
+ *  quotes its words so they can be copied, and offers no Bring it back while it is out, since words brought back and
+ *  sent again would post the comment twice. So closing the dialog loses nothing, and a new comment on the passage opens
+ *  empty. The hold stays, and so does the working mark: a later answer settles the create. An ack removes the note
+ *  entry (spendLandedWords); a refusal moves the words into the box of an unsent echo-mode dialog open on the passage
+ *  when it is empty, or turns the entry into a refused one (refusedCreateBack). A main-mode dialog is never marked sent
+ *  (main's send spends nothing: its words stay in the message's draft). */
+function releaseSentDialog(): void {
+  const pa = pendingCommentAnchor;
+  const c = pa && pa.createId ? cmtEchoCreates.get(pa.createId) : undefined;
+  if (c) cmtHeldRefusals.push(c);
+}
+
+/** An acknowledged create's words leave the note, where the close of its sent dialog put them while it
+ *  was out (releaseSentDialog): they landed. */
+function spendLandedWords(c: CommentCreate): void {
+  const i = cmtHeldRefusals.findIndex((h) => h.createId === c.createId);
+  if (i < 0) return;
+  cmtHeldRefusals.splice(i, 1);
+  const pop = document.getElementById("cmt-pop"), pa = pendingCommentAnchor;
+  if (pop && pa && !holdNoteRepaint("paint")) paintHeldNotes(pop, pa);
+}
+
+// A press on a note's Bring it back or Dismiss must not see the note rebuilt under it (ui/CLAUDE.md, the click-safe
+// rule): another comment's ack (spendLandedWords) or refusal (its warn's full rebuild, then refusedCreateBack) on the
+// same message repaints the note, and a button replaced between its pointerdown and pointerup gets no click. The
+// buttons are delegated (the body's cmtheldback and cmtheldx); the note's host also holds a kernel event's repaint
+// while a press is under way on it (pressHold, as the tab menu does), and the repaint runs on the press's own release,
+// a tick after the click lands on the still-present button. A full rebuild owed then covers a repaint of the note.
+let cmtNoteHold: { host: HTMLElement; hold: ReturnType<typeof pressHold> } | null = null;
+let cmtNoteOwed: "paint" | "rebuild" | null = null;
+/** Parks a kernel event's repaint of the open dialog's note (or, for a warn, its full rebuild) while a press is under
+ *  way on the note, and says so; false when no press is, so the caller repaints now. */
+function holdNoteRepaint(kind: "paint" | "rebuild"): boolean {
+  const h = cmtNoteHold;
+  if (!h || !h.host.isConnected || !h.hold.held()) return false;
+  if (kind === "rebuild" || !cmtNoteOwed) cmtNoteOwed = kind;
+  void h.hold.defer(() => {
+    const owed = cmtNoteOwed, pop = document.getElementById("cmt-pop"), pa = pendingCommentAnchor;
+    cmtNoteOwed = null;
+    if (!owed || !pa) return;                            // the press closed the dialog, or an earlier run painted
+    if (owed === "rebuild") { pop?.remove(); renderCommentPopover(); }
+    else if (pop) paintHeldNotes(pop, pa);
+  });
+  return true;
+}
+
+/** A comment's typed name into the dialog's name box, where it fits (nameFits, checked by the caller). */
+function restoreTypedName(pop: HTMLElement, nk: string, name: string): void {
+  const nb = pop.querySelector(".cmt-name") as HTMLInputElement | null;
+  if (!name || !nb) return;
+  nb.value = name;
+  commentDrafts.set(nk, name);
+}
+
+// the echo-mode comments whose refused words the person dismissed from the note (dropHeld), by createId, for the page's
+// life: a late ack of one (lateEchoLanding) finds its words in no box, so it shows no toast about what the box holds
+const cmtNoteDismissed = new Set<string>();
+// the echo-mode comments whose words the person brought back from the note into a main-mode box (bringBackHeld), by
+// createId, until a late ack of one settles them there (lateEchoLanding): after a host shows no echo, every dialog on it
+// is main's, and Bring it back puts a handed-back comment's words in main's draft of the message
+const cmtBroughtMain = new Set<string>();
+// of those, the ones whose words main's draft then moved into an echo-mode dialog's draft once the host showed the echo
+// again (noteMainBrought: the carry as that dialog opened, or its Bring it back), by createId: that dialog's passage,
+// whose box and draft a late ack of the comment looks in before main's draft (lateEchoLanding)
+const cmtBroughtCarried = new Map<string, string>();
+// Echo-mode comments waiting in a note, shown in a create dialog of either mode on any passage of their message:
+// unanswered ones whose sent dialog closed before their answer (releaseSentDialog; not saved yet, and no Bring it back
+// while they are out), refused ones (refusedCreateBack) that no box took (no unsent echo-mode dialog of their passage
+// was open, or its box or name box held other typed words), and ones handed back when their host showed it has no echo
+// (handBackEchoCreates). Kept until brought back or dismissed, and an unanswered one until its answer. A main-mode
+// dialog shows them too, so words left there before a host's mode changed stay in reach.
+const cmtHeldRefusals: CommentCreate[] = [];
+// why a note's Bring it back waits: the box holds the person's words, which bringing the comment back would replace
+// (it names what posting is called here: the create dialog's button reads Comment and has no Send); or, the box
+// empty, the name box holds a name they typed, which the comment's own typed name would replace
+const HELD_BACK_WAITS = "Post or clear this comment first";
+const HELD_NAME_WAITS = "Clear the typed name first";
+
+// the key a note entry for the dialog's other mode's draft carries on its buttons (no createId is ever this), and the
+// key of an echo-mode dialog's entry for a main-mode comment still out on the message, which has no buttons
+const OTHER_DRAFT = "~draft";
+const MAIN_OUT = "~main";
+
+// what each note host shows now (paintHeldNotes), so a repaint that would show the same leaves it standing
+const cmtNoteShown = new WeakMap<HTMLElement, string>();
+
+/** The other mode's draft a create dialog's note shows, when it holds words or a typed name. In a main-mode dialog, its
+ *  passage's echo-mode draft: words typed there while the host was in echo mode, which main's keys do not hold and
+ *  main's handling never deletes or prunes, so they stay there until the person brings them back or dismisses them. In
+ *  an echo-mode dialog, main's draft of the message, when the dialog did not take it into its box (carryMainDraft).
+ *  While a main-mode create is out on the message, main keeps that comment's words there until its answer, and the note
+ *  shows that comment from its hold (paintHeldNotes), so the draft is an entry of its own only when it holds other
+ *  words: ones the person typed over it in another main-mode dialog of the message. */
+function otherModeDraft(pa: { uuid: string; exact: string; echo?: boolean }): { dk: string; nk: string; text: string; name: string } | null {
+  const dk = pa.echo ? "new:" + pa.uuid : createDraftKey(pa), nk = pa.echo ? "newname:" + pa.uuid : createNameKey(pa);
+  const text = commentDrafts.get(dk) || "", name = commentDrafts.get(nk) || "";
+  if (!text.trim() && !name.trim()) return null;
+  const out = pa.echo ? cmtCreateInFlight.get(pa.uuid) : undefined;
+  if (out && (!text.trim() || text.trim() === out.text)) return null;   // the words of main's comment still out, shown from its hold
+  return { dk, nk, text, name };
+}
+
+/** The notes for the comments waiting on this dialog's MESSAGE, whichever passage of it the dialog is on (none in a
+ *  dialog whose own create is out): a reselection a character longer or shorter is another passage, so a note shown
+ *  only on its exact passage left the words out of reach. Each echo-mode comment's entry names its own passage
+ *  (passageLabel) over the words whole, and says whether the comment is not saved yet (still out: nothing more, since
+ *  its answer settles the entry), was not saved (refused), or may or may not have been saved because the kernel
+ *  restarted as an older version (handed back at a downgrade, handBackEchoCreates); the last two get a dismiss and, on
+ *  their own passage only, Bring it back, enabled only while bringing it back replaces nothing typed. Then, in an
+ *  echo-mode dialog, a main-mode comment still out on the message, from its hold, naming its passage, with nothing to
+ *  press; then the other mode's draft (otherModeDraft), with Bring it back and a dismiss: in a main-mode dialog its
+ *  passage's echo-mode words, naming the passage, and in an echo-mode dialog main's draft, which names the message and
+ *  offers Bring it back on any passage of it. A waiting Bring it back says why in its title, which never reaches a
+ *  touch pointer, so on a coarse one the same words stand as a line. A repaint that would show the same notes leaves
+ *  them as they stand, so words selected in one stay selected. A main-mode dialog built with nothing waiting has no
+ *  host for the note (renderCommentPopover), as main's had none: the first entry adds it (addNoteHost). */
+function paintHeldNotes(pop: HTMLElement, pa: { sid: string; uuid: string; exact: string; createId?: string; echo?: boolean }): void {
+  let host = pop.querySelector(".cmt-held") as HTMLElement | null;
+  const entries: { id: string; lead: string; words: string; back: boolean; drop: boolean }[] = [];
+  if (!pa.createId) {
+    for (const c of cmtHeldRefusals) {
+      if (c.sid !== pa.sid || c.uuid !== pa.uuid) continue;
+      const out = cmtEchoCreates.has(c.createId);           // still being sent: no answer yet
+      entries.push({ id: c.createId, words: c.text, drop: !out, back: !out && c.exact === pa.exact,   // its own passage: the only box Bring it back fills
+                     lead: "Your earlier comment on " + passageLabel(c.exact)
+                       + (out ? " is not saved yet:" : cmtHandedBack.has(c.createId) ? HANDED_BACK_LEAD : " was not saved:") });
+    }
+    // in an echo-mode dialog, a main-mode comment still out on the message: its own words, from its hold, not saved yet
+    // and with nothing to press, since brought back and sent again it would post twice
+    const mo = pa.echo ? cmtCreateInFlight.get(pa.uuid) : undefined;
+    if (mo) entries.push({ id: MAIN_OUT, words: mo.text, drop: false, back: false,
+                           lead: "Your earlier comment on " + passageLabel(mo.exact) + " is not saved yet:" });
+    const d = otherModeDraft(pa);
+    if (d) entries.push({ id: OTHER_DRAFT, words: d.text, drop: true, back: true,
+      lead: "Words you typed earlier in a comment on " + (pa.echo ? "this message" : passageLabel(pa.exact))
+        + (d.name.trim() ? ", under the name " + d.name : "") + ":" });
+  }
+  if (!host) {
+    if (!entries.length || pop.dataset.mode !== "create") return;
+    host = addNoteHost(pop);
+  }
+  const noteHost = host;
+  const sig = JSON.stringify([entries, isCoarsePointer()]);
+  if (cmtNoteShown.get(noteHost) !== sig) {
+    cmtNoteShown.set(noteHost, sig);
+    // the page's own write: the size it gives the dialog is not one the person chose (cmtPopOwnWrite)
+    cmtPopOwnWrite(pop, () => noteHost.replaceChildren(...entries.map((e) => {
+      const note = el("div", "cmt-held-note");
+      const lead = el("div", "cmt-note");
+      lead.textContent = e.lead;
+      const words = el("div", "cmt-held-words");
+      words.textContent = e.words;
+      note.append(lead, words);
+      if (!e.drop) return note;                             // brought back and sent again, a comment still out would post twice
+      const row = el("div", "cmt-actions");
+      const drop = el("button", "cmt-act") as HTMLButtonElement;
+      drop.type = "button";
+      drop.textContent = "Dismiss";
+      drop.title = "Drop these words";
+      drop.dataset.act = "cmtheldx";
+      drop.dataset.held = e.id;
+      if (e.back) {
+        const back = el("button", "cmt-act") as HTMLButtonElement;
+        back.type = "button";
+        back.textContent = "Bring it back";
+        back.dataset.act = "cmtheldback";
+        back.dataset.held = e.id;
+        row.append(back, drop);
+      } else row.append(drop);
+      note.append(row);
+      if (e.back && isCoarsePointer()) {
+        const why = el("div", "cmt-note cmt-held-why");
+        why.textContent = HELD_BACK_WAITS + ".";
+        note.appendChild(why);
+      }
+      return note;
+    })));
+  }
+  syncHeldBack(pop);
+}
+
+/** The note's host in a create dialog, just under its composer: a press on its buttons holds a kernel event's repaint
+ *  of it (cmtNoteHold, holdNoteRepaint). */
+function addNoteHost(pop: HTMLElement): HTMLElement {
+  const host = el("div", "cmt-held");
+  const crow = pop.querySelector(".cmt-composer");
+  if (crow) crow.after(host); else pop.appendChild(host);
+  cmtNoteHold = { host, hold: pressHold(host) };
+  return host;
+}
+
+/** The open create dialog's note painted again from what it shows now (paintHeldNotes), unless a press is under way
+ *  on it (holdNoteRepaint): main's handling of an answer or a session frame can change main's draft or end main's
+ *  create on a message, which an echo-mode dialog's note shows. */
+function paintOpenNote(): void {
+  const pop = document.getElementById("cmt-pop"), pa = pendingCommentAnchor;
+  if (pop && pa && !holdNoteRepaint("paint")) paintHeldNotes(pop, pa);
+}
+
+/** The typed name a note entry would bring back with its words. */
+function heldEntryName(id: string): string {
+  const pa = pendingCommentAnchor;
+  if (id === OTHER_DRAFT) return (pa && otherModeDraft(pa)?.name) || "";
+  return cmtHeldRefusals.find((h) => h.createId === id)?.name || "";
+}
+
+/** Bring it back follows the box and the name box on every keystroke: enabled only while the box is empty and the
+ *  name box holds no other typed name than the comment's own (a comment with a typed name brings it back too, and
+ *  neither name is dropped), saying why otherwise: the words in the box first, and once it is empty the typed name. */
+function syncHeldBack(pop: HTMLElement): void {
+  const box = pop.querySelector(".cmt-input") as HTMLTextAreaElement | null;
+  const typed = typedNameIn(pop);
+  const backs = Array.from(pop.querySelectorAll('[data-act="cmtheldback"]')) as HTMLButtonElement[];
+  if (!backs.length) return;
+  // the page's own write: the reason line shown, hidden or reworded resizes the dialog, not the person (cmtPopOwnWrite)
+  cmtPopOwnWrite(pop, () => {
+    for (const b of backs) {
+      const reason = !box || box.value.trim() ? HELD_BACK_WAITS : !nameFits(heldEntryName(b.dataset.held || ""), typed) ? HELD_NAME_WAITS : "";
+      b.disabled = !!reason;
+      b.title = reason || "Put these words back in the box";
+      const why = b.closest(".cmt-held-note")?.querySelector(".cmt-held-why") as HTMLElement | null;
+      if (why) { why.hidden = !reason; if (reason) why.textContent = reason + "."; }
+    }
+  });
+}
+
+/** Bring it back (enabled only while it replaces nothing typed, syncHeldBack): the words and their typed name into
+ *  the empty box of the open dialog, and its own draft for its mode; the note entry goes. A refused comment comes back
+ *  only on its own passage. The other mode's draft moves into this dialog's keys, the person's own act: in a main-mode
+ *  dialog, main's handling applies to it from then on. */
+function bringBackHeld(id: string): void {
+  const pop = document.getElementById("cmt-pop"), pa = pendingCommentAnchor;
+  if (!pop || !pa || pa.createId) return;
+  const box = pop.querySelector(".cmt-input") as HTMLTextAreaElement | null;
+  if (!box || box.value.trim()) return;                   // nothing typed is replaced
+  let text = "", name = "";
+  if (id === OTHER_DRAFT) {
+    const d = otherModeDraft(pa);
+    if (!d) return;
+    text = d.text; name = d.name;
+    commentDrafts.delete(d.dk);
+    commentDrafts.delete(d.nk);
+    // main's draft brought into an echo-mode box after main's retry gave up on the message's comment: its late ack,
+    // should the kernel land it, clears these words from this box if they are its own and unchanged (noteMainBrought)
+    noteMainBrought(pa, { text, name });
+  } else {
+    const i = cmtHeldRefusals.findIndex((c) => c.createId === id);
+    if (i < 0) return;
+    const c = cmtHeldRefusals[i];
+    if (c.sid !== pa.sid || c.uuid !== pa.uuid || c.exact !== pa.exact) return;
+    cmtHeldRefusals.splice(i, 1);
+    text = c.text; name = c.name;
+    if (!pa.echo) cmtBroughtMain.add(c.createId);          // main's draft holds them now: a late ack of the comment looks there
+  }
+  const { dk, nk } = dialogDraftKeys(pa);
+  box.value = text;
+  if (text) commentDrafts.set(dk, text);
+  restoreTypedName(pop, nk, name);
+  paintHeldNotes(pop, pa);
+  box.focus();
+}
+
+/** The note's dismiss: the words are dropped, at the person's request (the other mode's draft with them); a refused
+ *  comment's id is kept (cmtNoteDismissed), so a late ack of it finds its words in no box and shows no toast. */
+function dropHeld(id: string): void {
+  const pa = pendingCommentAnchor;
+  if (id === OTHER_DRAFT) {
+    const d = pa ? otherModeDraft(pa) : null;
+    if (d) { commentDrafts.delete(d.dk); commentDrafts.delete(d.nk); }
+  } else {
+    const i = cmtHeldRefusals.findIndex((c) => c.createId === id);
+    if (i >= 0) { cmtHeldRefusals.splice(i, 1); cmtNoteDismissed.add(id); }
+  }
+  const pop = document.getElementById("cmt-pop");
+  if (pop && pa) paintHeldNotes(pop, pa);
+}
+
+/** An echo-mode create's ack: its settle (settleAckedCreate), and its thread adopted into the dialog that sent it, now
+ *  or, when the ack beat its frame, on the frame (cmtEchoAdopt). */
+function ackEchoCreate(held: CommentCreate, sid: string, tid: string): void {
+  settleAckedCreate(held, tid);
+  if (pendingCommentAnchor && pendingCommentAnchor.createId === held.createId) {   // the dialog that sent it
+    if ((commentThreads.get(sid) || []).some((t) => t.tid === tid)) adoptEchoThread(sid, tid);
+    else cmtEchoAdopt = { tid, create: held };
+  }
+}
+
+/** An echo-mode create's refusal: a transient one keeps the hold and arms its frame-keyed retry; a real one drops the
+ *  hold and the working mark and hands the words back to their passage (refusedCreateBack). */
+function refuseEchoCreate(held: CommentCreate, transient: boolean): void {
+  if (transient) { if (held.tries === 0) held.tries = 1; }
+  else { cmtEchoCreates.delete(held.createId); dropSynthThread(held.sid, held.createId); refusedCreateBack(held); }
+}
+
+/** An answer naming an echo-mode create (echoAnswer: an id this page minted in echo mode) settles that create: a
+ *  refusal by refuseEchoCreate, an ack by ackEchoCreate. A late ack for a create the page gave up on, or handed back
+ *  when its host showed no echo, settles it as main's late ack does (lateEchoLanding). Any other answer to a create no
+ *  longer held (one settled already, refused, or handed back) settles nothing more. */
+function echoCreateAnswered(m: { id: unknown; tid?: unknown; transient?: unknown; createId: string; type: string }): void {
+  const held = heldCreateFor(cmtEchoCreates, m);
+  if (!held) {
+    const gone = cmtEchoGivenUp.get(m.createId);
+    if (gone && m.type === "commentCreated") lateEchoLanding(gone, String(m.id), String(m.tid));
+    return;
+  }
+  if (m.type === "commentCreateFailed") refuseEchoCreate(held, !!m.transient);
+  else ackEchoCreate(held, String(m.id), String(m.tid));
+}
+
+/** Echo mode's step for every create answer, run beside main's handling of it (the frame handler runs it just before
+ *  its routing). The answer is its host's latest evidence of the echo (noteHostEcho): only a kernel with the echo sends
+ *  the createId key, even empty, so an answer without it hands back every echo-mode create still out on that host
+ *  (handBackEchoCreates) before main's handling takes the answer, which settles main-mode state alone, by the message's
+ *  uuid, as main does. Federation's own relayDrop answer is the page's and shows nothing of the host. And an ack naming
+ *  a main-mode comment the page gave up on, whose own words came into an echo-mode box by Bring it back or the carry
+ *  (noteMainBrought), is main's late landing there: settled as an echo-mode comment's late ack is (lateEchoLanding).
+ *  Words that came in and were not its own stay where they are, and while they sit in that open box a toast says it was
+ *  saved after all. */
+function echoSideOfAnswer(m: any): void {
+  const said = m.id ? answerEchoEvidence(m) : null;
+  if (said !== null) noteHostEcho(hostOf(String(m.id)), said);
+  const landed = m.type === "commentCreated" && m.id && m.tid && typeof m.createId === "string";
+  const brought = landed ? cmtMainBrought.get(m.createId) : undefined;
+  if (brought) {
+    cmtMainBrought.delete(m.createId);
+    lateEchoLanding(brought.words, String(m.id), String(m.tid), brought.exact);
+  }
+  const other = landed ? cmtMainBroughtOther.get(m.createId) : undefined;
+  if (other) {
+    cmtMainBroughtOther.delete(m.createId);
+    const pa = pendingCommentAnchor, pop = document.getElementById("cmt-pop");
+    const box = pop && pa && pa.echo && !pa.createId && pa.sid === other.sid && pa.uuid === other.uuid && pa.exact === other.exact
+      ? pop.querySelector(".cmt-input") as HTMLTextAreaElement | null : null;
+    if (box && (box.value.trim() || typedNameIn(pop!))) warnToast(savedAfterAllToast(other.passage));
+  }
+}
+
+// main-mode creates main's retry gave up on, by createId, for the page's life (retryCmtCreates keeps each here), and
+// those whose own words then came into an echo-mode dialog's box, by Bring it back or the carry (noteMainBrought): the
+// words as they came in, on that dialog's passage, and the comment's own passage. The kernel's pusher can still land a
+// main-mode comment after main's give-up, and its late ack, naming main's own id, clears the words it finds unchanged
+// in that box, as main's late ack deletes main's draft (echoSideOfAnswer, lateEchoLanding)
+const cmtMainGivenUp = new Map<string, CommentCreate>();
+const cmtMainBrought = new Map<string, { words: CommentCreate; exact: string }>();
+// main-mode comments main's retry gave up on whose draft came into an echo-mode box though it no longer held the
+// comment's own words and typed name (the person edited them in main mode after the send, or typed over them in another
+// main-mode dialog of the message): no record of those words as the comment's; its late ack leaves them where they
+// are, and while they sit in that open box a toast says the comment was saved after all (noteMainBrought,
+// echoSideOfAnswer). By createId: the box's session, message and passage, and the comment's own passage
+const cmtMainBroughtOther = new Map<string, { sid: string; uuid: string; exact: string; passage: string }>();
+
+/** Main's draft words brought into an echo-mode dialog's box while main holds nothing on the message, by Bring it back
+ *  (bringBackHeld) or by the carry as the dialog opens (openCommentComposer, carryMainDraft), after main's retry gave
+ *  up on the message's comment. Only words that are that comment's own are recorded as brought, as they came into the
+ *  box, on that dialog's passage: its frame's words (compared without the spaces main's send trims), and its frame's
+ *  typed name, or no name at all: main's draft then holds no name, whether main's prune deleted it (the prune deletes
+ *  main's typed-name draft at every comments frame, so a frame between the send and the move leaves the comment's own
+ *  words with no name) or the person cleared the name box, and either way nothing is lost, since the words landed with
+ *  the comment. Its late ack, should the kernel land it, clears them from that box if they are unchanged, an open
+ *  dialog adopting the thread, and otherwise leaves them with a toast that it was saved after all (lateEchoLanding).
+ *  Main keeps a sent comment's words in its draft, which the person can still change (main's sent dialog keeps its box
+ *  and name box editable, and another main-mode dialog of the message opens on that draft): other words, or another
+ *  typed name, are not recorded as its own, so its late ack leaves them where they are, with the toast while they sit
+ *  in that open box (cmtMainBroughtOther). The same move carries the words of an echo-mode comment handed back and
+ *  brought back into main's draft of the message (cmtBroughtMain) into this dialog's passage, which is recorded
+ *  (cmtBroughtCarried), so that comment's late ack looks for them there (lateEchoLanding). */
+function noteMainBrought(pa: { sid: string; uuid: string; exact: string; echo?: boolean }, words: { text: string; name: string } | null): void {
+  if (!words || !pa.echo) return;
+  for (const id of cmtBroughtMain) {                       // a handed-back comment brought back into main's draft of this message
+    const c = cmtEchoGivenUp.get(id);
+    if (c && c.sid === pa.sid && c.uuid === pa.uuid) cmtBroughtCarried.set(id, pa.exact);
+  }
+  if (cmtCreateInFlight.has(pa.uuid)) return;
+  const gone = Array.from(cmtMainGivenUp.values()).filter((c) => c.sid === pa.sid && c.uuid === pa.uuid).pop();
+  if (!gone) return;
+  if (words.text.trim() === gone.text.trim() && (words.name.trim() === gone.name.trim() || !words.name.trim())) {
+    cmtMainBroughtOther.delete(gone.createId);
+    cmtMainBrought.set(gone.createId, { words: { ...gone, exact: pa.exact, text: words.text, name: words.name }, exact: gone.exact });
+  } else {
+    cmtMainBrought.delete(gone.createId);
+    cmtMainBroughtOther.set(gone.createId, { sid: pa.sid, uuid: pa.uuid, exact: pa.exact, passage: gone.exact });
+  }
+}
+
+/** A keyed ack for an echo-mode create this page gave up on (retryEchoCreates): the kernel's pusher kept its park and
+ *  landed it. Settled as main's late ack settles its create: words that waited in the note leave it, and nothing else
+ *  changes, whatever the person typed elsewhere since (no box held them), and so for words the person dismissed from
+ *  the note (cmtNoteDismissed); its words, when they are back in its passage's box (the box of an unsent echo-mode
+ *  dialog open there, or else the passage's draft) exactly as they were handed back, words and typed name, leave it,
+ *  and an open dialog there adopts the thread; a box emptied since, with only the handed-back typed name left, loses
+ *  that name too, with no toast; words or a name changed there since stay, and a toast says the comment was saved after
+ *  all. A comment the person already sent again by hand is a create of its own: its thread stands beside this one, the
+ *  visible duplicate the kernel's repeat memo documents for a comment posted again by hand after the viewer gave up
+ *  (kernel.py, above _recent_creates), which the person can delete. Words brought back from the note into a main-mode
+ *  box (cmtBroughtMain: after a host shows no echo every dialog on it is main's) are settled the same way where they
+ *  are then, when that passage's own box and draft hold nothing: first in the box and draft of the passage whose
+ *  echo-mode dialog main's draft then moved them into, once the host showed the echo again (cmtBroughtCarried: the
+ *  carry as that dialog opened, or its Bring it back); and when those hold nothing, in main's draft of the message,
+ *  which a main-mode dialog open on any passage of it shows, unless main has a create of its own out on the message,
+ *  whose words main keeps there until its answer (the person sent them again), which are left to main's handling. In
+ *  both, a typed name main's prune deleted before the words left main's draft counts as unchanged, and an open dialog
+ *  there adopts the thread, whichever passage of the message it is on. Main's late landing in an echo-mode box
+ *  (echoSideOfAnswer) comes here with the words as the person brought them back or the dialog carried them in
+ *  (noteMainBrought), on that box's passage, and the toast names the comment's own passage (`passage`). */
+function lateEchoLanding(c: CommentCreate, sid: string, tid: string, passage: string = c.exact): void {
+  cmtEchoGivenUp.delete(c.createId);
+  const inNote = cmtHeldRefusals.findIndex((h) => h.createId === c.createId);
+  if (inNote >= 0 || cmtNoteDismissed.has(c.createId)) {   // its words waited in the note, dismissed since or not: no box held them
+    if (inNote >= 0) cmtHeldRefusals.splice(inNote, 1);
+    paintOpenNote();
+    return;
+  }
+  const pa = pendingCommentAnchor, pop = document.getElementById("cmt-pop");
+  let dk = createDraftKey(c), nk = createNameKey(c), viaMain = false;
+  let box = pop && pa && pa.echo && !pa.createId && pa.sid === c.sid && pa.uuid === c.uuid && pa.exact === c.exact
+    ? pop.querySelector(".cmt-input") as HTMLTextAreaElement | null : null;
+  let words = box ? box.value : commentDrafts.get(dk) || "", name = box ? typedNameIn(pop!) : commentDrafts.get(nk) || "";
+  const to = cmtBroughtCarried.get(c.createId);
+  if (!box && !words.trim() && !name && cmtBroughtMain.has(c.createId) && to !== undefined) {
+    viaMain = true;                                        // brought back into main's draft, then carried into an echo-mode one
+    dk = createDraftKey({ uuid: c.uuid, exact: to }); nk = createNameKey({ uuid: c.uuid, exact: to });
+    box = pop && pa && pa.echo && !pa.createId && pa.sid === c.sid && pa.uuid === c.uuid && pa.exact === to
+      ? pop.querySelector(".cmt-input") as HTMLTextAreaElement | null : null;
+    words = box ? box.value : commentDrafts.get(dk) || ""; name = box ? typedNameIn(pop!) : commentDrafts.get(nk) || "";
+  }
+  if (!box && !words.trim() && !name && cmtBroughtMain.has(c.createId) && !cmtCreateInFlight.has(c.uuid)) {
+    viaMain = true;                                        // brought back into a main-mode box: main's draft of the message
+    dk = "new:" + c.uuid; nk = "newname:" + c.uuid;
+    box = pop && pa && !pa.echo && pa.sid === c.sid && pa.uuid === c.uuid
+      ? pop.querySelector(".cmt-input") as HTMLTextAreaElement | null : null;
+    words = box ? box.value : commentDrafts.get(dk) || ""; name = box ? typedNameIn(pop!) : commentDrafts.get(nk) || "";
+  }
+  cmtBroughtMain.delete(c.createId);
+  cmtBroughtCarried.delete(c.createId);
+  if (words === c.text && (name === c.name || viaMain && !name)) {
+    commentDrafts.delete(dk);
+    commentDrafts.delete(nk);
+    if (box) {
+      if ((commentThreads.get(sid) || []).some((t) => t.tid === tid)) { adoptEchoThread(sid, tid); return; }
+      box.value = "";
+      const nb = pop!.querySelector(".cmt-name") as HTMLInputElement | null;
+      if (nb) nb.value = nb.dataset.prefill || "";
+      cmtEchoAdopt = { tid, create: c, anchor: pa! };      // the frame adopts it into this dialog
+    }
+  } else if (!words.trim() && name === c.name) {           // the box emptied, and only its handed-back typed name left: that
+    commentDrafts.delete(nk);                              // name goes too, as main's late ack deletes it, and no toast
+    const nb = box ? pop!.querySelector(".cmt-name") as HTMLInputElement | null : null;
+    if (nb) nb.value = nb.dataset.prefill || "";
+  } else if (words.trim() || name) warnToast(savedAfterAllToast(passage));
+  paintOpenNote();
+}
+
 // the one busy answer for the mark + rail tick: an in-flight EXCHANGE (the gesture latch above), or
 // — after a reload lost the client latch — the exchange's own records still saying a reply is owed
 // (msgs ending with the user's message). A stuck/errored/closed thread never pulses: green would lie.
@@ -11147,12 +11948,23 @@ function cmtBootHolds(tid: string): boolean {
 }
 let openCommentKey: { sid: string; tid: string } | null = null;     // the open thread popover
 let pendingCommentAnchor: { sid: string; uuid: string; exact: string;
-  model?: string; effort?: string; fast?: string; color?: string } | null = null; // create mode (+ the thread's own picks)
+  model?: string; effort?: string; fast?: string; color?: string;
+  echo?: boolean; createId?: string } | null = null; // create mode (+ the thread's own picks); echo mode's two fields: echo,
+//                                                      the dialog's mode, taken when it opens; createId, an echo-mode
+//                                                      dialog's create, while it is out
 let pendingAdoptTid: string | null = null;                          // commentCreated ack that beat its frame
+// an echo-mode ack that beat its frame: the thread, and the create it settled, whose sent dialog the frame adopts into
+// (only that dialog) and whose words and typed name that dialog shows until then, through any rebuild; for a late ack
+// of a create the page gave up on (lateEchoLanding), the unsent echo-mode dialog on its passage that held its words
+// (`anchor`)
+let cmtEchoAdopt: { tid: string; create: CommentCreate; anchor?: object } | null = null;
 let commentPopPos: { x: number; y: number } | null = null;
 // the size WE set on the open popover (its open geometry, a stored preference, maximize/restore) — the
 // ResizeObserver tells our own sizing from the user's pull by it, so only a pull is remembered (2026-09-10)
 let cmtPopApplied: { w: number; h: number } | null = null;
+// the size each popover had when it opened, which the observer's .sized arm compares with (echo mode's: kept per
+// popover, where it was the observer's own constant, so the page's own writes to the note move it, cmtPopOwnWrite)
+const cmtPopArmBase = new WeakMap<HTMLElement, { w: number; h: number }>();
 let cmtPopPreMax: CmtPopFrac | null = null;     // the size the box had before the last maximize this page-load: restore's target
 
 // the popover's own file picker (the user 2026-08-17: the attach clip, like the chat's) — files
@@ -11170,6 +11982,7 @@ document.body.appendChild(cmtFilePicker);
 
 function closeCommentPop(): void {
   document.getElementById("cmt-pop")?.remove();
+  releaseSentDialog();                                   // echo mode's: a sent dialog's held words go to the message's note, not saved yet
   openCommentKey = null;
   pendingCommentAnchor = null;
 }
@@ -11564,14 +12377,43 @@ function pickThreadColor(sid: string): string {
 }
 
 function openCommentComposer(sid: string, uuid: string, exact: string, x: number, y: number): void {
-  pendingCommentAnchor = { sid, uuid, exact, color: pickThreadColor(sid) };
+  releaseSentDialog();                                   // echo mode's: the dialog this one replaces, when it was sent and unanswered
+  // the dialog's mode, taken now and kept for its life and its create's (the user 2026-09-25), but for the fail-safe:
+  // evidence that its host has no echo hands its create back if it is out (handBackEchoCreates) and turns the dialog
+  // main mode if it has not sent (leaveEchoModeWithoutEcho). Echo mode when the session's host is last known to echo
+  // the createId (createIdEcho), main mode otherwise; main's line, with the mode added (echo mode's)
+  const echo = hostEchoMode(createIdEcho, sid);
+  pendingCommentAnchor = { sid, uuid, exact, color: pickThreadColor(sid), echo };
+  // echo mode's: an echo-mode dialog whose passage has no draft of its own takes main's draft of the message, words
+  // typed while the host was in main mode (carryMainDraft), except while that message's main-mode create is out: main
+  // keeps that comment's words in its draft until its answer, and the note quotes the comment from its hold as not
+  // saved yet, with other words typed over the draft since as an entry of their own (paintHeldNotes). Words it takes
+  // after main's retry gave up on the message's comment are recorded as brought when they are that comment's own words
+  // and typed name, so its late ack settles them in this box as it does after Bring it back; other words stay at its
+  // late ack, with a toast that it was saved after all (noteMainBrought). Words of a handed-back echo-mode comment that
+  // the person brought back into main's draft are recorded as carried to this passage, where its late ack looks for
+  // them (cmtBroughtCarried). A main-mode dialog takes nothing: the passage's echo-mode draft waits in its note until the
+  // person brings it back
+  if (echo && !cmtCreateInFlight.has(uuid)) {
+    const moved = carryMainDraft(commentDrafts, { uuid, exact });
+    noteMainBrought(pendingCommentAnchor, moved);
+  }
   openCommentKey = null;
   commentPopPos = { x, y };
   renderCommentPopover();
 }
 
 function openCommentPopover(sid: string, tid: string, _x?: number, _y?: number): void {
+  // echo mode's: an echo-mode comment still out has no thread yet, only its working mark's placeholder ("pending:" + its
+  // createId), which the kernel does not know: a reply sent there was refused, and its words lost with the next
+  // comments frame. Its mark (or any other way in) opens the create dialog on its passage instead, where its words show
+  // in the note. A main-mode comment's mark opens its placeholder's thread popover, as on main
+  if (tid.startsWith("pending:") && cmtEchoCreates.has(tid.slice("pending:".length))) {
+    openHeldCreatePassage(sid, tid.slice("pending:".length), _x ?? 8, _y ?? 60);
+    return;
+  }
   openCommentKey = { sid, tid };
+  releaseSentDialog();                                   // echo mode's: the create dialog this thread replaces, when it was sent and unanswered
   pendingCommentAnchor = null;
   // click coords no longer seed the position (the user 2026-08-25): a THREAD popover opens at the
   // fixed right-aligned geometry below; only a real drag (commentPopPos) parks it elsewhere. The
@@ -11583,13 +12425,34 @@ function openCommentPopover(sid: string, tid: string, _x?: number, _y?: number):
   applyCommentMarks(sid);
 }
 
+/** The create dialog on the passage of an echo-mode comment still out (its hold names the passage), opened as a new
+ *  comment there: empty, with the comment waiting in the note. */
+function openHeldCreatePassage(sid: string, createId: string, x: number, y: number): void {
+  const held = cmtEchoCreates.get(createId);
+  if (held) openCommentComposer(sid, held.uuid, held.exact, x, y);
+}
+
 /** commentCreated's adoption: swap the create popover for the named thread's (never a guess — the
  *  kernel sends the frame first, then the ack naming the tid). When the frame hasn't landed yet
- *  (a dropped/reordered leg), the tid parks in pendingAdoptTid and the next frame adopts it. */
+ *  (a dropped/reordered leg), the tid parks in pendingAdoptTid and the next frame adopts it.
+ *  Main mode: main's adoption. It never takes an echo-mode dialog, and never carries an echo-mode create's latch (its
+ *  own ack carries it, settleAckedCreate). */
 function adoptCommentThread(sid: string, tid: string): void {
   // the create's gesture latch carries onto the real thread (the synth tid retires with the anchor)
   for (const k of Array.from(cmtAwaitBase.keys())) {
+    if (cmtEchoMinted.has(k.slice("pending:".length))) continue;   // echo mode's: an echo-mode create's latch, which its own ack carries
     if (k.startsWith("pending:")) { cmtAwaitBase.set(tid, cmtAwaitBase.get(k)!); cmtAwaitBase.delete(k); }
+  }
+  // echo mode's: an echo-mode dialog is open (on another session, or on this one once its host showed the echo, by its
+  // connection's connect push or an answer carrying the key), and main's answers leave it as it is, so the dialog swap
+  // below is skipped: main's draft of that dialog's message kept, the dialog neither turned into the thread's popover
+  // nor closed by it, which is what the open thread's key does to a create dialog (renderCommentPopover); the rest runs
+  // as main's does, the latch carried above, the parked adoption cleared, the thread seen and its marks repainted
+  if (pendingCommentAnchor?.echo) {
+    pendingAdoptTid = null;
+    vscodeApi?.postMessage({ type: "commentSeen", id: sid, tid });
+    applyCommentMarks(sid);
+    return;
   }
   if (pendingCommentAnchor && pendingCommentAnchor.sid === sid) {
     commentDrafts.delete("new:" + pendingCommentAnchor.uuid);
@@ -11597,6 +12460,18 @@ function adoptCommentThread(sid: string, tid: string): void {
     pendingCommentAnchor = null;
   }
   pendingAdoptTid = null;
+  openCommentKey = { sid, tid };
+  vscodeApi?.postMessage({ type: "commentSeen", id: sid, tid });
+  renderCommentPopover();
+  applyCommentMarks(sid);
+}
+
+/** An echo-mode ack's adoption into the dialog that sent its create (the callers check it is that dialog): the dialog
+ *  becomes the named thread's popover. The create's latch carried onto the thread at its ack, and the send spent its
+ *  drafts. */
+function adoptEchoThread(sid: string, tid: string): void {
+  pendingCommentAnchor = null;
+  cmtEchoAdopt = null;
   openCommentKey = { sid, tid };
   vscodeApi?.postMessage({ type: "commentSeen", id: sid, tid });
   renderCommentPopover();
@@ -11954,6 +12829,25 @@ function saveCmtPopSize(pop: HTMLElement): void {
   const frac = toCmtPopFrac(pop.offsetWidth, pop.offsetHeight, window.innerWidth, window.innerHeight);
   try { localStorage.setItem(CMT_POP_SIZE_KEY, JSON.stringify(frac)); } catch { /* storage full or denied */ }
 }
+/** Runs a write of the page's own into the open comment popover, a change the person did not make by resizing it (the
+ *  note painted, cleared or repainted, or its reason line shown, hidden or reworded: paintHeldNotes, syncHeldBack), and
+ *  counts the size change that write causes as the page's: the size the observer treats as set by the page
+ *  (cmtPopApplied) and the size its .sized arm compares with (cmtPopArmBase) move by that change. So the observer
+ *  neither saves the new size as the one the person chose (romp:cmtPopSize, which every later popover of either mode
+ *  opens at) nor takes it for a resize that unlocks the quote's clamp, while a resize of the person's own that the
+ *  observer has not yet seen, one made in the same frame, still differs by what the person moved and is saved. A box at
+ *  a fixed size (a stored preference, a thread's open geometry, a size the person dragged) does not move, and nothing
+ *  changes. Keyed on the write, as the observer's other exceptions are keyed on the page's own sizing. */
+function cmtPopOwnWrite(pop: HTMLElement, write: () => void): void {
+  const w0 = pop.offsetWidth, h0 = pop.offsetHeight;
+  write();
+  if (!pop.isConnected) return;
+  const dw = pop.offsetWidth - w0, dh = pop.offsetHeight - h0;
+  if (!dw && !dh) return;
+  const a = cmtPopApplied, b = cmtPopArmBase.get(pop);
+  cmtPopApplied = a ? { w: a.w + dw, h: a.h + dh } : { w: pop.offsetWidth, h: pop.offsetHeight };
+  if (b) cmtPopArmBase.set(pop, { w: b.w + dw, h: b.h + dh });
+}
 /** Size the box programmatically and record what it measures: the observer treats that size as ours. */
 function sizeCommentPop(pop: HTMLElement, w: number, h: number): void {
   pop.style.width = w + "px";
@@ -12025,6 +12919,50 @@ function commentPopTitle(create: boolean, th: CommentThread | null | undefined):
     : th!.status === "resolved" ? nm + " (resolved)" : nm;
 }
 
+/** An echo-mode dialog's send (its host announced the createId echo): the create is held by the id the gesture mints,
+ *  the dialog stamped with it, its drafts spent (its words and typed name ride the held create), and the sent dialog
+ *  made read-only with its Comment button busy until that create's own answer. One send per dialog. */
+function sendEchoCreate(pop: HTMLElement, create: NonNullable<typeof pendingCommentAnchor>, box: HTMLTextAreaElement,
+                        send: HTMLButtonElement | null, text: string): void {
+  // one send per dialog: its create is out until that create's own answer hands the dialog back, and Enter in
+  // its read-only box would otherwise post a second create with a fresh id
+  if (create.createId || !vscodeApi) return;
+  const nameBox = pop.querySelector(".cmt-name") as HTMLInputElement | null;
+  // an UNTOUCHED prefill is sent as "": the kernel picks its own default (bare name, next free number);
+  // only a name the user typed is theirs (T289: the prefill, sent as a chosen name, collided with the
+  // thread the same prefill had named before, and the owning kernel refused the create)
+  const nm = nameToSend(nameBox?.value || "", nameBox?.dataset.prefill || "");
+  if (nm && !/^[A-Za-z0-9._-]+$/.test(nm)) { nameBox?.classList.add("bad"); nameBox?.focus(); return; }
+  if (send) { send.disabled = true; send.classList.add("busy"); }   // ack before the round-trip (the ➤
+  //                                       dims); the words ride the held create, and a refusal puts them back
+  // the gesture is stamped once, here; the hold re-posts the same frame while a transient nack stands
+  const held = newCommentCreate(create, text, nm);
+  // the ants start on the GESTURE (the user 2026-08-17: the cue lagged the kernel round-trip):
+  // a synthetic working thread marks the passage NOW; the kernel's frame replaces the whole list,
+  // so its never-listed tid unwraps through the standard sweep the moment the real thread lands
+  const synth: CommentThread = { tid: "pending:" + held.createId, anchorUuid: create.uuid,
+    exact: create.exact, status: "open", createdT: Date.now() / 1000, state: "working",
+    unread: false, replyOwed: true, promotedName: "", msgs: [],
+    name: nm || nameBox?.dataset.prefill || "comment", color: create.color || "" };   // the hint, until the kernel's frame names it
+  const cur0 = commentThreads.get(create.sid) || [];
+  commentThreads.set(create.sid, [...cur0.filter((t) => t.tid !== synth.tid), synth]);
+  cmtAwaitBase.set(synth.tid, { ...CMT_LATCH_ZERO });   // the SEND gesture latches the pulse, before any kernel round-trip (T102); released once a frame acknowledges the send (T237)
+  applyCommentMarks(create.sid);
+  cmtEchoCreates.set(held.createId, held);
+  cmtEchoMinted.add(held.createId);                  // its answers are echo mode's for the page's life, a late one included
+  create.createId = held.createId;                   // this dialog's create: only its answer adopts into it or hands it back
+  commentDrafts.delete(createDraftKey(create));      // spent at the send: the words are the held create's now
+  commentDrafts.delete(createNameKey(create));
+  box.readOnly = true;
+  if (nameBox) nameBox.readOnly = true;
+  pop.dataset.sent = held.createId;                  // the dialog on screen is this create's sent one (the in-place refresh's key)
+  paintHeldNotes(pop, create);                       // a sent dialog shows no refused comment's note
+  // posted LAST, once the hold, the dialog's createId and the sent dialog stand: federation answers a create it
+  // cannot deliver (no open relay socket) inside this very call, with a warn that rebuilds the dialog and a
+  // transient refusal that arms this hold's retry, and both must find the create already sent
+  vscodeApi.postMessage(commentCreateFrame(held));
+}
+
 /** Send the popover composer's text — the Enter key and the delegated Send button share this. The
  *  button acknowledges instantly; a thread reply also renders its optimistic pending bubble. */
 function commentSendFromPop(pop: HTMLElement): void {
@@ -12033,7 +12971,9 @@ function commentSendFromPop(pop: HTMLElement): void {
   const text = box?.value.trim();
   if (!box || !text || !vscodeApi) return;
   const create = pendingCommentAnchor;
+  if (create && create.echo) { sendEchoCreate(pop, create, box, send, text); return; }   // echo mode's send (above)
   if (create) {
+    // main mode: main's send
     const nameBox = pop.querySelector(".cmt-name") as HTMLInputElement | null;
     // an UNTOUCHED prefill is sent as "" — the kernel picks its own default (bare name, next free number);
     // only a name the user typed is theirs (T289: the prefill, sent as a chosen name, collided with the
@@ -12092,8 +13032,20 @@ function renderCommentPopover(): void {
   if (key && !th) { closeCommentPop(); return; }
   const mode = create ? "create" : "thread";
   const status = th ? th.status : "";
+  const sentId = create?.createId || "";                 // echo mode's: the dialog's create is out, and its own answer hands the dialog back
+  // echo mode's: the create it sent, held, or settled by an ack that beat its thread's frame, whose words the dialog
+  // shows until the frame adopts it (cmtEchoAdopt)
+  const sentCreate = !sentId ? undefined : cmtEchoCreates.get(sentId)
+    || (cmtEchoAdopt && cmtEchoAdopt.create.createId === sentId ? cmtEchoAdopt.create : undefined);
+  // main's in-place key, with echo mode's check in its last two lines: a create dialog refreshes in place only in its
+  // own mode, and an echo-mode one only for the same PASSAGE (the message's uuid and the exact words) in the same sent
+  // state: a dialog opened over it on another passage of the message, or over its sent dialog on the same passage, is
+  // rebuilt for itself, or the old box and its words would stay on screen and Enter would post them there. A
+  // main-mode one keeps main's rule, the message's uuid (only an echo-mode dialog carries the stamps: below)
   if (prev && prev.dataset.mode === mode && prev.dataset.tid === (th ? th.tid : create!.uuid)
-      && prev.dataset.status === status) {
+      && prev.dataset.status === status
+      && (!create || ((prev.dataset.echo === "1") === !!create.echo
+                      && (!create.echo || (prev.dataset.exact === create.exact && prev.dataset.sent === sentId))))) {
     // in-place refresh: conversation, title, and the live model/effort labels
     const t = prev.querySelector(".cmt-title") as HTMLElement | null;
     if (t) t.textContent = commentPopTitle(!!create, th);
@@ -12112,6 +13064,9 @@ function renderCommentPopover(): void {
   pop.dataset.mode = mode;
   pop.dataset.tid = th ? th.tid : create!.uuid;
   pop.dataset.status = status;
+  // echo mode's: an echo-mode dialog's mode, passage and sent create, the in-place key's; a main-mode dialog carries none,
+  // as main's did, and the key reads a dialog without them as main mode
+  if (create && create.echo) { pop.dataset.echo = "1"; pop.dataset.exact = create.exact; pop.dataset.sent = sentId; }
   const head = el("div", "cmt-head");
   const title = el("span", "cmt-title");
   title.textContent = commentPopTitle(!!create, th);
@@ -12124,7 +13079,8 @@ function renderCommentPopover(): void {
     // (a remote session displays as "host:name", and the host is this viewer's label, never part of
     // the name the owning kernel knows — comment-name.ts); left untouched, it is sent as "" and the
     // kernel picks its own default (T289).
-    const nk = "newname:" + create.uuid;
+    // main mode: main's typed-name draft, the message's; the ternary is echo mode's, an echo-mode dialog's being its passage's (createNameKey)
+    const nk = create.echo ? createNameKey(create) : "newname:" + create.uuid;
     nameBox = document.createElement("input");
     nameBox.type = "text";
     nameBox.className = "cmt-name";
@@ -12135,10 +13091,12 @@ function renderCommentPopover(): void {
     const prefill = defaultCommentName(sess0?.name, sid, (commentThreads.get(sid) || []).length);
     nameBox.dataset.prefill = prefill;
     nameBox.value = commentDrafts.get(nk) || prefill;
+    if (sentId) { nameBox.value = sentCreate?.name || prefill; nameBox.readOnly = true; }   // echo mode's: the name this dialog's create carries
     nameBox.title = "Suggested name; type to choose your own";
     if (create.color) nameBox.style.color = create.color;   // its identity color, distinct from the parent's
     const nb = nameBox;
-    nb.addEventListener("input", () => { nb.classList.remove("bad"); commentDrafts.set(nk, nb.value); });
+    // main's name-draft listener; its syncHeldBack call is echo mode's: the note's Bring it back follows the name box
+    nb.addEventListener("input", () => { nb.classList.remove("bad"); commentDrafts.set(nk, nb.value); syncHeldBack(pop); });
   }
   // maximize ⇄ restore (the user 2026-09-10), right before the ×; delegated like the × (cmtmax), the
   // glyph and label painted by syncCmtMaxState once the box has its open size
@@ -12169,10 +13127,11 @@ function renderCommentPopover(): void {
     toggleCommentPopMax();
   });
   // the WHOLE box drags (the user 2026-08-17), not just the header — any grip that isn't an
-  // interactive control or selectable text, and never the bottom-right resize corner
+  // interactive control or selectable text, and never the bottom-right resize corner (echo mode's: a waiting
+  // comment's words in the note, .cmt-held-words, are among that text, so they can be copied)
   pop.addEventListener("pointerdown", (ev: PointerEvent) => {
     const t = ev.target as HTMLElement;
-    if (t.closest(".cmt-x, .cmt-name, .cmt-input, .cmt-msgs, .cmt-quote, button, input, textarea, .meta-btn, .meta-menu")) return;
+    if (t.closest(".cmt-x, .cmt-name, .cmt-input, .cmt-msgs, .cmt-quote, .cmt-held-words, button, input, textarea, .meta-btn, .meta-menu")) return;
     const pr = pop.getBoundingClientRect();
     if (ev.clientX > pr.right - 18 && ev.clientY > pr.bottom - 18) return;   // the resize handle's corner
     ev.preventDefault();
@@ -12334,7 +13293,8 @@ function renderCommentPopover(): void {
     });
   }
   if (create || th!.status !== "promoted") {
-    const dk = create ? "new:" + create.uuid : th!.tid;
+    // main mode: main's draft, the message's; the ternary is echo mode's, an echo-mode dialog's being its passage's (createDraftKey)
+    const dk = create ? (create.echo ? createDraftKey(create) : "new:" + create.uuid) : th!.tid;
     const box = document.createElement("textarea");
     box.className = "cmt-input";
     box.rows = 2;
@@ -12342,8 +13302,11 @@ function renderCommentPopover(): void {
       : th!.status === "merged" ? "Reply to continue — the discussion so far was relayed to the session…"
       : th!.status === "resolved" ? "Reply to reopen…" : "Reply…";
     box.value = commentDrafts.get(dk) || "";
-    box.addEventListener("input", () => commentDrafts.set(dk, box.value));
+    if (sentId) { box.value = sentCreate?.text ?? ""; box.readOnly = true; }   // echo mode's: its words are out with its create, and a refusal hands them back
+    // main's draft listener; its syncHeldBack call is echo mode's: the note's Bring it back follows the box
+    box.addEventListener("input", () => { commentDrafts.set(dk, box.value); if (create) syncHeldBack(pop); });
     box.addEventListener("keydown", (ev) => {
+      // main mode: main's Enter (a thread reply's too), which sends what the box holds; an echo-mode create sends once (sendEchoCreate)
       if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); commentSendFromPop(pop); }
       else if (ev.key === "Escape") { ev.stopPropagation(); closeCommentPop(); }
     });
@@ -12362,8 +13325,17 @@ function renderCommentPopover(): void {
     send.title = create ? "Comment (Enter)" : "Send (Enter)";
     send.setAttribute("aria-label", create ? "Comment" : "Send");
     send.dataset.act = "cmtsend";
+    if (sentId) { send.disabled = true; send.classList.add("busy"); }   // echo mode's: a rebuild keeps the sent dialog busy
     crow.append(attach, box, send);
     pop.appendChild(crow);
+    if (create) {
+      // echo mode's note, in a create dialog of either mode: a comment on this message not saved yet, refused, or handed
+      // back at a downgrade waits here (paintHeldNotes), and in a main-mode dialog the echo-mode words typed on its
+      // passage. An echo-mode dialog always has the note's host; a main-mode one gets it once its note has an entry
+      // (paintHeldNotes adds it), so a main-mode dialog with nothing waiting has main's DOM
+      if (create.echo) addNoteHost(pop);
+      paintHeldNotes(pop, create);
+    }
     if (metaRowPending) pop.appendChild(metaRowPending);   // model/effort under the box, like the chat
     if (th && th.mailOff && (th.heldMail || 0) > 0) {
       // T356: a thread's mail is off until it is broken out, but the comment box does not SAY so (the user
@@ -12465,15 +13437,17 @@ function renderCommentPopover(): void {
   if (typeof ResizeObserver === "function") {
     // resizing the BOX (resize: both) hands the extra room to the quoted context: the .sized class
     // unlocks the quote's clamp; armed only after a real user resize, so the natural size stays tight
-    const w0 = pop.offsetWidth, h0 = pop.offsetHeight;
+    cmtPopArmBase.set(pop, { w: pop.offsetWidth, h: pop.offsetHeight });   // echo mode's: kept per popover (cmtPopOwnWrite)
     // …and REMEMBERS the size (the user 2026-09-10): this observer sees the native grip and the edge
     // bands alike, so it is the one event every user resize fires — each observation writes the fraction
     // (comment-pop-size.ts) except the ones that are not the user's: the size WE set (cmtPopApplied —
-    // the open geometry, a stored preference, maximize/restore), a box the WINDOW moved through the
+    // the open geometry, a stored preference, maximize/restore, and echo mode's: a size change the page's own
+    // write to the note caused, cmtPopOwnWrite), a box the WINDOW moved through the
     // vw/vh caps (re-baselined on resize below: a briefly-small window never rewrites the preference,
     // the tab strip's rule), and the box leaving the page (a 0×0 box is a close, not a choice).
     const ro = new ResizeObserver(() => {
-      if (Math.abs(pop.offsetWidth - w0) > 6 || Math.abs(pop.offsetHeight - h0) > 6) pop.classList.add("sized");
+      const b0 = cmtPopArmBase.get(pop)!;         // echo mode's: the arm's base, kept per popover (cmtPopOwnWrite)
+      if (Math.abs(pop.offsetWidth - b0.w) > 6 || Math.abs(pop.offsetHeight - b0.h) > 6) pop.classList.add("sized");
       if (!pop.isConnected || !pop.offsetWidth || !pop.offsetHeight) return;
       const a = cmtPopApplied;
       if (a && Math.abs(pop.offsetWidth - a.w) <= 1 && Math.abs(pop.offsetHeight - a.h) <= 1) return;
@@ -18623,6 +19597,18 @@ window.addEventListener("romp:wsup", () => {
   // one they are looking at as a background tab. The live activeId is re-announced on the socket's open.
   const st = shownTabForRelay(); if (st && activeTabToReannounce(st, "")) announceActiveToRelay(st);   // this column's OWN shown tab, focused or not
 });
+// echo mode's: the page's own socket opened again; until that socket's flip frame is handed on, a frame handed on is a
+// dropped socket's, whichever socket it came on (cmtFlipGen, the frame handler's flip line). Its drop needs no listener
+// of its own: a frame still draining from the dropped socket before this reopen posts nothing again, since the entry
+// holds that connection's reading, whose first strip was read, and the page's socket is not open then (sockOpen)
+window.addEventListener("romp:wsup", () => { cmtConnPush.set("", "down"); });
+// federation dispatches this with a remote host's caps frame, in that host's frame order (the frame itself never reaches
+// a pane, which reads a caps frame as the local kernel's): evidence of whether the host echoes the comment create id (noteHostEcho)
+window.addEventListener("romp:hostCaps", (e) => {
+  const d = (((e as CustomEvent).detail || {}) as any);
+  if (typeof d.host === "string" && d.host) noteHostEcho(d.host, capsAnnounceEcho(d.caps));
+  leaveEchoModeWithoutEcho();                              // an unsent echo-mode dialog there turns main mode (the fail-safe)
+});
 // federation dispatches this on a host relay socket (re)connect — the exact event that makes that
 // host's owed acks reachable again; the detail names the host, so only its entries re-ship
 window.addEventListener("romp:hostRelayUp", (e) => {
@@ -18634,6 +19620,9 @@ window.addEventListener("romp:hostRelayUp", (e) => {
   refreshSettledPreviews();
   reaskWaitingSubagents(h);   // …and that host's subagent viewers still waiting ask again (T355: a remote kernel's restart; an empty host is the local one)
   reaskOutstandingGaps(Array.from(gapLoading), h);   // …and re-send every loadTurns still outstanding for that host: a relay drop fires no romp:wsdown, so gapLoading kept its keys and, with the guard now correct, the gap would stay suppressed until a reload (2026-09-15)
+  // …and echo mode's: that host's new connection awaits its connect push, which alone may post its held comment creates
+  // again (noteConnectPush)
+  if (h) cmtConnPush.delete(h);
   // …and the tab this pane is LOOKING AT, when that host owns it (T246, the user 2026-09-07): the relay's
   // open is the moment the remote kernel holds a FRESH client for this pane — after that kernel restarted,
   // one with no active tab at all. Its pusher builds and flushes a client's active tab first; every tab is
@@ -20950,6 +21939,20 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   // dropFile was not delivered" toast (and tore down an in-flight provisional create) an RTT before
   // the relay's own onopen re-shipped correctly. romp:hostRelayUp IS that onopen — the one exact event.
   if (m.type === "hostUp") { refreshSettledPreviews(); healPathImgs(); }
+  // echo mode's steps, beside the chain's handling below: the local kernel's caps frame is its evidence of the comment
+  // create echo (noteHostEcho), and so is a create's answer from any host (echoSideOfAnswer); evidence of no echo hands
+  // back the echo-mode creates out on that host first (handBackEchoCreates), before main's handling below takes the
+  // answer
+  if (m.type === "caps") noteHostEcho("", capsAnnounceEcho(m.caps));
+  if (m.type === "commentCreated" || m.type === "commentCreateFailed") echoSideOfAnswer(m);
+  // …and each connection's connect push (noteConnectPush): the page's own socket's next connection starts at the shim's
+  // socket-flip frame carrying the current generation, in frame order (a strip still draining from a dropped socket
+  // comes before it: cmtFlipGen), or at one carrying none, which fails safe; and a host relay's at romp:hostRelayUp
+  if (m.type === "wsup") {
+    cmtFlipGen = typeof m.gen === "number" && sockGen() !== undefined ? m.gen : null;
+    if (cmtFlipGen === null || cmtFlipGen === sockGen()) cmtConnPush.delete("");
+  }
+  if (m.type === "tabOrder") noteConnectPush(m);
   if (m.type === "tabOrder") noteSkeletonTabOrder(m);   // BEFORE the chain's applyTabOrder below: one repaint, final skeleton set (2026-09-07)
   if (m.type === "session") upsert(m);
   else if (m.type === "globalRetryPaused") {
@@ -21304,7 +22307,9 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     //                                               re-ship raced the original ack) — attaching it again
     //                                               would double the file on whatever tab is active (T215)
     const cbox = document.getElementById("cmt-pop")?.querySelector(".cmt-input") as HTMLTextAreaElement | null;
-    if (cbox) {
+    // echo mode's: a SENT dialog's box (its words out with its create) takes no path, the composer does, below; a
+    // main-mode dialog's box is never read-only
+    if (cbox && !cbox.readOnly) {
       // a comment popover is open — its own clip shipped this file, so the path lands in ITS box
       retirePendingShip(m.path, ackShip);
       cbox.value = (cbox.value ? cbox.value.trimEnd() + " " : "") + m.path + " ";
@@ -21360,10 +22365,16 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // an OPTIMISTIC synth thread (a create still in flight) survives the frame rebuild until its
     // real thread supersedes it (same anchor) or its create fails — the frame used to wipe it, so
     // every create's mark BLINKED between the gesture and the thread's first frame, and a
-    // parse-lag refusal erased the comment entirely (the T106 lab's first catch, 2026-08-26)
+    // parse-lag refusal erased the comment entirely (the T106 lab's first catch, 2026-08-26).
+    // A main-mode create's (main's rule, these first lines) goes with any real thread on its message
     const synths = (commentThreads.get(sid) || []).filter((t) =>
       t.tid.startsWith("pending:") && cmtCreateInFlight.has(t.tid.slice("pending:".length))
       && !threads.some((r) => r.anchorUuid === t.anchorUuid));
+    // echo mode's: an echo-mode create's goes only with a real thread on its own PASSAGE (the message's uuid, and the
+    // passage compared on the frame's own cut of it, frameExact), so another passage's create on the message keeps its mark
+    synths.push(...(commentThreads.get(sid) || []).filter((t) =>
+      t.tid.startsWith("pending:") && cmtEchoCreates.has(t.tid.slice("pending:".length))
+      && !threads.some((r) => r.anchorUuid === t.anchorUuid && frameExact(r.exact || "") === frameExact(t.exact))));
     commentThreads.set(sid, synths.length ? [...threads, ...synths] : threads);
     // THE REPLY-COMPLETED EVENT (T102, sharpened by T112): a frame whose msgs hold MORE agent
     // records than the send's base AND whose thread reads settled — the turn that produced the
@@ -21388,8 +22399,17 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
       if (!k.startsWith("pending:") && !knownTids.has(k)) cmtAwaitBase.delete(k);
     const live = new Set(threads.filter((t) => t.status !== "promoted").map((t) => t.tid));
     for (const k of Array.from(commentPending.keys())) if (!live.has(k)) commentPending.delete(k);
-    for (const k of Array.from(commentDrafts.keys())) if (!k.startsWith("new:") && !live.has(k)) commentDrafts.delete(k);
-    if (pendingAdoptTid && threads.some((t) => t.tid === pendingAdoptTid)) adoptCommentThread(sid, pendingAdoptTid);
+    // main's prune, which keeps the create dialogs' words ("new:"), with echo mode's clause beside it (the second
+    // condition): it also keeps an echo-mode dialog's typed name ("newname:" and its passage, which holds a newline),
+    // since a refused comment's typed name comes back with its words and must outlive the next frame
+    for (const k of Array.from(commentDrafts.keys())) if (!k.startsWith("new:") && !(k.startsWith("newname:") && k.includes("\n")) && !live.has(k)) commentDrafts.delete(k);
+    if (pendingAdoptTid && threads.some((t) => t.tid === pendingAdoptTid)) adoptCommentThread(sid, pendingAdoptTid);   // main's
+    // echo mode's: an echo-mode ack that beat its frame adopts its thread into the dialog that sent it, and no other
+    const ea = cmtEchoAdopt;
+    if (ea && ea.create.sid === sid && threads.some((t) => t.tid === ea.tid)) {
+      if (ea.anchor ? pendingCommentAnchor === ea.anchor : pendingCommentAnchor?.createId === ea.create.createId) adoptEchoThread(sid, ea.tid);
+      else cmtEchoAdopt = null;                            // the dialog that sent it closed meanwhile
+    }
     if (openCommentKey && openCommentKey.sid === sid) {
       // reading IS seeing: a reply that lands while its popover is open must not dot the mark — the
       // watermark advances BEFORE the marks paint (T237), so it never wears yellow for it, not even one tick
@@ -21402,6 +22422,17 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     applyCommentMarks(sid);
     if (openCommentKey && openCommentKey.sid === sid) renderCommentPopover();
   }
+  // echo mode's: an answer whose createId names a create this page minted in echo mode goes to the echo-mode code,
+  // which settles that create by the id and adopts only into the dialog that sent it (echoCreateAnswered); any other
+  // answer goes to main's handling below, which reads and writes main-mode state alone. Those are the answers main saw,
+  // and one main never got: federation's own relayDrop refusal of a main-mode create it could not deliver (main saw that
+  // drop's warn alone). It changes no main-mode state: it arrives inside main's post, before main's send stores that
+  // create's hold, so the only hold it can find is an earlier send's on the message, which main's send then replaces;
+  // and a re-post by main's retry has its hold armed already, which a transient refusal leaves as it is
+  else if ((m.type === "commentCreateFailed" && m.id && m.uuid || m.type === "commentCreated" && m.id && m.tid) && echoAnswer(m, cmtEchoMinted)) {
+    echoCreateAnswered(m as { id: unknown; tid?: unknown; transient?: unknown; createId: string; type: string });
+  }
+  // main mode: main's handling of the answers.
   // the create ack names the new thread: adopt exactly it (never a guess). The kernel sends the
   // frame first; if this ack somehow beat it, park the tid and the next frame adopts. The draft is
   // spent UNCONDITIONALLY off the echoed anchor uuid — a popover closed before the ack otherwise
@@ -21460,6 +22491,7 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
   // any payload that rebuilt transcript DOM must get its highlights re-applied (marks live IN that DOM)
   if (m && m.id && (m.type === "session" || m.type === "chatTail" || m.type === "chatHead" || m.type === "chatWindow" || m.type === "chatTurns" || m.type === "chatEpisode"))
     applyCommentMarks(String(m.id));
+  // main mode: main's warn hand-back.
   // a refused create (warn) must hand the popover back — the draft is intact, the button un-sticks.
   // FULL rebuild: the in-place refresh path deliberately never touches the composer, so it would
   // leave the disabled "Starting…" button stuck (the user 2026-08-15, screenshot of exactly that)
@@ -21468,9 +22500,28 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     const pa = pendingCommentAnchor;
     commentThreads.set(pa.sid, (commentThreads.get(pa.sid) || []).filter((t) => t.tid !== "pending:" + pa.uuid));
     applyCommentMarks(pa.sid);
-    document.getElementById("cmt-pop")?.remove();
-    renderCommentPopover();
+    if (!pa.echo) {   // echo mode's guard (below)
+      document.getElementById("cmt-pop")?.remove();
+      renderCommentPopover();
+    }
+    // echo mode's: the guard above keeps main's hand-back, the rebuild, for a main-mode dialog; an echo-mode dialog
+    // gets a FULL rebuild too, but no hand-back. Main's bookkeeping above runs beside either, as main runs it whatever
+    // dialog is open: the working mark of a main-mode comment out on the dialog's message goes (an echo-mode comment's
+    // mark is keyed by its createId, so none of those goes). An echo-mode dialog whose create is out stays busy with
+    // its words until that create's own answer, or until its host shows it has no echo: a refusal's commentCreateFailed
+    // drops its synthetic mark and hands the words back (refusedCreateBack), the hand-back at a downgrade closes the
+    // dialog and puts the words in the note (handBackEchoCreates), and an unrelated warn un-sticks nothing
+    else if (!holdNoteRepaint("rebuild")) {              // while a press is under way on the note, the rebuild waits for its release
+      document.getElementById("cmt-pop")?.remove();
+      renderCommentPopover();
+    }
   }
+  // echo mode's: main's handling of an answer can delete main's draft or end main's create on a message, which an open
+  // echo-mode dialog's note shows (paintHeldNotes: a note that shows the same stays as it stands)
+  if (m && (m.type === "commentCreated" || m.type === "commentCreateFailed")) paintOpenNote();
+  // echo mode's: an echo-mode dialog that has not sent, open on a host this frame showed has no echo, turns main mode,
+  // now that main's handling of the frame has run beside it (leaveEchoModeWithoutEcho, the fail-safe)
+  leaveEchoModeWithoutEcho();
 }));
 
 // Tick the working timer (the chip color-pulse is pure CSS) and keep the model/ctx
@@ -22888,6 +23939,8 @@ setupSettings();
       openCommentPopover(activeId, tid, Math.min(r.left, window.innerWidth - 380), r.bottom + 6);
     },
     cmtclose: () => closeCommentPop(),
+    cmtheldback: (elx) => { if (elx.dataset.held) bringBackHeld(elx.dataset.held); },   // echo mode's: a waiting comment's note (paintHeldNotes): its words back in the empty box
+    cmtheldx: (elx) => { if (elx.dataset.held) dropHeld(elx.dataset.held); },           // …or dismissed, the words with it
     cmtmax: () => toggleCommentPopMax(),   // maximize ⇄ restore; the head's double-click lands in the same function
     // Interrupt the THREAD's own turn (T138): the sid rides the button (the thread's session),
     // never activeId — the exact owner-scoping class queued-x/Retry were fixed for. The gesture

@@ -53,8 +53,14 @@ class DisconnectBanner(unittest.TestCase):
                       'restartAnnounced=0;', js)   # T217: the announced-restart latch spends inside the gate
         self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', js)
         # the flip as a FRAME too (upstream 2026-09-07): enqueue() follows the dispatch, and the onopen body closes
-        # after it; upstream's ready re-post below sits above both (the resolved shim's order)
-        self.assertIn('try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}\nenqueue({type:"wsup"});}', js)
+        # after it; upstream's ready re-post below sits above both (the resolved shim's order). The frame carries the
+        # new socket's generation, counted and published just before the dispatch (a source pin of the order only; the
+        # generation itself is executed by test_pane_shim_return.py's SocketGeneration)
+        self.assertIn('sockGen++;window.__rompSockGen=sockGen;try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}\n'
+                      'enqueue({type:"wsup",gen:sockGen});}', js,
+                      "the reopen counts and publishes the socket's generation just before romp:wsup, and stamps its socket-flip "
+                      "frame with it (a source pin of where the lines sit; the generation is executed by test_pane_shim_return.py's "
+                      "SocketGeneration, the shim run under node)")
         # ...and re-posts the bundle's OWN ready message (readyMsg, the bytes the bundle sent), so the kernel's connect
         # push resyncs this socket at once instead of on the pusher's next cycle: ONLY while the bundle has sent its
         # ready (bundleReady), no caps frame has answered one yet (readyAcked: the kernel's word, sent by the ready arm

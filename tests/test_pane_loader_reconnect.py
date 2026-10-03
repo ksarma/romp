@@ -79,8 +79,16 @@ class PaneLoaderReconnect(unittest.TestCase):
         self.assertIn('if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;'
                       'restartAnnounced=0;', shim,
                       "the wasReconn gate stands; T217 spends the announced-restart latch inside it")
-        self.assertIn('try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}\nenqueue({type:"wsup"});}', shim,
-                      "wsup still rides the same wasReconn gate as the reload prompt")
+        self.assertIn('sockGen++;window.__rompSockGen=sockGen;try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}\n'
+                      'enqueue({type:"wsup",gen:sockGen});}', shim,
+                      "wsup still rides the same wasReconn gate as the reload prompt, and so does the socket's generation: "
+                      "counted and published as window.__rompSockGen before romp:wsup, and stamped on the socket-flip frame, "
+                      "so a page tells the socket that opened last from a dropped one even when it did not hear this "
+                      "reopen's romp:wsup (a source pin of where the lines live: the generation is executed by "
+                      "test_pane_shim_return.py's SocketGeneration, the shim under node, and the page's reading of it by "
+                      "comment-create-gesture-browser.test.ts's 'the fail-safe: a strip from a socket that opened and dropped "
+                      "before the shim handed any of its frames on, handed on once the next socket is open, is read as no "
+                      "connect push' and its test of a flip frame without a generation)")
         self.assertIn("var wasReconn=everConnected;everConnected=true;", shim,
                       "and wasReconn still means 'this socket had connected before'")
 

@@ -384,6 +384,189 @@ class CreateIsIdempotent(unittest.TestCase):
                        "text": "Why jitter at all?", "name": ""}, self.client)
         self.assertIn("comment create repeated", buf.getvalue(), "a collapse is visible, never silent")
 
+    # ── every answer names the gesture it answers (the chat popover's same-message create collision) ─────
+    # The popover holds each create by the id its send gesture minted. Two creates on one message share the
+    # anchor uuid, so an answer that named only the uuid settled whichever of them the popover held under it:
+    # the second send's hold overwrote the first's, the first's ack retired the second's, and the ack adopted
+    # the thread into whatever create dialog was open. Every door that answers a create echoes the id.
+    def _answers(self):
+        return [(f["type"], f.get("createId"), f.get("transient")) for f in self.sent
+                if f.get("type") in ("commentCreated", "commentCreateFailed")]
+
+    def test_every_answer_to_a_stamped_create_echoes_its_create_id(self):
+        self._create(create_id="g-1111")                                   # created
+        self._create(create_id="g-1111")                                   # a re-post: the same thread, answered again
+        taken = self._rows()[0]["name"]
+        self._create(text="And the cap?", name=taken, create_id="g-2222")  # refused: the name is taken
+        self._create(uuid="a9", create_id="g-3333")                        # the anchor lags: parked, transient
+        self._create(uuid="a9", create_id="g-3333")                        # a re-post while parked: busy, transient
+        self.assertEqual(self._answers(), [
+            ("commentCreated", "g-1111", None), ("commentCreated", "g-1111", None),
+            ("commentCreateFailed", "g-2222", False),
+            ("commentCreateFailed", "g-3333", True), ("commentCreateFailed", "g-3333", True)],
+            "the success, the repeat, the refusal, the lag nack and the busy nack each name the gesture they answer")
+        p = Path(km._sessions(0)[0]["path"])
+        with p.open("a") as fh:
+            fh.write(json.dumps(aline(self.now - 300, "Add a jitter to the backoff.", "a9", parent="a1")) + "\n")
+        with km._clients_lock:
+            km._clients.append(self.client)
+        try:
+            km._retry_parked_creates()                                     # the pusher lands the parked create
+        finally:
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c is not self.client]
+        self.assertEqual(self._answers()[-1], ("commentCreated", "g-3333", None),
+                         "the pusher's ack for a parked create names the gesture it was parked under")
+        self.assertEqual(km._parked_creates, [])
+
+    def test_an_unstamped_create_is_answered_with_an_empty_create_id(self):
+        # a create that carries no id (a page from before the id) is answered with "". A page routes an answer whose
+        # id names a create it minted in echo mode to its echo-mode handling, which settles that create. Every other
+        # answer goes to its handling of a kernel without the echo, by the message's uuid: "" and an id the page did
+        # not mint in echo mode settle none of its echo-mode creates and show it the echo; an answer with no createId
+        # key (a kernel older than the echo) shows it no echo, and first hands its echo-mode creates still out on that
+        # host back to the person, with no re-post
+        self._create()
+        taken = self._rows()[0]["name"]
+        self._create(text="And the cap?", name=taken)
+        self._create(uuid="a9")
+        self.assertEqual(self._answers(), [("commentCreated", "", None), ("commentCreateFailed", "", False),
+                                           ("commentCreateFailed", "", True)])
+        km._parked_creates.clear()
+
+    def test_a_create_refused_at_the_drive_gate_is_answered_as_a_refusal_naming_its_gesture(self):
+        # a create addressed to a session this kernel does not have is refused at the drive gate (the modal, the
+        # row in undelivered.jsonl); it is also answered as the create door answers a refusal, so a page that sent
+        # it from an echo-mode dialog hands that dialog back with its words instead of leaving it busy until it is
+        # closed; a main-mode dialog stays busy until closed, as on main (main hands back only on a warn, and the
+        # gate sends the modal, not a warn)
+        foreign = "bbbbbbbb-1111-2222-3333-444444444444"
+        handled, _ = self._drive({"type": "commentCreate", "id": foreign, "uuid": "a1", "exact": "exponential backoff",
+                                  "text": "Why jitter at all?", "name": "", "createId": "g-4444"})
+        self.assertTrue(handled, "the gate consumed the create")
+        self.assertEqual([f["type"] for f in self.sent], ["err", "commentCreateFailed"],
+                         "the modal, then the typed refusal the popover settles its create by")
+        failed = self.sent[-1]
+        self.assertEqual((failed.get("id"), failed.get("uuid"), failed.get("transient"), failed.get("createId")),
+                         (foreign, "a1", False, "g-4444"), "a real refusal, naming the gesture it refuses")
+        self._drive({"type": "commentCreate", "id": foreign, "uuid": "a1", "exact": "exponential backoff",
+                     "text": "And the cap?", "name": ""})
+        self.assertEqual(self.sent[-1].get("createId"), "", "an unstamped create refused at the gate is answered with an empty id")
+        self.assertEqual(self._rows(), [], "nothing was created")
+
+    def test_the_kernel_announces_that_its_create_answers_echo_the_create_id(self):
+        # the caps frame (in reply to a page's ready) and /version carry commentCreateId: a page opens a comment dialog
+        # in echo mode (its create settled by the answer that names it) only for a session whose kernel is last known to
+        # echo it (the createIdEcho marker on its connection's connect push, this cap, or the key on a create answer), and
+        # in main mode, main's handling, otherwise
+        self.assertIn("commentCreateId", km.KERNEL_WS_CAPS)
+        self.assertIn("commentCreateId", km._version_info()["caps"])
+
+
+
+# ── every connection's connect push carries the marker ──────────────────────────────────────────────────────────
+# A page re-posts an echo-mode comment create still held from an earlier connection only on a connection whose first
+# strip carries createIdEcho (the frame every chat connection is sent ahead of its sessions, _tab_order_frame), and a
+# connection whose first strip lacks it makes the page hand those creates back to the person, with no re-post
+# (render.ts noteConnectPush, handBackEchoCreates). So the marker must ride the first strip of EVERY connection, whichever sender
+# serves it: the ready arm's connect push for a fresh page and for a relay's first dial, the pusher's cycle for a
+# redial (a page's or a relay's), and the two off-cycle senders, either of which can be a redial's first strip.
+MARK_SIDS = ("cccccccc-1111-2222-3333-444444444441", "cccccccc-1111-2222-3333-444444444442")
+
+
+class _ReadySelf:
+    """The handler's `self` for _dispatch_ws: the ready arm reaches only _push_one, whose real body is
+    _push([client], connect=True)."""
+    def _push_one(self, client):
+        km._push([client], connect=True)
+
+
+class ConnectPushMarker(unittest.TestCase):
+    def setUp(self):
+        self._td = tempfile.mkdtemp()
+        # the ready arm reaches km._sdk() under the sandboxed jd.STATE below, which builds the kernel's backend singleton
+        # over this directory: kept here and put back in tearDown before the directory goes
+        self._sdk_backend = km._sdk_backend
+        self._saved = (km._chat_tab_sessions, km._live_map, km._cached_feed, km.build_session, km._comments_frame,
+                       km._push_subagents, km.NAMES, km.jd.STATE, list(km._clients))
+        km._chat_tab_sessions = lambda now, live_map: [
+            {"sid": sid, "name": "web", "path": os.path.join(self._td, sid + ".jsonl"), "anchor": sid} for sid in MARK_SIDS]
+        km._live_map = lambda: {}
+        km._cached_feed = lambda *a, **k: None
+        km.build_session = lambda sid, now, live_map=None, **kw: {
+            "type": "session", "id": sid, "name": "web", "events": [], "status": {"state": "idle", "sinceEpoch": None}, "ledger": None}
+        km._comments_frame = lambda sid, live_map=None: None
+        km._push_subagents = lambda clients, now, live_map: None
+        km.NAMES = Path(self._td) / "names"
+        km.NAMES.mkdir()
+        km.jd.STATE = Path(self._td) / "state"
+        km.jd.STATE.mkdir(parents=True, exist_ok=True)
+        km._built_chat.clear()
+        km._prev_chat_events.clear()
+        km._prev_chat_ledger.clear()
+        del km._clients[:]
+
+    def tearDown(self):
+        (km._chat_tab_sessions, km._live_map, km._cached_feed, km.build_session, km._comments_frame,
+         km._push_subagents, km.NAMES, km.jd.STATE, clients) = self._saved
+        del km._clients[:]
+        km._clients.extend(clients)
+        km._built_chat.clear()
+        km._prev_chat_events.clear()
+        km._prev_chat_ledger.clear()
+        km._sdk_backend = self._sdk_backend
+        shutil.rmtree(self._td, ignore_errors=True)
+
+    @staticmethod
+    def _client(**kw):
+        frames = []
+        c = {"app": "chat", "alive": True, "sent": {}, "send": lambda s: frames.append(json.loads(s)), "_frames": frames}
+        c.update(kw)
+        return c
+
+    def _first_strip(self, c):
+        """The client's frames up to and including its first strip: the strip must come before any session frame and
+        before the caps frame, and it must carry the marker."""
+        types = [f["type"] for f in c["_frames"]]
+        self.assertIn("tabOrder", types, "the connection got a strip")
+        at = types.index("tabOrder")
+        self.assertNotIn("session", types[:at], "no session frame ahead of the connection's first strip")
+        self.assertNotIn("caps", types[:at], "and no caps frame ahead of it")
+        return c["_frames"][at]
+
+    def test_a_fresh_pages_connect_push_carries_the_marker_on_its_first_strip(self):
+        c = self._client(caps={km.READY_GATE_CAP}, ready=False)        # a kernel-served pane, held until its bundle's ready
+        km.Handler._dispatch_ws(_ReadySelf(), {"type": "ready", "proto": 2}, c)
+        self.assertIs(self._first_strip(c).get("createIdEcho"), True)
+        self.assertEqual([f["type"] for f in c["_frames"]][-1], "caps", "the caps frame still comes last, after the pushes")
+
+    def test_a_relays_first_dial_carries_the_marker_on_its_first_strip(self):
+        c = self._client(kind="relay")                                  # federation's dial through the splice: ready from accept
+        km.Handler._dispatch_ws(_ReadySelf(), {"type": "ready", "proto": 2}, c)   # federation posts the page's ready on a first dial
+        self.assertIs(self._first_strip(c).get("createIdEcho"), True)
+
+    def test_a_redial_served_by_the_pushers_cycle_carries_the_marker_on_its_first_strip(self):
+        for kw in ({"reconnect": True, "redial": True, "active": MARK_SIDS[0]},                       # a pane's redial
+                   {"reconnect": True, "redial": True, "kind": "relay", "dietSkeleton": True}):     # a relay's
+            c = self._client(**kw)
+            km._push([c])                                               # the cycle the redial's handshake woke
+            self.assertIs(self._first_strip(c).get("createIdEcho"), True, kw)
+
+    def test_the_off_cycle_strips_carry_the_marker_too_since_either_can_be_a_redials_first(self):
+        c = self._client(reconnect=True, redial=True, active=MARK_SIDS[0])
+        km._clients.append(c)
+        self.assertTrue(km._confirm_close_now("cccccccc-1111-2222-3333-444444444449"))   # a close confirmation, first
+        self.assertIs(self._first_strip(c).get("createIdEcho"), True, "the close confirmation's strip")
+        c2 = self._client(reconnect=True, redial=True, active=MARK_SIDS[0])
+        km._clients[:] = [c2]
+        km._push_session_now(MARK_SIDS[1])                             # an off-cycle session push, first
+        self.assertIs(self._first_strip(c2).get("createIdEcho"), True, "the off-cycle session push's strip")
+
+    def test_every_strip_the_builder_makes_carries_the_marker(self):
+        # the one builder: no sender can send a strip without it, a client's frame and the bare shape alike
+        self.assertIs(km._tab_order_frame(list(MARK_SIDS), [], set(MARK_SIDS)).get("createIdEcho"), True)
+        self.assertIs(km._tab_order_frame(list(MARK_SIDS), [], set(), self._client(skeletonOrder=[], skeleton=set())).get("createIdEcho"), True)
+
 
 if __name__ == "__main__":
     unittest.main()
