@@ -345,22 +345,35 @@ const cueRec = () => {
   let dirty = false, lastBox = "", lastSig = "";
   const sig = (bx, ch) => JSON.stringify(bx) + JSON.stringify(ch.map((x) => x.box));
   try { new MutationObserver(() => { dirty = true; }).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true }); } catch (e) { /* no observer */ }
+  // THE LOADER'S OWN FRAME (round 2 of the review, 2026-10-03, ruling C): while painted, the badge's watch places it from a
+  // requestAnimationFrame callback (rframe) that a change to the page or a scroll registers. The loop's callback, registered a frame
+  // earlier, runs before it in that frame, so its read saw the page changed and the badge not yet placed, a state no frame paints
+  // (the landing notice leg read the badge over the notice, 24 percent, at f1a720ef2). So the recorder wraps requestAnimationFrame:
+  // when the page registers a callback named rframe, a late read is registered right after it, and the loop leaves that frame's
+  // move record to the late read. The badge's paint and clear are recorded by the loop as before (the paint places the badge in its
+  // own task). The wrapper changes no callback: it passes every call through.
+  let late = false;
+  const raf = w.requestAnimationFrame;
+  const moveRead = () => {
+    // a move is recorded only while the badge is drawn (a pane hidden by another tab draws nothing: a zero box) and only when its
+    // box or the chrome's boxes changed, so a page that keeps mutating without moving anything adds no record. At most MOVES_CAP
+    // records are kept; a move past the cap sets movesCapped, which the test fails on (round 2 of the review, fresh-3: the cap
+    // dropped every later painted state unread while the leg stayed green)
+    const bb = box(document.getElementById("pane-reconn")), bx = JSON.stringify(bb);
+    if (bb[2] && bb[3] && (dirty || bx !== lastBox)) { const ch = chrome(), sg = sig(bb, ch); if (sg !== lastSig) {
+      if (c.moves.length < MOVES_CAP) c.moves.push({ t: Date.now(), on: true, box: bb, chrome: ch, hidden: hiddenNow, content: !!content, ctop: content ? Math.round(content.getBoundingClientRect().top) : null, vw: document.documentElement.clientWidth });
+      else c.movesCapped = true;
+      lastSig = sg; } }
+    lastBox = bx; dirty = false;
+  };
+  const lateRead = () => { late = false; const v = read(); if (v.on && v.on + "|" + v.text === last) moveRead(); };
+  w.requestAnimationFrame = function (fn) { const id = raf.apply(w, arguments); if (typeof fn === "function" && fn.name === "rframe" && !late) { late = true; raf.call(w, lateRead); } return id; };
   const loop = () => { c.frames++; c.lastT = Date.now(); const v = read(), k = v.on + "|" + v.text; if (k !== last) { const e = { t: c.lastT, on: v.on, text: v.text };
     if (v.on) { e.box = box(document.getElementById("pane-reconn")); e.chrome = chrome(); e.hidden = hiddenNow; e.content = !!content; e.ctop = content ? Math.round(content.getBoundingClientRect().top) : null; e.vw = document.documentElement.clientWidth; lastBox = JSON.stringify(e.box); lastSig = sig(e.box, e.chrome); }
     c.badge.push(e); last = k; dirty = false; }
-    else if (v.on) {
-      // a move is recorded only while the badge is drawn (a pane hidden by another tab draws nothing: a zero box) and only when its
-      // box or the chrome's boxes changed, so a page that keeps mutating without moving anything adds no record. At most MOVES_CAP
-      // records are kept; a move past the cap sets movesCapped, which the test fails on (round 2 of the review, fresh-3: the cap
-      // dropped every later painted state unread while the leg stayed green)
-      const bb = box(document.getElementById("pane-reconn")), bx = JSON.stringify(bb);
-      if (bb[2] && bb[3] && (dirty || bx !== lastBox)) { const ch = chrome(), sg = sig(bb, ch); if (sg !== lastSig) {
-        if (c.moves.length < MOVES_CAP) c.moves.push({ t: c.lastT, on: true, box: bb, chrome: ch, hidden: hiddenNow, content: !!content, ctop: content ? Math.round(content.getBoundingClientRect().top) : null, vw: document.documentElement.clientWidth });
-        else c.movesCapped = true;
-        lastSig = sg; } }
-      lastBox = bx; dirty = false; }
-    requestAnimationFrame(loop); };
-  requestAnimationFrame(loop);
+    else if (v.on && !late) moveRead();
+    raf.call(w, loop); };
+  raf.call(w, loop);
   w.addEventListener("romp:wsfresh", () => { const t = Date.now(); c.fresh.push(t); c.hold.push({ k: "fresh", t, f: c.frames }); });
   return "armed";
 };

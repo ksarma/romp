@@ -417,6 +417,49 @@ global.document = { getElementById: (id) => (id === 'pane-reconn' ? BADGE : id =
         ReturnFromBackground._badge_clear_of_chrome(self, "uncapped: ", rec["badge"], moves=rec["moves"], moves_capped=rec.get("movesCapped"))
 
 
+class CueRecorderFrameOrder(unittest.TestCase):
+    """The recorder reads the badge after the page's own placement in a frame (round 2 of the review, 2026-10-03, ruling C): the
+    badge's watch places it from a requestAnimationFrame callback named rframe, which a change to the page registers, and the
+    recorder's loop callback, registered a frame earlier, runs before it in that frame. Executed under node over the cap test's fake
+    page: a control comes under the painted badge in a task, the page's observer fires, and the page registers rframe, which moves
+    the badge off the control; the frame then runs the loop's callback, rframe and anything registered after. At f1a720ef2 the loop
+    recorded the badge over the control, a state no frame paints, and the served landing notice leg failed on it in all three
+    engines; now the late read, registered right after rframe, records the badge where the frame paints it."""
+
+    FAKE = CueRecorderCap.FAKE
+
+    def _frame(self):
+        node = shutil.which("node")
+        if not node:
+            raise unittest.SkipTest("node not installed")
+        src = Path(DRIVER).read_text(encoding="utf-8")
+        a = src.index("const cueRec = () => {")
+        b = src.index("\n};\n", a) + 3
+        script = self.FAKE + "let BX = 248; BADGE.getBoundingClientRect = () => rect(BX, 52, 134, 25);\n" + src[a:b] + "\ncueRec();\n" + r"""
+const run = () => { NOW += 16; FR.splice(0).forEach((fn) => fn(NOW)); };
+run(); run();                                                         // the badge recorded painted; the control far below it
+Y = 54; CTRL.getBoundingClientRect = () => rect(300, Y, 60, 20);      // a task puts the control under the badge
+MO.forEach((m) => m.cb([]));                                          // the page's observers fire (the recorder's marks the page dirty)
+requestAnimationFrame(function rframe() { BX = 120; });               // the page's watch asks for its placement: the badge goes left of it
+run(); run();
+const c = window.__labCue; console.log(JSON.stringify({ badge: c.badge, moves: c.moves, movesCapped: c.movesCapped }));
+"""
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, "rec.js")
+            Path(path).write_text(script, encoding="utf-8")
+            r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertEqual(r.returncode, 0, "the recorder ran over the fake page: " + r.stderr[-800:])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_the_recorder_reads_the_badge_after_the_pages_own_placement_in_the_frame(self):
+        rec = self._frame()
+        self.assertEqual([m["box"] for m in rec["moves"]], [[120, 52, 134, 25]], "one move, the badge where the frame paints it, left of the control")
+        ReturnFromBackground._badge_clear_of_chrome(self, "frame order: ", rec["badge"], moves=rec["moves"], moves_capped=rec.get("movesCapped"))
+
+
 class ReturnFromBackground(unittest.TestCase):
     """One lab kernel for every leg (setUpClass); each leg is one driver run, one measurement, one artifact."""
     maxDiff = None
