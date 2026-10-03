@@ -147,6 +147,13 @@ The machine's own fixed ports (the postal bus's, the kernel's, the manager's) ar
 and the two modules write them on purpose, to show the belt and the licences refusing them. A band made any other way
 is not read.
 
+THE HEADER'S BANDS (HeaderBands; round 1 on fork PR 966). tests/manager-ports.js's header lists the bands other suites
+draw from, which its blocks sit under. Each range in that list must lie below LOW, since under this census no test
+draws a port from a band that reaches the range, and must hold a band bind_bands() derives from another file, so the
+list names bands the tree has (it still named 20000-39999, the postal port two modules derived from their pid, after
+both had moved to port 1). Its single ports, the machine's own, are not read, and neither is whether the list is
+complete or each range tight.
+
 Synthetic: reads the tree only; no socket, no kernel, no subprocess.
 """
 import ast
@@ -865,6 +872,36 @@ def sentinel_faults(root, bands, modules=SENTINEL_MODULES):
     return out
 
 
+# The bands tests/manager-ports.js's header lists (THE HEADER'S BANDS, in the docstring).
+MANAGER_PORTS = os.path.join("tests", "manager-ports.js")
+_HEADER_LIST = re.compile(r"sits under every band[^:]*:(?P<list>.*?)\.(?:\s|$)", re.S)
+_RANGE = re.compile(r"(?<![\d.])(\d{4,5})-(\d{4,5})(?![\d.])")
+
+
+def header_band_faults(root, bands):
+    """[str]: each range tests/manager-ports.js's header lists among the bands other suites draw from that reaches the
+    ephemeral range or holds no band `bands` derives from another file; one fault when the list cannot be read."""
+    try:
+        with open(os.path.join(root, MANAGER_PORTS), encoding="utf-8") as fh:
+            text = fh.read()
+    except (UnicodeDecodeError, OSError) as e:
+        return ["%s cannot be read: %s" % (MANAGER_PORTS, e)]
+    comments = " ".join(re.sub(r"^//[ \t]?", "", l.strip()) for l in text.splitlines() if l.strip().startswith("//"))
+    m = _HEADER_LIST.search(comments)
+    ranges = [(int(a), int(b)) for a, b in _RANGE.findall(m.group("list"))] if m else []
+    if not ranges:
+        return ["%s's header has no sentence 'It also sits under every band ...: <ranges>.' with a range in it" % MANAGER_PORTS]
+    others = [(lo, hi) for lo, hi, where in bands if where != "the ephemeral range" and not where.startswith(MANAGER_PORTS)]
+    out = []
+    for lo, hi in ranges:
+        if hi >= LOW:
+            out.append("%d-%d reaches the ephemeral range (%d-%d), where this census refuses a port, so no test draws "
+                       "from it" % (lo, hi, LOW, HIGH))
+        elif not any(lo <= blo and bhi <= hi for blo, bhi in others):
+            out.append("%d-%d holds no band a test draws from (bind_bands())" % (lo, hi))
+    return out
+
+
 # The pins.
 class NoFixedEphemeralPort(unittest.TestCase):
     @classmethod
@@ -1303,6 +1340,45 @@ class SentinelPlants(unittest.TestCase):
                     for v in (7, above):
                         self._write(rel, tmpl % v)
                         self.assertEqual(sentinel_faults(self.d, bind_bands(self.d), (rel,)), [], tmpl % v)
+
+
+class HeaderBands(unittest.TestCase):
+    """THE HEADER'S BANDS: every range tests/manager-ports.js's header lists among the bands other suites draw from lies
+    below the ephemeral range and holds a band a test draws from, in the tree and in planted headers."""
+    B = 21000                                     # a planted draw's low end, below the range
+
+    def test_the_manager_ports_header_lists_only_bands_the_tree_draws_from(self):
+        bands = parse_cache.derived("ephemeral_port_bind_bands", lambda: bind_bands(ROOT))
+        faults = header_band_faults(ROOT, bands)
+        if faults:
+            self.fail("%s's header lists, among the bands other suites draw from, a range the tree does not have. This "
+                      "pin reads that sentence only; the bands themselves are derived by bind_bands() (THE BIND BANDS, "
+                      "in this module's docstring). Correct the header:\n%s" % (MANAGER_PORTS, "\n".join("  " + f for f in faults)))
+
+    def _plant(self, ranges, sentence="It also sits under every band another suite on the same machine draws from"):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, "tests"))
+        with open(os.path.join(d, "tests", "free-x.bash"), "w", encoding="utf-8") as f:
+            f.write("p = random.randint(%d, %d)\n" % (self.B, self.B + 999))
+        with open(os.path.join(d, MANAGER_PORTS), "w", encoding="utf-8") as f:
+            f.write("'use strict';\n// A header.\n//\n// %s: the bus's %d, %s (all in\n// tests/free-x.bash's header).\n"
+                    "//\n// The table.\nconst RANGES = {\n  'a.test.js': [%d, %d],\n};\n"
+                    % (sentence, self.B + 1500, ", ".join("%d-%d" % r for r in ranges), self.B - 9000, self.B - 8489))
+        return header_band_faults(d, bind_bands(d))
+
+    def test_a_planted_header(self):
+        b = self.B
+        self.assertEqual(self._plant([(b, b + 999), (b - 500, b + 1200)]), [], "ranges that hold the draw")
+        for label, ranges, sentence, want in (
+                ("a range that reaches the range", [(b, b + 999), (b, LOW + 7231)], None, "reaches the ephemeral range"),
+                ("a range no test draws from", [(b, b + 999), (b + 2000, b + 2999)], None, "holds no band"),
+                ("a range that holds only the file's own block", [(b - 9000, b - 8000)], None, "holds no band"),
+                ("the sentence reworded", [(b, b + 999)], "Every other band is higher", "has no sentence")):
+            with self.subTest(label):
+                faults = self._plant(ranges, *([sentence] if sentence else []))
+                self.assertEqual(len(faults), 1, faults)
+                self.assertIn(want, faults[0])
 
 
 if __name__ == "__main__":
