@@ -292,6 +292,43 @@ test("the nothing-armed re-show of a scrolled-up view (land-saved): no take, the
   assert.equal(w.v.shown, true);
 });
 
+test("a tab whose formulas the math renderer laid out while it was hidden (onMathSettled marked it, setActive kept the line read when the tab was left): the nothing-armed show lands that line at its offset, one anchor-restore write by its displacement and no take; that turn's top when the line is gone; the raw land-saved write when the turn is gone too; an unmarked view writes raw as before; the marks are consumed by the show whatever its road (the review of iOS item 6, round two)", () => {
+  // the model's line sits LINE px inside r3, recorded 20 px under the viewport top when the tab was left; r3 stands at R3_OFFSET at the saved
+  // place, so in this layout the line is at R3_OFFSET + LINE, the formulas above it having grown while the tab was hidden
+  const LINE = 30;
+  const at = { block: 4, char: 0, y: 20 };
+  const shift = (turn: Node) => turn.getBoundingClientRect().top + LINE - at.y;
+  const w = world({ saved: 2350 }, { readingShift: (turn, p) => { assert.deepEqual(p, at, "the line kept at the leave"); assert.equal((turn as any).dataset.uuid, "r3", "inside its turn"); return shift(turn as Node); } });
+  w.v.leaveLine = { uuid: "r3", y: -90, at }; w.v.lineMoved = true;
+  w.land(w.content, w.v);
+  assert.equal(takes(w), 0, "the saved road takes nothing");
+  assert.deepEqual(w.writes, [{ writer: "anchor-restore", top: 2350 + R3_OFFSET + LINE - at.y, stick: false, from: undefined }], "one write by the line's displacement");
+  assert.equal(w.rows[3].getBoundingClientRect().top + LINE, at.y, "the reader's line where it was when they left the tab");
+  assert.equal(w.v.leaveLine, null); assert.equal(w.v.lineMoved, false, "consumed");
+  // the line gone from the turn (readingPointShift answers null): the turn's top at the offset kept with it
+  const t = world({ saved: 2350 }, { readingShift: () => null });
+  t.v.leaveLine = { uuid: "r3", y: -90, at }; t.v.lineMoved = true;
+  t.land(t.content, t.v);
+  assert.deepEqual(t.writes, [{ writer: "anchor-restore", top: 2350 + R3_OFFSET + 90, stick: false, from: undefined }], "the turn's top at its kept offset");
+  assert.equal(t.rows[3].getBoundingClientRect().top, -90);
+  // the turn gone too (the view rebuilt without it): the raw write, as before
+  const g = world({ saved: 2350 }, { readingShift: () => null });
+  g.v.leaveLine = { uuid: "11111111-2222-4333-8444-000000000099", y: -90, at }; g.v.lineMoved = true;
+  g.land(g.content, g.v);
+  assert.deepEqual(g.writes, [{ writer: "land-saved", top: 2350, stick: false, from: undefined }]);
+  // kept at the leave but never marked (the renderer did not land while the tab was hidden): the raw write, the line dropped
+  const u = world({ saved: 2350 }, { readingShift: () => { throw new Error("an unmarked view reads no line"); } });
+  u.v.leaveLine = { uuid: "r3", y: -90, at }; u.v.lineMoved = false;
+  u.land(u.content, u.v);
+  assert.deepEqual(u.writes, [{ writer: "land-saved", top: 2350, stick: false, from: undefined }]);
+  assert.equal(u.v.leaveLine, null, "consumed");
+  // marked on a show that is not the saved road (an anchor armed and landed): the landing places the reader, the marks are consumed
+  const a = world({ saved: 2350 }, { anchor: "11111111-2222-4333-8444-000000000003", land: true, readingShift: () => { throw new Error("a landing reads no kept line"); } });
+  a.v.leaveLine = { uuid: "r3", y: -90, at }; a.v.lineMoved = true;
+  a.land(a.content, a.v);
+  assert.deepEqual(a.writes, []); assert.equal(a.v.leaveLine, null); assert.equal(a.v.lineMoved, false);
+});
+
 test("an armed anchor that MISSES on a re-show: the take before the attempt, then the row the saved place held is put back at its offset over the re-sized spacer (anchor-restore), never the raw pre-resize scrollTop", () => {
   // a card's anchor nowhere in the transcript (scrollToAnchor false: pointer-not-rendered), a figure parked, the scroller at the saved place
   const w = world({ saved: 2350 }, { anchor: "11111111-2222-4333-8444-000000000001", land: false });

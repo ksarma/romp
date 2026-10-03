@@ -24,7 +24,10 @@ Against a hermetic kernel serving the checkout's own build (tests/lab_dist.py), 
     and keeps it there through the swap;
   - the same reload in a LONG transcript (the reply followed by more replies than the fresh page's tail window holds, so the
     restore lands the reply through the deep-link land's keep offset: render.ts scrollToAnchor), in both engines on the phone:
-    the paragraph within 2 px while the formulas wait and after the swap (the keep offset carries the reader's line too).
+    the paragraph within 2 px while the formulas wait and after the swap (the keep offset carries the reader's line too);
+  - a hidden tab (a second session, `api`, beside `web`), in both engines on the phone: the reader on the paragraph in `web`, every formula
+    above it waiting, switches to `api`; the chunk lands and the swap lays the formulas out while `web` is hidden; back on `web` the
+    paragraph is within 1 px of where they left it (render.ts keeps the reader's line at the switch and lands it on the next show).
 SYNTHETIC fixtures only; skips LOUDLY without the extension deps or a Playwright browser (CI's served job installs both)."""
 import gzip
 import json
@@ -51,6 +54,7 @@ sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
 
 SID = "aaaaaaaa-1111-2222-3333-555555555555"
+SID2 = "bbbbbbbb-1111-2222-3333-555555555555"   # the second session of the tests marked with_api_session
 FIRST_REPLY = "The notes-api README covers install and usage; the cost is $5-$10 and $HOME stays literal."
 MATH_INTRO = "Here are the three identities the tests check:"
 FORMULAS = [r"\sum_{i=0}^{n} i^2 = \frac{n(n+1)(2n+1)}{6}",
@@ -98,6 +102,13 @@ def reply(uuid, parent, t, text):
 
 def jsonl(records):
     return "".join(json.dumps(r) + "\n" for r in records)
+
+
+def with_api_session(test):
+    """Mark a test whose kernel also serves a second session, `api` (setUp seeds it before the kernel starts; every other test's chat
+    holds `web` alone, so its first formula is the first the page meets)."""
+    test.api_session = True
+    return test
 
 
 DRIVER = r"""
@@ -396,6 +407,84 @@ await browser.close();
 process.exit(0);
 """
 
+# Two sessions on a phone: the reader on the paragraph in `web` with the reply's formulas waiting above it, a switch to `api`, the chunk
+# released and the swap done while `web` is hidden, then the switch back.
+DRIVER_TABS = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const out = {};
+const PENDING = "#content .md-math-inline, #content .md-math-display";
+try {
+  const device = Object.assign({}, pw.devices["iPhone 15"]);
+  delete device.defaultBrowserType;
+  const ctx = await browser.newContext(device);
+  const errors = [];
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => errors.push(e.message));
+  const settle = () => page.evaluate(() => fetch("/healthz", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+  // a tab's view on screen: the paragraph starting `marker` displayed (a hidden view's elements have no offsetParent)
+  const showing = (marker) => page.waitForFunction((m) => Array.from(document.querySelectorAll("#content p")).some((e) => e.offsetParent !== null && (e.textContent || "").startsWith(m)), marker, { timeout: 30000 });
+  const tab = (sid) => page.evaluate((sid) => { const t = document.querySelector('#tabs .tab[data-id="' + sid + '"]'); if (!t) return false; t.click(); return true; }, sid);
+  const measure = () => page.evaluate((marker) => {
+    const c = document.getElementById("content");
+    const ct = c.getBoundingClientRect().top;
+    const p = Array.from(c.querySelectorAll("p")).find((e) => (e.textContent || "").startsWith(marker));
+    const turn = p ? p.closest("[data-uuid]") : null;
+    const shown = turn ? Array.from(turn.querySelectorAll(".md-math-display, .katex-display")) : [];
+    const last = shown[shown.length - 1];
+    return { displayed: !!(p && p.offsetParent !== null), markerTop: p ? p.getBoundingClientRect().top - ct : null,
+      turnHeight: turn ? turn.getBoundingClientRect().height : null, lastFormulaBottom: last ? last.getBoundingClientRect().bottom - ct : null,
+      pendingInTurn: turn ? turn.querySelectorAll(".md-math-inline, .md-math-display").length : null,
+      katexInTurn: turn ? turn.querySelectorAll(".katex").length : null, scrollTop: c.scrollTop,
+      atBottom: c.scrollHeight - c.clientHeight - c.scrollTop < 4 };
+  }, cfg.marker);
+  const reqs = [];
+  let release; const held = new Promise((r) => { release = r; });
+  await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => { reqs.push(route.request().url()); await held; await route.continue(); });
+  await page.goto(cfg.chat);
+  await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-id]").length >= 2, null, { timeout: 30000 });
+  out.clickWeb = await tab(cfg.sid);
+  await showing(cfg.lastFiller);
+  await settle();
+  const placed = await page.evaluate(({ marker, off }) => {
+    const c = document.getElementById("content");
+    c.style.overflowAnchor = "none";   // the phone's WebKit has no scroll anchoring; Chromium's own is off so the page's keep is what holds
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    if (!p) return "no paragraph starting " + marker;
+    c.scrollTop += p.getBoundingClientRect().top - c.getBoundingClientRect().top - off;
+    return "";
+  }, { marker: cfg.marker, off: cfg.offset });
+  if (placed) throw new Error(placed);
+  await settle();
+  out.before = await measure();
+  out.clickApi = await tab(cfg.sid2);
+  await showing(cfg.apiMarker);
+  await settle();
+  out.hidden = await measure();
+  release();
+  await page.waitForFunction((sel) => !document.querySelector(sel) && document.querySelectorAll("#content .katex").length > 0, PENDING, { timeout: 30000 });
+  await settle();
+  out.apiAfter = await page.evaluate(() => { const c = document.getElementById("content"); return { atBottom: c.scrollHeight - c.clientHeight - c.scrollTop < 4 }; });
+  out.clickBack = await tab(cfg.sid);
+  await showing(cfg.marker);
+  await settle();
+  out.after = await measure();
+  out.requests = reqs.length;
+  out.errors = errors;
+} catch (e) {
+  out.died = String(e && e.message || e);
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
 
 class ServedMathChunk(unittest.TestCase):
     """One hermetic kernel per test, so each engine's chat opens on a transcript that has never held a formula (the chat
@@ -426,6 +515,18 @@ class ServedMathChunk(unittest.TestCase):
         proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
         os.makedirs(proj, exist_ok=True)
         self.t0 = int(time.time()) - 900
+        if getattr(getattr(self, self._testMethodName, None), "api_session", False):
+            # the second session: a reply with display formulas at its top, then replies long enough that its reader sits at the bottom
+            Path(state, "names", SID2).write_text("api\t%s\t\t\n" % cwd)
+            Path(state, "sdk", SID2 + ".json").write_text(json.dumps(
+                {"sid": SID2, "name": "api", "cwd": cwd, "mode": "auto", "effort": "high",
+                 "lastSid": SID2, "alive": True, "model": "claude-opus-5", "liveModel": "Opus 5"}))
+            recs = [{"type": "user", "timestamp": iso(self.t0 + 10), "uuid": "v1", "parentUuid": None, "promptSource": "typed",
+                     "sessionId": SID2, "message": {"role": "user", "content": "what does the api tier cost?"}},
+                    dict(reply("w0", "v1", self.t0 + 20, MATH_INTRO + "\n\n" + "\n\n".join("$$%s$$" % f for f in FORMULAS) + "\n"), sessionId=SID2)]
+            for i in range(1, 16):
+                recs.append(dict(reply("w%d" % i, "w%d" % (i - 1), self.t0 + 20 + i, "API-TAB " + FILLER % i), sessionId=SID2))
+            Path(proj, SID2 + ".jsonl").write_text(jsonl(recs))
         self.transcript = os.path.join(proj, SID + ".jsonl")
         Path(self.transcript).write_text(jsonl([
             {"type": "user", "timestamp": iso(self.t0), "uuid": "u1", "parentUuid": None, "promptSource": "typed",
@@ -671,6 +772,49 @@ class ServedMathChunk(unittest.TestCase):
 
     def test_reload_into_a_long_transcript_on_a_phone_webkit(self):
         self._window_reload("webkit")
+
+    def _hidden_tab(self, engine):
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
+                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                reply("r1", "u2", self.t0 + 40, ranking_reply())]
+        for i in range(FILLERS):
+            recs.append(reply("g%d" % i, "r1" if i == 0 else "g%d" % (i - 1), self.t0 + 60 + i, FILLER % i))
+        with open(self.transcript, "a") as f:
+            f.write(jsonl(recs))
+        cfg = os.path.join(self.lab, "cfg-tabs-%s.json" % engine)
+        Path(cfg).write_text(json.dumps({
+            "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID, "sid2": SID2,
+            "lastFiller": "Filler reply %d:" % (FILLERS - 1), "apiMarker": "API-TAB", "marker": "READ-03", "offset": 80}))
+        r = self._run(engine, DRIVER_TABS, cfg, "tabs-" + engine)
+        w = engine + ": hidden tab: "
+        self.assertNotIn("died", r, w + "the driver stopped early: %r\nkernel:\n%s" % (r.get("died"), Path(self.klog).read_text()[-1500:]))
+        self.assertEqual((r["clickWeb"], r["clickApi"], r["clickBack"]), (True, True, True), w + "both tabs on the strip: %r" % r)
+        n = len(STEP_FORMULAS)
+        b, h, a = r["before"], r["hidden"], r["after"]
+        self.assertTrue(b["displayed"], w + "the paragraph being read is on screen in web: %r" % b)
+        self.assertEqual(b["pendingInTurn"], 3 * n, w + "every formula of the reply waits for the chunk: %r" % b)
+        self.assertLess(b["lastFormulaBottom"], 0, w + "above the viewport top, in the reader's own turn: %r" % b)
+        self.assertGreater(b["markerTop"], 0, w + "%r" % b)
+        self.assertFalse(h["displayed"], w + "web is hidden behind api when the chunk lands: %r" % h)
+        self.assertEqual(h["pendingInTurn"], 3 * n, w + "its formulas still waiting then: %r" % h)
+        self.assertTrue(r["apiAfter"]["atBottom"], w + "api's reader, at its bottom, is still at its bottom after the swap: %r" % r["apiAfter"])
+        self.assertTrue(a["displayed"], w + "%r" % a)
+        self.assertEqual((a["pendingInTurn"], r["requests"]), (0, 1), w + "one chunk, every formula laid out: %r" % r)
+        self.assertGreater(a["turnHeight"] - b["turnHeight"], 20, w + "the swap grew the reader's own turn while it was hidden: %r %r" % (b, a))
+        self.assertLessEqual(abs(a["markerTop"] - b["markerTop"]), 1,
+                             w + "back on web, the paragraph being read is within 1 px of where the reader left it: %r %r" % (b, a))
+        self.assertEqual(r["errors"], [], w + "no page error")
+
+    @with_api_session
+    def test_a_tab_hidden_while_the_chunk_lands_on_a_phone_chromium(self):
+        self._hidden_tab("chromium")
+
+    @with_api_session
+    def test_a_tab_hidden_while_the_chunk_lands_on_a_phone_webkit(self):
+        self._hidden_tab("webkit")
 
 
 if __name__ == "__main__":

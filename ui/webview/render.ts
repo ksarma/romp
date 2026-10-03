@@ -1424,7 +1424,7 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; units?: DisplayItem[]; measureDue?: boolean; measured?: { avg?: number; per?: number }; followRebuilt?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner); units: the display items the DOM was last built from (compact mode's tail plan reads them, chat-compact-tail.ts); measureDue: a window build or a reflow asks the unit observer for fresh figures (measureUnits); measured: the figures it read, waiting for the next paint to take them (applyMeasure)
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; pxPerTurn?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; gapUnits?: Map<number, number>; edgeTop?: number; edgeUp?: boolean; gestureScroll?: boolean; working?: boolean; units?: DisplayItem[]; measureDue?: boolean; measured?: { avg?: number; per?: number }; followRebuilt?: boolean; leaveLine?: ReadingAnchor | null; lineMoved?: boolean; uo?: ResizeObserver; uh?: WeakMap<Element, number>; ro?: ResizeObserver; mo?: MutationObserver; }   // leaveLine: the reader's line when the tab was left with a formula waiting for the math renderer, and lineMoved: the renderer laid the formulas out while the tab was hidden (setActive, onMathSettled, landActive); working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner); units: the display items the DOM was last built from (compact mode's tail plan reads them, chat-compact-tail.ts); measureDue: a window build or a reflow asks the unit observer for fresh figures (measureUnits); measured: the figures it read, waiting for the next paint to take them (applyMeasure)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
@@ -14649,7 +14649,9 @@ function rerenderAll(): void {
 // at the bottom written to the new bottom. The line and not the turn, because a reply's formulas usually sit in the same turn
 // the reader is partway down: keeping that turn's top let its formulas push the text being read down by their growth (the
 // review of iOS item 6, 2026-10-02: about 133 px on a phone for eight short display formulas). A turn whose visible part holds
-// no such line keeps its top, as before. A failed load takes the same road, each formula becoming its source. Then the comment
+// no such line keeps its top, as before. A view not on screen when the renderer lands has its formulas laid out unseen, so it is marked
+// (lineMoved) and its next show lands the line its reader was on when they left the tab (setActive keeps it while a formula waits,
+// landActive lands it; the review of iOS item 6, round two). A failed load takes the same road, each formula becoming its source. Then the comment
 // marks go back on every view that held a waiting formula (a mark on math pairs with the rendered .katex root,
 // applyCommentMarks), and a queued group whose cached node held one is marked changed, so its next render rebuilds the node's
 // children with the renderer in (renderPendingGroup).
@@ -14661,6 +14663,7 @@ onMathSettled(() => {
   const bottom = live && atBottom(content!);
   const keep = live && !bottom ? captureReadingAnchor(content!, av!) : null;
   const held = Array.from(views.entries()).filter(([, v]) => mathPendingIn(v.el)).map(([sid]) => sid);
+  for (const sid of held) { const hv = views.get(sid)!; if (!(live && hv === av)) hv.lineMoved = true; }   // a hidden view's formulas grow unseen: its next show lands the line read when it was left
   for (const g of pendingGroupNode.values()) if (mathPendingIn(g.node)) g.sig = "";
   return () => {
     if (live && content && av) {
@@ -15698,6 +15701,12 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
   const figures = figuresBefore(v);   // what the take below takes, given back by the fallback when it has no row to put back
   if (!saved && applyMeasure(v)) redrawGapUnits(v);
   sizeSpacers(v);
+  // A tab left with a formula waiting for the math renderer and shown again after the renderer laid it out unseen (onMathSettled marked it):
+  // its saved scrollTop was taken over the waiting formulas, so the saved road lands the line read when the tab was left (setActive) instead
+  // (the review of iOS item 6, round two: the raw write put the text being read 133 px off in a phone-sized Chromium). Consumed by this show,
+  // whatever its road.
+  const moved = saved && v.lineMoved ? v.leaveLine ?? null : null;
+  v.leaveLine = null; v.lineMoved = false;
   // The durable seek re-arms the per-pass attempt: every render pass retries until it lands, the
   // user cancels, or the backstop fires — never hijacking a scroll-back keep-offset restore.
   if (!pendingAnchor && pendingAnchorT == null && pendingAnchorKeepY == null && seek && seek.sid === activeId) {
@@ -15785,12 +15794,15 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
     }
     else if (!v.shown || v.stick) writeScroll(content, content.scrollHeight, "land-bottom", true);
     // an armed land that missed: the row the saved place held goes back at its offset over the spacers the take re-sized; the raw write
-    // whenever the restore has no row to put back: nothing armed (nothing taken: the saved scrollTop is exact), no row at the saved
+    // whenever the restore has no row to put back: nothing armed (nothing taken: the saved scrollTop is exact unless formulas grew while the
+    // tab was hidden, the `moved` road below), no row at the saved
     // place, or the captured row gone with the attempt's window build (the maintainer's round 2 ruling; the third road named by the
     // author's own verifiers after pass 3, executed in land-active-keep.test.ts). On the two roads after a take the take is undone first
     // (untakeMeasure), so the saved scrollTop lands in the layout it was saved in and the figures wait, as on the nothing-armed road (the
     // maintainer's round 3 ruling B)
-    else if (!(held && restoreScrollAnchor(content, v, held))) { untakeMeasure(v, figures); writeScroll(content, v.scrollTop, "land-saved"); }
+    // A tab whose formulas were laid out while it was hidden (`moved`, the saved road: nothing was taken) lands the line read when it was left,
+    // else that turn's top, at their offsets; the raw write when neither is still rendered.
+    else if (!(held && restoreScrollAnchor(content, v, held)) && !(moved && (restoreReadingLine(content, v, moved) || restoreScrollAnchor(content, v, moved)))) { untakeMeasure(v, figures); writeScroll(content, v.scrollTop, "land-saved"); }
   }
   v.shown = true;
   scheduleRailSticky();
@@ -19615,7 +19627,12 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   const content = document.getElementById("content");
   if (content && activeId && activeId !== id) {
     const cur = views.get(activeId);
-    if (cur) { cur.scrollTop = content.scrollTop; cur.stick = atBottom(content); }   // the leaving tab's follow mode: the true bottom
+    if (cur) {
+      cur.scrollTop = content.scrollTop; cur.stick = atBottom(content);   // the leaving tab's follow mode: the true bottom
+      // …and, while a formula in it waits for the math renderer, the reader's line: the renderer can arrive while the tab is hidden, and the
+      // saved scrollTop then puts the text being read off by the formulas' growth (onMathSettled marks the view, landActive lands the line)
+      cur.leaveLine = !cur.stick && content.clientHeight > 0 && cur.el.style.display !== "none" && mathPendingIn(cur.el) ? captureReadingAnchor(content, cur) : null;
+    }
   }
   // Stash the leaving tab's draft; show the entering tab's own (usually empty).
   const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
