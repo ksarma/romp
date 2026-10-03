@@ -355,8 +355,10 @@ subject; `verify` refuses the branch otherwise.
    `git` would wait on or read without end, refuses the sweep before its first `git` call that
    would read it, naming the file; one a leg leaves there marks nothing in its own run, which read
    the ref before the first leg, and refuses the next sweep. A move of your `origin/main`
-   during a sweep marks no run invalid, unlike a change to your shallow file (below): the next
-   sweep's clones hold the ref as it then stands. When your repository is shallow as the sweep
+   during a sweep marks no run invalid, unlike a change to your shallow file (below), since a
+   fetch of origin during the sweep moves it as a leg can and the sweep cannot tell the two
+   apart: the next sweep's clones hold the ref as it then stands, and its result records that
+   commit. When your repository is shallow as the sweep
    starts, each clone is shallow the same way: the sweep reads your shallow file before the first
    leg and gives every clone that copy, so a leg that writes the file changes no later job's clone.
    After the last leg the sweep reads the file again, and when it differs from that copy (a leg

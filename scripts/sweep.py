@@ -337,8 +337,11 @@ fetches the pushed sha alone, and names no remote, so a plain `git fetch` in a l
 of origin/main, in the batcher's repository or in the leg's own clone: each clone's refs/remotes/origin/main is written
 at the commit the runner read from the batcher's origin/main before the first leg (main_snapshot), and no ref is read
 again for a later clone. A move in the batcher's repository does reach the next run, whose snapshot reads the ref as
-the leg left it, and, unlike a change to the shallow file (below), it marks no run invalid: that ref changes what a
-test that reads main compares the sha with, not the sha's tree, which every checkout is verified against. Nor does a
+the leg left it, and, unlike a change to the shallow file (below), it marks no run invalid, since a fetch of origin
+into the batcher's repository during a run, theirs or another process's, moves it as a leg can, and a re-read after
+the last leg could not tell the two apart: such a mark would void sound runs. So a leg that moves it changes what the
+next run's checkouts hold (moved forward, it narrows what a test that reads main scans there), nothing marks that, and
+the next run's result records the commit its checkouts held (runner.checkout.main). Nor does a
 shallow file a leg writes into the batcher's repository: each clone gets the one the runner read before the first leg
 (shallow_snapshot; the narrow landing delta's ruling 8). That file does reach the next run, whose snapshot reads it, so every checkout of
 that run reads it as it now stands, cut where the leg's file says, or not shallow at all when the leg removed it, and
@@ -1721,9 +1724,11 @@ def shallow_moved(path, snapshot):
 # The one ref of the batcher's repository whose commit a job's checkout holds, under the same name (main_snapshot). A test
 # that reads main finds it there as it would in the batcher's own clone: tests/gitleaks-config.bats' history case, as
 # fork PR 954 scopes it, scans the commits HEAD adds over origin/main where the clone has that ref, and all of HEAD's
-# history where it has neither origin/main nor main. In a checkout with neither (each one before this ref was written),
-# that scan went past the 180 s the bats leg allows a test (BATS_TEST_TIMEOUT) over 13,766 commits: 208 s at a load of
-# 47 to 56, and 364 s held to one core (a CPUQuota of 100%), measured 2026-10-03.
+# history where it has no origin/main, whether or not it has a local main. In a checkout with no ref (each one before
+# this ref was written), that scan went past the 180 s the bats leg allows a test (BATS_TEST_TIMEOUT) over 13,766
+# commits: 208 s at a load of 47 to 56, and 364 s held to one core (a CPUQuota of 100%), measured 2026-10-03. In a
+# checkout holding the ref, the same case under PR 954's test scanned the 171 commits a branch added over origin/main
+# and ended in 2.4 s (measured 2026-10-03); under a test that reads no ref it scans all of HEAD's history either way.
 MAIN_REF = "refs/remotes/origin/main"
 
 
