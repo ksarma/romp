@@ -53,9 +53,10 @@ THE RULE. A number in the range counts when it is WRITTEN AS A PORT, in one of t
     the positional argument right after a host in a call, the empty string aside (http.client.HTTPConnection(
     "127.0.0.1", N, timeout=30), asyncio.open_connection(HOST, N));
     an operand formatted into an address, by %, by an f-string or by str.format, whose template (a literal; for % and
-    format, also a name bound to one literal) puts a loopback or wildcard host, or // and any host, then a colon right
-    before the operand ("http://127.0.0.1:%d/" % N, f"http://127.0.0.1:{P}/", f"ws://{h}:{P}/",
-    "http://127.0.0.1:{}/".format(N));
+    format, also a name bound to one literal) puts a loopback or wildcard host, or // and any host, a placeholder for
+    the host included, then a colon right before the operand ("http://127.0.0.1:%d/" % N, "http://%s:%d/" % (h, N),
+    f"http://127.0.0.1:{P}/", f"ws://{h}:{P}/", "http://127.0.0.1:{}/".format(N)); for %, the port's placeholder is
+    %d, %i or %s, and the whole right operand is read, each element of a tuple;
     and one hop through a name: a value written in one of those positions as a bare name counts the literals the module
     binds that name to (P = N ... {"port": P}).
   An int counts (45_001 is 45001), and so does a string of the number's five digits, except as a positional argument
@@ -106,6 +107,8 @@ is a change to this list):
   postal/ and cli/ defines, or a tests/ helper the module does not import) with no host right before it;
   in a file read as text, a positional port beyond the call rule (nc -l 127.0.0.1 N, python3 -m http.server N,
   startServer(N)), and a port reached through a name that does not name a port (const P = N, then :${P});
+  a %-template whose port's placeholder carries a mapping key, a flag or a width ("http://127.0.0.1:%(p)d/" % {"p": N},
+  "http://127.0.0.1:%5d/" % N), unless another rule reads the operand (a port-named key does);
   a value under a key spelled other than as a word (a computed key, {K: N});
   code text that does not parse on its own (an indented fragment, a %-template), which the text rules read instead, so
   its positional ports are not resolved;
@@ -179,7 +182,7 @@ TEXT_RULES = (
 )
 _NAMED = frozenset({"key", "decl", "env", "flag", "pair"})   # the rules whose match carries a name that must name a port
 _ADDR_END = re.compile(r"(?:" + _HOST + r"|//[\w.\x00-]+)[ \t]*:[ \t]*$")   # a template's address up to the port's colon (\x00: a formatted host)
-_ADDR_PCT = re.compile(r"(?:" + _HOST + r"|//[\w.-]+):%[ds]")
+_ADDR_PCT = re.compile(r"(?:" + _HOST + r"|//(?:[\w.-]|%s)+):%[dis]")   # a host after // may be a %s placeholder
 _BLANKED = frozenset([tokenize.COMMENT, tokenize.STRING] + [getattr(tokenize, t) for t in (
     "FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END", "TSTRING_START", "TSTRING_MIDDLE", "TSTRING_END") if hasattr(tokenize, t)])
 
@@ -813,6 +816,10 @@ class Plants(unittest.TestCase):
                 ("formatted address", 'u = "http://127.0.0.1:%%d/peer" %% %d\n' % n, "formatted into an address"),
                 ("formatted address, the template from a name", 'URL = "http://127.0.0.1:%%d/peer"\nurlopen(URL %% %d)\n' % n,
                  "formatted into an address"),
+                ("formatted address with a placeholder host", 'u = "http://%%s:%%d/x" %% (h, %d)\n' % n, "formatted into an address"),
+                ("formatted address with a placeholder host from an attribute, %s for the port",
+                 'u = "ws://%%s:%%s/ws" %% (self.host, %d)\n' % n, "formatted into an address"),
+                ("formatted address, %i for the port", 'u = "http://localhost:%%i/x" %% %d\n' % n, "formatted into an address"),
                 ("f-string address", 'P = %d\nurllib.request.urlopen(f"http://127.0.0.1:{P}/peer")\n' % n,
                  "formatted into an address, through the name P"),
                 ("f-string address with a formatted host", 'h = "x"\nu = f"ws://{h}:{%d}/ws"\n' % n, "formatted into an address"),
@@ -942,6 +949,8 @@ class Plants(unittest.TestCase):
                 ("a positional port in JavaScript", "x.test.mjs", "const srv = startServer(%d);\n" % n),
                 ("a JavaScript name that does not name a port", "y.test.ts",
                  "const P = %d;\nawait fetch(`http://127.0.0.1:${P}/x`);\n" % n),
+                ("a %-template placeholder with a mapping key or a width", "test_x.py",
+                 'u = "http://127.0.0.1:%%(p)d/x" %% {"p": %d}\nv = "http://127.0.0.1:%%5d/x" %% %d\n' % (n, n)),
                 ("a computed key", "test_x.py", 'K = "port"\nrow = {K: %d}\n' % n),
                 ("code text that does not parse", "test_x.py", 'FRAG = "    km._notify_bus_peer(\'h\', %d, True)"\n' % n)):
             with self.subTest(label):
