@@ -9,6 +9,9 @@
 //   downUnread      a pane's socket reported down ({romp:'wsState'}, the shims' message): a new entry and a live problem
 //   downOpen        the Log opened again: everything seen, the socket still down
 //   upOpen          the socket reported up, the Log still open
+//   openNew         one entry logged with the Log still open: opening marked only the entries it showed, so it is unread
+//   closedNew       the Log closed with that entry still unread
+//   reopenSeen      the Log opened again by a tap on the triangle, which marks that entry seen
 //   lightIdle       the light theme picked (romp:settings, the shell's theme reader), the Log closed, nothing unread
 //   lightUnread     one entry logged under the light theme, on another pane tab
 // Each snapshot also lists the stylesheet rules that match #merr and declare a colour, in document order (a failure's
@@ -160,6 +163,19 @@ try {
   await page.evaluate(() => window.postMessage({ romp: "wsState", app: "chat", state: "up" }, "*"));
   await has(false);
   await snap("upOpen");
+  // an entry that arrives while the Log is open: opening marked only the entries it showed, so this one is unread
+  await page.evaluate(() => window.__rompNotify("warn", "Synthetic warning for the triangle test, Log open"));
+  // waits on the entry being listed, not on has, so a tree that marks it seen on arrival is red at this step, not a timeout
+  await until("the entry listed in the open Log", () => Array.from(document.querySelectorAll("#rerr-list .rerr-msg"))
+    .some((x) => x.textContent.indexOf("Synthetic warning for the triangle test, Log open") === 0));
+  await snap("openNew");
+  await page.evaluate(() => window.__rompCloseErrs());
+  await until("the Log closed", () => document.getElementById("rerr-back").hidden);
+  await snap("closedNew");
+  await page.click("#merr");
+  await until("the Log open", () => !document.getElementById("rerr-back").hidden);
+  await has(false);
+  await snap("reopenSeen");
   await page.evaluate(() => window.__rompCloseErrs());
   await until("the Log closed", () => document.getElementById("rerr-back").hidden);
   // the light theme, picked the way the gear picks it: the settings object, then the event the shell's theme reader hears
