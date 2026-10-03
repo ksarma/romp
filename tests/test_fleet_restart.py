@@ -309,7 +309,7 @@ class AnAskStaysOnThatPeer(unittest.TestCase):
                          if path == "/tunnels/pull" else {"ok": True, "restarting": True, "fleet": False})
         km._peer_call = _peer_call
         km._remotes.clear()
-        km._remotes["TESTHOST"] = row(checkin_peer=True, kernel_sha=REMOTE_SHA, local_port=52025,
+        km._remotes["TESTHOST"] = row(checkin_peer=True, kernel_sha=REMOTE_SHA, local_port=1,
                                       token="peertok")
 
     def tearDown(self):

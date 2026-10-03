@@ -19582,15 +19582,15 @@ class HermeticKernelPostal(unittest.TestCase):
             ("the saved mapping made under an if", "the saved mapping", under_if(shape["saved_made"]), "is made by one statement that runs before the call"),
             # ...a kick in the window or the wrapper (the verifier's second notify and Popen of the postal service inside
             # the try passed every pin but, on some runs, the executed one), one per clause of the window rule
-            ("a second notify inside the try", "in the try", 'km._notify_bus_peer("TESTHOST", 50002, True)', window),
+            ("a second notify inside the try", "in the try", 'km._notify_bus_peer("TESTHOST", 2, True)', window),
             ("a Popen of the postal service inside the try", "in the try",
              'km.subprocess.Popen([sys.executable, "bin/romp-postal-service", "ensure"]).wait()', window),
             ("another kernel call between the install and the trio", "after the install", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
             ("another kernel call between the rebind and the install", "before the install", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
             ("an assertion inside the try that calls the kernel", "in the try", 'self.assertFalse(km._notify_bus_origin_trust("TESTHOST", "directed"))', window),
-            ("a second notify statement inside the try", "in the try", 'self.assertFalse(km._notify_bus_peer("TESTHOST", 50003, True))', window),
+            ("a second notify statement inside the try", "in the try", 'self.assertFalse(km._notify_bus_peer("TESTHOST", 3, True))', window),
             ("the notify statement calling a second notify", "the notify",
-             'self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, True) or km._notify_bus_peer("TESTHOST", 50003, True))', window),
+             'self.assertFalse(km._notify_bus_peer("TESTHOST", 2, True) or km._notify_bus_peer("TESTHOST", 3, True))', window),
             ("another kernel call in the finally before the wait", "before the wait", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
             ("km.BUS_PORT put back from a kernel call before the wait", "before the wait",
              'km.BUS_PORT = km._notify_bus_origin_trust("TESTHOST", "directed")', window),
@@ -19606,9 +19606,9 @@ class HermeticKernelPostal(unittest.TestCase):
             # (with beside() reading no lambda's body, every pin passed), and the saved mapping's items() read outside
             # the restore (with any items() call taken as the restore's read, every pin passed)
             ("a second notify in the wait statement's own argument", "the wait",
-             '%(ended)s = %(event)s.wait(km._notify_bus_peer("TESTHOST", 50003, True) or 60)', window),
+             '%(ended)s = %(event)s.wait(km._notify_bus_peer("TESTHOST", 3, True) or 60)', window),
             ("a second notify in a try of the finally, before the wait it holds", "the wait",
-             'try:\n    km._notify_bus_peer("TESTHOST", 50003, True)\nfinally:\n    %(ended)s = %(event)s.wait(60)', window),
+             'try:\n    km._notify_bus_peer("TESTHOST", 3, True)\nfinally:\n    %(ended)s = %(event)s.wait(60)', window),
             ("an assertion inside the try whose lambda runs a kernel call and raises", "in the try",
              'self.assertRaises(ZeroDivisionError, lambda: km._notify_bus_origin_trust("TESTHOST", "directed") / 0)', window),
             ("the saved mapping's items read after the try", "after the try", "_planted = %(saved_env)s.items()",
@@ -19619,7 +19619,7 @@ class HermeticKernelPostal(unittest.TestCase):
             # at that end, the wait's calls read from its positional arguments alone, or the notify statement's
             # comprehension from its first argument alone, every pin passed)
             ("a decorator on the wrapper that runs a second notify after it", "the wrapper def",
-             '@(lambda f: lambda: (f(), km._notify_bus_peer("TESTHOST", 50003, True)))', undecorated),
+             '@(lambda f: lambda: (f(), km._notify_bus_peer("TESTHOST", 3, True)))', undecorated),
             ("a decorator on the fake that replaces it with the real run", "the fake def", "@(lambda f: km.subprocess.run)", undecorated),
             ("a decorator on the road that makes another kernel call", "the road def",
              '@(lambda f: lambda *a: (km._notify_bus_origin_trust("TESTHOST", "directed"), f(*a))[1])', undecorated),
@@ -19628,18 +19628,18 @@ class HermeticKernelPostal(unittest.TestCase):
              window),
             ("a kernel call as the finally's first statement", "the finally's first", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
             ("a second notify in the wait's timeout keyword", "the wait",
-             '%(ended)s = %(event)s.wait(timeout=km._notify_bus_peer("TESTHOST", 50003, True) or 60)', window),
+             '%(ended)s = %(event)s.wait(timeout=km._notify_bus_peer("TESTHOST", 3, True) or 60)', window),
             ("the notify run twice by a comprehension in the notify statement's second argument", "the notify",
-             'self.assertEqual([False, False], [km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)], "planted")', window),
+             'self.assertEqual([False, False], [km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)], "planted")', window),
             ("the notify run twice by a comprehension in a keyword argument of the notify statement", "the notify",
-             'self.assertEqual([False, False], second=[km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)])', window),
+             'self.assertEqual([False, False], second=[km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)])', window),
             # round 2's twenty-eighth commit on fork PR #894 (the re-verifier's findings on the twenty-seventh): two
             # plants that _repeats reading a lambda's body alone refuses, harmless ones (with that part skipped, every
             # pin passed, and its docstring said no plant could tell)
             ("a lambda holding a call-free list comprehension handed to the notify statement as its msg", "the notify",
-             'self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, True), msg=(lambda: [p for p in (1, 2)]))', window),
+             'self.assertFalse(km._notify_bus_peer("TESTHOST", 2, True), msg=(lambda: [p for p in (1, 2)]))', window),
             ("a lambda holding a call-free set comprehension as the notify's own argument", "the notify",
-             'self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, (lambda: {p for p in (1, 2)})))', window))
+             'self.assertFalse(km._notify_bus_peer("TESTHOST", 2, (lambda: {p for p in (1, 2)})))', window))
         lines = cls_src.splitlines(keepends=True)
 
         def with_args(fn, args):           # the one-line header of a def of the test, its parameters replaced
@@ -19685,7 +19685,7 @@ class HermeticKernelPostal(unittest.TestCase):
                  _plant_at(cls_src, shape["wait"], 'try:\n    km._notify_bus_origin_trust("TESTHOST", "directed")\nfinally:\n    pass', "before"),
                  [wait_line, wait_line + 1, wait_line + 3]),
                 ("a second notify statement after the test's own",
-                 _plant_at(cls_src, shape["notify"], 'self.assertFalse(km._notify_bus_peer("TESTHOST", 50003, True))', "after"), [notify_end + 1])):
+                 _plant_at(cls_src, shape["notify"], 'self.assertFalse(km._notify_bus_peer("TESTHOST", 3, True))', "after"), [notify_end + 1])):
             with self.assertRaises(AssertionError, msg="%s: the pin passed it" % label) as caught:
                 self._guard_shape(planted)
             self.assertIn("other statements at lines %s)" % named, str(caught.exception), "%s: the message names each statement of the window that runs "
@@ -19696,11 +19696,11 @@ class HermeticKernelPostal(unittest.TestCase):
         # wrapper's, every pin passed). Both written out here, not read from what the pin reads, so a kind dropped from
         # _REPEATS or a row dropped from the name rule leaves its plant passing; held equal to them after each loop, so
         # one added without a plant fails the test
-        repeats = (("a list comprehension", ast.ListComp, '[km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)], [False, False]'),
-                   ("a set comprehension", ast.SetComp, '{km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)}, {False}'),
+        repeats = (("a list comprehension", ast.ListComp, '[km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)], [False, False]'),
+                   ("a set comprehension", ast.SetComp, '{km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)}, {False}'),
                    ("a dict comprehension", ast.DictComp,
-                    '{p: km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)}, {50002: False, 50003: False}'),
-                   ("a generator expression", ast.GeneratorExp, '(*(km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)),), (False, False)'))
+                    '{p: km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)}, {2: False, 3: False}'),
+                   ("a generator expression", ast.GeneratorExp, '(*(km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)),), (False, False)'))
         for what, _, args in repeats:
             with self.assertRaises(AssertionError, msg="the notify run twice by %s: the pin passed it" % what) as caught:
                 self._guard_shape(_plant_at(cls_src, shape["notify"], 'self.assertEqual(%s, "planted")' % args, "replace"))
@@ -19733,14 +19733,14 @@ class HermeticKernelPostal(unittest.TestCase):
         # not set), and the port the notify dials changed before the window, the test's own km.BUS_PORT = 1 rewritten
         # and a second assignment before the rebind (the re-verifier's on the twenty-seventh; the executed pin reds on
         # each)
-        notify_call = 'km._notify_bus_peer("TESTHOST", 50002, True)'
+        notify_call = 'km._notify_bus_peer("TESTHOST", 2, True)'
         port_set = [s for s in shape["fn"].body if _assign_to(s, ["km", "BUS_PORT"]) and isinstance(s.value, ast.Constant)]
         self.assertEqual([ast.unparse(s) for s in port_set], ["km.BUS_PORT = 1"], "the guard test sets km.BUS_PORT = 1 once, in a statement of its own body")
         self.assertEqual(cls_src.count(notify_call), 1, "the guard test's notify call is written once as %s" % notify_call)
         truth = _plant_at(cls_src, shape["rebind"], "class _K:\n    def __bool__(_s):\n        km._ensure_postal_bus()\n"
                           "        return True\n_k = _K()", "before").replace(notify_call, notify_call.replace("True", "_k"))
         timeout = _plant_at(_plant_at(cls_src, shape["wait"], "%(ended)s = %(event)s.wait(_t)" % names, "replace"), shape["rebind"],
-                            'class _T:\n    def __gt__(_s, o):\n        km._notify_bus_peer("TESTHOST", 50003, True)\n        return True\n\n'
+                            'class _T:\n    def __gt__(_s, o):\n        km._notify_bus_peer("TESTHOST", 3, True)\n        return True\n\n'
                             "    def __float__(_s):\n        return 60.0\n_t = _T()", "before")
         for label, planted in (("the real revive on a thread through km.threading before the rebind",
                                 _plant_at(cls_src, shape["rebind"], "km.threading.Thread(target=km._revive_postal_bus, daemon=True).start()", "before")),
