@@ -1319,17 +1319,15 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "once, by one top-level plain assignment, to a call of `compile` handed a string or bytes constant (and at most a "
                 "flags argument that is an int constant, an attribute of that name, or their `|`) on a name the module binds to "
                 "the standard library's `re` by binding is read through its `.search`, `.match`, `.fullmatch` and `.findall`, and "
-                "through its `.sub` where the replacement is a string or bytes constant holding no backslash, which change "
-                "nothing, so such a call's arguments are the page text and the compiled name holds none of its own; a `.sub` with "
-                "any other replacement (one holding a backslash, which `re` may expand as a template escape or a group reference "
-                "into text the replacement does not spell, a name, a callable, a starred argument or a `**`) is refused by name, "
-                "since "
-                "the census does not model template expansion; the proof by binding is the digest leaf's (below), with its limit, "
-                "so a module object stored in "
-                "sys.modules under that name before the import binds it, or a function of the module replaced by an attribute "
-                "store, is not seen. The census reads a page only where the bytes a browser decodes are the text it scans, which "
-                "it reads as UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding a byte past ASCII (a "
-                "byte order mark, whole or split across constants, among them); page text holding U+FEFF, refused on the safe side "
+                "through its `.sub` where the replacement is a string or bytes constant holding no backslash, which change nothing, so "
+                "such a call's arguments are the page text and the compiled name holds none of its own; a `.sub` with any other "
+                "replacement (one holding a backslash, which `re` may expand as a template escape or a group reference into text the "
+                "replacement does not spell, a name, a callable, a starred argument or a `**`) is refused by name, since the census "
+                "does not model template expansion; the proof by binding is the digest leaf's (below), with its limit, so a module "
+                "object stored in sys.modules under that name before the import binds it, or a function of the module replaced by an "
+                "attribute store, is not seen. The census reads a page only where the bytes a browser decodes are the text it scans, "
+                "which it reads as UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding a byte past ASCII "
+                "(a byte order mark, whole or split across constants, among them); page text holding U+FEFF, refused on the safe side "
                 "because a leading U+FEFF is a byte order mark the page's UTF-8 bytes carry; page text holding a NUL, by which a "
                 "browser may read interleaved NULs as UTF-16; "
                 "page text declaring a charset other than utf-8 (a `charset=` in any case, as a "
@@ -1337,11 +1335,10 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "`encoding=`, followed by any label but utf-8) in a string or bytes constant, an f-string's literal part or the "
                 "joined text of a join of string constants; a script-running content type whose parameters name a charset other "
                 "than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD, "
-                "U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (any part "
-                "but a string constant among its pieces, between two literals or as one half: a name's text, a call, a conditional "
-                "expression or a bytes constant, which the census reads each on its own) is read as each text spells it. The "
-                "routes are derived from the calls of `_send` the scan reads "
-                "(spelled `_send(...)` or `<x>._send(...)`; a call through a "
+                "U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (any part but a "
+                "string constant among its pieces, between two literals or as one half: a name's text, a call, a conditional expression "
+                "or a bytes constant, which the census reads each on its own) is read as each text spells it. The routes are derived "
+                "from the calls of `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through a "
                 "name computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A "
                 "`_send` call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in "
                 "its file, direct in the call's own class body (a call through self: a call on a name that is self by binding, the first "
@@ -9043,6 +9040,18 @@ AT_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AT_PLANTS)
 # algorithm, hda an attribute of a class of the file, hdx hashlib's new and hdv an attribute of a call's return, each silent there),
 # hdl such a digest reached through a local and base64, refused where resolve meets it (by its undrawn .decode(), as agb is), and hdk
 # (a string naming sha256) and hde (key, msg and digestmod by their keywords) leaves, silent at both heads.
+# (sb), the 16:5xZ addendum's (1) to that ruling, the decoding class through a substitution: a compiled pattern's .sub read through only
+# where its replacement is a string or bytes constant holding no backslash, any other replacement refused by name (re may expand a
+# backslash in a replacement as a template escape or a group reference, and calls a replacement that is a function, into text the
+# replacement does not spell). nsz, nso and nsn put a NUL (`\0`, `\000`) or a newline (`\n`) in place of each Q of a page encoded
+# UTF-16LE with its NULs spelled Q, which Python serves as that page with no byte order mark; nsf and so1 put an f (`\146`) in place of
+# the Q of `Qetch`, nsg, sgn, sgk and sbb rebuild `fetch` from the group `fe` (`\1tch`, `\g<a>tch`, by its keyword, in bytes), snm (a
+# name), sla (a lambda), sst (a starred argument), skw (`**`), sss (a constant, then a starred subject) and skk (a constant, then `**`)
+# put the f there too, each served by Python as a working fetch; sz1 puts a NUL after a page whose fetch the subject holds; nsb's `\x00`
+# re refuses as a bad escape at run time, refused here all the same. Each was silent at the reviewed head (sz1 read there with no
+# refusal) and is refused at its line; nsc and sbn (an empty str and bytes replacement), psfa (a .findall's return joined) and psse (a
+# .search's return) are read at both heads, their fetches sites, and sz1's subject fetch is a site beside its refusal (RD_SB_SUBJECT);
+# snb and srq, an f put in place of a Q by place and by keyword, are the join limit's witnesses (RD_SB_LIMIT).
 def _rd_u16(tag):
     """A plant's page encoded as UTF-16LE, as escapes in a bytes literal of the probe's source."""
     return "".join("\\x%02x" % b for b in (FGH_PAGE % tag).encode("utf-16-le"))
@@ -9203,10 +9212,10 @@ RD_READ = ("zmu", "zxu", "zcn", "zcp", "zcq", "chg", "cho", "chv", "chp", "nsc",
 # a substitution refused by its replacement whose subject is still read, its fetch a site beside the refusal
 RD_SB_SUBJECT = ("sz1",)
 # the witnesses of item 1's stated limit, silent at both heads: a charset declaration split across texts the census reads apart (any
-# part but a string constant between the halves: a name between two literals in zln, a name as one half in zlh, a call in dcl, a
-# conditional expression in dif, or bytes constants, which the census reads each on its own, in zlb), each read as each text spells
-# it, so neither refused nor, the fetch split by an ISO-2022-JP escape the whole declaration's decoder drops, a site; a browser
-# decodes the page whole
+# part but a string constant among its pieces, between two literals or as one half: a name between two literals in zln, a name as one
+# half in zlh, a call between them in dcl, a conditional expression between them in dif, or bytes constants, which the census reads
+# each on its own, in zlb), each read as each text spells it, so neither refused nor, the fetch split by an ISO-2022-JP escape the
+# whole declaration's decoder drops, a site; a browser decodes the page whole
 RD_LIMIT = ("zln", "zlh", "dcl", "dif", "zlb")
 # the witnesses of the join limit at a substitution, silent at both heads: a replacement with no backslash, read apart from the subject
 # it is inserted into (snb by its place, srq by its keyword), so a fetch the insertion completes is not seen
