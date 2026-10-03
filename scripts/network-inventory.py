@@ -4692,11 +4692,13 @@ def _body_param(d, pos, me, tree, rebinds=(), shadow=False, texts=None):
     codec, in their roles (_send_preamble). Any other statement refuses by its kind, its line and the shape it lacks ("an Expr
     statement at line N in no shape the census lists for an Expr before the end_headers (the response line, ...)"), or the count
     its shape is listed for ("an Assign statement at line N in the shape of the codec, which the census lists once"), or the order
-    it stands outside ("an Expr statement at line N outside the order (...)"), a statement in a listed shape holding a string
-    constant with a CR or LF in a header call's arguments by that constant and its line ("a Constant holding a CR or LF in a
-    header call at line N"), and a node of another kind by its kind and line ("a With statement at line N", "a FunctionDef
-    statement at line N"): among them a statement after the end_headers (end_headers writes the header buffer to the stream, so a
-    header call after it would reach the body), a second end_headers, a definition
+    it stands outside ("an Expr statement at line N outside the order (...)"), a statement in a listed shape whose builtin or
+    module constant fails its proof by that proof ("getattr at line N, a builtin in a file that calls exec at line M, which may
+    rewrite the builtins at run time", "the module constant X, whose bound text holds a CR or LF, as a header value at line N"), a
+    statement in a listed shape holding a string constant with a CR or LF in a header call's arguments by that constant and its
+    line ("a Constant holding a CR or LF in a header call at line N"), and a node of another kind by its kind and line ("a With
+    statement at line N", "a FunctionDef statement at line N"): among them a statement after the end_headers (end_headers writes
+    the header buffer to the stream, so a header call after it would reach the body), a second end_headers, a definition
     with none, and any other rebinding of the page parameter (another assignment, an augmented or annotated assignment, a walrus,
     a loop or with target, an import, an except name, a del, a match capture, a def, class or nested parameter of its name),
     another codec name or a second argument to `.encode` (either can name a codec or an error handler the file registers at run
