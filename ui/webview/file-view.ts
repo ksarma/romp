@@ -3190,10 +3190,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   and the window's, or the document's and the window's, Firefox), the focus leaving at the click's release and nothing
   //   else there; in a finger's tap before its pointerup, one run of the focus leaving this window in one of those orders,
   //   a finger held while the focus leaves this window once (any other run left for the grammar), and the mouse's pointermoves
-  //   and mousemoves with no button down, the mouse moving during the tap; and in a mouse's press between its mousedown and its
-  //   pointerup, a finger's pointermoves with the contact down, a resting finger moving during the click. Every other chain is
-  //   refused, by construction: a mouse event with no button down inside a press, a mouse-typed pointer event anywhere in a tap
-  //   and a mouse event in a tap's contact, but in a finger's contact the four boundary events to no element and the mouse's moves
+  //   and mousemoves with no button down, the mouse moving with no button down during the tap's contact; and in
+  //   a mouse's press between its mousedown and its pointerup, a finger's pointermoves with the contact down,
+  //   a resting finger moving during the click. Every other chain is refused, by construction: a mouse event
+  //   with no button down inside a press, a mouse-typed pointer event anywhere in a tap and a mouse event in
+  //   a tap's contact, but in a finger's contact the four boundary events to no element and the mouse's moves
   //   with no button down, a tap with no compatibility mousemove, a window's blur but where a read-out takes it out, a
   //   drag, a context menu, an auxclick, a cancel, a second pointerdown, a touch event in a press but a finger's move in
   //   a mouse's, a boundary event to no element with the button down, and any sign the grammar does not name. The read-outs
@@ -3292,7 +3293,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // inBrowser) does not set; a probe kept out of the tree that set it read that order opening the tab with the sign covered at
   // 142ade155 and refused here, the next click opening.
   // The retired blur's rule's node guard stands as the allowlist refusing its orders: its rows of the mouse's and a pen's held
-  // press, of Firefox's and WebKit's tap and of the two costs are red at d61eb027d, which read no blur, and under M-OFF; its row
+  // press, of Firefox's and WebKit's tap and of the two costs are red at d61eb027d, which read no blur (with FOCUS_LEAVING's
+  // line added to its file-view.ts, without which the guard stops at its precondition), and under M-OFF; its row
   // of an element's blur with no focus after it is now extra5-1's closure with the focus not back and a cost, and its rows of the
   // window's blur alone between a mouse click's pointerup and its mouseup and in a finger's contact are refused, since
   // the focus-leaving read-outs take the focus leaving this window only as the whole of what comes between a mouse's pointerup
@@ -3490,13 +3492,23 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // document's or both, then the window's (round 19's measurement of the blur's rule, its recorded rows replayed: Chromium 18
   // and 14, Firefox 14 and WebKit 18, with Firefox's 2 taps whose own pointerdown took the focus out of the viewer's window, 66 in
   // all, and the first own-gesture adversary's rows at d9fb76da0), and on a device with a mouse and a touchscreen, a finger's tap
-  // during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves (Chromium,
+  // during whose contact the mouse moves in the viewer with no button down and crosses no element's edge there, and a
+  // mouse click during which a finger resting on the viewer moves and Chromium does not cancel its touch (Chromium,
   // touch emulated, that adversary's rows); in the browser at 5288151dd, which brought the read-outs, the first opened 13 of 13 in
   // each engine (the Files pane and the chat), the second 13 of 13 in Chromium, the device's tap and click 5 of 5 each and the
   // pen's press during which the mouse moves 0 of 5, each as the same probe read it at bef9ff8fc but the pen's, 5 of 5 there. The
-  // press held while the focus moves out of the viewer's window, and a tap whose pointerup the focus moves at, paid the retired
-  // blur rule's cost and pay the allowlist's the same (round 19's measurement: a mouse press held on the control or on
-  // the picture while the page or a peer frame moves the focus, Chromium 18 of 18, Firefox 14 of 14 and WebKit 18 of 18
+  // device's tap and click open only as far as the read-outs take their events: the mouse's pointermoves and mousemoves
+  // with no button down before the finger's pointerup, its boundary events to no element being the third widening's, so the
+  // mouse moving with its button held or crossing an element's edge during a finger's tap is refused (both costs below), and
+  // a finger's pointermoves with the contact down between the mouse's mousedown and its pointerup, while no read-out takes
+  // the pointercancel and the pointerout to no element of a touch that Chromium cancels, so a click during which Chromium cancels
+  // the touch is refused (a cost below). In a probe of these fixes at 28b5012fb kept out of the tree (Chromium, the Files pane
+  // and the chat, five of each), a resting finger moved 2, 5, 10, 14 or 15 px to the right during a mouse click
+  // opened, the finger's only events in the click's chain being its pointermoves, and one moved 16, 17, 20, 30
+  // or 60 px was refused, its touch cancelled after the 16th of its 1 px moves. The press held while the focus
+  // moves out of the viewer's window, and a tap whose pointerup the focus moves at, paid the retired blur rule's
+  // cost and pay the allowlist's the same (round 19's measurement: a mouse press held on the control or on the
+  // picture while the page or a peer frame moves the focus, Chromium 18 of 18, Firefox 14 of 14 and WebKit 18 of 18
   // for each mover, a pen's press held so, Chromium 14 of 14, the focus moved at a mouse click's own pointerdown, 18, 14
   // and 18, and at a tap's pointerup, 18, 14 and 18); so does a Firefox press dragged out of the frame and back, the retired
   // held arm's cost (8 of 8). By reading: any event the grammar does not name that a real gesture brings into a press or
@@ -3542,9 +3554,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // probe and not costs: a resting finger that leaves the viewer or crosses an element's edge within the touch slop during a
   // mouse click opens under both, Chromium keeping the touch captured so that the chain carries the finger's moves alone, which a
   // read-out takes; a finger lifted during a mouse click opens nothing under the allowlist, bef9ff8fc's gate or those reads,
-  // Chromium sending the finger's tap's click in place of the mouse's; and the mouse entering or leaving the viewer during a
-  // finger's contact opens under both when its path crosses no element's edge in the viewer, its boundary events to no element
-  // being the third widening's (a path that crosses one is a crossing above, refused). By reading, not driven: the
+  // Chromium sending the finger's tap's click in place of the mouse's; and the mouse entering or leaving the viewer with no button
+  // down during a finger's contact opens under both when its path crosses no element's edge in the viewer, its boundary events
+  // to no element being the third widening's (a path that crosses one is a crossing above, refused). By reading, not driven: the
   // device's gestures in Firefox and WebKit; WebKit's hover update between elements inside a finger's slow tap after the content
   // moved under a resting mouse; a touch-order pen's double tap's second tap (their tail takes its mouseup of detail 2); and
   // perhaps a capture handler's focus move that no census drove. A touch-order pen's tap with the focus leaving before its

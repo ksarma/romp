@@ -8801,7 +8801,8 @@ mousedown or a mouse resting in the viewer, the viewer's window hears a mouseout
 over the control, which goes away during the press, took that tap's slot and opened the tab with the sign covered at its
 start, red at ddb446fae (the file review's round 19, extra8-2), which the allowlist refuses by that mouseout in the tap's chain,
 the mouseout Firefox sends 20 to 35 ms after the viewer's own tap's click falling in no chain a click reads; and the blur guard's
-rows of a mouse's and a pen's held press and of Firefox's and WebKit's tap, red at d61eb027d, are red under M-OFF, its row of an
+rows of a mouse's and a pen's held press and of Firefox's and WebKit's tap, red at d61eb027d (with FOCUS_LEAVING's
+line added to its file-view.ts, without which the guard stops at its precondition), are red under M-OFF, its row of an
 element's blur with no focus after it now extra5-1's closure with the focus not back and a cost, and its rows of the window's
 blur alone between a mouse click's pointerup and its mouseup and in a finger's contact refused, since the focus-leaving
 read-outs take the focus leaving this window only as the whole of what comes between a mouse's pointerup and its mouseup
@@ -8834,9 +8835,9 @@ whole, the focus leaving this window in one of three orders, an element's blur, 
 element's blur and the window's, Chromium and WebKit; an element's, the document's and the window's, or the document's and the
 window's, Firefox), the focus leaving at the click's release and nothing else there; in a finger's tap before its pointerup, one
 run of the focus leaving this window in one of those orders, a finger held while the focus leaves this window once (any other run
-left for the grammar), and the mouse's pointermoves and mousemoves with no button down, the mouse moving during the tap;
-and in a mouse's press between its mousedown and its pointerup, a finger's pointermoves with the contact down, a resting
-finger moving during the click; and every other chain is refused by construction, a mouse event with no button down inside
+left for the grammar), and the mouse's pointermoves and mousemoves with no button down, the mouse moving with no button down during
+the tap's contact; and in a mouse's press between its mousedown and its pointerup, a finger's pointermoves with the contact down, a
+resting finger moving during the click; and every other chain is refused by construction, a mouse event with no button down inside
 a press, a mouse-typed pointer event anywhere in a tap and a mouse event in a tap's contact, but in a finger's contact
 the four boundary events to no element and the mouse's moves with no button down, a tap with no compatibility mousemove,
 a window's blur but where a read-out takes it out, a drag, a context menu, an auxclick, a cancel, a second pointerdown,
@@ -9032,13 +9033,22 @@ a finger held while the focus leaves this window once, each in one of the three 
 blur, the document's or both, then the window's (round 19's measurement of the blur's rule, its recorded rows replayed:
 Chromium 18 and 14, Firefox 14 and WebKit 18, with Firefox's 2 taps whose own pointerdown took the focus out of the viewer's
 window, 66 in all, and the first own-gesture adversary's rows at d9fb76da0), and on a device with a mouse and a touchscreen, a
-finger's tap during which the mouse moves in the viewer and a mouse click during which a finger resting on the viewer moves
+finger's tap during whose contact the mouse moves in the viewer with no button down and crosses no element's edge
+there, and a mouse click during which a finger resting on the viewer moves and Chromium does not cancel its touch
 (Chromium, touch emulated, that adversary's rows), in the browser at 5288151dd, which brought the read-outs, 13 of 13 in each
-engine, 13 of 13 in Chromium and 5 of 5 each, the pen's press during which the mouse moves 0 of 5 there and 5 of 5 at bef9ff8fc;
-and by reading any event the grammar does not name that a real gesture brings into a press or a tap, since the allowlist refuses
-each such chain by construction, among them every place below where the incremental reads would open (24 families of them measured
-since, below), and besides them a touch-order pen's tap with the focus leaving before its compatibility mousedown, an eraser
-or a barrel button and any event of an engine not measured (the file review's round 17, tests-1 with regression-1, its
+engine, 13 of 13 in Chromium and 5 of 5 each, the pen's press during which the mouse moves 0 of 5 there and 5 of 5 at
+bef9ff8fc, the device's tap and click opening only as far as the read-outs take their events (the mouse's pointermoves
+and mousemoves with no button down before the finger's pointerup, its boundary events to no element being the third
+widening's, so the mouse moving with its button held or crossing an element's edge during a finger's tap is refused, and a
+finger's pointermoves with the contact down between the mouse's mousedown and its pointerup, while no read-out takes the
+pointercancel and the pointerout to no element of a touch that Chromium cancels, so a click during which Chromium cancels the touch
+is refused, each a cost below), and in a probe of these fixes at 28b5012fb kept out of the tree (Chromium, the Files pane and the
+chat, five of each) a resting finger moved 2, 5, 10, 14 or 15 px to the right during a mouse click opened, the finger's only events
+in the click's chain being its pointermoves, and one moved 16, 17, 20, 30 or 60 px was refused, its touch cancelled after the 16th
+of its 1 px moves; and by reading any event the grammar does not name that a real gesture brings into a press or a tap, since the
+allowlist refuses each such chain by construction, among them every place below where the incremental reads would open (24 families
+of them measured since, below), and besides them a touch-order pen's tap with the focus leaving before its compatibility mousedown,
+an eraser or a barrel button and any event of an engine not measured (the file review's round 17, tests-1 with regression-1, its
 round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them, the closing check after those
 fixes, the closing check at 142ade155 after the fixes for the file review's round 18, the file review's round 19, extra5-1,
 extra8-1 and extra8-2, and its round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions on them);
@@ -9080,9 +9090,9 @@ Measured in Chromium in the same probe and not costs: a resting finger that leav
 edge within the touch slop during a mouse click opens under both, Chromium keeping the touch captured so that
 the chain carries the finger's moves alone, which a read-out takes; a finger lifted during a mouse click opens nothing under the
 allowlist, bef9ff8fc's gate or those reads, Chromium sending the finger's tap's click in place of the mouse's; and the mouse
-entering or leaving the viewer during a finger's contact opens under both when its path crosses no element's edge in the viewer,
-its boundary events to no element being the third widening's (a path that crosses one is a crossing above, refused).
-By reading, not driven: the device's gestures in Firefox and WebKit; WebKit's hover update between elements inside a
+entering or leaving the viewer with no button down during a finger's contact opens under both when its path crosses no element's
+edge in the viewer, its boundary events to no element being the third widening's (a path that crosses one is a crossing above,
+refused). By reading, not driven: the device's gestures in Firefox and WebKit; WebKit's hover update between elements inside a
 finger's slow tap after the content moved under a resting mouse; a touch-order pen's double tap's second tap (their tail takes its
 mouseup of detail 2); and perhaps a capture handler's focus move that no census drove. At each the click or the tap opens nothing
 and reveals the control, the next click opening, while a touch-order pen's tap with the focus leaving before its compatibility
@@ -9473,11 +9483,15 @@ under an element that cancels its mousedown and its held-move form, WebKit's hov
 covered click refused in each of three runs and opened in every run at bef9ff8fc (the Chromium leg runs the same module's cell of
 extra5-1's still shape with the focus not back), and, since the coordinator's ruling on the allowlist's build, no cell of the
 four read-outs, which ui/webview/file-view-outline.test.ts pins in node (an admit row for each read-out, red under the mutant
-that drops it and at 5501b7a79, and rows that keep refused the window's blur alone at a mouse click's release and in a finger's
-contact, and an element's blur then the window's, Chromium's and WebKit's order, before a press's pointerup, after a tap's, after
-a desktop-order pen's and before a touch-order pen's, each red under a mutant that widens its read-out there, and, since the
-ruling after the focused re-check at ff255168f, rows that keep refused three wider forms, the focus leaving after a mouse click's
-mouseup, between a tap's compatibility mousedown and its mouseup, and a second time in a finger's contact, each red under a mutant
+that drops it and at 5501b7a79, the finger's in each of the three orders since the ruling on 28b5012fb, its row of the document's
+blur then the window's also red under a finger's read-out without that order, and rows that keep refused the window's blur
+alone at a mouse click's release and in a finger's contact, each red under a mutant that widens its read-out there,
+and the focus leaving before a press's pointerup, after a tap's, after a desktop-order pen's and before a touch-order
+pen's, an element's blur then the window's, Chromium's and WebKit's order, and since the ruling on 28b5012fb every
+order the read-outs take, read from file-view.ts's FOCUS_LEAVING, each red under a mutant that widens its read-out
+there and under one restricted to one order, in that order alone, and, since the ruling after the focused re-check
+at ff255168f, rows that keep refused three wider forms, the focus leaving after a mouse click's mouseup, between
+a tap's compatibility mousedown and its mouseup, and a second time in a finger's contact, each red under a mutant
 that widens its read-out that way and, since the ruling after the light read at 7186e10ab, run in every order the read-outs
 take, read from file-view.ts's FOCUS_LEAVING, and red under such a mutant restricted to one of Firefox's two orders,
 and also an admit row of a triple click's third click, red under a token that leaves a mouseup's detail uncapped or

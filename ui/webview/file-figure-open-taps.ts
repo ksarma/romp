@@ -210,8 +210,14 @@
 //   held while the focus leaves this window once, each in one of the three orders the read-outs take, an element's blur, the
 //   document's or both, then the window's (round 19's measurement of the blur's rule, its recorded rows replayed, Chromium
 //   18 and 14, Firefox 14 and WebKit 18, with Firefox's 2 taps whose own pointerdown took the focus out of the viewer's
-//   window, 66 in all), and a finger's tap during which the mouse moves in the viewer and a mouse click during which a finger
-//   resting on the viewer moves (Chromium, touch emulated); and by reading any event the grammar does not name that a real gesture
+//   window, 66 in all), and a finger's tap during whose contact the mouse moves in the viewer with no button down and
+//   crosses no element's edge there, and a mouse click during which a finger resting on the viewer moves and Chromium does
+//   not cancel its touch (Chromium, touch emulated: the read-outs take the mouse's moves with no button down before the
+//   finger's pointerup and a finger's pointermoves with the contact down in the mouse's press, so the mouse moving with
+//   its button held or crossing an element's edge, and a touch Chromium cancels during the click, whose pointercancel and
+//   pointerout no read-out takes, are refused, costs below, and in a probe at 28b5012fb kept out of the tree a resting finger moved
+//   2, 5, 10, 14 or 15 px to the right during a mouse click opened and one moved 16, 17, 20, 30 or 60 px was refused, its touch
+//   cancelled after the 16th of its 1 px moves); and by reading any event the grammar does not name that a real gesture
 //   brings into a press or a tap, among them the places below where the incremental reads would open, 24 families of which are
 //   measured since, and the device's gestures in Firefox and WebKit. The read-outs (the coordinator's ruling on the allowlist's
 //   build) add no covered click: each takes events out only where the viewer's own gesture puts them (the focus-leaving
@@ -248,8 +254,8 @@
 //   release (Chromium, Firefox and WebKit), and the focus leaving at a pen's click's release or after its mouseup, a finger
 //   moving during a pen's press, the mouse crossing an element's edge in the viewer during a finger's tap and a pen hovering during
 //   a mouse click (Chromium). Measured in Chromium and not costs: a resting finger that leaves the viewer or crosses
-//   an element's edge within the touch slop during a mouse click, and the mouse entering or leaving the viewer during a finger's
-//   contact on a path that crosses no element's edge in the viewer, open under both, and a finger lifted during a
+//   an element's edge within the touch slop during a mouse click, and the mouse entering or leaving the viewer with no button down
+//   during a finger's contact on a path that crosses no element's edge in the viewer, open under both, and a finger lifted during a
 //   mouse click opens nothing under either. By reading: the device's gestures in Firefox and WebKit, WebKit's
 //   hover update between elements inside a finger's slow tap, a touch-order pen's double tap's second tap, and
 //   perhaps a capture handler's focus move that no census drove (file-view.ts's gate comment says why for each).
