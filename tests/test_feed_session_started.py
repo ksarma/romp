@@ -460,9 +460,9 @@ class HostsCurrentAtTheMint(_Feed):
 class FeedCaptureHoldsTheBuildAlone(_Feed):
     """_feed's err holds every stderr write build_feed makes and nothing else: the backend's one-time construction
     stays out of it (the first _sdk() call, made before the capture opens), and a write from inside the build still
-    reaches it. A test here cannot rely on being the process's first to build the real backend, so each stands a
-    stand-in for one function build_feed calls, wrapping the real one, that writes a line of its own, and reads where
-    each line went. Calls from other threads go straight to the real function: the backend's threads may call _sdk()
+    reaches it. A test here cannot rely on being the process's first to build the real backend, so each test replaces
+    one function build_feed calls with a stand-in that wraps the real one and writes a line of its own, then reads
+    where each line went. Calls from other threads go straight to the real function: the backend's threads may call _sdk()
     while a test runs, and their lines are not this test's."""
 
     def _ask_only(self):
