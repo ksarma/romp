@@ -1,0 +1,15 @@
+---
+title: postal: a host that only dials this bus is reachable while its inbound exchange link is open, so a send to it says queued, not parked (unreachable)
+status: candidate
+where: postal/postal_service.py (_inbound_links, _inbound_links_lock, _inbound_seq and the helpers _peer_conn_closed, _inbound_arrived, _inbound_pre_write, _inbound_outcome, _inbound_forget, _inbound_open, new; the /peer-exchange route's link out-parameter, pre-write probe and outcome; peer_exchange_handle's arrival; the busId fold's forget; the /send relay leg's queued answer and its /redial guard; _sent_receipts parkedUp); tests/test_postal_peers.py (_TwoBusHarness._serve, moved up; AHostThatDialsUsIsReachedOnItsNextExchange, TheInboundLinkUnits and InboundLinkLockDiscipline, new); the setUps that clear the peer tables in tests/test_bus_seed_token.py, test_postal_peer_identity.py, test_postal_peer_tier.py, test_postal_quarantine.py, test_postal_read_receipts.py, test_postal_relay_honesty.py, test_postal_remote_sids_mirror.py, test_postal_self_send.py and test_postal_via_dedupe.py; upstream/2026-10-03-postal-dialed-only-host-reachable.md (this entry)
+added: 2026-10-03
+pr:
+tier: fix
+offered:
+closed:
+---
+A bus whose peer only dials it (the peer's kernel holds an ssh forward to this bus; this bus's own kernel holds no tunnel to the peer, so PEERS has no row for it, or a portless or held-down one) answered every /send to that peer with "parked for <host> (unreachable)" and posted a /redial its kernel could not act on, and check_sent read "(unreachable)" too, although the mail crossed on the peer's next long-poll exchange. The send path and the receipt read only PEERS, which only this bus's own kernel's tunnel notifies fill.
+
+The fix counts a host reachable while its inbound exchange link is open, keyed on events, with no seen-at window: an exchange's arrival opens it, a response write that returned with a 200 keeps it open across the gap before the next dial, and the dialer's FIN or reset (a non-blocking peek on the live exchange's socket), a write that raised, a refused exchange or a handler exception close it; the newest evidence decides. A send to an open link answers "queued for '<name>' on <host>: it goes out on <host>'s next poll of this machine", keeps the parked key and posts no /redial; a closed one posts /redial only for a host with a port row. The receipt's parkedUp reads the same rule. A dialer that stops with no event this side sees (a silent partition, a bus that dies between exchanges, a kernel mark-down that leaves the tunnel up) leaves the link open until newer evidence arrives, so the note says queued then: a delay, not a loss. A refused dial closes every link whose arrivals declared its host, so a second bus declaring the same name closes a healthy link (two buses under one name already collide in PEER_STATE).
+
+The project's public tree (upstream/main, last updated 2026-09-24) carries the same send-side branch (postal/postal_service.py `if PEERS.get(phost, {}).get("up"):` and the parkedUp read).

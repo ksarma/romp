@@ -244,6 +244,7 @@ class TheSeedLearnsNoTokenAndTheNotifySuppliesIt(_Harness):
         pm.KERNEL_BASE = "http://127.0.0.1:%d" % self.kern.server_address[1]
         pm._peer_threads_reconcile = lambda host: None      # the dialer is not under test
         pm.PEERS.clear()
+        pm._inbound_links.clear()
 
     def tearDown(self):
         pm.KERNEL_BASE, pm._peer_threads_reconcile, saved = self._pm_saved

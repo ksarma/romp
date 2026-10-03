@@ -304,6 +304,7 @@ class Mirror(unittest.TestCase):
         saved = (dict(pm.HEARTBEATS), dict(pm.PEER_STATE), dict(pm.PEERS), _listing_record(), pm._PEERS_SEEDED[0],
                  set(answered))                       # round-5 ruling B): one test's far buses are not another's
         pm.HEARTBEATS.clear(); pm.PEER_STATE.clear(); pm.PEERS.clear(); answered.clear()
+        pm._inbound_links.clear()
         _forget_listing()                             # no listing read yet in this "process": the writer releases nothing
         pm._PEERS_SEEDED[0] = False                   # ...and no seed from the kernel's list of links
 
