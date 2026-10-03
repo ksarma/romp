@@ -800,6 +800,7 @@ global.requestAnimationFrame = (fn) => { FRAMES.push(fn); return FRAMES.length; 
 global.cancelAnimationFrame = (id) => { if (FRAMES[id - 1]) FRAMES[id - 1] = null; };
 const frame = () => task(() => { const fs = FRAMES.splice(0); fs.forEach((fn) => fn && fn(NOW)); });
 const scroll = () => task(() => (DOCL.scroll || []).slice().forEach((f) => f({ type: 'scroll' })));
+const transition = () => task(() => (DOCL.transitionend || []).slice().forEach((f) => f({ type: 'transitionend' })));   // a CSS transition ended somewhere in the page
 // a short view and a short list (a landscape phone with the keyboard up): the page's height and the list's bottom
 const shortList = (viewH, bottom) => { document.documentElement.clientHeight = viewH; CONTENT.getBoundingClientRect = () => ({ top: CTOP, left: 0, right: 390, bottom }); };
 """
@@ -883,6 +884,38 @@ out({ atPaint, scrolled, rereads, cleared, afterChange });""")
         self.assertLessEqual(o["rereads"], 1, "a scroll re-reads the boxes the last scan found; it does not scan the page's styles again")
         self.assertIs(o["cleared"]["painted"], False)
         self.assertEqual(o["afterChange"], {"watching": 0, "scrollListeners": 0}, "with the badge down, the frame the next change asks for ends the watch: no observer, no scroll listener")
+
+    def test_a_column_of_controls_through_the_badges_column_sends_it_left_not_down_onto_them(self):
+        # round 2, extra5-1: a column of controls outside the list, from 50 px to the page's bottom, under the badge's column. The
+        # walk that prefers the shorter step goes down the column (each step down, 50 px, is shorter than the 90 px step left) and
+        # passes the list's bottom; at a4262a94d the fallback then weighed only places at the right edge, each over the column or
+        # the header's control, and took the least covered of them, over both. A second walk from the first place steps left
+        # wherever the badge fits
+        o = self._fit(r"""
+add(null, [0, 0, 390, 44], { sel: 'button' });                        // the header's session picker, across the page
+for (let y = 50; y < 844; y += 22) add(null, [300, y, 80, 22], { sel: 'button' });
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "98px", "painted": True},
+                         "one step left of the column (390 - 300 + 8), at the first place's height, clear (a4262a94d: 39 px at the right edge, over the header's "
+                         "control and the column)")
+
+    def test_the_end_of_a_transition_re_reads_the_boxes_while_painted(self):
+        # round 2, open call 7: the scroll marks move to their new places by a 180 ms CSS transition, which no change to the page or
+        # scroll reports, and WebKit read them mid-move at the scroll. The painted badge is placed again at the end of a transition
+        # (a transitionend listener on the document, capturing): a re-read, no scan, at the next frame
+        o = self._fit(r"""
+const mark = add(null, [381, 300, 8, 2], { sel: '[data-act]' });
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+mark.box[1] = 60;                                                     // the mark ends its move under the badge
+const reads = STYLE_READS; transition(); const beforeFrame = at(); frame(); const ended = { place: at(), reads: STYLE_READS - reads };
+fire('romp:wsfresh'); change(CONTENT); frame();
+out({ atPaint, beforeFrame, ended, listenersAfter: (DOCL.transitionend || []).length });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True})
+        self.assertEqual(o["beforeFrame"], {"top": "52px", "right": "8px", "painted": True})
+        self.assertEqual(o["ended"], {"place": {"top": "52px", "right": "17px", "painted": True}, "reads": 1},
+                         "at the frame after the transition ends, the badge goes left of the mark where it now is (390 - 381 + 8), with no scan")
+        self.assertEqual(o["listenersAfter"], 0, "with the badge down, the watch's end removes the transitionend listener")
 
     # What an overflow container hides does not count (round 2, correctness-1, 2026-10-03). The desktop chat's tab strip (#tabbar,
     # max-height 150 px, overflow-y auto) and the pinned-notes strip (max-height min(11em, 30vh), overflow-y auto) scroll what does

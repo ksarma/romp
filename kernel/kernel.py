@@ -70046,8 +70046,11 @@ def _pane_spin(cid, ignore_id=""):
             # whose overflow clips it, along its chain of containing blocks (rclip; round 2, correctness-1: the desktop chat's tab
             # strip and the pinned-notes strip scroll what does not fit out of view, and the rows they hid below them still pushed
             # the badge down the transcript or, on a short pane, onto a visible tab). From the first place it steps down below what
-            # it would cover, or left of it when that is the shorter move (a narrow control at the right edge, a scroll mark). If no
-            # place above the container's visible bottom is clear (a list shorter than the badge), it takes the place in the pane's
+            # it would cover, or left of it when that is the shorter move (a narrow control at the right edge, a scroll mark). When
+            # that walk reaches the container's visible bottom, a second walk from the first place steps left wherever the badge
+            # fits there with 8 px to spare, and down only where it does not (round 2, extra5-1: a column of controls through the
+            # badge's column sent the first walk down the column and the fallback onto it, while one step left was clear). If
+            # neither walk finds a clear place (a list shorter than the badge), it takes the place in the pane's
             # view, at the right edge and 8 px above or below one of those controls, that covers the least of them, the nearest
             # the first place among equals: a clear one wherever the view's right edge has room for the badge with 8 px to spare
             # above and below, which may be over the chrome's text above the list; only a view without that room leaves it over a
@@ -70065,8 +70068,10 @@ def _pane_spin(cid, ignore_id=""):
             # content, where a session's messages and their clocks change. A change that can add a control (an element added, or a
             # class, style or hidden change on an element the last scan did not hold or that holds elements) scans again; any other
             # (a text change such as the status line's timer, an element removed, a change to a control the last scan holds that
-            # holds no element, such as the composer's text field as it grows) and a scroll re-read the boxes the last scan found
-            # and the boxes that clip them. So a control that appears or moves under the badge moves it on, the viewer opened or the
+            # holds no element, such as the composer's text field as it grows), a scroll and the end of a CSS transition re-read the
+            # boxes the last scan found and the boxes that clip them (the end of a transition: the scroll marks move to their new
+            # places by a 180 ms transition, so the frame after the change that starts the move reads them mid-move, and only the
+            # transition's end says where they stop; WebKit left the badge over a mark after a scroll; round 2, open call 7). So a control that appears or moves under the badge moves it on, the viewer opened or the
             # notice shown, and typing and the timer scan nothing. A sticky element that appears deep in the content, not as the
             # container's own child, is found at the next scan, not at once. No timer. The search runs only while the badge is
             # painted (rwatch starts at the paint and stops at the first frame a change or scroll asks for after the badge is
@@ -70107,23 +70112,29 @@ def _pane_spin(cid, ignore_id=""):
             "if(a[1]){if(x0>l)l=x0;if(x0+p.clientWidth<g)g=x0+p.clientWidth;}if(a[2]){if(y0>u)u=y0;if(y0+p.clientHeight<d)d=y0+p.clientHeight;}}"
             "return g>l&&d>u?{left:l,top:u,right:g,bottom:d}:null;}"
             # the nearest clear place from the first one: past the boxes it would cover, down below them or left of them, whichever
-            # is the shorter move. When none is clear above the container's visible bottom (a list shorter than the badge: a
+            # is the shorter move, and when that walk passes the container's visible bottom, the walk again from the first place
+            # with every step left that fits (rwalk). When neither walk finds a clear place (a list shorter than the badge: a
             # landscape phone with the keyboard up and a long pinned note), the place in the pane's view, at the right edge and 8 px
             # above or below the edge of one of those boxes, that covers the least of them, the nearest the first place among
             # equals: a clear one wherever the view's right edge has room for it with 8 px to spare above and below, and the first
             # place when every place covers as much (the rehearsed check of round 1: before this the first place stood, over the
             # composer's buttons below a list 20 px tall). `again` (a scroll) re-reads the boxes of the controls the last scan
             # found and of the ancestors that clip them: a scroll moves only what is inside the scrolled element
-            "function rfit(y0,again){var b=rb.getBoundingClientRect(),w=b.width,h=b.height,de=document.documentElement,W=de.clientWidth,H,o=[],y=y0,x=8;"
+            "function rfit(y0,again){var b=rb.getBoundingClientRect(),w=b.width,h=b.height,de=document.documentElement,W=de.clientWidth,H,o=[];"
             "if(!w||!h||!W)return [y0,8];H=Math.min(de.clientHeight||1e9,c.getBoundingClientRect().bottom);if(!again||!rob){rob=robs();rwire();}"
             "for(var i=0;i<rob.length;i++){var q=rvis(rob[i]);if(q)o.push(q);}"
-            "for(var k=0;k<64;k++){var L=W-x-w,R=W-x,n=0,hl=W,hb=y;"
-            "for(i=0;i<o.length;i++){var r=o[i];if(r.left<R&&r.right>L&&r.top<y+h&&r.bottom>y){n++;if(r.left<hl)hl=r.left;if(r.bottom>hb)hb=r.bottom;}}"
-            "if(!n)return [y,x];var nx=Math.ceil(W-hl)+8,ny=Math.ceil(hb)+8;if(W-nx-w>=8&&nx-x<=ny-y)x=nx;else y=ny;if(y+h>H-8)break;}"
+            "var p=rwalk(o,y0,w,h,W,H,false)||rwalk(o,y0,w,h,W,H,true);if(p)return p;"
             "var V=de.clientHeight||H,cl=W-8-w,cr=W-8,by=y0,ba=rcov(o,cl,cr,y0,h),bd=0,cs=[];"
             "for(i=0;i<o.length;i++)cs.push(Math.floor(o[i].top-8-h),Math.ceil(o[i].bottom+8));"
             "for(i=0;i<cs.length;i++){var cy=cs[i];if(cy<8||cy+h>V-8)continue;var ca=rcov(o,cl,cr,cy,h),cd=Math.abs(cy-y0);if(ca<ba||(ca===ba&&cd<bd)){by=cy;ba=ca;bd=cd;}}"
             "return [by,8];}"
+            # a walk from the first place (y0, 8 px from the right) past the boxes the badge would cover: at each place it covers
+            # one, the step left of them (when the badge fits there with 8 px to spare) or down below them, the shorter, or with
+            # `left` the step left whenever it fits; the first clear place as [top, right], or null once the badge would pass the
+            # container's visible bottom less 8 px
+            "function rwalk(o,y,w,h,W,H,left){var x=8;for(var k=0;k<64;k++){var L=W-x-w,R=W-x,n=0,hl=W,hb=y;"
+            "for(var i=0;i<o.length;i++){var r=o[i];if(r.left<R&&r.right>L&&r.top<y+h&&r.bottom>y){n++;if(r.left<hl)hl=r.left;if(r.bottom>hb)hb=r.bottom;}}"
+            "if(!n)return [y,x];var nx=Math.ceil(W-hl)+8,ny=Math.ceil(hb)+8;if(W-nx-w>=8&&(left||nx-x<=ny-y))x=nx;else y=ny;if(y+h>H-8)return null;}return null;}"
             # the area of those boxes a badge from l to r and from y to y+h would cover
             "function rcov(o,l,r,y,h){var a=0;for(var i=0;i<o.length;i++){var q=o[i],dx=Math.min(r,q.right)-Math.max(l,q.left),dy=Math.min(y+h,q.bottom)-Math.max(y,q.top);if(dx>0&&dy>0)a+=dx*dy;}return a;}"
             "function rplace(again){if(!rb||!c||!rscroll())return;var t=Math.round(c.getBoundingClientRect().top),y=(t>0?t:0)+8,x=8;"
@@ -70145,9 +70156,9 @@ def _pane_spin(cid, ignore_id=""):
             "function rrec(rs){var any=false,f=false;for(var i=0;i<rs.length;i++){var m=rs[i],g=m.target;if(g===rb||rb.contains(g))continue;any=true;"
             "if(m.type==='childList'){for(var j=0;j<m.addedNodes.length;j++)if(m.addedNodes[j].nodeType===1)f=true;}else if(!rhs||!rhs.has(g)||g.firstElementChild)f=true;}if(any)rwant(f);}"
             "function rwatch(on){try{if(on){if(!rmo&&typeof MutationObserver==='function'&&document.body){rmo=new MutationObserver(rrec);rwire();}"
-            "if(!rsc&&document.addEventListener){document.addEventListener('scroll',rnudge,true);rsc=true;}}"
+            "if(!rsc&&document.addEventListener){document.addEventListener('scroll',rnudge,true);document.addEventListener('transitionend',rnudge,true);rsc=true;}}"
             "else{rob=null;rhs=null;rpins=[];rfull=false;if(rfr){if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(rfr);rfr=0;}if(rmo){rmo.disconnect();rmo=null;}"
-            "if(rsc){document.removeEventListener('scroll',rnudge,true);rsc=false;}}}catch(e){}}"
+            "if(rsc){document.removeEventListener('scroll',rnudge,true);document.removeEventListener('transitionend',rnudge,true);rsc=false;}}}catch(e){}}"
             "if(rb&&c&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(function(){rplace();});rro.observe(c);rro.observe(document.documentElement);}catch(e){}}"
             "rplace();"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
