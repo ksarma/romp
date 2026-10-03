@@ -3483,9 +3483,9 @@ shOut({boot:boot,refused:refused,opened:opened});""")
         r = self._run(r"""
 shOpen();shRecv({type:'ka'});
 shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // a return to a dead socket: the fast path abandons it and dials
-var s1=cueLine();
+var s1=cueLine(),t0=SHNOW;
 SHNOW+=5000;shTick();var s1later=cueLine();                  // 5 s on, the first try still in flight: unchanged
-SHNOW+=11000;shTick();var cutRs=SHSOCKS[1].readyState;       // past the 15 s cut: the watchdog closes the hung dial
+shRunDue(t0+15000);var cutRs=SHSOCKS[1].readyState;          // SH_CONNECT_MS after the dial: the dial's own timer cuts it (iOS item 1a)
 SHSOCKS[1].onclose({code:1006});var s2=cueLine();            // its close: the retry line
 shFireDials();var s2redial=cueLine();                        // the next try dials: the line stands
 shOpen();var up=cueLine();                                   // the link is up: the line goes, with no success line
@@ -3495,7 +3495,7 @@ shOut({s1:s1,s1later:s1later,cutRs:cutRs,s2:s2,s2redial:s2redial,up:up,socks:SHS
         self.assertEqual(r["s1later"], r["s1"], "no change without an event: the shell's tick moves nothing")
         self.assertEqual(r["cutRs"], 3)
         self.assertEqual((r["s2"]["shown"], r["s2"]["text"]), (True, _CUE_HUNG1),
-                         "S2, the second state: after the watchdog cut, the retry line naming the cause once")
+                         "S2, the second state: from the close of the dial's own cut, the retry line naming the cause once")
         self.assertEqual(r["s2redial"], r["s2"])
         self.assertEqual((r["up"]["shown"], r["up"]["text"]), (False, ""), "the open clears it")
         self.assertEqual(r["socks"], 3)
@@ -3582,7 +3582,9 @@ shOut({drop:cueText()});""")
 
     # tests-4 of round 1: the cut's boundary. shCueCuts counts a never-opened close at least SH_CONNECT_MS after its dial, the
     # complement of the redial ladder's refused test, so both readers agree on a close at exactly the cut (delivered directly: the
-    # watchdog's own close comes only past the cut) and on one a millisecond sooner
+    # watchdog's own close comes only past the cut) and on one a millisecond sooner. Since the merge of PR 949 (iOS item 1a) this
+    # is the clock half of the rule, the reading of a close no timer of the dial made (the tick's backstop, or the browser's own);
+    # the close the dial's own cut timer makes counts by its event (shCutHere), the cases below
     def test_a_close_at_exactly_the_connect_cut_is_a_cut_and_one_a_millisecond_sooner_is_a_refusal(self):
         js = _mobile_js()
         cut = int(re.search(r"SH_CONNECT_MS=(\d+)", js).group(1))
@@ -3600,6 +3602,93 @@ shOut({line:cueText(),redial:shDialTimers().map(function(t){return t.ms;})});"""
         self.assertEqual(got["sooner"]["redial"], [rung], "the ladder reads the sooner close as a refusal too: its first rung")
         self.assertEqual(len(got["at"]["redial"]), 1)
         self.assertNotEqual(got["at"]["redial"], [rung], "...and the close at the cut as a cut, off the ladder: the two readers agree")
+
+    # ---- review round 2, the merge of fork main (2026-10-03): S2 on PR 949's per-dial cut. Each dial arms its own cut timer at
+    # SH_CONNECT_MS (iOS item 1a), so the retry line (S2) begins at that timer's close, 15 s after the dial, where before the merge
+    # it waited for the watchdog tick that made the cut, 15 to 20 s after the dial. The cut's own close counts as a cut in
+    # shCueCuts by its event (shCutHere), not by the clock. Mutants that redden these: the timer closing nothing, so the tick's
+    # backstop makes the cut and S2 begins at that tick (the walk, the S2 case above); the cue's line refreshed only at the tick
+    # (the walk); the count keyed on the clock alone, the line before the merge (the ms-short case); the timer's close not counted
+    # (the walk, the count case); the cue's count above the late-close return (the late-close case).
+    def test_s2_begins_at_the_close_of_the_dials_own_cut_at_15s_not_at_the_next_watchdog_tick(self):
+        # a hung return walked on the clock: every timer fired at its due time, the watchdog ticking on its own phase (2.3 s after
+        # the return's dial, so its ticks fall at 12.3 s and 17.3 s, either side of the cut), a read of the line 1 ms before the
+        # cut, and each cut's close event delivered at once. The line reads the wait at every event before the cut's close and
+        # the retry line from that close at 15,000 ms on; before the merge the tick at 17.3 s made the cut and the line changed there
+        self.maxDiff = None
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials; the path hangs from here on
+var t0=SHNOW,nextTick=t0+2300,reads=[t0+14999],end=t0+20000,closed={},seq=[];
+function at(k){seq.push([k,SHNOW-t0,cueText()]);}
+at('return');
+for(var g=0;g<100;g++){var nt=null;SHTIMERS.forEach(function(t){if(t.live&&(!nt||t.at<nt.at))nt=t;});
+var tt=nt?nt.at:Infinity,tr=reads.length?reads[0]:Infinity,when=Math.min(tt,nextTick,tr);if(when>end)break;SHNOW=when;
+if(tr===when){reads.shift();at('read');continue;}
+if(tt===when){nt.live=false;nt.fn();at(nt.fn.name);}else{shTick();nextTick+=5000;at('tick');}
+var s=shSock();if(s.readyState===3&&!closed[SHSOCKS.length]){closed[SHSOCKS.length]=1;s.onclose({code:1006});at('close');}}
+shOut({seq:seq});""")
+        self.assertEqual(r["seq"], [["return", 0, _CUE_WAIT], ["tick", 2300, _CUE_WAIT], ["tick", 7300, _CUE_WAIT],
+                                    ["tick", 12300, _CUE_WAIT], ["read", 14999, _CUE_WAIT],
+                                    ["shCut", 15000, _CUE_WAIT], ["close", 15000, _CUE_HUNG1],
+                                    ["shellWS", 15250, _CUE_HUNG1], ["tick", 17300, _CUE_HUNG1]],
+                         "S1 through the tick at 12.3 s and 1 ms before the cut; S2 from the close of the dial's own cut at exactly "
+                         "15,000 ms, not from the next tick at 17.3 s; it stands through the redial and that tick")
+
+    def test_the_cuts_close_counts_by_its_event_so_a_timer_firing_a_ms_short_still_reads_no_response(self):
+        # a timer can fire while the wall clock reads a ms short of SH_CONNECT_MS after the dial (949 measured it on real timers:
+        # 33 of 160 cuts). The same clock reading, 14,999 ms after the dial, with the close made two ways: by the dial's own cut
+        # timer (shCutHere set) and by the browser with no timer behind it. The cue and the redial ladder read the first as a cut
+        # and the second as a refusal, so the event tells them apart, not the clock
+        rung = int(re.search(r"SH_LADDER=\[(\d+)", _mobile_js()).group(1))
+        got = {}
+        for k, close in (("timer", "shCutTimers().forEach(function(t){t.live=false;t.fn();});"), ("browser", "d.readyState=3;")):
+            got[k] = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials
+var d=shSock(),t0=SHNOW;
+SHNOW=t0+14999;%s
+var rs=d.readyState;if(rs===3)d.onclose({code:1006});
+shOut({rs:rs,line:cueText(),redial:shDialTimers().map(function(t){return t.ms;})});""" % close)
+        self.assertEqual(got["timer"]["rs"], 3, "the dial's own timer closed the socket")
+        self.assertEqual((got["timer"]["line"], got["timer"]["redial"]), (_CUE_HUNG1, [250]),
+                         "the close the timer made is a cut by its event: 'got no response', and the ladder reads it as hung (250 ms in the window)")
+        self.assertEqual((got["browser"]["line"], got["browser"]["redial"]), (_CUE_REFUSED1, [rung]),
+                         "the same clock with no timer behind the close: a refusal for both readers")
+
+    def test_each_close_of_the_dials_own_cut_counts_as_a_cut(self):
+        # two hung tries, each cut by its dial's own timer at SH_CONNECT_MS, then a refusal: the count names the cause while every
+        # try was a cut and turns to the connect line at the first refusal, every try counted
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials
+function cut(){var d=shSock();shRunDue(SHNOW+15000);if(d.readyState===3)d.onclose({code:1006});return cueText();}
+var lines=[cut()];shFireDials();lines.push(cut());shFireDials();
+SHNOW+=300;shRefuseNow();lines.push(cueText());             // the third try refused 300 ms in
+shOut({lines:lines});""")
+        self.assertEqual(r["lines"], [_CUE_HUNG1, "Trying again: 2 tries got no response.", "Trying again: 3 tries could not connect to the kernel."],
+                         "each timer cut counts as a cut; a refusal among them takes the connect line")
+
+    def test_an_older_sockets_late_close_after_a_newer_dial_opened_leaves_the_line_off(self):
+        # 949's late-close return: an older socket's close delivered after a newer dial clears its own cut and stops. The cue's count
+        # sits below that return, so the late close counts no try and turns the line on over no newer dial. Here the return's dial A
+        # is cut by its own timer with its close event queued, a tick dials B over it, B opens (the link is up, the line goes), and
+        # then A's close arrives: the line stays off. Above the return, A's close counted a cut and showed 'got no response' while
+        # the link was up, until the next open. (While B is still CONNECTING the same return leaves A's try uncounted, as the return
+        # probe leaves it.)
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials A
+var A=shSock(),tA=SHNOW;
+shRunDue(tA+15000);var cutA=A.readyState;                    // A's own timer cuts it; its close event is still queued
+SHNOW+=100;shTick();var B=shSock();                          // a tick finds A CLOSED past SH_REDIAL_MS and dials B
+shOpen();var opened=cueLine();                               // B opens: the link is up, the line goes
+A.onclose({code:1006});var late=cueLine();                   // A's close, delivered after B opened
+shOut({cutA:cutA,socks:SHSOCKS.length,newer:B!==A,opened:[opened.shown,opened.text],late:[late.shown,late.text],up:global.__rompLink().up});""")
+        self.assertEqual([r["cutA"], r["socks"], r["newer"]], [3, 3, True], "A cut by its own timer, then B dialed over it")
+        self.assertEqual(r["opened"], [False, ""], "B's open clears the line")
+        self.assertEqual(r["late"], [False, ""], "A's late close counts no try and turns no line on over B's open link")
+        self.assertIs(r["up"], True)
 
     def test_the_lines_are_the_drafted_copy_and_the_count_never_reaches_the_glance(self):
         js = _mobile_js()
@@ -3665,11 +3754,12 @@ class ReconnectCueLinked(unittest.TestCase):
         r = self._run(r"""
 shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
 shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;
-shShow();show();snap('return');                        // the shell dials (it hangs); the pane, link down, awaits it
+shShow();show();var tD=NOW;snap('return');             // the shell dials (it hangs); the pane, link down, awaits it
 holdFires();snap('hold');                              // the hold passes with no fresh frame: S1 painted
-NOW+=16000;shTick();shSock().onclose({code:1006});snap('cut');   // the watchdog cuts the hung first try: S2
+NOW=tD+15000;var d=shSock();SHTIMERS.forEach(function(t){if(t.live&&t.fn.name==='shCut'){t.live=false;t.fn();}});
+if(d.readyState===3)d.onclose({code:1006});snap('cut');   // SH_CONNECT_MS after the shell's dial its own timer cuts the hung first try (iOS item 1a): S2
 shFireDials();snap('redial');
-NOW+=20000;failsafeFires();snap('past30');             // 36 s on: no failsafe stood armed, the badge stays
+NOW+=20000;failsafeFires();snap('past30');             // 35 s on: no failsafe stood armed, the badge stays
 shOpen();snap('linkup');                               // the shell's socket opens: the link word dials the pane
 open();snap('paneopen');
 NOW+=50;recv({type:"feed",asks:[]});snap('fresh');""")

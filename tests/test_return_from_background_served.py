@@ -549,6 +549,11 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertIn(CUE_HUNG1, texts, where + "the connect cut's line after the hung first try was cut: %r" % (log,))
             cut = next(e["t"] - ret for e in during if e.get("text") == CUE_HUNG1)
             self.assertGreaterEqual(cut, 15000 - 100, where + "...no sooner than the connect cut (15 s): %d" % cut)
+            # review round 2, the merge of fork main (2026-10-03): the line follows the close of the dial's own cut timer at
+            # SH_CONNECT_MS (PR 949, iOS item 1a), so it comes within 1 s of 15 s after the return, the window _shell_cut reads for
+            # the cut itself; before the merge the watchdog tick made the cut, 15 to 20 s after the dial. A smoke check in a real
+            # engine, as _shell_cut is: the pins of S2 at the timer's close are ReconnectCueDetail's in tests/test_kernel_mobile.py
+            self.assertLessEqual(cut, 15000 + 1000, where + "...and within 1 s of it, at the close of the dial's own cut, not at a later watchdog tick: %d" % cut)
         elif regime == "hung":
             self.assertEqual(set(texts) - {CUE_WAIT}, set(), where + "a hung outage shorter than the cut keeps the wait line: %r" % (log,))
         else:
