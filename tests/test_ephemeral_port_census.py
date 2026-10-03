@@ -1060,9 +1060,25 @@ class Plants(unittest.TestCase):
         self.assertEqual([h for h in census(self.d)["hits"] if h[0].endswith("x.test.js")], [])
         self.assertRed("y.test.js", "server.listen(%d);\n" % n, "rule call")
 
-    def test_the_rule_reads_the_upper_end_of_the_range(self):
-        self.assertRed("test_plant.py", 'row = {"local_port": %d}\n' % HIGH, "key 'local_port'", n=HIGH)
-        self.assertGreen("test_x.py", 'row = {"local_port": %d}\n' % (LOW - 1))
+    def test_the_range_ends_are_32768_and_65535(self):
+        """The ends, with values built apart from LOW and HIGH so a change to either constant shows: 2**15 and 2**16 - 1
+        are read, 2**15 - 1 is not, and neither is 2**16, which no port can be."""
+        for v in (2 ** 15, 2 ** 16 - 1):
+            with self.subTest(v):
+                self.assertRed("test_plant.py", 'row = {"local_port": %d}\n' % v, "key 'local_port'", n=v)
+        for v in (2 ** 15 - 1, 2 ** 16):
+            with self.subTest(v):
+                self.assertGreen("test_x.py", 'row = {"local_port": %d}\n' % v)
+
+    def test_the_plural_ports_names_a_port(self):
+        """ports is a port word as port is: a ports key, and a *ports parameter taking the extra arguments."""
+        n = _n()
+        for label, src, why in (
+                ("a ports key", 'row = {"ports": [%d, 1]}\n' % n, "key 'ports'"),
+                ("a *ports parameter", 'def listen_all(host, *ports):\n    pass\n\n\nlisten_all("TESTHOST", %d)\n' % n,
+                 "argument ports of listen_all()")):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why)
 
 
 if __name__ == "__main__":
