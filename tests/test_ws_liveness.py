@@ -208,6 +208,7 @@ class PhantomPanesAreDropped(unittest.TestCase):
         self.clock[0] = t0 + 3 * km.WS_DEAD_S
         km._keepalive_all(now=self.clock[0])
         self.assertTrue(client["alive"], "silence during a dispatch is the kernel's, not the peer's")
+        self.assertTrue(self._settle(lambda: len(peer.pings) == 2), "the beat's ping left while the handler was busy")
         km._note_ws_inbound(client); client["inRead"] = True        # the handler returns to its read: fresh clock
         self.assertIsNone(client["pingAt"])
         km._keepalive_all(now=self.clock[0])                        # a new ping…
@@ -215,6 +216,43 @@ class PhantomPanesAreDropped(unittest.TestCase):
         self.clock[0] += km.WS_DEAD_S
         km._keepalive_all(now=self.clock[0])                        # …judged on its own fresh window
         self.assertFalse(client["alive"], "back in the read and still silent for a whole window → dropped")
+
+    def test_c3_widened_c3_holds_when_its_second_ping_leaves_late(self):
+        """c3 run with its race window held open. Each beat queues a ka text and then a ping for the client's
+        sender thread, and the sender stamps pingAt as a ping goes out, but only when pingAt is None. At c3's
+        second beat the first ping is still unanswered, so that beat's ping goes out without a stamp, unless c3
+        has already cleared the clock (_note_ws_inbound): then the sender finds None and stamps the beat's time
+        after the clear, and the assertIsNone that follows reads the stamp if it lands first. So c3 waits until
+        the peer has received the second ping before it clears the clock; by then the sender's check for that
+        ping is behind it, and no stamp from that ping can land after the clear. Here the sender waits 10 ms
+        before each text frame, so the second ping leaves after the clear even if c3 yields briefly before
+        clearing, and _note_ws_inbound waits 50 ms after its clear, so a stamp lands before the assert reads
+        pingAt: with these waits a version of c3 without that settle failed at its pingAt assert in every
+        measured run, and c3 as written passes. The widening relies on the beat queuing its ka before its ping.
+        A fixed wait in c3 longer than the 10 ms delay would also pass here; the settle on the event is what c3
+        owes. This test runs c3 itself rather than a copy, so removing c3's settle turns it red. Unaided the
+        window is narrow; the free-threaded build, whose threads run in parallel, is where it showed. The last
+        two asserts check that both wrappers were reached, so a change that stops them taking effect (the
+        sender no longer calling the module's _ws_send, say) fails here instead of passing without the waits."""
+        real_inbound, real_send = km._note_ws_inbound, km._ws_send
+        self.addCleanup(setattr, km, "_note_ws_inbound", real_inbound)   # registered before either patch takes effect
+        self.addCleanup(setattr, km, "_ws_send", real_send)
+        reached = {"inbound": 0, "send": 0}
+
+        def held_inbound(*a, **k):
+            real_inbound(*a, **k)
+            reached["inbound"] += 1
+            time.sleep(0.05)                                        # c3's assert reads pingAt only 50 ms after the clear
+
+        def late_send(*a, **k):                                     # _ws_sender looks _ws_send up in the module
+            reached["send"] += 1
+            time.sleep(0.01)                                        # each text frame, and the ping behind it, leaves 10 ms late
+            return real_send(*a, **k)
+
+        km._note_ws_inbound, km._ws_send = held_inbound, late_send
+        self.test_c3_a_peer_is_never_judged_while_its_handler_is_inside_a_dispatch()
+        self.assertGreaterEqual(reached["send"], 2, "the beats' ka frames went through the delayed send")
+        self.assertGreaterEqual(reached["inbound"], 1, "c3's clear went through the held wrapper")
 
     def test_c3b_a_peer_the_kernel_declines_to_judge_still_gets_its_beat(self):
         """Not judging a client mid-dispatch must not also starve it: the ka is what the shim's own silence
