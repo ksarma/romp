@@ -19,8 +19,8 @@ it in /proc/sys/net/ipv4/ip_local_port_range; CI's ubuntu-latest runners are Lin
 macOS hands out, 49152-65535 (CI's macOS cells).
 
 THE FILES are derived by walking the checkout (files()): every regular file under tests/, fixtures included, and every
-file named *.test.* or under a directory named fixtures anywhere else, outside node_modules, .git, dist, out and
-__pycache__. A symlink is skipped (its target is read where it lives). A file that is not UTF-8 text is skipped, and the
+file named *.test.* or under a directory named fixtures anywhere else, outside node_modules, dist, out, site, venv,
+__pycache__ and every hidden directory (.git; .claude, where a clone may keep worktrees of other commits; .venv). A symlink is skipped (its target is read where it lives). A file that is not UTF-8 text is skipped, and the
 census fails if the walk finds no files, no Python file with a number in the range, or no product function to resolve a
 call against, so it never passes on nothing. A file is read only when it holds a five-digit number in the range, or, for
 Python, a modulus by a constant of four or five digits (the computed form, below); a port computed from smaller constants
@@ -97,7 +97,7 @@ import parse_cache                                  # noqa: E402  one parse per 
 
 LOW, HIGH = 32768, 65535
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1", "::", ""})
-SKIP_DIRS = frozenset({"node_modules", ".git", "dist", "out", "__pycache__"})
+SKIP_DIRS = frozenset({"node_modules", "dist", "out", "site", "venv", "__pycache__"})   # and every hidden directory
 PRODUCT_DIRS = ("kernel", "postal", "cli")
 FIVE = re.compile(r"(?<![\w.])(\d{5})(?![\w.])")     # a five-digit number standing alone (not inside an id, a decimal or a hash)
 WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
@@ -411,10 +411,11 @@ def _one_per_place(hits):
 # The population.
 def files(root):
     """Every file the census reads under `root`: the files under tests/, and every *.test.* file and fixtures file
-    elsewhere, outside SKIP_DIRS; symlinks skipped."""
+    elsewhere, outside SKIP_DIRS and every hidden directory (.git; .claude, where a clone may keep worktrees of other
+    commits; .venv); symlinks skipped."""
     out = []
     for d, dirs, names in os.walk(root):
-        dirs[:] = sorted(x for x in dirs if x not in SKIP_DIRS)
+        dirs[:] = sorted(x for x in dirs if x not in SKIP_DIRS and not x.startswith("."))
         parts = os.path.relpath(d, root).split(os.sep)
         for f in sorted(names):
             p = os.path.join(d, f)
@@ -615,6 +616,15 @@ class Plants(unittest.TestCase):
     def test_a_port_below_the_range_or_port_one_is_not_counted(self):
         self.assertGreen("test_x.py", 'ps.peer_update({"host": "TESTHOST", "port": 1, "up": True})\nrow = {"local_port": 2, "bus_port": %d}\n'
                          % (LOW - 1))
+
+    def test_the_walk_skips_hidden_and_build_directories(self):
+        n = _n()
+        for d in (".claude/worktrees/old/tools", "vscode-extension/node_modules/pkg", "site/assets", "venv/lib"):
+            os.makedirs(os.path.join(self.d, d), exist_ok=True)
+            with open(os.path.join(self.d, d, "x.test.js"), "w", encoding="utf-8") as f:
+                f.write("server.listen(%d);\n" % n)
+        self.assertEqual([h for h in census(self.d)["hits"] if h[0].endswith("x.test.js")], [])
+        self.assertRed("y.test.js", "server.listen(%d);\n" % n, "rule call")
 
     def test_the_rule_reads_the_upper_end_of_the_range(self):
         self.assertRed("test_plant.py", 'row = {"local_port": %d}\n' % HIGH, "key 'local_port'", n=HIGH)
