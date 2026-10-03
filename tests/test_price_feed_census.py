@@ -11706,7 +11706,7 @@ class TheServedPagesAreScanned(_Scope):
         and UnaryOp passed again; a subscript's slice never reaches resolve, so that arm refuses none, the (z) case's refusal deciding
         it), and its reason for vdc; the lambda's read for vlm and vld, the method allowlist's check at a module constant for vkc
         (then refused as a lambda through a name's value), its defaults' read for
-        vld, and its parameters' scope for vlp (the live lambda at kernel/kernel.py:75779 is not among its reds:
+        vld, and its parameters' scope for vlp (the live lambda at kernel/kernel.py:75790 is not among its reds:
         its `mm.group(1)` stands in int's argument, which resolve does not read);
         the Div's read for vdv (a value slot again, which also leaves SERVED_ALLOW's _MENTION_PINS entry naming nothing); the check
         at every call on the path for vdvr (the (eb) case's mutants that drop it); the `__file__` value slot for no plant of this
@@ -12594,7 +12594,7 @@ class TheServedPagesAreScanned(_Scope):
         _own_self's mark for rmh, rmhp, rmhs, rmsp and rmhb (a parameter then taken for the calling method's first parameter, the
         tree's seven calls on a parameter among them, each refused as a method no def statement defines first, having no route
         class); the refuse arm's name set for i3a (then refused as a route class's method) and the tree's seven calls on a parameter,
-        `q.get` and `raw.decode` (each then refused; `mm.group` in the lambda at kernel/kernel.py:75779 is not among
+        `q.get` and `raw.decode` (each then refused; `mm.group` in the lambda at kernel/kernel.py:75790 is not among
         them, standing in int's argument, which resolve does not read), its self root for the self plants (each then refused as a method
         called on self that no def statement defines first), its parameter root for rmh, rmhd, rmpa, rmhp, rmhs and rmhb (each then
         silent), its spelling test for rmss (then read), and the refusal of any other name on self through a binding for i3a (then
