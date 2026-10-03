@@ -8983,7 +8983,8 @@ AT_PLANTS = (("atlf", "page text holding a line feed", ((_AR_EXTRA, '           
     (("atts", "a t-string in the injection's value", ((_AT_INJ, 'extra + str(t"{extra}") + _PROBE_AWW_INJ, 1)'),),
       ("gate", 't"{extra}"', "a TemplateStr expression at line %d")),) if sys.version_info >= (3, 14) else ())
 AT_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AT_PLANTS)
-# The landing round's rulings on classes (the reviewer's 13:2xZ ruling of 2026-10-03), each a probe module of its own under kernel/,
+# The landing round's rulings on classes (the reviewer's 13:2xZ ruling of 2026-10-03), each a probe module of its own under kernel/
+# whose `_send` is the kernel's shape (B_KERNEL_SEND, its codec among it, so Python serves each page as that definition encodes it),
 # read by the served pass beside the others (RD_FILES, part of AD_FILES), every refusal a SERVED line by name at its plant's line and
 # every plant red at the reviewed head for its reason (each read or silent there). (zb) and (zd), item 1, the decoding a page is read in:
 # a bytes constant holding a byte past ASCII refused (zbu, a UTF-16 byte order mark and a fetch encoded as UTF-16LE, silent at the
@@ -9079,11 +9080,11 @@ RD_HD = (("hdm", 'hmac.new(b"k", b"m", _ProbeHdm).hexdigest()'),
          ("hdk", 'hmac.new(b"k", b"m", "sha256").hexdigest()'),
          ("hde", 'hmac.new(key=b"k", msg=b"m", digestmod=hashlib.sha256).hexdigest()'))
 RD_HDL = ("hdl", '_d = hmac.new(b"k", b"m", _ProbeHdm).digest()\n            return self._send(200, "<p>hdl</p>" + base64.b64encode(_d).decode(), "text/html")')
-RD_FILES = (("rdzb", _a_module("rdzb", A_SEND % "", branches=RD_ZB)),
-            ("rdzd", _a_module("rdzd", A_SEND % "", head=RD_ZD_HEAD, branches=RD_ZD)),
-            ("rdcr", _a_module("rdcr", A_SEND % "", head=RD_CT_HEAD, branches=RD_CT)),
+RD_FILES = (("rdzb", _a_module("rdzb", B_KERNEL_SEND, branches=RD_ZB)),
+            ("rdzd", _a_module("rdzd", B_KERNEL_SEND, head=RD_ZD_HEAD, branches=RD_ZD)),
+            ("rdcr", _a_module("rdcr", B_KERNEL_SEND, head=RD_CT_HEAD, branches=RD_CT)),
             ("rdch", _a_module("rdch", B_KERNEL_SEND, head=RD_CH_HEAD, branches=RD_CH)),
-            ("rdhd", _a_module("rdhd", A_SEND % "", head=RD_HD_HEAD, branches=tuple(_fo_page(t, e) for t, e in RD_HD) + (RD_HDL,))))
+            ("rdhd", _a_module("rdhd", B_KERNEL_SEND, head=RD_HD_HEAD, branches=tuple(_fo_page(t, e) for t, e in RD_HD) + (RD_HDL,))))
 _RD_LEAF = "a digest of hmac's new whose digestmod is no constructor or algorithm name of hashlib's, whose return may be any text"
 _RD_CTYPE = "serves a response whose content type holds a CR or LF ("
 _RD_ARG = "a constant holding a CR or LF"
@@ -15453,7 +15454,7 @@ class TheServedFileReadsAreDecodedAsTheWalkRead(unittest.TestCase):
         for tag, data in body.items():
             with open(os.path.join(tiny, "ui", "probe-%s.js" % tag), "wb") as f:
                 f.write(data)
-        page = _a_module("rdfd", A_SEND % "", head="from pathlib import Path", branches=tuple(
+        page = _a_module("rdfd", B_KERNEL_SEND, head="from pathlib import Path", branches=tuple(
             (t, 'return self._send(200, (Path(__file__).resolve().parent.parent / "ui" / "probe-%s.js").read_text(), "text/html")' % t) for t in body))
         rel = _a_rel("rdfd")
         with open(os.path.join(tiny, rel), "w", encoding="utf-8") as f:
