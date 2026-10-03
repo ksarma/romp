@@ -337,16 +337,18 @@ module replaced by an attribute store, is not seen. The census reads a page only
 where the bytes a browser decodes are the text it scans, which it reads as
 UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding
 a byte past ASCII (a byte order mark, whole or split across constants, among
-them); page text holding U+FEFF, which the page's UTF-8 bytes carry as a byte
-order mark; page text declaring a charset other than utf-8 (a `charset=` in any
+them); page text holding U+FEFF, refused on the safe side because a leading U+FEFF is a byte order mark the page's UTF-8 bytes carry; page text holding a NUL, by which a browser may read interleaved
+NULs as UTF-16; page text declaring a charset other than utf-8 (a `charset=` in any
 case, as a meta element's charset attribute and a content attribute's parameter
 spell it, or an XML declaration's `encoding=`, followed by any label but utf-8)
 in a string or bytes constant, an f-string's literal part or the joined text of
 a join of string constants; a script-running content type whose parameters name
 a charset other than utf-8; and a page's read of a walked browser-text file
-whose text, as the walk decoded it, holds U+FFFD or U+FEFF or declares such a
-charset. A declaration split across texts the census reads apart, with a name's
-text between them, is read as each text spells it. The routes are derived from
+whose text, as the walk decoded it, holds U+FFFD, U+FEFF or a NUL, or declares such a
+charset. A declaration split across texts the census reads apart (a name's text
+among the parts, whether between two literals or as one half, or across bytes
+constants, which the census reads each on its own) is read as each text spells
+it. The routes are derived from
 the calls of
 `_send` the scan reads (spelled `_send(...)` or `<x>._send(...)`; a call through
 a name computed at run time is not read) and every Content-Type header written
@@ -839,8 +841,7 @@ float's call is: a call, with no argument, of the `.digest()` or `.hexdigest()`
 method of a call of one of `hashlib`'s constructors, or of `hmac`'s `new` handed
 exactly one digestmod (its third positional argument or its digestmod keyword,
 with no starred argument and no keyword but key, msg and digestmod) that is a
-string constant naming one of `hashlib`'s named constructors or such a
-constructor as an attribute of `hashlib`, each module name the standard
+string constant naming one of `hashlib`'s named constructors (not the variable-length `shake_128` or `shake_256`) or such a constructor as an attribute of `hashlib`, each module name the standard
 library's by binding, is a value the census reads none of what it is computed
 from (`hmac`'s `new` hands its digest to the object its digestmod names, so one
 handed any other digestmod is refused by name), and a base64 encoding of such a
@@ -1637,7 +1638,7 @@ Text a page joins through
 anything but a
 string constant (a
 name, a call, an attribute, a subscript of a container whose text the pass does
-not read, or a field or a `%` slot holding one) is read piece by piece: a tool's
+not read, a field or a `%` slot holding one, or a bytes constant, which the census reads each on its own and folds only joins of string constants) is read piece by piece: a tool's
 name, a tag or an attribute split there is not seen, and a fetch URL cut there
 is classed by the part before the cut. An injection, which puts its value into
 the page at its marker, and a compiled pattern's `.sub`, which puts its

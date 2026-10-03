@@ -202,13 +202,15 @@ the page text and the compiled name holds none of its own; the proof by binding 
 module object stored in sys.modules under that name before the import binds it, or a function of the module replaced by an
 attribute store, is not seen. The census reads a page only where the bytes a browser decodes are the text it scans, which it reads
 as UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding a byte past ASCII (a byte order mark, whole or
-split across constants, among them); page text holding U+FEFF, which the page's UTF-8 bytes carry as a byte order mark; page text
+split across constants, among them); page text holding U+FEFF, refused on the safe side because a leading U+FEFF is a byte order mark
+the page's UTF-8 bytes carry; page text holding a NUL, by which a browser may read interleaved NULs as UTF-16; page text
 declaring a charset other than utf-8 (a `charset=` in any case, as a meta element's charset attribute and a content attribute's
 parameter spell it, or an XML declaration's `encoding=`, followed by any label but utf-8) in a string or bytes constant, an
 f-string's literal part or the joined text of a join of string constants; a script-running content type whose parameters name a
-charset other than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD or
-U+FEFF or declares such a charset. A declaration split across texts the census reads apart, with a name's text between them, is
-read as each text spells it. The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or
+charset other than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD,
+U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (a name's
+text among the parts, whether between two literals or as one half, or across bytes constants, which the census
+reads each on its own) is read as each text spells it. The routes are derived from the calls of `_send` the scan reads (spelled `_send(...)` or
 `<x>._send(...)`; a call through a name
 computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A `_send`
 call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in its
@@ -519,8 +521,7 @@ base of a receiver, a container or an attribute, a callee or a call's argument, 
 container whose text the pass does not read: below); a digest, which carries no host either, a leaf as int's and float's call is:
 a call, with no argument, of the `.digest()` or `.hexdigest()` method of a call of one of `hashlib`'s constructors, or of `hmac`'s
 `new` handed exactly one digestmod (its third positional argument or its digestmod keyword, with no starred argument and no
-keyword but key, msg and digestmod) that is a string constant naming one of `hashlib`'s named constructors or such a constructor
-as an attribute of `hashlib`, each module name the standard library's by binding, is a value the census reads none of what it is
+keyword but key, msg and digestmod) that is a string constant naming one of `hashlib`'s named constructors (not the variable-length `shake_128` or `shake_256`) or such a constructor as an attribute of `hashlib`, each module name the standard library's by binding, is a value the census reads none of what it is
 computed from (`hmac`'s `new` hands its digest to the object its digestmod names, so one handed any other digestmod is refused by
 name),
 and a base64 encoding of such a leaf (one of base64's encoders on the name base64 so bound, handed the leaf alone), a `.decode()`
@@ -1033,7 +1034,7 @@ attribute, a subscript whose join the pass does not compute, refused as that, or
 as it reads it (`self.X.format(...)`, `Handler.X.format(...)`), that line standing for the text the receiver holds. Text a page
 joins through anything but a string constant (a name,
 a call, an attribute, a
-subscript of a container whose text the pass does not read, or a field or a `%` slot holding one) is read piece by piece: a tool's
+subscript of a container whose text the pass does not read, a field or a `%` slot holding one, or a bytes constant, which the census reads each on its own and folds only joins of string constants) is read piece by piece: a tool's
 name, a tag or an attribute split there is not seen, and a fetch URL cut there is classed by the part before the cut. An
 injection, which puts its value into the page at its marker, and a compiled pattern's `.sub`, which puts its replacement into its
 subject at each match, are such joins: the census reads the page or the subject whole, the marker or the match in place, and the
@@ -3458,12 +3459,15 @@ _CONSTANT_KINDS = {bytes: "a non-empty bytes Constant", float: "a float Constant
 # bytes a browser decodes are the text it scans, which it reads as UTF-8, so it refuses by name, as a page it cannot read, a page
 # whose bytes may carry a byte order mark or whose type or text names another charset: a bytes constant holding a byte past ASCII
 # (_BYTES_WIDE, resolve), page text holding U+FEFF, which its UTF-8 bytes carry as a byte order mark (_BOM_TEXT, _Served._decoded),
-# page text declaring a charset other than utf-8 (_DECLARED, _declared_charset; a join of string constants by its joined text,
-# served_texts), a script-running content type naming one (judge, _ctype_charset), and a walked browser-text file a page reads whose
-# text, as the walk decoded it, holds a byte the walk could not decode as UTF-8 or U+FEFF, or declares such a charset (_undecoded,
-# _FILE_UNDECODED)
+# page text holding a NUL, by which a browser may read interleaved NULs as UTF-16 and decode the page other than the census scans it
+# (_NUL_TEXT, _Served._decoded; so a page encoded UTF-16 with no byte order mark, whose ASCII bytes the bytes arm would read one to a
+# character, is refused), page text declaring a charset other than utf-8 (_DECLARED, _declared_charset; a join of string constants by its
+# joined text, served_texts), a script-running content type naming one (judge, _ctype_charset), and a walked browser-text file a page
+# reads whose text, as the walk decoded it, holds a byte the walk could not decode as UTF-8, a U+FEFF or a NUL, or declares such a
+# charset (_undecoded, _FILE_UNDECODED)
 _BYTES_WIDE = "a bytes constant holding a byte past ASCII, which a browser may decode other than one byte to a character"
-_BOM_TEXT = "text holding U+FEFF, which the page's UTF-8 bytes carry as a byte order mark, by which a browser may decode the page"
+_BOM_TEXT = "text holding U+FEFF, refused on the safe side because a leading U+FEFF is a byte order mark the page's UTF-8 bytes carry, by which a browser may decode the page"
+_NUL_TEXT = "text holding a NUL, by which a browser may read interleaved NULs as UTF-16 and decode the page other than the census scans it"
 _DECLARED = "text declaring %s, a charset other than utf-8, by which a browser may decode the page"
 _DECLARED_RX = re.compile(r"(charset|<\?xml\b[^>]*?\bencoding)\s*=\s*[\"'\\]*\s*([A-Za-z0-9_.:-]*)", re.I)
 
@@ -3473,8 +3477,10 @@ def _declared_charset(text):
     past spaces, by `=`, as a meta element's charset attribute and a content attribute's parameter spell it, and an XML declaration's
     encoding (`encoding=` inside one `<?xml ...>`); the label read after the `=` past spaces, quotes and backslashes, as far as it
     runs in letters, digits, `_`, `.`, `:` and `-`. Any label but utf-8, in any case (another label of UTF-8 and the empty one, where
-    something else follows, among them), is returned. A declaration split across texts the census reads apart (a name between its
-    halves) is read as each text spells it, the literal match's limit."""
+    something else follows, among them), is returned. A declaration split across texts the census reads apart (a name's text among the
+    parts, whether between two literals or as one half, or across bytes constants, which the census reads each on its own and does not
+    fold) is read as each text spells it, the literal match's limit; only a declaration a join of string constants folds to one text
+    (served_texts) is caught there."""
     for m in _DECLARED_RX.finditer(text):
         if m.group(2).lower() != "utf-8": return "%s=%s" % ("charset" if m.group(1).lower() == "charset" else "encoding", m.group(2))
     return None
@@ -3484,9 +3490,12 @@ def _undecoded(text):
     """Why a walked browser-text file's text, as the walk decoded it (UTF-8, errors replaced), is not what a browser decodes from its
     bytes, or None (item 1 of the reviewer's 13:2xZ ruling of 2026-10-03; served_texts refuses a page's read of such a file by name,
     _FILE_UNDECODED): it holds U+FFFD, which the walk writes for a byte it cannot decode as UTF-8 (a UTF-16 byte order mark among
-    them), or U+FEFF, a byte order mark, or it declares a charset other than utf-8 (_declared_charset)."""
+    them), or U+FEFF, a byte order mark, or a NUL, by which a browser may read the file as UTF-16 (a UTF-16 page with no byte order
+    mark, whose ASCII-and-NUL bytes the walk decodes as UTF-8 with no U+FFFD, among them), or it declares a charset other than utf-8
+    (_declared_charset)."""
     if "\ufffd" in text: return "U+FFFD, which may stand for a byte the walk could not decode as UTF-8"
     if "\ufeff" in text: return "U+FEFF, a byte order mark"
+    if "\x00" in text: return "a NUL, by which a browser may read the file as UTF-16"
     got = _declared_charset(text)
     return "a declaration of %s" % got if got is not None else None
 
@@ -3811,7 +3820,8 @@ _LEAF_STRIPS = ("strip", "lstrip", "rstrip")
 _LEAF_REBOUND = "a digest or a base64 encoding through %s, bound other than to the standard library's module, whose return may be any text"
 # hmac's new is a leaf only where its digestmod is one the standard library makes (the reviewer's 13:2xZ ruling of 2026-10-03, item 3):
 # exactly one digestmod, the third positional argument or the digestmod keyword, beside no other argument but the key and the message,
-# no starred argument and no `**`, and that digestmod a string constant naming one of hashlib's named constructors (_DIGESTMODS) or
+# no starred argument and no `**`, and that digestmod a string constant naming one of hashlib's named constructors but the
+# variable-length shake_128 and shake_256 (_DIGESTMODS) or
 # an attribute of that name on a name bound to hashlib by binding (_Served._std_module). hmac hands its digest to the object its
 # digestmod names, so any other digestmod (a name the file binds, an attribute of anything else, a call, none) is refused by name
 # (_LEAF_DIGESTMOD, _Served._digestmod). hashlib's new is no named constructor: handed no algorithm's name, it makes no digest
@@ -8961,16 +8971,16 @@ class _Served(object):
         params, local, cls, nested, where, scope = ctx
         if isinstance(e, ast.Constant):
             if isinstance(e.value, str):   # read where a browser decodes it as the census scans it (_Served._decoded, asked only of a
-                # text holding U+FEFF or a declaration, so resolve's own depth at a plain constant is unchanged: decision 11 of the tenth
-                # round's review)
-                if ("\ufeff" not in e.value and _DECLARED_RX.search(e.value) is None) or self._decoded(e, e.value, where):
+                # text holding U+FEFF, a NUL or a declaration, so resolve's own depth at a plain constant is unchanged: decision 11 of the
+                # tenth round's review)
+                if ("\ufeff" not in e.value and "\x00" not in e.value and _DECLARED_RX.search(e.value) is None) or self._decoded(e, e.value, where):
                     self.pieces.append((label, e.lineno, e.value, (e.lineno, e.col_offset, -1)))
             elif isinstance(e.value, bytes):   # page text, scanned like a string's (A(i) of the reviewer's 06:26Z ruling of 2026-10-01),
                 # each byte its own character, where every byte is ASCII, which a browser decodes one byte to a character; a byte past
                 # ASCII is refused by name (item 1 of the reviewer's 13:2xZ ruling of 2026-10-03: a byte order mark, whole or split
-                # across constants, among them)
+                # across constants, among them), and a NUL byte, by which a browser may read the page as UTF-16 (_NUL_TEXT, _decoded)
                 if not e.value.isascii(): self._unread(e, _BYTES_WIDE, where)
-                elif _DECLARED_RX.search(e.value.decode("latin-1")) is None or self._decoded(e, e.value.decode("latin-1"), where):
+                elif (0 not in e.value and _DECLARED_RX.search(e.value.decode("latin-1")) is None) or self._decoded(e, e.value.decode("latin-1"), where):
                     self.pieces.append((label, e.lineno, e.value.decode("latin-1"), (e.lineno, e.col_offset, -1)))
             elif e.value is None or type(e.value) in (bool, int):
                 # a value slot read as no text: None, a bool or an int, refused by name where it stands directly as the right operand
@@ -8987,7 +8997,7 @@ class _Served(object):
             for idx, v in enumerate(e.values):
                 if isinstance(v, ast.Constant):
                     at = v.lineno if sys.version_info >= (3, 12) else prev
-                    if ("\ufeff" not in v.value and _DECLARED_RX.search(v.value) is None) or self._decoded(e, v.value, where, at):
+                    if ("\ufeff" not in v.value and "\x00" not in v.value and _DECLARED_RX.search(v.value) is None) or self._decoded(e, v.value, where, at):
                         self.pieces.append((label, at, v.value, (e.lineno, e.col_offset, idx)))
                 elif isinstance(v, ast.FormattedValue):
                     prev = v.value.end_lineno; self.resolve(v.value, ctx, label, done)
@@ -9218,9 +9228,9 @@ class _Served(object):
     def _decoded(self, e, text, where, line=None):
         """Whether the page text `text`, which the node `e` holds, is one a browser decodes as the text the census scans (item 1 of
         the reviewer's 13:2xZ ruling of 2026-10-03): False where it holds U+FEFF, which the page's UTF-8 bytes carry as a byte order
-        mark (_BOM_TEXT), or declares a charset other than utf-8 (_declared_charset, _DECLARED), each refused by name at its line or at
-        `line` (an f-string's part), its text read no further."""
-        why = _BOM_TEXT if "\ufeff" in text else None
+        mark (_BOM_TEXT), a NUL, by which a browser may read interleaved NULs as UTF-16 (_NUL_TEXT), or declares a charset other than
+        utf-8 (_declared_charset, _DECLARED), each refused by name at its line or at `line` (an f-string's part), its text read no further."""
+        why = _BOM_TEXT if "\ufeff" in text else _NUL_TEXT if "\x00" in text else None
         if why is None:
             got = _declared_charset(text)
             why = _DECLARED % got if got is not None else None

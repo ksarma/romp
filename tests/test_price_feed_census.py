@@ -1324,14 +1324,17 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "sys.modules under that name before the import binds it, or a function of the module replaced by an attribute "
                 "store, is not seen. The census reads a page only where the bytes a browser decodes are the text it scans, which "
                 "it reads as UTF-8, so it refuses by name, as a page it cannot read: a bytes constant holding a byte past ASCII (a "
-                "byte order mark, whole or split across constants, among them); page text holding U+FEFF, which the page's UTF-8 "
-                "bytes carry as a byte order mark; page text declaring a charset other than utf-8 (a `charset=` in any case, as a "
+                "byte order mark, whole or split across constants, among them); page text holding U+FEFF, refused on the safe side "
+                "because a leading U+FEFF is a byte order mark the page's UTF-8 bytes carry; page text holding a NUL, by which a "
+                "browser may read interleaved NULs as UTF-16; "
+                "page text declaring a charset other than utf-8 (a `charset=` in any case, as a "
                 "meta element's charset attribute and a content attribute's parameter spell it, or an XML declaration's "
                 "`encoding=`, followed by any label but utf-8) in a string or bytes constant, an f-string's literal part or the "
                 "joined text of a join of string constants; a script-running content type whose parameters name a charset other "
-                "than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD or "
-                "U+FEFF or declares such a charset. A declaration split across texts the census reads apart, with a name's text "
-                "between them, is read as each text spells it. The routes are derived from the calls of `_send` the scan reads "
+                "than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD, "
+                "U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (a name's "
+                "text among the parts, whether between two literals or as one half, or across bytes constants, which the census "
+                "reads each on its own) is read as each text spells it. The routes are derived from the calls of `_send` the scan reads "
                 "(spelled `_send(...)` or `<x>._send(...)`; a call through a "
                 "name computed at run time is not read) and every Content-Type header written outside `_send`, in every scanned Python file. A "
                 "`_send` call's content type is read through the definition it reaches, the one def or async def statement that binds `_send` in "
@@ -1495,7 +1498,8 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "digest, which carries no host either, a leaf as int's and float's call is: a call, with no argument, of the "
                 "`.digest()` or `.hexdigest()` method of a call of one of `hashlib`'s constructors, or of `hmac`'s `new` handed "
                 "exactly one digestmod (its third positional argument or its digestmod keyword, with no starred argument and no "
-                "keyword but key, msg and digestmod) that is a string constant naming one of `hashlib`'s named constructors or "
+                "keyword but key, msg and digestmod) that is a string constant naming one of `hashlib`'s named constructors (not the "
+                "variable-length `shake_128` or `shake_256`) or "
                 "such a constructor as an attribute of `hashlib`, each module name the standard library's by binding, is a value "
                 "the census reads none of what it is computed from (`hmac`'s `new` hands its digest to the object its digestmod "
                 "names, so one handed any other digestmod is refused by name), and a base64 encoding of such a leaf (one of "
@@ -1767,7 +1771,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "Python's own length for each field, a `%` by an upper bound) refuses by name, each literal still read on its own, a string "
                 "constant, which is source text, aside; the width test bounds one field and this cap the whole text. A tool's name, a tag, an "
                 "attribute, an import or a fetch URL split across such a join is therefore read whole, and a site both reads "
-                "find is listed once; a fetch URL cut at the join is listed as the joined text reads it, whole. A `.format` or `.format_map` whose format string holds a replacement field whose name reaches an attribute or an index of its argument (`{0.CSS}`, `{h.CSS}`, `{self.body}`, `{0[k]}`) refuses by name, since the text such a field reads is the argument's attribute or item, which the pass does not read: the census looks for such a field where the format string is the receiver's text, a string constant or one of these joins, or the value of a module constant or a local bound to one, and a `.format` or `.format_map` whose format string the receiver reaches any other way (a function's or a method's return, a parameter, an attribute, an if-expression, a `+` over a name among them) is refused by name too, since the pass does not read that format string's fields, unless the receiver is a class (above), refused as a class attribute, a subscript whose join the pass does not compute, refused as that, or one the pass refuses by name, in whole or in part, as it reads it (`self.X.format(...)`, `Handler.X.format(...)`), that line standing for the text the receiver holds. Text a page joins through anything but a string constant (a name, a call, an attribute, a subscript of a container whose text the pass does not read, or a field or a `%` slot holding one) is read piece by piece: a tool's name, a tag or an attribute split there is not seen, and a fetch URL cut there is classed by the part before the cut. An injection, which puts its value into the page at its marker, and a compiled pattern's `.sub`, which puts its replacement into its subject at each match, are such joins: the census reads the page or the subject whole, the marker or the match in place, and the inserted text apart, so a fetch URL the insertion completes is classed by what the page or the subject holds around it, as a cut URL is. A subscript by a constant index over a container whose text the pass reads (the containers named above for a slice) that stands as an operand of one of these joins, a `+`, a `%` or an f-string, or the receiver or an argument of "
+                "find is listed once; a fetch URL cut at the join is listed as the joined text reads it, whole. A `.format` or `.format_map` whose format string holds a replacement field whose name reaches an attribute or an index of its argument (`{0.CSS}`, `{h.CSS}`, `{self.body}`, `{0[k]}`) refuses by name, since the text such a field reads is the argument's attribute or item, which the pass does not read: the census looks for such a field where the format string is the receiver's text, a string constant or one of these joins, or the value of a module constant or a local bound to one, and a `.format` or `.format_map` whose format string the receiver reaches any other way (a function's or a method's return, a parameter, an attribute, an if-expression, a `+` over a name among them) is refused by name too, since the pass does not read that format string's fields, unless the receiver is a class (above), refused as a class attribute, a subscript whose join the pass does not compute, refused as that, or one the pass refuses by name, in whole or in part, as it reads it (`self.X.format(...)`, `Handler.X.format(...)`), that line standing for the text the receiver holds. Text a page joins through anything but a string constant (a name, a call, an attribute, a subscript of a container whose text the pass does not read, a field or a `%` slot holding one, or a bytes constant, which the census reads each on its own and folds only joins of string constants) is read piece by piece: a tool's name, a tag or an attribute split there is not seen, and a fetch URL cut there is classed by the part before the cut. An injection, which puts its value into the page at its marker, and a compiled pattern's `.sub`, which puts its replacement into its subject at each match, are such joins: the census reads the page or the subject whole, the marker or the match in place, and the inserted text apart, so a fetch URL the insertion completes is classed by what the page or the subject holds around it, as a cut URL is. A subscript by a constant index over a container whose text the pass reads (the containers named above for a slice) that stands as an operand of one of these joins, a `+`, a `%` or an f-string, or the receiver or an argument of "
                 "a `.join`, `.format`, `.format_map` or `.replace` (an element of a list, tuple or set literal or a key of a dict literal handed to `.join`, an element of a starred list or tuple literal handed to `.format`, and a value of a dict literal handed to `.format` or `.format_map`, among them), is refused by name, since the pass reads its container whole and not the text the join makes of the pieces the indexes select; the refusal is keyed on such a container, and a subscript of any other container is read piece by piece, as above; a subscript read through a function falls under the call limit above. "
                 "A `.join` whose one argument, or, unbound as in `str.join(\"\", {...})`, its second, is or holds a set literal or a set comprehension as the census reads it refuses by name, its iteration order not fixed, so its join is no one text: the argument itself, a walrus's value, an if-expression's branches, a boolean operation's operands, a list or tuple display's elements (a starred one's value among them), the sources of a list or dict comprehension or a generator (one that names the comprehension's own target excepted, its items held by an earlier source), and the values of a local of the page's scope or of a module constant that the census reads the name by (a local's values, a loop's, an unpacking's or a with target's source and a local container's appended or stored values among them, or a module constant's value), a name bound so in turn; a set the census reaches only through a call's return (a function's, or a read method's, a set's copy or a dict's get among them) or through a parameter (the argument a call hands it, or its default) is read piece by piece, under the join limit above (its witnesses: a set a module function returns, a set's copy and a set a dict's get returns, and a set a module function's parameter takes as its argument and one it takes as its default, each joined, a fetch split across its elements). A file the page reads at run time is covered by the walk only where the walk scans it as browser text, its DOM loads counted as a page's are (a JavaScript file under ui/ or vscode-extension/src), and only where the page reads it with an encoding the census reads as utf-8, utf_8 or utf8, or with none, and hands the read no other argument: the walk scans each file once as UTF-8, a byte it cannot decode replaced, so a page that reads such a file with any other encoding, with an errors handler (in either spelling, beside a UTF-8 name or with no encoding), or with any other argument besides the one encoding, a `**` keyword whose mapping the census cannot read among them, is refused by name, since that one scan may not be the text the page serves, and a read that names no encoding and hands nothing else takes the locale's default, a stated limit the census cannot prove is UTF-8; one the walk scans as Python, as shell, or as JavaScript elsewhere, its DOM loads not "
                 "counted, is refused by name, the kind named, since the walk reads none of its text as a page's; a stylesheet the walk does not "
@@ -8990,7 +8994,11 @@ AT_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AT_PLANTS)
 # a bytes constant holding a byte past ASCII refused (zbu, a UTF-16 byte order mark and a fetch encoded as UTF-16LE, silent at the
 # reviewed head, whose latin-1 reading found no fetch, while a browser decodes the page as UTF-16 and runs it; zbs, the same mark split
 # across two constants, each refused; zbe, a UTF-8 byte order mark before a fetch, read at the reviewed head); page text holding U+FEFF,
-# which its UTF-8 bytes carry as a byte order mark, refused (zbf, read at the reviewed head); page text declaring a charset other than
+# which its UTF-8 bytes carry as a byte order mark, refused (zbf, read at the reviewed head); page text holding a NUL, by which a browser
+# may read interleaved NULs as UTF-16, refused (the closing round: znb, a bytes constant encoding a page UTF-16LE with no byte order
+# mark, whose ASCII-and-NUL bytes the bytes arm read one to a character at the reviewed head, silent there, while a browser decodes it
+# as UTF-16 and runs its fetch; zns, the same page as a str constant, read there; znx, the bytes form under application/xhtml+xml);
+# page text declaring a charset other than
 # utf-8 refused, its text not read (zbm, an ASCII bytes constant's meta charset before a fetch, read at the reviewed head; zij, a meta
 # charset of iso-2022-jp with an escape inside fetch, which that decoder drops, silent there; zhe, a content attribute's charset before
 # a fetch, read there; zxe, an XML declaration's encoding, silent there; zjn, a declaration and a fetch its literals spell only together,
@@ -9024,8 +9032,11 @@ RD_ZB = (("zbu", 'return self._send(200, b"\\xff\\xfe%s", "text/html")' % _rd_u1
          ("zbs", 'return self._send(200, b"\\xff" + b"\\xfe%s", "text/html")' % _rd_u16("zbs")),
          ("zbe", 'return self._send(200, b"\\xef\\xbb\\xbf%s", "text/html")' % (FGH_PAGE % "zbe")),
          ("zbf", 'return self._send(200, "\\ufeff%s", "text/html")' % (FGH_PAGE % "zbf")),
-         ("zbm", 'return self._send(200, b"<meta charset=iso-2022-jp>%s", "text/html")' % (FGH_PAGE % "zbm")))
-RD_ZD_HEAD = '_PROBE_ZFS = "x"'
+         ("zbm", 'return self._send(200, b"<meta charset=iso-2022-jp>%s", "text/html")' % (FGH_PAGE % "zbm")),
+         ("znb", 'return self._send(200, b"%s", "text/html")' % _rd_u16("znb")),
+         ("zns", 'return self._send(200, "%s", "text/html")' % _rd_u16("zns")),
+         ("znx", 'return self._send(200, b"%s", "application/xhtml+xml")' % _rd_u16("znx")))
+RD_ZD_HEAD = '_PROBE_ZFS = "x"\n_PROBE_ZLN = ""\n_PROBE_ZLH = "<meta char"'
 RD_ZD = (("zij", 'return self._send(200, "<meta charset=\\"iso-2022-jp\\">%s", "text/html")' % (RD_ESC % "zij")),
          ("zhe", 'return self._send(200, "<meta http-equiv=\\"Content-Type\\" content=\\"text/html; charset=shift_jis\\">%s", "text/html")'
                  % (FGH_PAGE % "zhe")),
@@ -9039,7 +9050,10 @@ RD_ZD = (("zij", 'return self._send(200, "<meta charset=\\"iso-2022-jp\\">%s", "
                  '"application/xhtml+xml")' % (FGH_PAGE % "zxu")),
          ("zcn", 'return self._send(200, "%s", "text/html; charset")' % (FGH_PAGE % "zcn")),
          ("zcp", 'return self._send(200, "%s", "text/html; profile=probe")' % (FGH_PAGE % "zcp")),
-         ("zcq", 'return self._send(200, "%s", "text/html; charset=\\"UTF-8\\"")' % (FGH_PAGE % "zcq")))
+         ("zcq", 'return self._send(200, "%s", "text/html; charset=\\"UTF-8\\"")' % (FGH_PAGE % "zcq")),
+         ("zln", 'return self._send(200, "<meta char" + _PROBE_ZLN + "set=iso-2022-jp>%s", "text/html")' % (RD_ESC % "zln")),
+         ("zlh", 'return self._send(200, _PROBE_ZLH + "set=iso-2022-jp>%s", "text/html")' % (RD_ESC % "zlh")),
+         ("zlb", 'return self._send(200, b"<meta char" + b"set=iso-2022-jp>' + (RD_ESC % "zlb") + '", "text/html")'))
 RD_CT_HEAD = '_PROBE_CRM = "text/html\\r\\nX-Probe: 1"'
 RD_CT = (("crx", 'return self._send(200, "<p>crx</p>", "text/html\\r\\n\\r\\n%s")' % (FGH_PAGE % "crx")),
          ("cry", 'return self._send(200, "%s", "text/html\\r\\nX-Probe: 1")' % (FGH_PAGE % "cry")),
@@ -9096,6 +9110,9 @@ RD_REFUSED = (("rdzb", "zbu", 1, "a bytes constant holding a byte past ASCII", 1
               ("rdzb", "zbe", 1, "a bytes constant holding a byte past ASCII", 1),
               ("rdzb", "zbf", 1, "text holding U+FEFF", 1),
               ("rdzb", "zbm", 1, "text declaring charset=iso-2022-jp, a charset other than utf-8", 1),
+              ("rdzb", "znb", 1, "text holding a NUL", 1),
+              ("rdzb", "zns", 1, "text holding a NUL", 1),
+              ("rdzb", "znx", 1, "text holding a NUL", 1),
               ("rdzd", "zij", 1, "text declaring charset=iso-2022-jp, a charset other than utf-8", 1),
               ("rdzd", "zhe", 1, "text declaring charset=shift_jis, a charset other than utf-8", 1),
               ("rdzd", "zxe", 1, "text declaring encoding=iso-2022-jp, a charset other than utf-8", 1),
@@ -9110,12 +9127,16 @@ RD_REFUSED = (("rdzb", "zbu", 1, "a bytes constant holding a byte past ASCII", 1
               ("rdch", "cht", 1, "the module constant _PROBE_CHT, whose bound text holds a CR or LF", 1)) + tuple(
     ("rdhd", t, 1, _RD_LEAF, 1) for t in ("hdm", "hdd", "hdn", "hdt", "hds", "hdw", "hdc", "hda", "hdx", "hdv")) + (
     ("rdhd", "hdl", 2, "a .decode() method called on a base whose own text the census does not read", 1),)
-RD_WHOLE = ("zbu", "zbs", "zbe", "zbf", "zbm", "zij", "zhe", "zxe")   # the plants whose every page text is refused
+RD_WHOLE = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe", "zxe")   # the plants whose every page text is refused
 # the plants read at the fix (and at the reviewed head), each page's fetch a site and no SERVED line at it
 RD_READ = ("zmu", "zxu", "zcn", "zcp", "zcq", "chg", "cho", "chv", "chp")
+# the witnesses of item 1's stated limit, silent at both heads: a charset declaration split across texts the census reads apart, a name
+# between two literals (zln), a name as one half (zlh) or across bytes constants (zlb), each read as each text spells it, so neither
+# refused nor, the fetch split by an ISO-2022-JP escape the whole declaration's decoder drops, a site; a browser decodes the page whole
+RD_LIMIT = ("zln", "zlh", "zlb")
 # the texts no reader scans: each refused plant's page or what its header carries, the limit's witnesses' header text, and the
 # digestmod class's text
-RD_UNREAD = ("zbu", "zbs", "zbe", "zbf", "zbm", "zij", "zhe", "zxe", "zjn", "zfs", "zcs", "crx", "cry", "crm", "crr", "crl", "crd", "chcx", "chkx",
+RD_UNREAD = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe", "zxe", "zjn", "zfs", "zcs", "crx", "cry", "crm", "crr", "crl", "crd", "chcx", "chkx",
              "chyx", "chbx", "chqx", "chnx", "chmx", "chtx", "chgx", "chvx", "chpx", "hdmx")
 AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES + AT_FILES + RD_FILES
 
@@ -11230,7 +11251,7 @@ class TheServedPagesAreScanned(_Scope):
         (probe_lsa's `setattr(Handler, "_se" + "nd", ...)`); a header value, and a response that a Content-Type in its headers
         argument, passed or defaulted, makes a page (probe_lct's Content-Type passed in `headers=`, and probe_tg1's call passing
         application/json beside a headers default holding text/html), a header value read only for a CR or LF where the census reads
-        it (the landing round's (ct) and (ch) plants: probe_lhv, a CR LF and a fetch passed in `headers=`, was this limit's witness
+        it (the landing round's (cr) and (ch) plants: probe_lhv, a CR LF and a fetch passed in `headers=`, was this limit's witness
         and is refused since, and chv and chp are the witnesses of a header value held where the census does not read it); code the
         definition runs through an object it is handed (probe_lob's mapping whose items() writes), each of these the eighth
         round's limits case; and a module namespace rewritten at run time by code outside the forms the census reads, a listed
@@ -14953,8 +14974,10 @@ class TheChatMediaRoadIsRowed(_Scope):
         """The paint clause's example of a page whose own address carries the parameter its condition names (the landing round's
         review, regression-1): a pane page loaded on such an address by a load the kernel does not count as a navigation (one whose
         Sec-Fetch-Dest names neither a document nor an iframe or, with no Sec-Fetch headers, whose Accept does not name text/html, as
-        kernel/kernel.py's _is_navigation reads them), the case that holds at the head, as the build record measured by a run of the
-        kernel's handler; the example it replaced, a pane page opened bare, held absent. Held in the script's clause and in this
+        kernel/kernel.py's _is_navigation reads them), the case that holds at the head, pinned by the executed handler test in
+        tests/test_session_cookie_auth.py (LoginHandoff) that loads /, /chat and /feed on such an address under each non-navigation
+        Sec-Fetch-Dest (object, embed, frame and empty: the page served, its address keeping the parameter) and under a document
+        navigation (its address losing it); the example it replaced, a pane page opened bare, held absent. Held in the script's clause and in this
         module's two copies, which the section, the sent cell, the paint row and the ledger carry word for word (the case above and
         tests/test_security_price_feed.py). Red at the reviewed head, whose clause gave the example it replaced."""
         for name, clause in (("the script's PAINT_CLAUSE", script_module(ROOT).PAINT_CLAUSE), ("PAINT_CLAUSE", PAINT_CLAUSE), ("CHAT_MEDIA_PAINT", CHAT_MEDIA_PAINT)):
@@ -15422,6 +15445,20 @@ class TheLandingRoundsClassesFailClosed(_Scope):
             with self.subTest(unread=tag):
                 self.assertFalse(self._is_site(tag), "%s is no site: a refused page or a header value, which no reader scans" % tag)
 
+    def test_item_ones_split_declaration_limit_is_read_apart_at_its_witnesses(self):
+        """Item 1's stated limit (the closing round): a charset declaration the census reads apart because it is split across texts (a
+        name between two literals in zln, a name as one half in zlh, or across bytes constants it reads each on its own in zlb) is read
+        as each text spells it, so the census neither refuses it nor, its fetch split by an ISO-2022-JP escape, lists a site; a browser
+        decodes the page by the whole declaration and runs it. Silent at the reviewed head and the fix alike: only a declaration a join
+        of string constants folds to one text (zjn) is caught. RD_READ and RD_UNREAD held no witness of this limit before."""
+        files = dict(RD_FILES)
+        for tag in RD_LIMIT:
+            with self.subTest(limit=tag):
+                line = _a_line(files["rdzd"], '"/probe-%s"' % tag) + 1
+                got = [ln for ln in self._served("rdzd") if ln.startswith("SERVED %s:%d " % (_a_rel("rdzd"), line))]
+                self.assertEqual(got, [], "%s is read apart, neither refused nor a whole-page line: %r" % (tag, got))
+                self.assertFalse(self._is_site(tag), "%s's fetch is no site: the escape splits it until the page is decoded whole" % tag)
+
     def test_the_eighth_rounds_header_witness_is_refused_by_the_header_rule(self):
         """probe_lhv, a headers dict holding a CR LF and a fetch passed at the call, was the eighth round's witness of the limit that a
         header value is not scanned; the reviewer's 13:2xZ ruling of 2026-10-03 reads a constant a call hands its definition for a CR
@@ -15438,8 +15475,9 @@ class TheServedFileReadsAreDecodedAsTheWalkRead(unittest.TestCase):
     """The file arm of item 1 of the reviewer's 13:2xZ ruling of 2026-10-03: a page's read of a walked browser-text file counts as
     covered only where the file's text, as the walk decoded it, is what a browser decodes from its bytes; a file holding U+FFFD
     (fdu, a UTF-16LE file behind its byte order mark, whose two leading bytes the walk cannot decode as UTF-8), U+FEFF (fdb, a UTF-8
-    byte order mark) or a declaration of another charset (fdm, a meta charset of iso-2022-jp) is refused by name at the read, and a
-    clean one (fdc) stays covered, no line. A tiny root of its own, scanned in process: the script's copy, the declared roots, a page
+    byte order mark), a declaration of another charset (fdm, a meta charset of iso-2022-jp) or a NUL (fdn, a UTF-16LE file with no
+    byte order mark, whose ASCII-and-NUL bytes the walk decodes as UTF-8 with no U+FFFD, the closing round) is refused by name at the
+    read, and a clean one (fdc) stays covered, no line. A tiny root of its own, scanned in process: the script's copy, the declared roots, a page
     module under kernel/ reading each file under ui/ through `Path(__file__)`. At the reviewed head every read was covered."""
 
     def test_a_page_reading_a_file_the_walk_decoded_otherwise_is_refused(self):
@@ -15450,7 +15488,8 @@ class TheServedFileReadsAreDecodedAsTheWalkRead(unittest.TestCase):
         os.makedirs(os.path.join(tiny, "scripts"))
         shutil.copy2(os.path.join(ROOT, INVENTORY), os.path.join(tiny, INVENTORY))
         body = {"fdb": b"\xef\xbb\xbf" + (FGH_PAGE % "fdb").encode(), "fdu": b"\xff\xfe" + (FGH_PAGE % "fdu").encode("utf-16-le"),
-                "fdm": ('<meta charset="iso-2022-jp">' + FGH_PAGE % "fdm").encode(), "fdc": (FGH_PAGE % "fdc").encode()}
+                "fdm": ('<meta charset="iso-2022-jp">' + FGH_PAGE % "fdm").encode(), "fdn": (FGH_PAGE % "fdn").encode("utf-16-le"),
+                "fdc": (FGH_PAGE % "fdc").encode()}
         for tag, data in body.items():
             with open(os.path.join(tiny, "ui", "probe-%s.js" % tag), "wb") as f:
                 f.write(data)
@@ -15463,7 +15502,7 @@ class TheServedFileReadsAreDecodedAsTheWalkRead(unittest.TestCase):
         res = mod.scan(tiny)
         got = [p for p in res.problems if p.startswith("SERVED %s:" % rel)]
         why = {"fdb": "U+FEFF, a byte order mark", "fdu": "U+FFFD, which may stand for a byte the walk could not decode as UTF-8",
-               "fdm": "a declaration of charset=iso-2022-jp"}
+               "fdm": "a declaration of charset=iso-2022-jp", "fdn": "a NUL, by which a browser may read the file as UTF-16"}
         for tag, reason in sorted(why.items()):
             with self.subTest(file=tag):
                 want = ("SERVED %s:%d reads ui/probe-%s.js for a served page, a walked browser-text file whose text, as the walk decoded "
@@ -15524,7 +15563,9 @@ class TheKindTableIsHeldAgainstTheInterpretersKinds(unittest.TestCase):
     """The _SEND_KINDS comment's claim, executed (tests-3 of the landing round's review): every statement kind the running
     interpreter's syntax tree holds outside the table has a (k) plant, and every such expression kind but the three argued there (a
     Slice, a FormattedValue and an Interpolation, each only inside another excluded kind) has an (at) plant. The kinds are derived
-    from the interpreter's ast (every concrete subclass of ast.stmt and of ast.expr, the deprecated Constant aliases excluded), and the
+    from the interpreter's ast (every direct subclass of ast.stmt and of ast.expr; the deprecated Constant aliases, Num, Str, Bytes,
+    NameConstant and Ellipsis, are subclasses of ast.Constant, not direct subclasses of ast.expr, so they never reach this set and need
+    no exclusion (and on 3.14 they do not exist), and the
     plants' kinds are read by parsing each plant's module, the nodes of its `_send` definition, never from their labels: the (k)
     plants' statement kinds against the derived statement kinds, the (at) plants' expression kinds against the derived expression
     kinds, apart, each side less the table and the three argued kinds; a kind the interpreter adds with no plant and no argument reds
@@ -15540,11 +15581,10 @@ class TheKindTableIsHeldAgainstTheInterpretersKinds(unittest.TestCase):
 
     def test_each_kind_outside_the_table_has_a_plant_or_its_argument(self):
         table = set(script_module(ROOT)._SEND_KINDS) | set(self.ARGUED)
-        gone = ("Num", "Str", "Bytes", "NameConstant", "Ellipsis")
         for base, plants in ((ast.stmt, [_a_h_module(t, extra, head) for t, _l, extra, head, _w in B_ROADS if t.startswith("k")]),
                              (ast.expr, [text for _t, text in AT_FILES])):
             with self.subTest(kinds=base.__name__):
-                derived = {c.__name__ for c in base.__subclasses__() if c.__name__ not in gone} - table
+                derived = {c.__name__ for c in base.__subclasses__()} - table
                 held = set().union(*(self._send_kinds(text, base) for text in plants)) - table
                 self.assertTrue(derived, "the interpreter's %s kinds outside the table, derived" % base.__name__)
                 self.assertEqual(held, derived, "the plants' %s kinds equal the interpreter's outside the table" % base.__name__)
