@@ -70691,9 +70691,10 @@ if(last&&last.kind===kind&&last.text===String(text)){last.n=(last.n||1)+1;last.t
 else{NOTES.push({kind:String(kind||'error'),text:String(text),t:Math.floor(Date.now()/1000),n:1,seen:false,tgt:tgt||null});
 if(NOTES.length>MAX)NOTES=NOTES.slice(-MAX);}
 // An entry that lands while the Log is open is seen as it lands, with the mark an opening gives (markSeen below): the reader
-// is looking at the list it joins, so closing the Log leaves nothing unread behind. Before 2026-10-03 it landed unread, and
-// the phone's triangle stayed red with an unread digit after the Log closed, for a line the reader had seen. The last entry
-// is the one just written, pushed or coalesced.
+// is looking at the list it joins, so the entry neither turns the triangle red under the open Log nor leaves it red once the
+// Log closes. Before 2026-10-03 it landed unread, and the phone's triangle stayed red with an unread digit after the Log
+// closed, for a line the reader had seen. A muted kind's entry stays unread here as at an opening. The last entry is the one
+// just written, pushed or coalesced.
 if(!back.hidden)markSeen(NOTES[NOTES.length-1]);
 save();paint();};
 // pane iframes can feed the center too; sid/itemId ride along as the entry's jump target. An entry naming a CARD

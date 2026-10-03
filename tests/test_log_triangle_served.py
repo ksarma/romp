@@ -12,17 +12,18 @@ health failure line's), since the dark red is about 2:1 on the light bar, fainte
 
 What the triangle shows, from the design (the paint comment): red while anything unread is in the Log or a visible pane's
 socket is down. The Log is not a tab on the phone: the triangle opens it as a centred modal, and opening marks every entry
-it shows seen, so with the Log open the triangle is red only while a live problem stands, and grey again once the socket
-is back. An entry that arrives while the Log is open is seen as it lands, with the mark an opening gives (the Log's
-markSeen), so the triangle stays grey under the open Log and after it closes, and the reopened Log lists the entry. Before
-2026-10-03 such an entry landed unread: it turned the triangle red under the open Log and kept it red, with an unread
-digit, after the Log closed, a false red for a line the reader had seen, which the colour fix would have made visible. The
-walk (tests/log_triangle_browser.mjs) reads the triangle's computed colour at each of those states, on the tab the shell
-opened on and after a tap on another tab, then under the light theme, and reads every other bar button's colour at every
-step, so the fix is held to leaving the active tab's accent, the other tabs' grey and the other actions' grey as they
-were. The glyph's outline and digit are drawn in currentColor, and each is read as well. Muted kinds and the live cue are
-the Log script's as before (an arrival of a muted kind stays unread, as at an opening; a visible pane's socket down keeps
-the triangle red with the Log open); tests/test_error_center.py executes those against the script itself.
+it shows seen, and an entry that arrives while the Log is open is seen as it lands, with the same mark (the Log's
+markSeen). So with the Log open the triangle is red while a visible pane's socket is down and grey again once it is back,
+and an entry logged with the Log open leaves it grey there and after the Log closes; the reopened Log lists that entry.
+Before 2026-10-03 such an entry landed unread: it turned the triangle red under the open Log and kept it red, with an
+unread digit, after the Log closed, a false red for a line the reader had seen, which the colour fix would have made
+visible. A muted kind is the one exception, at an opening and at an arrival alike: its entries stay unread, so unmuting it
+re-reddens the triangle, with the Log open or closed. The walk (tests/log_triangle_browser.mjs) reads the triangle's
+computed colour at each of the states above, on the tab the shell opened on and after a tap on another tab, then under the
+light theme, and reads every other bar button's colour at every step, so the fix is held to leaving the active tab's
+accent, the other tabs' grey and the other actions' grey as they were. The glyph's outline and digit are drawn in
+currentColor, and each is read as well. The walk mutes nothing; tests/test_error_center.py executes the muted kinds, and an
+arrival with a socket down and the Log open, against the Log script itself.
 
 Red at the base tree in every engine at the first unread step (the computed colour there is the action grey). A mutant
 that restores the old precedence (the selector back to `#merr.has`) turns the dark steps red; one without the light rule
