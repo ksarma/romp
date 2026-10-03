@@ -3,7 +3,7 @@ title: test_feed_session_started builds the kernel's SDK backend before _feed op
 status: candidate
 where: tests/test_feed_session_started.py (_Feed._feed: km._sdk() before the redirect_stderr; FeedCaptureHoldsTheBuildAlone, new); upstream/2026-10-03-tests-feed-capture-backend-build.md (this entry)
 added: 2026-10-03
-pr:
+pr: 963
 tier: docs
 offered:
 closed:
