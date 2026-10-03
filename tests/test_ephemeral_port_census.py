@@ -39,6 +39,8 @@ THE RULE. A number in the range counts when it is WRITTEN AS A PORT, in one of t
     a first parameter named self or cls is skipped; a *ports parameter takes every extra argument;
     an element of the sequence a for loop or a comprehension walks, under a target that names a port (for host, port in
     (("h", N),): the element at the port's index);
+    the second argument of a call whose first argument is a string that names a port (os.environ.setdefault(
+    "ROMP_POSTAL_PORT", "N"), monkeypatch.setenv);
     the port of an address tuple whose host is a loopback or wildcard literal (("127.0.0.1", N));
     an operand formatted into an address ("http://127.0.0.1:%d/" % N);
     and one hop through a name: a value written in one of those positions as a bare name counts the literals the module
@@ -57,10 +59,11 @@ THE RULE. A number in the range counts when it is WRITTEN AS A PORT, in one of t
     flag  a --*port option (--port N, --port=N);
     authority  host:N after a loopback or wildcard host or after // in a URL (http://127.0.0.1:N, //TESTHOST:N);
     address    a loopback or wildcard address tuple in text (("127.0.0.1", N));
-    call  a number handed first to .listen(, .connect(, createConnection( or .bind(.
+    call  a number handed first to .listen(, .connect(, createConnection( or .bind(;
+    pair  a port-named string and the number handed together ("ROMP_POSTAL_PORT", "N").
   Code text in a Python string, one that parses as Python (a probe a test runs with python -c, a planted module), is
   read by the Python rules, whether or not anything runs it: the census cannot tell a probe that runs from one that is
-  only parsed, so code is code.
+  only parsed, so code is code. A hit inside a string literal is reported on the source line that writes the number.
 
 THE EXCLUDED CLASS, a stated predicate rather than a list: a number in the range written anywhere else is not a port
 setting, neither dials nor binds, and stays. That is prose, a comment and a docstring; a log, error or ps line a test
@@ -131,13 +134,22 @@ TEXT_RULES = (
     ("authority", re.compile(r"(?:" + _HOST + r"|//[\w.-]+)[ \t]*:[ \t]*(?P<n>\d{5})(?![\w.])")),
     ("address", re.compile(r"\([ \t]*[\"'](?:127\.0\.0\.1|localhost|0\.0\.0\.0|::1?|)[\"'][ \t]*,[ \t]*(?P<n>\d{5})[ \t]*[,)]")),
     ("call", re.compile(r"(?:\.listen|\.connect|createConnection|\.bind)\([ \t]*(?P<n>\d{5})(?![\w.])")),
+    ("pair", re.compile(r"\([ \t]*[\"'`](?P<name>[\w$.-]+)[\"'`][ \t]*,[ \t]*" + _NUM)),
 )
-_NAMED = frozenset({"key", "decl", "env", "flag"})   # the rules whose match carries a name that must name a port
+_NAMED = frozenset({"key", "decl", "env", "flag", "pair"})   # the rules whose match carries a name that must name a port
+
+
+def _line_in(first, last, after):
+    """The physical line of a place inside a string literal that spans lines `first` to `last`, with `after` newlines of
+    the literal's value after the place. It is counted back from the literal's end, so a triple-quoted literal whose
+    opening line ends in a backslash reads right, and it is held between the two lines, so a literal written on one line
+    with newline escapes reads as that line."""
+    return max(first, min(last, last - after))
 
 
 def text_hits(text, first_line=1, last_line=None):
-    """[(line, number, why)] for every text rule's match in `text`: the line counted from `first_line`, and held at
-    `last_line` when the text is one physical line of source (a string literal written with escapes)."""
+    """[(line, number, why)] for every text rule's match in `text`: in a whole file, the line counted from `first_line`;
+    in a string literal spanning `first_line` to `last_line`, the line _line_in reads."""
     out = []
     for rule, rx in TEXT_RULES:
         for m in rx.finditer(text):
@@ -148,8 +160,11 @@ def text_hits(text, first_line=1, last_line=None):
                 continue
             if rule == "env" and m.group("name") != m.group("name").upper():
                 continue
-            line = first_line + text.count("\n", 0, m.start("n"))
-            out.append((min(line, last_line) if last_line else line, v, "text rule %s" % rule))
+            if last_line is None:
+                line = first_line + text.count("\n", 0, m.start("n"))
+            else:
+                line = _line_in(first_line, last_line, text.count("\n", m.start("n")))
+            out.append((line, v, "text rule %s" % rule))
     return out
 
 
@@ -234,9 +249,19 @@ def interval(node, bound=None):
 class _Scan:
     """One module's (or one code text's) Python reading; hits are (line, number, why)."""
 
-    def __init__(self, own, product, line_of, depth):
-        self.own, self.product, self.line_of, self.depth = own, product, line_of, depth
+    def __init__(self, own, product, line_of, depth, src=None):
+        self.own, self.product, self.line_of, self.depth, self.src = own, product, line_of, depth, src
         self.hits = []
+
+    def _place(self, est, v, first, last):
+        """The line among `first`-`last` of the module's source that writes the number `v`, nearest the estimate `est`
+        (several pieces of one literal can sit on separate lines); `est` when no line there writes it or the source is
+        not at hand."""
+        if not self.src:
+            return est
+        rx = re.compile(r"(?<!\d)%d(?!\d)" % v)
+        cands = [i for i in range(first, last + 1) if i - 1 < len(self.src) and rx.search(self.src[i - 1])]
+        return min(cands, key=lambda i: abs(i - est)) if cands else est
 
     def _resolve(self, name):
         return self.own[name] if name in self.own else self.product.get(name, ())
@@ -297,6 +322,8 @@ class _Scan:
                 for kw in n.keywords:
                     if names_a_port(kw.arg):
                         self._value(kw.value, "the keyword %s=" % kw.arg)
+                if len(n.args) >= 2 and isinstance(n.args[0], ast.Constant) and names_a_port(n.args[0].value):
+                    self._value(n.args[1], "the value handed with the name %r" % n.args[0].value)
                 name = _callee(n.func)
                 for params, star in (self._resolve(name) if name else ()):
                     for i, a in enumerate(n.args):
@@ -348,23 +375,26 @@ class _Scan:
         if self.depth < MAX_CODE_DEPTH:
             try:
                 sub = ast.parse(n.value)
-            except (SyntaxError, ValueError):
+            except (SyntaxError, ValueError, RecursionError, MemoryError):
                 sub = None
         if sub is not None and sub.body:
-            def line_of(x, end=False, first=first, last=last):
-                return min(first + getattr(x, "end_lineno" if end else "lineno", 1) - 1, last)
-            inner = _Scan(defs_of(sub, dict(self.own)), self.product, line_of, self.depth + 1)
+            total = n.value.count("\n")
+
+            def line_of(x, end=False, first=first, last=last, total=total):
+                return _line_in(first, last, total - (getattr(x, "end_lineno" if end else "lineno", 1) - 1))
+            inner = _Scan(defs_of(sub, dict(self.own)), self.product, line_of, self.depth + 1, self.src)
             inner.scan(sub)
-            self.hits.extend((ln, v, "in code text, " + why) for ln, v, why in inner.hits)
+            self.hits.extend((self._place(ln, v, first, last), v, "in code text, " + why) for ln, v, why in inner.hits)
         else:
-            self.hits.extend(text_hits(n.value, first, last if last == first else None))
+            self.hits.extend((self._place(ln, v, first, last), v, why) for ln, v, why in text_hits(n.value, first, last))
 
 
-def scan_python(tree, product):
-    """[(line, number, why)], sorted and one per (line, number), for a parsed module."""
+def scan_python(tree, product, text=None):
+    """[(line, number, why)], sorted and one per (line, number), for a parsed module; `text`, the module's source, places a
+    hit inside a string literal on the physical line that writes it."""
     def line_of(x, end=False):
         return getattr(x, "end_lineno" if end else "lineno", 1) or 1
-    sc = _Scan(defs_of(tree), product, line_of, 0)
+    sc = _Scan(defs_of(tree), product, line_of, 0, text.split("\n") if text is not None else None)
     sc.scan(tree)
     return _one_per_place(sc.hits)
 
@@ -421,7 +451,7 @@ def census(root):
             continue
         if p.endswith(".py"):
             n_py += 1
-            found = scan_python(parse_cache.source_and_tree(p)[1], product)
+            found = scan_python(parse_cache.source_and_tree(p)[1], product, text)
         else:
             found = _one_per_place(text_hits(text))
         hits += [(rel, line, v, why) for line, v, why in found]
@@ -440,11 +470,11 @@ class NoFixedEphemeralPort(unittest.TestCase):
 
     def test_no_test_writes_a_fixed_port_in_the_ephemeral_range(self):
         hits = self.result["hits"]
-        self.assertFalse(hits, "%d fixed port(s) in %d-%d written as a port. Any process can hold a listener on such a "
-                               "port, so a dial to it can hang. Use port 1 for a dial that never lands (2, 3 and on for a "
-                               "row's other ports), and a bind to port 0 or tests/lab_ports.reserve for a listener; this "
-                               "module's docstring states the rule and what it excludes:\n%s"
-                         % (len(hits), LOW, HIGH, render(hits)))
+        if hits:
+            self.fail("%d fixed port(s) in %d-%d written as a port. Any process can hold a listener on such a port, so a "
+                      "dial to it can hang. Use port 1 for a dial that never lands (2, 3 and on for a row's other ports), "
+                      "and a bind to port 0 or tests/lab_ports.reserve for a listener; this module's docstring states the "
+                      "rule and what it excludes:\n%s" % (len(hits), LOW, HIGH, render(hits)))
 
     def test_the_population_is_not_empty(self):
         self.assertGreater(self.result["files"], 1000, "the walk read the tests and the node suites")
@@ -515,6 +545,8 @@ class Plants(unittest.TestCase):
                 ("product function positional", 'km._notify_bus_peer("TESTHOST", %d, True)\n' % n, "argument port of _notify_bus_peer()"),
                 ("product method positional", 'r.ring(%d)\n' % n, "argument port of ring()"),
                 ("loop target", 'for host, port in (("A", %d),):\n    pass\n' % n, "loop target port"),
+                ("a call handed a port name and its value", 'os.environ.setdefault("ROMP_POSTAL_PORT", "%d")\n' % n,
+                 "handed with the name 'ROMP_POSTAL_PORT'"),
                 ("address", 's.connect(("127.0.0.1", %d))\n' % n, "address ('127.0.0.1'"),
                 ("formatted address", 'u = "http://127.0.0.1:%%d/peer" %% %d\n' % n, "formatted into an address"),
                 ("one hop", 'P = %d\nps.peer_update({"host": "h", "port": P})\n' % n, "through the name P"),
@@ -543,7 +575,8 @@ class Plants(unittest.TestCase):
                 ("flag", "c.bats", "run romp serve --port %d\n" % n, "rule flag"),
                 ("URL", "d.test.mjs", "await fetch('http://localhost:%d/healthz');\n" % n, "rule authority"),
                 ("address in shell python", "e.bats", "python3 -c \"s.bind(('127.0.0.1', %d))\"\n" % n, "rule address"),
-                ("listen", "f.test.js", "server.listen(%d, '127.0.0.1');\n" % n, "rule call")):
+                ("listen", "f.test.js", "server.listen(%d, '127.0.0.1');\n" % n, "rule call"),
+                ("a name and its value handed together", "g.test.js", "setEnv('ROMP_POSTAL_PORT', '%d');\n" % n, "rule pair")):
             with self.subTest(label):
                 self.assertRed(name, src, why)
 
@@ -565,6 +598,19 @@ class Plants(unittest.TestCase):
                 ("bats size", "i.bats", '[[ "$output" == *"dom %d"* ]]\n' % n)):
             with self.subTest(label):
                 self.assertGreen(name, src)
+
+    def test_a_hit_inside_a_string_that_spans_lines_names_its_own_line(self):
+        n = _n()
+        src = ('import textwrap\n'
+               'PROBE = textwrap.dedent("""\\\n'
+               '    import os\n'
+               '    os.environ["ROMP_POSTAL_PORT"] = "%d"\n'
+               '""")\n'
+               'JS = """\n'
+               'const srv = { port: %d };\n'
+               '"""\n'
+               'ONE = "x = 1\\nbus.peer_update({\\"port\\": %d})"\n') % (n, n, n)
+        self.assertEqual([h[1] for h in self._hits("test_plant.py", src)], [4, 7, 9], src)
 
     def test_a_port_below_the_range_or_port_one_is_not_counted(self):
         self.assertGreen("test_x.py", 'ps.peer_update({"host": "TESTHOST", "port": 1, "up": True})\nrow = {"local_port": 2, "bus_port": %d}\n'
