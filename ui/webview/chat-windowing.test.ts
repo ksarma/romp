@@ -270,7 +270,7 @@ test("round nine fixes each carry a pin (T386 stage 2): an older fetch in flight
   const sca = RENDER.slice(RENDER.indexOf("function scrollToAnchor("), RENDER.indexOf("\nfunction ", RENDER.indexOf("function scrollToAnchor(") + 1));
   assert.match(sca, /if \(live\) \{ landTrail\.push\("pointer-fetch-busy"\); landToast\("still going to the earlier message"\); return false; \}\s*\n(\s*\/\/[^\n]*\n)*\s*if \(loadingOlder\.has\(activeId\)\) \{ pendingOlderAnchor\.set\(activeId, uuid\); pendingOlderKeepY\.delete\(activeId\); pendingAnchor = uuid; anchorPendingOlder = true; landTrail\.push\("pointer-fetch-older"\); return false; \}/, "only a live window ask is busy; an older fetch in flight is re-pointed onto the anchor and arms the landing for chatHead's arrival");
   assert.doesNotMatch(sca, /loadingOlder\.has\(activeId\) \|\| liveWindowAsk\(activeId\)/, "the unconditional refusal is gone");
-  assert.match(RENDER, /if \(landedNow \|\| !anchorPendingOlder\) \{ pendingAnchor = null; pendingAnchorKeepY = null; \}/, "the reload restore's caller keeps its arm while an older fetch is pointed at the anchor");
+  assert.match(RENDER, /if \(landedNow \|\| !anchorPendingOlder\) \{ pendingAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; \}/, "the reload restore's caller keeps its arm (the offset and the reader's line) while an older fetch is pointed at the anchor");
   assert.match(RENDER, /^window\.addEventListener\("romp:wsdown", \(\) => onWireDown\(\)\);$/m, "the socket's down edge runs the one clear");
   assert.match(RENDER, /if \(m\.type === "pipeState"\) \{ if \(!m\.up\) \{ awaitingFull\.clear\(\); markPendingLost\("connection"\); onWireDown\(\); \} pipeBanner\(!!m\.up, Number\(m\.queued\) \|\| 0\); return; \}/, "…and so does the VS Code pane's pipe-down edge (this fork clears its awaited-full set there too, as the socket's down edge does)");
   assert.match(RENDER, /function onWireDown\(\): void \{[\s\S]*?if \(hostOf\(parseGapKey\(k\)\.sid\) === ""\) gapLoading\.delete\(k\);[\s\S]*?windowAsks\.clear\(\); loadingOlder\.clear\(\);[\s\S]*?hideLandingNotice\(\);[\s\S]*?pendingAnchor = null; anchorPendingOlder = false;/, "the clear: page asks, every ask record, the older-ask set, the glyphs, the notice, the arm");
@@ -289,7 +289,7 @@ test("round eleven fixes each carry a pin (T386 stage 2): a real second click re
   const sca = RENDER.slice(RENDER.indexOf("function scrollToAnchor("), RENDER.indexOf("\nfunction ", RENDER.indexOf("function scrollToAnchor(") + 1));
   assert.match(sca, /if \(live && live\.anchor === uuid\) \{ anchorPendingOlder = true; landTrail\.push\("pointer-fetch-waiting"\); if \(pendingAnchorClick\) pulseLandingNotice\(\); return false; \}/, "a real second click on the anchor a landing is on the wire for pulses the notice; a pass's re-attempt does not");
   assert.match(RENDER, /pendingAnchorClick = typeof m\.anchor === "string";/, "the focus frame marks the click");
-  assert.match(RENDER, /pendingAnchorKeepY = null; pendingAnchorClick = false;\s*\n\s*\/\/ Diagnostics: log every landing attempt/, "…and the pass clears it");
+  assert.match(RENDER, /pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorClick = false;\s*\n\s*\/\/ Diagnostics: log every landing attempt/, "…and the pass clears it");
   assert.match(CSS, /\.tx-landing-notice\.pulse \{ animation: tx-notice-pulse 500ms ease-out; \}/, "the pulse is one short animation");
 });
 

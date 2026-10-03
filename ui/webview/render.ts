@@ -1392,6 +1392,11 @@ function revealProgressTick(scrolled: boolean, attAnchor: string | null): void {
 // around it), then restore it to this y instead of calling landOn. Sticks with pendingAnchor across
 // render-pass retries, like pendingAnchorIntent.
 let pendingAnchorKeepY: number | null = null;
+// …and the reader's LINE inside that row, when the keep is a page reload's whose record carries one (reading-point.ts; the review of iOS
+// item 6, round two): the record is taken over laid-out formulas and the row lands over formulas still waiting for the math renderer, so
+// the row's top alone puts the line off by their growth, and the swap then keeps the wrong line in place. Set with pendingAnchorKeepY,
+// cleared wherever it is cleared; null for every keep that carries no line (a scroll-back's, a rebuild's).
+let pendingAnchorKeepAt: ReadingPoint | null = null;
 let flashedAnchor: string | null = null; // the anchor already flashed THIS navigation — a deep anchor
 // re-lands once per older-history fetch round, and each re-land used to pulse again (the user
 // 2026-08-15: "pulsating way too many times"). A NEW navigation (setActive with an anchor) re-arms.
@@ -13055,6 +13060,11 @@ function scrollToAnchor(uuid: string): boolean {
       const working = s.status.state === "working" || s.status.state === "compacting";
       figures = figuresBefore(v);
       renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working, true);   // anchored: landOn puts the target under the reader
+      // The window's marks, branch chips and fork spots go on now, before any landing reads the layout (syncView's wrapper does the same
+      // after every sync). Applied after the landing, by the payload's re-apply or the math renderer's arrival, a fork spot under each
+      // response above the target grew the rows above it with no write, and the reader landed about 8 px off per response (the review of iOS
+      // item 6, round two: a reload into a long transcript with two responses above the reader ended 16 px off, at the base already).
+      applyCommentMarks(activeId);
       // Re-query with the SAME three selectors the first lookup used. data-mids was missing here, so an
       // unhydrated postal turn (whose message ids live only in data-mids) could be found in the events,
       // have its window rendered — and then still honest-fail "pointer-not-rendered" on the re-query.
@@ -13133,13 +13143,16 @@ function scrollToAnchor(uuid: string): boolean {
   // like a deep-link. Routing it through landOn was what yanked a reader off the summary they had just
   // jumped to and onto the head of the resident tail (an old Bash card); see chatHead.
   if (pendingAnchorKeepY != null) {
-    const keepY = pendingAnchorKeepY;
-    pendingAnchorKeepY = null;
+    const keepY = pendingAnchorKeepY, keepAt = pendingAnchorKeepAt;
+    pendingAnchorKeepY = null; pendingAnchorKeepAt = null;
     landTrail.push("pointer-keep-offset");
     const content = document.getElementById("content");
     if (content) {
       const yNow = target.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
-      writeScroll(content, yNow - keepY, "keep-offset");
+      // the reader's line when the keep carries one and the row holds it (a reload into a row outside the fresh page's window, the
+      // restore's own road for a row inside it), else the row's top: one write either way
+      const dy = keepAt && v ? readingLineShift(content, v, { uuid, y: keepY, at: keepAt }) : null;
+      writeScroll(content, dy !== null ? content.scrollTop + dy : yNow - keepY, "keep-offset");
     }
     return true;
   }
@@ -15607,11 +15620,11 @@ function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: stri
   const figures = figuresBefore(v);   // what the take below takes, given back when neither restore has a row to put back
   if (applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   if (restoreScrollAnchor(content, v, keep)) return true;
-  pendingAnchor = keep.uuid; pendingAnchorKeepY = keep.y;
+  pendingAnchor = keep.uuid; pendingAnchorKeepY = keep.y; pendingAnchorKeepAt = null;
   relandAsk = true;
   let landed = false;
   try { landed = scrollToAnchor(keep.uuid); } finally { relandAsk = false; }
-  if (!anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; }   // an older-history fetch keeps them armed for chatHead's re-land
+  if (!anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; }   // an older-history fetch keeps them armed for chatHead's re-land
   // the double miss: the row that was under the viewport top, back at its offset over the take; with that row gone too (the attempt's window
   // build replaced the rows) nothing can be put back and nothing is written, so the take is undone and the figures wait (untakeMeasure; the
   // maintainer's round 3 ruling B: until then the take stood under a reader nothing had placed)
@@ -15717,7 +15730,7 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
   // unanchorable — so they honest-fail with a toast rather than a clock-nearest guess (which often landed on
   // an unrelated turn anyway — the 'retry'-message bug). The old time tier-2 (scrollToNearestT) is GONE: the
   // last time-based navigation removed, per "no time heuristics". WORK/REPLY intent never had a tier-2 either.
-  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; pendingAnchorClick = false;
+  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorClick = false;
   // Diagnostics: log every landing attempt; a deep-link that couldn't resolve announces itself loudly
   // instead of impersonating a successful jump.
   if (att.anchor || att.t != null) {
@@ -15758,7 +15771,7 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
         // offset (review find, 2026-09-08)
         writeScroll(content, rs.top, "reload-restore");
         if (rs.anchor) {
-          pendingAnchor = rs.anchor.uuid; pendingAnchorKeepY = rs.anchor.y;
+          pendingAnchor = rs.anchor.uuid; pendingAnchorKeepY = rs.anchor.y; pendingAnchorKeepAt = rs.anchor.at ?? null;   // the row's offset and the reader's line in it
           // …and run that land NOW (T374, the verifier of 2026-09-12 executed the gap on both heads): this pass made its own
           // landing attempt above, before the restore armed anything, and the next pass comes only with a frame that changes
           // the run, which an idle session never sends, so a saved row outside the fresh window (mid-run: its raw top not in
@@ -15766,7 +15779,7 @@ function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean
           // outside the run → asks its window here (chatWindow lands it on arrival, the arm stays for that reply).
           landTrail = [];
           const landedNow = scrollToAnchor(rs.anchor.uuid);
-          if (landedNow || !anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; }
+          if (landedNow || !anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; }
         }
       }
     }
@@ -15882,12 +15895,17 @@ function captureReadingAnchor(content: HTMLElement, v: View): ReadingAnchor | nu
 /** The reader's line back at its offset, one write by its displacement; false, writing nothing, when no line was recorded or the
  *  turn no longer holds it, and the caller then restores the turn (restoreScrollAnchor). `from` as restoreScrollAnchor's. */
 function restoreReadingLine(content: HTMLElement, v: View, a: ReadingAnchor | null, from?: number): boolean {
-  if (!a || !a.at) return false;
-  const turn = v.el.querySelector(`[data-uuid="${cssEscape(a.uuid)}"]`) as HTMLElement | null;
-  const dy = turn ? readingPointShift(content, turn, a.at) : null;
+  const dy = readingLineShift(content, v, a);
   if (dy === null) return false;
   writeScroll(content, content.scrollTop + dy, "anchor-restore", false, from);   // the line keeps its exact on-screen offset
   return true;
+}
+/** How far the anchor's line has moved since it was taken (readingPointShift inside the anchor turn), or null when no line was recorded or
+ *  the turn no longer holds it. Writes nothing: restoreReadingLine and scrollToAnchor's keep-offset landing write by it. */
+function readingLineShift(content: HTMLElement, v: View, a: ReadingAnchor | null): number | null {
+  if (!a || !a.at) return null;
+  const turn = v.el.querySelector(`[data-uuid="${cssEscape(a.uuid)}"]`) as HTMLElement | null;
+  return turn ? readingPointShift(content, turn, a.at) : null;
 }
 
 // Live tail-append to the ACTIVE view. At the bottom → follow it. Scrolled UP reading → keep the viewport
@@ -16537,7 +16555,7 @@ function cancelLanding(): void {
   if (gv) for (const g of Array.from(gv.el.querySelectorAll(".tx-gap.tx-gap-loading")) as HTMLElement[]) { if (!gapHasAsk(sid, { lo: Number(g.dataset.lo), hi: Number(g.dataset.hi) })) g.classList.remove("tx-gap-loading"); }
   landTrail.push("cancelled");
   vscodeApi?.postMessage({ type: "locateDiag", id: sid, ok: false, trail: landTrail.slice(), anchor: target ?? pendingAnchor ?? undefined, anchorT: pendingAnchorT ?? undefined, kind: pendingAnchorKind ?? undefined, cancelled: true });
-  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; anchorPendingOlder = false;
+  pendingAnchor = null; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; anchorPendingOlder = false;
   clearSeek();
 }
 /** The view jumps STRAIGHT to where the target will be (the user 2026-09-12): the anchor's time against the runs' times picks the
@@ -20428,7 +20446,7 @@ function chatHead(msg: any) {
   if (anchorUuid && !pendingAnchor) {
     pendingAnchor = anchorUuid; pendingAnchorIntent = null; pendingAnchorT = null; pendingAnchorKind = null;
     flashedAnchor = null;                  // ditto: this path is also a user navigation
-    pendingAnchorKeepY = keepY ?? null;
+    pendingAnchorKeepY = keepY ?? null; pendingAnchorKeepAt = null;   // a scroll-back's keep carries no line
   }
   showActive();
   // the prepend RESTORES the row itself (round ten, low 1): a landing that already filed its row does not re-land on the re-render, so a
@@ -20602,7 +20620,7 @@ function chatWindow(msg: any) {
   // flight, so that mark cannot be the key); the notice's click stands the landing down and the window appears in place instead
   if (target && ask.nav && !cancelled) {
     // the landing re-armed on the window's anchor, so the click's time and kind ride through (T386: the landing row keeps the datum that ties it to the click)
-    pendingAnchor = target; pendingAnchorIntent = null; pendingAnchorT = ask.t; pendingAnchorKind = ask.kind; flashedAnchor = null; pendingAnchorKeepY = null; anchorPendingOlder = false;
+    pendingAnchor = target; pendingAnchorIntent = null; pendingAnchorT = ask.t; pendingAnchorKind = ask.kind; flashedAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; anchorPendingOlder = false;
     showActive();
     return;
   }

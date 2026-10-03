@@ -21,7 +21,10 @@ Against a hermetic kernel serving the checkout's own build (tests/lab_dist.py), 
     reading-point.ts; keeping the turn's top let the formulas push the text down by their growth, the review of iOS item 6);
     and a reload in that place, whose record is taken over KaTeX's layout, lands the paragraph within 2 px of where it was
     while the fresh page's formulas still wait (whole-pixel scroll offsets, written more than once as the fresh page settles),
-    and keeps it there through the swap.
+    and keeps it there through the swap;
+  - the same reload in a LONG transcript (the reply followed by more replies than the fresh page's tail window holds, so the
+    restore lands the reply through the deep-link land's keep offset: render.ts scrollToAnchor), in both engines on the phone:
+    the paragraph within 2 px while the formulas wait and after the swap (the keep offset carries the reader's line too).
 SYNTHETIC fixtures only; skips LOUDLY without the extension deps or a Playwright browser (CI's served job installs both)."""
 import gzip
 import json
@@ -60,6 +63,7 @@ FILLER = ("Filler reply %d: the web session reran the notes-api tests and the ap
 STEP_FORMULAS = [r"\frac{a}{b}", r"\sum_{i=1}^{n} x_i", r"\int_0^1 f(x)\,dx", r"\binom{n}{k}", r"\sqrt{\frac{a}{b}}",
                  r"\prod_{k=1}^{m} p_k", r"\frac{\partial f}{\partial x}", r"\lim_{x\to 0} g(x)"]
 READS = 10
+LONG_FILLERS = 110   # more replies after the math reply than the chat's tail window (render.ts WINDOW_TAIL, 80 units) renders
 
 
 def ranking_reply():
@@ -304,6 +308,94 @@ await browser.close();
 process.exit(0);
 """
 
+# The reader inside the math reply of a LONG transcript, on a phone: the reply sits above the fresh page's tail window, so the reload
+# restore finds no row of it in the fresh page, lands the raw top and arms the deep-link land, which builds a window around the reply and
+# lands it at the record's offset (render.ts landActive's reload restore, scrollToAnchor's keep-offset branch). One page life to place the
+# reader (the chunk served when asked), then the reload with the chunk held.
+DRIVER_WINDOW = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const out = {};
+const PENDING = "#content .md-math-inline, #content .md-math-display";
+try {
+  const device = Object.assign({}, pw.devices["iPhone 15"]);
+  delete device.defaultBrowserType;
+  const ctx = await browser.newContext(device);
+  const errors = [];
+  const settle = (page) => page.evaluate(() => fetch("/healthz", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+  const swapped = (page) => page.waitForFunction((sel) => !document.querySelector(sel) && document.querySelectorAll("#content .katex").length > 0, PENDING, { timeout: 30000 });
+  const rendered = (marker) => Array.from(document.querySelectorAll("#content p")).some((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+  const has = (page) => page.evaluate(rendered, cfg.marker);
+  const measure = (page) => page.evaluate((marker) => {
+    const c = document.getElementById("content");
+    const ct = c.getBoundingClientRect().top;
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    const turn = p ? p.closest("[data-uuid]") : null;
+    const shown = turn ? Array.from(turn.querySelectorAll(".md-math-display, .katex-display")) : [];
+    const last = shown[shown.length - 1];
+    return { markerTop: p ? p.getBoundingClientRect().top - ct : null, turnTop: turn ? turn.getBoundingClientRect().top - ct : null,
+      turnHeight: turn ? turn.getBoundingClientRect().height : null, lastFormulaBottom: last ? last.getBoundingClientRect().bottom - ct : null,
+      pending: document.querySelectorAll("#content .md-math-inline, #content .md-math-display").length,
+      katex: document.querySelectorAll("#content .katex").length, scrollTop: c.scrollTop };
+  }, cfg.marker);
+  const place = (page) => page.evaluate(({ marker, off }) => {
+    const c = document.getElementById("content");
+    c.style.overflowAnchor = "none";
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    if (!p) return "no paragraph starting " + marker;
+    c.scrollTop += p.getBoundingClientRect().top - c.getBoundingClientRect().top - off;
+    return "";
+  }, { marker: cfg.marker, off: cfg.offset });
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => errors.push(e.message));
+  const reqs = [];
+  let gate = null;
+  await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => { reqs.push(route.request().url()); if (gate) await gate.p; await route.continue(); });
+  await page.goto(cfg.chat);
+  await page.waitForFunction((t) => (document.body.innerText || "").includes(t), cfg.lastFiller, { timeout: 30000 });
+  await settle(page);
+  out.boot = { marker: await has(page), pending: await page.evaluate((sel) => document.querySelectorAll(sel).length, PENDING) };
+  // up to the reply: the window grows as the reader reaches its top
+  for (let i = 0; i < 120 && !(await has(page)); i++) {
+    await page.evaluate(() => { const c = document.getElementById("content"); c.scrollTop = 0; });
+    await settle(page);
+  }
+  if (!(await has(page))) throw new Error("the reply never rendered as the reader scrolled up");
+  await swapped(page);
+  await settle(page);
+  for (let i = 0; i < 2; i++) {   // twice: the window can still grow under the first placing
+    const placed = await place(page);
+    if (placed) throw new Error(placed);
+    await settle(page);
+  }
+  out.preReload = await measure(page);
+  gate = {}; gate.p = new Promise((r) => { gate.r = r; });
+  await page.reload();
+  await page.waitForFunction(rendered, cfg.marker, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelectorAll('script[src*="math-chunk.js"]').length > 0, null, { timeout: 30000 });
+  await page.evaluate(() => { document.getElementById("content").style.overflowAnchor = "none"; });
+  await settle(page);
+  out.pending = await measure(page);
+  gate.r();
+  await swapped(page);
+  await settle(page);
+  out.after = await measure(page);
+  out.requests = reqs.length;
+  out.errors = errors;
+} catch (e) {
+  out.died = String(e && e.message || e);
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
 
 class ServedMathChunk(unittest.TestCase):
     """One hermetic kernel per test, so each engine's chat opens on a transcript that has never held a formula (the chat
@@ -539,6 +631,46 @@ class ServedMathChunk(unittest.TestCase):
 
     def test_reader_inside_the_math_reply_on_a_phone_webkit(self):
         self._in_turn("webkit")
+
+    def _window_reload(self, engine):
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
+                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                reply("r1", "u2", self.t0 + 40, ranking_reply())]
+        for i in range(LONG_FILLERS):
+            recs.append(reply("g%d" % i, "r1" if i == 0 else "g%d" % (i - 1), self.t0 + 60 + i, FILLER % i))
+        with open(self.transcript, "a") as f:
+            f.write(jsonl(recs))
+        cfg = os.path.join(self.lab, "cfg-window-%s.json" % engine)
+        Path(cfg).write_text(json.dumps({
+            "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+            "lastFiller": "Filler reply %d:" % (LONG_FILLERS - 1), "marker": "READ-03", "offset": 80}))
+        r = self._run(engine, DRIVER_WINDOW, cfg, "window-" + engine)
+        w = engine + ": long transcript: "
+        self.assertNotIn("died", r, w + "the driver stopped early: %r\nkernel:\n%s" % (r.get("died"), Path(self.klog).read_text()[-1500:]))
+        n = len(STEP_FORMULAS)
+        self.assertEqual(r["boot"], {"marker": False, "pending": 0},
+                         w + "the fresh page's tail window holds none of the reply, so the reload restore takes the windowed road: %r" % r["boot"])
+        pre, pend, a = r["preReload"], r["pending"], r["after"]
+        self.assertEqual(pre["pending"], 0, w + "the place is taken over KaTeX's layout: %r" % pre)
+        self.assertLess(pre["lastFormulaBottom"], 0, w + "with the reply's formulas above the viewport top: %r" % pre)
+        self.assertGreater(pre["markerTop"], 0, w + "and the paragraph being read on screen: %r" % pre)
+        self.assertEqual(pend["pending"], 3 * n, w + "the fresh page's formulas wait for the chunk: %r" % pend)
+        # within 2 px, as the in-window reload above (whole-pixel scroll offsets)
+        self.assertLessEqual(abs(pend["markerTop"] - pre["markerTop"]), 2,
+                             w + "the fresh page lands the paragraph being read where it was, over the waiting formulas: %r %r" % (pre, pend))
+        self.assertGreater(a["turnHeight"] - pend["turnHeight"], 20, w + "the swap grew the turn: %r %r" % (pend, a))
+        self.assertLessEqual(abs(a["markerTop"] - pre["markerTop"]), 2, w + "and keeps it there through the swap: %r %r" % (pre, a))
+        self.assertEqual((a["pending"], r["requests"]), (0, 2), w + "one chunk per page life: %r" % r)
+        self.assertEqual(r["errors"], [], w + "no page error")
+
+    def test_reload_into_a_long_transcript_on_a_phone_chromium(self):
+        self._window_reload("chromium")
+
+    def test_reload_into_a_long_transcript_on_a_phone_webkit(self):
+        self._window_reload("webkit")
 
 
 if __name__ == "__main__":
