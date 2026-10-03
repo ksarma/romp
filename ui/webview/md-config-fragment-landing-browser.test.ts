@@ -67,8 +67,8 @@ const MATH_NOTE = [
 
 const BUILD = { bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
-function filesBundle(): string {
-  const r = requireCjs("esbuild").buildSync({ ...BUILD, entryPoints: [path.join(UI, "files.ts")] });
+function filesBundle(): string {   // the Files pane's bundle with KaTeX installed first, as its on-demand chunk installs it (iOS item 6)
+  const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents: 'import "./math-chunk";\nimport "./files";\n', resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" } });
   return r.outputFiles[0].text;
 }
 const FILES_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}\n${PANE}</style></head><body class=fileview-pane>

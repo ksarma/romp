@@ -119,6 +119,7 @@ const STYLES = read("styles.css").replace('@import "katex/dist/katex.min.css";',
 /** The chat's two renderers, minus the PR-reference walk (md-config-chat-styles-browser.test.ts's bundle). */
 function chatBundle(): string {
   const contents = [
+    'import "./math-chunk";',   // KaTeX installed as its on-demand chunk installs it, so the fill renders in the call (iOS item 6)
     'import { marked } from "marked";',
     'import { applyMdConfig } from "./md-config";',
     'import { sanitizeMd } from "./md-sanitize";',

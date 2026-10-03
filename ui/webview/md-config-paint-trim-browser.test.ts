@@ -74,7 +74,7 @@ function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { viewerHtml } from "./file-view";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
+      contents: 'import "./math-chunk";\nimport { viewerHtml } from "./file-view";\nimport { applyMdConfig } from "./md-config";\nimport { sanitizeMd } from "./md-sanitize";\n'
         + 'import { paintRendered, trimCollapsedMarks } from "./anchor-map";\napplyMdConfig();\n(window as any).__romp = { viewerHtml, sanitizeMd, paintRendered, trimCollapsedMarks };\n',
       resolveDir: UI, loader: "ts", sourcefile: "paint-trim-probe.ts",
     },

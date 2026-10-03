@@ -69,8 +69,8 @@ test("scrollToAnchor restores a keep-offset instead of landing on it", () => {
   const branch = body.slice(at, body.indexOf('landTrail.push("pointer-exact")', at));   // the keep branch alone
   assert.match(branch, /landTrail\.push\("pointer-keep-offset"\)/,
     "the audit trail names the restore, so it is never mistaken for a click again");
-  assert.match(branch, /writeScroll\(content, yNow - keepY, "keep-offset"\)/,
-    "the row comes back at its captured offset");
+  assert.match(branch, /writeScroll\(content, dy !== null \? content\.scrollTop \+ dy : yNow - keepY, "keep-offset"\)/,
+    "the row comes back at its captured offset, or the reader's line inside it when a reload's keep carries one (scroll-to-anchor-roads.test.ts executes both)");
   assert.ok(!/landOn\(/.test(branch), "a restore must NOT top-align + flash the row like a jump");
   // …and the ordinary path still does land properly.
   assert.match(body, /landTrail\.push\("pointer-exact"\);[\s\S]{0,1200}?landOn\(target, uuid, quoteEl \?\? firstTextAtomBelow\(target\), quote\);/,

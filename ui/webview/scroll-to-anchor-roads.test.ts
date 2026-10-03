@@ -47,23 +47,24 @@ class Host {
 }
 
 type Ev = { kind: string; uuid: string };
-type Opts = { resident?: string[]; events: Ev[]; rendersOnBuild?: boolean; intent?: string | null; keepY?: number | null; headFrom?: number; proto?: number; older?: boolean; parked?: boolean };
-type World = { host: Host; calls: any[]; writes: any[]; rows: any[]; toasts: string[]; state: () => { pendingAnchor: string | null; pendingAnchorIntent: string | null; pendingAnchorKeepY: number | null; anchorPendingOlder: boolean; landTrail: string[] }; jump: (uuid: string) => boolean; parked: () => boolean };
+type Opts = { resident?: string[]; events: Ev[]; rendersOnBuild?: boolean; intent?: string | null; keepY?: number | null; keepAt?: unknown; lineShift?: (a: any) => number | null; headFrom?: number; proto?: number; older?: boolean; parked?: boolean };
+type World = { host: Host; calls: any[]; writes: any[]; rows: any[]; toasts: string[]; state: () => { pendingAnchor: string | null; pendingAnchorIntent: string | null; pendingAnchorKeepY: number | null; pendingAnchorKeepAt: unknown; anchorPendingOlder: boolean; landTrail: string[] }; jump: (uuid: string) => boolean; parked: () => boolean };
 
 /** A view holding `resident` uuids as rows, over a session of `events` (a unit per event); the stubbed renderWindowItems records the
  *  flag it is handed and, when `rendersOnBuild`, gives the anchor its row (the re-query then finds it); `intent` is the kind guard's,
- *  `keepY` a re-land's kept offset; `headFrom` and `older` shape the older-than-the-tail branch. */
+ *  `keepY` a re-land's kept offset and `keepAt` the reader's line a reload's keep carries, `lineShift` the stubbed readingLineShift's answer
+ *  (how far that line has moved, or null when the row no longer holds it); `headFrom` and `older` shape the older-than-the-tail branch. */
 function world(o: Opts): World {
   const host = new Host();
   for (const u of o.resident ?? []) host.children.push(new Row("turn " + (o.events.find((e) => e.uuid === u)?.kind === "user" ? "turn-user" : "turn-assistant"), u));
   const s: any = { id: "A", events: o.events, status: { state: "working" }, proto: o.proto ?? 1, headFrom: o.headFrom ?? 0, regions: undefined };
   const v: any = { el: host };
-  const H: any = { host, s, v, calls: [] as any[], writes: [] as any[], rows: [] as any[], toasts: [] as string[], intent: o.intent ?? null, keepY: o.keepY ?? null, older: !!o.older, parked: o.parked ?? true,
+  const H: any = { host, s, v, calls: [] as any[], writes: [] as any[], rows: [] as any[], toasts: [] as string[], intent: o.intent ?? null, keepY: o.keepY ?? null, keepAt: o.keepAt ?? null, lineShift: o.lineShift, older: !!o.older, parked: o.parked ?? true,
                    build: (uuid: string) => { if (o.rendersOnBuild) { const ev = o.events.find((e) => e.uuid === uuid); host.children.push(new Row("turn " + (ev?.kind === "user" ? "turn-user" : "turn-assistant"), uuid)); } } };
   const js = liftBetween("function scrollToAnchor(uuid: string): boolean {", "/** The atoms of the transcript turn");
   const prelude = `
     const H = HOOKS;
-    let anchorPendingOlder = false, pendingAnchor = null, pendingAnchorIntent = H.intent, pendingAnchorKeepY = H.keepY, pendingAnchorClick = false, pendingAnchorQuote = null, landTrail = [];
+    let anchorPendingOlder = false, pendingAnchor = null, pendingAnchorIntent = H.intent, pendingAnchorKeepY = H.keepY, pendingAnchorKeepAt = H.keepAt, pendingAnchorClick = false, pendingAnchorQuote = null, landTrail = [];
     const activeId = "A"; const views = new Map([["A", H.v]]);
     const liveSession = () => H.s;
     const displayItems = (s) => s.events.map((e, i) => ({ kind: "event", index: i }));
@@ -81,13 +82,15 @@ function world(o: Opts): World {
     const landToast = (m) => { H.toasts.push(m); }; const pulseLandingNotice = () => {};
     const scrollDiagRow = (kind, row) => { H.rows.push([kind, row]); };
     const document = { getElementById: (id) => (id === "content" ? { scrollTop: 500, getBoundingClientRect: () => ({ top: 0 }) } : null) };
-    const writeScroll = (c, top, writer) => { H.writes.push([writer, top]); };
+    const writeScroll = (c, top, writer) => { H.writes.push([writer, top]); H.calls.push(["write", writer]); };
+    const applyCommentMarks = (sid) => { H.calls.push(["marks", sid]); };   // the window's marks, branch chips and fork spots (comments.test.ts and the served legs execute the real one)
     const highlightCiteSpan = () => null; const firstTextAtomBelow = () => null;
     const landOn = (target, uuid) => { H.calls.push(["landOn", target.dataset.uuid, uuid]); };
+    const readingLineShift = (c, v, a) => { H.calls.push(["line", a]); return H.lineShift ? H.lineShift(a) : null; };   // render.ts's, over reading-point.ts (land-active-keep.test.ts and reading-point-browser.test.ts execute the real ones)
   `;
   const epilogue = `
     return { jump: (uuid) => { building = uuid; return scrollToAnchor(uuid); },
-             state: () => ({ pendingAnchor, pendingAnchorIntent, pendingAnchorKeepY, anchorPendingOlder, landTrail: landTrail.slice() }) };
+             state: () => ({ pendingAnchor, pendingAnchorIntent, pendingAnchorKeepY, pendingAnchorKeepAt, anchorPendingOlder, landTrail: landTrail.slice() }) };
   `;
   const api = new Function("HOOKS", prelude + js + epilogue)(H) as { jump: (uuid: string) => boolean; state: World["state"] };
   return { host, calls: H.calls, writes: H.writes, rows: H.rows, toasts: H.toasts, state: api.state, jump: api.jump, parked: () => H.parked };
@@ -101,6 +104,7 @@ test("a resident target: no build (no take), the landing on the row, true", () =
   const w = world({ resident: [U(1), U(2)], events });
   assert.equal(w.jump(U(2)), true);
   assert.deepEqual(builds(w), [], "the row is there: nothing rebuilt, nothing taken");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "marks"), [], "no build, so no re-apply here: the sync that rendered the row applied its marks (syncView)");
   assert.deepEqual(lands(w), [["landOn", U(2), U(2)]], "the reader is put on the row");
   assert.deepEqual(w.writes, []); assert.deepEqual(w.state().landTrail, ["pointer-exact"]);
   assert.equal(w.state().pendingAnchor, null, "the arm is consumed");
@@ -112,6 +116,9 @@ test("a target the window does not hold, in the events: the flagged build (the t
   assert.deepEqual(builds(w), [["renderWindowItems", 0, 4, true]], "one window build around the anchor's unit, flagged: its take is the land's");
   assert.deepEqual(lands(w), [["landOn", U(4), U(4)]], "the take is followed by the placing write");
   assert.ok(w.calls.findIndex((c) => c[0] === "renderWindowItems") < w.calls.findIndex((c) => c[0] === "landOn"), "the build (and its take) before the land, which reads the row's live rect");
+  assert.deepEqual(w.calls.filter((c) => ["renderWindowItems", "marks", "landOn"].includes(c[0])).map((c) => c[0]), ["renderWindowItems", "marks", "landOn"],
+    "the window's marks, branch chips and fork spots go on between the build and the land, so the land reads the layout they make (the review of iOS item 6, round two: a fork spot put on after the land grew the rows above the target)");
+  assert.deepEqual(w.calls.find((c) => c[0] === "marks"), ["marks", "A"], "on the active view");
   assert.deepEqual(w.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take"], "the build took and the landing kept the take"); assert.equal(w.parked(), false);
   assert.deepEqual(w.state().landTrail, ["pointer-exact"]); assert.equal(w.state().pendingAnchor, null);
 });
@@ -123,6 +130,28 @@ test("a keep-offset re-land (keepPlaceAcrossWindow's, or the reload restore's): 
   assert.deepEqual(lands(w), [], "a restore, not a jump");
   assert.deepEqual(w.writes, [["keep-offset", 100 + 500 + 50]], "the row's top in scroll space less the kept offset");
   assert.deepEqual(w.state().landTrail, ["pointer-keep-offset"]); assert.equal(w.state().pendingAnchorKeepY, null, "the offset is consumed");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "line"), [], "a keep with no line reads none");
+});
+
+test("a reload's keep-offset re-land that carries the reader's LINE (the review of iOS item 6, round two): one write by the line's displacement, not the row's top; a line the row no longer holds lands the row's top as before; both consumed", () => {
+  // the reload restore of a record whose row is outside the fresh page's window arms the row's offset and the line the record carries (render.ts
+  // landActive); the record was taken over laid-out formulas and the row lands over formulas waiting for the math renderer, so the row's top
+  // alone put the reader's line 117 px off in Chromium on a phone (the round-two lab) and the swap kept it there
+  const at = { block: 18, char: 0, y: 80 };
+  const w = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, keepY: -50, keepAt: at, lineShift: () => -117 });
+  assert.equal(w.jump(U(4)), true);
+  assert.deepEqual(lands(w), [], "a restore, not a jump");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "line"), [["line", { uuid: U(4), y: -50, at }]], "the line read inside the anchor's row, after the window build rendered it");
+  assert.ok(w.calls.findIndex((c) => c[0] === "renderWindowItems") < w.calls.findIndex((c) => c[0] === "line"), "the build before the read");
+  assert.deepEqual(w.writes, [["keep-offset", 500 - 117]], "the line back at its offset: the scroller's place plus the line's displacement, one write");
+  assert.deepEqual(w.calls.filter((c) => ["renderWindowItems", "marks", "line", "write"].includes(c[0])).map((c) => c[0]), ["renderWindowItems", "marks", "line", "write"],
+    "the build, its marks and fork spots, then the line read in the layout they make, then the write");
+  assert.deepEqual(w.state().landTrail, ["pointer-keep-offset"]);
+  assert.equal(w.state().pendingAnchorKeepY, null); assert.equal(w.state().pendingAnchorKeepAt, null, "the line is consumed with the offset");
+  const gone = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, keepY: -50, keepAt: at, lineShift: () => null });
+  assert.equal(gone.jump(U(4)), true);
+  assert.deepEqual(gone.writes, [["keep-offset", 100 + 500 + 50]], "the row's top less the kept offset when the row lacks the line");
+  assert.equal(gone.state().pendingAnchorKeepAt, null);
 });
 
 test("the pointer-not-rendered miss road reached from markjump, replyjump and cmtjump: the build's re-query finds no row (the arm stays for the next pass, a landmiss row is filed), nothing is written, and the build's take is given back (the maintainer's round 3 ruling B: until then it stood, a take-then-no-write road the body disclosed); called after a taker of its own, the build finds nothing parked and gives nothing back", () => {

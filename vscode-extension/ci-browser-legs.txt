@@ -50,3 +50,6 @@
 # from a child process, and its own first test opens a page through inBrowser.
 out-tests/ui/webview/real-viewer-leg-switch.test.js
 out-tests/ui/webview/gear-sub-focus-browser.test.js
+out-tests/ui/webview/math-chunk-load-browser.test.js
+out-tests/ui/webview/file-view-math-hold-browser.test.js
+out-tests/ui/webview/reading-point-browser.test.js

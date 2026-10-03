@@ -38,12 +38,12 @@ const BUILD = { bundle: true, write: false, format: "iife", platform: "browser",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
 /** The Files pane's bundle plus the anchor map's exports, for the mapping over the page's own rendered box. */
 function filesBundle(): string {
-  const contents = 'import "./files";\nimport { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex } from "./anchor-map";\n(window as any).__rompProbe = { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex };\n';
+  const contents = 'import "./math-chunk";\nimport "./files";\nimport { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex } from "./anchor-map";\n(window as any).__rompProbe = { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex };\n';
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" } });
   return r.outputFiles[0].text;
 }
-function feedBundle(): string {
-  const r = requireCjs("esbuild").buildSync({ ...BUILD, entryPoints: [path.join(UI, "feed.ts")] });
+function feedBundle(): string {   // the feed's bundle with KaTeX installed first, as its on-demand chunk installs it (iOS item 6)
+  const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents: 'import "./math-chunk";\nimport "./feed";\n', resolveDir: UI, loader: "ts", sourcefile: "feed-probe.ts" } });
   return r.outputFiles[0].text;
 }
 /** feed.css as the webview build emits it: the KaTeX @import inlined (esbuild.js's webview config, in memory). */

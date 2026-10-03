@@ -140,7 +140,7 @@ function liftWorld(): (hooks: Hooks, mod: typeof MOD, doc: ReturnType<typeof fak
   const fetch = liftBetween("function fetchOlderForAnchor(sid: string, uuid: string): boolean {", "// Ask the kernel for the chunk of history just before the resident tail.");
   const prelude = `
     let sessions = new Map(), views = new Map(), activeId = "A";
-    let pendingAnchor = null, pendingAnchorIntent = null, pendingAnchorT = null, pendingAnchorKind = null, pendingAnchorKeepY = null, flashedAnchor = null;
+    let pendingAnchor = null, pendingAnchorIntent = null, pendingAnchorT = null, pendingAnchorKind = null, pendingAnchorKeepY = null, pendingAnchorKeepAt = null, flashedAnchor = null;
     let anchorPendingOlder = false;
     let seek = null;
     const loadingOlder = new Set(), pendingOlderAnchor = new Map(), pendingOlderKeepY = new Map(), windowAsks = new Map();   // windowAsks: the per-ask records revealProgressTick reads (round eight)

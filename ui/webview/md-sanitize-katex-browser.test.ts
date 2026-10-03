@@ -39,6 +39,7 @@ const STYLES_CSS = fs.readFileSync(path.join(UI, "styles.css"), "utf8").replace(
 const ENTRY = `
 import { Marked } from "marked";
 import katex from "katex";
+import "./math-chunk";   // KaTeX installed as its on-demand chunk installs it, so the fill renders in the call (iOS item 6)
 import { userMdHtml } from "./chat-md";
 import { mdExtensions } from "./md-config";
 import { sanitizeMd, registerMdPostPass } from "./md-sanitize";

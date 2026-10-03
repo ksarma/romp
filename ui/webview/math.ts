@@ -28,6 +28,23 @@
 // Files pane and the feed (Slice 4, decision 1; before it files.js and feed.js had neither the grammar nor the
 // fill nor KaTeX).
 //
+// KaTeX itself is not in those bundles (iOS item 6, 2026-10-02): it ships as its own on-demand bundle,
+// dist/math-chunk.js (math-chunk.ts), and this module types the part it calls structurally and imports no
+// KaTeX, not even a type (math-lazy.test.ts reads every import and every bundle's inputs). The grammar, the
+// bounds and the fill stay here and need no KaTeX until a formula is about to be laid out. With the engine
+// loaded the fill runs synchronously, exactly as before. Without it a formula that passes every bound stays
+// as its placeholder, the TeX as text in the sheets' quiet pending dress (styles.css and feed.css, the
+// .md-math-inline and .md-math-display rule), stamped with its call's group so the arrival can charge the
+// per-message budget per message, and the fill asks for the chunk: one script tag, its URL and nonce taken
+// from the page's own bundle tag (chunk-url.ts), while the two common KaTeX faces load beside it (the sheet
+// declares them font-display: block, so laying out before they arrive would show a blank formula). When the
+// chunk has run and the faces have settled, the settle handlers run (onMathSettled: the chat keeps the
+// reader's place around the swap, the viewer repaints a paint it held) and then one fill over the whole
+// document renders every pending placeholder still in it. A load that fails, registers nothing or has not
+// settled within MATH_CHUNK_BACKSTOP_MS is a failure: every pending formula becomes the source fallback with
+// a title naming the failure, the console says so once, and later formulas take the same fallback until the
+// page is reloaded, so a broken load is visible and is never retried in a loop by every render.
+//
 // The delimiter problem: `$` is everywhere in chat text that is NOT math (shell variables,
 // prices), and a naive $..$ tokenizer strikes a formula through half a sentence the way the
 // single-tilde del rule once did (render.ts). Code spans and fences are already safe: marked
@@ -44,9 +61,9 @@
 // \( \) / \[ \] / $$ $$ carry no real ambiguity and pass through with only a non-blank
 // content check. Escaped \$ needs nothing: the walker meets the backslash first and marked's
 // escape tokenizer consumes both characters before any math rule sees the $.
-import katex from "katex";
 import type { TokenizerAndRendererExtension, Tokens } from "marked";
 import { frameOf, memoBlockStart, type Frame } from "./md-block-start";
+import { chunkScript } from "./chunk-url";
 
 type MathToken = Tokens.Generic & { text: string; display: boolean };
 
@@ -298,6 +315,102 @@ export const MATH_ERROR_COLOR = "var(--math-err)";
  *  pins the option): under it no TeX command mints a link, an image or an HTML attribute of the author's choosing. */
 const KATEX_OPTIONS = { output: "html", trust: false, maxSize: MATH_MAX_SIZE_EM, errorColor: MATH_ERROR_COLOR } as const;
 
+/** The part of KaTeX the fill calls, typed here by its shape: KaTeX belongs to the on-demand chunk (math-chunk.ts), which
+ *  registers it as `globalThis.__rompKatex`, and nothing in this module imports it, a type included. */
+type MathEngine = {
+  render(tex: string, el: HTMLElement, options: object): void;
+  ParseError: new (...args: never[]) => Error;
+};
+
+/** KaTeX once the chunk has run (or a test bundle imported math-chunk.ts for its side effect), else null. */
+function engine(): MathEngine | null {
+  const k = (globalThis as { __rompKatex?: MathEngine }).__rompKatex;
+  return k && typeof k.render === "function" ? k : null;
+}
+
+/** The attribute a formula waiting for the engine carries: the number of the fill call that met it, so the fill that renders
+ *  it later charges MATH_TEX_BUDGET_CHARS per original call (one message, one note) and not over everything pending in a view
+ *  at once. Set after the sanitizer, which keeps no data-* attribute an author wrote (md-sanitize.ts ALLOW_DATA_ATTR: false),
+ *  so no author picks a group. */
+export const MATH_CALL_ATTR = "data-math-call";
+const PLACEHOLDER_SEL = "." + MATH_INLINE_CLASS + ", ." + MATH_DISPLAY_CLASS;
+
+/** How long the chunk may take to load, with the two common faces, before the load counts as failed: ui/CLAUDE.md's loading
+ *  rule, a backstop so a wait can never trap the reader. The viewer holds its loader over a note with math until the engine
+ *  arrives, and a chunk fetch that stalls without erroring fires no event at all, so this is the one end that has none. The
+ *  size follows the PDF renderer's (file-view.ts PDF_RENDER_BACKSTOP_MS, twice the pane loader's 30 s that has never fired,
+ *  because the wait includes a fetch), and it never fires in the load path: the chunk is about 86 KB served. */
+export const MATH_CHUNK_BACKSTOP_MS = 60_000;
+
+let mathCalls = 0;                                        // the group numbers handed out so far
+let engineLoad: "idle" | "loading" | "ready" | "failed" = "idle";
+let engineFailure = "";                                   // what went wrong, for the fallback's title
+const settleHandlers: Array<() => (() => void) | void> = [];
+
+/** Whether `root` holds a formula still waiting for the engine: after a fill, a placeholder that is left is one. */
+export function mathPendingIn(root: ParentNode): boolean {
+  return !!root.querySelector(PLACEHOLDER_SEL);
+}
+
+/** Run `handler` when the engine's load settles, either way, BEFORE the fill over the document renders what is pending (or
+ *  shows it as source); a function it returns runs AFTER that fill. The chat reads the reader's place before and writes it
+ *  back after; the viewer repaints a paint it held. Returns the function that removes the handler. */
+export function onMathSettled(handler: () => (() => void) | void): () => void {
+  settleHandlers.push(handler);
+  return () => { const i = settleHandlers.indexOf(handler); if (i >= 0) settleHandlers.splice(i, 1); };
+}
+
+/** The two faces nearly every formula uses, loaded beside the chunk: katex.min.css declares every KaTeX face
+ *  font-display: block, so a formula laid out before its face arrives is invisible ink. Settled either way, never thrown. */
+function katexFaces(): Promise<unknown> {
+  const faces = (document as { fonts?: { load(font: string): Promise<unknown> } }).fonts;
+  if (!faces || typeof faces.load !== "function") return Promise.resolve();
+  return Promise.all(["1em KaTeX_Main", "italic 1em KaTeX_Math"].map((f) => faces.load(f).catch(() => null)));
+}
+
+/** Ask for the chunk, once per page life: a script tag beside the page's bundle (chunk-url.ts), the faces in parallel. Every
+ *  end settles through engineSettled, never synchronously, so a fill that asks is never re-entered by its own failure. */
+function requestEngine(): void {
+  if (engineLoad !== "idle" || typeof document === "undefined") return;
+  engineLoad = "loading";
+  const tag = chunkScript("math-chunk.js");
+  if (!tag) { queueMicrotask(() => engineSettled("no bundle script on this page to derive the math renderer's URL from")); return; }
+  const faces = katexFaces();
+  let done = false;
+  const finish = (failure: string | null): void => {
+    if (done) return;
+    done = true;
+    clearTimeout(backstop);
+    engineSettled(failure);
+  };
+  const backstop = setTimeout(() => finish("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
+  const sc = document.createElement("script");
+  sc.src = tag.src;
+  if (tag.nonce) sc.nonce = tag.nonce;
+  // a load that registers nothing (a script cut short, an engine too old to run it) is a failure, like an error
+  sc.onload = () => { if (!engine()) finish("the math renderer loaded but registered nothing"); else void faces.then(() => finish(null)); };
+  sc.onerror = () => finish("the math renderer failed to load");
+  (document.head || document.documentElement).appendChild(sc);
+}
+
+/** The load is over: the handlers, then one fill over the document (each pending formula rendered, or shown as source on a
+ *  failure), then what the handlers returned. A failure is said once on the console and stands for the page's life. */
+function engineSettled(failure: string | null): void {
+  if (failure !== null) {
+    engineLoad = "failed";
+    engineFailure = failure;
+    console.error("math: " + failure + "; formulas are shown as their TeX source until the page is reloaded");
+  } else engineLoad = "ready";
+  const after: Array<() => void> = [];
+  for (const h of settleHandlers.slice()) {
+    try { const a = h(); if (typeof a === "function") after.push(a); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
+  }
+  renderMathPlaceholders(document);
+  for (const a of after) {
+    try { a(); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
+  }
+}
+
 // Closing punctuation allowed right after the closing $ (plus whitespace / end-of-text).
 // Includes markdown emphasis/strike markers so **$O(n)$** works, and the common CJK stops.
 const AFTER_CLOSE = "[\\s.,;:!?)\\]}\"'*_~\\-、。，；：！？）】」]";
@@ -494,7 +607,8 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  Four bounds stand ahead of the one katex.render
  *  call, each shown as the source with its reason (showSource): a formula longer than MATH_TEX_MAX_CHARS;
  *  a formula that would take the call's rendered total past MATH_TEX_BUDGET_CHARS (the running total is
- *  this call's, so it is one message's or one note's; a shorter formula after it still renders while it
+ *  this call's, so it is one message's or one note's, and a formula that waited for the engine is charged to
+ *  the call that first met it, its MATH_CALL_ATTR group; a shorter formula after it still renders while it
  *  fits); a formula whose macro definitions repeat an argument; a formula that defines a body with `\edef`
  *  or `\xdef`, which KaTeX stores expanded (macroBounds; the two cases no expansion count over the bodies
  *  as written can bound). The call itself runs under maxSize and a maxExpand computed from the formula's
@@ -506,12 +620,18 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  again with throwOnError: false, KaTeX's own flagged text (span.katex-error, the TeX in the theme's error
  *  ink, MATH_ERROR_COLOR) as on main; a residual throw (an internal error)
  *  takes the belt, the source the same way and a word on the console once per call, so a formula can never
- *  blank a message. A second run over the same root is a no-op: no placeholder survives the first. Plain
- *  and exported: md-config.ts registers it as sanitizeMd's post-pass, and the tests call it directly. */
+ *  blank a message. Until the engine has loaded, a formula that passes the four bounds is left as its
+ *  placeholder, stamped with this call's group, and the chunk is asked for (requestEngine); the fill over
+ *  the document at the engine's arrival renders it, and after a failed load the fill shows it as source
+ *  with the failure in its title. With the engine loaded, a second run over the same root is a no-op: no
+ *  placeholder survives the first. Plain and exported: md-config.ts registers it as sanitizeMd's
+ *  post-pass, the arrival runs it over the document, and the tests call it directly. */
 export function renderMathPlaceholders(root: ParentNode): void {
-  let rendered = 0;          // characters of TeX handed to KaTeX so far in this call: the budget's meter
+  const katex = engine();    // null until the chunk has run: then a formula that passes every bound waits for it
+  const meters = new Map<string, number>();   // characters of TeX handed to KaTeX so far, per call group: the budget's meters
+  let group = "";            // this call's own group number, minted when its first formula waits for the engine
   let reported = false;      // the belt's console report, once per call
-  root.querySelectorAll("." + MATH_INLINE_CLASS + ", ." + MATH_DISPLAY_CLASS).forEach((node) => {
+  root.querySelectorAll(PLACEHOLDER_SEL).forEach((node) => {
     const el = node as HTMLElement;
     const display = el.classList.contains(MATH_DISPLAY_CLASS);
     const tex = el.textContent || "";
@@ -520,6 +640,8 @@ export function renderMathPlaceholders(root: ParentNode): void {
       showSource(el, tex, "Not rendered: " + tex.length + " characters of TeX; the limit is " + MATH_TEX_MAX_CHARS + ".");
       return;
     }
+    const call = el.getAttribute(MATH_CALL_ATTR) || "";   // the call that first met this formula; "" for this one
+    let rendered = meters.get(call) || 0;                 // that call's meter: one message's or one note's total
     if (rendered + tex.length > MATH_TEX_BUDGET_CHARS) {
       showSource(el, tex, "Not rendered: the formulas above already total " + rendered + " characters of TeX; the limit for one message or note is " + MATH_TEX_BUDGET_CHARS + ".");
       return;
@@ -534,6 +656,13 @@ export function renderMathPlaceholders(root: ParentNode): void {
       return;
     }
     rendered += tex.length;
+    meters.set(call, rendered);
+    if (!katex) {
+      if (engineLoad === "failed") { showSource(el, tex, "Not rendered: " + engineFailure + "; reload the page to try again."); return; }
+      if (!call) el.setAttribute(MATH_CALL_ATTR, group || (group = String(++mathCalls)));
+      requestEngine();
+      return;
+    }
     const maxExpand = maxExpandFor(tex, bounds);
     try {
       try {
