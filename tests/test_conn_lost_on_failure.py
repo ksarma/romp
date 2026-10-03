@@ -123,6 +123,9 @@ const realNotify = window.__rompNotify, CONN = [];
 window.__rompNotify = function (kind, text) { if (kind === 'conn') CONN.push(String(text)); return realNotify.apply(this, arguments); };
 window.__rompColOf = (src) => (src && src.col) || '';   // the shell's column lookup by the sender frame, stubbed
 function postFrom(src, data) { (WL['message'] || []).forEach((f) => f({ data: data, source: src })); }
+// the shell socket's call, read through a guard so a Log without the hook (the fork's main before this change) still runs every step
+// and is read by the steps' own assertions; out.hook says whether the hook was there
+function linkFailed() { out.hook = typeof window.__rompLinkFailed === 'function'; if (out.hook) window.__rompLinkFailed(); }
 const snap = () => ({ texts: notes().map((n) => n.text), unread: notes().filter((n) => !n.seen).length, ns: notes().map((n) => n.n),
   conn: CONN.length, red: EL['merr']._cls.has('has'), num: EL['merr']._num.textContent });
 post({ romp: 'wsState', app: 'chat', state: 'down' });
@@ -141,14 +144,14 @@ EL['rerr-clear'].fire('click');
 post({ romp: 'wsState', app: 'chat', state: 'down' });
 post({ romp: 'wsState', app: 'feed', state: 'down' });
 post({ romp: 'wsState', app: 'waiting', state: 'down' }); // not shown (no po-waiting class)
-window.__rompLinkFailed();
+linkFailed();
 out.link = snap();                                         // the shell's link failed: every waiting shown pane
 BODY.add('po-waiting');
-window.__rompLinkFailed();
+linkFailed();
 out.shownLater = snap();                                   // the Waiting pane is shown now and still down: written at the next failure
 post({ romp: 'wsState', app: 'timeline', state: 'down' });
 post({ romp: 'wsState', app: 'timeline', state: 'parked' });
-window.__rompLinkFailed();
+linkFailed();
 out.parked = snap();                                       // a drop that became a park is dropped
 post({ romp: 'wsState', app: 'timeline', state: 'down' });
 post({ romp: 'wsFail', app: 'timeline' });
@@ -167,7 +170,7 @@ postFrom({ col: '2' }, { romp: 'wsFail', app: 'chat' });
 out.colFailed = snap();                                    // a split column waits and is written under its own key
 postFrom({ col: '3' }, { romp: 'wsState', app: 'chat', state: 'down' });
 postFrom({ col: '3' }, { romp: 'wsState', app: 'chat', state: 'up' });
-window.__rompLinkFailed();
+linkFailed();
 out.colBack = snap();                                      // a column that reopened has nothing waiting
 console.log(JSON.stringify(out));
 """
@@ -188,6 +191,9 @@ class LogWaitsForTheFailure(unittest.TestCase):
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 
     CHAT = "Kernel connection lost: Chat pane (reconnecting)"
+
+    def test_the_shell_has_a_door_for_its_links_failure(self):
+        self.assertIs(self.out["hook"], True, "window.__rompLinkFailed is the Log's: the shell socket's close calls it")
 
     def test_a_drop_alone_writes_nothing_and_the_live_cue_shows_it(self):
         self.assertEqual(self.out["drop"], {"texts": [], "unread": 0, "ns": [], "conn": 0, "red": True, "num": "!"},
