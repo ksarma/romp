@@ -3,7 +3,7 @@ title: The tool-rows browser test (T418) saves its screenshots only when asked, 
 status: candidate
 where: tests/test_tool_rows_vocab_browser.py (_drops_dir, new; _result reads it; the module docstring); tests/test_tool_rows_vocab_shots_root.py (new); upstream/2026-10-03-tests-t418-shots-state-root.md (this entry)
 added: 2026-10-03
-pr:
+pr: 962
 tier: docs
 offered:
 closed:
