@@ -555,14 +555,34 @@ def _run_of(mod, root, res):
     return _Run(res, fig, expected, probs, listing.getvalue(), table.getvalue())
 
 
+def _collect_before_freeze(value):
+    """Run one full collection, then return `value`: the last step of this module's two builds (_tree's and served_pass's),
+    inside the call parse_cache.derived makes, after the build's own work has returned (its frame and locals gone) and just
+    before derived() freezes every object then tracked, so the freeze keeps only live objects. On the free-threaded build
+    the collector starts an automatic collection only once the objects allocated since the last one reach a quarter of the
+    objects already in its heap (up to half, by its memory check), so a worker several GiB into the suite holds millions of
+    dead objects when the census builds: across the run's two workers the freezes kept about 12 million dead objects without
+    this collection and about 3.4 million with it. Measured on 2026-10-03 with CI's 3.14t pytest command on 3.14.6t, as the
+    run's peak anonymous memory: without the collection 16.8 to 18.6 GiB, and killed under a 16.5 GiB cap at 92% of its
+    tests, near where CI's 16 GB runner stopped the cell twice; main 14.3 to 15.7 GiB; with the collection 15.5 to 15.8 GiB
+    in five runs, two of which ran under that cap and completed. On every interpreter the collection also frees what the
+    build itself drops while derived() holds the collector off, about a quarter of a million objects per build when the
+    module runs alone, in under a second each on 3.10, 3.12 and 3.14t; on the interpreters with a GIL that is about all it
+    finds, since their young collections run after a fixed count of allocations whatever the heap's size.
+    tests/parse_cache.py is unchanged: its retention shape keeps a collection out of derived() for every caller."""
+    gc.collect()
+    return value
+
+
 TREE_KEY = ("tests/test_price_feed_census.py", "the tree run")   # parse_cache.derived's key for the tree's one derivation
 
 
 def _tree():
     """The tree's one derivation, built on the first call in the process and the same object after (parse_cache.derived,
-    which holds the collector off for the build and freezes what the build leaves tracked): the script's scan over ROOT
-    and the pieces main composes from it (_run_of). The tree is never mutated."""
-    return PC.derived(TREE_KEY, lambda: _run_of(script_module(ROOT), ROOT, script_module(ROOT).scan(ROOT)))
+    which holds the collector off for the build and freezes what is tracked when the build returns; the build's last step
+    is one full collection, _collect_before_freeze, so the freeze keeps only live objects): the script's scan over ROOT and
+    the pieces main composes from it (_run_of). The tree is never mutated."""
+    return PC.derived(TREE_KEY, lambda: _collect_before_freeze(_run_of(script_module(ROOT), ROOT, script_module(ROOT).scan(ROOT))))
 
 
 def tree_run(*flags):
@@ -10449,8 +10469,9 @@ def _served_build():
 
 def served_pass():
     """The served pass (_served_build), built once per process and the same object after (parse_cache.derived under SERVED_KEY,
-    the collector off for the build): (the plants' lines, (exit code, stdout))."""
-    return PC.derived(SERVED_KEY, _served_build)
+    the collector off for the build, whose last step is one full collection, _collect_before_freeze, so the freeze keeps
+    only live objects): (the plants' lines, (exit code, stdout))."""
+    return PC.derived(SERVED_KEY, lambda: _collect_before_freeze(_served_build()))
 
 
 class TheServedPagesAreScanned(_Scope):
