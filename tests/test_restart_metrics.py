@@ -9,6 +9,8 @@ import io
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -652,7 +654,9 @@ class PublicForm(unittest.TestCase):
     def test_a_32_hex_token_on_an_event_row_refuses_the_print_the_way_the_export_refuses_the_write(self):
         """events.recent is the one place raw ledger rows pass through, and a 32-hex token fits the identifier grammar,
         so the fold keeps it as a key and as a value; the identifier scan does not know it. `romp perf export` refuses
-        such a document through check_document, which runs the paste walk beside the scan; this verb ran the scan alone
+        such a document through check_document, whose three sources are the identifier scan, the paste walk and the
+        denylist walk (which refuses what the fold would have dropped, folded or coarsened as "the public form still
+        fails the denylist"); this verb ran the scan alone
         and PRINTED the token (the export PR's closing check, 2026-09-18). Both verbs now run
         check_document: the print is refused, exit 1, nothing on stdout, and the refusal names the kind and the key
         path of the shallowest finding (a value's own path; a key's the dict holding it) and never the token. Fails
@@ -704,6 +708,186 @@ class PublicForm(unittest.TestCase):
                               "a key under events/recent/%d/detail); nothing printed\n" % j)
         for token in (key_token, value_token):
             self.assertNotIn(token, out + err, "the token never reaches stdout or stderr")
+
+    def test_a_fifo_at_the_private_strings_path_is_no_list_said_on_stderr_and_the_public_print_returns_at_once(self):
+        """The third of the three callers of the shared list reader (perf_public.private_strings): with a fifo at
+        ROMP_PRIVATE_STRINGS the public print goes out with no list, as before, and now says so in one stderr line naming the
+        path and the reason (pp.LIST_UNREADABLE, the fourth review round, 2026-09-19), where the list turned itself off in
+        silence (extra4-1). The verb runs as a child under a pinned hostname, a synthetic HOME and login and no kernel, and
+        THE CHILD IS RUN UNDER A TIMEOUT AND HARD-KILLED WHEN IT EXPIRES: a fifo at a user-named path is where a plain open
+        hung this verb (the second round), so a plain wait would take the runner with it. Fails before: stderr was empty."""
+        fifo = str(self.state / "private-strings.fifo")
+        os.mkfifo(fifo)
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": xdg, "HOME": "/home/tester", "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1",
+                    "ROMP_PRIVATE_STRINGS": fifo})
+        child = ("import runpy, socket, sys; socket.gethostname = lambda: 'TESTHOST.example'; sys.argv = sys.argv[1:]; "
+                 "runpy.run_path(sys.argv[0], run_name='__main__')")
+        try:
+            r = subprocess.run([sys.executable, "-c", child, os.path.join(BIN, "romp-restart-metrics"), "--json", "--public", "--anchor", "2026-09-10",
+                                "--tz", TZ, "--no-live", "--state", str(self.state)], capture_output=True, text=True, timeout=8, env=env)
+        except subprocess.TimeoutExpired:
+            self.fail("the restart-metrics child hung on the fifo at the private-strings path (killed after 8 s)")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "romp: no private-strings list was read from %s (a fifo); no listed string is checked\n" % fifo,
+                         "the list turning itself off is said, naming the path and the reason")
+        self.assertIs(json.loads(r.stdout)["public"], True, "and the public document was printed")
+
+    def test_a_listed_pointed_value_a_spend_bucket_spells_refuses_the_public_print_naming_the_path_and_the_list_line(self):
+        """The third road of the numeric floor (the comment at pp.NUMERIC_PROBE_MIN_DIGITS; the closing delta of 2026-09-19).
+        spend.json's usd for a day is a float that reaches the public document as buckets/N/spendUsd (spend_by_day, then
+        round(x, 4)), so a listed private string that is a pointed value of eight digits, 1234.5678, refuses the print as the
+        export and the upload refuse it: rc 1, the one stderr line naming the kind, the value's path and line 1 of the list
+        with the remedy, the digits in no output, nothing printed; the same document with no list prints, the value in its
+        bucket. The child runs under a pinned hostname, a synthetic HOME and login and no kernel, as the fifo case does, and
+        under a timeout. The export and upload roads pin this value in their own modules; this road shares check_document
+        and passed by inheritance at the closing delta, unpinned, so a road-specific change here would have gone unseen.
+        Fails at the first floor, whose longest-run gate did not apply an entry of this shape to any number: rc 0, the value
+        printed."""
+        (self.state / "spend.json").write_text(json.dumps({"days": {"2026-09-10": {"usd": 1234.5678, "turns": 30}}, "hours": {}}))
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        listed = os.path.join(xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1234.5678\n")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": xdg, "HOME": "/home/tester", "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1"})
+        child = ("import runpy, socket, sys; socket.gethostname = lambda: 'TESTHOST.example'; sys.argv = sys.argv[1:]; "
+                 "runpy.run_path(sys.argv[0], run_name='__main__')")
+        argv = [sys.executable, "-c", child, os.path.join(BIN, "romp-restart-metrics"), "--json", "--public", "--anchor", "2026-09-10",
+                "--tz", TZ, "--no-live", "--state", str(self.state)]
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=20, env=dict(env, ROMP_PRIVATE_STRINGS=listed))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "romp restart-metrics: refused: a string this machine knows (private string) survives as the value at "
+                                   "buckets/0/spendUsd; edit line 1 of the private-strings list or that value; nothing printed\n")
+        self.assertEqual(r.stdout, "", "nothing printed")
+        for digits in ("1234.5678", "12345678", "1234"):
+            self.assertNotIn(digits, r.stdout + r.stderr, "the value is never printed")
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=20, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "", "no list, nothing said")
+        self.assertEqual(json.loads(r.stdout)["buckets"][0]["spendUsd"], 1234.5678, "without the list the value is a measurement like any other")
+
+    def test_a_listed_entry_with_an_exponent_beyond_any_double_prints_under_a_finite_address_space_with_one_line_and_no_traceback(self):
+        """The refusable input of the closing re-run (2026-09-19, finding 5) through the third caller of the shared list reader:
+        ROMP_PRIVATE_STRINGS naming a list of 1e-1000000000 alone, the entry whose plain decimal expansion asked for a billion
+        digits (format(Decimal(text), 'f') writes about as many digits as the exponent, so the work was exponential in an
+        entry's length while PRIVATE_STRINGS_MAX bounded only the file) and took `romp perf export --public` and `romp perf
+        upload` down with an uncaught MemoryError at the head the closing re-run read; this verb shares machine_probes and died the same way. The
+        list's second line is 1e-10000000000000000000, whose exponent (10**19) the decimal module refuses to construct (past
+        decimal.MAX_EMAX, about 1e18): the bound's first cut asked Decimal(text).adjusted() bare and this verb died on it with
+        an uncaught InvalidOperation too (the re-run's verification, rc 1). Now, over the ordinary fixture: rc 0, stdout
+        parses as JSON and is the public document, stderr exactly the one skip line (pp.LIST_EXPANSION_SKIPPED: 2 of 2, list
+        lines 1 and 2, the bound 324) and Traceback, MemoryError and InvalidOperation in neither stream. THE CHILD RUNS UNDER A
+        FINITE ADDRESS-SPACE CAP (RLIMIT_AS, 1.5 GiB, set by the child itself in its prelude before the verb's code runs; the
+        report's reproduction used 768 MiB, ulimit -v 786432, which the free-threaded 3.14t interpreter maps past before any
+        code runs, and 2 GiB lets the billion-digit expansion complete, so the export module's cap and this one are 1.5 GiB
+        on every interpreter, the reasons measured at the export module's ADDRESS_SPACE_CAP), so with the bound removed the
+        input fails fast under the cap with a MemoryError rather than allocating without bound. The export road pins the same
+        list in its own module;
+        the upload road in its. Dropping `and expansion_bounded(text)` from number_spellings' guard reds this with rc 1 and
+        the traceback; the try/except removed from expansion_bounded reds it with rc 1 and InvalidOperation in stderr."""
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        listed = os.path.join(xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e-1000000000\n1e-10000000000000000000\n")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": xdg, "HOME": "/home/tester", "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1",
+                    "ROMP_PRIVATE_STRINGS": listed})
+        cap = 1536 * 1024 * 1024                                            # the export module's ADDRESS_SPACE_CAP, and why
+        child = ("import resource, runpy, socket, sys; resource.setrlimit(resource.RLIMIT_AS, (%d, %d)); "
+                 "socket.gethostname = lambda: 'TESTHOST.example'; sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')" % (cap, cap))
+        argv = [sys.executable, "-c", child, os.path.join(BIN, "romp-restart-metrics"), "--json", "--public", "--anchor", "2026-09-10",
+                "--tz", TZ, "--no-live", "--state", str(self.state)]
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout[-500:] + r.stderr)
+        self.assertEqual(r.stderr, pp.LIST_EXPANSION_SKIPPED % (2, 2, "list lines 1 and 2", 324) + "\n", "the skip line and nothing else")
+        for word in ("Traceback", "MemoryError", "InvalidOperation", "1e-1000000000", "1e-10000000000000000000"):
+            self.assertNotIn(word, r.stdout + r.stderr, word)
+        self.assertIs(json.loads(r.stdout)["public"], True, "and the public document was printed")
+
+    def test_a_listed_exponent_written_entry_refuses_the_public_print_when_its_plain_digits_sit_in_a_key_or_a_string(self):
+        """The third road of the key and string fix (the closing re-run of 2026-09-19, finding 1; its verification found this
+        road unpinned, where the export and upload roads pin theirs and the precedent above says a road that passes by
+        inheritance lets a road-specific change go unseen). An event row whose kind is zz0.000015 survives the fold as the
+        key events/byKind/zz0.000015 (and as the string events/recent/N/kind), and a list of 1.5e-05 alone refuses the print
+        through the entry's plain expansion: rc 1, stdout empty, stderr exactly the refusal naming the kind, a key under
+        events/byKind and line 1 of the list with the remedy, the digits and the entry's text in no output; the control, the
+        same state with the list 1e+16, prints (rc 0, the public document, the key in it). On a second fixture state (the
+        check names one finding, so the string road is not asked beside the key), a cut row whose reason is 0.000015 survives
+        as the string restarts/2/reason (the fixture's two cut rows before it) and is refused the same way naming the value.
+        The child runs as the pointed value case does: a pinned hostname, a synthetic HOME and login, no kernel, under a
+        timeout. Fails before the fix: rc 0 with the key printed (the expansion was applied to numbers alone)."""
+        t1 = D0 + 3600
+        with open(self.state / "session-events.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"t": t1 + 6, "pid": 101, "kind": "zz0.000015", "sid": SID, "name": "web"}) + "\n")
+        xdg = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, xdg, True)
+        listed = os.path.join(xdg, "private-strings.txt")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": xdg, "HOME": "/home/tester", "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1",
+                    "ROMP_PRIVATE_STRINGS": listed})
+        child = ("import runpy, socket, sys; socket.gethostname = lambda: 'TESTHOST.example'; sys.argv = sys.argv[1:]; "
+                 "runpy.run_path(sys.argv[0], run_name='__main__')")
+        argv = [sys.executable, "-c", child, os.path.join(BIN, "romp-restart-metrics"), "--json", "--public", "--anchor", "2026-09-10",
+                "--tz", TZ, "--no-live", "--state", str(self.state)]
+        refusal = ("romp restart-metrics: refused: a string this machine knows (private string) survives as %s; "
+                   "edit line 1 of the private-strings list or that %s; nothing printed\n")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1.5e-05\n")
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 1, r.stdout[-500:] + r.stderr)
+        self.assertEqual(r.stderr, refusal % ("a key under events/byKind", "key"), "the key, by the entry's plain expansion")
+        self.assertEqual(r.stdout, "", "nothing printed")
+        for text in ("0.000015", "1.5e-05"):
+            self.assertNotIn(text, r.stdout + r.stderr, "the digits and the entry's text reach no output")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e+16\n")
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout[-500:] + r.stderr)
+        self.assertEqual(r.stderr, "", "the control: an unrelated exponent entry says nothing")
+        doc = json.loads(r.stdout)
+        self.assertIs(doc["public"], True, "and the public document was printed")
+        self.assertIn("zz0.000015", doc["events"]["byKind"], "with the key in it")
+        other = Path(tempfile.mkdtemp())                                    # the string road on its own fixture: one finding is named
+        self.addCleanup(shutil.rmtree, other, True)
+        t2 = D0 + 7200
+        _fixture(other)
+        with open(other / "restart-cuts.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"t": t2 + 3000, "pid": 102, "cutTurns": [], "stopped": 1, "unjoined": 0, "reaped": 0,
+                                 "watchesArmed": 1, "reason": "0.000015"}) + "\n")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1.5e-05\n")
+        r = subprocess.run(argv[:-1] + [str(other)], capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r.returncode, 1, r.stdout[-500:] + r.stderr)
+        self.assertEqual(r.stderr, refusal % ("the value at restarts/2/reason", "value"), "the string value, by the same expansion")
+        self.assertEqual(r.stdout, "", "nothing printed")
+
+    def test_an_uptime_no_double_can_hold_from_the_kernels_version_answer_is_null_in_the_public_form_and_raises_nothing(self):
+        """The third road of the closing check's HIGH 2 (2026-09-19): live.kernel.uptimeS is GET /version's uptime_s
+        (kernel_live), public_form folds it through pp.public_uptime, and that function raised OverflowError on an int float()
+        cannot hold (math.isfinite, then the quotient). The shared fold now nulls such an int (pp.finite_number, the rule that
+        nulls a NaN) and the coarsening is total over ints, so the public form carries null and no traceback for 10**400,
+        -10**400 and 10**5000 (an int already, so the interpreter's digit limit on str-to-int is not in play), an int a double
+        holds is rounded exactly, and the folded document is the check's fixed point: perf_export.check_document over it at
+        the root, as the verb runs it before the print, finds nothing. This reader's other float-domain sites (float() over
+        ledger rows and the /version answer, the MB helpers) take the kernel's own ledgers and answer, never a file a person
+        names, and are listed in the closing check's audit with no fix beyond this shared one. Fails with finite_number's int
+        arm reverted (10**400 - 40 where None is asserted)."""
+        for label, v in (("10**400", 10 ** 400), ("-10**400", -(10 ** 400)), ("10**5000", 10 ** 5000), ("the edge", 2 ** 1024 - 2 ** 970)):
+            public = rm.public_form({"live": {"platform": "Linux", "kernel": {"uptimeS": v, "cpuS": 1.5}}})
+            self.assertIsNone(public["live"]["kernel"]["uptimeS"], label)
+            self.assertEqual(public["live"]["kernel"]["cpuS"], 1.5, label)
+            self.assertIs(public["public"], True, label)
+            with mock.patch.object(pp, "machine_probes", return_value=SYNTHETIC_PROBES):
+                self.assertIsNone(rm.perf_export.check_document(public, Path(tempfile.mkdtemp()), under=(), tail="nothing printed"), label)
+        fmax = int(sys.float_info.max)
+        held = rm.public_form({"live": {"kernel": {"uptimeS": fmax}}})["live"]["kernel"]["uptimeS"]
+        self.assertEqual(held, fmax - fmax % 60, "an int a double holds is rounded down to the minute, exactly")
+        self.assertEqual(rm.public_form({"live": {"kernel": {"uptimeS": 3725}}})["live"]["kernel"]["uptimeS"], 3720)
 
     def test_public_without_json_is_refused(self):
         err = io.StringIO()
