@@ -25,7 +25,8 @@ test("the feed bundle builds and wires the gear where it hosts it (VS Code's fee
   assert.ok(FEED.includes("if (hostsGear(window)) initGear("), "feed.ts inits the gear on its kernel channel, unless the kernel's feed page said the gear is on /settings");
   const PAGE = read("ui", "webview", "settings-page.ts");
   assert.ok(PAGE.includes('require("./gear.js")') && PAGE.includes("initGear("), "the settings page is the dashboard's gear host");
-  assert.ok(GEAR.includes("module.exports = { initGear }"));
+  assert.ok(GEAR.includes("module.exports = { initGear, raPriceNote }"),
+    "initGear is the wiring entry; raPriceNote is the Token usage modal's pure price-source formatter, exported so analytics-price-source.test.ts runs it as shipped");
 });
 
 test("the gear opens on the shared {romp:'openSettings'} message on BOTH hosts", () => {
@@ -315,6 +316,14 @@ test("one tooltip per settings row: the Account row's live status is NOT a secon
   assert.ok(GEAR_CSS.includes("#rsettings .rs-row.rs-picking .rs-sub { display: none; }"), "an open picker menu owns the row: its description stands down while the row wears rs-picking, which gear.js setListOpen toggles with the list's hidden (the maintainer's round 5 of the wsBytesByHost review, correctness-1: keyed on the list's id before; gear-sub-focus-browser.test.ts drives it)");
   assert.match(GEAR, /function setListOpen\(/, "setListOpen exists; that it is the ONE writer of a list's open state is held in gear-sub-focus-browser.test.ts, which pins its body verbatim, counts its six call sites and holds that no site writes a list's hidden directly (one home for the body pin: the maintainer's round 6, tests-7)");
   assert.ok(GEAR_CSS.includes("#rsettings .rs-row:has(.rs-mixed:hover) .rs-sub { display: none; }"), "the mixed mark's title stands alone");
+});
+
+test("the Token usage line's fetch age is the shell's one age helper, bound and not copied (the review of PR 878, round 2)", () => {
+  // a copy of agoWords in this file said 720 hours ago where the API-health popup says 30 days ago; the line binds the
+  // helper itself, so the two surfaces cannot drift (analytics-price-source-states.test.ts runs the line against
+  // agoWords by execution at every boundary; this pin is on WHERE the words come from)
+  assert.ok(GEAR.includes("var raAgo = require('./api-health-merge.ts').agoWords;"), "raAgo is the shared helper under the modal's name");
+  assert.doesNotMatch(GEAR, /function raAgo\(/, "no age function of the gear's own");
 });
 
 test("the analytics legend swatch matches its bar (PR #886 review: they split in classic)", () => {

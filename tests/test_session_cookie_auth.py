@@ -54,6 +54,7 @@ TOK = km.TOKEN
 CN = km._SESSION_COOKIE                       # this kernel's own session-cookie name
 SLOT = km._PAGE_KEY_SLOT                      # this kernel's localStorage slot for the page key (keyed by CN)
 SEED_SET = "localStorage.setItem(" + json.dumps(SLOT)   # how the login seed writes the key into that slot
+DROP_STEP = "searchParams['delete']('token')"   # how the seed and the shell's fallback step drop the parameter from a page's address
 SESS = km._mint_session()                     # one browser's session id (never printed)
 KEY = km._page_key(SESS)                      # its page key K
 SESS2 = km._mint_session()                    # a second browser's session
@@ -722,20 +723,37 @@ class LoginHandoff(_Server):
 
     def test_a_token_on_a_page_route_signs_in_a_navigation_alone(self):
         # On a page route the token authorizes whatever loads it, but only a navigation (_is_navigation) signs
-        # the browser in: a fetch of / or /chat carrying ?token= (Accept */*, no Sec-Fetch-Dest), and a load
-        # whose Sec-Fetch-Dest names no document, get the page with no cookie and no seed.
-        for path in ("/", "/chat"):
+        # the browser in: a fetch carrying ?token= (Accept */*, no Sec-Fetch-Dest), and a load whose
+        # Sec-Fetch-Dest names no document and no iframe (object, embed, frame, or empty), get the page with no
+        # cookie and no seed. The pages of /chat and /feed then hold no step that rewrites their address (no
+        # replaceState), so the parameter stays in it: the paint clause's case, which the census's paint pin names
+        # this test for. The shell at / holds its own fallback step, which drops it. A document navigation signs
+        # the browser in and seeds the key, and the seed's own script drops the parameter and writes the address back.
+        for path in ("/", "/chat", "/feed"):
             for what, kw in (("a fetch", {"accept": "*/*"}),
-                             ("a load that is not a document", {"accept": "text/html", "sec_fetch": "empty"})):
+                             ("an empty-dest load", {"accept": "text/html", "sec_fetch": "empty"}),
+                             ("an object load", {"accept": "text/html", "sec_fetch": "object"}),
+                             ("an embed load", {"accept": "text/html", "sec_fetch": "embed"}),
+                             ("a frame load", {"accept": "text/html", "sec_fetch": "frame"})):
                 status, body, headers = self._req(path + "?token=" + TOK, **kw)
                 text = body.decode("utf-8", "replace")
                 self.assertEqual(status, 200, "%s of %s is authorized by the token" % (what, path))
                 self.assertIn("__rompPageKey", text, "%s of %s gets the page" % (what, path))
                 self.assertEqual(self._set_cookies(headers), [], "%s of %s sets no cookie" % (what, path))
                 self.assertNotIn(SEED_SET, text, "%s of %s carries no seed" % (what, path))
+                if path == "/":
+                    self.assertEqual(text.count(DROP_STEP), 1, "%s of the shell gets its own fallback step, which drops the parameter" % what)
+                else:
+                    self.assertNotIn("replaceState", text, "%s of %s gets a page with no step that rewrites its address" % (what, path))
             status, body, headers = self._req(path + "?token=" + TOK, accept="text/html", sec_fetch="document")
             self.assertTrue(km._session_ok(self._session_cookie_value(headers) or ""), "a navigation to %s signs in" % path)
-            self.assertIn(SEED_SET, body.decode("utf-8", "replace"), "and seeds the key")
+            text = body.decode("utf-8", "replace")
+            self.assertIn(SEED_SET, text, "and seeds the key")
+            seed = text[text.index(SEED_SET):]
+            seed = seed[:seed.index("</script>")]
+            # (compared as booleans: the seed holds the page key, which is never printed)
+            self.assertTrue(DROP_STEP in seed, "the seed's own script drops the parameter from the address of %s" % path)
+            self.assertTrue("history.replaceState(" in seed, "and writes the address back without it")
 
     def test_a_signed_in_browser_keeps_its_session_on_a_second_login(self):
         status, _, headers = self._req("/?token=" + TOK, cookie=SESS, accept="text/html", sec_fetch="document")

@@ -1259,7 +1259,7 @@ test("startPageServer hands the Handler an isolated environment: a minted token,
     assert.deepEqual([...STRIPPED_KEY_ENV_PREFIXES].sort(), ["ANTHROPIC_", "OP_SESSION_"]);
     const plantedKeys = { ...Object.fromEntries(NEVER_KEYS.map((k) => [k, `planted-${k.toLowerCase()}`])), OP_SESSION_testaccount: "planted-op-session", ANTHROPIC_PROBE_FOR_THE_TEST: "must-not-cross" };
     const planted = { UI_BENCH_STUB_ENV_OUT: envOut, ...plantedKeys, ROMP_CLAUDE_BIN: "/nonexistent/claude", ROMP_POSTAL_PEERS: "1",
-      ROMP_SERVICE_ENV_FILE: path.join(tmp, "planted-service.env"), ROMP_MODEL_CATALOG: "on", ROMP_CLI_SCOPE: "1",
+      ROMP_SERVICE_ENV_FILE: path.join(tmp, "planted-service.env"), ROMP_MODEL_CATALOG: "on", ROMP_PRICE_FEED: "on", ROMP_CLI_SCOPE: "1",
       ...Object.fromEntries(NEVER.map((k) => [k, k === "TMUX" ? "/tmp/tmux-0/default,1,0" : k === "ROMP_STATE_DIR" ? path.join(tmp, "planted-state") : k === "ROMP_MANAGER_PORT" ? "7432" : "1"])) };
     const srv = await withEnv(planted, () => startPageServer({ dist, python: stub }));
     try {
@@ -1275,6 +1275,7 @@ test("startPageServer hands the Handler an isolated environment: a minted token,
       assert.equal(env.ROMP_SERVICE_ENV, env.ROMP_SERVICE_ENV_FILE);
       assert.ok(!fs.existsSync(env.ROMP_SERVICE_ENV_FILE));
       assert.equal(env.ROMP_MODEL_CATALOG, "off", "no boot fetch of the Models API");
+      assert.equal(env.ROMP_PRICE_FEED, "off", "no fetch of the public price table when a pane opens Token usage: conftest's floor is the runner's and never reaches a kernel the bench starts from a shell (the review of PR 878, round 2)");
       assert.equal(env.ROMP_CLAUDE_BIN, "/bin/false", "a binary that runs nothing; removing the variable would resolve the real CLI");
       assert.equal(env.ROMP_CLI_SCOPE, "0", "no route that constructs the SDK backend probes systemd-run");
       for (const k of Object.keys(plantedKeys)) assert.equal(env[k], undefined, `${k} was planted and must not reach the Handler (a key source or credential conftest pops)`);

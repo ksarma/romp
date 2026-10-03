@@ -2,7 +2,8 @@
 # `NAME module` line per writer module, the five leak names aside (_leak_writers holds those); derived by the
 # census of tests/test_hermetic_kernel_postal.py at round 2 of fork PR #894's review. The census pin compares
 # it with the census by equality (_writer_set_faults): a floor name added, dropped or moved between the two
-# floor modules changes this file in the same change.
+# floor modules changes this file in the same change. The ROMP_PRICE_FEED line is fork PR #878's, whose
+# tests/conftest.py adds that floor, taken in when that PR merged the main that carries this census.
 GIT_AUTHOR_EMAIL conftest.py
 GIT_AUTHOR_NAME conftest.py
 GIT_COMMITTER_EMAIL conftest.py
@@ -13,6 +14,7 @@ ROMP_CKPT_FIRST_DOC_KB __init__.py
 ROMP_CKPT_FIRST_DOC_KB conftest.py
 ROMP_CLAUDE_BIN conftest.py
 ROMP_POSTAL_HERMETIC conftest.py
+ROMP_PRICE_FEED conftest.py
 ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR conftest.py
 ROMP_TESTS_SYSTEM_TMPDIR __init__.py
 TMPDIR __init__.py

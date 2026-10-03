@@ -409,9 +409,9 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "romp-fc-parity-"));
   try {
     // the floors tests/conftest.py and tests/test_file_comments.py put under a kernel load: a hermetic state
-    // root, a dead manager port, no browser open, no real CLI, no catalog fetch, no systemd scope
+    // root, a dead manager port, no browser open, no real CLI, no catalog fetch, no price feed fetch, no systemd scope
     const env: NodeJS.ProcessEnv = { ...process.env, XDG_STATE_HOME: scratch, ROMP_MANAGER_PORT: "1", ROMP_KERNEL_NO_OPEN: "1",
-      ROMP_SERVE_TOKEN: "testtok", ROMP_CLAUDE_BIN: "/bin/false", ROMP_MODEL_CATALOG: "off", ROMP_CLI_SCOPE: "0" };
+      ROMP_SERVE_TOKEN: "testtok", ROMP_CLAUDE_BIN: "/bin/false", ROMP_MODEL_CATALOG: "off", ROMP_PRICE_FEED: "off", ROMP_CLI_SCOPE: "0" };
     delete env.ROMP_STATE_DIR;
     const r = spawnSync("python3", ["-c", script, REPO], { input: JSON.stringify(cases), encoding: "utf8", env, timeout: 60000, maxBuffer: 8 << 20 });
     assert.equal(r.status, 0, "the kernel loaded and built every message: " + (r.stderr || r.error));

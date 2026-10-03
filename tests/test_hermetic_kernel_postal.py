@@ -13526,8 +13526,10 @@ class HermeticKernelPostal(unittest.TestCase):
         fixture's own code set or pop each name in the setup of each probe test of its context, each following a write
         of the name; test_a_re_asserted_licence_holds_only_where_a_child_pytest_sees_the_fixtures_own_re_assert
         runs every facet under it). Here: the proof refuses nothing over the real conftest and grants every name the
-        filter counts, twelve today (client-only joined the port among _dead_manager_port's at the merge of main that
-        brought fork PR #875), among them each name a `reasserted` licence names; and THE LIVE CONFTEST MODULES,
+        filter counts, thirteen today (client-only joined the port among _dead_manager_port's at the merge of main that
+        brought fork PR #875, and fork PR #878's price feed switch, ROMP_PRICE_FEED, re-asserted by that PR's own
+        fixture _no_price_feed_fetch, joined when that PR merged the main that carries this pin), among them each
+        name a `reasserted` licence names; and THE LIVE CONFTEST MODULES,
         the conftest.py files a run under tests/ loads (every one under tests/, walked, and one at the checkout's root),
         are one, tests/conftest.py, whose fixtures the filter refuses none of."""
         got = _conftest_reasserts_proved()
@@ -13538,7 +13540,7 @@ class HermeticKernelPostal(unittest.TestCase):
         live += [p for p in (os.path.join(os.path.dirname(HERE), "conftest.py"),) if os.path.isfile(p)]
         self.assertEqual([os.path.relpath(p, HERE) for p in live], ["conftest.py"], "the live conftest modules: one")
         sites, refused = _reassert_sites()
-        self.assertEqual((refused, set(sites), len(sites)), ((), names, 12),
+        self.assertEqual((refused, set(sites), len(sites)), ((), names, 13),
                          "the filter refuses none of the one live conftest module's fixtures, and the proof grants every name "
                          "it counts")
         for name, lic in LICENSED_MODULE_LEVEL_WRITES.items():
@@ -17658,7 +17660,9 @@ class HermeticKernelPostal(unittest.TestCase):
         five names _dead_manager_port re-asserts in each read, the three _no_real_service_env re-asserts (the verifier's
         X7, a module collected third or later) and the one _no_real_claude_config re-asserts (its Y1, a module collected
         second to six-hundredth) in the reads of the fourth module collected and in no other, and the two _no_cli_scope
-        re-asserts (a module collected first) in the reads of the first and in no other, and grants the one other; and
+        re-asserts (a module collected first) in the reads of the first and in no other, and grants the two others
+        (_no_model_catalog_fetch's, and _no_price_feed_fetch's since fork PR #878 merged the main that carries this
+        pin); and
         each child process that collects, in each run of _proof_modes (in both forms of _PROOF_MODE_RUNS, the reviewer's
         ruling of 2026-09-25 09:17Z, (11)), records every condition of _proof_copy_roads true (the verifier's Q1, Q2 and
         Q3, true in a real run and false under the thirty-seventh commit's shim) and each condition of
