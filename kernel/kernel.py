@@ -69239,6 +69239,7 @@ if(APP==="chat"&&!COL&&!SKEL&&parentMobile()===true)RESTART_DIET=true;
 function park(){var d=ws;if(d){d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;}
 if(d&&stalePending&&openSock===d){var qw=stalePending;stalePending="";raiseStale(qw+"-quiet");}
 freshPending=false;window.__rompFreshPending=false;try{if(window.__rompReload)window.__rompReload.ended();}catch(e){}   // [fork] D2 (review round 1, 2026-09-18): the fast path armed the reload core's fresh hold a line before the park branch (the upstream armFresh line), and only a frame on a socket ends it; a parked pane dials nothing until its tap, so the hold would stand for FRESH_HOLD_MS with nothing coming and the core would hold an accepted reload on this pane's word. End it here, as onmessage's resync line does, and tell the core so a reload already held goes now; the tap's open arms it again with its own stamp (ws.onopen's wasReconn branch)
+try{window.dispatchEvent(new Event("romp:parked"));}catch(e){}   // [fork] iOS item 4 (2026-10-02): tells this page's loader the pane is parked, before the wsdown below: its reconnect badge stays down while parked (an off-screen pane gets no fresh frame until its tap, so a hold run here painted the badge off screen, and the tap showed it until that pane's first frame; _pane_spin)
 parked=true;returnParked=true;netState("parked");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 function returnDiag(what,data){try{data.app=APP;send({type:"clientDiag",surface:"pane-shim",what:what,data:data});}catch(e){}}
 var nav="";try{var ne=performance.getEntriesByType("navigation");nav=(ne&&ne[0]&&ne[0].type)||"";}catch(e){}
@@ -69564,6 +69565,7 @@ if(L.connT&&Date.now()-L.connT>25000){awaitLink=false;if(returnAt&&linkUpMs<0)li
 // (a rotation, a resize across the breakpoint) ends a park too: the desktop keeps its background redial.
 try{window.addEventListener("message",function(e){var m=e&&e.data;if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];
 if(parked&&(onScreen===true||parentMobile()!==true)){parked=false;foregroundedAt=Date.now();eagerDial=true;returnAt=foregroundedAt;returnBytes=0;returnRedialed=false;returnRow=null;awaitLink=false;linkUpMs=-1;
+try{window.dispatchEvent(new Event("romp:unpark"));}catch(e2){}   // [fork] iOS item 4: the pane is on screen again; its loader holds the badge from this moment, before the wsdown re-raise below
 try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e2){}
 var L=parentLink();if(L===undefined||L.up){if(L!==undefined)linkUpMs=Date.now()-foregroundedAt;connect();}else{awaitLink=true;}}});}catch(e){}
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
@@ -69595,7 +69597,7 @@ pendingWhy="foreground";freshPending=true;armFresh();   // the reconnect's arm r
 // through to the D3 block and dials on return like the visible pane; one extra redial per return is the accepted cost. Keyed on the
 // pane's app alone, never on width or timing.
 if(onScreen===false&&parentMobile()===true&&APP!=="feed"){park();row.parked=true;returnDiag("return",row);return;}
-parked=false;   // [fork] D2 (review round 1, 2026-09-18): a return on an ALREADY parked pane that passes the branch above (the layout no longer the phone's, with no panes word yet to end the park) ends the park here, so the D3 block and the upstream lines below can dial and the row's parked:false, set above, is the truth
+if(parked)try{window.dispatchEvent(new Event("romp:unpark"));}catch(e){}parked=false;   // [fork] iOS item 4: a park ended here is an unpark for the loader too (romp:unpark, as the show branch tells it). [fork] D2 (review round 1, 2026-09-18): a return on an ALREADY parked pane that passes the branch above (the layout no longer the phone's, with no panes word yet to end the park) ends the park here, so the D3 block and the upstream lines below can dial and the row's parked:false, set above, is the truth
 // [fork] D3 (2026-09-18): when this pane sits in a shell that publishes a link, put the socket down for EVERY state
 // (abandon nulls ws, so the tick is inert and no onclose timer arms) and dial only once the link is up: now if it
 // already is (linkUpMs 0, the whole wait is code-owned), else on the shell's link-up word (awaitLink; the panes
@@ -69923,6 +69925,12 @@ def _loader_inner():
             "</div><div class=rl-dots><i></i><i></i><i></i></div></div>")
 
 
+# [fork] iOS item 4 (2026-10-02): the pane badge's no-flash hold, the time a drop must stay unanswered before the corner badge
+# paints. Presentational only: it delays the first paint and never clears anything (_pane_spin's fork lines say why no event
+# can stand in for it). Healthy lab returns end in 386 ms (phone) and 620 ms (desktop), under it.
+_RECONN_BADGE_HOLD_MS = 1000
+
+
 def _pane_spin(cid, ignore_id=""):
     """A per-pane loading overlay (the user 2026-06-26): the romp LOADER (swirl + 'romp' + dots) centered over
     the pane until its content container `cid` gets its first REAL child, then it FADES (kept in the DOM, not
@@ -69988,6 +69996,115 @@ def _pane_spin(cid, ignore_id=""):
             # the badge's own failsafe, armed per SHOW like the sheet's (2026-09-07): it now waits for
             # fresh DATA (below), which over a dead tunnel may never come — 30s only ever fires then.
             "function badge(on){if(rb)rb.classList.toggle('on',!!on);clearTimeout(bfail);if(on)bfail=setTimeout(function(){badge(false);},30000);}"
+            # [fork] iOS item 4 (2026-10-02): latches on the badge, written as listeners around upstream's, whose lines stay byte
+            # for byte. (1) The no-flash hold: a badge a drop newly raises is pulled back in the same dispatch (the listener after
+            # upstream's wsdown, below), so it never paints, and it paints only if no fresh frame has come RHOLD ms after the drop
+            # that started the hold, the page turning visible or a parked pane's tap, whichever is latest; a repeat drop while the
+            # hold is pending does not move it, so a link that keeps dropping cannot put the cue off. A healthy return then shows
+            # nothing (the lab measured a 386 ms flash). The hold is a time because no event tells a hung first try from a slow
+            # good one: a hung dial is silent until its cut, 15 s on. It delays the first paint and never clears anything:
+            # romp:wsfresh still clears, and a painted badge stays painted on a repeat drop (no flicker); hiding the page cancels a
+            # pending hold, and turning visible re-holds a pending or painted badge. (2) On a page with a shell, upstream's 30 s
+            # failsafe never runs: a painted badge stays until this pane's first fresh frame, however long the wait. The page has a
+            # shell once it hears the shell's link word (rsh), link:'up' or 'down', the words the shim's await also hears: in the
+            # panes word, which the shell sends to each pane frame at its load and at each re-tell, or in the link word, which a
+            # frame that hears no panes word (a split chat column) gets at each re-tell, that is at each change of the shell's
+            # link; such a frame counts as a page with no shell until its first one.
+            # Before this the failsafe hid the badge at 30 s while romp was still dialing, and after round 1 of its review
+            # (ruling B, 2026-10-03) it no longer restarts at the link-up word or at this pane's own reopen either, so no timer
+            # takes a painted badge down before the fresh frame. A page with no shell hears no link word and keeps upstream's
+            # failsafe: 30 s from the paint, restarted by a repeat drop as upstream's wsdown line restarts it. This listener runs
+            # before upstream's wsdown line and records whether the badge was already painted.
+            # (3) A parked pane (the phone's off-screen tabs at a return, the shim's park) holds its badge with no timer, and its
+            # tap starts the hold: the shim's romp:parked and romp:unpark (rpk). Before this the hold ran off screen, where no
+            # fresh frame can come until the tap, so the badge painted there and the tap showed it until that pane's first frame
+            # even when the link had come up at once (finding of 2026-10-02: a 286 ms flash at a tap 2 s after a healthy return).
+            "var RHOLD=" + str(_RECONN_BADGE_HOLD_MS) + ",rh=0,rpend=false,ron=false,rsh=false,rpk=false;"
+            "function rfail(){clearTimeout(bfail);bfail=0;if(rb&&rb.classList.contains('on')&&!rsh)bfail=setTimeout(function(){badge(false);},30000);}"
+            # the paint places the badge in the same turn as it turns it on (rplace, below), so no frame shows it anywhere else: at
+            # that moment a shown pane's style and box are real, whatever the load read and whatever the resize observer has said,
+            # and the badge has its size, which the search for a clear place needs; then it watches for what could move it (rwatch)
+            "function rpaint(){rh=0;if(!rpend||!rb)return;rpend=false;rb.classList.add('on');rplace();rwatch(true);rfail();}"
+            "function rhold(){clearTimeout(rh);rh=0;rpend=true;if(rb)rb.classList.remove('on');clearTimeout(bfail);bfail=0;if(document.visibilityState!=='hidden'&&!rpk)rh=setTimeout(rpaint,RHOLD);}"
+            "window.addEventListener('romp:wsdown',function(){ron=!!(rb&&rb.classList.contains('on'));});"
+            # [fork] iOS item 4 (findings of 2026-10-02 and of round 1, 2026-10-03): where the badge sits. Its first place is 8 px
+            # below the top of the pane's content container `c` when that container is the pane's own scroll area (overflow-y auto
+            # or scroll), at upstream's right 8 px: below the chrome above the list (the chat's tab strip or the phone's session
+            # header, the strip's resize handle and the pinned notes; the Outline's search and tag filter; the Waiting pane's
+            # header). Upstream's top:8px sat over that chrome's right end, where it hid the phone chat's tag filter and + button,
+            # the desktop strip's tag filter and gear, and the phone Outline's tag filter and search, for the whole wait. The Feed
+            # shows no header above its list (its #feed-head is hidden), so the list's top is the page's and its first place is
+            # upstream's 8 px.
+            # The first place alone still covered controls that do not scroll with the content (round 1): the subagent viewer's
+            # sticky header and its 'keep this tab' pin, the chat's landing notice (the only cancel for a jump), and the Feed's
+            # sticky column heads with their drag chips. So while the badge is painted it moves to the nearest place that covers
+            # nothing that stays put when the content scrolls and holds a control (rfit, robs): a control outside the container
+            # (the chrome, and what is drawn over the container from outside it, such as the landing notice and the scroll marks),
+            # and inside it the whole box of a sticky or fixed element that is or holds a control (the viewer's header, a Feed
+            # column head), so the badge goes below such a header, never onto it. From the first place it steps down below what it
+            # would cover, or left of it when that is the shorter move (a narrow control at the right edge, a scroll mark). If no
+            # place above the container's visible bottom is clear (a list shorter than the badge), it takes the place in the pane's
+            # view, at the right edge and 8 px above or below one of those controls, that covers the least of them, the nearest
+            # the first place among equals: a clear one wherever the view's right edge has room for the badge with 8 px to spare
+            # above and below, which may be over the chrome's text above the list; only a view without that room leaves it over a
+            # control (taps still pass through it). A control is anything RCTL matches or anything drawn with a pointer or grab
+            # cursor (the Feed's drag chip has its cursor and nothing else). Controls in the content itself (the top row of
+            # messages or cards) are not avoided: they scroll out from under the badge, and taps pass through it (ruling 9 of
+            # round 0).
+            # When: the badge is placed at load and at each resize event of the container or the page (a scroll area's box moves
+            # only with a size change: the chrome above grows or shrinks, the pane is shown, the window is resized); at its paint;
+            # and while it is painted, at each change to the page's elements (a MutationObserver on the body: the viewer opened,
+            # the notice shown) and at each scroll (a sticky element moving into its place), so a control that appears or moves
+            # under it moves it on (a scroll re-reads the boxes the last scan found; a change scans again). No timer. The search
+            # runs only while the badge is painted (rwatch starts at the paint and stops at the first change or scroll after the
+            # badge is down), so a healthy page scans nothing. Upstream's CSS rule stays
+            # byte for byte (the inline top and right outrank it). A container that is not a scroll area keeps upstream's corner.
+            # The scroll-area test is made at each placement, never once at load (finding of 2026-10-02, the served Firefox leg):
+            # Firefox resolves no computed style in a frame that is not rendered, so in the phone's chat iframe, display:none while
+            # another tab shows and loaded that way when the phone opens on the Feed tab, overflow-y read '' at load; the test made
+            # there failed, no observer was made, and the badge painted at upstream's top 8 px over the chat header's session
+            # picker, tag filter and + button. So the observer is made whenever the engine has one (Firefox's, made in the hidden
+            # frame, reports at the frame's first show), and the badge is placed at the load, each resize event and its own paint.
+            "function rscroll(){try{return /^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){return false;}}"
+            "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true]',rmo=null,rsc=false,rob=null;"
+            "function rctl(e,s){return (e.matches&&e.matches(RCTL))||/^(pointer|grab|grabbing)$/.test(s.cursor);}"
+            # what the badge must not cover, as elements: each control outside the container, and inside it each sticky or fixed
+            # element (the outermost, when they nest) that is or holds a control, whole: a header the badge goes below, not onto
+            "function robs(){var o=[],d=document.body,pin=[];if(!d||!d.getElementsByTagName)return o;var a=d.getElementsByTagName('*');"
+            "for(var i=0;i<a.length;i++){var e=a[i];if(e===c||e===rb||rb.contains(e))continue;var s=getComputedStyle(e);"
+            "if(c.contains(e)){if(s.position==='sticky'||s.position==='fixed')pin.push(e);for(var j=0;j<pin.length;j++){if(pin[j].contains(e)){if(o.indexOf(pin[j])<0&&rctl(e,s))o.push(pin[j]);break;}}continue;}"
+            "if(rctl(e,s)&&s.visibility!=='hidden'&&s.display!=='none')o.push(e);}return o;}"
+            # the nearest clear place from the first one: past the boxes it would cover, down below them or left of them, whichever
+            # is the shorter move. When none is clear above the container's visible bottom (a list shorter than the badge: a
+            # landscape phone with the keyboard up and a long pinned note), the place in the pane's view, at the right edge and 8 px
+            # above or below the edge of one of those boxes, that covers the least of them, the nearest the first place among
+            # equals: a clear one wherever the view's right edge has room for it with 8 px to spare above and below, and the first
+            # place when every place covers as much (the rehearsed check of round 1: before this the first place stood, over the
+            # composer's buttons below a list 20 px tall). `again` (a scroll) re-reads the boxes of the elements the last scan
+            # found: a scroll of the container moves only what is inside it
+            "function rfit(y0,again){var b=rb.getBoundingClientRect(),w=b.width,h=b.height,de=document.documentElement,W=de.clientWidth,H,o=[],y=y0,x=8;"
+            "if(!w||!h||!W)return [y0,8];H=Math.min(de.clientHeight||1e9,c.getBoundingClientRect().bottom);if(!again||!rob)rob=robs();"
+            "for(var i=0;i<rob.length;i++){var q=rob[i].getBoundingClientRect();if(q.width>0&&q.height>0)o.push(q);}"
+            "for(var k=0;k<64;k++){var L=W-x-w,R=W-x,n=0,hl=W,hb=y;"
+            "for(i=0;i<o.length;i++){var r=o[i];if(r.left<R&&r.right>L&&r.top<y+h&&r.bottom>y){n++;if(r.left<hl)hl=r.left;if(r.bottom>hb)hb=r.bottom;}}"
+            "if(!n)return [y,x];var nx=Math.ceil(W-hl)+8,ny=Math.ceil(hb)+8;if(W-nx-w>=8&&nx-x<=ny-y)x=nx;else y=ny;if(y+h>H-8)break;}"
+            "var V=de.clientHeight||H,cl=W-8-w,cr=W-8,by=y0,ba=rcov(o,cl,cr,y0,h),bd=0,cs=[];"
+            "for(i=0;i<o.length;i++)cs.push(Math.floor(o[i].top-8-h),Math.ceil(o[i].bottom+8));"
+            "for(i=0;i<cs.length;i++){var cy=cs[i];if(cy<8||cy+h>V-8)continue;var ca=rcov(o,cl,cr,cy,h),cd=Math.abs(cy-y0);if(ca<ba||(ca===ba&&cd<bd)){by=cy;ba=ca;bd=cd;}}"
+            "return [by,8];}"
+            # the area of those boxes a badge from l to r and from y to y+h would cover
+            "function rcov(o,l,r,y,h){var a=0;for(var i=0;i<o.length;i++){var q=o[i],dx=Math.min(r,q.right)-Math.max(l,q.left),dy=Math.min(y+h,q.bottom)-Math.max(y,q.top);if(dx>0&&dy>0)a+=dx*dy;}return a;}"
+            "function rplace(again){if(!rb||!c||!rscroll())return;var t=Math.round(c.getBoundingClientRect().top),y=(t>0?t:0)+8,x=8;"
+            "if(rb.classList.contains('on')){var f=rfit(y,again===true);y=f[0];x=f[1];}"
+            "var ty=y+'px',tx=x===8?'':x+'px';if(rb.style.top!==ty)rb.style.top=ty;if(rb.style.right!==tx)rb.style.right=tx;}"
+            "function rnudge(e){if(rb.classList.contains('on'))rplace(!!e&&e.type==='scroll');else rwatch(false);}"
+            "function rwatch(on){try{if(on){if(!rmo&&typeof MutationObserver==='function'&&document.body){"
+            "rmo=new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var g=rs[i].target;if(g!==rb&&!rb.contains(g)){rnudge();return;}}if(!rb.classList.contains('on'))rwatch(false);});"
+            "rmo.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','hidden']});}"
+            "if(!rsc&&document.addEventListener){document.addEventListener('scroll',rnudge,true);rsc=true;}}"
+            "else{rob=null;if(rmo){rmo.disconnect();rmo=null;}if(rsc){document.removeEventListener('scroll',rnudge,true);rsc=false;}}}catch(e){}}"
+            "if(rb&&c&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(function(){rplace();});rro.observe(c);rro.observe(document.documentElement);}catch(e){}}"
+            "rplace();"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
             # the opaque sheet; the sheet stays for a genuinely empty pane (cold load / never
             # painted), per the loading-states rule.
@@ -70012,6 +70129,18 @@ def _pane_spin(cid, ignore_id=""):
             "window.addEventListener('romp:firstpaintreleased',function(){held=false;arm();});"
             "window.addEventListener('romp:wsdown',function(){if(held)clearTimeout(fail);});"
             "window.addEventListener('romp:wsup',function(){if(held)o.classList.remove('gone');});"
+            # [fork] iOS item 4: the hold's and the shell latch's listeners, after upstream's (registration order). A badge
+            # upstream's wsdown just raised is pulled back and held; one already painted keeps painting (rfail: no failsafe on a
+            # page with a shell, upstream's restarted one on a page without); a repeat drop during a pending hold keeps that
+            # hold's first deadline. A link word makes the page a shell page and stands down a failsafe a paint armed before it.
+            "window.addEventListener('romp:wsdown',function(){if(!rb||!rb.classList.contains('on'))return;if(ron){rfail();return;}if(rpend){rb.classList.remove('on');clearTimeout(bfail);bfail=0;return;}rhold();});"
+            "window.addEventListener('romp:wsfresh',function(){clearTimeout(rh);rh=0;rpend=false;});"
+            "window.addEventListener('message',function(e){var m=e&&e.data;if(m&&(m.romp==='panes'||m.romp==='link')&&(m.link==='up'||m.link==='down')){rsh=true;rfail();}});"
+            "document.addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden'){clearTimeout(rh);rh=0;return;}if(rpend||(rb&&rb.classList.contains('on')))rhold();});"
+            # the park pulls a pending or painted badge back and holds it with no timer; the unpark holds it from that moment,
+            # as turning visible does (the shim dispatches each before its wsdown, so that drop finds the hold pending)
+            "window.addEventListener('romp:parked',function(){rpk=true;if(rpend||(rb&&rb.classList.contains('on')))rhold();});"
+            "window.addEventListener('romp:unpark',function(){rpk=false;if(rpend||(rb&&rb.classList.contains('on')))rhold();});"
             "window.addEventListener('romp:wsfresh',function(){badge(false);});})();</script>")
 
 
@@ -73588,9 +73717,32 @@ var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8
 // that puts it down (review round 2, 2026-09-18: a pane awaiting in that tick filed a false link-backstop row and dialed on
 // its own). The field keeps its name: the pane reads connT, and its derivation pin (tests/test_kernel_ws_heartbeat.py) too.
 window.__rompLink=function(){return {up:!!(shWs&&shWs.readyState===1&&Date.now()-shLastRecv<=SH_STALE_MS),connT:Math.max(shConnT,shTickT)};};
+// [fork] iOS item 4 (2026-10-02): the reconnect cue's detail, one tap from the glance. The glance is each pane's corner badge
+// ('reconnecting…', _pane_spin), with no count. The detail is a live line at the top of the Log (#rerr-live, inserted before
+// #rerr-list so the Log's own re-render leaves it alone), shown while this shell's socket is down after it once opened: on
+// at an abandon (a return's fast path, the watchdog's quiet arm) or a close, off at the next open, with no success line.
+// shCueTries counts the dials that never opened since the link went down or the return began, whichever is later;
+// shCueCuts those the connect cut closed (the close the dial's own cut timer made, shCutHere, or a never-opened close at
+// least SH_CONNECT_MS after its dial, the tick's backstop for a lost timer: the complement of the refused-ladder test in
+// ws.onclose). The two states a user sees after a return: the first try in flight (the wait line) and, from the close of
+// the cut that ends it, the retry line that names the cause once ('got no response'). Since iOS item 1a (2026-10-02) that
+// cut is the dial's own timer, SH_CONNECT_MS after the dial, so the retry line comes at 15 s and not at the next watchdog
+// tick, which cuts only a dial whose timer the browser lost. Refusals take the connect line, with the count from the second
+// on. Every change is one of those events; the cue arms no timer of its own.
+var shCueOn=false,shCueTries=0,shCueCuts=0,shCueEl=null;
+function shCueText(){if(!shCueOn)return '';if(!shCueTries)return 'Waiting for the kernel to respond. The dashboard updates on its own when it does.';
+var hung=shCueCuts===shCueTries;if(shCueTries===1)return hung?'Trying again: the first try got no response.':'Trying again: the first try could not connect to the kernel.';
+return 'Trying again: '+shCueTries+(hung?' tries got no response.':' tries could not connect to the kernel.');}
+function shCue(on){shCueOn=!!on&&shellOpened;if(!shCueOn){shCueTries=0;shCueCuts=0;}
+try{var list=document.getElementById('rerr-list');if(!list||!list.parentNode)return;
+if(!shCueEl){shCueEl=document.createElement('div');shCueEl.id='rerr-live';shCueEl.className='rerr-row';shCueEl.setAttribute('role','status');shCueEl.style.borderBottom='1px solid rgba(127,127,127,0.25)';
+var g=document.createElement('span'),im=document.createElement('img');im.className='rnet-spin';im.src='/media/romp-swirl-glyph.svg';im.alt='';g.appendChild(im);
+var tx=document.createElement('span');tx.className='rerr-msg';shCueEl.appendChild(g);shCueEl.appendChild(tx);list.parentNode.insertBefore(shCueEl,list);}
+shCueEl.style.display=shCueOn?'':'none';shCueEl.lastChild.textContent=shCueText();}catch(e){}}
 function shTell(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
 function shAbandon(){var d=shWs;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}shWs=null;   // detach + null so the abandoned socket's onclose is nobody's event (as the shim's abandon)...
 if(shellSock===d){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}shellSock=null;}   // ...so the API health detail is told HERE, in ws.onclose's order (the hook, then the null): a pause press this socket carried cannot be answered now (review round 1, 2026-09-18: unsaid, the redial's ready re-sent the last frame with the same seq and the press stayed acknowledged, the case onclose's own comment guards against)
+shCue(true);   // [fork] iOS item 4: the link is down, the cue's detail line is on
 shTell();}   // link down: re-tell the panes
 // the shim's freeze / resume stamps: a thawed Chromium tab must not redial a shell socket the browser still holds OPEN
 document.addEventListener('freeze',function(){shFrozeAt=Date.now();});
@@ -73611,6 +73763,7 @@ ws.onopen=function(){clearTimeout(shCutMe);if(shCutT===shCutMe)shCutT=0;shOpened
 shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket; the queue holds clientDiag rows alone, so one re-read of the kill switch at the open holds them all when a mute was flipped on while the socket was down, as the pane shim's flush does (review find, 2026-09-18)
 if(shReturnProbe){shReturnProbe.ms=Date.now()-shForegroundedAt;shReturnProbe.attempts=shFailed;shReturnProbe.firstFailMs=shFirstFailT?Date.now()-shFirstFailT:-1;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;shFailed=0;shFirstFailT=0;}   // [fork] D3: ONE shell row per return - the decision, the hidden/quiet gap, and the path's own recovery (attempts, firstFailMs, foreground->open ms)
 shTell();   // [fork] D3: link up - re-tell the panes
+shCue(false);   // [fork] iOS item 4: the link is up, the cue's detail line goes (no success line)
 if(shellOpened&&window.__rompReload)window.__rompReload.checkBoot();shellOpened=true;};
 ws.onmessage=function(ev){shLastRecv=Date.now();shResumeProvisional=0;var m;try{m=JSON.parse(ev.data);}catch(e){return;}
 if(m&&m.type==='restarting'){shRestartAnnounced=Date.now();return;}   // [fork] D3: the kernel's announced death - the redial keeps its tight cadence
@@ -73639,6 +73792,7 @@ else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateO
 // redial's ready re-sends the last frame verbatim), so the detail is told before the redial (_LANDING_APIH_JS)
 ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;shTell();   // [fork] D3: link down - re-tell the panes. shWs keeps the CLOSED socket (review round 1, 2026-09-18): the watchdog's CLOSED arm below reads it to recover a lost redial timer; shellWS's guard skips a socket that is neither CONNECTING nor OPEN and __rompLink requires readyState 1, so a CLOSED shWs is harmless
 clearTimeout(shCutMe);if(shCutT===shCutMe)shCutT=0;if(ws!==shWs)return;if(!shOpened){if(!shFailed)shFirstFailT=Date.now();shFailed++;}   // [fork] iOS item 1a: the close clears this dial's OWN connect cut (shCutMe) and resets shCutT only while it is still this dial's: the watchdog's CLOSED arm can dial while an older socket's close event is still queued, and that late close must leave the newer dial's cut in force (review round 1, 2026-10-02). A close of a socket that is no longer shWs (its close delivered after a newer dial) stops there, after clearing its own handle: it neither counts a failure toward the return probe nor arms a redial, so it cannot leave a second pending redial beside the newer dial's, or file a return-probe row with attempts from a socket put down before the return (review round 2, 2026-10-02; the per-dial cut widened this road, since a tick can now land right after a cut). D3: a handshake that never opened - the return probe's attempt count
+if(!shOpened){shCueTries++;if(shCutHere||Date.now()-shConnT>=SH_CONNECT_MS)shCueCuts++;}shCue(true);   // [fork] iOS item 4: a try that never opened counts, and whether the connect cut made its close: the close this dial's own cut timer made (shCutHere, iOS item 1a, read by the event, so a timer that fires while the wall clock reads a ms short of SH_CONNECT_MS still counts as a cut) or a close at least SH_CONNECT_MS after the dial (the tick's backstop for a lost timer), the complement of the refused-ladder test below (an open socket's close finds the count its open zeroed). Below the late-close return above, so a superseded socket's close counts no try and turns the line on over no newer dial, as it counts nothing toward the return probe
 var shInWin=shForegroundedAt&&Date.now()-shForegroundedAt<SH_STALE_MS,shd;   // [fork] D3: the redial cadence (ruling 4, 2026-09-18)
 if(shRestartAnnounced&&Date.now()-shRestartAnnounced<30000)shd=250;   // an announced restart keeps its tight redial (the kernel's own word)
 else if(!shOpened&&!shCutHere&&Date.now()-shConnT<SH_CONNECT_MS){shd=SH_LADDER[shRung<SH_LADDER.length?shRung:SH_LADDER.length-1];shRung++;}   // a REFUSED attempt (an onclose within the connect cut that the cut did not make: shCutHere, iOS item 1a, so a timer that fires while the wall clock reads a ms short of SH_CONNECT_MS still paces a hung attempt below): back off on the bounded ladder 1/2/4/4 s, reset by an open, so a fast-refusing path is not a dial storm (the harness baseline: 236 dials/pane in 30 s at 250 ms)
@@ -73675,6 +73829,7 @@ var shStale=!shWs||shWs.readyState!==1||Date.now()-shLastRecv>SH_STALE_MS;
 if(!shStale){shReturnProbe=null;return;}
 shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-stale',hiddenMs:shHiddenAt?Date.now()-shHiddenAt:-1,quietMs:shLastRecv?Date.now()-shLastRecv:-1};
 shFailed=0;shFirstFailT=0;
+shCueTries=0;shCueCuts=0;   // [fork] iOS item 4: every return's cue counts its tries from zero (shAbandon below turns it on)
 shAbandon();shellWS();});
 shellWS();
 // [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src) and the feed's (exempt)

@@ -6,6 +6,7 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -2620,17 +2621,18 @@ function shOut(o){process.stdout.write(JSON.stringify(o));}
 """
 
 
-def _run_probe(scenario, source=None):
-    """`source` is the shell script the case runs: _mobile_js() unless the case hands in a rewrite of that same text (review round
-    1 of iOS item 1a, 2026-10-02: the cut timer's SH_CONNECT_MS binding, executed with the constant rewritten), so every run
-    still reads the script through _mobile_js."""
+def _run_probe(scenario, pre="", source=None):
+    """`pre` runs after the shell harness and BEFORE the shell script (the reconnect cue's Log fakes, _CUE_PRE). `source` is the
+    shell script the case runs: _mobile_js() unless the case hands in a rewrite of that same text (review round 1 of iOS item 1a,
+    2026-10-02: the cut timer's SH_CONNECT_MS binding, executed with the constant rewritten), so every run still reads the script
+    through _mobile_js."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + (_mobile_js() if source is None else source) + "\n" + scenario)
+        f.write(_FIT_HARNESS + _SHELL_PROBE_HARNESS + pre + (_mobile_js() if source is None else source) + "\n" + scenario)
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
@@ -3407,6 +3409,426 @@ shOut({socks:SHSOCKS.length,lateClose:lateClose,all:all,newest:all.length?all[al
         self.assertEqual(unguarded["socks"], 2)
         self.assertEqual(unguarded["lateClose"], [2000], "without the return, A's late close reads A's own flag: a hung close outside any window, the blind redial")
         self.assertEqual(unguarded["newest"], 1000, "...and climbs nothing, so B's refusal still takes the ladder's first rung")
+
+
+# ── the reconnect cue (iOS item 4, 2026-10-02): its detail line in the Log, and the glance composed with the shell ─────
+# The detail is a live line the shell inserts before #rerr-list (so the Log's own re-render, which empties the list, leaves
+# it alone). The fit harness's document answers no Log, so _CUE_PRE hands the shell a Log panel holding the list and an
+# element factory; cueLine() reads the live line back: shown, its text, its place before the list, its role.
+_CUE_PRE = r"""
+const CUEPANEL = { children: [], insertBefore(n, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? this.children.length : i, 0, n); n.parentNode = this; return n; } };
+const cueEl = (tag) => { const e = { tagName: tag, id: '', className: '', src: '', alt: null, style: {}, attrs: {}, children: [], parentNode: null, textContent: '',
+  setAttribute(k, v) { this.attrs[k] = String(v); }, appendChild(c) { this.children.push(c); c.parentNode = this; return c; } };
+  Object.defineProperty(e, 'lastChild', { get() { return e.children.length ? e.children[e.children.length - 1] : null; } }); return e; };
+const CUELIST = cueEl('div'); CUELIST.id = 'rerr-list'; CUEPANEL.children.push(CUELIST); CUELIST.parentNode = CUEPANEL;
+const cueFitGet = global.document.getElementById;
+global.document.getElementById = (id) => (id === 'rerr-list' ? CUELIST : cueFitGet(id));
+global.document.createElement = (tag) => cueEl(tag);
+global.cueLine = () => { const el = CUEPANEL.children.find((c) => c.id === 'rerr-live'); if (!el) return null;
+  return { shown: el.style.display !== 'none', text: el.lastChild ? el.lastChild.textContent : null,
+    beforeList: CUEPANEL.children.indexOf(el) < CUEPANEL.children.indexOf(CUELIST), role: el.attrs.role || null, cls: el.className,
+    glyph: el.children[0] && el.children[0].children[0] ? el.children[0].children[0].className : null }; };
+global.cueText = () => { const c = cueLine(); return c ? c.text : null; };   // null where no line was ever inserted (a head without the cue)
+"""
+# Nothing in the Log line runs on a timer (iOS item 4): each read of the line also samples the shell's live timers other than its
+# redial (shellWS) and its dial's connect cut (shCut, iOS item 1a: the dial arms it, not the cue), and its interval count, and the
+# shell's output carries the samples with the count at the case's start (CUEIV0, set by ReconnectCueDetail._run), so a clearing timer
+# of any length armed at a cue event is caught at the next read, not only one short enough to fire inside a case. The cuts are
+# sampled apart (cuts): at most one live at a read, of SH_CONNECT_MS, the current dial's. Runs after _CUE_PRE (it wraps cueLine;
+# cueText reads through it).
+_CUE_TIMERS = r"""
+var CUETIMERS=[];
+var cueLine0=global.cueLine;global.cueLine=function(){CUETIMERS.push({others:SHTIMERS.filter(function(t){return t.live&&t.fn.name!=='shellWS'&&t.fn.name!=='shCut';}).map(function(t){return t.ms;}),cuts:SHTIMERS.filter(function(t){return t.live&&t.fn.name==='shCut';}).map(function(t){return t.ms;}),intervals:SHINTERVALS.length});return cueLine0();};
+var shOut0=shOut;shOut=function(o){o.cueTimers=CUETIMERS;o.cueIv0=CUEIV0;shOut0(o);};
+"""
+_CUE_WAIT = "Waiting for the kernel to respond. The dashboard updates on its own when it does."
+_CUE_HUNG1 = "Trying again: the first try got no response."
+_CUE_REFUSED1 = "Trying again: the first try could not connect to the kernel."
+
+
+class ReconnectCueDetail(unittest.TestCase):
+    """iOS item 4 (2026-10-02): the reconnect cue's detail, one tap from the glance (the Log's live first line). Shown while the
+    shell's socket is down after it once opened, cleared at the next open with no success line, its every change keyed on the
+    shell's own events (abandon, close, open). The two states a user sees after a return are pinned: the first try in flight
+    (the wait line, no count) and, from the close of the cut that ends it, the retry line that names the cause once. Refusals
+    take the connect line, counted from the second. Run under node against the shell harness's fake socket and clock
+    (ShellLinkProbe's), which fires no timer by itself: a case that never fires the dial's own cut timer (iOS item 1a) and cuts
+    at a watchdog tick past SH_CONNECT_MS is the case of a cut timer the browser lost, the tick's backstop."""
+
+    def _run(self, scenario):
+        """Nothing in the line runs on a timer, at any length: every read of the line (cueLine, cueText) also samples the shell's
+        live timers other than its redial (shellWS) and its dial's connect cut (shCut), and its interval count (_CUE_TIMERS), and
+        every sample, one after each cue event a case reads, must show no such timer, at most one cut, of SH_CONNECT_MS, and the
+        intervals the shell had when the case began (its watchdog tick)."""
+        r = _run_probe("var CUEIV0=SHINTERVALS.length;\n" + scenario, pre=_CUE_PRE + _CUE_TIMERS)
+        self.assertTrue(r["cueTimers"], "the line was read at least once, so the timers were sampled")
+        self.assertEqual([c for c in r["cueTimers"] if c["others"] or c["intervals"] != r["cueIv0"]], [],
+                         "no live timer but the shell's redial and its dial's cut, and no new interval, after any cue event (a clearing timer of any length shows here)")
+        cut = int(re.search(r"SH_CONNECT_MS=(\d+)", _mobile_js()).group(1))
+        self.assertEqual([c for c in r["cueTimers"] if c["cuts"] not in ([], [cut])], [],
+                         "at most one live connect cut at a read, of SH_CONNECT_MS: the current dial's, and none the cue armed")
+        return r
+
+    def test_no_line_before_the_first_open_and_none_for_a_boot_dial_that_never_opened(self):
+        r = self._run(r"""
+var boot=cueLine();
+shRefuseNow();var refused=cueLine();      // the boot dial refused: the page never had a link, the boot splash covers it
+shFireDials();shOpen();var opened=cueLine();
+shOut({boot:boot,refused:refused,opened:opened});""")
+        self.assertIsNone(r["boot"], "nothing inserted before any socket event")
+        self.assertEqual((r["refused"]["shown"], r["refused"]["text"]), (False, ""), "a boot dial that never opened is not a reconnect")
+        self.assertEqual((r["opened"]["shown"], r["opened"]["text"]), (False, ""))
+
+    def test_the_two_states_after_a_return_the_wait_then_the_cut_and_the_open_clears_it(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // a return to a dead socket: the fast path abandons it and dials
+var s1=cueLine(),t0=SHNOW;
+SHNOW+=5000;shTick();var s1later=cueLine();                  // 5 s on, the first try still in flight: unchanged
+shRunDue(t0+15000);var cutRs=SHSOCKS[1].readyState;          // SH_CONNECT_MS after the dial: the dial's own timer cuts it (iOS item 1a)
+SHSOCKS[1].onclose({code:1006});var s2=cueLine();            // its close: the retry line
+shFireDials();var s2redial=cueLine();                        // the next try dials: the line stands
+shOpen();var up=cueLine();                                   // the link is up: the line goes, with no success line
+shOut({s1:s1,s1later:s1later,cutRs:cutRs,s2:s2,s2redial:s2redial,up:up,socks:SHSOCKS.length});""")
+        self.assertEqual(r["s1"], {"shown": True, "text": _CUE_WAIT, "beforeList": True, "role": "status", "cls": "rerr-row", "glyph": "rnet-spin"},
+                         "S1, the first state a user sees: the wait line, no count, at the top of the Log above its list, announced (role status), the romp swirl beside it")
+        self.assertEqual(r["s1later"], r["s1"], "no change without an event: the shell's tick moves nothing")
+        self.assertEqual(r["cutRs"], 3)
+        self.assertEqual((r["s2"]["shown"], r["s2"]["text"]), (True, _CUE_HUNG1),
+                         "S2, the second state: from the close of the dial's own cut, the retry line naming the cause once")
+        self.assertEqual(r["s2redial"], r["s2"])
+        self.assertEqual((r["up"]["shown"], r["up"]["text"]), (False, ""), "the open clears it")
+        self.assertEqual(r["socks"], 3)
+
+    def test_refusals_take_the_connect_line_and_count_from_the_second(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var lines=[cueText()];
+for(var i=0;i<3;i++){shRefuseNow();lines.push(cueText());SHNOW+=1000;shFireDials();}
+SHNOW+=16000;shTick();shSock().onclose({code:1006});lines.push(cueText());   // a cut after refusals: still the connect line
+shFireDials();shOpen();
+shOut({lines:lines,up:cueLine()});""")
+        self.assertEqual(r["lines"], [_CUE_WAIT, _CUE_REFUSED1,
+                                      "Trying again: 2 tries could not connect to the kernel.",
+                                      "Trying again: 3 tries could not connect to the kernel.",
+                                      "Trying again: 4 tries could not connect to the kernel."],
+                         "a refused try names a connect failure; the count climbs from the second, and a mix keeps the connect line")
+        self.assertEqual((r["up"]["shown"], r["up"]["text"]), (False, ""))
+
+    def test_two_cuts_count_on_the_no_response_line(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var lines=[];
+for(var i=0;i<2;i++){SHNOW+=16000;shTick();shSock().onclose({code:1006});lines.push(cueText());shFireDials();}
+shOut({lines:lines});""")
+        self.assertEqual(r["lines"], [_CUE_HUNG1, "Trying again: 2 tries got no response."])
+
+    def test_a_new_return_counts_from_zero(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+SHNOW+=16000;shTick();shSock().onclose({code:1006});var s2=cueText();
+shFireDials();
+shHide();SHNOW+=100;shShow();                                  // the page goes away and comes back while the next try hangs
+shOut({s2:s2,again:cueText()});""")
+        self.assertEqual(r["s2"], _CUE_HUNG1)
+        self.assertEqual(r["again"], _CUE_WAIT, "the new return's fast path dials afresh: its first try, no count")
+
+    def test_a_link_that_opens_drops_and_opens_again_moves_the_line_only_at_those_events(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var seq=[];function at(k){var c=cueLine();seq.push(c?[k,c.shown,c.text]:[k,null,null]);}
+at('return');SHNOW+=2000;shTick();at('tick');
+shOpen();at('open');SHNOW+=5000;shRecv({type:'ka'});shTick();at('tick');
+shSock().readyState=3;shSock().onclose({code:1006});at('drop');   // the opened socket drops: a new wait, its own count
+SHNOW+=1000;shTick();at('tick');
+shFireDials();shRefuseNow();at('refused');
+SHNOW+=1000;shFireDials();shOpen();at('open');SHNOW+=5000;shRecv({type:'ka'});shTick();at('tick');
+shOut({seq:seq});""")
+        self.assertEqual(r["seq"], [["return", True, _CUE_WAIT], ["tick", True, _CUE_WAIT],
+                                    ["open", False, ""], ["tick", False, ""],
+                                    ["drop", True, _CUE_WAIT], ["tick", True, _CUE_WAIT],
+                                    ["refused", True, _CUE_REFUSED1],
+                                    ["open", False, ""], ["tick", False, ""]],
+                         "each change at a link event (abandon, close, open); every tick between leaves the line as it was")
+
+    # tests-2 of round 1: the count is zeroed whenever the line is off (shCue's reset), which covers two readers. A try counted
+    # before an open must not carry into the wait after that socket drops: the refused try of a return, and the refused BOOT dial
+    # (counted while the page had never opened, when the line cannot show), each followed by an open and a drop of the open socket
+    def test_a_return_refused_then_opened_counts_the_next_drop_from_zero(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // a return to a dead socket: the fast path dials
+shRefuseNow();var refused=cueText();                         // the return's first try is refused: one try counted
+SHNOW+=1000;shFireDials();shOpen();var opened=cueLine();     // the next try opens: the line goes, and its count with it
+SHNOW+=5000;shRecv({type:'ka'});
+shSock().readyState=3;shSock().onclose({code:1006});         // the opened socket drops: a new wait
+shOut({refused:refused,opened:opened,drop:cueText()});""")
+        self.assertEqual(r["refused"], _CUE_REFUSED1)
+        self.assertEqual((r["opened"]["shown"], r["opened"]["text"]), (False, ""))
+        self.assertEqual(r["drop"], _CUE_WAIT, "the drop after the open is a new wait with no tries yet (a stale count read 'the first try could not connect')")
+
+    def test_a_refused_boot_dial_counts_nothing_toward_the_first_drop_after_the_open(self):
+        r = self._run(r"""
+shRefuseNow();                                               // the boot dial is refused: the page has never had a link
+SHNOW+=1000;shFireDials();shOpen();                          // the next boot dial opens
+SHNOW+=5000;shRecv({type:'ka'});
+shSock().readyState=3;shSock().onclose({code:1006});         // the first drop after that open
+shOut({drop:cueText()});""")
+        self.assertEqual(r["drop"], _CUE_WAIT, "the boot's refused dial is not counted into the first wait after the open")
+
+    # tests-4 of round 1: the cut's boundary. shCueCuts counts a never-opened close at least SH_CONNECT_MS after its dial, the
+    # complement of the redial ladder's refused test, so both readers agree on a close at exactly the cut (delivered directly: the
+    # watchdog's own close comes only past the cut) and on one a millisecond sooner. Since the merge of PR 949 (iOS item 1a) this
+    # is the clock half of the rule, the reading of a close no timer of the dial made (the tick's backstop, or the browser's own);
+    # the close the dial's own cut timer makes counts by its event (shCutHere), the cases below
+    def test_a_close_at_exactly_the_connect_cut_is_a_cut_and_one_a_millisecond_sooner_is_a_refusal(self):
+        js = _mobile_js()
+        cut = int(re.search(r"SH_CONNECT_MS=(\d+)", js).group(1))
+        rung = int(re.search(r"SH_LADDER=\[(\d+)", js).group(1))
+        got = {}
+        for k, dt in (("sooner", cut - 1), ("at", cut)):
+            got[k] = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials now
+var T=SHNOW,s=shSock();
+SHNOW=T+%d;s.readyState=3;s.onclose({code:1006});            // that dial's close, %d ms after it
+shOut({line:cueText(),redial:shDialTimers().map(function(t){return t.ms;})});""" % (dt, dt))
+        self.assertEqual(got["sooner"]["line"], _CUE_REFUSED1, "a close inside the cut is a refusal")
+        self.assertEqual(got["at"]["line"], _CUE_HUNG1, "a close at exactly the cut is the cut's: 'got no response'")
+        self.assertEqual(got["sooner"]["redial"], [rung], "the ladder reads the sooner close as a refusal too: its first rung")
+        self.assertEqual(len(got["at"]["redial"]), 1)
+        self.assertNotEqual(got["at"]["redial"], [rung], "...and the close at the cut as a cut, off the ladder: the two readers agree")
+
+    # ---- review round 2, the merge of fork main (2026-10-03): S2 on PR 949's per-dial cut. Each dial arms its own cut timer at
+    # SH_CONNECT_MS (iOS item 1a), so the retry line (S2) begins at that timer's close, 15 s after the dial, where before the merge
+    # it waited for the watchdog tick that made the cut, 15 to 20 s after the dial. The cut's own close counts as a cut in
+    # shCueCuts by its event (shCutHere), not by the clock. Mutants that redden these: the timer closing nothing, so the tick's
+    # backstop makes the cut and S2 begins at that tick (the walk, the S2 case above); the cue's line refreshed only at the tick
+    # (the walk); the count keyed on the clock alone, the line before the merge (the ms-short case); the timer's close not counted
+    # (the walk, the count case); the cue's count above the late-close return (the late-close case).
+    def test_s2_begins_at_the_close_of_the_dials_own_cut_at_15s_not_at_the_next_watchdog_tick(self):
+        # a hung return walked on the clock: every timer fired at its due time, the watchdog ticking on its own phase (2.3 s after
+        # the return's dial, so its ticks fall at 12.3 s and 17.3 s, either side of the cut), a read of the line 1 ms before the
+        # cut, and each cut's close event delivered at once. The line reads the wait at every event before the cut's close and
+        # the retry line from that close at 15,000 ms on; before the merge the tick at 17.3 s made the cut and the line changed there
+        self.maxDiff = None
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials; the path hangs from here on
+var t0=SHNOW,nextTick=t0+2300,reads=[t0+14999],end=t0+20000,closed={},seq=[];
+function at(k){seq.push([k,SHNOW-t0,cueText()]);}
+at('return');
+for(var g=0;g<100;g++){var nt=null;SHTIMERS.forEach(function(t){if(t.live&&(!nt||t.at<nt.at))nt=t;});
+var tt=nt?nt.at:Infinity,tr=reads.length?reads[0]:Infinity,when=Math.min(tt,nextTick,tr);if(when>end)break;SHNOW=when;
+if(tr===when){reads.shift();at('read');continue;}
+if(tt===when){nt.live=false;nt.fn();at(nt.fn.name);}else{shTick();nextTick+=5000;at('tick');}
+var s=shSock();if(s.readyState===3&&!closed[SHSOCKS.length]){closed[SHSOCKS.length]=1;s.onclose({code:1006});at('close');}}
+shOut({seq:seq});""")
+        self.assertEqual(r["seq"], [["return", 0, _CUE_WAIT], ["tick", 2300, _CUE_WAIT], ["tick", 7300, _CUE_WAIT],
+                                    ["tick", 12300, _CUE_WAIT], ["read", 14999, _CUE_WAIT],
+                                    ["shCut", 15000, _CUE_WAIT], ["close", 15000, _CUE_HUNG1],
+                                    ["shellWS", 15250, _CUE_HUNG1], ["tick", 17300, _CUE_HUNG1]],
+                         "S1 through the tick at 12.3 s and 1 ms before the cut; S2 from the close of the dial's own cut at exactly "
+                         "15,000 ms, not from the next tick at 17.3 s; it stands through the redial and that tick")
+
+    def test_the_cuts_close_counts_by_its_event_so_a_timer_firing_a_ms_short_still_reads_no_response(self):
+        # a timer can fire while the wall clock reads a ms short of SH_CONNECT_MS after the dial (949 measured it on real timers:
+        # 33 of 160 cuts). The same clock reading, 14,999 ms after the dial, with the close made two ways: by the dial's own cut
+        # timer (shCutHere set) and by the browser with no timer behind it. The cue and the redial ladder read the first as a cut
+        # and the second as a refusal, so the event tells them apart, not the clock
+        rung = int(re.search(r"SH_LADDER=\[(\d+)", _mobile_js()).group(1))
+        got = {}
+        for k, close in (("timer", "shCutTimers().forEach(function(t){t.live=false;t.fn();});"), ("browser", "d.readyState=3;")):
+            got[k] = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials
+var d=shSock(),t0=SHNOW;
+SHNOW=t0+14999;%s
+var rs=d.readyState;if(rs===3)d.onclose({code:1006});
+shOut({rs:rs,line:cueText(),redial:shDialTimers().map(function(t){return t.ms;})});""" % close)
+        self.assertEqual(got["timer"]["rs"], 3, "the dial's own timer closed the socket")
+        self.assertEqual((got["timer"]["line"], got["timer"]["redial"]), (_CUE_HUNG1, [250]),
+                         "the close the timer made is a cut by its event: 'got no response', and the ladder reads it as hung (250 ms in the window)")
+        self.assertEqual((got["browser"]["line"], got["browser"]["redial"]), (_CUE_REFUSED1, [rung]),
+                         "the same clock with no timer behind the close: a refusal for both readers")
+
+    def test_each_close_of_the_dials_own_cut_counts_as_a_cut(self):
+        # two hung tries, each cut by its dial's own timer at SH_CONNECT_MS, then a refusal: the count names the cause while every
+        # try was a cut and turns to the connect line at the first refusal, every try counted
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials
+function cut(){var d=shSock();shRunDue(SHNOW+15000);if(d.readyState===3)d.onclose({code:1006});return cueText();}
+var lines=[cut()];shFireDials();lines.push(cut());shFireDials();
+SHNOW+=300;shRefuseNow();lines.push(cueText());             // the third try refused 300 ms in
+shOut({lines:lines});""")
+        self.assertEqual(r["lines"], [_CUE_HUNG1, "Trying again: 2 tries got no response.", "Trying again: 3 tries could not connect to the kernel."],
+                         "each timer cut counts as a cut; a refusal among them takes the connect line")
+
+    def test_an_older_sockets_late_close_after_a_newer_dial_opened_leaves_the_line_off(self):
+        # 949's late-close return: an older socket's close delivered after a newer dial clears its own cut and stops. The cue's count
+        # sits below that return, so the late close counts no try and turns the line on over no newer dial. Here the return's dial A
+        # is cut by its own timer with its close event queued, a tick dials B over it, B opens (the link is up, the line goes), and
+        # then A's close arrives: the line stays off. Above the return, A's close counted a cut and showed 'got no response' while
+        # the link was up, until the next open. (While B is still CONNECTING the same return leaves A's try uncounted, as the return
+        # probe leaves it.)
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});
+shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();       // the return: the fast path dials A
+var A=shSock(),tA=SHNOW;
+shRunDue(tA+15000);var cutA=A.readyState;                    // A's own timer cuts it; its close event is still queued
+SHNOW+=100;shTick();var B=shSock();                          // a tick finds A CLOSED past SH_REDIAL_MS and dials B
+shOpen();var opened=cueLine();                               // B opens: the link is up, the line goes
+A.onclose({code:1006});var late=cueLine();                   // A's close, delivered after B opened
+shOut({cutA:cutA,socks:SHSOCKS.length,newer:B!==A,opened:[opened.shown,opened.text],late:[late.shown,late.text],up:global.__rompLink().up});""")
+        self.assertEqual([r["cutA"], r["socks"], r["newer"]], [3, 3, True], "A cut by its own timer, then B dialed over it")
+        self.assertEqual(r["opened"], [False, ""], "B's open clears the line")
+        self.assertEqual(r["late"], [False, ""], "A's late close counts no try and turns no line on over B's open link")
+        self.assertIs(r["up"], True)
+
+    def test_the_lines_are_the_drafted_copy_and_the_count_never_reaches_the_glance(self):
+        js = _mobile_js()
+        for text in (_CUE_WAIT, _CUE_HUNG1, _CUE_REFUSED1, "' tries got no response.'", "' tries could not connect to the kernel.'"):
+            self.assertIn(text, js)
+        spin = km._pane_spin("content", "live-ask")
+        self.assertNotIn("shCue", spin, "the pane's badge reads nothing of the count")
+        self.assertIn("reconnecting…</div>", spin)
+        for dash in ("\u2014", "\u2013"):   # the em and en dash, as escapes
+            for text in (_CUE_WAIT, _CUE_HUNG1, _CUE_REFUSED1):
+                self.assertNotIn(dash, text, "no em or en dash in the copy")
+
+
+# The glance composed with the shell (one node process, one clock): the shell script, one pane's shim and the pane's
+# _pane_spin loader script, so the badge a case reads is driven by the shim's real wsdown, wsup and wsfresh and by the panes
+# word the shell's real tell builds (_LINK_GLUE). The pane harness's dispatchEvent only records; here it also runs the
+# listeners (the loader's), and the pane's document answers the loader's three elements: its sheet, its badge, and a content
+# container with one thread (a drop over content raises the badge, not the sheet). snap(k) records the badge and the line.
+_SPIN_BEFORE = r"""
+var SPB=new Set(),SPS=new Set();
+function spCls(S){return {add:function(c){S.add(c);},remove:function(c){S.delete(c);},contains:function(c){return S.has(c);},toggle:function(c,on){if(on)S.add(c);else S.delete(c);return !!on;}};}
+var SPEL={"pane-spin":{classList:spCls(SPS)},"pane-reconn":{classList:spCls(SPB)},"content":{children:[{id:"thread-1"}]}};
+// the glance carries no count: any write to the badge's text or children, from the pane's script or from the shell's, is recorded
+// and every case asserts there was none (badgeWrites). The shell reaches the pane's document as a real page's would, through
+// its iframe (document.querySelectorAll or getElementsByTagName), so a shell that wrote a count into the badge is caught here too.
+var BADGEW=[];var SPRB=SPEL["pane-reconn"];
+function spTrap(name){var n={};["nodeValue","textContent","data","innerHTML"].forEach(function(k){Object.defineProperty(n,k,{get:function(){return "reconnecting";},set:function(v){BADGEW.push(name+"."+k+"="+String(v));}});});return n;}
+var SPKIDS=[spTrap("img"),spTrap("text")];
+["textContent","innerHTML","innerText","outerHTML"].forEach(function(k){Object.defineProperty(SPRB,k,{get:function(){return "reconnecting";},set:function(v){BADGEW.push(k+"="+String(v));}});});
+["appendChild","append","prepend","insertBefore","replaceChild","replaceChildren","replaceWith","insertAdjacentHTML","insertAdjacentText","insertAdjacentElement","removeChild","remove","before","after"].forEach(function(k){SPRB[k]=function(){BADGEW.push(k+"("+Array.prototype.map.call(arguments,String).join(",")+")");};});
+[["childNodes",SPKIDS],["children",[SPKIDS[0]]],["firstChild",SPKIDS[0]],["lastChild",SPKIDS[1]],["firstElementChild",SPKIDS[0]],["lastElementChild",SPKIDS[0]]].forEach(function(kv){Object.defineProperty(SPRB,kv[0],{get:function(){return kv[1];}});});
+var SPFRAME={id:"f-test",tagName:"IFRAME",contentDocument:document,contentWindow:window,getAttribute:function(){return null;}};
+global.document.querySelectorAll=function(sel){return /iframe/i.test(String(sel))?[SPFRAME]:[];};
+global.document.getElementsByTagName=function(t){return String(t).toLowerCase()==="iframe"?[SPFRAME]:[];};
+document.getElementById=function(id){return SPEL[id]||null;};
+window.dispatchEvent=function(e){winEvents.push(e.type);(winL[e.type]||[]).forEach(function(f){f(e);});return true;};
+var SNAPS=[];function snap(k){var c=global.cueLine();SNAPS.push({k:k,badge:SPB.has("on"),line:c&&c.shown?c.text:""});}
+function fireNamed(test){var n=0;timers.forEach(function(t){if(t.live&&test(t)){t.live=false;t.fn();n++;}});return n;}
+function holdFires(){return fireNamed(function(t){return t.fn.name==="rpaint";});}
+function failsafeFires(){return fireNamed(function(t){return t.ms===30000&&String(t.fn).indexOf("badge(false)")>=0;});}
+function liveHolds(){return timers.filter(function(t){return t.live&&t.fn.name==="rpaint";}).length;}
+"""
+
+
+def _spin_script():
+    js = km._pane_spin("content", "live-ask")
+    return js[js.index("<script>") + len("<script>"):js.index("</script>")]
+
+
+class ReconnectCueLinked(unittest.TestCase):
+    """iOS item 4 (2026-10-02): the glance (the pane's badge) and the detail (the shell's Log line) across a whole return, on one
+    clock, with the pane's loader script listening to the shim's real events and the shell's real link word. Pins the
+    composition: the badge waits out the hold, stays up through the shell's cut and past 30 s while the link is down, and
+    clears on the pane's first fresh frame after the link comes up; a healthy return paints nothing; a link that opens and
+    drops again before any fresh frame keeps the badge up throughout."""
+
+    def _run(self, scenario):
+        r = _run_linked(_spin_script() + "\n" + scenario + "\nout({snaps:SNAPS,holds:liveHolds(),badgeWrites:BADGEW});", pre=_CUE_PRE, before=_SPIN_BEFORE)
+        self.assertEqual(r["badgeWrites"], [], "nothing, the pane's script or the shell's, writes the badge's text or children: the glance carries no count")
+        return r
+
+    def test_a_hung_return_shows_the_cue_through_the_cut_and_past_30s_and_clears_after_link_up(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;
+shShow();show();var tD=NOW;snap('return');             // the shell dials (it hangs); the pane, link down, awaits it
+holdFires();snap('hold');                              // the hold passes with no fresh frame: S1 painted
+NOW=tD+15000;var d=shSock();SHTIMERS.forEach(function(t){if(t.live&&t.fn.name==='shCut'){t.live=false;t.fn();}});
+if(d.readyState===3)d.onclose({code:1006});snap('cut');   // SH_CONNECT_MS after the shell's dial its own timer cuts the hung first try (iOS item 1a): S2
+shFireDials();snap('redial');
+NOW+=20000;failsafeFires();snap('past30');             // 35 s on: no failsafe stood armed, the badge stays
+shOpen();snap('linkup');                               // the shell's socket opens: the link word dials the pane
+open();snap('paneopen');
+NOW+=50;recv({type:"feed",asks:[]});snap('fresh');""")
+        self.assertEqual(r["snaps"], [
+            {"k": "return", "badge": False, "line": _CUE_WAIT},
+            {"k": "hold", "badge": True, "line": _CUE_WAIT},
+            {"k": "cut", "badge": True, "line": _CUE_HUNG1},
+            {"k": "redial", "badge": True, "line": _CUE_HUNG1},
+            {"k": "past30", "badge": True, "line": _CUE_HUNG1},
+            {"k": "linkup", "badge": True, "line": ""},
+            {"k": "paneopen", "badge": True, "line": ""},
+            {"k": "fresh", "badge": False, "line": ""}],
+            "glance: held at the return, painted at the hold through the cut and past 30 s, cleared by the fresh frame; detail: "
+            "the wait line, the cut line, gone at the link-up")
+        self.assertEqual(r["holds"], 0)
+
+    def test_a_healthy_return_paints_nothing(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;
+shShow();show();snap('return');
+NOW+=150;shOpen();snap('linkup');                      // the shell's dial opens at once, inside the hold
+NOW+=100;open();NOW+=100;recv({type:"feed",asks:[]});snap('fresh');   // the pane dials, opens and gets its first frame
+""")
+        self.assertEqual([s["badge"] for s in r["snaps"]], [False, False, False], "no badge at any point of a return that links inside the hold")
+        self.assertEqual([s["line"] for s in r["snaps"]], [_CUE_WAIT, "", ""], "the Log line lived from the return to the link-up")
+        self.assertEqual(r["holds"], 0, "the fresh frame cancelled the hold")
+
+    # ruling B of round 1 (2026-10-03), composed: in a pane that hears the real shell's link word, neither the link-up word nor the
+    # pane's own reopen arms a failsafe, so a painted badge waits for the pane's first fresh frame however long it takes
+    def test_after_the_link_up_and_the_panes_reopen_the_badge_waits_for_the_fresh_frame_however_long(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;
+shShow();show();holdFires();snap('hold');               // painted at the hold
+NOW+=3000;shOpen();snap('linkup');                     // the shell's socket opens: its link word reaches the pane
+open();snap('paneopen');                               // the pane's own socket opens, and no frame comes yet
+NOW+=40000;failsafeFires();snap('later');              // 40 s on: a failsafe armed at either event would fire here
+NOW+=50;recv({type:"feed",asks:[]});snap('fresh');""")
+        self.assertEqual([s["badge"] for s in r["snaps"]], [True, True, True, True, False],
+                         "painted from the hold through the link-up and the reopen and 40 s past them; the fresh frame clears it")
+
+    # fresh-1 of round 1, composed: a quick switch away and back with both sockets standing goes through the shim's and the shell's
+    # keep paths, which dispatch no drop; the loader's visibility listener sees the page turn visible and must hold nothing
+    def test_a_quick_switch_over_standing_sockets_paints_nothing(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=2000;shShow();show();snap('return');   // a quick switch: both sockets stand, the fast paths keep them
+holdFires();snap('hold');
+NOW+=40000;failsafeFires();snap('later');""")
+        self.assertEqual([s["badge"] for s in r["snaps"]], [False, False, False], "no badge at the return, at a hold or later")
+        self.assertEqual(r["holds"], 0)
+        self.assertEqual([s["line"] for s in r["snaps"]], ["", "", ""], "and no Log line: the link never went down")
+
+    def test_a_link_that_opens_and_drops_before_any_fresh_frame_keeps_the_badge_up_without_a_flap(self):
+        r = self._run(r"""
+shOpen();shRecv({type:'ka'});open();recv({type:"ka"});
+shHide();hide();NOW+=40000;SHSOCKS[0].readyState=3;sock().readyState=3;
+shShow();show();holdFires();snap('hold');
+NOW+=3000;shOpen();open();snap('linked');              // the link and the pane's socket open, no fresh frame yet
+NOW+=500;shSock().readyState=3;shSock().onclose({code:1006});snap('shelldrop');
+sock().readyState=3;sock().onclose({code:1006});snap('panedrop');   // inside the return window, link down: the pane awaits
+holdFires();snap('nohold');                            // nothing pending: a painted badge is never re-held by a drop
+NOW+=2000;shFireDials();shOpen();snap('linkagain');
+open();NOW+=50;recv({type:"feed",asks:[]});snap('fresh');""")
+        self.assertEqual([s["badge"] for s in r["snaps"]], [True, True, True, True, True, True, False],
+                         "painted from the hold to the fresh frame, through the open, both drops and the second link")
+        self.assertEqual([s["line"] for s in r["snaps"]], [_CUE_WAIT, "", _CUE_WAIT, _CUE_WAIT, _CUE_WAIT, "", ""],
+                         "the detail follows the shell's link at its own events")
 
 
 # ── the lazy panes and the phone's skeleton first dial, shell + shim (stage 0, 2026-09-18) ────────────────────────
