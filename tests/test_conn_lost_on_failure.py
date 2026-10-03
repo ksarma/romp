@@ -30,8 +30,8 @@ import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
-os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+# Hermetic state before the imports below, each of which loads the kernel source at import: the state floor here, and the
+# kernel's own switches (ROMP_KERNEL_NO_OPEN, ROMP_SERVE_TOKEN) are those modules' own writes, made before their loads.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 import test_error_center as _errc          # noqa: E402  the modules, not their classes: an imported TestCase would be collected twice
