@@ -8,8 +8,8 @@ can't catch scope slips in this class of inline JS) and drives the full story:
 
   a visible pane's WS drop logs an entry + reddens the bell with an unread count; a repeat of the same
   drop coalesces (event-exact, no time window); a HIDDEN pane's drop logs nothing; opening the popover
-  marks everything seen; panes can post {romp:'notify'}; per-row clear and Clear all empty the store;
-  entries persist in localStorage.
+  marks everything seen, and an entry that arrives while it is open is seen as it lands; panes can post
+  {romp:'notify'}; per-row clear and Clear all empty the store; entries persist in localStorage.
 
 Synthetic only — no network, no real DOM.
 """
@@ -148,11 +148,15 @@ out.afterMute = { stored: STORE['romp:errFilters'], n: notes().length,
 EL['rerr-fgrid'].children[0].fire('click');
 out.afterUnmute = { red: EL['rail-errs']._cls.has('has'), rows: EL['rerr-list'].children.length,
   chip: EL['rerr-list'].children[0].children[0].textContent, num: bellNum() };
-// 12) past nine unread the in-bell count yields to '+' (a two-glyph "10" can't fit the body)
+// 12) past nine unread the in-bell count yields to '+' (a two-glyph "10" can't fit the body). The popover, open since step 5,
+// is closed first: an entry that arrives while it is open lands seen (the arrival rule, 2026-10-03), so nothing would be unread
+window.__rompCloseErrs();
 for (let i = 0; i < 12; i++) post({ romp: 'notify', kind: 'warn', text: 'distinct problem ' + i });
 out.afterMany = { num: bellNum() };
 // 13) an entry minted from a feed card carries a jump target: clicking the row closes the popover,
-// reveals the feed pane, and posts revealCard into the feed iframe
+// reveals the feed pane, and posts revealCard into the feed iframe. The popover is reopened first, as it stood here before
+// step 12 closed it: its row is read from the open list, which a closed popover does not re-render
+window.__rompOpenErrs();
 post({ romp: 'notify', kind: 'stalled', text: 'api \u2014 stalled: held', sid: 'TESTSID', itemId: 'TESTSID:g9' });
 const jumpRow = EL['rerr-list'].children[0];
 out.jump = { linky: jumpRow.className.indexOf('link') >= 0 };
@@ -493,6 +497,105 @@ post({ romp: 'wsState', app: 'chat', state: 'up' });
 out.afterUp = { n: notes().length, red: EL['rail-errs']._cls.has('has') };
 console.log(JSON.stringify(out));
 """
+
+
+ARRIVAL_DRIVER = r"""
+const out = {};
+// the phone's triangle (#merr) and the desktop's cue, the gear's Open log count (the last logUnseen posted into the settings
+// iframe, T290), with the store's own count of entries not marked seen
+function lastCount() { const p = SETTINGS_POSTED.filter((m) => m.romp === 'logUnseen'); return p.length ? p[p.length - 1].n : null; }
+function listed(t) { return EL['rerr-list'].children.some((r) => r.children[1] && r.children[1].textContent.indexOf(t) === 0); }
+function state() {
+  return { red: EL['merr']._cls.has('has'), num: EL['merr']._num.textContent, gear: lastCount(),
+           open: !EL['rerr-back'].hidden, unseenStored: notes().filter((n) => !n.seen).length };
+}
+// a) the Log closed: an arrival is unread (the control)
+post({ romp: 'notify', kind: 'warn', text: 'arrival closed' });
+out.closed = state();
+// b) the Log opened: everything shown is seen
+window.__rompOpenErrs();
+out.opened = state();
+// c) an arrival with the Log open lands seen: listed, nothing unread, the gear's count 0
+post({ romp: 'notify', kind: 'warn', text: 'arrival open' });
+out.arrivedOpen = Object.assign(state(), { listed: listed('arrival open') });
+// d) the same entry again with the Log open: it coalesces and is still seen
+post({ romp: 'notify', kind: 'warn', text: 'arrival open' });
+out.coalescedOpen = Object.assign(state(), { times: notes()[notes().length - 1].n });
+// e) the Log closed: nothing unread was left behind
+window.__rompCloseErrs();
+out.closedAfter = state();
+// f) the same entry again with the Log closed: it coalesces and is unread again, a repeat the reader has not seen
+post({ romp: 'notify', kind: 'warn', text: 'arrival open' });
+out.repeatClosed = state();
+// g) a muted kind's arrival with the Log open stays unread, as an opening leaves it: unmuting re-reddens, open or closed
+window.__rompOpenErrs();
+const warnBtn = EL['rerr-fgrid'].children.find((c) => c.textContent === 'warning');
+warnBtn.fire('click');
+post({ romp: 'notify', kind: 'warn', text: 'arrival muted' });
+out.mutedOpen = state();
+warnBtn.fire('click');
+out.unmutedOpen = state();
+window.__rompCloseErrs();
+out.unmutedClosed = state();
+// h) a visible pane's socket down with the Log open: its entry lands seen, the live cue keeps the triangle red, open and
+// closed; the socket back up clears it
+window.__rompOpenErrs();
+post({ romp: 'wsState', app: 'chat', state: 'down' });
+out.downOpen = state();
+window.__rompCloseErrs();
+out.downClosed = state();
+post({ romp: 'wsState', app: 'chat', state: 'up' });
+out.upClosed = state();
+console.log(JSON.stringify(out));
+"""
+
+
+class ArrivalWhileOpen(unittest.TestCase):
+    """An entry that arrives while the Log is open is seen as it lands (2026-10-03), with the mark an opening gives (markSeen):
+    the reader is looking at the list it joins. Before, it landed unread, so closing the Log left the phone's triangle red
+    with an unread digit, and the gear's Open log count with a 1, for a line already read. Muted kinds and the live cue are
+    as they were: a muted kind's arrival stays unread, as an opening leaves it, and a visible pane's socket down keeps the
+    triangle red with the Log open. One script serves both layouts, so the desktop's cue (the gear's count) is read beside
+    the phone's triangle at every step."""
+
+    @classmethod
+    def setUpClass(cls):
+        script = HARNESS + km._LANDING_ERRS_JS + ARRIVAL_DRIVER
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, "the center's JS threw: " + r.stderr[:800]
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def _is(self, step, red, num, gear, unseen_stored, log_open):
+        self.assertEqual(self.out[step], dict(self.out[step], red=red, num=num, gear=gear, unseenStored=unseen_stored,
+                                              open=log_open), step)
+
+    def test_an_arrival_with_the_log_open_is_seen_and_closing_leaves_nothing_unread(self):
+        self._is("closed", True, "1", 1, 1, False)          # the control: closed, an arrival is unread
+        self._is("opened", False, "!", 0, 0, True)
+        self._is("arrivedOpen", False, "!", 0, 0, True)     # THE RULE: seen as it lands
+        self.assertTrue(self.out["arrivedOpen"]["listed"], "the open Log lists the entry it marked seen")
+        self._is("coalescedOpen", False, "!", 0, 0, True)
+        self.assertEqual(self.out["coalescedOpen"]["times"], 2, "the repeat coalesced into the entry")
+        self._is("closedAfter", False, "!", 0, 0, False)    # closing leaves nothing unread: the triangle grey, the gear's count 0
+
+    def test_a_repeat_after_the_log_closes_is_unread_again(self):
+        self._is("repeatClosed", True, "1", 1, 1, False)
+
+    def test_a_muted_kinds_arrival_with_the_log_open_stays_unread_as_at_an_opening(self):
+        self._is("mutedOpen", False, "!", 0, 1, True)       # stored unread, counted nowhere while muted
+        self._is("unmutedOpen", True, "1", 1, 1, True)      # unmuting re-reddens, with the Log open
+        self._is("unmutedClosed", True, "1", 1, 1, False)
+
+    def test_a_socket_down_with_the_log_open_keeps_the_triangle_red_through_the_close(self):
+        self._is("downOpen", True, "!", 0, 0, True)         # its entry seen as it lands; the live cue holds the red
+        self._is("downClosed", True, "!", 0, 0, False)
+        self._is("upClosed", False, "!", 0, 0, False)
 
 
 class ParkedPaneCue(unittest.TestCase):

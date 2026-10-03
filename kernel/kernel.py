@@ -70537,7 +70537,7 @@ setTimeout(hide,5000);})();
 # They now land as entries in a sequential feed behind a bell in the bottom bar's action cluster (next to
 # ↻ / network / gear): the bell goes red when something arrives (no count badge — it clipped and the
 # number added nothing, the user 2026-07-27), the popover lists entries newest-first with per-row clear +
-# Clear all, and opening it marks everything seen. Entries persist
+# Clear all, and opening it marks everything seen; an entry that arrives while it is open is seen as it lands. Entries persist
 # in localStorage so a reload (kernel restart) keeps the story. Sources: pane WS drops (each pane iframe
 # posts {romp:'wsState',app,state}; the timeline/feed/etc. are pushed from the kernel, so a drop silently
 # freezes them), the usage-limit + judge-degraded signatures (see _LANDING_USAGE_JS), and any
@@ -70690,6 +70690,11 @@ var last=NOTES[NOTES.length-1];
 if(last&&last.kind===kind&&last.text===String(text)){last.n=(last.n||1)+1;last.t=Math.floor(Date.now()/1000);last.seen=false;if(tgt)last.tgt=tgt;}
 else{NOTES.push({kind:String(kind||'error'),text:String(text),t:Math.floor(Date.now()/1000),n:1,seen:false,tgt:tgt||null});
 if(NOTES.length>MAX)NOTES=NOTES.slice(-MAX);}
+// An entry that lands while the Log is open is seen as it lands, with the mark an opening gives (markSeen below): the reader
+// is looking at the list it joins, so closing the Log leaves nothing unread behind. Before 2026-10-03 it landed unread, and
+// the phone's triangle stayed red with an unread digit after the Log closed, for a line the reader had seen. The last entry
+// is the one just written, pushed or coalesced.
+if(!back.hidden)markSeen(NOTES[NOTES.length-1]);
 save();paint();};
 // pane iframes can feed the center too; sid/itemId ride along as the entry's jump target. An entry naming a CARD
 // (itemId: the feed's badge mirror, a card still loaded in a pane hidden mid-page) is not this browser's while its
@@ -70724,9 +70729,11 @@ if(s==='down'&&prev!=='down'&&shown(m.app))
 window.__rompNotify('conn','Kernel connection lost: '+paneLabel(m.app)+' pane (reconnecting)');
 else paint();});
 window.addEventListener('romp-panes',paint);
-// opening marks seen only what the filters let you SEE — a muted kind's entries stay unread, so
-// re-enabling its toggle re-reddens the bell if something happened while it was muted
-function open(){for(var i=0;i<NOTES.length;i++)if(kindOn(NOTES[i].kind))NOTES[i].seen=true;save();back.hidden=false;renderList();paint();}
+// opening marks seen only what the filters let you SEE: a muted kind's entries stay unread, so re-enabling its toggle
+// re-reddens the bell if something happened while it was muted. markSeen is that one mark, shared by an opening and by an
+// entry that lands while the Log is open (__rompNotify above), so the two can never disagree about what is seen.
+function markSeen(n){if(kindOn(n.kind))n.seen=true;}
+function open(){for(var i=0;i<NOTES.length;i++)markSeen(NOTES[i]);save();back.hidden=false;renderList();paint();}
 function close(){back.hidden=true;}
 if(icon)icon.addEventListener('click',function(){back.hidden?open():close();});
 back.addEventListener('click',function(e){if(e.target===back)close();});

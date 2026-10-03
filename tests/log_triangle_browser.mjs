@@ -9,15 +9,16 @@
 //   downUnread      a pane's socket reported down ({romp:'wsState'}, the shims' message): a new entry and a live problem
 //   downOpen        the Log opened again: everything seen, the socket still down
 //   upOpen          the socket reported up, the Log still open
-//   openNew         one entry logged with the Log still open: opening marked only the entries it showed, so it is unread
-//   closedNew       the Log closed with that entry still unread
-//   reopenSeen      the Log opened again by a tap on the triangle, which marks that entry seen
+//   openNew         one entry logged with the Log still open: it lands seen, with the mark an opening gives what it shows
+//   closedNew       the Log closed: nothing unread was left behind
+//   reopenSeen      the Log opened again by a tap on the triangle: the entry is listed, and nothing is unread
 //   lightIdle       the light theme picked (romp:settings, the shell's theme reader), the Log closed, nothing unread
 //   lightUnread     one entry logged under the light theme, on another pane tab
 // Each snapshot also lists the stylesheet rules that match #merr and declare a colour, in document order (a failure's
-// evidence: which rule set the colour). Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python
-// side turns that into a skip). Never touches a live kernel: cfg.healthz names the LAB port and is asserted before any
-// request. No sessions, no real data.
+// evidence: which rule set the colour), and whether the Log's list holds the entry openNew logs (newListed; the list is
+// re-rendered only while the Log is open, so the field is read at the open steps). Prints one `RESULT:` JSON line; exits 3
+// when the browser does not launch (the Python side turns that into a skip). Never touches a live kernel: cfg.healthz names
+// the LAB port and is asserted before any request. No sessions, no real data.
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import http from "node:http";
@@ -29,6 +30,7 @@ const engine = cfg.engine || "chromium";
 const now = () => Date.now();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = { engine, errors: [], steps: {} };
+const OPEN_TEXT = "Synthetic warning for the triangle test, Log open";   // the entry openNew logs with the Log open
 
 const healthz = await new Promise((resolve) => {
   const req = http.get(cfg.healthz, (res) => { res.resume(); resolve({ status: res.statusCode }); });
@@ -76,7 +78,7 @@ const until = async (what, fn, arg, ms = 8000) => {
 
 const snap = async (name) => {
   await frames();
-  out.steps[name] = await page.evaluate(() => {
+  out.steps[name] = await page.evaluate((openText) => {
     const m = document.getElementById("merr");
     if (!m) return { missing: true };
     const cs = getComputedStyle(m);
@@ -105,8 +107,10 @@ const snap = async (name) => {
              textFill: txt ? getComputedStyle(txt).fill : null, digit: txt ? txt.textContent : null,
              logOpen: !document.getElementById("rerr-back").hidden, tab: document.body.getAttribute("data-tab"),
              light: document.body.classList.contains("theme-light"), barDisplay: bar ? getComputedStyle(bar).display : null,
+             newListed: Array.from(document.querySelectorAll("#rerr-list .rerr-msg"))
+               .some((x) => x.textContent.indexOf(openText) === 0),
              others, rules };
-  });
+  }, OPEN_TEXT);
   return out.steps[name];
 };
 
@@ -163,18 +167,19 @@ try {
   await page.evaluate(() => window.postMessage({ romp: "wsState", app: "chat", state: "up" }, "*"));
   await has(false);
   await snap("upOpen");
-  // an entry that arrives while the Log is open: opening marked only the entries it showed, so this one is unread
-  await page.evaluate(() => window.__rompNotify("warn", "Synthetic warning for the triangle test, Log open"));
-  // waits on the entry being listed, not on has, so a tree that marks it seen on arrival is red at this step, not a timeout
-  await until("the entry listed in the open Log", () => Array.from(document.querySelectorAll("#rerr-list .rerr-msg"))
-    .some((x) => x.textContent.indexOf("Synthetic warning for the triangle test, Log open") === 0));
+  // an entry that arrives while the Log is open lands seen, with the mark an opening gives what it shows
+  await page.evaluate((t) => window.__rompNotify("warn", t), OPEN_TEXT);
+  // waits on the entry being listed (the write path's own paint renders the open list), not on has, which this step expects
+  // to stay as it was: a tree that leaves the arrival unread is red at this step's assertion, not at a timeout
+  const listed = (t) => Array.from(document.querySelectorAll("#rerr-list .rerr-msg")).some((x) => x.textContent.indexOf(t) === 0);
+  await until("the entry listed in the open Log", listed, OPEN_TEXT);
   await snap("openNew");
   await page.evaluate(() => window.__rompCloseErrs());
   await until("the Log closed", () => document.getElementById("rerr-back").hidden);
   await snap("closedNew");
   await page.click("#merr");
   await until("the Log open", () => !document.getElementById("rerr-back").hidden);
-  await has(false);
+  await until("the entry listed in the reopened Log", listed, OPEN_TEXT);
   await snap("reopenSeen");
   await page.evaluate(() => window.__rompCloseErrs());
   await until("the Log closed", () => document.getElementById("rerr-back").hidden);

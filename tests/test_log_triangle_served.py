@@ -12,17 +12,22 @@ health failure line's), since the dark red is about 2:1 on the light bar, fainte
 
 What the triangle shows, from the design (the paint comment): red while anything unread is in the Log or a visible pane's
 socket is down. The Log is not a tab on the phone: the triangle opens it as a centred modal, and opening marks every entry
-it shows seen, so just after opening the triangle is red only while a live problem stands, and grey again once the socket
-is back. Opening marks only the entries present at that moment: an entry that arrives while the Log is open is unread,
-turns the triangle red again and keeps it red after the Log closes, until the next opening marks it seen. The walk
-(tests/log_triangle_browser.mjs) reads the triangle's computed colour at each of those states, on the tab the shell opened
-on and after a tap on another tab, then under the light theme, and reads every other bar button's colour at every step, so
-the fix is held to leaving the active tab's accent, the other tabs' grey and the other actions' grey as they were. The
-glyph's outline and digit are drawn in currentColor, and each is read as well.
+it shows seen, so with the Log open the triangle is red only while a live problem stands, and grey again once the socket
+is back. An entry that arrives while the Log is open is seen as it lands, with the mark an opening gives (the Log's
+markSeen), so the triangle stays grey under the open Log and after it closes, and the reopened Log lists the entry. Before
+2026-10-03 such an entry landed unread: it turned the triangle red under the open Log and kept it red, with an unread
+digit, after the Log closed, a false red for a line the reader had seen, which the colour fix would have made visible. The
+walk (tests/log_triangle_browser.mjs) reads the triangle's computed colour at each of those states, on the tab the shell
+opened on and after a tap on another tab, then under the light theme, and reads every other bar button's colour at every
+step, so the fix is held to leaving the active tab's accent, the other tabs' grey and the other actions' grey as they
+were. The glyph's outline and digit are drawn in currentColor, and each is read as well. Muted kinds and the live cue are
+the Log script's as before (an arrival of a muted kind stays unread, as at an opening; a visible pane's socket down keeps
+the triangle red with the Log open); tests/test_error_center.py executes those against the script itself.
 
 Red at the base tree in every engine at the first unread step (the computed colour there is the action grey). A mutant
 that restores the old precedence (the selector back to `#merr.has`) turns the dark steps red; one without the light rule
-turns the light step red; one that marks an entry seen when it arrives with the Log open turns the openNew step red.
+turns the light step red; one that leaves an entry that arrives with the Log open unread (the write path before
+2026-10-03) turns the openNew step red.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), its port and its wait from tests/lab_ports.py, a
@@ -78,8 +83,8 @@ STEPS = (("idle", DARK, False, False, "!"),
          ("downUnread", DARK, True, False, "1"),
          ("downOpen", DARK, True, True, "!"),
          ("upOpen", DARK, False, True, "!"),
-         ("openNew", DARK, True, True, "1"),
-         ("closedNew", DARK, True, False, "1"),
+         ("openNew", DARK, False, True, "!"),
+         ("closedNew", DARK, False, False, "!"),
          ("reopenSeen", DARK, False, True, "!"),
          ("lightIdle", LIGHT, False, False, "!"),
          ("lightUnread", LIGHT, True, False, "1"))
@@ -159,12 +164,24 @@ class LogTriangle(unittest.TestCase):
         self.assertEqual(sorted(steps), sorted(s[0] for s in STEPS), engine + ": every step was read")
         # THE DEFECT, first, so a tree without the fix is red for it: an unread entry paints the triangle red, on the tab the
         # shell opened on and on another tab, in the dark theme and in the light one
-        for name in ("unread", "unreadOtherTab", "downUnread", "downOpen", "openNew", "closedNew", "lightUnread"):
+        for name in ("unread", "unreadOtherTab", "downUnread", "downOpen", "lightUnread"):
             s, pal = steps[name], dict((x[0], x[1]) for x in STEPS)[name]
             self.assertTrue(s["has"], "%s %s: the Log's script marked the triangle: %r" % (engine, name, s))
             self.assertEqual(s["color"], pal["red"], "%s %s: the marked triangle is red (tab %s, Log open %s); the rules that "
                              "match #merr and set a colour, in document order: %s"
                              % (engine, name, s["tab"], s["logOpen"], json.dumps(s["rules"])))
+        # THE ARRIVAL RULE (2026-10-03), second, so a tree that leaves the arrival unread is red for it: an entry logged with
+        # the Log open is seen as it lands, so the triangle is grey with the '!' glyph under the open Log and after it closes,
+        # and the reopened Log lists the entry. newListed is read at every open step: false before the entry is logged
+        for name, listed in (("openSeen", False), ("downOpen", False), ("upOpen", False), ("openNew", True),
+                             ("reopenSeen", True)):
+            self.assertEqual(steps[name]["newListed"], listed, "%s %s: the open Log lists the entry logged with it open: %r"
+                             % (engine, name, steps[name]))
+        for name in ("openNew", "closedNew", "reopenSeen"):
+            s = steps[name]
+            self.assertEqual((s["has"], s["digit"], s["color"]), (False, "!", DARK["idle"]),
+                             "%s %s: an entry that arrived with the Log open is seen, so nothing is unread (Log open %s): %r"
+                             % (engine, name, s["logOpen"], s))
         prev_tab = None
         for name, pal, has, log_open, digit in STEPS:
             s = steps[name]
