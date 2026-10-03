@@ -377,7 +377,9 @@ class ActionKinds(unittest.TestCase):
             ([{"label": "a", "kind": "quarantine", "body": {"verdict": "approve"}}], "a quarantine action's body needs the held message's id"),
             ([{"label": "a", "kind": "quarantine", "body": {"mid": "../x", "verdict": "approve"}}], "a quarantine action's body needs the held message's id"),
         ]:
-            row, err = km.post_notice(SID, "k", "t", producer="cli", actions=acts, now=100)
+            # internal=True: on this fork the quarantine kind is the kernel's alone (tests/test_kernel_trust.py,
+            # HeldMailKindIsTheKernels), so its body shape is judged behind that door; the other rows refuse before it
+            row, err = km.post_notice(SID, "k", "t", producer="cli", actions=acts, now=100, internal=True)
             self.assertEqual((row, err), (None, why))
         self.assertEqual(_rows(SID), [], "nothing written")
 
@@ -385,7 +387,7 @@ class ActionKinds(unittest.TestCase):
         acts = [{"label": "Approve", "kind": "quarantine", "body": {"mid": mid, "verdict": "approve"}},
                 {"label": "Deny", "kind": "quarantine", "body": {"mid": mid, "verdict": "deny"}}]
         row, err = km.post_notice(SID, mid, "New message from api", "from TESTHOST:api to web, held because peer TESTHOST is DIRECTED\n\nhello",
-                                  producer="postal", actions=acts, needs_you=True, dismiss_on_action=True, now=100)
+                                  producer="postal", actions=acts, needs_you=True, dismiss_on_action=True, now=100, internal=True)
         self.assertIsNone(err)
         return "notice:%s:%s:1" % (SID, mid)
 
@@ -428,10 +430,10 @@ class ActionKinds(unittest.TestCase):
         qdir = km.jd.STATE / "postal" / "quarantine"; qdir.mkdir(parents=True, exist_ok=True)
         (qdir / "held-1.json").write_text(json.dumps({"mid": "held-1", "to": "web", "toId": SID, "frm": "api", "frmId": SID2, "body": "hello", "kind": "coordinate", "origin": "TESTHOST", "at": 1000}))
         acts = [{"label": "Approve", "kind": "quarantine", "body": {"mid": "held-1", "verdict": "approve"}}]
-        self.assertEqual(km.post_notice(SID2, "held-1", "t", producer="postal", actions=acts, needs_you=True, now=100), (None, "a quarantine action's message is held for another session, not this card's owner"))
-        row, err = km.post_notice(SID, "held-1", "t", producer="postal", actions=acts, needs_you=True, now=100)
+        self.assertEqual(km.post_notice(SID2, "held-1", "t", producer="postal", actions=acts, needs_you=True, now=100, internal=True), (None, "a quarantine action's message is held for another session, not this card's owner"))
+        row, err = km.post_notice(SID, "held-1", "t", producer="postal", actions=acts, needs_you=True, now=100, internal=True)
         self.assertIsNone(err); self.assertEqual(row["actions"], acts)
-        row, err = km.post_notice(SID2, "held-9", "t", producer="postal", actions=[{"label": "Approve", "kind": "quarantine", "body": {"mid": "held-9", "verdict": "approve"}}], needs_you=True, now=100)
+        row, err = km.post_notice(SID2, "held-9", "t", producer="postal", actions=[{"label": "Approve", "kind": "quarantine", "body": {"mid": "held-9", "verdict": "approve"}}], needs_you=True, now=100, internal=True)
         self.assertIsNone(err, "no file: nothing to compare at the post")
 
     def test_the_stored_body_is_matched_whole_and_a_send_kind_is_not_a_quarantine_kind(self):

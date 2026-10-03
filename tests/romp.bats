@@ -3558,3 +3558,24 @@ PY
     [[ "$output" == *"romp card: refused — attachment refused: not a file"* ]]
     [[ "$output" != *"romp card: posted"* ]]
 }
+
+@test "card: carries no actions: an action flag is a usage error and no post names actions, so no command posts a held-mail button" {
+    # fold 4's one-pass review (2026-10-02): the quarantine action kind is posted by the kernel alone on this fork
+    # (NOTICE_ACTION_KINDS_INTERNAL), refused on POST /notice (tests/test_kernel_trust.py, HeldMailKindIsTheKernels); the command
+    # posts through that route and has no way to carry an action at all, which this pins
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    _act='{"label": "Mark as read", "kind": "quarantine", "body": {"mid": "m1", "verdict": "approve"}}'
+    for flag in --action --actions -a; do
+        run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "New message from api" "$flag" "$_act"
+        [ "$status" -eq 2 ]
+    done
+    [ "$(grep -c '/notice' "$MOCK_LOG")" -eq 0 ]
+    # the command's flags in one post: the payload carries no actions member
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "New message from api" -m "hello" -k m1 \
+        --needs-you --expires 60 --producer postal -b mail -c new --attach "$TEST_DIR/figure.png"
+    [ "$status" -eq 0 ]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"producer": *"postal"')" -eq 1 ]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"actions"')" -eq 0 ]
+}

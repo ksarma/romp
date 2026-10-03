@@ -342,11 +342,12 @@ class HeldMailCards(unittest.TestCase):
 
     def _post_held(self, mid, to_id=WEB):
         # the card upstream's backfill posts for the held file `mid` (needs-you, under the recipient, Approve and Deny of the
-        # quarantine kind, dismissed on the decision), through the same door with the same arguments
+        # quarantine kind, dismissed on the decision), through the same door with the same arguments, plus internal=True: the
+        # kind is the kernel's alone on this fork (HeldMailKindIsTheKernels below)
         rec = json.loads((km.jd.STATE / "postal" / "quarantine" / (mid + ".json")).read_text())
         row, err = km.post_notice(to_id, mid, km._held_mail_title(rec), km._held_mail_body(rec), producer=km.HELD_MAIL_PRODUCER,
                                   needs_you=True, actions=km._held_mail_actions(mid), dismiss_on_action=True,
-                                  t=int(rec.get("at") or 0) or None)
+                                  t=int(rec.get("at") or 0) or None, internal=True)
         self.assertIsNone(err, err)
         return row
 
@@ -372,11 +373,11 @@ class HeldMailCards(unittest.TestCase):
         # bus's to refuse at the click)
         self._name(OTHER, "api")
         self._write_held("xo-1", to="api", to_id=OTHER)
-        row, err = km.post_notice(WEB, "xo-1", "New message from api", producer="postal", actions=km._held_mail_actions("xo-1"), needs_you=True, now=100)
+        row, err = km.post_notice(WEB, "xo-1", "New message from api", producer="postal", actions=km._held_mail_actions("xo-1"), needs_you=True, now=100, internal=True)
         self.assertEqual((row, err), (None, "a quarantine action's message is held for another session, not this card's owner"))
-        row, err = km.post_notice(OTHER, "xo-1", "New message from api", producer="postal", actions=km._held_mail_actions("xo-1"), needs_you=True, now=100)
+        row, err = km.post_notice(OTHER, "xo-1", "New message from api", producer="postal", actions=km._held_mail_actions("xo-1"), needs_you=True, now=100, internal=True)
         self.assertIsNone(err, "the recipient's own card is accepted")
-        row, err = km.post_notice(WEB, "nofile", "t", producer="postal", actions=km._held_mail_actions("nofile-1"), needs_you=True, now=100)
+        row, err = km.post_notice(WEB, "nofile", "t", producer="postal", actions=km._held_mail_actions("nofile-1"), needs_you=True, now=100, internal=True)
         self.assertIsNone(err, "no held file to consult: the click's bus answers")
 
     def test_build_feed_lists_the_quarantine_family_and_this_fork_takes_no_backfill(self):
@@ -471,6 +472,89 @@ class HeldMailDecision(unittest.TestCase):
         self.assertEqual(self.acts, [], "the bus was never asked")
         self.assertEqual([r["op"] for r in km._notice_rows(WEB) if r.get("key") == "xo-7"], ["post"], "the card stands, undecided")
         self.assertTrue((km.jd.STATE / "postal" / "quarantine" / "xo-7.json").exists(), "the message is still held")
+
+
+class HeldMailKindIsTheKernels(unittest.TestCase):
+    """The quarantine action kind is posted by the kernel alone on this fork (NOTICE_ACTION_KINDS_INTERNAL; fold 4's one-pass
+    review, 2026-10-02). With the held-mail backfill held out (kernel.py, "THIS FORK HOLDS OUT") the kind has no kernel
+    producer, so without this an external producer could post, under the recipient's own sid (the owner check passes), a card
+    whose button, under any label the producer picks, approves that session's held mail. The external roads are POST /notice
+    and `romp card`, which posts through that route and carries no actions (tests/romp.bats pins that half). The fork's own
+    road for a held message, QuarantineCards and the quarantineDecision op, is no notice card and is untouched. Synthetic: a
+    placeholder recipient sid, invented session names and text."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        HeldMailCards.setUp(self)
+        HeldMailCards._write_held(self, "qk-1")         # held FOR web: the owner check passes, so the kind alone is judged
+
+    def tearDown(self):
+        HeldMailCards.tearDown(self)
+
+    def _post(self, body):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request("POST", "/notice", json.dumps(body), {"Content-Type": "application/json", "X-Romp-Token": km.TOKEN})
+        r = c.getresponse()
+        data = json.loads(r.read().decode() or "{}")
+        c.close()
+        return r.status, data
+
+    def test_the_notice_route_refuses_a_held_mail_card_under_the_recipients_own_sid(self):
+        refused = (200, {"ok": False, "error": "action kind 'quarantine' is posted by the kernel alone"})
+        disguised = [{"label": "Mark as read", "kind": "quarantine", "body": {"mid": "qk-1", "verdict": "approve"}}]
+        reply = [{"label": "Reply", "kind": "send", "body": {"text": "on it"}}]
+        # a producer's own label on the approve, the backfill's exact pair, and the kind beside an admitted one
+        for acts in (disguised, km._held_mail_actions("qk-1"), reply + disguised):
+            got = self._post({"id": WEB, "key": "qk-1", "title": "New message from api", "needsYou": True,
+                              "dismissOnAction": True, "producer": "postal", "actions": acts})
+            self.assertEqual(got, refused, acts)
+        self.assertEqual(km._notice_rows(WEB), [], "nothing reached the recipient's notice file")
+        self.assertEqual(km._notice_cards(2000, km._cleared_ids(), {WEB}), [], "no card on the feed")
+        # the same post without the kind is accepted: the route stands, only the kind is the kernel's
+        code, data = self._post({"id": WEB, "key": "qk-1", "title": "New message from api", "producer": "postal", "actions": reply})
+        self.assertEqual((code, data.get("ok")), (200, True), data)
+
+    def test_post_notice_refuses_the_kind_without_internal_and_the_kernels_own_door_still_posts_it(self):
+        # the function the route calls (and so the command), and the backend's hook (type(_sdk_backend).on_notice =
+        # staticmethod(post_notice)), neither of which passes internal
+        row, err = km.post_notice(WEB, "qk-1", "New message from api", producer="postal", actions=km._held_mail_actions("qk-1"),
+                                  needs_you=True, dismiss_on_action=True, now=100)
+        self.assertEqual((row, err), (None, "action kind 'quarantine' is posted by the kernel alone"))
+        self.assertEqual(km._notice_rows(WEB), [])
+        # internal=True, the door a fold that takes the backfill posts through, still carries the kind and its owner check
+        row, err = km.post_notice(WEB, "qk-1", "New message from api", producer="postal", actions=km._held_mail_actions("qk-1"),
+                                  needs_you=True, dismiss_on_action=True, now=100, internal=True)
+        self.assertIsNone(err, err)
+        self.assertEqual([a["kind"] for a in row["actions"]], ["quarantine", "quarantine"])
+        HeldMailCards._name(self, OTHER, "api")
+        row, err = km.post_notice(OTHER, "qk-2", "t", producer="postal", actions=km._held_mail_actions("qk-1"), needs_you=True,
+                                  now=100, internal=True)
+        self.assertEqual((row, err), (None, "a quarantine action's message is held for another session, not this card's owner"))
+
+    def test_the_forks_own_held_mail_card_and_its_decision_op_are_untouched(self):
+        self.assertIn("quarantine:qk-1", [c["itemId"] for c in km._quarantine_cards(2000, set())], "the held message's own card")
+        saved = km._bus_quarantine_act, km._mark_views_dirty
+        acts, sent = [], []
+        try:
+            km._bus_quarantine_act = lambda body: (acts.append(body) or (True, ""))
+            km._mark_views_dirty = lambda: None
+            client = {"app": "feed", "wid": "w1", "alive": True, "send": lambda raw: sent.append(json.loads(raw))}
+            km.Handler._dispatch_ws(None, {"type": "quarantineDecision", "mid": "qk-1", "action": "approve", "sid": WEB}, client)
+        finally:
+            km._bus_quarantine_act, km._mark_views_dirty = saved
+        self.assertEqual(acts, [{"mid": "qk-1", "action": "approve", "sid": WEB}], "the op reaches the bus as before")
+        self.assertEqual(sent, [])
+        self.assertEqual(km._notice_rows(WEB), [], "the fork's road writes no notice card")
 
 
 class MirrorTrust(unittest.TestCase):

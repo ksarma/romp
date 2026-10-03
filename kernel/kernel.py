@@ -29652,7 +29652,11 @@ NOTICE_ACTION_KINDS = ("send", "quarantine", "setting-proposal")
 # whether a kind's runner acts on the card's OWNER (send: its session; quarantine: the recipient of the held message): the
 # owner-less home refuses those at the post and at the click, as it always has, and admits a kind that names no session
 NOTICE_ACTION_KIND_OWNER = {"send": True, "quarantine": True, "setting-proposal": False}
-NOTICE_ACTION_KINDS_INTERNAL = ("setting-proposal",)   # post_notice(..., internal=True) alone may carry these
+# THIS FORK adds quarantine (fold 4's one-pass review, 2026-10-02): with the held-mail backfill held out (below, "THIS FORK
+# HOLDS OUT") the kind has no kernel producer, and the route would let any producer holding the serve token post, under the
+# recipient's own sid, a card whose button, under a label the producer picks, approves that session's held mail. `romp card`
+# posts through the route and carries no actions. A fold that takes the backfill posts its cards with internal=True.
+NOTICE_ACTION_KINDS_INTERNAL = ("setting-proposal", "quarantine")   # post_notice(..., internal=True) alone may carry these
 _NOTICE_ROUTE_KINDS = {"/send": "send"}    # the older stored shape and the older pane's wire, read as their kind
 NOTICE_ACTION_ROUTES = tuple(_NOTICE_ROUTE_KINDS)   # kept as a name: the routes the older shape may carry
 NOTICE_OWNERLESS_SID = "notes"             # the owner-less notice cards' home under STATE/notices (the user 2026-09-18: a card with no session,
@@ -30086,9 +30090,10 @@ def _held_mail_record(mid):
 # its call at the head of _notice_cards are not taken, so no held message becomes a notice card here; a held message keeps the
 # fork's own card (_quarantine_cards, its build_feed call and the quarantineDecision op). Why: the backfill skips, without a
 # word, every held id longer than a notice key (64 characters), and a relayed id is 48 characters plus the sender's pid digits
-# plus its host name (65 or more from a 13-character host name); a held-mail notice card outlives its held file; the 50-key
-# cap drops the oldest cards first, and the holds are the oldest. The quarantine action kind, its owner check
-# (_held_mail_record) and the helpers here are upstream's as shipped.
+# plus its host name, so a hold is skipped whenever the host name's length plus the pid's digits exceeds the 16 characters
+# left in the key; a held-mail notice card outlives its held file; the 50-key cap drops the oldest cards first, and the holds
+# are the oldest. The quarantine action kind, its owner check (_held_mail_record) and the helpers here are upstream's as
+# shipped, except that the kind is posted by the kernel alone here (NOTICE_ACTION_KINDS_INTERNAL above, and why).
 
 
 _HELD_MAIL_SAID = set()
