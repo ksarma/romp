@@ -2563,12 +2563,13 @@ class Checkout(_Base):
         self.assertEqual(by_leg["bats"]["main"], main, "premise: the bats leg's checkout started at the snapshot")
         for leg in ("manager", "tools"):
             self.assertEqual(by_leg[leg]["main"], head, "premise: %s, in the bats leg's checkout, sees the move" % leg)
-        shell = by_leg["bats"]["root"]
         later = SEED_ORDER[SEED_ORDER.index("tools") + 1:]
         self.assertTrue(later)
+        # the crossing first, so a runner whose jobs share a checkout is red naming the later job's leg that saw the move
         for leg in later:
-            self.assertNotEqual(by_leg[leg]["root"], shell, "%s ran in a later job's checkout" % leg)
             self.assertEqual(by_leg[leg]["main"], main, "%s's checkout holds the snapshot, not the bats leg's move" % leg)
+        for leg in later:
+            self.assertNotEqual(by_leg[leg]["root"], by_leg["bats"]["root"], "%s ran in a later job's checkout" % leg)
 
     def test_a_move_of_the_batchers_origin_main_during_the_run_moves_no_checkouts_ref(self):
         """The brief's item 1 (a snapshot, as the shallow file's): the pytest leg, the first job's, finds the batcher's
@@ -6505,8 +6506,8 @@ class LegEnvironment(_Base):
         checkout holds, so LEG_CHECKOUT's text and the hash moved: a result recorded under the hash before it, the
         literal BEFORE_MAIN_REF_HASH, reads as recorded under another leg environment. Red under the LEG_CHECKOUT text
         before it, which gives that hash again."""
-        self.assertIn("refs/remotes/origin/main", sweep.LEG_CHECKOUT, "the hashed text names the ref the checkout holds")
         self.assert_reads_as_another(self.BEFORE_MAIN_REF_HASH, "the runner before the checkouts held origin/main")
+        self.assertIn("refs/remotes/origin/main", sweep.LEG_CHECKOUT, "the hashed text names the ref the checkout holds")
 
     def test_the_hash_names_the_pdf_smoke_leg(self):
         """The owner's build question 4 added the pdf-smoke leg, and the leg environment hash names every leg's set values
