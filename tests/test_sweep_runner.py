@@ -36,6 +36,7 @@ import importlib.util
 import json
 import os
 import re
+import resource
 import select
 import shlex
 import shutil
@@ -401,6 +402,14 @@ elif act == "move-batcher-main":                 # the BATCHER's refs/remotes/or
         common = os.path.dirname(fh.read().split("\n")[0].rstrip("/"))
     head = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
     subprocess.run(["git", "--git-dir", common, "update-ref", "refs/remotes/origin/main", head], check=True)
+elif act == "drop-main-object":                  # the BATCHER's loose object for the commit origin/main names, removed,
+    # found from the clone's alternates, so a later job's checkout cannot write origin/main there (update-ref refuses a
+    # ref to an object it cannot find)
+    with open(os.path.join(root, ".git", "objects", "info", "alternates")) as fh:
+        objects = fh.read().split("\n")[0].rstrip("/")
+    main = subprocess.run(["git", "-C", root, "rev-parse", "refs/remotes/origin/main"], stdout=subprocess.PIPE, text=True,
+                          check=True).stdout.strip()
+    os.remove(os.path.join(objects, main[:2], main[2:]))
 elif act in ("shallow", "shallow-unreadable"):  # the BATCHER's shallow file written at the sha, found from the clone;
     # shallow-unreadable then leaves it unreadable (mode 0)
     with open(os.path.join(root, ".git", "objects", "info", "alternates")) as fh:
@@ -1191,7 +1200,8 @@ class Runner(_Base):
 
     def test_a_dirty_tree_is_swept_at_its_sha_and_the_edits_named_as_not_swept(self):
         """Round 1, A3 and decision 17 (replacing the dirty-tree refusal): the batcher's tree is read for its HEAD sha
-        and branch only, so it need not be clean. The runner prints one line naming how many uncommitted edits it holds
+        and branch (its repository also for its shallow file and its origin/main), and no leg reads its work tree, so it
+        need not be clean. The runner prints one line naming how many uncommitted edits it holds
         and that they are not swept, and the legs read the sha's bytes, not the edits."""
         w = self.w
         sha = w.head()
@@ -1982,13 +1992,18 @@ def runner_argv(w, *extra, ignore=()):
             "--tree", w.tree, "--python", w.python, "--workers", "2", *extra]
 
 
-# Starts a program with its soft address-space limit (RLIMIT_AS) at the number of bytes in its first argument (the hard
-# limit kept), then execs the rest of its arguments in its own process: a read without end, of a symlink to /dev/zero,
-# then fails with a MemoryError at the cap instead of taking the machine's memory, on Linux, which enforces RLIMIT_AS.
+# Starts a program with its address-space limit (RLIMIT_AS), soft and hard, at the number of bytes in its first argument
+# (or the inherited hard limit, where that is lower), then execs the rest of its arguments in its own process: a read
+# without end, of a symlink to /dev/zero, then fails with a MemoryError at the cap instead of taking the machine's
+# memory, on Linux, which enforces RLIMIT_AS. The hard limit is set too, so no descendant can raise the cap: run_git's
+# shell sets its limit with ulimit -v, soft and hard, and under a kept hard limit a runner that gave it a figure above
+# the cap lifted the cap for its git (round 1 of PR 959's build review, pins-1); now the shell's ulimit fails there, and
+# run_git refuses by name (LIMIT_FAILED).
 ADDRESS_CAP = 4 << 30
 CAP_SHIM = ("import os, resource, sys\n"
             "cap, hard = int(sys.argv[1]), resource.getrlimit(resource.RLIMIT_AS)[1]\n"
-            "resource.setrlimit(resource.RLIMIT_AS, (cap if hard == resource.RLIM_INFINITY else min(cap, hard), hard))\n"
+            "cap = cap if hard == resource.RLIM_INFINITY else min(cap, hard)\n"
+            "resource.setrlimit(resource.RLIMIT_AS, (cap, cap))\n"
             "os.execv(sys.argv[2], sys.argv[2:])\n")
 # macOS accepts RLIMIT_AS and does not enforce it (the closing check's verify, code finding 3), so off Linux a regression
 # that read a symlink to /dev/zero would read without bound until its case's watchdog. The pins that plant such a
@@ -2004,33 +2019,46 @@ ZERO_CAPPED = sys.platform.startswith("linux")
 # run_git call whose arguments, joined by spaces, start with one of those, made (for one that names a leg) after that leg
 # has started, since the file it meets is that leg's plant, has `bound` seconds; every other call keeps the runner's
 # GIT_BOUND (the 22:21Z ruling on the merge of fork main, item 1: a bound of 3 s on every call ended a normal checkout
-# under load on 3.10, so the pin read the load, not the planted event). With "log" a path in that JSON, each call
-# appends the bound it ran at, how it ended ("bound" for GitBound, "ended" for a return, "raised" for any other
-# exception) and the call, a line of three tab-separated fields.
+# under load on 3.10, so the pin read the load, not the planted event). With "memory" a number of bytes in that JSON, the
+# same calls alone have that memory limit in place of the runner's GIT_MEMORY (round 1 of PR 959, ruling A: the memory
+# pins' plants are met at a small limit, PIN_MEMORY, so a worker never holds the runner's 1 GiB); a runner without
+# GIT_MEMORY (the one before ruling A) sets none, and the planted call runs unlimited but for the case's address cap.
+# With "log" a path in that JSON, each call appends the bound it ran at, the memory limit it ran at (None for the
+# runner's), how it ended ("bound" for GitBound, "memory" for GitMemory, "ended" for a return, "raised" for any other
+# exception), the largest resident size in bytes of any child the runner had reaped when the call ended
+# (RUSAGE_CHILDREN, which counts the call's git, since the shell execs it in its own place; Linux reports it in KiB),
+# and the call, a line of five tab-separated fields.
 BOUND_DRIVER = r"""
-import importlib.util, json, sys
+import importlib.util, json, resource, sys
 spec_, mode, path, argv = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4:]
 spec = importlib.util.spec_from_file_location("sweep_runner", path)
 sweep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sweep)
 full, short, planted, started, log = sweep.GIT_BOUND, spec_["bound"], spec_["on"], set(), spec_.get("log")
+small, full_memory = spec_.get("memory"), getattr(sweep, "GIT_MEMORY", None)
 run_git, run_leg = sweep.run_git, sweep.run_leg
 def planted_run_git(repo, *args, **kwargs):
     call = " ".join(args)
     hit = any(call.startswith(words) and (leg is None or leg in started) for words, leg in planted)
-    sweep.GIT_BOUND, ended = short if hit else full, "raised"
+    sweep.GIT_BOUND, ended = short if hit and short is not None else full, "raised"
+    memory = small if hit else None
+    if memory is not None and full_memory is not None:
+        sweep.GIT_MEMORY = memory
     try:
         result = run_git(repo, *args, **kwargs)
         ended = "ended"
         return result
-    except sweep.GitBound:
-        ended = "bound"
+    except sweep.GitBound as e:
+        ended = "memory" if isinstance(e, getattr(sweep, "GitMemory", ())) else "bound"
         raise
     finally:
         if log:
             with open(log, "a") as f:
-                f.write("%s\t%s\t%s\n" % (sweep.GIT_BOUND, ended, call))
+                peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024
+                f.write("%s\t%s\t%s\t%d\t%s\n" % (sweep.GIT_BOUND, memory, ended, peak, call))
         sweep.GIT_BOUND = full
+        if full_memory is not None:
+            sweep.GIT_MEMORY = full_memory
 def leg_started(tree, name, *args, **kwargs):
     started.add(name)
     return run_leg(tree, name, *args, **kwargs)
@@ -2041,11 +2069,13 @@ sys.exit(sweep.main(argv))
 """
 
 
-def bound_spec(bound, *on, log=None):
-    """BOUND_DRIVER's argv[1]: `bound` seconds for the calls `on` names, each a call's leading words or (those words, the
-    leg after whose start the call meets the plant); every other call keeps the runner's GIT_BOUND. With `log`, the
-    driver appends a line per call to that path."""
-    return json.dumps({"bound": bound, "on": [[c, None] if isinstance(c, str) else list(c) for c in on], "log": log})
+def bound_spec(bound, *on, log=None, memory=None):
+    """BOUND_DRIVER's argv[1]: `bound` seconds (None: the runner's GIT_BOUND) and, with `memory`, that many bytes of
+    memory limit for the calls `on` names, each a call's leading words or (those words, the leg after whose start the
+    call meets the plant); every other call keeps the runner's GIT_BOUND and GIT_MEMORY. With `log`, the driver appends
+    a line per call to that path."""
+    return json.dumps({"bound": bound, "memory": memory, "on": [[c, None] if isinstance(c, str) else list(c) for c in on],
+                       "log": log})
 ZERO_SKIP = "a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is enforced: Linux"
 
 
@@ -2058,6 +2088,107 @@ def zero_target(tmp):
     with open(path, "w") as f:
         f.write("a symlink's target\n")
     return path
+
+
+# Round 1 of PR 959, ruling A, the memory pins. Each plant that git would read without end (a symlink to /dev/zero, a
+# sparse file) is met at PIN_MEMORY, a memory limit set on the planted call alone (BOUND_DRIVER's "memory", or
+# MAIN_DRIVER for main_snapshot's calls), as the time pins set a short GIT_BOUND on the planted call alone, so an xdist
+# worker on CI's 16 GB runners never holds the runner's 1 GiB figure; test_the_figure_is_what_run_git_sets_by_default
+# holds that figure. The code under test runs in a child under an address cap of the case's own, MEMORY_PIN_CAP, which
+# holds against the code under test because CAP_SHIM sets the hard limit as well, so a git's shell cannot raise it: a
+# runner that sets no memory limit (the one before ruling A, or a mutant) has its git stopped there, and one that sets a
+# figure above the cap is refused (LIMIT_FAILED), the case red either way, instead of taking the machine's memory. The
+# cap is 2 GiB, not less, because the free-threaded 3.14 interpreter reserves about 1 GiB of address space as it starts
+# (mimalloc's arenas; 17 to 38 MiB on 3.10 to 3.13, and 38 to 54 MiB once sweep.py is imported, measured 2026-10-03),
+# and the runner and the fake legs run on it. A case that plants an unbounded source skips off Linux, where RLIMIT_AS
+# does not bind (MEMORY_SKIP), and never runs it unbounded.
+PIN_MEMORY = 64 << 20
+MEMORY_PIN_CAP = 2 << 30
+# The most address space a capped pin's child may map: test_the_address_cap_is_live maps this much under MEMORY_PIN_CAP
+# and must be refused, so MEMORY_PIN_CAP cannot be raised past it unnoticed.
+PIN_CAP_BUDGET = 4 << 30
+PIN_BOUND = 5
+MEMORY_SKIP = ("a file git would read without end is planted only where RLIMIT_AS binds, the runner's memory limit and "
+               "the case's cap alike: Linux")
+# A sparse file larger than PIN_MEMORY and than REF_FILE_MAX, made with truncate (no byte of it is written), and under the
+# 1 GiB file size limit a capped run sets (ulimit -f).
+SPARSE_SIZE = 512 << 20
+# A sparse index larger than PIN_MEMORY, which git maps whole, so the map fails at that limit (MemoryBound).
+INDEX_SPARSE = 256 << 20
+# The largest loose ref file the runner lets git read, as the pins state it (the round's correctness-2, its refuter's
+# bound); test_an_origin_main_file_larger_than_a_ref_file_is_refused_naming_its_size_before_git_reads_it holds
+# REF_FILE_MAX to it, after the refusals it pins.
+REF_BOUND = 4096
+# git's rev-parse rules, ref_rev_parse_rules in git's refs.c (git 2.43): the names a short name is tried as, in order. A
+# read of MAIN_REF by them opens the exact file and the five beside it (strace, 2026-10-03, git 2.43.0: refs/refs/...,
+# refs/tags/..., refs/heads/..., refs/remotes/... and refs/remotes/.../HEAD).
+REV_PARSE_RULES = ("%s", "refs/%s", "refs/tags/%s", "refs/heads/%s", "refs/remotes/%s", "refs/remotes/%s/HEAD")
+
+
+def rev_parse_siblings(name):
+    """The refs git's rev-parse rules read for `name` beside `name` itself."""
+    return [rule % name for rule in REV_PARSE_RULES if rule % name != name]
+
+
+# Runs main_snapshot (scripts/sweep.py at argv[1]) over the repository whose work tree is argv[2], as argv[3]'s JSON asks:
+# "memory", the memory limit of main_snapshot's git calls (GIT_MEMORY; a runner without one sets none), "bound", their
+# GIT_BOUND, and "swap", "zero" or "fifo": after main_ref_checked's check passes, the loose ref file is replaced, in one
+# rename, by a symlink to /dev/zero or a FIFO, as a process swapping it in between the check and git's open would, or
+# "alternates-fifo", "shallow-fifo" or "config-fifo": a FIFO is put, the same way, at <common dir>/objects/info/alternates,
+# the shallow file or the config, each of which git reads with the ref (SWAP_FIFO_AT). It
+# prints JSON: the commit ("result"), or the refusal's text and class ("refused", "kind"), and "maxrss", the largest
+# resident size in bytes of any git it started (RUSAGE_CHILDREN; find_repo's discovery is the one call made before the
+# limits are set). It is run under CAP_SHIM at MEMORY_PIN_CAP.
+MAIN_DRIVER = r"""
+import importlib.util, json, os, resource, sys
+path, tree, opts = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+spec = importlib.util.spec_from_file_location("sweep_main", path)
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+repo = sweep.find_repo(tree)
+sweep.GIT_BOUND = opts["bound"]
+if hasattr(sweep, "GIT_MEMORY"):
+    sweep.GIT_MEMORY = opts["memory"]
+if opts.get("swap"):
+    real = sweep.main_ref_checked
+    def checked_then_swapped(r):
+        real(r)
+        ref = os.path.join(r.common_dir, *sweep.MAIN_REF.split("/"))
+        if opts["swap"] in opts.get("fifo_at", {}):
+            ref = os.path.join(r.common_dir, *opts["fifo_at"][opts["swap"]].split("/"))
+            os.mkfifo(ref + ".swap")
+        elif opts["swap"] == "zero":
+            os.symlink("/dev/zero", ref + ".swap")
+        else:
+            os.mkfifo(ref + ".swap")
+        os.replace(ref + ".swap", ref)
+    sweep.main_ref_checked = checked_then_swapped
+out = {}
+try:
+    out["result"] = sweep.main_snapshot(repo)
+except sweep.Refused as e:
+    out.update(refused=str(e), kind=type(e).__name__)
+out["maxrss"] = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024
+print(json.dumps(out))
+"""
+
+
+# MAIN_DRIVER's swaps that put a FIFO at a file other than the ref's, each with that file under the common dir.
+SWAP_FIFO_AT = {"alternates-fifo": "objects/info/alternates", "shallow-fifo": "shallow", "config-fifo": "config"}
+
+
+def linked_dirs(wt):
+    """(git dir, common dir) of the linked worktree at `wt`, derived from its own files and never from find_repo, whose
+    reading of them is what the pins check: the gitdir line of its .git file, and that git dir's commondir file, a path
+    relative to it. Each is a real path."""
+    with open(os.path.join(wt, ".git")) as f:
+        line = f.read().strip()
+    if not line.startswith("gitdir: "):
+        raise AssertionError("premise: %s/.git is a gitdir file (%r)" % (wt, line))
+    gitdir = line[len("gitdir: "):]
+    with open(os.path.join(gitdir, "commondir")) as f:
+        common = f.read().strip()
+    return os.path.realpath(gitdir), os.path.realpath(os.path.join(gitdir, common))
 
 # The stop pins' git (Checkout.stop_in_the_re_read), first on the runner's PATH: every call runs the real git, except a
 # check-ignore call made while the arm file exists, which takes that file (so one call waits), writes its pid to the ready
@@ -2661,11 +2792,14 @@ class Checkout(_Base):
         leg, so it ends with every leg run and no mark (no re-read after the legs; the residual the texts state). The next
         run checks that file with os.lstat beside the shallow file, before any git call but find_repo's discovery
         (main_ref_checked), and refuses: exit 2, naming the ref, the file and its type, no leg run, the result left as
-        the planting run wrote it, no git call but the discovery (logging_git). Before, git read the file: main_snapshot's
-        rev-parse waited on the FIFO until GIT_BOUND (this case then fails at its watchdog), read /dev/zero until it
-        ran out of memory (at the case's address cap; the real runner has none), read through the symlink to a regular
-        file and swept, and read the directory as no ref and swept with no main. The "zero" case runs on Linux alone
-        (ZERO_SKIP)."""
+        the planting run wrote it, no git call but the discovery (logging_git). Before that check, git read the file:
+        main_snapshot's rev-parse waited on the FIFO until GIT_BOUND (this case then fails at its watchdog), read
+        /dev/zero until it ran out of memory (at the case's address cap; that runner set no memory limit), and read
+        through the symlink to a regular file, so the run swept with the commit it held. The directory went by git's
+        version (the round's tests-3 and extra4-4), nothing being packed: show-ref --exists failed it with exit 1 (Is a
+        directory) before git 2.43.2, so that runner refused it as naming no commit, after git calls had read the path,
+        and from 2.43.2 reads it as absent (exit 2), so that runner swept with no main. With origin/main packed, the
+        read went past the directory to the packed commit. The "zero" case runs on Linux alone (ZERO_SKIP)."""
         for kind, what in self.SPECIAL_KINDS:
             with self.subTest(kind=kind):
                 if kind == "zero" and not ZERO_CAPPED:
@@ -2694,6 +2828,487 @@ class Checkout(_Base):
                 self.assertEqual(len(w.calls()), before, "the next run ran no leg")
                 with open(w.result_path(), "rb") as f:
                     self.assertEqual(f.read(), recorded, "the next run recorded nothing")
+
+    # main_snapshot's reads of origin/main, the read before round 1 of PR 959's ruling B, and the peel as it set
+    # core.warnAmbiguousRefs itself before round 1's spot-check, S4 (its -c), as BOUND_DRIVER's planted calls: the memory
+    # pins' plants are met at PIN_MEMORY and PIN_BOUND, at the runner before each fix too.
+    MAIN_READS = ("show-ref", "rev-parse --verify --quiet", "-c core.warnAmbiguousRefs=false rev-parse")
+
+    def test_an_origin_main_symbolic_ref_or_oversized_file_refuses_the_run_before_any_git_reads_it(self):
+        """Round 1 of PR 959, ruling A's symbolic-ref and sparse-file shapes, through a run: the batcher's loose
+        origin/main file is a symbolic ref to a FIFO or to a symlink to /dev/zero, or a sparse file of SPARSE_SIZE
+        bytes, planted after every git call of the case's own. cmd_run's main_ref_checked, before any git call but
+        find_repo's discovery, refuses it: exit 2, naming the file and why, no leg run, nothing recorded, no git call
+        but the discovery (logging_git). The read git would make is planted at PIN_MEMORY and PIN_BOUND (MAIN_READS). At
+        the head before the fix the file passed the check and main_snapshot's rev-parse read it: it waited on the FIFO
+        until the bound (refused, on another text), and read /dev/zero and the sparse file with no memory limit (each
+        planted call then ended without meeting a planted bound, which run_bounded fails on)."""
+        for kind in ("symref-fifo", "symref-zero", "sparse"):
+            with self.subTest(kind=kind):
+                if kind != "symref-fifo" and not ZERO_CAPPED:
+                    self.skipTest(MEMORY_SKIP)
+                w = World()
+                self.addCleanup(w.close)
+                tree = os.path.realpath(w.tree)
+                path = os.path.join(tree, ".git", "refs", "remotes", "origin", "main")
+                self.assertTrue(os.path.isfile(path) and not os.path.islink(path),
+                                "premise: the batcher holds origin/main as a loose ref file")
+                env, calls = self.logging_git(w)
+                result = w.result_path()            # read before the plant, as every git call of the case's own
+                os.remove(path)
+                if kind == "sparse":
+                    with open(path, "wb"):
+                        pass
+                    os.truncate(path, SPARSE_SIZE)
+                    why = "%d bytes, more than the %d a ref file holds, and git reads a loose ref file whole" % (
+                        SPARSE_SIZE, REF_BOUND)
+                else:
+                    with open(path, "w") as f:
+                        f.write("ref: refs/remotes/origin/x\n")
+                    target = os.path.join(tree, ".git", "refs", "remotes", "origin", "x")
+                    os.mkfifo(target) if kind == "symref-fifo" else os.symlink("/dev/zero", target)
+                    why = "a symbolic ref, to refs/remotes/origin/x, which git would follow unchecked; no fetch writes one"
+                rc, out, err = self.run_bounded(w, env=env, cap=MEMORY_PIN_CAP, git_bound=PIN_BOUND, memory=PIN_MEMORY,
+                                                planted=self.MAIN_READS)
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s cannot be read (%s: %s)"
+                              % (tree, path, why), err)
+                self.assertEqual(calls(), [self.DISCOVERY_CALL], "refused before any git call but find_repo's")
+                self.assertEqual(w.calls(), [], "no leg ran")
+                self.assertFalse(os.path.exists(result), "nothing was recorded")
+
+    def test_a_packed_refs_file_git_would_wait_on_refuses_the_run_naming_it_before_any_git_reads_it(self):
+        """The batcher's packed-refs, which git reads for any ref with no loose file, is a FIFO, planted after every git
+        call of the case's own. cmd_run's main_ref_checked, before any git call but find_repo's discovery, refuses it
+        (packed_refs_checked): exit 2, naming the file and its type, no leg run, nothing recorded, no git call but the
+        discovery (logging_git). With every ref loose, the first of cmd_run's git calls that opens packed-refs is
+        uncommitted_count's git status (with core.warnAmbiguousRefs off, rev-parse HEAD and symbolic-ref do not: round
+        1's spot-check, S8, by a run of each call over a FIFO there), so that call is planted at PIN_BOUND: under the
+        check undone it waits on the FIFO until that bound and the run is refused naming the call (red on the text,
+        within the case's bound). At the head before the check, with core.warnAmbiguousRefs on, rev-parse HEAD read
+        packed-refs first, to look up the names its rules try beside HEAD, and the run was refused naming HEAD's file
+        and the branch's loose file, neither of which git was waiting on."""
+        w = World()
+        self.addCleanup(w.close)
+        tree = os.path.realpath(w.tree)
+        packed = os.path.join(tree, ".git", "packed-refs")
+        env, calls = self.logging_git(w)
+        result = w.result_path()            # read before the plant, as every git call of the case's own
+        if os.path.lexists(packed):
+            os.remove(packed)
+        os.mkfifo(packed)
+        rc, out, err = self.run_bounded(w, env=env, git_bound=PIN_BOUND, planted=("status --porcelain=v1",))
+        self.assertEqual(rc, 2, out + err)
+        self.assertIn("the batcher's packed refs in the repository at %s cannot be read (%s: a FIFO, not a regular file)"
+                      % (tree, packed), err)
+        self.assertEqual(calls(), [self.DISCOVERY_CALL], "refused before any git call but find_repo's")
+        self.assertEqual(w.calls(), [], "no leg ran")
+        self.assertFalse(os.path.exists(result), "nothing was recorded")
+
+    def test_a_branch_head_names_that_git_reads_without_end_refuses_the_run_naming_head_and_the_branch(self):
+        """Round 1 of PR 959, ruling A's rev-parse HEAD shape, at the memory limit (/dev/zero) and the time limit (a
+        FIFO) (the round's rev-parse HEAD item, ruled into the PR): the loose ref file of the branch the batcher's HEAD
+        names is a symlink to /dev/zero, or a FIFO. cmd_run's rev-parse HEAD reads it, planted at PIN_MEMORY and
+        PIN_BOUND, meets the memory limit or the time limit, and the run is refused (exit 2), naming HEAD's file, the
+        branch and its file, the limit and the remedy (head_unread), with no leg run and nothing recorded. At the head
+        before the fix the symlink was read with no memory limit (the planted call ended without meeting a planted
+        bound, which run_bounded fails on) and the FIFO's wait ended at the bound with the call named alone."""
+        cases = (("zero", "the %d MiB memory limit (GIT_MEMORY)" % (PIN_MEMORY >> 20), "ran out of memory and failed ("),
+                 ("fifo", "the %d s time limit (GIT_BOUND)" % PIN_BOUND, "did not end within %d s and was killed" % PIN_BOUND))
+        for kind, limit, what in cases:
+            with self.subTest(kind=kind):
+                if kind == "zero" and not ZERO_CAPPED:
+                    self.skipTest(MEMORY_SKIP)
+                w = World()
+                self.addCleanup(w.close)
+                tree = os.path.realpath(w.tree)
+                self.assertEqual(w.git("symbolic-ref", "HEAD"), "refs/heads/main", "premise: HEAD names main")
+                branch = os.path.join(tree, ".git", "refs", "heads", "main")
+                self.assertTrue(os.path.isfile(branch) and not os.path.islink(branch), "premise: main is a loose ref file")
+                env, calls = self.logging_git(w)
+                result = w.result_path()            # read before the plant, which every git reading HEAD meets
+                os.remove(branch)
+                os.mkfifo(branch) if kind == "fifo" else os.symlink("/dev/zero", branch)
+                rc, out, err = self.run_bounded(w, env=env, cap=MEMORY_PIN_CAP, git_bound=PIN_BOUND, memory=PIN_MEMORY,
+                                                planted=("rev-parse HEAD", "symbolic-ref"))
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn("the batcher's HEAD in the repository at %s could not be read within %s (%s, and the branch it "
+                              "names, refs/heads/main, %s: git rev-parse HEAD %s"
+                              % (tree, limit, os.path.join(tree, ".git", "HEAD"), branch, what), err)
+                self.assertIn(self.HEAD_REMEDY, err)
+                self.assertEqual(calls(), [self.DISCOVERY_CALL, "rev-parse HEAD"],
+                                 "refused at the HEAD read")
+                self.assertEqual(w.calls(), [], "no leg ran")
+                self.assertFalse(os.path.exists(result), "nothing was recorded")
+
+    # head_unread's remedy, the end of each refusal of a read of the batcher's HEAD that met a bound.
+    HEAD_REMEDY = ("; remove or repair the file git was reading (git reads a symlink to /dev/zero, or an oversized or "
+                   "sparse file, until a limit stops it, and waits on a FIFO; removing packed-refs drops the refs it "
+                   "holds), and sweep again")
+    # The HEAD reads run and check make (rev-parse HEAD, rev-parse --verify -q HEAD), the read check made first before
+    # them, and the same reads as each set core.warnAmbiguousRefs itself before round 1's spot-check, S4 (its -c), as
+    # BOUND_DRIVER's planted calls, so the runner before each fix meets the same plants at the same bounds.
+    HEAD_READS = ("rev-parse HEAD", "rev-parse --verify -q HEAD", "rev-parse --verify HEAD^{commit}",
+                  "-c core.warnAmbiguousRefs=false rev-parse")
+
+    def test_head_unread_in_a_linked_worktree_names_the_branchs_file_in_the_common_dir(self):
+        """The HEAD pin above, with the batcher's tree a linked worktree (its usual shape) on a branch of its own, side,
+        whose loose ref file is in the common dir, and is a FIFO or a symlink to /dev/zero: the run is refused naming the
+        worktree's HEAD (in its git dir), the branch and <common dir>/refs/heads/side, each path derived from the
+        worktree's own files (linked_dirs), never from the GitRepo under test, with no leg run and nothing recorded. Red
+        under head_unread taking the branch's file in the git dir (round 1 of PR 959's build review, pins-5, its mutant
+        M07c): no file is there, so the refusal named packed-refs, and before packed-refs was named,
+        <git dir>/refs/heads/side, under worktrees/<name>, a file that does not exist."""
+        cases = (("zero", "the %d MiB memory limit (GIT_MEMORY)" % (PIN_MEMORY >> 20), "ran out of memory and failed ("),
+                 ("fifo", "the %d s time limit (GIT_BOUND)" % PIN_BOUND, "did not end within %d s and was killed" % PIN_BOUND))
+        for kind, limit, what in cases:
+            with self.subTest(kind=kind):
+                if kind == "zero" and not ZERO_CAPPED:
+                    self.skipTest(MEMORY_SKIP)
+                w = World()
+                self.addCleanup(w.close)
+                wt = os.path.join(w.tmp, "linked-side")
+                w.git("worktree", "add", "-q", "-b", "side", wt)
+                gitdir, common = linked_dirs(wt)
+                self.assertNotEqual(gitdir, common, "premise: the linked worktree's git dir is not its common dir")
+                branch = os.path.join(common, "refs", "heads", "side")
+                self.assertTrue(os.path.isfile(branch) and not os.path.islink(branch),
+                                "premise: side is a loose ref file in the common dir")
+                self.assertFalse(os.path.lexists(os.path.join(gitdir, "refs", "heads", "side")),
+                                 "premise: the git dir holds no such file")
+                env, calls = self.logging_git(w)
+                result = w.result_path()            # read before the plant, as every git call of the case's own
+                os.remove(branch)
+                os.mkfifo(branch) if kind == "fifo" else os.symlink("/dev/zero", branch)
+                rc, out, err = self.run_bounded(w, env=env, argv=["run", "--tree", wt, "--python", w.python, "--workers",
+                                                                  "2"], cap=MEMORY_PIN_CAP, git_bound=PIN_BOUND,
+                                                memory=PIN_MEMORY,
+                                                planted=("rev-parse HEAD", "symbolic-ref"))
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn("could not be read within %s (%s, and the branch it names, refs/heads/side, %s: git "
+                              "rev-parse HEAD %s"
+                              % (limit, os.path.join(gitdir, "HEAD"), branch, what), err)
+                self.assertEqual(calls(), [self.DISCOVERY_CALL, "rev-parse HEAD"],
+                                 "refused at the HEAD read")
+                self.assertEqual(w.calls(), [], "no leg ran")
+                self.assertFalse(os.path.exists(result), "nothing was recorded")
+
+    def test_a_packed_branch_whose_packed_refs_meets_the_memory_limit_refuses_the_run_naming_packed_refs(self):
+        """The branch the batcher's HEAD names is packed (git pack-refs, as git gc runs it), so it has no loose file and
+        git reads it from packed-refs, here a sparse file of SPARSE_SIZE bytes, planted after every git call of the
+        case's own. It is a regular file, so main_ref_checked lets it through, and cmd_run's read of HEAD (planted at
+        PIN_MEMORY) meets the memory limit there: the run is refused (exit 2), naming HEAD's file, the branch, and
+        packed-refs as the file git read it from, with no leg run and nothing recorded. At the head before the fix the
+        refusal named the branch's loose file, which was not there (red on the text)."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        w = World()
+        self.addCleanup(w.close)
+        tree = os.path.realpath(w.tree)
+        self.assertEqual(w.git("symbolic-ref", "HEAD"), "refs/heads/main", "premise: HEAD names main")
+        w.git("pack-refs", "--all")
+        loose = os.path.join(tree, ".git", "refs", "heads", "main")
+        packed = os.path.join(tree, ".git", "packed-refs")
+        self.assertFalse(os.path.lexists(loose), "premise: main has no loose file")
+        env, calls = self.logging_git(w)
+        result = w.result_path()            # read before the plant, which every git reading HEAD meets
+        os.truncate(packed, SPARSE_SIZE)
+        rc, out, err = self.run_bounded(w, env=env, cap=MEMORY_PIN_CAP, memory=PIN_MEMORY, planted=self.HEAD_READS)
+        self.assertEqual(rc, 2, out + err)
+        self.assertIn("the batcher's HEAD in the repository at %s could not be read within the %d MiB memory limit "
+                      "(GIT_MEMORY) (%s, and the branch it names, refs/heads/main, which has no loose file, so git reads it "
+                      "from %s: git rev-parse HEAD ran out of memory and failed ("
+                      % (tree, PIN_MEMORY >> 20, os.path.join(tree, ".git", "HEAD"), packed), err)
+        self.assertIn(self.HEAD_REMEDY, err)
+        self.assertNotIn(loose, err, "the loose file, which is not there, is not named")
+        self.assertEqual(w.calls(), [], "no leg ran")
+        self.assertFalse(os.path.exists(result), "nothing was recorded")
+
+    def test_a_branch_head_names_that_git_reads_without_end_refuses_check_naming_head_and_the_branch(self):
+        """check reads the batcher's HEAD alone first (rev-parse --verify -q HEAD, with core.warnAmbiguousRefs off), as
+        run reads it, before its reads of the commit: a branch whose loose ref file is a symlink to /dev/zero or a FIFO,
+        or a packed branch whose packed-refs is a sparse regular file, meets the memory limit or the time limit there
+        (planted at PIN_MEMORY and PIN_BOUND), and check is refused (exit 2), naming HEAD's file, the branch and the file
+        git read it from (head_unread), with no git call after it. At the head before the fix check's first read was
+        rev-parse --verify HEAD^{commit}, which met the same plants, and the refusal named the call and the directory
+        alone (red on the text). A packed-refs that is a FIFO is refused before this read since round 1's spot-check,
+        S9 (the pin after this one); before S9 this case held one, met at the time limit."""
+        cases = (("zero", "the %d MiB memory limit (GIT_MEMORY)" % (PIN_MEMORY >> 20), "ran out of memory and failed ("),
+                 ("fifo", "the %d s time limit (GIT_BOUND)" % PIN_BOUND, "did not end within %d s and was killed" % PIN_BOUND),
+                 ("packed-sparse", "the %d MiB memory limit (GIT_MEMORY)" % (PIN_MEMORY >> 20),
+                  "ran out of memory and failed ("))
+        for kind, limit, what in cases:
+            with self.subTest(kind=kind):
+                if kind != "fifo" and not ZERO_CAPPED:
+                    self.skipTest(MEMORY_SKIP)
+                w = World()
+                self.addCleanup(w.close)
+                tree = os.path.realpath(w.tree)
+                self.assertEqual(w.git("symbolic-ref", "HEAD"), "refs/heads/main", "premise: HEAD names main")
+                branch = os.path.join(tree, ".git", "refs", "heads", "main")
+                packed = os.path.join(tree, ".git", "packed-refs")
+                if kind == "packed-sparse":
+                    w.git("pack-refs", "--all")
+                    self.assertFalse(os.path.lexists(branch), "premise: main has no loose file")
+                    where = "which has no loose file, so git reads it from %s" % packed
+                else:
+                    self.assertTrue(os.path.isfile(branch) and not os.path.islink(branch), "premise: a loose ref file")
+                    where = branch
+                env, calls = self.logging_git(w)
+                if kind == "packed-sparse":
+                    os.truncate(packed, SPARSE_SIZE)
+                else:
+                    os.remove(branch)
+                    os.mkfifo(branch) if kind == "fifo" else os.symlink("/dev/zero", branch)
+                rc, out, err = self.run_bounded(w, env=env, argv=["check", "--tree", w.tree], cap=MEMORY_PIN_CAP,
+                                                git_bound=PIN_BOUND, memory=PIN_MEMORY, planted=self.HEAD_READS)
+                self.assertEqual(rc, 2, out + err)
+                self.assertIn("the batcher's HEAD in the repository at %s could not be read within %s (%s, and the branch "
+                              "it names, refs/heads/main, %s: git rev-parse --verify -q "
+                              "HEAD %s" % (tree, limit, os.path.join(tree, ".git", "HEAD"), where, what), err)
+                self.assertIn(self.HEAD_REMEDY, err)
+                self.assertEqual(calls(), [self.DISCOVERY_CALL, "rev-parse --verify -q HEAD"],
+                                 "refused at the HEAD read")
+
+    def test_a_packed_refs_file_git_would_wait_on_refuses_check_naming_it_before_any_git_reads_it(self):
+        """Round 1's spot-check, S9: check refuses the batcher's packed-refs when it is not a regular file, by its type
+        (packed_refs_checked), before its read of HEAD, which reads that file when HEAD's branch is packed. With the branch
+        packed and packed-refs a FIFO, planted after every git call of the case's own, check exits 2 naming the file and
+        its type, with no git call but find_repo's discovery (logging_git). At the head before S9 check's read of HEAD
+        (planted at PIN_BOUND, HEAD_READS) waited on the FIFO until the bound, and the refusal named HEAD's file and the
+        branch, through head_unread (red on the text and on the calls)."""
+        w = World()
+        self.addCleanup(w.close)
+        tree = os.path.realpath(w.tree)
+        w.run(check=0)
+        w.git("pack-refs", "--all")
+        branch = os.path.join(tree, ".git", "refs", "heads", "main")
+        packed = os.path.join(tree, ".git", "packed-refs")
+        self.assertFalse(os.path.lexists(branch), "premise: HEAD's branch, main, has no loose file")
+        env, calls = self.logging_git(w)
+        os.remove(packed)
+        os.mkfifo(packed)
+        rc, out, err = self.run_bounded(w, env=env, argv=["check", "--tree", w.tree], git_bound=PIN_BOUND,
+                                        planted=self.HEAD_READS)
+        self.assertEqual(rc, 2, out + err)
+        self.assertIn("the batcher's packed refs in the repository at %s cannot be read (%s: a FIFO, not a regular file)"
+                      % (tree, packed), err)
+        self.assertEqual(calls(), [self.DISCOVERY_CALL], "refused before any git call but find_repo's")
+
+    # The names git's rev-parse rules try beside HEAD when core.warnAmbiguousRefs is on (git's default), and those
+    # symbolic-ref --short tries for the branch HEAD names, main, to tell whether its short name is ambiguous, each under
+    # the batcher's .git.
+    HEAD_SIBLINGS = tuple(rev_parse_siblings("HEAD")) + ("main", "refs/main", "refs/tags/main")
+
+    def test_a_ref_beside_head_or_its_branch_that_git_reads_without_end_is_not_read_and_the_run_proceeds(self):
+        """cmd_run reads the batcher's HEAD with core.warnAmbiguousRefs off and its branch with a plain symbolic-ref, and
+        uncommitted_count's git status runs with that setting off too, so none of them opens a name beside HEAD or its
+        branch: a symlink to /dev/zero at each of HEAD_SIBLINGS, planted after every git call of the case's own, is
+        never read, and the run sweeps every leg and records the branch as main. At the head before the fix rev-parse
+        HEAD and git status tried each name rev-parse's rules give for HEAD, to warn of an ambiguous one, and
+        symbolic-ref --short each name that could make main ambiguous, and the read of the symlink met the memory limit:
+        the run was refused naming HEAD's file and the branch's, neither of which git was reading."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        self.assertEqual(self.HEAD_SIBLINGS, ("refs/HEAD", "refs/tags/HEAD", "refs/heads/HEAD", "refs/remotes/HEAD",
+                                              "refs/remotes/HEAD/HEAD", "main", "refs/main", "refs/tags/main"),
+                         "premise: the eight names")
+        for sibling in self.HEAD_SIBLINGS:
+            with self.subTest(sibling=sibling):
+                w = World()
+                self.addCleanup(w.close)
+                tree = os.path.realpath(w.tree)
+                self.assertEqual(w.git("symbolic-ref", "HEAD"), "refs/heads/main", "premise: HEAD names main")
+                sha = w.head()                  # read before the plant, as every git call of the case's own
+                planted = os.path.join(tree, ".git", *sibling.split("/"))
+                os.makedirs(os.path.dirname(planted), exist_ok=True)
+                os.symlink("/dev/zero", planted)
+                try:
+                    rc, out, err = self.run_bounded(w, cap=MEMORY_PIN_CAP)
+                finally:
+                    os.remove(planted)
+                self.assertEqual(rc, 0, out + err)
+                self.assertNotIn("could not be read", err)
+                self.assertEqual(w.legs_called(), SEED_ORDER, "every leg ran")
+                self.assertEqual(w.result(sha)["branch"], "main", "the branch recorded as its short name")
+
+    def test_a_ref_beside_head_or_its_branch_that_git_reads_without_end_is_not_read_by_check(self):
+        """check's reads of HEAD, of the commit and of the branch run as run's do (core.warnAmbiguousRefs off, a plain
+        symbolic-ref), so a symlink to /dev/zero at a name beside HEAD (refs/HEAD) or beside its branch (refs/tags/main),
+        planted after a run recorded a pass and after every git call of the case's own, is never read: check reports the
+        pass for HEAD's branch. At the head before the fix its rev-parse --verify HEAD^{commit} tried refs/HEAD, and
+        symbolic-ref --short tried refs/tags/main, and check was refused at the memory limit (exit 2)."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        for sibling in ("refs/HEAD", "refs/tags/main"):
+            with self.subTest(sibling=sibling):
+                w = World()
+                self.addCleanup(w.close)
+                tree = os.path.realpath(w.tree)
+                w.run(check=0)
+                planted = os.path.join(tree, ".git", *sibling.split("/"))
+                os.makedirs(os.path.dirname(planted), exist_ok=True)
+                os.symlink("/dev/zero", planted)
+                try:
+                    rc, out, err = self.run_bounded(w, argv=["check", "--tree", w.tree], cap=MEMORY_PIN_CAP)
+                finally:
+                    os.remove(planted)
+                self.assertEqual(rc, 0, out + err)
+                self.assertTrue(out.startswith("ok   "), out + err)
+                self.assertNotIn("could not be read", err)
+
+    # The names git's rev-parse rules give a full object id beside the object itself, which git with
+    # core.warnAmbiguousRefs on (its default) opens to warn that the id is also a ref's name, each under the batcher's
+    # .git (round 1 of PR 959's spot-check, S4): <git dir>/<sha>, refs/<sha>, refs/tags/<sha>, refs/heads/<sha>,
+    # refs/remotes/<sha> and refs/remotes/<sha>/HEAD. The pins plant four of them, one per directory git reads them in.
+    SHA_SIBLINGS = ("%s", "refs/tags/%s", "refs/heads/%s", "refs/remotes/%s/HEAD")
+
+    def test_a_ref_named_by_the_sha_that_git_reads_without_end_is_not_read_by_check(self):
+        """Round 1 of PR 959's spot-check, S4: every runner git runs with core.warnAmbiguousRefs off (GIT_NEUTRAL_CONFIG),
+        so a git given the sha's full object id reads the object and no ref of that name. The sha here has no
+        vscode-extension/package.json, so the pass marks deps, the webview legs, pdf-smoke and served not owed, and check
+        reads the excuse rule's git cat-file -e <sha>:vscode-extension/package.json in the batcher's repository. A symlink
+        to /dev/zero at each name of SHA_SIBLINGS, planted after the run and after every git call of the case's own, is
+        never read: check of HEAD and of the sha reports the pass. At the head before S4 the excuse rule's cat-file ran
+        with the setting on, tried each name to warn of an ambiguous one, read the symlink to the memory limit, and check
+        was refused (exit 2) naming the call and GIT_MEMORY."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        w = World()
+        self.addCleanup(w.close)
+        tree = os.path.realpath(w.tree)
+        sha = w.change({"vscode-extension/package.json": None})
+        w.run(check=0)
+        self.assertEqual(w.result(sha)["legs"]["deps"]["why"], sweep.NO_PACKAGE_JSON,
+                         "premise: the pass marks deps not owed, so check reads the excuse rule")
+        for rule in self.SHA_SIBLINGS:
+            planted = os.path.join(tree, ".git", *(rule % sha).split("/"))
+            os.makedirs(os.path.dirname(planted), exist_ok=True)
+            os.symlink("/dev/zero", planted)
+            try:
+                for argv in (["check", "--tree", w.tree], ["check", sha, "--tree", w.tree]):
+                    with self.subTest(planted=rule, argv=argv):
+                        rc, out, err = self.run_bounded(w, argv=argv, cap=MEMORY_PIN_CAP)
+                        self.assertEqual(rc, 0, out + err)
+                        self.assertTrue(out.startswith("ok   sweep at %s: pass" % sha[:10]), out + err)
+                        self.assertNotIn("memory", out + err)
+            finally:
+                os.remove(planted)
+
+    def test_a_failed_write_of_origin_main_into_a_later_jobs_checkout_makes_the_run_invalid(self):
+        """Round 1 of PR 959, ruling C (the round's tests-1, as its refuters corrected it): the pytest leg, the first job's,
+        finds the batcher's repository through its clone's alternates and removes the loose object of the commit
+        origin/main names (main_world, so that commit is not HEAD and the checkout itself does not need it). The next
+        job's update-ref cannot write origin/main into its fresh checkout, and the run is invalid (exit 3), naming the
+        ref, the commit and the sha, and no leg after the pytest leg runs: no job gets a checkout without the ref. The
+        record's main is the commit the first job's checkout holds, and each later job's record names no checkout, so
+        it claims the ref for none that never got one. Red under a make_checkout that ignores the failed write (rc 0,
+        every leg run in checkouts with no origin/main)."""
+        w, main, head = self.main_world()
+        obj = os.path.join(w.tree, ".git", "objects", main[:2], main[2:])
+        self.assertTrue(os.path.isfile(obj), "premise: origin/main's commit is a loose object in the batcher's repository")
+        w.ctl({"action": {PYTEST_LEG: "drop-main-object"}})
+        p = w.run(check=3)
+        self.assertFalse(os.path.exists(obj), "premise: the leg removed origin/main's object: %s" % (p.stdout + p.stderr))
+        r = w.result()
+        self.assertIn("could not write refs/remotes/origin/main at %s into a private clone of %s: "
+                      % (sweep.short(main), sweep.short(head)), r["invalid"] or "")
+        self.assertTrue(r["invalid"].startswith("the fresh checkout for "), r["invalid"])
+        self.assertEqual(w.legs_called(), [PYTEST_LEG], "no leg after the pytest leg ran")
+        co = r["runner"]["checkout"]
+        self.assertEqual(co["main"], main, "the first job's checkout held the snapshot")
+        self.assertIsNotNone(co["groups"][0]["path"], "premise: the first job had a checkout")
+        self.assertEqual([g["path"] for g in co["groups"][1:]], [None] * (len(co["groups"]) - 1),
+                         "no later job's record names a checkout")
+
+    def test_a_linked_worktree_batchers_origin_main_is_checked_in_its_common_dir_by_cmd_run(self):
+        """Round 1 of PR 959, ruling E's run-level pin (the round's tests-2, its refuter's note): the batcher is a linked
+        worktree of the World's repository, whose git dir is not its common dir, and origin/main's loose file in the
+        common dir is a symlink to a regular file holding the commit it held. cmd_run's own main_ref_checked refuses the
+        run before any git call but the discovery, naming <common dir>/refs/remotes/origin/main, that path derived from
+        the worktree's .git file and its git dir's commondir file (linked_dirs), never from the GitRepo under test. Red
+        under main_ref_checked reading the git dir: both its calls pass, git reads the symlink through and the run
+        sweeps."""
+        w = self.w
+        wt = os.path.join(w.tmp, "linked")
+        w.git("worktree", "add", "-q", "--detach", wt)
+        gitdir, common = linked_dirs(wt)
+        self.assertNotEqual(gitdir, common, "premise: the linked worktree's git dir is not its common dir")
+        repo = sweep.find_repo(wt)
+        self.assertNotEqual(os.path.realpath(repo.git_dir), os.path.realpath(repo.common_dir),
+                            "premise: find_repo reads a git dir that is not the common dir")
+        path = os.path.join(common, "refs", "remotes", "origin", "main")
+        self.assertTrue(os.path.isfile(path) and not os.path.islink(path), "premise: origin/main is a loose ref file there")
+        with open(path, "rb") as f:
+            held = f.read()
+        env, calls = self.logging_git(w)
+        os.remove(path)
+        self.addCleanup(self.plant_special(path, "link", held))
+        rc, out, err = self.run_bounded(w, env=env, argv=["run", "--tree", wt, "--python", w.python, "--workers", "2"])
+        self.assertEqual(rc, 2, out + err)
+        self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s cannot be read (%s: a symlink, not a "
+                      "regular file)" % (os.path.realpath(wt), path), err)
+        self.assertEqual(calls(), [self.DISCOVERY_CALL], "refused before any git call but find_repo's")
+        self.assertEqual(w.calls(), [], "no leg ran")
+
+    # Runs scripts/sweep.py's main (argv[2], then its argv) with git_memory_limit told the platform is darwin, as the
+    # runner is there (the subreaper's not-linux driver, SUBREAPER_DRIVER, for the memory limit).
+    MEMORY_NOT_LINUX_DRIVER = ("import importlib.util, sys\n"
+                               "spec = importlib.util.spec_from_file_location('sweep_runner', sys.argv[1])\n"
+                               "sweep = importlib.util.module_from_spec(spec)\n"
+                               "spec.loader.exec_module(sweep)\n"
+                               "real = sweep.git_memory_limit\n"
+                               "sweep.git_memory_limit = lambda platform=None: real(platform='darwin')\n"
+                               "sys.exit(sweep.main(sys.argv[2:]))\n")
+
+    def test_each_git_of_a_run_has_the_memory_limit_and_off_linux_none_with_the_reason(self):
+        """Round 1 of PR 959, ruling A, and its darwin decision: every git a run starts has the memory limit, its soft and
+        hard RLIMIT_AS at the figure (1 GiB, or this process's own limit where that is lower, derived here, not read from
+        the code under test), and the run records it (runner.git_memory). Told it runs on darwin, as through the
+        subreaper's not-linux driver, the runner runs, sets no limit on any git (each has this process's own limit,
+        untouched), and records null with the reason (runner.git_memory_why), as it records the subreaper. A git first on
+        PATH appends the limit /proc gives it, then runs the real git."""
+        if not os.path.isdir("/proc"):
+            self.skipTest("the case reads each git's limits from /proc")
+        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        figure = min([1 << 30] + [n for n in (soft, hard) if n != resource.RLIM_INFINITY])
+        own = "unlimited" if soft == resource.RLIM_INFINITY else str(soft)
+        w = self.w
+        d = os.path.join(w.tmp, "limits-git")
+        os.makedirs(d)
+        log = os.path.join(d, "limits.log")
+        # the log's path and the real git written into the script, since the legs' environment, where tool_versions runs
+        # its git --version (not run_git's, and so not limited), carries neither in a variable
+        with open(os.path.join(d, "git"), "w") as f:
+            f.write("#!/bin/sh\nprintf '%%s\\t%%s\\n' \"$(grep '^Max address space' /proc/$$/limits)\" \"$*\" >> '%s'\n"
+                    "exec '%s' \"$@\"\n" % (log, shutil.which("git", path=w.env["PATH"])))
+        os.chmod(os.path.join(d, "git"), 0o755)
+        env = dict(w.env, PATH=d + os.pathsep + w.env["PATH"])
+
+        def limits():
+            """[soft, hard] of each git run_git started since the last read: every call but tool_versions' --version."""
+            with open(log) as f:
+                rows = [line.rstrip("\n").split("\t", 1) for line in f]
+            os.remove(log)
+            rows = [limit.split()[3:5] for limit, args in rows if args != "--version"]
+            self.assertGreater(len(rows), 5, "premise: the run's gits were seen")
+            return rows
+        w.run(env=env, check=0)
+        self.assertEqual({tuple(r) for r in limits()}, {(str(figure), str(figure))},
+                         "every git of the run had the figure as its soft and hard limit")
+        runner = w.result()["runner"]
+        self.assertEqual(runner.get("git_memory"), figure)
+        self.assertNotIn("git_memory_why", runner)
+        w.change({"README.md": "# notes-api, a second commit\n"})
+        p = subprocess.run([sys.executable, "-c", self.MEMORY_NOT_LINUX_DRIVER, str(SWEEP), "run", "--tree", w.tree, "--python",
+                            w.python, "--workers", "2"], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           stdin=subprocess.DEVNULL, timeout=300)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual({r[0] for r in limits()}, {own}, "no git had a limit of the runner's: each had this process's own")
+        runner = w.result()["runner"]
+        self.assertIsNone(runner.get("git_memory", "absent"))
+        self.assertIn("the runner runs on darwin, and only Linux enforces RLIMIT_AS, so no git it starts has a memory limit",
+                      runner.get("git_memory_why") or "")
 
     def test_a_shallow_file_a_leg_writes_into_the_batchers_repository_reaches_no_later_job(self):
         """The narrow landing delta's ruling 8: the pytest leg, the first job's, finds the batcher's repository through its
@@ -2904,9 +3519,15 @@ class Checkout(_Base):
 
     def test_the_address_cap_is_live(self):
         """The closing check's verify, code finding 3: the /dev/zero pins lean on CAP_SHIM's RLIMIT_AS to stop a read
-        without end, so where they run (Linux) the cap must hold. A child under CAP_SHIM maps twice ADDRESS_CAP of
-        anonymous memory without touching it: under a live cap the map is refused; were the cap not live, the map would
-        succeed and cost no memory, since no page is touched, and the case fails saying so."""
+        without end, so where they run (Linux) the cap must hold. A child under CAP_SHIM maps anonymous memory without
+        touching it: twice ADDRESS_CAP under ADDRESS_CAP, and PIN_CAP_BUDGET under MEMORY_PIN_CAP. Under a live cap the
+        map is refused; were the cap not live, or MEMORY_PIN_CAP above the budget, the map would succeed and cost no
+        memory, since no page is touched, and the case fails saying so. A shell under the cap cannot raise it with
+        ulimit -v, as run_git's shell sets its limit: CAP_SHIM sets the hard limit too, so a runner that set a figure
+        above the case's cap is refused (LIMIT_FAILED) rather than lifting the cap for its git. Red on the raise while
+        CAP_SHIM kept the inherited hard limit (round 1 of PR 959's build review, pins-1: under a run_git that gave
+        ulimit -v the limit in bytes, its planted gits grew to about 10 GiB of address space), and red on the map with
+        MEMORY_PIN_CAP at 1 << 50."""
         if not ZERO_CAPPED:
             self.skipTest(ZERO_SKIP)
         code = ("import mmap, sys\n"
@@ -2917,34 +3538,53 @@ class Checkout(_Base):
                 "else:\n"
                 "    m.close()\n"
                 "    print('mapped')\n")
-        p = subprocess.run([sys.executable, "-c", CAP_SHIM, str(ADDRESS_CAP), sys.executable, "-c", code, str(2 * ADDRESS_CAP)],
-                           text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=60)
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertTrue(p.stdout.startswith("refused: "), "a child under the address cap mapped twice the cap: the cap is not "
-                                                          "live (%s)" % (p.stdout + p.stderr).strip())
+        for cap, size in ((ADDRESS_CAP, 2 * ADDRESS_CAP), (MEMORY_PIN_CAP, PIN_CAP_BUDGET)):
+            with self.subTest(cap=cap):
+                p = subprocess.run([sys.executable, "-c", CAP_SHIM, str(cap), sys.executable, "-c", code, str(size)],
+                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                   timeout=60)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                self.assertTrue(p.stdout.startswith("refused: "), "a child under the address cap mapped %d bytes: the cap "
+                                                                  "is not live, or above that (%s)"
+                                % (size, (p.stdout + p.stderr).strip()))
+                p = subprocess.run([sys.executable, "-c", CAP_SHIM, str(cap), "/bin/sh", "-c", "ulimit -v %d" % (2 * cap >> 10)],
+                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                   timeout=60)
+                self.assertNotEqual(p.returncode, 0, "a shell under the address cap raised it to twice the cap with ulimit "
+                                                     "-v: a git run_git starts could then read past the case's cap")
 
-    def run_bounded(self, w, *extra, bound=90, argv=None, git_bound=None, lstat_passes=False, env=None, cwd=None, planted=()):
-        """The runner over `w` (with `extra`; or `argv`, a whole subcommand line, such as check's) under a watchdog, for the
-        pins whose regression is a wait or a read without end (the closing check's items 1 and 2): it runs in a process
-        group of its own, with its address space capped (CAP_SHIM), and has `bound` seconds to end. One still running
-        then (waiting on a FIFO, in its own open() or in a git it started) has its whole group killed, and each of its
-        descendants with its own group (kill_tree), and fails the case, saying so, and never hangs it, and no git it
-        started is left running; one that reads a symlink to /dev/zero without end stops at the cap with a
+    def run_bounded(self, w, *extra, bound=90, argv=None, git_bound=None, lstat_passes=False, env=None, cwd=None, planted=(),
+                    memory=None, cap=ADDRESS_CAP):
+        """The runner over `w` (with `extra`; or `argv`, a whole subcommand line, such as check's) under a watchdog, for
+        the pins whose regression is a wait or a read without end (the closing check's items 1 and 2): it runs in a
+        process group of its own, with its address space capped (CAP_SHIM), and has `bound` seconds to end. One still
+        running then (waiting on a FIFO, in its own open() or in a git it started) has its whole group killed, and each
+        of its descendants with its own group (kill_tree), and fails the case, saying so, and never hangs it, and no git
+        it started is left running; one that reads a symlink to /dev/zero without end stops at the cap with a
         MemoryError (exit 1), and never takes the machine's memory: on Linux, the only place such a symlink is planted
         (ZERO_CAPPED). pytest's --timeout is the outer bound. With `git_bound` the runner is BOUND_DRIVER, its GIT_BOUND
         that many seconds on the calls `planted` names (bound_spec) and the runner's own on every other (and with
         `lstat_passes` its cannot_read passing every file), and every call that ran at that bound must have ended at it
-        (GitBound), or the case fails naming the call: the short bound then reached a call that met no plant, which
-        ends early under load (the 22:21Z ruling on the merge of fork main, item 1). `env` replaces w.env, and `cwd` is
-        the directory it runs in (default: this process's). Returns (rc, stdout, stderr)."""
+        (GitBound), or the case fails naming the call: the short bound then reached a call that met no plant, which ends
+        early under load (the 22:21Z ruling on the merge of fork main, item 1). With `memory` the planted calls have
+        that memory limit too (BOUND_DRIVER), and each of them must have ended at one of the planted bounds (GitBound or
+        GitMemory): one that ended otherwise met its plant with no bound to end it (a runner that sets no memory limit
+        reads a symlink to /dev/zero until the case's cap) or met no plant at all. On Linux each planted call that ended
+        at GitMemory must also have held no more than `memory` resident (BOUND_DRIVER's RUSAGE_CHILDREN peak, an upper
+        bound on that call's): one that held more met an allocation failure at a larger limit than the one run_git names
+        (a runner that computes the limit and starts git without it fails at the case's cap and raises GitMemory all the
+        same: round 1 of PR 959's build review, pins-6, its mutant M01); an earlier child that held more fails the case
+        too, loudly, rather than pass it unchecked. `cap` is the address cap (default ADDRESS_CAP). `env` replaces
+        w.env, and `cwd` is the directory it runs in (default: this process's). Returns (rc, stdout, stderr)."""
         argv = argv or ["run", "--tree", w.tree, "--python", w.python, "--workers", "2", *extra]
         log = None
-        if git_bound is not None:
+        driven = git_bound is not None or memory is not None
+        if driven:
             fd, log = tempfile.mkstemp(prefix="bound-calls-", suffix=".log", dir=w.tmp)
             os.close(fd)
-        runner = [str(SWEEP)] if git_bound is None else ["-c", BOUND_DRIVER, bound_spec(git_bound, *planted, log=log),
-                                                         "lstat-passes" if lstat_passes else "plain", str(SWEEP)]
-        proc = subprocess.Popen([sys.executable, "-c", CAP_SHIM, str(ADDRESS_CAP), sys.executable, *runner, *argv],
+        runner = [str(SWEEP)] if not driven else ["-c", BOUND_DRIVER, bound_spec(git_bound, *planted, log=log, memory=memory),
+                                                  "lstat-passes" if lstat_passes else "plain", str(SWEEP)]
+        proc = subprocess.Popen([sys.executable, "-c", CAP_SHIM, str(cap), sys.executable, *runner, *argv],
                                 env=env or w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 stdin=subprocess.DEVNULL, start_new_session=True, cwd=cwd)
 
@@ -2960,9 +3600,21 @@ class Checkout(_Base):
                       "opened:\n%s%s" % (bound, out, err))
         if log is not None:
             with open(log) as f:
-                calls = [line.rstrip("\n").split("\t", 2) for line in f]
-            self.assertEqual([c for c in calls if c[0] == str(git_bound) and c[1] != "bound"], [],
-                             "a call at the short bound that did not end at it: the bound reached a call that met no plant")
+                calls = [line.rstrip("\n").split("\t", 4) for line in f]
+            if memory is None:
+                self.assertEqual([c for c in calls if c[0] == str(git_bound) and c[2] != "bound"], [],
+                                 "a call at the short bound that did not end at it: the bound reached a call that met no "
+                                 "plant")
+            else:
+                self.assertEqual([c for c in calls if (c[0] == str(git_bound) or c[1] == str(memory))
+                                  and c[2] not in ("bound", "memory")], [],
+                                 "a planted call that did not end at a planted bound (GitBound or GitMemory): it met its "
+                                 "plant with no bound to end it, or met no plant")
+                if ZERO_CAPPED:
+                    self.assertEqual([c for c in calls if c[1] == str(memory) and c[2] == "memory" and int(c[3]) > memory],
+                                     [], "a planted call that ended at GitMemory held more than the %d MiB memory limit set "
+                                     "on it (resident peak in bytes, the fourth field): the limit run_git named did not hold"
+                                     % (memory >> 20))
         return proc.returncode, out, err
 
     # The kinds of file the shallow and git state file pins plant where a regular file belongs, and the type each is
@@ -4802,6 +5454,53 @@ class ShallowBatcher(unittest.TestCase):
         self.assertEqual((whole.returncode, len(whole.stdout.split())), (0, 2), "the checkout reads the whole history")
         self.assertEqual(g("rev-parse", "--is-shallow-repository", cwd=path2).stdout.strip(), "false")
 
+    def test_a_shallow_file_larger_than_the_runner_reads_is_refused_naming_its_size_and_never_read(self):
+        """The runner reads the batcher's shallow file itself, before the first leg (shallow_snapshot) and after the last
+        (shallow_moved), and reads at most SHALLOW_FILE_MAX bytes of it (16 MiB, over 250,000 commits at a shallow
+        boundary): a regular file larger than that, a sparse one included (made with truncate, no byte of it written),
+        refuses the run before the first leg, naming its size, and after the last leg is a file that cannot be read,
+        naming its size, and neither read reads it. A file of exactly SHALLOW_FILE_MAX bytes is read whole. Before the
+        bound the runner read the whole file into its own memory, which no limit bounds (run_git's limit is on the gits
+        it starts), so a leg that left a sparse shallow file of any size in the batcher's repository made the next run
+        take that much memory: red there with Refused not raised, and shallow_moved reading the file as changed. The
+        oversized files here are 16 MiB and a byte, and 64 MiB, so a runner that reads them whole costs this process
+        no more than that."""
+        tmp = tempfile.mkdtemp(prefix="sweepshallowmax-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+                   GIT_AUTHOR_NAME="romp tests", GIT_AUTHOR_EMAIL="tests@example.invalid",
+                   GIT_COMMITTER_NAME="romp tests", GIT_COMMITTER_EMAIL="tests@example.invalid")
+        tree = os.path.join(tmp, "tree")
+        for args in (["init", "-q", tree], ["-C", tree, "commit", "-q", "--allow-empty", "-m", "c1"]):
+            subprocess.run(["git", *args], env=env, check=True, stdout=subprocess.DEVNULL)
+        head = subprocess.run(["git", "-C", tree, "rev-parse", "HEAD"], env=env, check=True, text=True,
+                              stdout=subprocess.PIPE).stdout.strip()
+        repo = sweep.find_repo(tree)
+        shallow = os.path.join(tree, ".git", "shallow")
+        bound = 16 << 20
+        for size in (bound + 1, 4 * bound):
+            with self.subTest(size=size):
+                with open(shallow, "wb"):
+                    pass
+                os.truncate(shallow, size)
+                self.assertEqual(os.path.getsize(shallow), size, "premise: the file's size")
+                words = "%d bytes, more than the %d the runner reads" % (size, bound)
+                with self.assertRaises(sweep.Refused) as cm:
+                    sweep.shallow_snapshot(repo)
+                self.assertIn("the shallow file of the repository at %s cannot be read (%s: %s)" % (tree, shallow, words),
+                              str(cm.exception))
+                self.assertIn("shallow file %s cannot be read (%s)" % (shallow, words),
+                              sweep.shallow_moved(shallow, None) or "")
+        line = (head + "\n").encode()
+        data = line * (bound // len(line))
+        data += b"\n" * (bound - len(data))
+        with open(shallow, "wb") as f:
+            f.write(data)
+        self.assertEqual(os.path.getsize(shallow), bound, "premise: the file is at the bound")
+        self.assertEqual(sweep.shallow_snapshot(repo), data, "a file at the bound is read whole")
+        self.assertIsNone(sweep.shallow_moved(shallow, data))
+        self.assertEqual(getattr(sweep, "SHALLOW_FILE_MAX", None), bound, "the runner's bound is the one pinned")
+
 
 class MainSnapshot(unittest.TestCase):
     """main_snapshot, the read of the batcher's refs/remotes/origin/main before the first leg: the commit it names; None
@@ -4851,9 +5550,15 @@ class MainSnapshot(unittest.TestCase):
 
     def test_an_origin_main_ref_file_that_is_not_a_regular_file_is_refused_before_git_reads_it(self):
         """main_snapshot checks the loose ref file with main_ref_checked before its own reads, as cmd_run does at the top
-        of a run: a symlink to a regular file holding the commit (which git reads through) and a directory (which git
-        reads as no ref) are refused, naming the file and its type. The FIFO and the symlink to /dev/zero are pinned
-        through a run, under the address cap (Checkout's test_an_origin_main_a_leg_leaves_not_a_regular_file_...)."""
+        of a run: a symlink to a regular file holding the commit and a directory are refused, naming the file and its
+        type. Before that check main_snapshot let git read both (the round's tests-3 and extra4-4). Through the symlink
+        it read the commit the file held, and returned it. The directory went by git's version, nothing being packed:
+        rev-parse reads a directory as no ref on every version, and show-ref --exists failed one with exit 1 (Is a
+        directory) before git 2.43.2, so main_snapshot refused it as naming no commit, after both git calls had read the
+        path, and from 2.43.2 reads it as absent (exit 2), so main_snapshot returned None and the run swept with no
+        main. With origin/main packed, rev-parse read past the directory to the packed commit, and main_snapshot returned
+        that. The FIFO and the symlink to /dev/zero are pinned through a run, under the address cap (Checkout's
+        test_an_origin_main_a_leg_leaves_not_a_regular_file_...)."""
         ref_file = os.path.join(self.repo.common_dir, "refs", "remotes", "origin", "main")
         for kind, what in (("link", "a symlink"), ("dir", "a directory")):
             with self.subTest(kind=kind):
@@ -4872,11 +5577,14 @@ class MainSnapshot(unittest.TestCase):
                               "regular file)" % (self.repo.work_tree, ref_file, what), str(cm.exception))
 
     def test_the_checkouts_origin_main_is_written_at_the_snapshot_with_its_reflog(self):
-        """make_checkout writes the snapshot as the checkout's refs/remotes/origin/main with update-ref, which logs it as
-        git logs any ref write in a repository with a work tree (one reflog entry, at the snapshot), as the checkout's
-        own `checkout --detach` logs HEAD; the ref then reads as one a fetch made, CI's checkout included. The write ran
-        with core.logAllRefUpdates=false at first, for a reason that held for that ref alone, since HEAD's reflog is
-        written either way (the verify pass on main_snapshot, its sixth item); red under that write."""
+        """make_checkout writes the snapshot as the checkout's refs/remotes/origin/main with update-ref, which logs it
+        as git logs a write to a remote-tracking ref in a repository with a work tree (core.logAllRefUpdates' default):
+        one reflog entry, at the snapshot, as the checkout's own `checkout --detach` logs HEAD, and as a fetch leaves
+        one on the remote-tracking ref it writes (CI's checkout on the ref of the branch it fetches; it holds no
+        origin/main except in a run on main, which make_checkout's docstring states, with what follows for a test that
+        reads it). The write ran with core.logAllRefUpdates=false at first, for a reason that held for that ref alone,
+        since HEAD's reflog is written either way (the verify pass on main_snapshot, its sixth item); red under that
+        write."""
         self.g("update-ref", "refs/remotes/origin/main", self.head)
         main = sweep.main_snapshot(self.repo)
         path, marker, _s = sweep.make_checkout(self.repo, self.head, None, main)
@@ -4888,15 +5596,24 @@ class MainSnapshot(unittest.TestCase):
 
     def test_a_git_without_show_ref_exists_is_refused_naming_the_version(self):
         """`git show-ref --exists` came in git 2.43; an older git exits 129 on the unknown option. With no origin/main,
-        the read the runner makes on every run whose rev-parse fails, main_snapshot then refuses naming the git version it
-        needs, where before it refused with the remedy for a ref it cannot read (fetch origin or remove the ref), for a
-        ref that is not there (the verify pass on main_snapshot, its fourth finding). A git first on PATH answers
-        show-ref --exists as such a git does and passes every other call to the real git."""
+        the read the runner makes on every run whose exact read (show-ref --verify, then the peel of the object id it
+        gives) gives no commit, main_snapshot then refuses naming the git version it needs, where before it refused with
+        the remedy for a ref it cannot read (fetch origin or remove the ref), for a ref that is not there (the verify pass
+        on main_snapshot, its fourth finding). A git first on PATH answers
+        show-ref --exists as such a git does, printing the error line and then show-ref's usage text on stderr (four of
+        its lines here; git 2.42.0 prints fifteen, measured 2026-10-03), and passes every other call to the real git. The
+        refusal quotes the error line alone, where before it quoted the whole usage text (round 1 of PR 959's build
+        review, versions-2)."""
         shim = os.path.join(os.path.dirname(self.tree), "old-git")
         os.makedirs(shim)
         with open(os.path.join(shim, "git"), "w") as f:
             f.write('#!/bin/sh\nif [ "$1" = show-ref ] && [ "$2" = --exists ]; then\n'
-                    '  echo "error: unknown option \\`exists\'" >&2; exit 129\nfi\nexec "$OLD_GIT_REAL" "$@"\n')
+                    '  echo "error: unknown option \\`exists\'" >&2\n'
+                    '  echo "usage: git show-ref [-q | --quiet] [--verify] [--head] [-d | --dereference]" >&2\n'
+                    '  echo "   or: git show-ref --exclude-existing[=<pattern>]" >&2\n'
+                    '  echo >&2\n'
+                    '  echo "    --tags                only show tags (can be combined with heads)" >&2\n'
+                    '  exit 129\nfi\nexec "$OLD_GIT_REAL" "$@"\n')
         os.chmod(os.path.join(shim, "git"), 0o755)
         self.assertIsNone(sweep.main_snapshot(self.repo), "premise: no origin/main, read as absent by this git")
         with unittest.mock.patch.dict(os.environ, PATH=shim + os.pathsep + os.environ["PATH"],
@@ -4905,12 +5622,973 @@ class MainSnapshot(unittest.TestCase):
                 sweep.main_snapshot(self.repo)
         self.assertIn("which this git does not have (show-ref exited 129: error: unknown option `exists'); sweep with git "
                       "2.43 or later", str(cm.exception))
+        self.assertNotIn("usage:", str(cm.exception), "git's usage text is not quoted")
 
     @staticmethod
     def write(path, text):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(text)
+
+    # -- round 1 of PR 959: rulings A (the unbounded read), B (the exact name) and E (the linked worktree) --
+
+    def ref_file(self):
+        return os.path.join(self.repo.common_dir, "refs", "remotes", "origin", "main")
+
+    def drive(self, swap=None):
+        """MAIN_DRIVER over this repository, its git calls at PIN_MEMORY and PIN_BOUND, in a child of its own session
+        under CAP_SHIM at MEMORY_PIN_CAP, with 120 s to end (then killed, with every process it started, and the case
+        fails): its JSON."""
+        proc = subprocess.Popen([sys.executable, "-c", CAP_SHIM, str(MEMORY_PIN_CAP), sys.executable, "-c", MAIN_DRIVER,
+                                 str(SWEEP), self.tree, json.dumps({"memory": PIN_MEMORY, "bound": PIN_BOUND, "swap": swap,
+                                                                    "fifo_at": SWAP_FIFO_AT})],
+                                env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and kill_tree(proc.pid))
+        try:
+            out, err = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc.pid)
+            out, err = proc.communicate()
+            self.fail("main_snapshot was still running after 120 s:\n%s%s" % (out, err))
+        self.assertEqual(proc.returncode, 0, out + err)
+        return json.loads(out.splitlines()[-1])
+
+    def assert_held_little(self, out):
+        """No git main_snapshot started held more than PIN_MEMORY: none read a planted file past the limit set on it (a
+        runner that sets none reads it until MEMORY_PIN_CAP). Linux reports ru_maxrss; elsewhere this is not checked."""
+        if sys.platform.startswith("linux"):
+            self.assertLessEqual(out["maxrss"], PIN_MEMORY, "a git main_snapshot started held %d MiB, more than the %d MiB "
+                                 "set on it: %s" % (out["maxrss"] >> 20, PIN_MEMORY >> 20, out))
+
+    def clear_plants(self):
+        """Remove origin/main's loose file and every ref or file planted under a name git's rev-parse rules expand it to,
+        with the reflogs update-ref wrote for them (one at refs/remotes/refs/remotes/origin/main is a file where the
+        next name's reflog needs a directory)."""
+        for d in ("refs/refs", "refs/tags/refs", "refs/heads/refs", "refs/remotes/refs", "refs/remotes/origin/x",
+                  "logs/refs/refs", "logs/refs/heads/refs", "logs/refs/remotes/refs"):
+            full = os.path.join(self.repo.common_dir, *d.split("/"))
+            if os.path.isdir(full) and not os.path.islink(full):
+                shutil.rmtree(full)
+            elif os.path.lexists(full):
+                os.remove(full)
+        if os.path.lexists(self.ref_file()):
+            os.remove(self.ref_file())
+
+    def test_a_symbolic_ref_at_origin_main_is_refused_naming_its_target_before_git_reads_it(self):
+        """Ruling A's symbolic-ref shape (the round's correctness-1, as its refuters corrected it): the loose
+        origin/main file is a regular file holding a symbolic ref, to a ref that is a FIFO or a symlink to /dev/zero,
+        which git follows unchecked, or to no ref at all (a dangling one, beside a tag named
+        refs/tags/refs/remotes/origin/main: ruling B's third pin). main_ref_checked reads the file itself
+        (read_ref_file) and refuses it, naming its target, before any git reads it. At the head before the fix the file
+        passed the check, being regular, and rev-parse followed it: it waited on the FIFO until the bound, read
+        /dev/zero until the case's cap (red on the text; its git held the whole cap), and, for the dangling one, took
+        the tag for origin/main and returned its commit."""
+        for kind in ("fifo", "zero", "dangling"):
+            with self.subTest(kind=kind):
+                if kind == "zero" and not ZERO_CAPPED:
+                    self.skipTest(MEMORY_SKIP)
+                self.clear_plants()
+                if kind == "dangling":
+                    self.g("update-ref", "refs/tags/refs/remotes/origin/main", self.head)
+                target = os.path.join(self.repo.common_dir, "refs", "remotes", "origin", "x")
+                self.write(self.ref_file(), "ref: refs/remotes/origin/x\n")
+                if kind == "fifo":
+                    os.mkfifo(target)
+                elif kind == "zero":
+                    os.symlink("/dev/zero", target)
+                out = self.drive()
+                self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s cannot be read (%s: a symbolic "
+                              "ref, to refs/remotes/origin/x, which git would follow unchecked; no fetch writes one)"
+                              % (self.repo.work_tree, self.ref_file()), out.get("refused") or "", out)
+                self.assert_held_little(out)
+
+    def test_an_origin_main_file_larger_than_a_ref_file_is_refused_naming_its_size_before_git_reads_it(self):
+        """Ruling A's sparse-file shape (the round's correctness-2, the bound as its refuter corrected it): git reads a
+        loose ref file whole, so a regular file at origin/main larger than REF_FILE_MAX bytes is refused, naming its
+        size, before git reads it: a sparse file of SPARSE_SIZE bytes (made with truncate, no byte written), and one of
+        REF_BOUND + 1 bytes, while one of REF_BOUND bytes, the commit and a newline padded with spaces (which git
+        accepts), is read. At the head before the fix rev-parse read the sparse file to its end and the refusal named no
+        size (red on the text), and the 4097-byte one was read; with the size bound off the sparse file reaches the
+        memory limit and the 4097-byte one is read."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        cases = (("sparse", SPARSE_SIZE), ("one byte over", REF_BOUND + 1), ("at the bound", REF_BOUND))
+        for label, size in cases:
+            with self.subTest(case=label):
+                self.clear_plants()
+                if label == "sparse":
+                    self.write(self.ref_file(), "")
+                    os.truncate(self.ref_file(), size)
+                else:
+                    self.write(self.ref_file(), (self.head + "\n").ljust(size))
+                self.assertEqual(os.path.getsize(self.ref_file()), size, "premise: the file's size")
+                out = self.drive()
+                if size > REF_BOUND:
+                    self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s cannot be read (%s: %d "
+                                  "bytes, more than the %d a ref file holds, and git reads a loose ref file whole)"
+                                  % (self.repo.work_tree, self.ref_file(), size, REF_BOUND),
+                                  out.get("refused") or "", out)
+                else:
+                    self.assertEqual(out.get("result"), self.head, out)
+                self.assert_held_little(out)
+        self.assertEqual(getattr(sweep, "REF_FILE_MAX", None), REF_BOUND, "the runner's bound is the one pinned")
+
+    def test_a_dev_zero_symlink_at_each_name_rev_parse_expands_origin_main_to_is_never_read(self):
+        """Ruling A's rev-parse-sibling shape and ruling B (the round's extra4-1): a symlink to /dev/zero at each of the
+        five refs git's rev-parse rules read beside origin/main (rev_parse_siblings), with origin/main present, absent
+        and a file git cannot parse. The exact read opens none of them, so main_snapshot returns origin/main's commit,
+        None, and the refusal, with no git holding more than a few MiB. At the head before the fix its rev-parse opened
+        all five and read the symlink until the case's cap: red on the result where origin/main is there, and on the
+        held memory in every case (its absent and unparseable answers matched, after the read)."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        self.assertEqual(rev_parse_siblings(sweep.MAIN_REF),
+                         ["refs/refs/remotes/origin/main", "refs/tags/refs/remotes/origin/main",
+                          "refs/heads/refs/remotes/origin/main", "refs/remotes/refs/remotes/origin/main",
+                          "refs/remotes/refs/remotes/origin/main/HEAD"], "premise: the five names")
+        for sibling in rev_parse_siblings(sweep.MAIN_REF):
+            for state in ("present", "absent", "unparseable"):
+                with self.subTest(sibling=sibling, origin_main=state):
+                    self.clear_plants()
+                    if state == "present":
+                        self.g("update-ref", sweep.MAIN_REF, self.head)
+                    elif state == "unparseable":
+                        self.write(self.ref_file(), "not a sha\n")
+                    planted = os.path.join(self.repo.common_dir, *sibling.split("/"))
+                    os.makedirs(os.path.dirname(planted), exist_ok=True)
+                    os.symlink("/dev/zero", planted)
+                    out = self.drive()
+                    if state == "present":
+                        self.assertEqual(out.get("result"), self.head, out)
+                    elif state == "absent":
+                        self.assertEqual(("result" in out, out.get("result")), (True, None), out)
+                    else:
+                        self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s names no commit the "
+                                      "runner can read" % self.repo.work_tree, out.get("refused") or "", out)
+                    self.assert_held_little(out)
+
+    def test_a_dev_zero_symlink_at_each_name_rev_parse_expands_the_object_id_to_is_never_read(self):
+        """The peel of the object id show-ref gives runs with core.warnAmbiguousRefs off, as every runner git does
+        (GIT_NEUTRAL_CONFIG). With it on (git's default)
+        rev-parse also tries the full object id as a ref name, by its rules (REV_PARSE_RULES: $GIT_DIR/<oid>,
+        refs/<oid>, refs/tags/<oid>, refs/heads/<oid>, refs/remotes/<oid> and refs/remotes/<oid>/HEAD), to warn of an
+        ambiguous name, and reads each file it finds. A symlink to /dev/zero at each of those six names, with origin/main
+        at a commit and at an annotated tag of it: main_snapshot returns the commit, and no git holds more than a few
+        MiB. Red with the setting dropped from the peel (round 1 of PR 959's build review, exact-1 and pins-2, when the
+        peel set it itself; from GIT_NEUTRAL_CONFIG since round 1's spot-check, S4): the read meets the memory limit and
+        the run is refused, naming origin/main's loose file, which git was not reading."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        self.g("tag", "-a", "-m", "t", "t1", self.head)
+        tag = self.g("rev-parse", "refs/tags/t1")
+        self.assertNotEqual(tag, self.head, "premise: the annotated tag is an object of its own")
+        for label, oid in (("commit", self.head), ("annotated tag", tag)):
+            for rule in REV_PARSE_RULES:
+                with self.subTest(origin_main=label, rule=rule):
+                    self.clear_plants()
+                    for top in (oid, "refs/" + oid, "refs/tags/" + oid, "refs/heads/" + oid, "refs/remotes/" + oid):
+                        full = os.path.join(self.repo.common_dir, *top.split("/"))
+                        if os.path.isdir(full) and not os.path.islink(full):
+                            shutil.rmtree(full)
+                        elif os.path.lexists(full):
+                            os.remove(full)
+                    self.g("update-ref", sweep.MAIN_REF, oid)
+                    planted = os.path.join(self.repo.common_dir, *(rule % oid).split("/"))
+                    os.makedirs(os.path.dirname(planted), exist_ok=True)
+                    os.symlink("/dev/zero", planted)
+                    out = self.drive()
+                    self.assertEqual(out.get("result"), self.head, out)
+                    self.assert_held_little(out)
+
+    def test_a_branch_or_tag_at_each_name_rev_parse_expands_origin_main_to_is_never_taken_for_it(self):
+        """Ruling B (the round's extra4-2 and correctness-3): a ref at each of the five names git's rev-parse rules try for
+        origin/main (`git tag refs/remotes/origin/main` and `git branch refs/remotes/origin/main` make two of them) is
+        not origin/main: with origin/main absent main_snapshot gives None, and with it a file git cannot parse, the
+        refusal. At the head before the fix rev-parse took the sibling and returned its commit in both."""
+        for sibling in rev_parse_siblings(sweep.MAIN_REF):
+            for state in ("absent", "unparseable"):
+                with self.subTest(sibling=sibling, origin_main=state):
+                    self.clear_plants()
+                    self.g("update-ref", sibling, self.head)
+                    if state == "unparseable":
+                        self.write(self.ref_file(), "not a sha\n")
+                        with self.assertRaises(sweep.Refused) as cm:
+                            sweep.main_snapshot(self.repo)
+                        self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s names no commit the "
+                                      "runner can read" % self.repo.work_tree, str(cm.exception))
+                    else:
+                        self.assertIsNone(sweep.main_snapshot(self.repo), "the sibling %s is not origin/main" % sibling)
+
+    def test_a_file_swapped_in_after_the_check_meets_a_bound_and_the_refusal_names_the_file(self):
+        """Ruling A's swap-after-the-lstat shape, at the memory limit (/dev/zero) and the time limit (a FIFO) (the
+        round's fresh-1): the loose origin/main file passes main_ref_checked and is then replaced, in one rename, by a
+        symlink to /dev/zero or a FIFO, before git opens it by name. git's read meets the memory limit, or the time
+        limit, and main_snapshot refuses naming the call, the limit, the file among those git may have met and as not a
+        regular file when it refused, and the remedy for the ref's own file. At the head before the fix the symlink was
+        read until the case's cap and refused as naming no commit (red on the text; its git held the whole cap), and the
+        FIFO's wait ended at the bound with the call named, not the file; with the limit set and the failure not read as
+        the limit's, the symlink is refused as naming no commit."""
+        cases = (("zero", "the %d MiB memory limit (GIT_MEMORY)" % (PIN_MEMORY >> 20), "ran out of memory and failed (",
+                  "GitMemory"),
+                 ("fifo", "the %d s time limit (GIT_BOUND)" % PIN_BOUND, "did not end within %d s and was killed" % PIN_BOUND,
+                  "GitBound"))
+        for kind, limit, what, cls in cases:
+            with self.subTest(kind=kind):
+                if kind == "zero" and not ZERO_CAPPED:
+                    self.skipTest(MEMORY_SKIP)
+                self.clear_plants()
+                self.g("update-ref", sweep.MAIN_REF, self.head)
+                out = self.drive(swap=kind)
+                refused = out.get("refused") or ""
+                self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s could not be read within %s: "
+                              "git show-ref --verify --hash refs/remotes/origin/main %s"
+                              % (self.repo.work_tree, limit, what), refused, out)
+                self.assertIn(", %s; of them, these are not regular files now (an lstat each after the call, so one can "
+                              "have changed since): %s (a %s, not a regular file). "
+                              % (self.ref_file(), self.ref_file(), "symlink" if kind == "zero" else "FIFO"), refused, out)
+                self.assertTrue(refused.endswith("; if it is the ref's own file, %s, remove it, since a fetch of origin "
+                                                 "writes the ref again; and sweep again" % self.ref_file()), out)
+                self.assertEqual(out.get("kind"), cls, out)
+                self.assert_held_little(out)
+
+    def test_a_linked_worktrees_origin_main_is_checked_in_its_common_dir(self):
+        """Ruling E's pin (the round's tests-2 and extra4-3): the batcher's usual shape is a linked worktree, whose git
+        dir is not its common dir, and origin/main's loose file is in the common dir. The not-a-regular-file subtests
+        above run again over a linked worktree of this repository: the refusal names <common
+        dir>/refs/remotes/origin/main, that path derived from the worktree's own .git file and its git dir's commondir
+        file (linked_dirs), never from the GitRepo under test. Red under main_ref_checked reading the git dir, where no
+        such file is: git then reads the symlink through and main_snapshot returns the commit it holds; the directory
+        goes by git's version, show-ref --exists failing it with exit 1 (Is a directory) before git 2.43.2, so
+        main_snapshot refuses it as naming no commit (red on the refusal's text), and from 2.43.2 reading it as absent
+        (exit 2), so main_snapshot returns None."""
+        wt = os.path.join(os.path.dirname(self.tree), "linked")
+        self.g("worktree", "add", "-q", "--detach", wt)
+        gitdir, common = linked_dirs(wt)
+        repo = sweep.find_repo(wt)
+        self.assertNotEqual(gitdir, common, "premise: the linked worktree's git dir is not its common dir")
+        self.assertNotEqual(os.path.realpath(repo.git_dir), os.path.realpath(repo.common_dir),
+                            "premise: find_repo reads a git dir that is not the common dir")
+        ref_file = os.path.join(common, "refs", "remotes", "origin", "main")
+        self.assertFalse(os.path.lexists(os.path.join(gitdir, "refs", "remotes", "origin", "main")),
+                         "premise: the git dir holds no origin/main of its own")
+        for kind, what in (("link", "a symlink"), ("dir", "a directory")):
+            with self.subTest(kind=kind):
+                if os.path.isdir(ref_file) and not os.path.islink(ref_file):
+                    shutil.rmtree(ref_file)
+                elif os.path.lexists(ref_file):
+                    os.remove(ref_file)
+                if kind == "link":
+                    self.write(ref_file + ".real", self.head + "\n")
+                    os.symlink(ref_file + ".real", ref_file)
+                else:
+                    os.makedirs(ref_file)
+                with self.assertRaises(sweep.Refused) as cm:
+                    sweep.main_snapshot(repo)
+                self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s cannot be read (%s: %s, not a "
+                              "regular file)" % (repo.work_tree, ref_file, what), str(cm.exception))
+
+    def test_a_swap_in_a_linked_worktree_names_the_common_dirs_file(self):
+        """The swap pin above, over a linked worktree of this repository (the batcher's usual shape): origin/main's loose
+        file in the common dir passes main_ref_checked and is then replaced by a symlink to /dev/zero or a FIFO, and
+        main_snapshot's bound refusal names <common dir>/refs/remotes/origin/main, that path derived from the worktree's
+        own files (linked_dirs), never from the GitRepo under test. Red under main_snapshot taking the file's path in the
+        git dir (round 1 of PR 959's build review, pins-5, its mutant M07b): no file is there, so the refusal named
+        packed-refs, and before packed-refs was named, <git dir>/refs/remotes/origin/main, under worktrees/<name>, a
+        file that does not exist."""
+        wt = os.path.join(os.path.dirname(self.tree), "linked-swap")
+        self.g("worktree", "add", "-q", "--detach", wt)
+        gitdir, common = linked_dirs(wt)
+        self.assertNotEqual(gitdir, common, "premise: the linked worktree's git dir is not its common dir")
+        self.tree, self.repo = wt, sweep.find_repo(wt)
+        loose = os.path.join(common, "refs", "remotes", "origin", "main")
+        cases = (("zero", "the %d MiB memory limit (GIT_MEMORY)" % (PIN_MEMORY >> 20), "ran out of memory and failed (",
+                  "GitMemory"),
+                 ("fifo", "the %d s time limit (GIT_BOUND)" % PIN_BOUND, "did not end within %d s and was killed" % PIN_BOUND,
+                  "GitBound"))
+        for kind, limit, what, cls in cases:
+            with self.subTest(kind=kind):
+                if kind == "zero" and not ZERO_CAPPED:
+                    self.skipTest(MEMORY_SKIP)
+                self.clear_plants()
+                self.g("update-ref", sweep.MAIN_REF, self.head)
+                self.assertTrue(os.path.isfile(loose) and not os.path.islink(loose),
+                                "premise: origin/main is a loose regular file in the common dir")
+                self.assertFalse(os.path.lexists(os.path.join(gitdir, "refs", "remotes", "origin", "main")),
+                                 "premise: the git dir holds no origin/main of its own")
+                out = self.drive(swap=kind)
+                self.assertIn("could not be read within %s: git show-ref --verify --hash refs/remotes/origin/main %s"
+                              % (limit, what), out.get("refused") or "", out)
+                self.assertIn("not regular files now (an lstat each after the call, so one can have changed since): %s (a "
+                              "%s, not a regular file). " % (loose, "symlink" if kind == "zero" else "FIFO"),
+                              out.get("refused") or "", out)
+                self.assertEqual(out.get("kind"), cls, out)
+                self.assert_held_little(out)
+
+    def test_a_fifo_at_the_alternates_file_is_named_beside_the_refs_file(self):
+        """Round 1's spot-check, S10: git reads <common dir>/objects/info/alternates with the ref, for the object the ref
+        names, and a FIFO a process puts there after main_ref_checked's check (MAIN_DRIVER's "alternates-fifo") holds
+        main_snapshot's read until the bound. The refusal names the call and the bound, the alternates file among the
+        files git may have met and as not a regular file when it refused, and the ref's loose file, which is regular,
+        not so. At the head before S10 it named the loose file alone, which git had read without fault (red on the
+        text)."""
+        self.clear_plants()
+        self.g("update-ref", sweep.MAIN_REF, self.head)
+        out = self.drive(swap="alternates-fifo")
+        refused = out.get("refused") or ""
+        alternates = os.path.realpath(os.path.join(self.tree, ".git", "objects", "info", "alternates"))
+        self.assertEqual(out.get("kind"), "GitBound", out)
+        self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s could not be read within the %d s "
+                      "time limit (GIT_BOUND): git " % (self.repo.work_tree, PIN_BOUND), refused, out)
+        self.assertIn(" did not end within %d s and was killed. git opens these files of the repository with the ref, or "
+                      "looks for them, and the one it met can be any of them: " % PIN_BOUND, refused, out)
+        self.assertIn("not regular files now (an lstat each after the call, so one can have changed since): %s (a FIFO, "
+                      "not a regular file). " % alternates, refused, out)
+        self.assertNotIn("%s (a" % self.ref_file(), refused, "the ref's loose file, a regular file, is not named as odd")
+
+    def test_a_fifo_at_the_shallow_file_or_the_config_is_named_and_the_regular_ref_file_is_not_to_be_removed(self):
+        """Round 1 of PR 959, V4: with origin/main's loose file regular, a process puts a FIFO, after main_ref_checked's
+        check, at the shallow file, which the peel's rev-parse reads to parse the commit, or at the config, which every
+        git call reads first, so show-ref --verify waits on it (MAIN_DRIVER's "shallow-fifo" and "config-fifo"). Each
+        call waits until the bound, and the refusal names the call, names the planted file among the files git may have
+        met and as not a regular file when it refused, does not name the ref's loose file as one, and does not tell you
+        to remove that file, which no read met. At the head before V4 both refusals named the ref's loose file as the
+        file git read the ref from and ended "remove the file, or what it leads to (a fetch of origin writes the ref
+        again), and sweep again" (red on the text)."""
+        config = os.path.join(self.repo.common_dir, "config")
+        with open(config, "rb") as f:
+            saved = f.read()
+        for swap, call in (("shallow-fifo", "rev-parse --verify --quiet %s^{commit}" % self.head),
+                           ("config-fifo", "show-ref --verify --hash refs/remotes/origin/main")):
+            with self.subTest(swap=swap):
+                self.clear_plants()
+                self.g("update-ref", sweep.MAIN_REF, self.head)
+                planted = os.path.join(self.repo.common_dir, *SWAP_FIFO_AT[swap].split("/"))
+                self.assertTrue(os.path.isfile(self.ref_file()) and not os.path.islink(self.ref_file()),
+                                "premise: origin/main is a loose regular file")
+                self.assertFalse(os.path.lexists(planted) and swap == "shallow-fifo", "premise: no shallow file")
+                try:
+                    out = self.drive(swap=swap)
+                finally:
+                    if os.path.lexists(planted) and not os.path.isfile(planted):
+                        os.remove(planted)
+                    if swap == "config-fifo":
+                        with open(config, "wb") as f:
+                            f.write(saved)
+                refused = out.get("refused") or ""
+                self.assertEqual(out.get("kind"), "GitBound", out)
+                self.assertNotIn("remove the file, or what it leads to", refused, out)
+                self.assertIn("not regular files now (an lstat each after the call, so one can have changed since): %s (a "
+                              "FIFO, not a regular file). " % os.path.realpath(planted), refused, out)
+                self.assertNotIn("%s (a" % self.ref_file(), refused, "the regular ref file is not named as odd")
+                self.assertIn("could not be read within the %d s time limit (GIT_BOUND): git %s did not end within %d s "
+                              "and was killed. " % (PIN_BOUND, call, PIN_BOUND), refused, out)
+
+    def test_a_packed_origin_main_whose_packed_refs_git_cannot_read_is_refused_naming_packed_refs(self):
+        """With origin/main packed (git pack-refs, as git gc runs it) and no loose file, git reads the ref from
+        <common dir>/packed-refs, so a leg that reaches the batcher's repository through its clone's alternates can leave
+        that file in a shape git waits on or reads without end. main_ref_checked refuses a packed-refs that is not a
+        regular file, a FIFO or a symlink to /dev/zero, naming it and its type, before any git reads it (its type only:
+        a real packed-refs can be large). A sparse regular one larger than PIN_MEMORY passes that check, and
+        show-ref --verify's read of it meets the memory limit: git's mmap of it fails ("Cannot allocate memory"), and
+        main_snapshot refuses naming packed-refs, the limit and a remedy for that file, never the loose file, which is
+        not there. The expected paths are derived from the repository's own .git, never from the GitRepo under test. At
+        the head before the fix the FIFO's wait ended at the bound, and the sparse file met the memory limit, each
+        refused naming the absent loose file and telling the user to remove it, and the symlink to /dev/zero read as no
+        packed refs at all, so main_snapshot returned None: every checkout would have held no origin/main. A symlink to
+        a regular file holding the packed refs is refused by its type too, as a symlinked loose ref file is (round 1's
+        spot-check, S7, which disclosed it): at the head of PR 959 before round 1, git read through it and main_snapshot
+        returned the commit."""
+        packed = os.path.realpath(os.path.join(self.tree, ".git", "packed-refs"))
+        loose = os.path.realpath(os.path.join(self.tree, ".git", "refs", "remotes", "origin", "main"))
+        for kind in ("fifo", "zero", "link", "sparse"):
+            with self.subTest(kind=kind):
+                if kind != "fifo" and not ZERO_CAPPED:
+                    self.skipTest(MEMORY_SKIP)
+                self.clear_plants()
+                if os.path.lexists(packed):
+                    os.remove(packed)
+                self.g("update-ref", "HEAD", self.head)     # HEAD's branch again, which the removal dropped
+                self.g("update-ref", sweep.MAIN_REF, self.head)
+                self.g("pack-refs", "--all")
+                self.assertFalse(os.path.lexists(loose), "premise: origin/main has no loose file")
+                with open(packed) as f:
+                    self.assertIn("%s refs/remotes/origin/main\n" % self.head, f.read(), "premise: packed-refs holds it")
+                if kind == "sparse":
+                    os.truncate(packed, SPARSE_SIZE)
+                elif kind == "link":
+                    os.replace(packed, packed + ".real")
+                    os.symlink(packed + ".real", packed)
+                else:
+                    os.remove(packed)
+                    os.mkfifo(packed) if kind == "fifo" else os.symlink("/dev/zero", packed)
+                out = self.drive()
+                refused = out.get("refused") or ""
+                if kind == "sparse":
+                    self.assertEqual(out.get("kind"), "GitMemory", out)
+                    self.assertIn("the batcher's refs/remotes/origin/main in the repository at %s could not be read within "
+                                  "the %d MiB memory limit (GIT_MEMORY): git show-ref --verify --hash "
+                                  "refs/remotes/origin/main ran out of memory and failed ("
+                                  % (self.repo.work_tree, PIN_MEMORY >> 20), refused, out)
+                    self.assertIn("Cannot allocate memory", refused, "premise: the failure is git's mmap of the file")
+                    self.assertIn(", %s. Find the one that is not a regular file" % packed, refused,
+                                  "packed-refs is named last among the files git may have met, the file it read the ref from")
+                    self.assertTrue(refused.endswith("; if it is packed-refs, %s, repair it rather than remove it, since it "
+                                                     "holds every packed ref of the repository, branches and tags too (a "
+                                                     "fetch of origin writes origin/main again); and sweep again" % packed),
+                                    out)
+                else:
+                    self.assertEqual(out.get("kind"), "Refused", out)
+                    self.assertIn("the batcher's packed refs in the repository at %s cannot be read (%s: %s, not a regular "
+                                  "file)" % (self.repo.work_tree, packed, "a FIFO" if kind == "fifo" else "a symlink"),
+                                  refused, out)
+                if kind == "link" and os.path.lexists(packed + ".real"):
+                    os.remove(packed + ".real")
+                self.assertNotIn(loose, refused, "the loose file, which is not there, is not named")
+                self.assert_held_little(out)
+
+
+# Runs run_git (scripts/sweep.py at argv[1]) once over the directory argv[2], its GIT_MEMORY at argv[3] bytes when the
+# runner has one, with the rest of argv as git's arguments, and prints JSON: its exit status and its stdout's and stderr's
+# bytes as text ("rc", "out", "err"), or the class and text of what it raised ("raised", "text"), and "maxrss", the
+# largest resident size in bytes of the git it started.
+RUN_GIT_DRIVER = r"""
+import importlib.util, json, os, resource, sys
+spec = importlib.util.spec_from_file_location("sweep_run_git", sys.argv[1])
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+where, memory, args = sys.argv[2], int(sys.argv[3]), sys.argv[4:]
+if hasattr(sweep, "GIT_MEMORY") and memory:
+    sweep.GIT_MEMORY = memory
+out = {}
+try:
+    repo = (sweep.find_repo(where) if os.environ.get("RUN_GIT_FIND")
+            else sweep.GitRepo(where, None, None, os.path.dirname(where)))
+    p = sweep.run_git(repo, *args, text=False)
+    out.update(rc=p.returncode, out=p.stdout.decode("utf-8", "replace"), err=p.stderr.decode("utf-8", "replace"))
+except Exception as e:
+    out.update(raised=type(e).__name__, bound=isinstance(e, sweep.GitBound), text=str(e))
+out["maxrss"] = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024
+print(json.dumps(out))
+"""
+
+
+class MemoryBound(unittest.TestCase):
+    """Round 1 of PR 959, ruling A, at run_git: every git call the runner makes through run_git has a memory limit,
+    GIT_MEMORY, set by the shell that execs it, and one that fails at it raises GitMemory, naming the call, the limit and
+    the remedy; the figure and the runner's own lower limit (git_memory_limit); git's arguments reach it unchanged
+    through the shell; a shell that cannot set the limit starts no git. The cases that run git under the limit run on
+    Linux, where RLIMIT_AS binds."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sweepmem-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+                        GIT_AUTHOR_NAME="romp tests", GIT_AUTHOR_EMAIL="tests@example.invalid",
+                        GIT_COMMITTER_NAME="romp tests", GIT_COMMITTER_EMAIL="tests@example.invalid")
+
+    def drive(self, where, memory, *args, cap=MEMORY_PIN_CAP, env=None):
+        """RUN_GIT_DRIVER in a child of its own session under CAP_SHIM at `cap`, with 120 s to end: its JSON."""
+        proc = subprocess.Popen([sys.executable, "-c", CAP_SHIM, str(cap), sys.executable, "-c", RUN_GIT_DRIVER, str(SWEEP),
+                                 where, str(memory), *args], env=env or self.env, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and kill_tree(proc.pid))
+        try:
+            out, err = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc.pid)
+            out, err = proc.communicate()
+            self.fail("run_git was still running after 120 s:\n%s%s" % (out, err))
+        self.assertEqual(proc.returncode, 0, out + err)
+        return json.loads(out.splitlines()[-1])
+
+    def test_the_limit_is_the_figure_or_a_lower_one_the_runner_has_and_none_off_linux(self):
+        """git_memory_limit: GIT_MEMORY, the figure its comment measures (1 GiB), or the runner's own soft or hard
+        RLIMIT_AS where either is lower, since a git inherits the runner's limit and run_git never raises it; off Linux
+        none, with the reason each run records."""
+        self.assertEqual(sweep.GIT_MEMORY, 1 << 30, "the figure GIT_MEMORY's comment states")
+        inf = resource.RLIM_INFINITY
+        for (soft, hard), want in (((inf, inf), 1 << 30), ((512 << 20, inf), 512 << 20), ((inf, 768 << 20), 768 << 20),
+                                   ((256 << 20, 768 << 20), 256 << 20), ((2 << 30, 4 << 30), 1 << 30)):
+            with self.subTest(soft=soft, hard=hard):
+                with unittest.mock.patch.object(sweep.resource, "getrlimit", return_value=(soft, hard)):
+                    self.assertEqual(sweep.git_memory_limit(platform="linux"), (want, None))
+        limit, why = sweep.git_memory_limit(platform="darwin")
+        self.assertIsNone(limit)
+        self.assertIn("the runner runs on darwin, and only Linux enforces RLIMIT_AS, so no git it starts has a memory limit",
+                      why)
+
+    def test_the_figure_is_what_run_git_sets_by_default_and_git_gets_its_arguments_unchanged(self):
+        """run_git, under a runner whose own limit (ADDRESS_CAP, 4 GiB) is above the figure, starts git with its soft and
+        hard RLIMIT_AS at GIT_MEMORY's default, 1 GiB, through the shell that execs it, which hands git every argument as
+        given: spaces, quotes, a dollar sign, a semicolon and an empty one. A git first on PATH writes its arguments,
+        each followed by a NUL, and the limit /proc gives it."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("run_git sets the limit on Linux alone (git_memory_limit)")
+        d = os.path.join(self.tmp, "bin")
+        os.makedirs(d)
+        with open(os.path.join(d, "git"), "w") as f:
+            f.write("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\0' \"$a\"; done\n"
+                    "grep '^Max address space' /proc/$$/limits >&2\n")
+        os.chmod(os.path.join(d, "git"), 0o755)
+        args = ["a b", "$HOME", "'quoted'", "--x=1;2", "", "-c", 'core.x="y"', "last"]
+        out = self.drive(self.tmp, 0, *args, cap=ADDRESS_CAP, env=dict(self.env, PATH=d + os.pathsep + self.env["PATH"]))
+        self.assertEqual(out.get("rc"), 0, out)
+        self.assertEqual(out["out"].split("\0")[:-1], args, "git's arguments, as given")
+        self.assertEqual(out["err"].split()[3:5], [str(1 << 30)] * 2, "git's soft and hard limit: the figure")
+
+    def test_the_runners_git_reads_the_index_on_one_thread_whatever_the_repository_says(self):
+        """index.threads=false in the runner's neutral git outranks the batcher's repository config, so the notice's git
+        status reads the index on one thread: with index.threads set and 20,000 entries or more, git status starts
+        threads to read it, and at the memory limit a thread that cannot start fails git status with EAGAIN ("unable to
+        create load_cache_entries thread"), which is not GitMemory's text, so the notice was dropped and the need varied
+        from run to run. The value run_git's git reads is the guard, over a boolean and a count in the repository's
+        config. The index write shows it in behaviour, for the boolean: git status, refreshing a file whose stat changed,
+        writes the index back, and records the end-of-index-entries extension (EOIE) where index.threads is true (git
+        writes it for a boolean true only, not for a count). Before the setting, the repository's own value was read and
+        the extension was written."""
+        w = os.path.join(self.tmp, "repo")
+        os.makedirs(w)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", w, *args], env=self.env, check=True, stdout=subprocess.PIPE,
+                                  text=True).stdout
+        git("init", "-q", ".")
+        with open(os.path.join(w, "f"), "w") as f:
+            f.write("f\n")
+        git("add", "f")
+        git("commit", "-qm", "f")
+        repo = sweep.find_repo(w)
+        for value in ("8", "true"):
+            with self.subTest(index_threads=value):
+                git("config", "index.threads", value)
+                self.assertEqual(git("config", "--type=bool-or-int", "index.threads").strip(), value,
+                                 "premise: the repository's own git reads the index on threads")
+                self.assertEqual(sweep.run_git(repo, "config", "--type=bool-or-int", "index.threads").stdout.strip(),
+                                 "false", "the runner's git read the batcher's index.threads")
+        index = os.path.join(w, ".git", "index")
+        git("-c", "index.threads=false", "update-index", "--force-write-index")
+        with open(index, "rb") as f:
+            self.assertFalse(b"EOIE" in f.read(), "premise: the index holds no EOIE before the notice")
+        t = time.time() - 100
+        os.utime(os.path.join(w, "f"), (t, t))
+        self.assertEqual(sweep.uncommitted_count(repo), 0)
+        with open(index, "rb") as f:
+            self.assertFalse(b"EOIE" in f.read(), "the runner's git status wrote the index as one read on threads")
+
+    def test_a_shell_that_cannot_set_the_limit_starts_no_git_and_is_refused_by_name(self):
+        """A shell whose ulimit -v fails (here, handed a value it cannot read) runs no git: run_git refuses, naming the call
+        and LIMIT_FAILED, rather than start the git without the limit. A git first on PATH would leave a file if run."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("run_git sets the limit on Linux alone (git_memory_limit)")
+        d = os.path.join(self.tmp, "bin")
+        os.makedirs(d)
+        ran = os.path.join(self.tmp, "git-ran")
+        with open(os.path.join(d, "git"), "w") as f:
+            f.write("#!/bin/sh\n: > '%s'\n" % ran)
+        os.chmod(os.path.join(d, "git"), 0o755)
+        broken = sweep._LIMITED.replace("ulimit -v %d", "ulimit -v x%d")
+        self.assertNotEqual(broken, sweep._LIMITED, "premise: the shell's ulimit is the planted text")
+        with unittest.mock.patch.object(sweep, "_LIMITED", broken), \
+                unittest.mock.patch.dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"]):
+            with self.assertRaises(sweep.Refused) as cm:
+                sweep.run_git(sweep.GitRepo(self.tmp, None, None, os.path.dirname(self.tmp)), "status")
+        self.assertIn("git status in %s did not run: %s, so the runner did not start it without one"
+                      % (self.tmp, sweep.LIMIT_FAILED), str(cm.exception))
+        self.assertFalse(os.path.exists(ran), "no git ran")
+
+    def test_a_git_that_reads_without_end_fails_at_the_limit_and_raises_git_memory_naming_the_call(self):
+        """A rev-parse HEAD whose branch's loose ref file is a symlink to /dev/zero, planted after the case's own git
+        calls: at PIN_MEMORY it fails within the limit, and run_git raises GitMemory, a GitBound, naming the call, the
+        directory, the limit and the remedy, with git's own words. Red under a run_git that sets no limit (the git reads
+        until the case's cap, and its failure is returned as an exit status) and under one that sets it but does not read
+        the failure as the limit's (an exit status of 128)."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        tree = os.path.join(self.tmp, "tree")
+        for args in (["init", "-q", tree], ["-C", tree, "commit", "-q", "--allow-empty", "-m", "c1"]):
+            subprocess.run(["git", *args], env=self.env, check=True, stdout=subprocess.DEVNULL)
+        ref = subprocess.run(["git", "-C", tree, "symbolic-ref", "HEAD"], env=self.env, check=True, text=True,
+                             stdout=subprocess.PIPE).stdout.strip()
+        branch = os.path.join(tree, ".git", *ref.split("/"))
+        os.remove(branch)
+        os.symlink("/dev/zero", branch)
+        out = self.drive(tree, PIN_MEMORY, "rev-parse", "HEAD")
+        self.assertEqual((out.get("raised"), out.get("bound")), ("GitMemory", True), out)
+        self.assertTrue(out["text"].startswith("git rev-parse HEAD in %s reached the %d MiB memory limit (GIT_MEMORY) the "
+                                               "runner sets on each git call into a repository and failed (fatal: Out of "
+                                               "memory, " % (tree, PIN_MEMORY >> 20)), out)
+        self.assertTrue(out["text"].endswith("); remove what it read without end there (a symlink to /dev/zero, an "
+                                             "oversized file or a symbolic ref leading to one, where git reads a ref, "
+                                             "packed-refs, the index, a config file, objects/info/alternates or the "
+                                             "shallow file) and sweep again"), out)
+        self.assertLessEqual(out["maxrss"], PIN_MEMORY, "the git held no more than the limit set on it: %s" % out)
+
+    # What git prints when an allocation fails at the limit, by the format strings in git 2.43.0's binary (its
+    # allocation wrappers, its zlib calls, its mmap) and the C library's and the loader's words for ENOMEM, each with
+    # the exit status git or the shell ends with then (128, git's die; 127, the shell's when the loader cannot map git;
+    # the shell's exec puts git in its place, so a git a signal kills reads as one), each of which run_git must read as
+    # the limit's. The index's text, anchored to the index of the repository the call names, is pinned with a real index
+    # (test_an_index_git_cannot_map_at_the_limit_raises_git_memory_naming_its_line).
+    OUT_OF_MEMORY_TEXTS = (
+        ("fatal: Out of memory, malloc failed (tried to allocate 1 bytes)", 128),
+        ("fatal: Out of memory, calloc failed", 128),
+        ("fatal: Out of memory, realloc failed", 128),
+        ("fatal: Out of memory, strdup failed", 128),
+        ("fatal: Out of memory, getdelim failed", 128),
+        ("fatal: Out of memory? fdopen failed: Cannot allocate memory", 128),
+        ("fatal: inflateInit: out of memory (no message)", 128),
+        ("fatal: inflate: out of memory", 128),
+        ("fatal: deflateInit2: out of memory (no message)", 128),
+        ("error: inflate: out of memory (no message)\nfatal: loose object 1111111111111111111111111111111111111111 "
+         "(stored in .git/objects/11/11) is corrupt", 128),
+        ("fatal: mmap failed, check sys.vm.max_map_count and/or RLIMIT_DATA: Cannot allocate memory", 128),
+        ("git: error while loading shared libraries: libz.so.1: failed to map segment from shared object", 127),
+        ("fatal: Out of memory, realloc failed", "KILL"),
+    )
+    # And what is not the limit's: a git that did not die (a warning, or the same words, from a git that exited 0 or 1);
+    # a line git writes that quotes a path a leg chose, which can hold those words (round 1 of PR 959's spot-check, S6:
+    # a .gitignore at "Out of memory/.gitignore" that git cannot open); what git prints when a path or a config value it
+    # quotes holds a newline, so that a later line, or the end of the first, is a leg's text (round 1 of PR 959, V2: the
+    # texts test_leg_text_after_a_newline_in_what_git_quotes_is_not_the_memory_limit_for_the_runners_real_git has the
+    # runner's own git print); the index's text naming no index of the call's repository (this case's call names none);
+    # and, what the first-line rule gives up, a memory line after another line. Each is returned as git's exit status.
+    NOT_OUT_OF_MEMORY_TEXTS = (
+        ("fatal: not a git repository (or any of the parent directories): .git", 128),
+        ("fatal: Out of memory, realloc failed", 1),
+        ("warning: unable to access 'Out of memory/.gitignore': Too many levels of symbolic links", 1),
+        ("warning: unable to access 'Out of memory/.gitignore': Too many levels of symbolic links", 128),
+        ("fatal: pathspec 'Out of memory/x' is beyond a symbolic link", 128),
+        ("fatal: pathspec 'x: Cannot allocate memory/y' is beyond a symbolic link", 128),
+        ("hint: Out of memory, realloc failed", 128),
+        ("fatal: pathspec 'L/x\nfatal: Out of memory, malloc failed (tried to allocate 1 bytes)\ny' is beyond a "
+         "symbolic link", 128),
+        ("fatal: bad numeric config value 'x: Out of memory\nmore' for 'core.compression' in file .git/config: "
+         "invalid unit", 128),
+        ("fatal: bad numeric config value 'x: Cannot allocate memory\nmore' for 'core.compression' in file "
+         ".git/config: invalid unit", 128),
+        ("fatal: bad numeric config value 'x': Out of memory\nmore' for 'core.compression' in file .git/config: "
+         "invalid unit", 128),
+        ("fatal: bad numeric config value 'x\nfatal: Out of memory, realloc failed\nmore' for 'core.compression' in "
+         "file .git/config: invalid unit", 128),
+        ("fatal: /elsewhere/.git/index: unable to map index file, check sys.vm.max_map_count and/or RLIMIT_DATA: "
+         "Cannot allocate memory", 128),
+        ("warning: a line git wrote first\nfatal: Out of memory, realloc failed", 128),
+    )
+
+    def test_each_text_git_prints_at_the_limit_raises_git_memory_and_another_failure_does_not(self):
+        """Each text in OUT_OF_MEMORY_TEXTS, printed by a git that then ends as it says (an exit status, or a signal),
+        makes run_git raise GitMemory naming the line, and each in NOT_OUT_OF_MEMORY_TEXTS is returned as git's exit
+        status. A git first on PATH prints the text a file holds and ends so. A planted read of a loose ref prints only
+        the realloc text, and a planted packed-refs only the mmap text (MainSnapshot's packed-refs pin), so the other
+        texts are pinned here by name: a classifier that dropped one, or matched one wrapper's words alone, passed every
+        planted read. The texts that are not the limit's were GitMemory before round 1 of PR 959's spot-check, S6, when
+        any failure whose stderr held the words anywhere was read as the limit's."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("run_git sets the limit on Linux alone (git_memory_limit)")
+        d = os.path.join(self.tmp, "bin")
+        os.makedirs(d)
+        said, ends = os.path.join(self.tmp, "said"), os.path.join(self.tmp, "ends")
+        with open(os.path.join(d, "git"), "w") as f:
+            f.write('#!/bin/sh\ncat "$SHIM_GIT_SAYS" >&2\nend=$(cat "$SHIM_GIT_ENDS")\n'
+                    'case $end in KILL) kill -KILL $$;; esac\nexit $end\n')
+        os.chmod(os.path.join(d, "git"), 0o755)
+        env = dict(self.env, PATH=d + os.pathsep + self.env["PATH"], SHIM_GIT_SAYS=said, SHIM_GIT_ENDS=ends)
+        for (text, end), limit in [(t, True) for t in self.OUT_OF_MEMORY_TEXTS] + \
+                                  [(t, False) for t in self.NOT_OUT_OF_MEMORY_TEXTS]:
+            with self.subTest(text=text, end=end):
+                with open(said, "w") as f:
+                    f.write(text + "\n")
+                with open(ends, "w") as f:
+                    f.write("%s\n" % end)
+                out = self.drive(self.tmp, PIN_MEMORY, "status", env=env)
+                if limit:
+                    self.assertEqual(out.get("raised"), "GitMemory", out)
+                    line = next(x for x in text.splitlines() if "memory" in x or "map segment" in x)
+                    self.assertIn("(%s)" % line, out["text"], out)
+                else:
+                    self.assertEqual((out.get("raised"), out.get("rc")), (None, end), out)
+
+    def test_a_path_a_leg_names_out_of_memory_is_not_the_memory_limit_for_the_runners_real_git(self):
+        """Round 1 of PR 959's spot-check, S6, with the runner's own git and the re-read's call: a leg leaves a directory
+        named "Out of memory" whose .gitignore is a symlink to itself, and git check-ignore, asked about a file there that
+        no rule ignores, warns that it cannot open that .gitignore, naming the path, and exits 1. tracked_ignored reads
+        that as no file ignored, so the leg's file counts as untracked. And a path under a directory a leg swapped for a
+        symlink after the runner's walk ("Out of memory", to a directory) makes git check-ignore die (128) with a fatal
+        line naming the path; run_git returns that failure, which tracked_ignored reports as git's error. Before S6,
+        run_git read both as GitMemory, so the run's invalid mark named the memory limit for a git that met none."""
+        w = os.path.join(self.tmp, "repo")
+        os.makedirs(w)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", w, *args], env=self.env, check=True, stdout=subprocess.PIPE,
+                                  text=True).stdout
+        git("init", "-q", ".")
+        with open(os.path.join(w, ".gitignore"), "w") as f:
+            f.write("*.o\n")
+        git("add", ".gitignore")
+        git("commit", "-qm", "c")
+        entries = sweep.tree_entries(w, git("rev-parse", "HEAD").strip())
+        loop = os.path.join(w, "Out of memory")
+        os.makedirs(loop)
+        os.symlink(".gitignore", os.path.join(loop, ".gitignore"))
+        with open(os.path.join(loop, "y"), "w") as f:
+            f.write("a leg's file\n")
+        plain = subprocess.run(["git", "-C", w, "check-ignore", "-v", "-z", "--no-index", "--stdin"], env=self.env,
+                               input=b"Out of memory/y\0", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(plain.returncode, 1, "premise: check-ignore ignores nothing here and exits 1: %r" % (plain,))
+        self.assertIn(b"unable to access 'Out of memory/.gitignore'", plain.stderr, "premise: git's warning names the path")
+        self.assertEqual(sweep.tracked_ignored(w, entries, [b"Out of memory/y"]), (set(), None))
+        os.remove(os.path.join(loop, ".gitignore"))
+        os.remove(os.path.join(loop, "y"))
+        os.rmdir(loop)
+        os.makedirs(os.path.join(w, "real"))
+        os.symlink("real", loop)
+        p = sweep.run_git(sweep.checkout_repo(w), "check-ignore", "-v", "-z", "--no-index", "--stdin",
+                          input=b"Out of memory/x\0", text=False)
+        self.assertEqual((p.returncode, p.stderr.strip()),
+                         (128, b"fatal: pathspec 'Out of memory/x' is beyond a symbolic link"))
+        ignored, err = sweep.tracked_ignored(w, entries, [b"Out of memory/x"])
+        self.assertIsNone(ignored)
+        self.assertEqual(err, "fatal: pathspec 'Out of memory/x' is beyond a symbolic link")
+
+    def test_leg_text_after_a_newline_in_what_git_quotes_is_not_the_memory_limit_for_the_runners_real_git(self):
+        """Round 1 of PR 959, V2, with the runner's own git: git quotes a path or a config value in its fatal line, and
+        a newline there ends git's line, so what follows it is a leg's text, at the start of the next line or at the end
+        of the first. A path under a directory a leg swapped for a symlink, named "L/x", a newline, git's whole
+        out-of-memory line and another newline, makes git check-ignore die (128) with that line as its second; and a
+        config value with an escaped newline in the repository's own .git/config, which a leg can write through its
+        clone's alternates, makes every git there die (128) with a first line that ends with ": Out of memory" or ":
+        Cannot allocate memory" after the value's opening quote, or after a quote of the leg's own, or with git's whole
+        out-of-memory line as its second. run_git returns each as a plain failure, and find_repo's discovery refuses
+        each as a repository git does not recognize, naming git's words; neither raises GitMemory, whose remedy tells
+        you to remove a symlink to /dev/zero. Before V2 every one was GitMemory: a line that started with "fatal: Out of
+        memory, ", or with "fatal: " and ended with those words, anywhere in what git printed, was the limit's."""
+        w = os.path.join(self.tmp, "repo")
+        subprocess.run(["git", "init", "-q", w], env=self.env, check=True)
+        os.makedirs(os.path.join(w, "real"))
+        os.symlink("real", os.path.join(w, "L"))
+        leg = b"fatal: Out of memory, malloc failed (tried to allocate 1 bytes)"
+        p = sweep.run_git(sweep.checkout_repo(w), "check-ignore", "-v", "-z", "--no-index", "--stdin",
+                          input=b"L/x\n" + leg + b"\ny\0", text=False)
+        self.assertEqual((p.returncode, p.stderr.splitlines()),
+                         (128, [b"fatal: pathspec 'L/x", leg, b"y' is beyond a symbolic link"]),
+                         "git check-ignore's failure, returned as git's, with the leg's line as its second")
+        config = os.path.join(w, ".git", "config")
+        with open(config) as f:
+            plain = f.read()
+        value_said = "fatal: bad numeric config value '"
+        for value, lines in ((r"x: Out of memory\nmore", [value_said + "x: Out of memory", "more' for"]),
+                             (r"x: Cannot allocate memory\nmore",
+                              [value_said + "x: Cannot allocate memory", "more' for"]),
+                             (r"x': Out of memory\nmore", [value_said + "x': Out of memory", "more' for"]),
+                             (r"x\nfatal: Out of memory, realloc failed\nmore",
+                              [value_said + "x", "fatal: Out of memory, realloc failed", "more' for"])):
+            with self.subTest(value=value):
+                with open(config, "w") as f:
+                    f.write(plain + '[core]\n\tcompression = "%s"\n' % value)
+                p = sweep.run_git(sweep.checkout_repo(w), "status")
+                said = p.stderr.splitlines()
+                self.assertEqual(p.returncode, 128, p)
+                self.assertEqual(said[:len(lines) - 1], lines[:-1], p.stderr)
+                self.assertTrue(said[len(lines) - 1].startswith(lines[-1]), p.stderr)
+                with self.assertRaises(sweep.Refused) as cm:
+                    sweep.find_repo(w)
+                self.assertNotIsInstance(cm.exception, sweep.GitBound)
+                self.assertIn("is not a git working tree that git recognizes (%s" % lines[0], str(cm.exception))
+
+    def test_an_index_git_cannot_map_at_the_limit_raises_git_memory_naming_its_line(self):
+        """INDEX_OUT_OF_MEMORY, the one template anchored to a path, the index of the repository the call names: an
+        index of INDEX_SPARSE bytes, sparse (truncate writes no byte of it), which git maps whole, makes git status die
+        at PIN_MEMORY with "<index>: unable to map index file, check sys.vm.max_map_count and/or RLIMIT_DATA: Cannot
+        allocate memory", and run_git, in the repository find_repo finds, raises GitMemory naming that line. Red when
+        the template is dropped (the line is then returned as a plain failure); the same words naming another index are
+        not the limit's (NOT_OUT_OF_MEMORY_TEXTS)."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        tree = os.path.realpath(os.path.join(self.tmp, "tree"))
+        for args in (["init", "-q", tree], ["-C", tree, "commit", "-q", "--allow-empty", "-m", "c1"]):
+            subprocess.run(["git", *args], env=self.env, check=True, stdout=subprocess.DEVNULL)
+        index = os.path.join(tree, ".git", "index")
+        with open(index, "wb") as f:
+            f.write(b"DIRC\0\0\0\2\0\0\0\0")
+            f.truncate(INDEX_SPARSE)
+        out = self.drive(tree, PIN_MEMORY, "status", "--porcelain", env=dict(self.env, RUN_GIT_FIND="1"))
+        line = ("fatal: %s: unable to map index file, check sys.vm.max_map_count and/or RLIMIT_DATA: Cannot allocate "
+                "memory" % index)
+        self.assertEqual(out.get("raised"), "GitMemory", out)
+        self.assertIn("failed (%s); remove what it read without end there" % line, out["text"], out)
+
+
+# Runs run_git (scripts/sweep.py at argv[1]) in the directory argv[2] with the arguments after argv[4], its GIT_BOUND at
+# argv[3] seconds, the stop signals' handlers installed (install_stop_signals, as main installs them for every command)
+# and, when OUTPUT_DRIVER_INPUT names a file, that file's bytes as git's input. It prints JSON: the exit status, and the
+# lengths of what run_git returned of stdout and stderr ("rc", "out", "err"), or the exception's class and text
+# ("raised", "text"), with "bound" true for a GitBound and "ended_git" for a Stopped whose git run_git ended.
+OUTPUT_DRIVER = r"""
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("sweep_output", sys.argv[1])
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+where, bound, args = sys.argv[2], float(sys.argv[3]), sys.argv[4:]
+sweep.GIT_BOUND = bound
+sweep.install_stop_signals()
+given = os.environ.get("OUTPUT_DRIVER_INPUT")
+data = None
+if given:
+    with open(given, "rb") as f:
+        data = f.read()
+out = {}
+try:
+    p = sweep.run_git(sweep.GitRepo(where, None, None, os.path.dirname(where)), *args, input=data, text=False)
+    out.update(rc=p.returncode, out=len(p.stdout), err=len(p.stderr))
+except BaseException as e:
+    out.update(raised=type(e).__name__, bound=isinstance(e, sweep.GitBound), text=str(e),
+               ended_git=getattr(e, "ended_git", None))
+print(json.dumps(out))
+"""
+
+
+# GIT_OUTPUT_MAX as the pins state it, its comment's figure; OutputBound's first case holds the constant to it, after the
+# behaviour it pins.
+OUTPUT_LIMIT = 64 << 20
+
+
+class OutputBound(unittest.TestCase):
+    """The 16:04Z ruling on PR 959 (ruling A's class: leg-controlled data held in the runner's memory): run_git reads a
+    git's stdout and stderr through one selector loop, with no thread, at most GIT_OUTPUT_MAX bytes of each, writing
+    its input through the same loop, with GIT_BOUND's deadline kept there; a git that prints past the limit is ended with
+    its process group, as at the bound, and refused by name (GitOutput, a GitBound), giving the call, the stream and the
+    limit. Before it, run_git read the whole of each stream with communicate. The cases run git, or a git first on PATH,
+    in a child of their own session under CAP_SHIM at MEMORY_PIN_CAP, so a run_git that held all of an output without
+    end stops at the cap."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sweepout-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+                        GIT_AUTHOR_NAME="romp tests", GIT_AUTHOR_EMAIL="tests@example.invalid",
+                        GIT_COMMITTER_NAME="romp tests", GIT_COMMITTER_EMAIL="tests@example.invalid")
+
+    def shim(self, body):
+        """An env with a git first on PATH that runs `body` (sh), and the directory it is in."""
+        d = os.path.join(self.tmp, "bin")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "git"), "w") as f:
+            f.write("#!/bin/sh\n" + body)
+        os.chmod(os.path.join(d, "git"), 0o755)
+        return dict(self.env, PATH=d + os.pathsep + self.env["PATH"])
+
+    def start(self, bound, *args, env=None, given=None, where=None):
+        """OUTPUT_DRIVER in a child of its own session under CAP_SHIM at MEMORY_PIN_CAP, run_git in `where` (default: the
+        case's directory): the process."""
+        env = dict(env or self.env)
+        if given is not None:
+            env["OUTPUT_DRIVER_INPUT"] = given
+        proc = subprocess.Popen([sys.executable, "-c", CAP_SHIM, str(MEMORY_PIN_CAP), sys.executable, "-c", OUTPUT_DRIVER,
+                                 str(SWEEP), where or self.tmp, str(bound), *args], env=env, text=True,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and kill_tree(proc.pid))
+        return proc
+
+    def finish(self, proc, watchdog=120):
+        try:
+            out, err = proc.communicate(timeout=watchdog)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc.pid)
+            out, err = proc.communicate()
+            self.fail("run_git was still running after %d s:\n%s%s" % (watchdog, out, err))
+        self.assertEqual(proc.returncode, 0, out + err)
+        return json.loads(out.splitlines()[-1])
+
+    def test_a_git_that_prints_without_end_is_refused_by_name_within_its_bound_and_ended(self):
+        """A git first on PATH that writes its pid to a file and then prints zero bytes without end, on its stdout or on
+        its stderr: run_git ends it with its process group and raises GitOutput, a GitBound, naming the call, the
+        directory, the stream and GIT_OUTPUT_MAX, well within the case's GIT_BOUND of 60 s, and the git is gone. Red at
+        the head before the ruling, where communicate held all of it: at the case's cap, a MemoryError (or, on
+        free-threaded 3.14, whose interpreter takes more of the cap, the same), never the refusal."""
+        if not ZERO_CAPPED:
+            self.skipTest(MEMORY_SKIP)
+        pid = os.path.join(self.tmp, "git.pid")
+        for stream, redirect in (("stdout", ""), ("stderr", " >&2")):
+            with self.subTest(stream=stream):
+                env = self.shim('echo $$ > "%s"\nexec cat /dev/zero%s\n' % (pid, redirect))
+                t0 = time.monotonic()
+                got = self.finish(self.start(60, "status", env=env))
+                took = time.monotonic() - t0
+                self.assertEqual((got.get("raised"), got.get("bound")), ("GitOutput", True), got)
+                self.assertEqual(got["text"], "git status in %s printed more than 64 MiB on its %s, the most the runner "
+                                              "reads of one git call (GIT_OUTPUT_MAX), and was killed; remove what made it "
+                                              "print so much there (files a leg left where the call reads, or an object it "
+                                              "rewrote) and sweep again" % (self.tmp, stream))
+                self.assertLess(took, 60, "refused at the limit, not at the bound")
+                with open(pid) as f:
+                    self.assertFalse(_alive(int(f.read())), "the git that printed is gone")
+        self.assertEqual(getattr(sweep, "GIT_OUTPUT_MAX", None), OUTPUT_LIMIT, "the figure GIT_OUTPUT_MAX's comment states")
+
+    def test_an_output_of_exactly_the_limit_is_returned_whole_and_one_byte_more_is_refused(self):
+        """The other side of the limit: a git that prints exactly GIT_OUTPUT_MAX bytes on its stdout, then a line on its
+        stderr, and exits 0 is returned whole, every byte of both; one that prints a byte more is GitOutput. So a
+        comparison that refused the limit itself (>= for >) is red on the first, and a run_git with no limit on the
+        second, which then holds it all (the head before the ruling)."""
+        limit = OUTPUT_LIMIT
+        for n in (limit, limit + 1):
+            with self.subTest(printed=n):
+                env = self.shim("head -c %d /dev/zero\necho done >&2\n" % n)
+                got = self.finish(self.start(60, "status", env=env))
+                if n == limit:
+                    self.assertEqual(got, {"rc": 0, "out": limit, "err": 5}, got)
+                else:
+                    self.assertEqual(got.get("raised"), "GitOutput", got)
+
+    def test_input_and_output_larger_than_a_pipe_buffer_complete(self):
+        """The runner's real git check-ignore over 20,000 paths, every one ignored by a rule of the tracked .gitignore:
+        its input (about 0.7 MB) and its output (about 1.2 MB) each far larger than a pipe's buffer, so a run_git that
+        wrote the whole input before reading any output would wait on a full stdin while git waits on a full stdout.
+        tracked_ignored, through run_git's one loop, returns all 20,000. Red under a mutant that writes the input whole
+        before the loop (the watchdog ends the child at 60 s, git and the runner each waiting on the other)."""
+        w = os.path.join(self.tmp, "repo")
+        os.makedirs(w)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", w, *args], env=self.env, check=True, stdout=subprocess.PIPE,
+                                  text=True).stdout
+        git("init", "-q", ".")
+        with open(os.path.join(w, ".gitignore"), "w") as f:
+            f.write("build/\n")
+        git("add", ".gitignore")
+        git("commit", "-qm", "c")
+        paths = [b"build/a-path-long-enough-to-fill-a-pipe-buffer-quickly/%05d.o" % i for i in range(20000)]
+        given = os.path.join(self.tmp, "paths")
+        with open(given, "wb") as f:
+            f.write(b"".join(n + b"\0" for n in paths))
+        self.assertGreater(os.path.getsize(given), 1 << 16, "premise: the input is larger than a pipe's buffer")
+        got = self.finish(self.start(60, "check-ignore", "-v", "-z", "--no-index", "--stdin", given=given, where=w),
+                          watchdog=60)
+        self.assertEqual(got.get("rc"), 0, got)
+        self.assertGreater(got["out"], 1 << 16, "premise: the output is larger than a pipe's buffer")
+        entries = sweep.tree_entries(w, git("rev-parse", "HEAD").strip())
+        self.assertEqual(sweep.tracked_ignored(w, entries, paths), (set(paths), None))
+
+    def test_a_stop_while_run_git_reads_ends_the_git_and_leaves_no_process(self):
+        """A stop signal that arrives while run_git reads (a git first on PATH that prints a line, writes its pid and its
+        child's to a file and waits on the child) raises Stopped out of the loop, with the git and its child ended (its
+        process group: SIGTERM, then SIGKILL after GIT_TERM_GRACE) and reaped first. Red under a run_git whose except
+        path catches Exception alone (the git left running, Stopped raised with nothing ended)."""
+        pids = os.path.join(self.tmp, "pids")
+        env = self.shim('echo started\nsleep 300 &\necho $$ $! > "%s.tmp" && mv "%s.tmp" "%s"\nwait\n' % (pids, pids, pids))
+        proc = self.start(120, "status", env=env)
+        end = time.monotonic() + 60
+        while not os.path.exists(pids) and time.monotonic() < end and proc.poll() is None:
+            time.sleep(0.05)
+        with open(pids) as f:
+            recorded = [int(x) for x in f.read().split()]
+        self.addCleanup(_kill_alive, recorded)
+        os.kill(proc.pid, signal.SIGTERM)
+        got = self.finish(proc, watchdog=60)
+        self.assertEqual((got.get("raised"), got.get("ended_git")), ("Stopped", True), got)
+        self.assertEqual([p for p in recorded if _alive(p)], [], "the git and its child are gone")
 
 
 class GitBoundPins(unittest.TestCase):
@@ -4950,6 +6628,7 @@ class GitBoundPins(unittest.TestCase):
 
     DISCOVERY = "rev-parse --path-format=absolute --show-toplevel --absolute-git-dir --git-common-dir"
     STATUS = "status --porcelain=v1 -z --untracked-files=all"
+    CHECK_COMMIT = "rev-parse --verify HEAD^{commit}"
     CHECK_IGNORE = "check-ignore -v -z --no-index --stdin"
 
     def test_a_fifo_at_the_batchers_config_refuses_the_run_and_check_naming_the_call(self):
@@ -5312,7 +6991,8 @@ sys.exit(sweep.main(["check", "--tree", sys.argv[2]]))
             missing = "deadbeef" * 5
             rc, out, err = started_ignored([str(SWEEP), "check", missing, "--tree", repo])
             self.assertEqual((rc, out), (2, ""), out + err)
-            self.assertTrue(err.startswith("sweep: git rev-parse --verify %s^{commit} failed in " % missing), err)
+            self.assertTrue(err.startswith("sweep: git rev-parse --verify %s^{commit} "
+                                           "failed in " % missing), err)
 
     # The no-git stop pin's driver: it loads sweep.py (argv[1]) and runs its main over the rest of argv, with SIGHUP and
     # SIGINT at their defaults first (so a caller that ignores them does not decide the case) and assess sending argv[2]'s
@@ -5448,7 +7128,7 @@ except sweep.GitBound as e:
         tree = os.path.realpath(w.tree)
         before = len(w.calls())
         os.mkfifo(os.path.join(tree, ".git", "shallow"))
-        for argv, call in ((None, self.STATUS), (["check", "--tree", w.tree], "rev-parse --verify HEAD^{commit}")):
+        for argv, call in ((None, self.STATUS), (["check", "--tree", w.tree], self.CHECK_COMMIT)):
             with self.subTest(argv=argv and argv[0]):
                 rc, out, err = self.bounded(w, argv=argv, lstat_passes=True, planted=[call])
                 self.assertEqual(rc, 2, out + err)
@@ -5480,10 +7160,10 @@ except sweep.GitBound as e:
         ("index", 0, None, STATUS, (0, None)),
         ("info/exclude", 0, None, STATUS, (0, None)),
         ("objects/info/alternates", 3, FRESH_CHECKOUT_BOUND % r"update-ref refs/remotes/origin/main [0-9a-f]{40}",
-         STATUS, (2, "rev-parse --verify HEAD^{commit}")),
+         STATUS, (2, CHECK_COMMIT)),
         ("objects/info/alternates (no origin/main)", 3, FRESH_CHECKOUT_BOUND % r"-c core\.hooksPath=/dev/null checkout -q "
                                                                                r"--detach [0-9a-f]{40}",
-         STATUS, (2, "rev-parse --verify HEAD^{commit}")),
+         STATUS, (2, CHECK_COMMIT)),
     )
     PLANTING_CALL = {"objects/info/alternates": (UPDATE_REF, PYTEST_LEG),
                      "objects/info/alternates (no origin/main)": (CHECKOUT, PYTEST_LEG)}
@@ -6009,9 +7689,10 @@ class RunnerOwnFiles(unittest.TestCase):
         it never printed, then prints its own summary (3 passed) to its stdout. The runner reads the summary and the
         count back through the descriptor it created the log with, so the record holds the leg's own 3 passed, with no
         wait and no read without end. deps_skipped reads the log by its path afterwards, through open_regular: a FIFO or
-        a symlink there reads as unreadable, so the served leg is red naming why (the run red, exit 1); the regular file
-        is read as the leg's own output would be, and the run passes. At the build head summarize_log opened the FIFO and
-        waited without end, read /dev/zero until the address cap stopped it, and recorded the planted 99 passed."""
+        a symlink there reads as unreadable, so the served leg is red naming the log and what is there (the run red,
+        exit 1); the regular file is read as the leg's own output would be, and the run passes. At the build head
+        summarize_log opened the FIFO and waited without end, read /dev/zero until the address cap stopped it, and
+        recorded the planted 99 passed."""
         for kind in ("fifo", "zero", "file"):
             with self.subTest(kind=kind):
                 if kind == "zero" and not ZERO_CAPPED:
@@ -6027,7 +7708,9 @@ class RunnerOwnFiles(unittest.TestCase):
                     self.assertEqual((rc, r["red"], r["invalid"]), (0, [], None), out + err)
                 else:
                     self.assertEqual((rc, r["red"]), (1, ["served"]), out + err)
-                    self.assertEqual(leg["deps_skipped"], {"error": "the pytest leg's log cannot be read"})
+                    what = "a FIFO" if kind == "fifo" else "a symlink"
+                    self.assertEqual(leg["deps_skipped"], {"error": "the pytest leg's log cannot be read (%s: %s, not a "
+                                                                    "regular file)" % (leg["log"], what)})
 
     def test_a_fifo_where_a_later_legs_log_would_go_is_never_opened(self):
         """The pytest leg, the run's first, plants a FIFO at every name a log of any leg or setup would take in the next 90
@@ -6084,7 +7767,7 @@ class RunnerOwnFiles(unittest.TestCase):
         w.ctl({})
         rc, out, err = self.run_bounded(w, bound=60)
         self.assertEqual(rc, 0, out + err)
-        self.assertIn("(no finished build)", out)
+        self.assertIn("(no finished build: its marker cannot be read (a FIFO, not a regular file))", out)
         self.assertTrue(stat.S_ISREG(os.lstat(marker).st_mode), "the rebuild wrote the marker again")
 
     def test_a_fifo_at_another_shas_result_reads_unreadable_in_check(self):
@@ -6298,7 +7981,7 @@ class RunnerOwnFiles(unittest.TestCase):
                 "lying.__dict__.update(os.__dict__)\n"
                 "lying.lstat = lambda p, *a, **k: plain if os.fsdecode(p).endswith('fifo') else real(p, *a, **k)\n"
                 "mod.os = lying\n"
-                "faults = mod._entry_faults(tmp, {b'fifo': (b'100644', 'e' * 40)})\n"
+                "faults = mod._entry_faults(tmp, {b'fifo': (b'100644', 'e' * 40, 0)})\n"
                 "out['faults'] = {k: [n.decode() for n in v] for k, v in faults.items() if v}\n"
                 "try:\n"
                 "    mod.venv_tree(tmp)\n"
@@ -6314,6 +7997,519 @@ class RunnerOwnFiles(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(json.loads(p.stdout), {"digest": None, "faults": {"content": ["fifo"]},
                                                 "venv_tree": "Unreadable: a FIFO, not a regular file"})
+
+    def test_a_sparse_file_a_leg_leaves_costs_the_runner_no_memory(self):
+        """The re-read after a leg reads every tracked file of the checkout (_entry_faults) and the clone's HEAD, config
+        and info/exclude (git_state) in the runner's own process, where run_git's memory limit does not apply. A leg
+        that truncates one to a large sparse size costs nothing on disk; before the bound the runner read each whole, so
+        it asked for the file's full size in memory: red there with a MemoryError in each subtest, under the cap here,
+        and any size a leg chose without one. Each plant is 768 MiB, in a child whose address space is capped at 256 MiB
+        above what it holds when the leg would have run: a tracked file whose size is not its blob's is a content fault
+        with nothing read, and a git state file larger than GIT_STATE_MAX is the whole verdict, named with its size. The
+        cap is the soft and the hard limit both, as CAP_SHIM sets them (round 1's spot-check, S3), so nothing the code
+        under test starts can raise it, a git through run_git's shell included: each subtest checks that a shell under
+        the cap fails to raise it to twice its figure with ulimit -v. With the soft limit alone, as the pin set it
+        before S3, that ulimit succeeded (red on the check)."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("only Linux enforces RLIMIT_AS")
+        code = ("import importlib.util, json, os, resource, subprocess, sys\n"
+                "spec = importlib.util.spec_from_file_location('sweep_runner', sys.argv[1])\n"
+                "mod = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(mod)\n"
+                "base, target = sys.argv[2], sys.argv[3]\n"
+                "src, co = os.path.join(base, 'src'), os.path.join(base, 'trees', 'co')\n"
+                "git = ['git', '-c', 'user.email=tests@example.invalid', '-c', 'user.name=romp tests']\n"
+                "subprocess.run(git + ['init', '-q', src], check=True)\n"
+                "with open(os.path.join(src, 'README.md'), 'w') as f:\n"
+                "    f.write('hello\\n')\n"
+                "subprocess.run(git + ['-C', src, 'add', 'README.md'], check=True)\n"
+                "subprocess.run(git + ['-C', src, 'commit', '-qm', 'one'], check=True)\n"
+                "sha = subprocess.run(['git', '-C', src, 'rev-parse', 'HEAD'], check=True, capture_output=True,\n"
+                "                     text=True).stdout.strip()\n"
+                "subprocess.run(['git', 'clone', '-q', src, co], check=True)\n"
+                "entries = mod.tree_entries(co, sha)\n"
+                "before = mod.git_state(co)\n"
+                "with open(os.path.join(co, target), 'r+b' if os.path.exists(os.path.join(co, target)) else 'wb') as f:\n"
+                "    f.truncate(768 << 20)\n"
+                "with open('/proc/self/status') as f:\n"
+                "    vm = int([l.split()[1] for l in f if l.startswith('VmSize:')][0]) << 10\n"
+                "cap, hard = vm + (256 << 20), resource.getrlimit(resource.RLIMIT_AS)[1]\n"
+                "cap = cap if hard == resource.RLIM_INFINITY else min(cap, hard)\n"
+                "resource.setrlimit(resource.RLIMIT_AS, (cap, cap))\n"
+                "faults = mod.recheck_checkout(co, sha, entries, before)\n"
+                "raised = subprocess.run(['/bin/sh', '-c', 'ulimit -v %d' % (2 * cap >> 10)]).returncode == 0\n"
+                "print(json.dumps([[[k, [n.decode() for n in v]] for k, v in faults], raised]))\n")
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
+        for target, want in (("README.md", [["content", ["README.md"]]]),
+                             (".git/HEAD", None), (".git/config", None), (".git/info/exclude", None)):
+            with self.subTest(target=target):
+                tmp = tempfile.mkdtemp(prefix="sweepsparse-")
+                self.addCleanup(shutil.rmtree, tmp, True)
+                p = subprocess.run([sys.executable, "-c", code, str(SWEEP), tmp, target], text=True, env=env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=120)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                if want is None:
+                    want = [["cannot be read", ["%s: %d bytes, more than the %d the runner reads"
+                                                % (target, 768 << 20, 1 << 16)]]]
+                faults, raised = json.loads(p.stdout)
+                self.assertEqual(faults, want)
+                self.assertFalse(raised, "a shell under the case's cap raised it with ulimit -v: the hard limit is not set")
+        self.assertEqual(getattr(sweep, "GIT_STATE_MAX", None), 1 << 16, "the runner's bound is the one pinned")
+
+
+# Runs the runner's own reads (scripts/sweep.py at argv[1]) over files READS_DRIVER plants under argv[2], each a sparse
+# file of argv[3] bytes made with truncate (no byte of it written, but for the chunked case sets' plants, which start with
+# a bats log's two lines, "ok 1 a" and "not ok 2 b", so a plant within the limit counts and hashes as a real file would),
+# in the case set argv[4] names, and prints JSON:
+# {case: [how it ended, what it gave, the bytes it read], ...}, the bytes counted as each read through open_regular and
+# the descriptor reader (_HeldLog) returns them. "whole" calls each reader that reads a file whole through the caller
+# that reads it; "chunked" calls the two hashing readers and the bats count, with HASHED_FILE_MAX and LOG_COUNT_MAX set to
+# argv[5], since a file over the runner's 1 GiB cannot be planted under the 1 GiB file size limit a capped run sets. A
+# case set ending "-grew" first makes os.fstat give every regular file's size as 0, as for a file that was empty at the
+# fstat and grew before the read, so the read itself must stop at the limit and a byte. The readers run under an address cap
+# set soft AND hard (no descendant raises it) at what the child maps once the plants are made plus 256 MiB, which bounds
+# the memory a reader that reads a plant whole can take. On CPython 3.10, 3.12 and 3.13 the cap binds first: such a read
+# ends in a MemoryError at the cap. Free-threaded 3.14 starts with about 1 GiB of address space its allocator has already
+# reserved, so there the cap leaves room for a 768 MiB plant and a whole read of it succeeds; the bytes read tell a
+# bounded read from a whole one on every interpreter.
+READS_DRIVER = r"""
+import contextlib, importlib.util, io, json, os, resource, stat, sys
+spec = importlib.util.spec_from_file_location("sweep_runner", sys.argv[1])
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+base, size, mode, small = sys.argv[2], int(sys.argv[3]), sys.argv[4], int(sys.argv[5])
+def plant(*parts, text=b""):
+    path = os.path.join(base, *parts)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(text)
+    os.truncate(path, size)
+    return path
+def small_file(path, text, exe=False):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(text)
+    if exe:
+        os.chmod(path, 0o755)
+state = os.path.join(base, "state")
+os.environ["ROMP_STATE_DIR"] = state
+sha, own = "a" * 40, "c" * 40
+cases = []
+if mode.startswith("whole"):
+    result = plant("state", "sweeps", sha + ".json")
+    cases.append(("assess", lambda: (lambda a: [a["case"], a["line"]])(sweep.assess(sha, env={"ROMP_STATE_DIR": state}))))
+if mode == "whole":
+    cases.append(("load_history", lambda: sweep.load_history(result, sha, False)))
+    cases.append(("newest_for_branch", lambda: list(sweep.newest_for_branch("b", env={"ROMP_STATE_DIR": state}))))
+    plant("venv", "m.json")
+    venv = os.path.join(base, "venv")
+    cases.append(("venv marker", lambda: list(sweep._venv_check({"marker": "m.json"}, venv, None, "k", None, None))))
+    cases.append(("venv marker's get-pip", lambda: sweep._marker_get_pip(venv, "m.json")))
+    trees = os.path.join(state, "sweeps", "trees")
+    co = os.path.join(trees, "0123456789ab-aaaaaaaa")
+    os.makedirs(co)
+    plant("state", "sweeps", "trees", "0123456789ab-aaaaaaaa.sha")
+    orphan = plant("state", "sweeps", "trees", "fedcba987654-bbbbbbbb.sha")
+    def stale():
+        with contextlib.redirect_stdout(io.StringIO()):
+            removed = sweep.sweep_stale_checkouts(own)
+        return [[list(r) for r in removed], os.path.lexists(co), os.path.lexists(orphan)]
+    cases.append(("checkout markers", stale))
+    log = plant("pytest.log")
+    cases.append(("deps_skipped", lambda: list(sweep.deps_skipped(log, []))))
+    checkout = os.path.join(base, "checkout")
+    plant("checkout", *sweep.CI_WORKFLOW.split("/"))
+    cases.append(("read_install_plan", lambda: sweep.read_install_plan(checkout, sha)))
+    cases.append(("read_served_step", lambda: sweep.read_served_step(checkout, sha)))
+    cases.append(("leg_groups", lambda: sweep.leg_groups(checkout, sha, ["pytest"])))
+    plant("checkout", "big.txt")
+    cases.append(("read_sed", lambda: sweep.read_sed(checkout, "s/^x\\(.*\\)$/\\1/p", "big.txt", "t")))
+    small_file(os.path.join(base, "npm", "package.json"), '{"name": "npm"}\n')
+    small_file(os.path.join(base, "npm", "bin", "npm-cli.js"), "#!/bin/sh\n", exe=True)
+    os.makedirs(os.path.join(base, "bin"))
+    os.symlink(os.path.join(base, "npm", "bin", "npm-cli.js"), os.path.join(base, "bin", "npm"))
+    plant("npm", "npmrc")
+    cases.append(("npm's builtin file", lambda: sweep.npm_builtin({"path": os.path.join(base, "bin")})))
+    plant("npm2", "package.json")
+    small_file(os.path.join(base, "npm2", "bin", "npm-cli.js"), "#!/bin/sh\n", exe=True)
+    os.makedirs(os.path.join(base, "bin2"))
+    os.symlink(os.path.join(base, "npm2", "bin", "npm-cli.js"), os.path.join(base, "bin2", "npm"))
+    cases.append(("npm's package.json", lambda: sweep.npm_builtin({"path": os.path.join(base, "bin2")})))
+read = {"bytes": 0}
+real_open, held_read = sweep.open_regular, sweep._HeldLog.read
+class Counting:
+    def __init__(self, f):
+        self.f = f
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        self.f.close()
+        return False
+    def fileno(self):
+        return self.f.fileno()
+    def seek(self, *args):
+        return self.f.seek(*args)
+    def read(self, n=-1):
+        data = self.f.read(n)
+        read["bytes"] += len(data)
+        return data
+def counting_open(path):
+    f = real_open(path)
+    return None if f is None else Counting(f)
+def counting_held(self, n):
+    data = held_read(self, n)
+    read["bytes"] += len(data)
+    return data
+sweep.open_regular, sweep._HeldLog.read = counting_open, counting_held
+if mode.startswith("chunked"):
+    sweep.HASHED_FILE_MAX = sweep.LOG_COUNT_MAX = small
+    lines = b"ok 1 a\nnot ok 2 b\n"
+    bats = plant("bats.log", text=lines)
+    if mode == "chunked":
+        cases.append(("bats count by path", lambda: list(sweep.count_tests("bats", bats))))
+    cases.append(("bats count by descriptor", lambda: list(sweep.count_tests("bats", os.open(bats, os.O_RDONLY)))))
+    cases.append(("bats summary by descriptor", lambda: sweep.summarize_log("bats", os.open(bats, os.O_RDONLY))))
+    if mode == "chunked":
+        big = plant("venv2", "lib", "big.so", text=lines)
+        cases.append(("venv_tree", lambda: sweep.venv_tree(os.path.join(base, "venv2"))))
+    plant("checkout2", "dist", "big.js", text=lines)
+    cases.append(("_file_digest", lambda: sweep._file_digest(os.path.join(base, "checkout2"), b"dist/big.js")))
+if mode.endswith("-grew"):
+    real_fstat = os.fstat
+    def emptied_fstat(fd):
+        st = real_fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return st
+        fields = list(st)
+        fields[stat.ST_SIZE] = 0
+        return os.stat_result(fields)
+    os.fstat = emptied_fstat
+with open("/proc/self/status") as f:
+    vm = int([line.split()[1] for line in f if line.startswith("VmSize:")][0]) << 10
+cap = vm + (256 << 20)
+resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
+out = {}
+for name, call in cases:
+    before = read["bytes"]
+    try:
+        got = ["returned", call()]
+    except MemoryError:
+        got = ["MemoryError"]
+    except Exception as e:
+        got = [type(e).__name__, str(e)]
+    out[name] = got + [read["bytes"] - before]
+print(json.dumps(out, sort_keys=True))
+"""
+
+
+class ReadLimits(unittest.TestCase):
+    """Round 1 of PR 959, ruling A's class (the 13:21Z ruling of 2026-10-03): every file the runner reads itself that a
+    leg can reach has a size limit, enforced by fstat before the read and by reading no more than the limit and a byte.
+    Each case plants a sparse file of 768 MiB (truncate; nothing written) where a reader reads, runs the reader under
+    the address cap READS_DRIVER sets, and counts the bytes it reads; the limits are each the runner's constant, stated
+    with its measurement there, or with the format that sets it where there was nothing to measure."""
+
+    SIZE = 768 << 20
+    JSON, MARKER, LOG, CHECKOUT, NPM, HASHED = 16 << 20, 4096, 128 << 20, 16 << 20, 1 << 20, 1 << 30
+    COUNT = 1 << 30
+    # The chunked readers' limit in these cases (READS_DRIVER sets HASHED_FILE_MAX and LOG_COUNT_MAX to it): a plant over
+    # the runner's 1 GiB would pass the 1 GiB file size limit a capped run sets.
+    SMALL_CHUNKED = 64 << 20
+    GREW_CHUNKED = 1 << 20
+
+    def setUp(self):
+        if not sys.platform.startswith("linux"):
+            self.skipTest("the driver sets its address cap from /proc/self/status, which only Linux has, and only Linux "
+                          "enforces RLIMIT_AS; the cap bounds the memory a whole read of a plant can take")
+
+    @staticmethod
+    def words(size, limit):
+        return "%d bytes, more than the %d the runner reads" % (size, limit)
+
+    @staticmethod
+    def grew(limit):
+        return "more than the %d bytes the runner reads" % limit
+
+    def drive(self, mode, small=0, size=None):
+        """READS_DRIVER in a child over a fresh scratch directory, its plants `size` bytes (SIZE when not given): (base,
+        {case: outcome})."""
+        base = tempfile.mkdtemp(prefix="sweepreads-")
+        self.addCleanup(shutil.rmtree, base, True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_")}
+        size = self.SIZE if size is None else size
+        p = subprocess.run([sys.executable, "-c", READS_DRIVER, str(SWEEP), base, str(size), mode, str(small)],
+                           text=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                           timeout=300)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        out = json.loads(p.stdout)
+        self.assertTrue(out, "premise: the driver ran cases")
+        return base, out
+
+    def test_each_whole_read_refuses_a_file_over_its_limit_naming_its_size_in_its_callers_shape(self):
+        """Each reader that reads a file whole, through the caller that reads it, meets a sparse file of 768 MiB: a result
+        (assess, load_history, newest_for_branch: JSON_FILE_MAX), a venv's marker (_venv_check, _marker_get_pip: the same
+        limit), a checkout's marker (sweep_stale_checkouts: MARKER_MAX), the pytest leg's log (deps_skipped: LOG_MAX),
+        ci.yml (read_install_plan, read_served_step, leg_groups: CHECKOUT_FILE_MAX), a sed line's file (read_sed: the same
+        limit), and npm's builtin file and package.json (npm_builtin: NPM_FILE_MAX). Each refuses or records the file in
+        the shape its caller already gives a file it cannot read, with fstat's size and the limit where that caller names
+        why, and none reads a byte of it. Before this pass each read the whole file (read_regular with no limit, or
+        open().read()), and each case here ended in a MemoryError: on CPython 3.10, 3.12 and 3.13 at the read, and on
+        free-threaded 3.14, where the cap does not bind first, after each read through read_regular had read all
+        805306368 bytes of its plant; red on its outcome on each, and on 3.14 on the bytes read as well. Without the cap,
+        any size a leg chose was read."""
+        base, out = self.drive("whole")
+        read = {name: got.pop() for name, got in out.items()}
+        state = os.path.join(base, "state")
+        sha = "a" * 40
+        result = os.path.join(state, "sweeps", sha + ".json")
+        co = os.path.join(state, "sweeps", "trees", "0123456789ab-aaaaaaaa")
+        ci = "%s at %s cannot be read (%s); " % (sweep.CI_WORKFLOW, sha[:10], self.words(self.SIZE, self.CHECKOUT))
+        exact = {
+            "assess": ["returned", ["unreadable", "sweep unreadable: %s: %s%s" % (result, self.words(self.SIZE, self.JSON),
+                                                                                   sweep.KEPT_REMEDY)]],
+            "load_history": ["Refused", "the result at %s is unreadable (%s); it is kept, since results are append-only: move "
+                                        "it aside to sweep this sha again" % (sha[:10], self.words(self.SIZE, self.JSON))],
+            "newest_for_branch": ["returned", [None, None]],
+            "venv marker": ["returned", ["no finished build: its marker cannot be read (%s)" % self.words(self.SIZE, self.JSON),
+                                         None, None]],
+            "venv marker's get-pip": ["returned", None],
+            "checkout markers": ["returned", [[[co, None]], False, False]],
+            "deps_skipped": ["returned", [None, "the pytest leg's log cannot be read (%s: %s)"
+                                          % (os.path.join(base, "pytest.log"), self.words(self.SIZE, self.LOG))]],
+            "read_sed": ["Refused", "t: sed reads big.txt, which cannot be read (%s)" % self.words(self.SIZE, self.CHECKOUT)],
+            # npm's package root is found from npm's real path, so the file is named under the scratch dir's real path
+            "npm's builtin file": ["Refused", "npm's builtin config file %s cannot be read (%s); npm reads it in every npm "
+                                              "leg, so the runner reads it first"
+                                   % (os.path.join(os.path.realpath(base), "npm", "npmrc"), self.words(self.SIZE, self.NPM))],
+        }
+        prefixed = {
+            "read_install_plan": ci, "read_served_step": ci, "leg_groups": ci,
+            "npm's package.json": "the npm on the legs' PATH, %s (real path %s), is not a link into npm's own package"
+                                  % (os.path.join(base, "bin2", "npm"),
+                                     os.path.join(os.path.realpath(base), "npm2", "bin", "npm-cli.js")),
+        }
+        self.assertEqual(sorted(out), sorted(set(exact) | set(prefixed)), "premise: every case ran")
+        for name, want in exact.items():
+            with self.subTest(case=name):
+                self.assertEqual(out[name], want)
+        for name, start in prefixed.items():
+            with self.subTest(case=name):
+                self.assertEqual(out[name][:1], ["Refused"], out[name])
+                self.assertTrue(out[name][1].startswith(start), out[name])
+        # npm_builtin names the package.json it could not read, and why, after the refusal's own words
+        self.assertTrue(out["npm's package.json"][1].endswith(
+            "first on PATH; %s cannot be read (%s)" % (os.path.join(os.path.realpath(base), "npm2", "package.json"),
+                                                       self.words(self.SIZE, self.NPM))), out["npm's package.json"])
+        # No case reads a byte of its plant; npm_builtin reads the 16 bytes of the small package.json READS_DRIVER writes
+        # for npm's builtin file case, and no other file.
+        self.assertEqual(read, dict(dict.fromkeys(read, 0), **{"npm's builtin file": len('{"name": "npm"}\n')}))
+        self.assertEqual({k: getattr(sweep, k, None) for k in ("JSON_FILE_MAX", "MARKER_MAX", "LOG_MAX", "CHECKOUT_FILE_MAX",
+                                                               "NPM_FILE_MAX")},
+                         {"JSON_FILE_MAX": self.JSON, "MARKER_MAX": self.MARKER, "LOG_MAX": self.LOG,
+                          "CHECKOUT_FILE_MAX": self.CHECKOUT, "NPM_FILE_MAX": self.NPM}, "the runner's limits are the ones pinned")
+
+    def test_a_whole_read_stops_at_its_limit_when_the_file_grew_after_the_fstat(self):
+        """The second half of each whole read's bound: read_regular reads no more than the limit and a byte, so a file
+        fstat gave as small that is larger when read (one that grew in between) is refused too, naming the limit. Here
+        os.fstat gives every regular file's size as 0 and the result is the 768 MiB plant: assess reads 16 MiB and a
+        byte of it, the bytes read the pin expects, and names it unreadable. Before this pass read_regular read it whole,
+        a MemoryError here: on CPython 3.10, 3.12 and 3.13 at the read, and on free-threaded 3.14, where the cap does not
+        bind first, after reading all 805306368 bytes of it. A read_regular that kept the fstat check but read the file
+        whole gives the expected text on 3.14, after reading all of it, so there only the bytes read make the pin red."""
+        base, out = self.drive("whole-grew")
+        result = os.path.join(base, "state", "sweeps", "a" * 40 + ".json")
+        self.assertEqual(out, {"assess": ["returned", ["unreadable", "sweep unreadable: %s: %s%s"
+                                                       % (result, self.grew(self.JSON), sweep.KEPT_REMEDY)],
+                                          self.JSON + 1]})
+
+    def test_each_chunked_read_reads_no_more_than_its_limit(self):
+        """The readers that read a file in pieces keep their memory to one piece whatever the size, so before this pass
+        a sparse file of any size cost no memory but was read to its end, however long that took. Each now reads no more
+        than its limit: the bats count (count_tests, by the log's path and by run_leg's descriptor) reads no log over
+        LOG_COUNT_MAX and counts none there, (None, None), and the leg's summary (summarize_log) says it was not
+        counted, naming the log's size and the limit; a venv's file over HASHED_FILE_MAX is a tree that cannot be read,
+        naming the file and its size (venv_tree); and an ignored file of a checkout over it reads as None, which no
+        excuse matches (_file_digest). Both limits are 64 MiB in these cases (SMALL_CHUNKED). Each reads nothing of its
+        plant.
+        Before this pass the bats count read all 768 MiB of each and counted (0, 0), and the hashing readers read and
+        hashed all of it: red there on the outcome and on the bytes read, 805306368 a case."""
+        base, out = self.drive("chunked", self.SMALL_CHUNKED)
+        big = os.path.join(base, "venv2", "lib", "big.so")
+        want = {"bats count by path": ["returned", [None, None], 0], "bats count by descriptor": ["returned", [None, None], 0],
+                "bats summary by descriptor": ["returned", "not counted, its log cannot be read (%s)"
+                                               % self.words(self.SIZE, self.SMALL_CHUNKED), 0],
+                "venv_tree": ["Unreadable", "%s: %s" % (big, self.words(self.SIZE, self.SMALL_CHUNKED)), 0],
+                "_file_digest": ["returned", None, 0]}
+        self.assertEqual(sorted(out), sorted(want), "premise: every case ran")
+        for name in want:
+            with self.subTest(case=name):
+                self.assertEqual(out[name], want[name])
+        self.assertEqual({k: getattr(sweep, k, None) for k in ("HASHED_FILE_MAX", "LOG_COUNT_MAX")},
+                         {"HASHED_FILE_MAX": self.HASHED, "LOG_COUNT_MAX": self.COUNT}, "the runner's limits are the ones pinned")
+
+    def test_each_chunked_read_reads_a_file_of_exactly_its_limit_and_refuses_one_byte_more(self):
+        """The other side of each chunked read's limit: a file of exactly the limit is read whole, so a comparison that
+        refused it (fstat's size at the limit taken as over it) is red here, where the 768 MiB plants pass under it.
+        Each plant starts with a bats log's two lines and is SMALL_CHUNKED bytes, the limit in these cases: the bats
+        count, by the log's path and by run_leg's descriptor, counts its one ok and one not ok, and the summary says so;
+        venv_tree records the venv's file with its size and sha256; and _file_digest gives the sha256; each reading all
+        SMALL_CHUNKED bytes. At one byte more each gives what the 768 MiB plants give, naming its own size where they
+        name theirs, having read nothing. read_regular's own comparison is pinned at its limit by ShallowBatcher's case
+        of a shallow file at the bound
+        (test_a_shallow_file_larger_than_the_runner_reads_is_refused_naming_its_size_and_never_read)."""
+        lines = b"ok 1 a\nnot ok 2 b\n"
+        h = hashlib.sha256(lines)
+        left = self.SMALL_CHUNKED - len(lines)
+        while left:
+            h.update(bytes(min(left, 1 << 20)))
+            left -= min(left, 1 << 20)
+        digest = h.hexdigest()
+        base, out = self.drive("chunked", self.SMALL_CHUNKED, size=self.SMALL_CHUNKED)
+        self.assertEqual(sorted(out), ["_file_digest", "bats count by descriptor", "bats count by path",
+                                       "bats summary by descriptor", "venv_tree"], "premise: every case ran")
+        tree = out.pop("venv_tree")
+        self.assertEqual(tree[:1] + tree[2:], ["returned", self.SMALL_CHUNKED], tree[:1] + tree[2:])
+        entry = tree[1]["lib/big.so"]
+        self.assertEqual([entry[0]] + entry[2:], ["file", self.SMALL_CHUNKED, digest])
+        self.assertEqual(out, {"bats count by path": ["returned", [1, 1], self.SMALL_CHUNKED],
+                               "bats count by descriptor": ["returned", [1, 1], self.SMALL_CHUNKED],
+                               "bats summary by descriptor": ["returned", "1 ok, 1 not ok", self.SMALL_CHUNKED],
+                               "_file_digest": ["returned", digest, self.SMALL_CHUNKED]})
+        over = self.SMALL_CHUNKED + 1
+        base, out = self.drive("chunked", self.SMALL_CHUNKED, size=over)
+        big = os.path.join(base, "venv2", "lib", "big.so")
+        self.assertEqual(out, {"bats count by path": ["returned", [None, None], 0],
+                               "bats count by descriptor": ["returned", [None, None], 0],
+                               "bats summary by descriptor": ["returned", "not counted, its log cannot be read (%s)"
+                                                              % self.words(over, self.SMALL_CHUNKED), 0],
+                               "venv_tree": ["Unreadable", "%s: %s" % (big, self.words(over, self.SMALL_CHUNKED)), 0],
+                               "_file_digest": ["returned", None, 0]})
+
+    def test_a_chunked_read_stops_at_its_limit_when_the_file_grew_after_the_fstat(self):
+        """The second half of each chunked read's bound: with os.fstat giving every regular file's size as 0, as for a
+        file that grew after it, the bats count by run_leg's descriptor reads LOG_COUNT_MAX and a byte of the 768 MiB
+        plant and counts none, the summary naming the limit, and _file_digest reads HASHED_FILE_MAX and a byte and gives
+        None, each limit 1 MiB here (GREW_CHUNKED). Before this pass both read all 768 MiB: red there on the outcome and
+        on the bytes read."""
+        _base, out = self.drive("chunked-grew", self.GREW_CHUNKED)
+        self.assertEqual(out, {"bats count by descriptor": ["returned", [None, None], self.GREW_CHUNKED + 1],
+                               "bats summary by descriptor": ["returned", "not counted, its log cannot be read (%s)"
+                                                              % self.grew(self.GREW_CHUNKED), self.GREW_CHUNKED + 1],
+                               "_file_digest": ["returned", None, self.GREW_CHUNKED + 1]})
+
+    def test_a_pytest_log_long_only_from_its_failures_is_read_for_its_deps_skips(self):
+        """The pytest leg's log is read whole for the tests it skipped for want of the deps, and a run where many tests
+        fail writes a long log: about 2 KB a failure (LOG_MAX's measurement). A well-formed log of 16 MiB and 64 KiB,
+        failure sections, then the short summary with one deps skip and pytest's closing line, has its skip read, so
+        the served leg runs it. Before the fix for finding L2 of the review of the read limits (round 1 of PR 959),
+        LOG_MAX was 16 MiB and this log made deps_skipped return (None, "the pytest leg's log cannot be read (<log>:
+        16842752 bytes, more than the 16777216 the runner reads)"), so the served leg was red without running. The
+        whole-read test above still holds a sparse log over LOG_MAX to a refusal naming its size."""
+        tmp = tempfile.mkdtemp(prefix="sweeplog-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, "pytest.log")
+        block = ("_" * 30 + " Case.test_case " + "_" * 30 + "\n\nself = <tests.test_case.Case testMethod=test_case>\n\n"
+                 "    def test_case(self):\n>       self.assertEqual(1, 2)\nE       AssertionError: 1 != 2\n\n"
+                 "tests/test_case.py:5: AssertionError\n").encode()
+        size = (16 << 20) + (64 << 10)
+        summary = ("=========================== short test summary info ============================\n"
+                   "SKIPPED tests/test_deps.py::test_it - needs vscode-extension/node_modules (npm ci)\n"
+                   "=================== 9000 failed, 1 skipped in 900.00s (0:15:00) ===================\n").encode()
+        head = b"=================================== FAILURES ===================================\n"
+        body = block * ((size - len(head) - len(summary)) // len(block))
+        with open(path, "wb") as f:
+            f.write(head + body + b"\n" * (size - len(head) - len(body) - len(summary)) + summary)
+        self.assertEqual(os.path.getsize(path), size, "premise: the log's size, over the 16 MiB of the limit before")
+        self.assertEqual(sweep.deps_skipped(path, []), (["tests/test_deps.py::test_it"], None))
+
+    def test_the_marker_and_package_json_reads_use_their_own_limits(self):
+        """A checkout's marker past its limit reads as no marker, naming nothing (sweep_stale_checkouts), so the 768 MiB
+        plant of the whole-read test, over every limit, passes under any marker limit below that; npm's package.json is
+        named with its limit only in the refusal that follows when no package.json names npm (npm_builtin). Each read
+        is pinned here on both sides of its own limit with small real files: a marker of MARKER_MAX bytes, its sha and
+        spaces, names its sha, and one of MARKER_MAX + 1 names none; a package.json of NPM_FILE_MAX bytes naming npm
+        makes npm_builtin find npm's root, and one of NPM_FILE_MAX + 1 is refused as not a link into npm's package. Red
+        when either read uses another limit: a larger one (the marker read at JSON_FILE_MAX, package.json at
+        CHECKOUT_FILE_MAX) fails the limit-and-a-byte subtest, and a smaller one the at-limit subtest."""
+        base = tempfile.mkdtemp(prefix="sweeplimits-")
+        self.addCleanup(shutil.rmtree, base, True)
+        sha = "a" * 40
+        trees = os.path.join(base, "state", "sweeps", "trees")
+        for size, want in ((self.MARKER, sha), (self.MARKER + 1, None)):
+            with self.subTest(marker=size):
+                co = os.path.join(trees, "aaaaaaaaaaaa-%d" % size)
+                os.makedirs(co)
+                with open(co + ".sha", "w") as f:
+                    f.write(sha.ljust(size))
+                self.assertEqual(os.path.getsize(co + ".sha"), size, "premise: the marker's size")
+                with unittest.mock.patch.dict(os.environ, {"ROMP_STATE_DIR": os.path.join(base, "state")}), \
+                        unittest.mock.patch("sys.stdout"):
+                    self.assertEqual(sweep.sweep_stale_checkouts("c" * 40), [(co, want)])
+        for size, found in ((self.NPM, True), (self.NPM + 1, False)):
+            with self.subTest(package_json=size):
+                root = os.path.join(base, "npm-%d" % size)
+                os.makedirs(os.path.join(root, "bin"))
+                with open(os.path.join(root, "package.json"), "w") as f:
+                    f.write('{"name": "npm"}'.ljust(size))
+                self.assertEqual(os.path.getsize(os.path.join(root, "package.json")), size, "premise: the file's size")
+                cli = os.path.join(root, "bin", "npm-cli.js")
+                with open(cli, "w") as f:
+                    f.write("#!/bin/sh\n")
+                os.chmod(cli, 0o755)
+                path = os.path.join(base, "bin-%d" % size)
+                os.makedirs(path)
+                os.symlink(cli, os.path.join(path, "npm"))
+                if found:
+                    self.assertEqual(sweep.npm_builtin({"path": path})["root"], os.path.realpath(root))
+                else:
+                    with self.assertRaisesRegex(sweep.Refused, "is not a link into npm's own package"):
+                        sweep.npm_builtin({"path": path})
+
+    def test_read_regular_asks_for_the_files_own_size_and_a_byte_not_its_limit(self):
+        """read_regular reads a file that did not grow in one read of the size fstat gave and a byte, so the memory it
+        asks Python for is the file's, not its limit's. With f.read(limit + 1), Python allocated the limit and a byte
+        before it read, whatever the file held: once LOG_MAX was 128 MiB, the pytest leg's small log ended the runner in
+        a MemoryError under LargeLog's 128 MiB RLIMIT_DATA (that test red, for both its legs). Here a file of 6 bytes
+        read with a 1 MiB limit is asked for 7 bytes, once; before the fix, for 1048577."""
+        tmp = tempfile.mkdtemp(prefix="sweepread-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, "small")
+        with open(path, "wb") as f:
+            f.write(b"hello\n")
+        asked, real = [], sweep.open_regular
+
+        class Recording:
+            def __init__(self, f):
+                self.f = f
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.f.close()
+                return False
+
+            def fileno(self):
+                return self.f.fileno()
+
+            def read(self, n=-1):
+                asked.append(n)
+                return self.f.read(n)
+
+        def recording(p):
+            f = real(p)
+            return None if f is None else Recording(f)
+
+        with unittest.mock.patch.object(sweep, "open_regular", recording):
+            self.assertEqual(sweep.read_regular(path, 1 << 20), b"hello\n")
+        self.assertEqual(asked, [7])
+
+    def test_read_regular_has_no_unbounded_mode(self):
+        """read_regular, the runner's one whole read of a file a leg can reach, takes its limit with no default, so a
+        caller cannot read without one by leaving it out (it raises TypeError instead). Before this pass the limit
+        defaulted to None, which read the file whole."""
+        import inspect
+        self.assertIs(inspect.signature(sweep.read_regular).parameters["limit"].default, inspect.Parameter.empty)
 
 
 # The keys of leg_context, with placeholder values: leg_sets' NAMES do not depend on them.
@@ -6626,7 +8822,7 @@ class LegEnvironment(_Base):
 
     # The leg environment hash the runner recorded from the narrow landing delta's ruling 8 until each job's checkout came
     # to hold refs/remotes/origin/main (main_snapshot): what policy_hash gives at PR 926's head as held for the user's
-    # decision page, and what every run of the owner's sweeps at PR 926's heads from 2026-10-01 to 2026-10-02 records.
+    # decision page, and what every run of the owner's sweeps at PR 926's heads from 2026-10-01 to 2026-10-03 records.
     BEFORE_MAIN_REF_HASH = "a7701f5a206cb2866731105fcdd7fd9d43b2cd4f1131780275ea9bcab627fffa"
 
     def test_a_result_recorded_before_the_checkouts_held_origin_main_reads_as_another(self):

@@ -3,8 +3,9 @@
 7): it reads LAUNCH SITES, not argv spellings. Every place scripts/sweep.py and scripts/batch.py can start a process is a
 launch site, and each one is on a named allowlist (ALLOWED), with its reason and the number of sites its function holds;
 a site anywhere else, or one more in a listed function, is a finding, whatever it would run. run_git, the one helper
-each script starts git through (a bounded wait, GIT_BOUND, killed with its process group at the bound, the repository
-named: GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE set and GIT_CEILING_DIRECTORIES above it), is the first entry in each.
+each script starts git through (a bounded wait, GIT_BOUND, killed with its process group at the bound; the memory and
+output limits, GIT_MEMORY and GIT_OUTPUT_MAX; the repository named: GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE set and
+GIT_CEILING_DIRECTORIES above it), is the first entry in each.
 The census it replaces looked for git in argvs, and missed git spelled through `shutil.which('git') or 'git'`,
 os.path.join, str.split and five more idioms (the closing check's census finding): an argv it could not read was a git
 call it did not see. Where processes start does not depend on how their argv is spelled.
@@ -109,8 +110,8 @@ LAUNCH_BUILTINS = {"help", "globals", "vars", "locals"}
 # The standard library modules the two files import that start no process and load no code, so the census need not
 # read their names. A module imported that is in none of the three tables is a finding.
 INERT_MODULES = {"argparse", "collections", "datetime", "errno", "fcntl", "functools", "glob", "hashlib", "heapq", "json",
-                 "random", "re", "shlex", "shutil", "signal", "stat", "string", "tempfile", "time", "urllib.parse",
-                 "urllib.request"}
+                 "random", "re", "resource", "select", "selectors", "shlex", "shutil", "signal", "stat", "string",
+                 "tempfile", "time", "urllib.parse", "urllib.request"}
 
 # Every launch site in each file, by (the function it is in, its kind) -> (the number of such sites there, why each is
 # legitimate). The kind is "launch", "load", or the name of the OPEN runner a caller references. run_git's own launch is
@@ -118,8 +119,8 @@ INERT_MODULES = {"argparse", "collections", "datetime", "errno", "fcntl", "funct
 # outer first (_build_venv.step).
 ALLOWED = {
     "scripts/sweep.py": {
-        ("run_git", "launch"): (1, "the helper every git call goes through: GIT_BOUND, the process group killed at the "
-                                   "bound, the repository named explicitly"),
+        ("run_git", "launch"): (1, "the helper every git call goes through: GIT_BOUND, the memory and output limits, "
+                                   "the process group killed at the bound, the repository named explicitly"),
         ("tool_versions", "launch"): (1, "each tool's version flag (git --version among them) as the legs' own tool, from "
                                          "their PATH and in a leg's environment, bounded at 60 s, under the stop hold; "
                                          "it reads no repository"),
@@ -142,16 +143,18 @@ ALLOWED = {
                                                         "does not start"),
     },
     "scripts/batch.py": {
-        ("run_git", "launch"): (1, "the helper every git call goes through: GIT_BOUND, the process group killed at the "
-                                   "bound, the repository named explicitly"),
+        ("run_git", "launch"): (1, "the helper every git call goes through: GIT_BOUND, the memory and output limits, "
+                                   "the process group killed at the bound, the repository named explicitly"),
         ("_run", "launch"): (1, "OPEN, the runner for gh, whose callers are named below, under the stop hold"),
         ("run_tool", "launch"): (1, "OPEN, the runner for the processes that run git in the clone (the ledger script, "
-                                    "scripts/pr-orphans.sh): run_git's bound, process-group kill and repository"),
+                                    "scripts/pr-orphans.sh): run_git's bound, memory and output limits, "
+                                    "process-group kill and repository"),
         ("run_command", "launch"): (1, "OPEN, the runner for bisect's command, under the stop hold and unbounded on "
                                        "purpose: a test command can rightly take longer than any git call"),
         ("cmd_bisect", "run_command"): (3, "the user's bisect command at the tip, at the base and at each step"),
         ("sweep_reader", "load"): (2, "scripts/sweep.py, loaded from beside this file (spec_from_file_location and "
-                                      "exec_module) for its reader and excuse rule"),
+                                      "exec_module) for its reader, its excuse rule and the limits every run_git "
+                                      "and run_tool call sets (git_limits)"),
         ("gh", "_run"): (1, "gh, the program gh_bin() finds"),
         ("cmd_summarize", "_run"): (2, "gh pr edit and gh pr create, the program gh_bin() finds"),
         ("convert_ledger_rows", "run_tool"): (1, "the ledger script's import of a row, in the batch worktree"),
@@ -576,8 +579,8 @@ def unheld_launches(source):
 # Plants for the held rule, each written over its script's real source (old, new): a launch site whose hold is removed.
 UNHELD_PLANTS = {
     "scripts/sweep.py": {
-        "run_git's hold removed": ("    argv = [\"git\", *args]\n    _hold_stops()\n    try:\n        p = subprocess.Popen(",
-                                   "    argv = [\"git\", *args]\n    pass\n    try:\n        p = subprocess.Popen("),
+        "run_git's hold removed": ("    _hold_stops()\n    try:\n        p = subprocess.Popen(launch,",
+                                   "    pass\n    try:\n        p = subprocess.Popen(launch,"),
         "probe's hold removed": ("        _hold_stops()\n        try:\n            proc = subprocess.Popen(argv,",
                                  "        pass\n        try:\n            proc = subprocess.Popen(argv,"),
     },

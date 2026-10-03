@@ -29,6 +29,7 @@ import importlib.util
 import json
 import os
 import re
+import resource
 import select
 import shutil
 import signal
@@ -1753,31 +1754,42 @@ class Verify(_Base):
 # event). That full bound is read once, at the load, not at each call: a call made inside a planted one (run_tool's
 # repo_for, whose rev-parse runs before the tool starts) read the planted call's short bound as its own and ran at it
 # (the verify pass at the closing check wf_fb19febe-36b's build, its code finding 1). Each call restores the bound it
-# found, so the planted call waits at its short bound after the call inside it returns. With a log, each call appends
-# the bound it ran at, how it ended ("bound" for GitBound, "ended" for a return, "raised" for any other exception) and
-# the call, a line of three tab-separated fields.
+# found, so the planted call waits at its short bound after the call inside it returns. With "memory" in the JSON, the
+# planted calls run under that memory limit too, set as scripts/sweep.py's GIT_MEMORY in the module batch.py reads its
+# limits from (git_limits; a batch.py without it sets none), so a pin keys on the planted call and no xdist worker holds
+# batch.py's own figure. With a log, each call appends the bound it ran at, how it ended ("memory" for GitMemory,
+# "bound" for any other GitBound, "ended" for a return, "raised" for any other exception), the largest resident size in
+# bytes of any child the process had reaped when it ended (RUSAGE_CHILDREN; Linux reports it in KiB) and the call, a
+# line of four tab-separated fields.
 BATCH_BOUND_DRIVER = r"""
-import importlib.util, json, sys
+import importlib.util, json, resource, sys
 spec_, path, argv = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3:]
 spec = importlib.util.spec_from_file_location("batch_tool_bounded", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-short, planted, log = spec_["bound"], spec_["on"], spec_.get("log")
+short, planted, log, memory = spec_["bound"], spec_["on"], spec_.get("log"), spec_.get("memory")
 def planted_bound(module, full, call, start, *args, **kwargs):
-    found, bound = module.GIT_BOUND, short if any(call.startswith(words) for words in planted) else full
+    hit = any(call.startswith(words) for words in planted)
+    found, bound = module.GIT_BOUND, short if hit else full
     module.GIT_BOUND, ended = bound, "raised"
+    limits = module.git_limits() if memory and hit and hasattr(module, "git_limits") else None
+    if limits is not None:
+        found_memory, limits.GIT_MEMORY = limits.GIT_MEMORY, memory
     try:
         result = start(*args, **kwargs)
         ended = "ended"
         return result
-    except module.GitBound:
-        ended = "bound"
+    except module.GitBound as e:
+        ended = "memory" if type(e).__name__ == "GitMemory" else "bound"
         raise
     finally:
         module.GIT_BOUND = found
+        if limits is not None:
+            limits.GIT_MEMORY = found_memory
         if log:
+            peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024
             with open(log, "a") as f:
-                f.write("%s\t%s\t%s\n" % (bound, ended, call))
+                f.write("%s\t%s\t%d\t%s\n" % (bound, ended, peak, call))
 full = mod.GIT_BOUND
 run_git, run_tool = mod.run_git, mod.run_tool
 mod.run_git = lambda args, *a, **k: planted_bound(mod, full, " ".join(args), run_git, args, *a, **k)
@@ -1809,10 +1821,11 @@ sys.exit(mod.main(argv))
 assert BATCH_TERMINAL_DRIVER != BATCH_BOUND_DRIVER
 
 
-def bound_spec(bound, *on, log=None):
-    """BATCH_BOUND_DRIVER's argv[1]: `bound` seconds for the calls whose leading words `on` gives; every other call keeps
-    the script's GIT_BOUND. With `log`, the driver appends a line per call to that path."""
-    return json.dumps({"bound": bound, "on": list(on), "log": log})
+def bound_spec(bound, *on, log=None, memory=None):
+    """BATCH_BOUND_DRIVER's argv[1]: `bound` seconds for the calls whose leading words `on` gives, and with `memory` that
+    many bytes of address space for them; every other call keeps the script's GIT_BOUND and memory limit. With `log`,
+    the driver appends a line per call to that path."""
+    return json.dumps({"bound": bound, "on": list(on), "log": log, "memory": memory})
 
 
 def _descendants(pid):
@@ -1936,6 +1949,36 @@ exec "$PLANT_REAL_GIT" "$@"
 """
 
 
+# Starts a program with its address-space limit (RLIMIT_AS), soft and hard, at the number of bytes in its first argument
+# (or the inherited hard limit, where that is lower), then execs the rest of its arguments in its own process, as
+# tests/test_sweep_runner.py's CAP_SHIM does: the hard limit holds for every descendant, so a git that reads a symlink
+# to /dev/zero fails at the cap, on Linux, which enforces RLIMIT_AS, instead of taking the machine's memory.
+CAP_SHIM = ("import os, resource, sys\n"
+            "cap, hard = int(sys.argv[1]), resource.getrlimit(resource.RLIMIT_AS)[1]\n"
+            "cap = cap if hard == resource.RLIM_INFINITY else min(cap, hard)\n"
+            "resource.setrlimit(resource.RLIMIT_AS, (cap, cap))\n"
+            "os.execv(sys.argv[2], sys.argv[2:])\n")
+# The cap the batch pins that plant a read without end run under: 2 GiB, as tests/test_sweep_runner.py's MEMORY_PIN_CAP,
+# since free-threaded 3.14 reserves about 1 GiB of address space as it starts.
+PLANT_CAP = 2 << 30
+# The memory limit the planted calls of the batch memory pins run under (BATCH_BOUND_DRIVER's "memory"): far below
+# batch.py's own GIT_MEMORY, so a pin's git reads a planted /dev/zero to no more than this, and above what any call the
+# fixture makes needs, so a reaped child's resident size above it is the planted call's.
+PLANT_MEMORY = 128 << 20
+# origin/main's full ref, and its short name under refs/tags, a name git's rev-parse rules try before refs/remotes: the
+# two places the batch memory pins plant a symlink to /dev/zero.
+ORIGIN_MAIN_REF = "refs/remotes/origin/main"
+TAG_OF_ORIGIN_MAIN = "refs/tags/origin/main"
+# PLANT_GIT's twin for a read without end: just before the first call whose argv holds PLANT_ON it replaces PLANT_ZERO
+# with a symlink to /dev/zero, so that call, and no earlier one, reads it.
+PLANT_ZERO_GIT = r"""#!/bin/sh
+case " $* " in
+  *"$PLANT_ON"*) [ -L "$PLANT_ZERO" ] || ln -sfn /dev/zero "$PLANT_ZERO" ;;
+esac
+exec "$PLANT_REAL_GIT" "$@"
+"""
+
+
 class BatchGitBound(_Base):
     """The 02:43Z ruling on PR 926, item 1, in batch.py: every git it starts goes through run_git, which has a bounded wait
     (GIT_BOUND; each pin runs batch.py with a bound of BOUND seconds on the call that meets its plant alone,
@@ -1945,19 +1988,23 @@ class BatchGitBound(_Base):
 
     BOUND = 3
 
-    def bounded(self, *args, env=None, driver=BATCH_BOUND_DRIVER, bound=None, planted=()):
+    def bounded(self, *args, env=None, driver=BATCH_BOUND_DRIVER, bound=None, planted=(), cap=None, memory=None):
         """(rc, stdout, stderr) of batch.py `args`, run through `driver` with the calls `planted` names (their leading
         words) at `bound` seconds (default BOUND), so the case keys on the call that meets its plant, not on how long a
         normal call takes under load. Every call that ran at that bound must have ended at it (GitBound), or the case
         fails naming the call: the short bound then reached a call that met no plant, a call made inside a planted one
         or a planted call whose case planted nothing, and that call ends early under load (the 22:21Z ruling on the
         merge of fork main, item 1; the verify pass at the closing check wf_fb19febe-36b's build, its code finding
-        1)."""
+        1). With `cap`, batch.py runs under CAP_SHIM with its address space capped at that many bytes, soft and hard, so
+        every git it starts has the cap too. With `memory`, the planted calls run under that memory limit as well
+        (BATCH_BOUND_DRIVER). The calls the driver logged are left in self.calls, each [bound, how it ended, the
+        largest resident size of a reaped child then, the call]."""
         fx = self.fx
         short = bound or self.BOUND
         fd, log = tempfile.mkstemp(prefix="bound-calls-", suffix=".log", dir=fx.tmp)
         os.close(fd)
-        proc = subprocess.Popen([sys.executable, "-c", driver, bound_spec(short, *planted, log=log),
+        capped = [] if cap is None else [sys.executable, "-c", CAP_SHIM, str(cap)]
+        proc = subprocess.Popen(capped + [sys.executable, "-c", driver, bound_spec(short, *planted, log=log, memory=memory),
                                  os.path.join(fx.dev, "scripts", "batch.py"), *args], cwd=fx.tmp, env=env or fx.env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True)
 
@@ -1972,9 +2019,11 @@ class BatchGitBound(_Base):
             self.fail("batch.py %s was still running after 60 s, waiting without end on a file a git it started opened:\n%s%s"
                       % (" ".join(args), out, err))
         with open(log) as f:
-            calls = [line.rstrip("\n").split("\t", 2) for line in f]
-        self.assertEqual([c for c in calls if c[0] == str(short) and c[1] != "bound"], [],
-                         "a call at the short bound that did not end at it: the bound reached a call that met no plant")
+            calls = [line.rstrip("\n").split("\t", 3) for line in f]
+        self.calls = calls
+        self.assertEqual([c for c in calls if c[0] == str(short) and c[1] not in ("bound", "memory")], [],
+                         "a call at the short bound that did not end at it: the bound reached a call that met no plant, "
+                         "or one that met its plant with no bound to end it; batch.py printed:\n%s%s" % (out, err))
         return proc.returncode, out, err
 
     def assembled(self):
@@ -1994,7 +2043,7 @@ class BatchGitBound(_Base):
         self.assembled()
         os.mkfifo(os.path.join(fx.dev, ".git", "shallow"))
         for args, call in ((("verify", "b1"), "fetch --quiet --prune origin"),
-                           (("verify", "b1", "--no-fetch"), "rev-list batch/b1 ^origin/main ^"),
+                           (("verify", "b1", "--no-fetch"), "rev-list refs/heads/batch/b1 ^refs/remotes/origin/main ^"),
                            (("plan", "--name", "b2"), "fetch --quiet --prune origin")):
             with self.subTest(args=args):
                 rc, out, err = self.bounded(*args, planted=[call])
@@ -2364,6 +2413,36 @@ exec "$TRACE_REAL_GIT" "$@"
         self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), tip, "HEAD is at the tip")
         self.assertEqual(fx._git("rev-parse", "--abbrev-ref", "HEAD", cwd=wt), "batch/b1", "the worktree is on the branch")
 
+    def test_bisects_checkout_of_the_base_reads_a_ref_named_by_its_id_and_stops_at_the_memory_limit(self):
+        """Round 1 of PR 959, V5: git checkout <sha> looks the id up as a ref name under every rule of git's rev-parse rules
+        first, whatever core.warnAmbiguousRefs says, so bisect's checkout of the base reads a symlink to /dev/zero a leg
+        left at refs/tags/<base> in the clone, whose refs the batch worktree shares. Under the memory limit every git
+        batch.py starts has (V1; PLANT_MEMORY on that call) bisect stops (exit 1) with GitMemory naming the checkout, the
+        call held no more than the limit, and the cleanup leaves the worktree on the branch at the tip. Before V1 the
+        checkout read the symlink until PLANT_CAP and died with "fatal: Out of memory, realloc failed", reported as a plain
+        git failure."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        fx = self.fx
+        tip, _merge_101 = self.bisect_chain()
+        wt = fx.wt("b1")
+        base = fx._git("merge-base", ORIGIN_MAIN_REF, tip, cwd=wt)
+        planted = os.path.join(fx.dev, ".git", "refs", "tags", base)
+        os.symlink("/dev/zero", planted)
+        self.addCleanup(lambda: os.path.lexists(planted) and os.remove(planted))
+        call = "checkout --quiet --detach %s" % base
+        rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", self.BISECT_CMD % "exit 1", cap=PLANT_CAP, bound=60,
+                                    planted=[call], memory=PLANT_MEMORY)
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("batch: git %s in %s reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and failed "
+                      "(fatal: Out of memory, " % (call, wt, PLANT_MEMORY >> 20), err)
+        ended = [c for c in self.calls if c[3] == call]
+        self.assertEqual([c[1] for c in ended], ["memory"], "bisect's checkout of the base ended at the memory limit")
+        self.assertLessEqual(int(ended[0][2]), PLANT_MEMORY, "the checkout held more than its limit: %s" % ended)
+        os.remove(planted)
+        self.assert_reset_at_the_tip(tip)
+
     def test_bisect_takes_an_exit_of_125_as_a_skip_and_names_the_commit_it_skipped(self):
         """The closing check wf_3b100f5e-b38, its item 6, bisect's exit rules: 125 is git bisect run's skip. The command
         exits 125 at the one commit between the base and the tip, so no first bad commit can be named: bisect fails with
@@ -2382,17 +2461,19 @@ exec "$TRACE_REAL_GIT" "$@"
         self.assert_reset_at_the_tip(tip)
 
     # A git first on PATH for test_bisect_reads_both_of_gits_wordings: it runs the real git (PLANT_REAL_GIT), and the
-    # output of a `git bisect` call, its stdout and stderr together, is passed on with git's sentence about the first bad
-    # commit written as BISECT_WORDING, whichever of the two wordings that git wrote (git 2.43 "first bad commit", git
-    # 2.55 "first 'bad' commit"), and appended to BISECT_SEEN; the call's exit status is the real git's.
+    # output of a `git bisect` call (bisect among its arguments, after the -c run_git puts first), its stdout and stderr
+    # together, is passed on with git's sentence about the first bad commit written as BISECT_WORDING, whichever of the
+    # two wordings that git wrote (git 2.43 "first bad commit", git 2.55 "first 'bad' commit"), and appended to
+    # BISECT_SEEN; the call's exit status is the real git's.
     WORDING_GIT = r"""#!/bin/sh
-if [ "$1" = bisect ]; then
+case " $* " in
+*" bisect "*)
   out=$("$PLANT_REAL_GIT" "$@" 2>&1)
   rc=$?
   printf '%s\n' "$out" | sed -e "s/first 'bad' commit/first bad commit/" -e "s/first bad commit/$BISECT_WORDING/" \
     | tee -a "$BISECT_SEEN"
-  exit $rc
-fi
+  exit $rc ;;
+esac
 exec "$PLANT_REAL_GIT" "$@"
 """
 
@@ -2747,6 +2828,119 @@ exec "$PLANT_REAL_GIT" "$@"
         self.assertNotIn("Traceback", err)
         self.assertEqual(err, "batch: the sweep result's excuse rule could not be read: git %s in %s did not end within %d s "
                               "and was killed\n" % (call, fx.dev, self.BOUND))
+
+    def test_a_ref_named_by_the_batch_head_that_git_reads_without_end_is_not_read_by_verify(self):
+        """Round 1 of PR 959's spot-check, S4, on verify's path: batch.py's own git calls name the batch head by its full
+        object id (its provenance check's rev-list and merge-base among them), and so does the excuse rule's git cat-file
+        -e <head>:vscode-extension/package.json through scripts/sweep.py's run_git; each runs with core.warnAmbiguousRefs
+        off (batch.py's run_git passes it; sweep.py's GIT_NEUTRAL_CONFIG holds it), so none opens a ref of that name. A
+        symlink to /dev/zero at each of <git dir>/<head>, refs/tags/<head>, refs/heads/<head> and
+        refs/remotes/<head>/HEAD in the clone, planted after assembly and the sweep, is never read: verify --no-fetch, run
+        under PLANT_CAP on batch.py and every git it starts, exits and prints as it does with none planted. Before S4
+        every one of those gits ran with the setting on and tried each name to warn of an ambiguous one: batch.py's own,
+        which had no memory limit of their own then (round 1 of PR 959, V1, gave them one), read the symlink until the
+        cap, and the excuse rule's until sweep.py's GIT_MEMORY, and verify failed."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        fx = self.fx
+        self.assembled()
+        head = fx.dev_git("rev-parse", "batch/b1")
+        want = self.bounded("verify", "b1", "--no-fetch", cap=PLANT_CAP)
+        self.assertNotIn("memory", want[1] + want[2], "premise: verify with nothing planted")
+        for rule in ("%s", "refs/tags/%s", "refs/heads/%s", "refs/remotes/%s/HEAD"):
+            planted = os.path.join(fx.dev, ".git", *(rule % head).split("/"))
+            os.makedirs(os.path.dirname(planted), exist_ok=True)
+            os.symlink("/dev/zero", planted)
+            try:
+                with self.subTest(planted=rule):
+                    got = self.bounded("verify", "b1", "--no-fetch", cap=PLANT_CAP)
+                    self.assertEqual(got, want, "verify with the symlink planted: %r" % (got,))
+            finally:
+                os.remove(planted)
+
+    def test_a_symlink_to_dev_zero_at_the_tag_of_origin_mains_name_is_never_read(self):
+        """Round 1 of PR 959, V1: git's rev-parse rules try refs/tags/<name> before refs/remotes/<name>, whatever
+        core.warnAmbiguousRefs says, so batch.py's reads of origin/main by its short name opened a symlink to /dev/zero
+        a leg left at TAG_OF_ORIGIN_MAIN and read it without end. batch.py names it by its full ref wherever it needs only
+        its commit, and a fetch reads no tag of that name, so with that symlink in the clone verify, fetching or not, and
+        plan end as they end with none, and assemble assembles, each run under PLANT_CAP with no memory error. Before
+        V1 each failed: its rev-parse, rev-list and merge-base of origin/main read the symlink until the cap and
+        died with "fatal: Out of memory, realloc failed"."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        fx = self.fx
+        self.assembled()
+        runs = (("verify", "b1"), ("verify", "b1", "--no-fetch"), ("plan", "--name", "b2"))
+        want = {args: self.bounded(*args, cap=PLANT_CAP)[0] for args in runs}
+        planted = os.path.join(fx.dev, ".git", *TAG_OF_ORIGIN_MAIN.split("/"))
+        os.makedirs(os.path.dirname(planted), exist_ok=True)
+        os.symlink("/dev/zero", planted)
+        self.addCleanup(lambda: os.path.lexists(planted) and os.remove(planted))
+        for args in runs + (("assemble", "b2"),):
+            with self.subTest(args=" ".join(args)):
+                rc, out, err = self.bounded(*args, cap=PLANT_CAP)
+                self.assertNotIn("memory", (out + err).lower(), "a git read the symlink: %s%s" % (out, err))
+                self.assertEqual(rc, want.get(args, 0), out + err)
+                self.assertTrue(os.path.islink(planted), "premise: the symlink is still there")
+        self.assertTrue(os.path.isdir(os.path.join(os.path.dirname(fx.dev), "romp-batch-b2")), "assemble made its worktree")
+
+    def test_a_symlink_to_dev_zero_at_origin_mains_own_file_is_refused_within_the_memory_limit_naming_it(self):
+        """Round 1 of PR 959, V1: a symlink to /dev/zero at origin/main's loose file (ORIGIN_MAIN_REF), which git reads
+        whole by that exact name too, is read by the first git call that reads the ref: verify's fetch, or with
+        --no-fetch its provenance check's rev-list, plan's fetch, and, planted just before it (PLANT_ZERO_GIT), assemble's
+        worktree add of the batch branch at origin/main. Each meets the memory limit batch.py sets on every git call,
+        here PLANT_MEMORY on the planted call (BATCH_BOUND_DRIVER), and the command stops (exit 1) with GitMemory,
+        naming the call, the limit, git's line and the ref's file; the call held no more than the limit. Before V1
+        batch.py's git had no memory limit: each read the symlink until PLANT_CAP, died with "fatal: Out of memory,
+        realloc failed", and was reported as a plain git failure."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        fx = self.fx
+        self.assembled()
+        ref = os.path.join(fx.dev, ".git", *ORIGIN_MAIN_REF.split("/"))
+        main = fx.dev_git("rev-parse", ORIGIN_MAIN_REF)
+        fx.dev_git("update-ref", "-d", ORIGIN_MAIN_REF)     # a loose file, where the clone had packed the ref
+        fx.dev_git("update-ref", ORIGIN_MAIN_REF, main)
+        self.assertTrue(os.path.isfile(ref) and not os.path.islink(ref), "premise: the ref is a loose regular file")
+        plant = os.path.join(fx.tmp, "plant-zero-bin")
+        os.makedirs(plant)
+        with open(os.path.join(plant, "git"), "w") as f:
+            f.write(PLANT_ZERO_GIT)
+        os.chmod(os.path.join(plant, "git"), 0o755)
+        fx.ok("plan", "--name", "b2")
+        cases = ((("verify", "b1"), "fetch --quiet --prune origin", None),
+                 (("verify", "b1", "--no-fetch"), "rev-list refs/heads/batch/b1 ^refs/remotes/origin/main ^", None),
+                 (("plan", "--name", "b3"), "fetch --quiet --prune origin", None),
+                 (("assemble", "b2", "--no-fetch"), "worktree add --quiet -B batch/b2 ", "worktree add --quiet -B batch/b2"))
+        for args, call, swap_on in cases:
+            with self.subTest(args=" ".join(args)):
+                env = None
+                if swap_on is None:
+                    os.remove(ref)
+                    os.symlink("/dev/zero", ref)
+                else:
+                    env = dict(fx.env, PATH=plant + os.pathsep + fx.env["PATH"], PLANT_ON=swap_on, PLANT_ZERO=ref,
+                               PLANT_REAL_GIT=shutil.which("git", path=fx.env["PATH"]))
+                try:
+                    rc, out, err = self.bounded(*args, env=env, cap=PLANT_CAP, bound=60, planted=[call],
+                                                memory=PLANT_MEMORY)
+                    self.assertTrue(os.path.islink(ref), "premise: the symlink was planted")
+                finally:
+                    if os.path.lexists(ref):
+                        os.remove(ref)
+                    fx.dev_git("update-ref", ORIGIN_MAIN_REF, main)
+                self.assertEqual(rc, 1, out + err)
+                self.assertIn("reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and failed (fatal: Out of "
+                              "memory, " % (PLANT_MEMORY >> 20), err)
+                self.assertIn("batch: git %s" % call, err)
+                self.assertRegex(err, r"; the call reads (?:\S+, )*%s(?:, \S+)*, and run the command again" % re.escape(ref))
+                ended = [c for c in self.calls if c[3].startswith(call)]
+                self.assertEqual([c[1] for c in ended], ["memory"], "the planted call ended at the memory limit")
+                self.assertLessEqual(int(ended[0][2]), PLANT_MEMORY, "the planted call held more than its limit: %s"
+                                     % ended)
 
     def test_a_linked_worktree_clone_whose_git_file_is_swapped_after_discovery_is_still_the_one_read(self):
         """The 02:43Z ruling, item 1(b), its GIT_DIR (the verify pass at PR 926's build head, its code finding 3): the clone
@@ -3367,7 +3561,7 @@ if _child is not None:
         rc, out, err = self.bounded("verify", "b1", "--no-fetch", planted=["worktree add --quiet --detach "])
         restore()
         self.assertEqual(rc, 1, out + err)
-        m = re.search(r"^batch: git worktree add --quiet --detach (\S+) batch/b1 in %s did not end within 3 s and was "
+        m = re.search(r"^batch: git worktree add --quiet --detach (\S+) refs/heads/batch/b1 in %s did not end within 3 s and was "
                       r"killed$" % re.escape(fx.dev), err, re.M)
         self.assertIsNotNone(m, err)
         self.assertFalse(os.path.lexists(os.path.dirname(m.group(1))), "the directory holding the tree is gone")
@@ -3408,7 +3602,7 @@ sys.exit(mod.main(argv))
         rc, out, err = self.bounded("verify", "b1", "--no-fetch", driver=driver, planted=["worktree add --quiet --detach "])
         restore()
         self.assertEqual(rc, 1, out + err)
-        self.assertRegex(err, r"batch: git worktree add --quiet --detach \S+ batch/b1 in %s did not end within 3 s and was "
+        self.assertRegex(err, r"batch: git worktree add --quiet --detach \S+ refs/heads/batch/b1 in %s did not end within 3 s and was "
                               r"killed" % re.escape(fx.dev))
         self.assertEqual(self.registrations(), before, "the locked registration the SIGKILL left is removed")
 
@@ -3930,6 +4124,157 @@ def _kill_groups(pgids):
                 pass
 
 
+# A git first on PATH for BatchGitLimits: it leaves the file $SHIM_RAN when set, prints $SHIM_OUT bytes on its stdout,
+# or else the address-space limit /proc gives it, and what the file $SHIM_SAYS holds on its stderr, then exits as
+# $SHIM_ENDS says.
+LIMITS_GIT = r"""#!/bin/sh
+if [ -n "$SHIM_RAN" ]; then : > "$SHIM_RAN"; fi
+if [ -n "$SHIM_OUT" ]; then head -c "$SHIM_OUT" /dev/zero; else grep '^Max address space' /proc/$$/limits; fi
+if [ -n "$SHIM_SAYS" ]; then cat "$SHIM_SAYS" >&2; fi
+exit ${SHIM_ENDS:-0}
+"""
+
+
+class BatchGitLimits(unittest.TestCase):
+    """Round 1 of PR 959, V1, at run_git and run_tool: every git batch.py starts, and every process run_tool starts, runs
+    under a memory limit set by the shell that execs it, GIT_MEMORY (1 GiB) or for a push PUSH_MEMORY (16 GiB), or the
+    test process's own lower limit; a shell that cannot set it starts nothing; a failure at it is GitMemory, read as
+    scripts/sweep.py reads one (git's own line, first); and output past GIT_OUTPUT_MAX ends the call with GitOutput. A git
+    first on PATH (LIMITS_GIT) stands in for git and for a tool. Linux only, where the limit is set."""
+
+    def setUp(self):
+        if not sys.platform.startswith("linux"):
+            self.skipTest("batch.py sets the memory limit on Linux alone")
+        self.tmp = tempfile.mkdtemp(prefix="batch-limits-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin = os.path.join(self.tmp, "bin")
+        os.makedirs(self.bin)
+        self.git = os.path.join(self.bin, "git")
+        with open(self.git, "w") as f:
+            f.write(LIMITS_GIT)
+        os.chmod(self.git, 0o755)
+        self.said = os.path.join(self.tmp, "said")
+        self.repo = batch.GitRepo(self.tmp, os.path.join(self.tmp, ".git"), os.path.join(self.tmp, ".git"),
+                                  os.path.dirname(self.tmp))
+
+    def env(self, **extra):
+        return unittest.mock.patch.dict(os.environ, dict(extra, PATH=self.bin + os.pathsep + os.environ["PATH"]))
+
+    @staticmethod
+    def expected(figure):
+        """`figure` bytes, or this process's own lower soft or hard RLIMIT_AS, which a child inherits."""
+        return min([figure] + [n for n in resource.getrlimit(resource.RLIMIT_AS) if n != resource.RLIM_INFINITY])
+
+    def limit_of(self, said):
+        line = next(x for x in said.splitlines() if x.startswith("Max address space"))
+        return line.split()[3:5]
+
+    def test_each_git_and_each_tool_process_starts_under_its_memory_limit(self):
+        """A git call gets 1 GiB of address space, soft and hard, a push 16 GiB (its pre-push hook starts gitleaks, which
+        reserves more than 4 GiB as it starts), and a run_tool process 1 GiB, each read from /proc by the process
+        itself. Before V1 each started with no limit ("unlimited")."""
+        with self.env():
+            plain = batch.run_git(["status"], self.tmp, repo=self.repo)
+            push = batch.run_git(["push", "--quiet", "-u", "origin", "refs/heads/batch/b1"], self.tmp, repo=self.repo)
+            tool = batch.run_tool([self.git, "check"], self.tmp, repo=self.repo)
+        for what, p, figure in (("git status", plain, 1 << 30), ("git push", push, 16 << 30), ("a tool", tool, 1 << 30)):
+            with self.subTest(what=what):
+                self.assertEqual(p.returncode, 0, p)
+                self.assertEqual(self.limit_of(p.stdout), [str(self.expected(figure))] * 2, p.stdout)
+
+    def test_a_shell_that_cannot_set_the_limit_starts_nothing_and_is_a_fail_naming_it(self):
+        """A shell whose ulimit -v fails (handed a value it cannot read) execs no git and no tool: run_git and run_tool
+        raise a Fail naming the call and LIMIT_FAILED, and the git first on PATH, which leaves a file when run, never
+        ran."""
+        limits = batch.git_limits()
+        broken = limits._LIMITED.replace("ulimit -v %d", "ulimit -v x%d")
+        self.assertNotEqual(broken, limits._LIMITED, "premise: the shell's ulimit is the planted text")
+        ran = os.path.join(self.tmp, "ran")
+        for what, call in (("git", lambda: batch.run_git(["status"], self.tmp, repo=self.repo)),
+                           ("tool", lambda: batch.run_tool([self.git, "check"], self.tmp, repo=self.repo))):
+            with self.subTest(what=what), self.env(SHIM_RAN=ran), \
+                    unittest.mock.patch.object(limits, "_LIMITED", broken):
+                with self.assertRaises(batch.Fail) as cm:
+                    call()
+                self.assertNotIsInstance(cm.exception, batch.GitBound)
+                self.assertIn(" in %s did not run: %s, so batch.py did not start it without one" % (self.tmp, limits.LIMIT_FAILED),
+                              str(cm.exception))
+                self.assertFalse(os.path.exists(ran), "nothing ran")
+
+    def test_a_failure_at_the_limit_is_git_memory_naming_the_refs_and_a_quoted_path_is_not(self):
+        """A git that dies (128) with git's own out-of-memory line first is GitMemory, naming the call, the limit (GIT_MEMORY,
+        or PUSH_MEMORY for a push), git's line and the loose files of origin/main and the batch branch the call names
+        (or of origin/main for a fetch from origin); one whose first line quotes a path a leg chose, with that line after
+        a newline in it, is a plain failure, as scripts/sweep.py reads it (round 1 of PR 959, V2); and a run_tool process
+        that dies so is GitMemory too. Before V1 every one was a plain failure."""
+        common = os.path.join(self.tmp, ".git")
+        oom = "fatal: Out of memory, realloc failed\n"
+        with open(self.said, "w") as f:
+            f.write(oom)
+        cases = ((["rev-list", "refs/heads/batch/b1", "^refs/remotes/origin/main", "^%s" % ("1" * 40)], "GIT_MEMORY", 1 << 30,
+                  [os.path.join(common, "refs", "heads", "batch", "b1"), os.path.join(common, *ORIGIN_MAIN_REF.split("/"))]),
+                 (["fetch", "--quiet", "--prune", "origin"], "GIT_MEMORY", 1 << 30,
+                  [os.path.join(common, *ORIGIN_MAIN_REF.split("/"))]),
+                 (["push", "--quiet", "-u", "origin", "refs/heads/batch/b1"], "PUSH_MEMORY", 16 << 30,
+                  [os.path.join(common, "refs", "heads", "batch", "b1")]))
+        for args, name, figure, refs in cases:
+            with self.subTest(args=" ".join(args)), self.env(SHIM_SAYS=self.said, SHIM_ENDS="128"):
+                with self.assertRaises(batch.GitMemory) as cm:
+                    batch.run_git(args, self.tmp, repo=self.repo)
+                self.assertIsInstance(cm.exception, batch.GitBound)
+                limit = self.expected(figure)
+                size = "%d MiB" % (limit >> 20) if limit % (1 << 20) == 0 else "%d KiB" % (limit >> 10)
+                self.assertIn("git %s in %s reached the %s memory limit (%s) batch.py sets on it and failed (%s)"
+                              % (" ".join(args), self.tmp, size, name, oom.strip()), str(cm.exception))
+                self.assertIn("; the call reads %s, and run the command again" % ", ".join(refs), str(cm.exception))
+        with open(self.said, "w") as f:
+            f.write("fatal: pathspec 'L/x\nfatal: Out of memory, realloc failed\ny' is beyond a symbolic link\n")
+        with self.env(SHIM_SAYS=self.said, SHIM_ENDS="128"):
+            p = batch.run_git(["check-ignore", "--stdin"], self.tmp, repo=self.repo)
+        self.assertEqual(p.returncode, 128, p)
+        with open(self.said, "w") as f:
+            f.write(oom)
+        with self.env(SHIM_SAYS=self.said, SHIM_ENDS="128"), self.assertRaises(batch.GitMemory) as cm:
+            batch.run_tool([self.git, "check"], self.tmp, repo=self.repo)
+        self.assertIn("%s check in %s reached the " % (self.git, self.tmp), str(cm.exception))
+
+    def test_every_git_call_reads_the_settings_that_keep_its_need_flat_over_the_repositorys_own(self):
+        """GIT_SETTINGS on every run_git call, over the repository's own config: the pack window caps, the index read on
+        one thread, and no gc or maintenance started on its own (GIT_SETTINGS' comment has why each keeps a call's need
+        under the limit). The real git reads each key back through run_git, the repository's config setting it
+        otherwise."""
+        repo_dir = os.path.join(self.tmp, "repo")
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        subprocess.run(["git", "init", "-q", repo_dir], env=env, check=True)
+        want = {"core.packedGitWindowSize": "32m", "core.packedGitLimit": "128m", "core.preloadIndex": "false",
+                "index.threads": "false", "gc.auto": "0", "maintenance.auto": "false"}
+        for key in want:
+            subprocess.run(["git", "-C", repo_dir, "config", key, "7"], env=env, check=True)
+        repo = batch.GitRepo(repo_dir, os.path.join(repo_dir, ".git"), os.path.join(repo_dir, ".git"), self.tmp)
+        with unittest.mock.patch.dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"):
+            got = {key: batch.run_git(["config", "--get", key], repo_dir, repo=repo).stdout.strip() for key in want}
+        self.assertEqual(got, want)
+
+    def test_output_past_the_limit_ends_the_call_with_git_output(self):
+        """A git, or a run_tool process, that prints more than GIT_OUTPUT_MAX bytes on its stdout (lowered here to 4096 in
+        the module batch.py reads its limits from) is killed with its process group, and GitOutput, a GitBound, names the
+        call, the stream and the limit. One that prints exactly the limit is read whole. Before V1 batch.py read any
+        amount."""
+        limits = batch.git_limits()
+        with unittest.mock.patch.object(limits, "GIT_OUTPUT_MAX", 4096):
+            with self.env(SHIM_OUT="4096"):
+                p = batch.run_git(["log"], self.tmp, repo=self.repo)
+            self.assertEqual(len(p.stdout), 4096)
+            for what, call in (("git", lambda: batch.run_git(["log"], self.tmp, repo=self.repo)),
+                               ("tool", lambda: batch.run_tool([self.git, "check"], self.tmp, repo=self.repo))):
+                with self.subTest(what=what), self.env(SHIM_OUT="4097"):
+                    with self.assertRaises(batch.GitOutput) as cm:
+                        call()
+                    self.assertIsInstance(cm.exception, batch.GitBound)
+                    self.assertIn("printed more than 4 KiB on its stdout, the most batch.py reads of one call "
+                                  "(GIT_OUTPUT_MAX), and was killed", str(cm.exception))
+
+
 # Runs the rest of its argv (an interpreter's arguments) with SIGCHLD ignored, which exec keeps (the same driver as
 # tests/test_sweep_runner.py's IGNORE_SIGCHLD).
 IGNORE_SIGCHLD = ("import os, signal, sys; signal.signal(signal.SIGCHLD, signal.SIG_IGN); "
@@ -4440,6 +4785,121 @@ class VerifyReadsTheSweep(_Base):
         for n in sweep.EXTENSION_LEGS:          # the fixture's worlds have no vscode-extension/package.json
             out[n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
         return out
+
+
+# Calls batch.py's read_state (scripts/batch.py at argv[1]) on the batch state file argv[2], a sparse file of argv[3]
+# bytes it makes with truncate (no byte of it written), under an address cap set soft AND hard at what the child maps
+# then plus 256 MiB, which bounds the memory a read of the whole file can take; with argv[4] "grew", os.fstat first gives
+# every regular file's size as 0, as for a file that grew after the fstat. Prints JSON: [how it ended, what it gave, the
+# bytes read], the bytes counted as each read of the file object read_state opens returns them. On CPython 3.10, 3.12
+# and 3.13 the cap binds first, so a whole read ends in a MemoryError at it. Free-threaded 3.14 starts with about 1 GiB
+# of address space its allocator has already reserved, so there the cap leaves room for a 768 MiB plant and a whole read
+# of it succeeds; the bytes read tell a bounded read from a whole one on every interpreter.
+STATE_DRIVER = r"""
+import importlib.util, json, os, resource, stat, sys
+spec = importlib.util.spec_from_file_location("batch_state_reader", sys.argv[1])
+batch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(batch)
+path, size, mode = sys.argv[2], int(sys.argv[3]), sys.argv[4]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path, "wb"):
+    pass
+os.truncate(path, size)
+if mode == "grew":
+    real_fstat = os.fstat
+    def emptied_fstat(fd):
+        st = real_fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return st
+        fields = list(st)
+        fields[stat.ST_SIZE] = 0
+        return os.stat_result(fields)
+    os.fstat = emptied_fstat
+read = {"bytes": 0}
+real_fdopen = os.fdopen
+class Counting:
+    def __init__(self, f):
+        self.f = f
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        self.f.close()
+        return False
+    def read(self, n=-1):
+        data = self.f.read(n)
+        read["bytes"] += len(data)
+        return data
+os.fdopen = lambda *args, **kwargs: Counting(real_fdopen(*args, **kwargs))
+with open("/proc/self/status") as f:
+    vm = int([line.split()[1] for line in f if line.startswith("VmSize:")][0]) << 10
+cap = vm + (256 << 20)
+resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
+try:
+    data = batch.read_state(path)
+    got = ["returned", None if data is None else len(data)]
+except MemoryError:
+    got = ["MemoryError"]
+except Exception as e:
+    got = [type(e).__name__, str(e)]
+print(json.dumps(got + [read["bytes"]]))
+"""
+
+
+class BatchStateLimit(unittest.TestCase):
+    """Round 1 of PR 959, ruling A's class: the batch state file lives in the clone's common dir, which a sweep's leg
+    reaches through its checkout's alternates, so a leg can leave a sparse file of any size there, and read_state reads
+    at most STATE_MAX (1 MiB) of it, enforced by fstat before the read and by reading no more than the limit and a byte."""
+
+    SIZE = 768 << 20
+
+    def state(self, mode, size=None):
+        if not sys.platform.startswith("linux"):
+            self.skipTest("the driver sets its address cap from /proc/self/status, which only Linux has, and only Linux "
+                          "enforces RLIMIT_AS; the cap bounds the memory a whole read of the plant can take")
+        tmp = tempfile.mkdtemp(prefix="batchstate-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, ".git", "batch", "b1.json")
+        size = self.SIZE if size is None else size
+        p = subprocess.run([sys.executable, "-c", STATE_DRIVER, str(SCRIPTS / "batch.py"), path, str(size), mode],
+                           text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return path, json.loads(p.stdout)
+
+    def test_a_batch_state_over_the_limit_is_refused_naming_its_size(self):
+        """A sparse state file of 768 MiB is a Fail naming the file, its size and the limit, with the remedy read_state
+        gives a state file it cannot read, and no byte of it is read. Before this pass read_state read it whole: on
+        CPython 3.10, 3.12 and 3.13 a MemoryError at the child's address cap here, and on free-threaded 3.14, where the
+        cap does not bind first, all 805306368 bytes of it; red on each for that reason, and any size a leg chose was
+        read without the cap."""
+        path, got = self.state("whole")
+        self.assertEqual(got, ["Fail", "the batch state %s cannot be read (%d bytes, more than the %d batch.py reads); move "
+                                       "it aside and plan again" % (path, self.SIZE, 1 << 20), 0])
+        self.assertEqual(getattr(batch, "STATE_MAX", None), 1 << 20, "batch.py's limit is the one pinned")
+
+    def test_a_batch_state_of_exactly_the_limit_is_read_whole_and_one_byte_more_is_refused(self):
+        """The other side of the limit: a state file of exactly STATE_MAX bytes is read whole, all of it, so a comparison
+        that refused it (fstat's size at the limit taken as over it) is red here, where the 768 MiB plant passes under
+        it; one of STATE_MAX + 1 bytes is the Fail naming its size and the limit, with nothing read. read_regular's own
+        comparison, in scripts/sweep.py, is pinned at its limit by tests/test_sweep_runner.py's ShallowBatcher case of
+        a shallow file at the bound
+        (test_a_shallow_file_larger_than_the_runner_reads_is_refused_naming_its_size_and_never_read)."""
+        limit = 1 << 20
+        path, got = self.state("whole", limit)
+        self.assertEqual(got, ["returned", limit, limit])
+        path, got = self.state("whole", limit + 1)
+        self.assertEqual(got, ["Fail", "the batch state %s cannot be read (%d bytes, more than the %d batch.py reads); move "
+                                       "it aside and plan again" % (path, limit + 1, limit), 0])
+
+    def test_a_batch_state_that_grew_after_the_fstat_stops_at_the_limit(self):
+        """The second half of the bound: with os.fstat giving every regular file's size as 0, as for a file that grew
+        after it, read_state reads 1 MiB and a byte of the 768 MiB plant, the bytes read the pin expects, and is a Fail
+        naming the limit. Before this pass it read the whole file: on CPython 3.10, 3.12 and 3.13 a MemoryError at the cap
+        here, and on free-threaded 3.14, where the cap does not bind first, all 805306368 bytes of it, returned; red on
+        each for that reason. A read_state that kept the fstat check but read the file whole gives the expected Fail on
+        3.14, after reading all of it, so there only the bytes read make the pin red."""
+        path, got = self.state("grew")
+        self.assertEqual(got, ["Fail", "the batch state %s cannot be read (more than the %d bytes batch.py reads); move it "
+                                       "aside and plan again" % (path, 1 << 20), (1 << 20) + 1])
 
 
 class CiJobs(unittest.TestCase):

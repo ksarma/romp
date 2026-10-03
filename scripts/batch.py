@@ -99,21 +99,46 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     .git: repo_root makes it once for the clone, and repo_for before every call made in a batch worktree, each at a
     directory that must itself hold .git and be git's work tree there, never walked up from), so a .git that git does
     not recognize fails the call instead of sending git up to an
-    enclosing repository (the 02:43Z ruling, item 1(b)), and bounds its wait at GIT_BOUND, 600 s (item
-    1(a)): a git still running then (waiting on a FIFO at the clone's shallow file, config or HEAD, which a sweep's leg
+    enclosing repository (the 02:43Z ruling, item 1(b)), runs with core.warnAmbiguousRefs off (QUIET_NAMES), so a full
+    object id a call resolves as an object reads no ref, and a name opens the names git's rules try up to the first that
+    finds a ref and none of the later ones git would open to warn that it is ambiguous (bisect's checkouts and git
+    bisect start look a commit id up as a ref name under every rule whatever the setting: QUIET_NAMES' comment), and
+    bounds its wait at GIT_BOUND, 600 s (item 1(a)): a git still
+    running then (waiting on a FIFO at the
+    clone's shallow file, config or HEAD, which a sweep's leg
     can plant through its checkout's alternates, say) is killed with its process group, and the command stops there with
     GitBound, a Fail (exit 1) naming the call, except in finish's read of the landed head's CI run, which, the merge
     having happened, reports any Fail there, GitBound included, as unread after the merge and carries on. The bound is far above the slowest call
     measured (a member's merge, under a second; the comment at GIT_BOUND gives the figures), and larger than
     scripts/sweep.py's because a push runs the pre-push hook and a fetch can bring new commits, neither measured.
-    verify's read of the excuse rule runs its git through scripts/sweep.py, at that script's bound. The two processes
-    the tool starts that run git in the clone, scripts/pr-orphans.sh (finish) and the ledger script (verify's check,
+    verify's read of the excuse rule runs its git through scripts/sweep.py, at that script's bound and limits. The two
+    processes the tool starts that run git in the clone, scripts/pr-orphans.sh (finish) and the ledger script (verify's
+    check,
     assemble's row import), start through run_tool, each with the GIT_DIR, GIT_COMMON_DIR, GIT_WORK_TREE and ceiling of
     the tree it runs in in its environment (the clone for pr-orphans.sh; the batch worktree, or the ledger check's
     temporary worktree, for the ledger script) and GIT_BOUND with the process-group kill, as run_git's calls have (the
     closing check wf_3b100f5e-b38, its item 5); finish reports a pr-orphans.sh killed at the bound as unread, the merge
-    having happened, and carries on. Not bounded: bisect's test command, which it runs at the tip, at the base and at
-    each step, and gh, with anything it starts (gh reads the clone's remotes with a git of its own). SIGTERM, SIGHUP
+    having happened, and carries on. Every such git, and every run_tool process, also has a memory limit and an output
+    limit, scripts/sweep.py's, read from that module (git_limits; round 1 of PR 959, V1): GIT_MEMORY, 1 GiB, of address
+    space (PUSH_MEMORY, 16 GiB, for a push, whose pre-push hook starts gitleaks), so a git of this tool's own that reads
+    without end (a symlink to /dev/zero at origin/main's loose file, which a sweep's leg can leave through its
+    checkout's alternates) fails at the limit and the command stops with GitMemory, naming the call, the limit and the
+    ref files of origin/main or a batch branch the call reads; and GIT_OUTPUT_MAX, 64 MiB a stream, past which the
+    process is killed with its group and the command stops with GitOutput, naming the call and the stream. Both are
+    GitBound Fails, which finish reports after the merge as it reports one at the bound. A git that pr-orphans.sh or the
+    ledger script starts has the same memory limit, but the script reads that git's failure as it reads any other:
+    pr-orphans.sh as a merged PR whose content is not on main (or, with no merge commit recorded, unknown), the ledger
+    import as a row no commit introduced (dated today), so a failure at the limit there is not named. origin/main and
+    the batch branches are named by their full refs (MAIN_REF, batch_ref) wherever a call needs only their commit, so
+    while the ref exists git opens no other name its rev-parse rules try for it (refs/tags/origin/main,
+    <git dir>/batch/<name> and the rest); an absent full ref sends git on through those rules (plan's and verify's reads
+    of a deleted base branch, verify's check for the batch branch), and finish's check that the batch branch is still
+    there and bisect's cleanup checkout of it name it by its short name, each under GIT_MEMORY, whose GitMemory then
+    names at most the full ref's loose file, not the file git read. Not bounded: bisect's test command, which it runs at
+    the tip, at the base and at each step; and gh, with anything it starts: _run holds all of what gh prints, with no
+    time, memory or output limit, which this PR leaves out of scope (the 16:04Z ruling on PR 959) since what gh prints
+    is GitHub's answer rather than a file a leg can grow, and gh's own git, which reads the clone's config and remotes,
+    has none of these limits either. SIGTERM, SIGHUP
     and SIGINT (Ctrl-C) stop the tool (but a SIGHUP or SIGINT the tool was started with ignored, as by nohup or as a
     shell's background job, stays ignored): any process it is waiting on is ended with its process group (a git, a
     run_tool process, gh or bisect's command, each started in a session of its own, so what it started goes too), each
@@ -131,6 +156,7 @@ import importlib.util
 import json
 import os
 import re
+import resource
 import shutil
 import signal
 import stat
@@ -152,6 +178,10 @@ MAIN = "main"
 PYTHON_REMEDY = ("<python>: a Python of the version CI's served step runs, or pass --served-python one as well; "
                  "docs/batching.md, batcher step 3")
 REMOTE = "origin"
+# origin/main by its full name (round 1 of PR 959, V1), as every git call that needs only its commit names it: a short
+# name is tried by git's rev-parse rules as <git dir>/<name>, refs/<name>, refs/tags/<name> and refs/heads/<name> before
+# refs/remotes/<name>, and a symlink to /dev/zero at any of those, whatever core.warnAmbiguousRefs says, is read whole.
+MAIN_REF = "refs/remotes/%s/%s" % (REMOTE, MAIN)
 LABEL_MAJOR = "major-feature"
 LABEL_HOLD = "hold"
 LABEL_LAND = "land"
@@ -193,7 +223,8 @@ class Fail(Exception):
 
 def _run(cmd, cwd=None, check=True, env=None, input_text=None):
     """A process that is not git, run without a bound (gh, which reads the clone's remotes with a git of its own), its
-    output read; every git call goes through run_git, and the two processes this tool starts that run git in the clone,
+    output read whole, with no memory or output limit either (out of scope: the module docstring's "Not bounded"); every
+    git call goes through run_git, and the two processes this tool starts that run git in the clone,
     scripts/pr-orphans.sh and the ledger script, through run_tool. It starts under the stop hold, as run_git's git does
     (the closing check wf_fb19febe-36b, its item 4), and in a session of its own, as run_tool's process does, so any
     exception while it runs ends it with its process group, gh's git included (_held_wait)."""
@@ -279,7 +310,74 @@ GIT_LOCATION_ENV = ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_
 
 
 class GitBound(Fail):
-    """A git call that did not end within GIT_BOUND seconds, killed with its process group: a refusal naming the call."""
+    """A git call that did not end within GIT_BOUND seconds, killed with its process group: a refusal naming the call.
+    GitMemory and GitOutput, the calls that met the memory and output limits, are GitBounds too, so every place that
+    handles one handles them the same way."""
+
+
+class GitMemory(GitBound):
+    """A git call, or a process run_tool started, that failed when an allocation reached the memory limit set on it
+    (git_memory): a refusal naming the call, the limit, git's line and the ref files of origin/main or a batch branch the
+    call reads."""
+
+
+class GitOutput(GitBound):
+    """A git call, or a process run_tool started, that printed more than GIT_OUTPUT_MAX bytes on its stdout or its stderr,
+    killed with its process group: a refusal naming the call, the stream and the limit."""
+
+
+# What run_git puts before every git call's own arguments: core.warnAmbiguousRefs off, over the clone's own config too.
+# With it on (git's default), a git given a name, or a full object id such as a batch head or a member's head, also
+# opens each other name git's rev-parse rules give it (<git dir>/<name>, refs/<name>, refs/tags/<name>,
+# refs/heads/<name>, refs/remotes/<name> and refs/remotes/<name>/HEAD) to warn that the name is ambiguous, and reads
+# what it finds there whole: a symlink to /dev/zero at refs/tags/<head>, which a sweep's leg can leave in the clone
+# through its checkout's alternates, made verify's git rev-list --parents -n 1 <head> read without end (round 1 of PR
+# 959's spot-check, S4, git 2.43.0, 2026-10-03), and this tool's git had no memory limit then (GIT_SETTINGS' comment), so
+# only GIT_BOUND's 600 s or the machine's memory ended it. No call here reads that warning: git prints it on stderr and resolves the name as it
+# does with the setting off, by the first rule that finds one. The setting also decides how strictly for-each-ref's
+# refname:short shortens a name, which this tool reads for the remote batch branches: it gave the same names with the
+# setting on and off, with a branch, a tag or a packed refs/remotes/<name>/HEAD of the same short name present
+# (measured the same day). The setting does not reach every call that names a commit by its id: git checkout <sha>,
+# which bisect makes of the base, git bisect start, and each bisect step's checkout of the next commit look the id up as
+# a ref name first under every rule (<git dir>/<sha>, refs/<sha>, refs/tags/<sha>, refs/heads/<sha>, refs/remotes/<sha>
+# and refs/remotes/<sha>/HEAD), whatever the setting, and read a symlink to /dev/zero at any of them (round 1 of PR 959,
+# V5, git 2.43.0, 2026-10-03). bisect runs them after your command has run in the batch worktree, whose refs are the
+# clone's, and each runs under GIT_MEMORY, so such a read stops bisect there, naming the call (GIT_SETTINGS' comment).
+QUIET_NAMES = ("-c", "core.warnAmbiguousRefs=false")
+
+# Round 1 of PR 959, V1 (the 13:21Z ruling: ruling A's class is every unbounded read of something a leg can reach): every
+# git run_git starts, and every process run_tool starts, has a memory limit beside GIT_BOUND's time limit, its address
+# space (RLIMIT_AS) set by the shell that execs it, and an output limit, scripts/sweep.py's: that module's GIT_MEMORY (1
+# GiB), git_memory_limit (the tool's own lower limit passed on instead, and none off Linux, where RLIMIT_AS is not
+# enforced), _LIMITED (the shell; one that cannot set the limit starts nothing, LIMIT_FAILED), GIT_OUTPUT_MAX (64 MiB a
+# stream, through its _git_streams' selector loop) and _out_of_memory_line (a failure is the limit's only when git died
+# with one of git's own lines as its first), read from it once per process (git_limits), so the two scripts keep one
+# figure and one reading of each. Before this, batch.py's git had GIT_BOUND alone, and a symlink to /dev/zero a leg left
+# at refs/tags/origin/main (a name git tries for origin/main before refs/remotes/origin/main) or at
+# refs/remotes/origin/main made its rev-parse, rev-list and fetch read until the machine's memory ran out, at 1.3 to 1.7
+# GiB/s (each reached a 3 GiB cap in 1.7 to 2.3 s, the round's evidence). The figures, measured on 2026-10-03 with git
+# 2.43.0 on a scratch clone of this project (its objects through alternates: 8 packs, the largest 289 MiB), by bisecting
+# to 4 MiB the smallest limit at which each
+# call class succeeds: with GIT_SETTINGS, a whole-tree worktree add needed 255 MiB, a member's merge 91 MiB, merge-tree
+# and diff-tree 87 MiB, a fetch that brought new commits 59 MiB, merge-base and rev-list 55 MiB, ls-remote 19 MiB,
+# rev-parse and for-each-ref 11 MiB; without them the same calls needed 419, 363, 315, 319, 311, 19 and 11 MiB, since a
+# call that reads an object maps a little more than the largest pack it touches. GIT_SETTINGS are those of
+# scripts/sweep.py's GIT_NEUTRAL_CONFIG that keep the need flat (its comment has the mechanism): the pack window caps,
+# and core.preloadIndex and index.threads off, since each thread git starts for the index reserves a stack and a malloc
+# arena, so a checkout's need would vary with the threads it starts; and gc.auto=0 and maintenance.auto=false, so no gc
+# or maintenance git starts on its own after a fetch, a merge or a commit runs under the limit with a need nobody measured
+# (a repack starts a thread per core) and, failing there, writes the gc.log that stops the clone's automatic gc until it
+# is removed; your own git calls in the clone still run them. A push gets PUSH_MEMORY instead of GIT_MEMORY: it runs
+# the clone's pre-push hook, and this project's hook starts gitleaks, which reserves its address space as it starts: a
+# push through it needed 5323 MiB, with or without GIT_SETTINGS, and gitleaks 8.30.1 alone failed to start under a 4 GiB
+# limit and started under 6 GiB (measured the same day). PUSH_MEMORY is three times that need; a gitleaks that reserves
+# more fails to start, and the hook then refuses the push, saying gitleaks could not run. run_tool's processes get
+# GIT_MEMORY without GIT_SETTINGS (they are not git): the ledger script's check needed 35 MiB on Python 3.12 and 103 MiB
+# on free-threaded 3.14, its import's git log -S 343 MiB (a little over the largest pack), and scripts/pr-orphans.sh 11
+# MiB with no merged PR to read (the same day).
+GIT_SETTINGS = ("-c", "core.packedGitWindowSize=32m", "-c", "core.packedGitLimit=128m", "-c", "core.preloadIndex=false",
+                "-c", "index.threads=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false")
+PUSH_MEMORY = 16 << 30
 
 
 # The signals that stop the tool (the closing check wf_3b100f5e-b38, its item 4): each raises Stopped, a BaseException
@@ -431,17 +529,26 @@ def run_git(args, cwd, repo=None, env=None, text=True):
     this tool starts git. stdin is closed, `env` is added to the environment, and the process starts in a session of its
     own and has GIT_BOUND seconds to end; one that has not is killed with its process group and reaped, and GitBound is
     raised naming the call. Any other exception while it runs (Stopped, which SIGTERM, SIGHUP and SIGINT raise, among
-    them) kills it the same way first."""
+    them) kills it the same way first. Every call runs with core.warnAmbiguousRefs off (QUIET_NAMES) and GIT_SETTINGS,
+    under the memory limit git_memory gives it, set by the shell that execs it, and its output is read through
+    _bounded_wait's limit: one that fails at the memory limit raises GitMemory, one that prints too much GitOutput, and
+    one whose shell could not set the limit, which starts no git, a Fail naming LIMIT_FAILED (_limit_met)."""
     repo = repo or repo_for(cwd)
     argv = ["git", *args]
+    limit = git_memory(args)
+    launch = ["git", *QUIET_NAMES, *GIT_SETTINGS, *args]
+    if limit is not None:
+        launch = ["/bin/sh", "-c", git_limits()._LIMITED % (limit >> 10), *launch]
     _hold_stops()
     try:
-        p = subprocess.Popen(argv, cwd=cwd, env=_git_env(repo, env), text=text, start_new_session=True,
+        p = subprocess.Popen(launch, cwd=cwd, env=_git_env(repo, env), text=text, start_new_session=True,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except BaseException:
         _release_stops()
         raise
-    out, err = _bounded_wait(p, "git " + " ".join(args), cwd)
+    what = "git " + " ".join(args)
+    out, err = _bounded_wait(p, what, cwd, text)
+    _limit_met(p.returncode, err if text else err.decode("utf-8", "replace"), what, cwd, limit, args, repo)
     return subprocess.CompletedProcess(argv, p.returncode, out, err)
 
 
@@ -452,32 +559,116 @@ def run_tool(cmd, cwd, repo=None):
     GIT_CEILING_DIRECTORIES above it, so every git it starts reads that repository and none walks up from its cwd;
     stdin closed; in a session of its own; and GIT_BOUND seconds to end, after which it is killed with its process
     group, the git it is waiting on included, and GitBound is raised naming it. Any other exception while it runs
-    (Stopped among them) kills it the same way first."""
+    (Stopped among them) kills it the same way first. It has run_git's memory and output limits (GIT_MEMORY, every
+    process it starts inheriting the address limit, and GIT_OUTPUT_MAX), with GitMemory, GitOutput and the LIMIT_FAILED
+    Fail as run_git raises them."""
     repo = repo or repo_for(cwd)
+    limit = git_memory()
+    launch = cmd if limit is None else ["/bin/sh", "-c", git_limits()._LIMITED % (limit >> 10), *cmd]
     _hold_stops()
     try:
-        p = subprocess.Popen(cmd, cwd=cwd, env=_git_env(repo), text=True, start_new_session=True,
+        p = subprocess.Popen(launch, cwd=cwd, env=_git_env(repo), text=True, start_new_session=True,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except BaseException:
         _release_stops()
         raise
-    out, err = _bounded_wait(p, " ".join(cmd), cwd)
+    what = " ".join(cmd)
+    out, err = _bounded_wait(p, what, cwd, True)
+    _limit_met(p.returncode, err, what, cwd, limit, None, repo)
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 
 
-def _bounded_wait(p, what, cwd):
+# scripts/sweep.py as git_limits loaded it, once per process: the module whose limits run_git and run_tool set.
+_LIMITS = None
+
+
+def git_limits():
+    """scripts/sweep.py, loaded once per process through sweep_reader, for the limits run_git and run_tool set and the
+    reading of a failure at the memory limit (GIT_SETTINGS' comment names each): one copy of each for both scripts."""
+    global _LIMITS
+    if _LIMITS is None:
+        _LIMITS = sweep_reader()
+    return _LIMITS
+
+
+def git_memory(args=None):
+    """The address-space limit in bytes run_git sets on `git <args>`, or run_tool on its process (`args` None), or None
+    where none is set: scripts/sweep.py's git_memory_limit (GIT_MEMORY, or the tool's own soft or hard RLIMIT_AS where
+    either is lower, since a child inherits it and the shell never raises it; None off Linux), but for a push PUSH_MEMORY
+    in GIT_MEMORY's place (GIT_SETTINGS' comment)."""
+    limit, _why = git_limits().git_memory_limit()
+    if limit is None or not args or args[0] != "push":
+        return limit
+    return min([PUSH_MEMORY] + [n for n in resource.getrlimit(resource.RLIMIT_AS) if n != resource.RLIM_INFINITY])
+
+
+def _bounded_wait(p, what, cwd, text):
     """(stdout, stderr) of `p`, a process run_git or run_tool started in a session of its own, once it ends within
-    GIT_BOUND seconds; one that has not is ended with its process group (_end_group), and GitBound is raised naming
-    `what` and `cwd`. Any other exception while it waits ends it the same way first, then propagates: a stop held while
-    `p` started among them, which _release_stops raises here, inside the try."""
+    GIT_BOUND seconds, each stream read through scripts/sweep.py's selector loop (_git_streams, decoded when `text`) up
+    to GIT_OUTPUT_MAX bytes; one that has not ended is ended with its process group (_end_group), and GitBound is raised
+    naming `what` and `cwd`, and one that printed more is ended the same way, and GitOutput is raised naming the stream.
+    Any other exception while it waits ends it the same way first, then propagates: a stop held while `p` started among
+    them, which _release_stops raises here, inside the try."""
+    limits = git_limits()
     try:
         _release_stops()
-        return p.communicate(timeout=GIT_BOUND)
+        return limits._git_streams(p, None, time.monotonic() + GIT_BOUND, text)
     except BaseException as e:
         _end_group(p)
         if isinstance(e, subprocess.TimeoutExpired):
             raise GitBound("%s in %s did not end within %d s and was killed" % (what, cwd, GIT_BOUND)) from None
+        if isinstance(e, limits._PastOutputLimit):
+            raise GitOutput("%s in %s printed more than %s on its %s, the most batch.py reads of one call "
+                            "(GIT_OUTPUT_MAX), and was killed; remove what made it print so much there and run the "
+                            "command again" % (what, cwd, limits.memory_text(limits.GIT_OUTPUT_MAX), e.stream)) from None
         raise
+
+
+def _limit_met(returncode, said, what, cwd, limit, args, repo):
+    """Raise for a process run_git or run_tool started under the memory `limit` (None: none set) whose shell could not set
+    it (exit 125 after LIMIT_FAILED: a Fail, the process never started) or that failed at it (scripts/sweep.py's
+    _out_of_memory_line over what it printed on stderr, `said`, with the index of `repo` for a git call: GitMemory naming
+    the call, the limit and git's line, and the ref files of origin/main or a batch branch the git call reads, _ref_files);
+    any other exit is the caller's to read."""
+    if limit is None or returncode == 0:
+        return
+    limits = git_limits()
+    said = said.strip()
+    if returncode == 125 and limits.LIMIT_FAILED in said:
+        raise Fail("%s in %s did not run: %s, so batch.py did not start it without one (%s)"
+                   % (what, cwd, limits.LIMIT_FAILED, said))
+    index = os.path.join(repo.git_dir, "index") if args is not None and repo.git_dir is not None else None
+    line = limits._out_of_memory_line(returncode, said, index)
+    if line is None:
+        return
+    name = "PUSH_MEMORY" if args and args[0] == "push" else "GIT_MEMORY"
+    refs = _ref_files(args or [], repo)
+    raise GitMemory("%s in %s reached the %s memory limit (%s) batch.py sets on it and failed (%s); remove what it read "
+                    "without end there (a symlink to /dev/zero, an oversized file or a symbolic ref leading to one, where "
+                    "git reads a ref, packed-refs, the index, a config file, objects/info/alternates or the shallow "
+                    "file)%s, and run the command again"
+                    % (what, cwd, limits.memory_text(limit), name, line,
+                       "; the call reads %s" % ", ".join(refs) if refs else ""))
+
+
+def _ref_files(args, repo):
+    """The loose files, under `repo`'s common dir, of origin/main and of the batch branches that `git <args>` names (a
+    full ref, a short batch/<name>, or either in a range, a ^ exclusion or a <rev>:<path>), and of origin/main for a
+    fetch from origin, which reads every refs/remotes/origin/ ref it updates: the ref files a GitMemory names."""
+    names = []
+    for word in (w for a in args for w in re.split(r"\.\.\.?|[\^:]", a) if w):
+        if word == MAIN_REF or word.startswith(("refs/heads/batch/", "refs/remotes/%s/batch/" % REMOTE)):
+            names.append(word.rstrip("/"))
+        elif word.startswith("batch/"):
+            names.append("refs/heads/" + word)
+    if args and args[0] == "fetch" and REMOTE in args:
+        names.append(MAIN_REF)
+    seen = []
+    for n in names:
+        path = os.path.join(repo.common_dir, *n.split("/"))
+        if path not in seen:
+            seen.append(path)
+    return seen
 
 
 # How long a process run_git or run_tool ends (at the bound, or on a stop), or one _run or run_command ends (on a stop;
@@ -655,6 +846,10 @@ def state_path(root, name):
 # How read_state opens a state file: no symlink followed (O_NOFOLLOW), no wait for a FIFO's writer (O_NONBLOCK), and
 # no terminal made this process's controlling terminal (O_NOCTTY), as scripts/sweep.py's open_regular opens.
 _STATE_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY
+# The most bytes read_state reads of a batch state file. The largest real one, measured 2026-10-03 among the 24 plans in
+# a working clone's common dir, was 29,946 bytes; 1 MiB is over 35 times it. A leg can leave a sparse file of any size
+# there, which costs it nothing on disk, so a larger one is refused naming its size, and is not read.
+STATE_MAX = 1 << 20
 
 
 def read_state(path):
@@ -663,13 +858,18 @@ def read_state(path):
     with _STATE_READ_FLAGS, read only when fstat finds a regular file, so one swapped in after the lstat is refused the
     same way. The state lives in the clone's common dir, which a sweep's leg reaches through its checkout's alternates:
     a FIFO there, opened by name, held verify and assemble without end (the verify pass at PR 926's build head, its code
-    finding 1)."""
+    finding 1). A regular file is read only when fstat gives it at most STATE_MAX bytes, of which no more are read, and a
+    larger one (a sparse file included) is a Fail naming its size and the limit, as the runner's own reads are bounded
+    (scripts/sweep.py's read_regular; round 1 of PR 959, ruling A's class)."""
     kinds = {stat.S_IFIFO: "a FIFO", stat.S_IFLNK: "a symlink", stat.S_IFDIR: "a directory", stat.S_IFCHR: "a character device",
              stat.S_IFBLK: "a block device", stat.S_IFSOCK: "a socket"}
 
     def refuse(mode):
         raise Fail("the batch state %s cannot be read (%s, not a regular file); move it aside and plan again"
                    % (path, kinds.get(stat.S_IFMT(mode), "a file of another type")))
+
+    def too_large(words):
+        raise Fail("the batch state %s cannot be read (%s); move it aside and plan again" % (path, words))
     try:
         st = os.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
@@ -685,15 +885,20 @@ def read_state(path):
             refuse(stat.S_IFLNK)
         raise
     try:
-        mode = os.fstat(fd).st_mode
-        if not stat.S_ISREG(mode):
-            refuse(mode)
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            refuse(fst.st_mode)
+        if fst.st_size > STATE_MAX:
+            too_large("%d bytes, more than the %d batch.py reads" % (fst.st_size, STATE_MAX))
         f = os.fdopen(fd, "rb")
     except BaseException:
         os.close(fd)
         raise
     with f:
-        return f.read()
+        data = f.read(STATE_MAX + 1)
+    if len(data) > STATE_MAX:
+        too_large("more than the %d bytes batch.py reads" % STATE_MAX)
+    return data
 
 
 def load_state(root, name):
@@ -719,6 +924,20 @@ def worktree_dir(root, name):
 
 def branch_of(name):
     return "batch/" + name
+
+
+def batch_ref(name):
+    """The batch branch of `name` by its full ref, as the git calls that need only its commit name it (MAIN_REF's
+    comment): <git dir>/batch/<name>, a name git tries before refs/heads/batch/<name>, is in the directory that holds
+    the batch state. While the ref exists git opens no other name for it; an absent one sends git on through its rules,
+    and finish's existence check and bisect's cleanup checkout name the branch by branch_of, the short name, which
+    reads <git dir>/batch/<name> (each under GIT_MEMORY)."""
+    return "refs/heads/" + branch_of(name)
+
+
+def remote_ref(branch):
+    """origin's `branch` by its full remote-tracking ref (MAIN_REF's comment)."""
+    return "refs/remotes/%s/%s" % (REMOTE, branch)
 
 
 def remote_main():
@@ -845,7 +1064,7 @@ def dependency_status(root, d):
         return "%s, not merged" % (pr.get("state") or "unknown").lower()
     merge = (pr.get("mergeCommit") or {}).get("oid")
     for sha in (merge, pr.get("headRefOid")):
-        if sha and git_ok("cat-file", "-e", sha + "^{commit}", cwd=root) and is_ancestor(sha, remote_main(), root):
+        if sha and git_ok("cat-file", "-e", sha + "^{commit}", cwd=root) and is_ancestor(sha, MAIN_REF, root):
             return "satisfied"
     return "merged, but not into %s" % MAIN
 
@@ -937,7 +1156,7 @@ def predict_conflicts(root, base_sha, ordered, cands):
 def cmd_plan(args):
     root = repo_root()
     fetch(root, args.no_fetch)
-    base_sha = git("rev-parse", remote_main(), cwd=root)
+    base_sha = git("rev-parse", MAIN_REF, cwd=root)
     name = args.name or pick_name(root)
     if os.path.exists(state_path(root, name)) and not args.force:
         old = load_state(root, name)
@@ -993,7 +1212,7 @@ def cmd_plan(args):
                 m["depends_on"].sort()
             continue
         merged, merged_head = merged_pr_for_branch(root, b)
-        live = git("rev-parse", "--verify", "--quiet", "%s/%s" % (REMOTE, b), cwd=root, check=False) or None
+        live = git("rev-parse", "--verify", "--quiet", remote_ref(b), cwd=root, check=False) or None
         if merged and (live is None or live == merged_head or is_ancestor(live, base_sha, root)):
             excluded[n] = "base %s belongs to merged PR #%d; run `gh pr edit %d --base %s`" % (b, merged, n, MAIN)
         elif merged:
@@ -1114,10 +1333,10 @@ def prepare_worktree(root, name):
     if os.path.isdir(wt) and git_ok("rev-parse", "--is-inside-work-tree", cwd=wt):
         if merge_in_progress(wt):
             git("merge", "--abort", cwd=wt)
-        git("checkout", "--quiet", "-B", br, remote_main(), cwd=wt)
+        git("checkout", "--quiet", "-B", br, MAIN_REF, cwd=wt)
     else:
         git("worktree", "prune", cwd=root)    # a directory removed by hand leaves a registration that blocks -B
-        git("worktree", "add", "--quiet", "-B", br, wt, remote_main(), cwd=root)
+        git("worktree", "add", "--quiet", "-B", br, wt, MAIN_REF, cwd=root)
     # rerere in the repository config: the cache (.git/rr-cache) is shared by every worktree, which
     # is what lets a re-assemble replay a resolution the batcher made once.
     git("config", "rerere.enabled", "true", cwd=wt)
@@ -1448,9 +1667,9 @@ def base_branch_verdict(root, state, m):
         if k != m["n"] and mm["head_ref"] == b:
             return "member", k
     merged_n, merged_head = merged_pr_for_branch(root, b)
-    live = git("rev-parse", "--verify", "--quiet", "%s/%s" % (REMOTE, b), cwd=root, check=False) or None
+    live = git("rev-parse", "--verify", "--quiet", remote_ref(b), cwd=root, check=False) or None
     if merged_n:
-        if live is None or live == merged_head or is_ancestor(live, remote_main(), root):
+        if live is None or live == merged_head or is_ancestor(live, MAIN_REF, root):
             return "merged", merged_n
         return "reused", merged_n
     return "unknown", None
@@ -1621,7 +1840,7 @@ def merge_main(root, wt, state):
         raise Fail("nothing assembled yet; run assemble first")
     if not (os.path.isdir(wt) and git_ok("rev-parse", "--is-inside-work-tree", cwd=wt)):
         raise Fail("no batch worktree at %s; run assemble first" % wt)
-    main_sha = git("rev-parse", remote_main(), cwd=root)
+    main_sha = git("rev-parse", MAIN_REF, cwd=root)
     if is_ancestor(main_sha, "HEAD", wt):
         print("%s (%s) is already in %s" % (remote_main(), short(main_sha), branch_of(state["name"])))
         return True
@@ -1752,7 +1971,7 @@ def cmd_assemble(args):
                 log(state, "re-pinned #%d: base %s -> %s" % (k, members[k]["base_ref"], pr["baseRefName"]))
                 members[k]["base_ref"] = pr["baseRefName"]
             ensure_object(root, pr["headRefOid"], members[k]["head_ref"])
-            mb = git("merge-base", remote_main(), pr["headRefOid"], cwd=root)
+            mb = git("merge-base", MAIN_REF, pr["headRefOid"], cwd=root)
             members[k]["touches"] = git("diff", "--name-only", mb, pr["headRefOid"], cwd=root).split()
             state["members"][str(k)] = members[k]
             log(state, "re-pinned #%d: %s -> %s" % (k, short(old), short(pr["headRefOid"])))
@@ -1765,7 +1984,7 @@ def cmd_assemble(args):
     # alone): then the dependency is satisfied by the new base and the dependents stay.
     dropped, satisfied = [], []
     for n in list(state["pulled"]):
-        if is_ancestor(members[n]["head"], remote_main(), root):
+        if is_ancestor(members[n]["head"], MAIN_REF, root):
             satisfied.append(n)
             continue
         for d in dependents_of(state, n):
@@ -1774,7 +1993,7 @@ def cmd_assemble(args):
                 dropped.append((d, n))
     state["pulled"].sort()
     prepare_worktree(root, args.name)
-    state["base"] = git("rev-parse", remote_main(), cwd=root)
+    state["base"] = git("rev-parse", MAIN_REF, cwd=root)
     old_log = state["assembly"].get("log", [])
     # Resolutions the earlier assemblies recorded, so a rerere replay of the same conflict keeps its review.
     prev = dict(state["assembly"].get("previous_resolutions") or {})
@@ -1924,20 +2143,20 @@ def check_provenance(root, state, lines):
     slipped into a merge commit is otherwise invisible to `rev-list --no-merges`. A member recorded
     as already contained must be reachable from the tip."""
     ok = True
-    br = branch_of(state["name"])
+    br, bref = branch_of(state["name"]), batch_ref(state["name"])
     merged = state["assembly"].get("merged", [])
     main_merges = {e["merge"]: e for e in state["assembly"].get("main_merges", [])}
     members = members_by_n(state)
     heads = {members[e["n"]]["head"]: e["n"] for e in merged}
-    excl = ["^" + remote_main()] + ["^" + h for h in heads]
-    stray = git("rev-list", br, *excl, "--no-merges", cwd=root).split()
+    excl = ["^" + MAIN_REF] + ["^" + h for h in heads]
+    stray = git("rev-list", bref, *excl, "--no-merges", cwd=root).split()
     undeclared = [s for s in stray if not subject_of(s, root).startswith("batch:")]
     declared = [s for s in stray if subject_of(s, root).startswith("batch:")]
     if undeclared:
         ok = False
         for s in undeclared:
             lines.append("FAIL provenance: undeclared commit %s (%s); commit batch changes with a `batch:` subject" % (short(s), subject_of(s, root)))
-    chain = git("rev-list", "--first-parent", "--reverse", "%s..%s" % (remote_main(), br), cwd=root).split()
+    chain = git("rev-list", "--first-parent", "--reverse", "%s..%s" % (MAIN_REF, bref), cwd=root).split()
     member_merges = 0
     for c in chain:
         ps = parents_of(c, root)
@@ -1959,7 +2178,7 @@ def check_provenance(root, state, lines):
                 ok = False
                 lines.append("FAIL provenance: #%d's merge on the chain is %s, recorded %s" % (n, short(c), short(rec["merge"])))
             ok = check_merge_tree(rec, "#%d" % n, c, p1, p2, root, lines) and ok
-        elif is_ancestor(p2, remote_main(), root):
+        elif is_ancestor(p2, MAIN_REF, root):
             ok = check_merge_tree(main_merges.get(c), "the %s" % remote_main(), c, p1, p2, root, lines) and ok
         else:
             ok = False
@@ -1968,7 +2187,7 @@ def check_provenance(root, state, lines):
         ok = False
         lines.append("FAIL provenance: %d member merges on the chain, %d recorded" % (member_merges, len(merged)))
     for e in state["assembly"].get("contained", []):
-        if not is_ancestor(members[e["n"]]["head"], br, root):
+        if not is_ancestor(members[e["n"]]["head"], bref, root):
             ok = False
             lines.append("FAIL provenance: #%d is recorded as already contained (by %s) but its head %s is not in %s"
                          % (e["n"], e["contained_by"], short(members[e["n"]]["head"]), br))
@@ -1979,7 +2198,7 @@ def check_provenance(root, state, lines):
 
 
 def ledger_check_on_branch(root, br):
-    """`scripts/upstream-ledger.py check` on the BRANCH's tree, in a temporary detached worktree, so
+    """`scripts/upstream-ledger.py check` on the BRANCH's tree (`br`, its full ref), in a temporary detached worktree, so
     the verdict is the branch's and not some directory's (the batch worktree may be gone or dirty).
     None when the branch carries no ledger script (pre-migration); else the completed process."""
     if not git_ok("cat-file", "-e", "%s:%s" % (br, LEDGER_SCRIPT), cwd=root):
@@ -2000,7 +2219,8 @@ def sweep_reader():
     path, its leg roster and the verdict rule live, so the runner and verify cannot disagree about them."""
     path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "sweep.py")
     if not os.path.exists(path):
-        raise Fail("scripts/sweep.py is missing beside batch.py (%s); verify reads sweep results through it" % path)
+        raise Fail("scripts/sweep.py is missing beside batch.py (%s); verify reads sweep results through it, and every git "
+                   "call reads its limits from it (git_limits)" % path)
     spec = importlib.util.spec_from_file_location("romp_batch_sweep_reader", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -2051,9 +2271,9 @@ def check_contains_main(root, name, head, lines):
 
 def excuse_contradiction(root, sweep, result, head, subject="the batch head"):
     """Round 1's excuse rule, read against the head's tree: scripts/sweep.py's excuse_contradiction, which its own
-    check applies too, so check prints what verify reads. Its git call is sweep.py's, bounded by that script's GIT_BOUND
-    in the repository its find_repo reads at `root`; a refusal there (sweep.py's Refused, its GitBound included) is a Fail
-    naming it."""
+    check applies too, so check prints what verify reads. Its git call is sweep.py's, bounded by that script's
+    GIT_BOUND, GIT_MEMORY and GIT_OUTPUT_MAX in the repository its find_repo reads at `root`; a refusal there
+    (sweep.py's Refused, its GitBound included) is a Fail naming it."""
     try:
         return sweep.excuse_contradiction(root, result, head, subject=subject)
     except sweep.Refused as e:
@@ -2107,9 +2327,9 @@ def cmd_verify(args, quiet=False):
     fetch(root, args.no_fetch)
     lines, ok = [], True
     br = branch_of(args.name)
-    if not git_ok("rev-parse", "--verify", "--quiet", br, cwd=root):
+    if not git_ok("rev-parse", "--verify", "--quiet", batch_ref(args.name), cwd=root):
         raise Fail("%s does not exist; run assemble first" % br)
-    head = git("rev-parse", br, cwd=root)
+    head = git("rev-parse", batch_ref(args.name), cwd=root)
     if state["assembly"].get("cursor"):
         raise Fail("%s is still stopped for resolution; --continue or --abort first" % merge_label(state["assembly"]["cursor"].get("n")))
     pending = state["assembly"].get("pending") or []
@@ -2144,13 +2364,13 @@ def cmd_verify(args, quiet=False):
             b = pr.get("baseRefName")
             if b in in_batch_refs:
                 lines.append("ok   base: #%d is based on %s, which is in the batch (land retargets it to %s before the merge)" % (m["n"], b, MAIN))
-            elif git_ok("rev-parse", "--verify", "--quiet", "%s/%s" % (REMOTE, b), cwd=root) and is_ancestor("%s/%s" % (REMOTE, b), remote_main(), root):
+            elif git_ok("rev-parse", "--verify", "--quiet", remote_ref(b), cwd=root) and is_ancestor(remote_ref(b), MAIN_REF, root):
                 lines.append("ok   base: #%d is based on %s, already in %s" % (m["n"], b, MAIN))
             else:
                 ok = False
                 lines.append("FAIL base: #%d is based on %s, which is neither in the batch nor in %s" % (m["n"], b, MAIN))
         state["members"][str(m["n"])] = m
-    proc = ledger_check_on_branch(root, br)
+    proc = ledger_check_on_branch(root, batch_ref(args.name))
     if proc is None:
         lines.append("note ledger: %s is not on %s (pre-migration); not checked" % (LEDGER_SCRIPT, br))
         state["ledger"] = "pre-migration"
@@ -2286,14 +2506,14 @@ def gather_body_inputs(root, state):
     A resolution's diff runs from the merge-tree of the parents to the merge and covers EVERY path
     that differs from it (the recorded files and anything else), so what the maintainer reads is the
     whole difference; per path, whose version was taken when one side won outright."""
-    br = branch_of(state["name"])
+    br = batch_ref(state["name"])
     members = members_by_n(state)
     resolutions = []
     # The merge shown is the one ON THE BRANCH for that second parent (a merge amended after the
     # record was written is what the maintainer would land), the recorded sha as the fallback.
     on_chain = {}
     if git_ok("rev-parse", "--verify", "--quiet", br, cwd=root):
-        for c in git("rev-list", "--first-parent", "%s..%s" % (remote_main(), br), cwd=root).split():
+        for c in git("rev-list", "--first-parent", "%s..%s" % (MAIN_REF, br), cwd=root).split():
             ps = parents_of(c, root)
             if len(ps) == 2:
                 on_chain.setdefault(ps[1], c)
@@ -2315,7 +2535,7 @@ def gather_body_inputs(root, state):
         resolutions.append({"n": n, "merge": merge, "diff": out, "choices": choices})
     entries = []
     if git_ok("rev-parse", "--verify", "--quiet", br, cwd=root):
-        mb = git("merge-base", remote_main(), br, cwd=root)
+        mb = git("merge-base", MAIN_REF, br, cwd=root)
         for line in git("diff", "--name-status", mb, br, "--", "upstream/", cwd=root).splitlines():
             parts = line.split("\t")
             if len(parts) < 2:
@@ -2584,8 +2804,9 @@ def cmd_summarize(args):
 # ── pull, land, finish, bisect ───────────────────────────────────────────────
 
 def push_batch(root, state, force):
-    br = branch_of(state["name"])
-    args = ["push", "--quiet", "-u", REMOTE, br]
+    # the branch by its full ref (MAIN_REF's comment), which pushes it to the same name on origin and sets it as the
+    # branch's upstream, as its short name did
+    args = ["push", "--quiet", "-u", REMOTE, batch_ref(state["name"])]
     if force:
         args.insert(2, "--force-with-lease")
     git(*args, cwd=root)
@@ -3151,7 +3372,7 @@ def cmd_finish(args):
     if bpr.get("state") != "MERGED":
         raise Fail("batch PR #%d is %s, not MERGED; finish runs after the merge" % (b, bpr.get("state")))
     merge_sha = (bpr.get("mergeCommit") or {}).get("oid")
-    if merge_sha and not is_ancestor(merge_sha, remote_main(), root):
+    if merge_sha and not is_ancestor(merge_sha, MAIN_REF, root):
         raise Fail("batch PR #%d's merge commit %s is not an ancestor of %s; was it squashed or rebased?" % (b, short(merge_sha), remote_main()))
     # Pre-round item 4: the merge commit's first parent must be the main verify read. land reads main once more right
     # before the merge call, but GitHub's merge pins the head, not the base, and the button or `gh pr merge` reads
@@ -3378,8 +3599,8 @@ def cmd_bisect(args):
     if not args.cmd:
         raise Fail("bisect needs a command after --, e.g. `-- pytest tests/test_x.py -q`", code=2)
     br = branch_of(args.name)
-    tip = git("rev-parse", br, cwd=wt)
-    base = git("merge-base", remote_main(), tip, cwd=wt)
+    tip = git("rev-parse", batch_ref(args.name), cwd=wt)
+    base = git("merge-base", MAIN_REF, tip, cwd=wt)
     if git("rev-parse", "HEAD", cwd=wt) != tip:
         raise Fail("%s is not checked out at %s (HEAD is %s)" % (wt, br, short(git("rev-parse", "HEAD", cwd=wt))))
     if run_command(args.cmd, wt) == 0:
