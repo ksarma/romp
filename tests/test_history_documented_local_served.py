@@ -13,16 +13,15 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -44,10 +43,6 @@ _ST0.mkdir(parents=True, exist_ok=True)
 
 SID = "eeee1111-2222-3333-4444-555555555555"
 COLOR = ("#64b5f6", "#0c1a2e")
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 DRIVER = r"""
@@ -173,22 +168,19 @@ class ServedDocumentedHistory(unittest.TestCase):
             em.set_checkpoint_dir(None)
             jd._rebind_state(saved_state)
 
-        cls.port, cls.token = _free_port(), "testtok-doc-hist"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-doc-hist"
         env = _lab.kernel_env(sub, claude, os.path.join(cls.lab, "dist"), cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1); break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            cls.kernel.kill(); raise unittest.SkipTest("kernel never served /healthz")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            cls.kernel.kill(); raise unittest.SkipTest("kernel never served /healthz: " + why)
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill(); cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _result(self):

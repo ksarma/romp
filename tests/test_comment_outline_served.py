@@ -22,16 +22,15 @@ light screenshot. Skips LOUDLY without the extension deps or a Playwright browse
 (placeholder UUIDs, invented prose, host TESTHOST)."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -86,14 +85,6 @@ def _contrast(a, b):
         return 0.2126 * f(ch[0]) + 0.7152 * f(ch[1]) + 0.0722 * f(ch[2])
     la, lb = lum(a), lum(b)
     return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -265,24 +256,20 @@ class ServedCommentOutline(unittest.TestCase):
             rows.append({"tid": "tid-%d" % (i + 1), "sid": tsid, "name": "web-comment-%d" % (i + 1), "anchorUuid": anchor,
                          "cutUuid": anchor, "exact": exact, "status": "open", "createdT": t})
         Path(state, "comments", WEB + ".json").write_text(json.dumps({"threads": rows}))
-        cls.port, cls.token = _free_port(), "testtok-outline"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-outline"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_the_cue_by_row_count_dashed_in_the_needs_you_red_gone_once_read(self):

@@ -11,7 +11,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import struct
 import subprocess
 import sys
@@ -23,6 +22,7 @@ import zlib
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -34,14 +34,6 @@ import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environm
 SID = "77777777-2222-3333-4444-555555555555"
 COLOR = ("#9cd2ff", "#0c1a2e")
 NOTES = "# Remote notes\n\nThe notes-api retry loop backs off with a jitter of ten percent.\n\n## Later\n\nA second section.\n"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _png(w=2, h=2, rgb=(60, 120, 200)):
@@ -136,14 +128,11 @@ def _kernel(lab, name, port, token, records=None, sid=None, files=None):
                           ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
     proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
-    for _ in range(120):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
-            return proc, log
-        except Exception:
-            time.sleep(0.5)
+    why = lab_ports.wait_owned(proc, env)
+    if not why:
+        return proc, log
     proc.kill(); proc.wait()
-    raise unittest.SkipTest("hermetic kernel %s never served /healthz here" % name)
+    raise unittest.SkipTest("hermetic kernel %s never served /healthz here: %s" % (name, why))
 
 
 class ServedRemoteFilePreview(unittest.TestCase):
@@ -177,8 +166,8 @@ class ServedRemoteFilePreview(unittest.TestCase):
                          "content": [{"type": "text", "text": "The notes are in docs/remote-notes.md (the later part at docs/remote-notes.md#later) and the plot at plots/remote-figure.png."}]}},
         ]
         # the REMOTE kernel owns the session and its files; the HUB has neither and shows the session through the relay
-        cls.rport, cls.rtoken = _free_port(), "testtok-remote-fp"
-        cls.hport, cls.htoken = _free_port(), "testtok-hub-fp"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-fp"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-fp"
         try:
             rp, cls.rlog = _kernel(cls.lab, "testhost", cls.rport, cls.rtoken, records=recs, sid=SID,
                                    files={"docs/remote-notes.md": NOTES, "plots/remote-figure.png": _png()})
@@ -188,7 +177,7 @@ class ServedRemoteFilePreview(unittest.TestCase):
         except unittest.SkipTest:
             cls.tearDownClass()
             raise
-        body = json.dumps({"host": "TESTHOST", "kernelPort": cls.rport, "busPort": _free_port(), "token": cls.rtoken}).encode()
+        body = json.dumps({"host": "TESTHOST", "kernelPort": cls.rport, "busPort": lab_ports.reserve(cls.lab), "token": cls.rtoken}).encode()
         req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (cls.hport, cls.htoken), data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -217,6 +206,7 @@ class ServedRemoteFilePreview(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_a_remote_sessions_links_preview_through_the_hosts_relay(self):

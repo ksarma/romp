@@ -7,6 +7,7 @@ dismisses the card and Undo restores it; a new revision under the same key re-sh
 an expired notice leaves at the next build. Synthetic only (placeholder ids, invented text)."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
@@ -15,7 +16,6 @@ import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
@@ -26,7 +26,6 @@ BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab  # noqa: E402  the lab kernel's environment
-from test_live_paused_window_browser import _free_port  # noqa: E402
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -222,6 +221,7 @@ class NoticeCardsServed(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             cls._skip("extension deps absent (npm ci not run here): the served guard needs them")
         cls.lab = tempfile.mkdtemp(prefix="notice-cards-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
@@ -250,20 +250,15 @@ class NoticeCardsServed(unittest.TestCase):
                  "message": {"role": "assistant", "model": "claude-fable-5-1", "stop_reason": "end_turn",
                              "content": [{"type": "text", "text": "the notes api keeps its shape."}]}}]
         Path(proj, SID + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-notices"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            cls._skip("hermetic kernel never served /healthz here")
+            cls._skip("hermetic kernel never served /healthz here: " + why)
         cls._r = None
 
     @classmethod
@@ -271,6 +266,7 @@ class NoticeCardsServed(unittest.TestCase):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _result(self):

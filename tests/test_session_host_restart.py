@@ -41,6 +41,7 @@ import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environm
 # the checkout's ONE build of the bundles, copied under the harness lock (tests/lab_dist.py); never a lock-free copy of
 # the shared checkout's dist by hand (the pull-in's review round 1, 2026-09-16)
 import lab_dist
+import lab_ports   # kernel_env reserves each kernel's postal port under the case's lab; _sweep releases them
 FAKE = os.path.join(HERE, "fixtures", "fake_claude.py")
 SDKVENV = os.path.expanduser("~/.local/state/romp/sdkvenv")
 # the kernel must run on the python the SDK venv was built for (its lib/python3.X names it), not on whatever
@@ -117,6 +118,7 @@ class ServedRestart(unittest.TestCase):
                     os.kill(int(p.name), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+        lab_ports.release(lab)   # the postal ports kernel_env reserved under the lab, now that its kernels are killed
         shutil.rmtree(lab, ignore_errors=True)
 
     def _env(self):

@@ -39,14 +39,13 @@ ui/webview/feed-view-state.test.ts, the kernel relay tests/test_kernel_active_ch
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -66,14 +65,6 @@ API_WORKING = "cccccccc-1111-2222-3333-000000000011"
 WEB_KEYS = {"f:a:" + WEB_BLOCKED, "f:a:" + WEB_WORKING, "f:a:" + WEB_DONE}
 
 NO_FOCUS = "No session is focused in the chat"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -264,33 +255,29 @@ class ServedFocusedSessionSection(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served guard needs them")
         cls.lab = tempfile.mkdtemp(prefix="feedfocus-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
         os.makedirs(state, exist_ok=True)
         with open(os.path.join(state, "session-hosts"), "w") as fh:   # a lab root of its own pins the hosts OFF (CLAUDE.md 2026-09-11)
             fh.write("off\n")
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-feedfocus"
         env = _lab.kernel_env(cls.lab, os.path.join(cls.lab, "claude"), dist, cls.port, cls.token)
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(os.path.join(cls.lab, "kernel.log"), "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     @staticmethod

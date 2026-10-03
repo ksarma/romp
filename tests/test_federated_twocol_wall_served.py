@@ -12,10 +12,10 @@ the 4a served builder's invented text."""
 import glob
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -47,10 +47,6 @@ REMOTE = HOST + ":" + SID_R
 REMOTE2 = HOST + ":" + SID_R2
 WID = "hublab"
 COLOR = ("#64b5f6", "#0c1a2e")
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def _short_transcript(t0, sid, n=4):
@@ -120,12 +116,10 @@ def _remote_kernel(lab, port, token):
     env = _lab.kernel_env(os.path.join(lab, name), claude, os.path.join(lab, "dist"), port, token, ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
     proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
-    for _ in range(120):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1); return proc, log, seed
-        except Exception:
-            time.sleep(0.5)
-    proc.kill(); proc.wait(); raise unittest.SkipTest("remote kernel never served /healthz")
+    why = lab_ports.wait_owned(proc, env)
+    if not why:
+        return proc, log, seed
+    proc.kill(); proc.wait(); raise unittest.SkipTest("remote kernel never served /healthz: " + why)
 
 
 def _hub_kernel(lab, port, token):
@@ -141,12 +135,10 @@ def _hub_kernel(lab, port, token):
     env = _lab.kernel_env(os.path.join(lab, name), claude, os.path.join(lab, "dist"), port, token, ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
     proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
-    for _ in range(120):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1); return proc, log
-        except Exception:
-            time.sleep(0.5)
-    proc.kill(); proc.wait(); raise unittest.SkipTest("hub kernel never served /healthz")
+    why = lab_ports.wait_owned(proc, env)
+    if not why:
+        return proc, log
+    proc.kill(); proc.wait(); raise unittest.SkipTest("hub kernel never served /healthz: " + why)
 
 
 # The driver shows TWO long cut-floor sessions side by side (col 1 = remote SID_R, col 2 = remote SID_R2), focuses
@@ -271,13 +263,13 @@ class FederatedTwoColWall(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser")
         cls.lab = tempfile.mkdtemp(prefix="fed-twocol-")
         lab_dist.copy_dist(os.path.join(cls.lab, "dist"))   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
-        cls.rport, cls.rtoken = _free_port(), "testtok-remote-2c"
-        cls.hport, cls.htoken = _free_port(), "testtok-hub-2c"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-2c"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-2c"
         rp, cls.rlog, cls.seed = _remote_kernel(cls.lab, cls.rport, cls.rtoken)
         cls.procs.append(rp)
         hp, cls.hlog = _hub_kernel(cls.lab, cls.hport, cls.htoken)
         cls.procs.append(hp)
-        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": _free_port(), "token": cls.rtoken}).encode()
+        body = json.dumps({"host": HOST, "kernelPort": cls.rport, "busPort": lab_ports.reserve(cls.lab), "token": cls.rtoken}).encode()
         req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (cls.hport, cls.htoken), data=body,
                                      headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -303,6 +295,7 @@ class FederatedTwoColWall(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _drive(self, focus):

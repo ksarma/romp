@@ -177,6 +177,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -972,8 +973,8 @@ class _LinkDrop(unittest.TestCase):
             os.makedirs(root, exist_ok=True)
             Path(root, "user-todos-enabled.json").write_text(TODOS_ON)
             Path(root, "update-mode.json").write_text(json.dumps({"mode": "off"}))
-        cls.rport, cls.rtoken = _dial._free_port(), "testtok-remote-ld"
-        cls.hport, cls.htoken = _dial._free_port(), "testtok-hub-ld"
+        cls.rport, cls.rtoken = lab_ports.reserve(cls.lab), "testtok-remote-ld"
+        cls.hport, cls.htoken = lab_ports.reserve(cls.lab), "testtok-hub-ld"
         rp, cls.rlog = _dial._kernel(cls.lab, "testhost", cls.rport, cls.rtoken, [(SID_R0, "api", 1), (SID_R1, "worker", 2)] + EXTRA,
                                      bin_dir=os.path.join(cls.remote_root or ROOT, "bin"))
         cls.procs.append(rp)
@@ -982,7 +983,7 @@ class _LinkDrop(unittest.TestCase):
         cls.hub_proc, cls.hlog = _dial._kernel(cls.lab, "hub", cls.hport, cls.htoken, [], bin_dir=os.path.join(cls.hub_root or ROOT, "bin"))
         cls.procs.append(cls.hub_proc)
         cls.hub_restarts = []
-        _dial.checkin(cls.hport, cls.htoken, cls.proxy.port, cls.rtoken)   # the peer's kernelPort IS the splice: the relay and the probes go through it
+        _dial.checkin(cls.hport, cls.htoken, cls.proxy.port, cls.rtoken, lab=cls.lab)   # the peer's kernelPort IS the splice: the relay and the probes go through it
         cls.transcript = cls._transcript_path()
         cls.append_parent = _dial.seed_uuid(1, _dial.SEED_PAIRS - 1, "a")   # api's seed tag is 1: the first append chains to its last reply
         cls.changes_made = []
@@ -1078,15 +1079,12 @@ class _LinkDrop(unittest.TestCase):
         lab_hub = os.path.join(cls.lab, "hub")
         env = _lab.kernel_env(lab_hub, os.path.join(lab_hub, "claude"), os.path.join(cls.lab, "dist"), cls.hport, cls.htoken, ROMP_HOST_NAME="HUB")
         proc = subprocess.Popen([os.path.join(cls.hub_root or ROOT, "bin", "romp-kernel")], stdout=open(cls.hlog, "a"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(HUB_SPAWN_TRIES):   # a 1 s probe and a 0.5 s pause each: hub_restart_bound_s counts them
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.hport, timeout=1)
-                return proc
-            except Exception:
-                time.sleep(0.5)
+        why = lab_ports.wait_owned(proc, env, tries=HUB_SPAWN_TRIES)   # a 1 s probe and a 0.5 s pause each: hub_restart_bound_s counts them
+        if not why:
+            return proc
         proc.kill()
         proc.wait()
-        raise RuntimeError("the respawned hub kernel never served /healthz")
+        raise RuntimeError("the respawned hub kernel never served /healthz: " + why)
 
     @classmethod
     def _restart_hub(cls):
@@ -1257,6 +1255,7 @@ class _LinkDrop(unittest.TestCase):
                     p.wait()
                 except Exception:
                     pass
+            lab_ports.release(getattr(cls, "lab", ""))
             shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)   # the minted checkout, if any, is under the lab
 
     # ---- the readers ----
@@ -2318,7 +2317,7 @@ class LinkProxyEnds(unittest.TestCase):
         the probe and listen(), and again between each drop() and its resume()."""
         srv = self._target()
         from unittest import mock
-        with mock.patch.object(_dial, "_free_port", side_effect=AssertionError("LinkProxy took its port from a free-port probe")):
+        with mock.patch.object(lab_ports, "reserve", side_effect=AssertionError("LinkProxy took its port from the lab's reservations")):
             p = LinkProxy(srv.getsockname()[1])   # the constructor binds port 0 and reads it: no probe, so no window before the bind
         self.addCleanup(p.stop)   # stop() closes the held port too; not self._proxy, whose cleanup reads the holder, so this test runs to its assertions over a splice that has none
         self.assertEqual(self._bind_errno(p.port), errno.EADDRINUSE, "constructed and not yet listening: the reported port is bound")

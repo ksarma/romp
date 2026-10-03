@@ -21,7 +21,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import tempfile
 import time
@@ -30,6 +29,7 @@ from romp_load import load_source
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -44,14 +44,6 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 _cred = load_source("romp_credentials_dropanywhere", os.path.join(ROOT, "kernel", "credentials.py"))
 SID_A = "11111111-2222-4333-8444-000000000901"
 SID_B = "11111111-2222-4333-8444-000000000902"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _transcript(sid, cwd, pairs):
@@ -182,7 +174,7 @@ class ServedDropAnywhere(unittest.TestCase):
                 {"sid": sid, "name": name, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid, "alive": True}))
             Path(proj, sid + ".jsonl").write_text(_transcript(sid, cwd, 3))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 100}, "seven_day": {"pct": 10}}))   # park sends
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-dropanywhere"
         cls.env = dict(os.environ,
                        XDG_STATE_HOME=os.path.join(cls.lab, "xdg"),
@@ -192,23 +184,17 @@ class ServedDropAnywhere(unittest.TestCase):
                        ROMP_DIST_DIR=dist, ROMP_MODEL_CATALOG="off",
                        # a postal bus of its own that is never started (the trio kernel_env gives every lab kernel):
                        # the kernel's boot-time ensure must never take the machine's fixed bus port (tests/test_hermetic_kernel_postal.py)
-                       ROMP_POSTAL_PORT=str(_free_port()), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1")
+                       ROMP_POSTAL_PORT=str(lab_ports.reserve(cls.lab)), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1")
         cls.env.pop("ROMP_STATE_DIR", None)
         for k in [k for k in cls.env if k in _cred.RETIRED_VARS or _cred.is_op_env_name(k)]:   # the kernel's own boot rule (module top)
             cls.env.pop(k, None)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=cls.env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         cls.result, cls.driver_error = None, None
         cls._drive()
 
@@ -251,6 +237,7 @@ class ServedDropAnywhere(unittest.TestCase):
             except (ProcessLookupError, PermissionError):
                 pass
             k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _r(self):

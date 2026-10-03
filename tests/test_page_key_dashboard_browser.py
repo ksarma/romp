@@ -48,21 +48,19 @@ import os
 import re
 import secrets
 import shutil
-import socket
 import struct
 import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unittest
-import urllib.request
 import zlib
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -149,14 +147,6 @@ def _pixel_contrast(path):
     ground = counts.most_common(1)[0][0]
     ink = max(counts, key=lambda px: _ratio(px, ground))
     return _ratio(ink, ground)
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 class _OtherOrigin(BaseHTTPRequestHandler):
@@ -714,18 +704,13 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         _OtherOrigin.seen = []
         cls.other = ThreadingHTTPServer(("127.0.0.1", 0), _OtherOrigin)
         threading.Thread(target=cls.other.serve_forever, daemon=True).start()
-        cls.port, cls.token = _free_port(), secrets.token_urlsafe(24)   # minted at run time, never printed
+        cls.port, cls.token = lab_ports.reserve(cls.lab), secrets.token_urlsafe(24)   # minted at run time, never printed
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -736,6 +721,7 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         if getattr(cls, "other", None):
             cls.other.shutdown()                      # ends the other origin's serve_forever thread
             cls.other.server_close()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _klog_tail(self):
