@@ -70056,12 +70056,21 @@ def _pane_spin(cid, ignore_id=""):
             # messages or cards) are not avoided: they scroll out from under the badge, and taps pass through it (ruling 9 of
             # round 0).
             # When: the badge is placed at load and at each resize event of the container or the page (a scroll area's box moves
-            # only with a size change: the chrome above grows or shrinks, the pane is shown, the window is resized); at its paint;
-            # and while it is painted, at each change to the page's elements (a MutationObserver on the body: the viewer opened,
-            # the notice shown) and at each scroll (a sticky element moving into its place), so a control that appears or moves
-            # under it moves it on (a scroll re-reads the boxes the last scan found; a change scans again). No timer. The search
-            # runs only while the badge is painted (rwatch starts at the paint and stops at the first change or scroll after the
-            # badge is down), so a healthy page scans nothing. Upstream's CSS rule stays
+            # only with a size change: the chrome above grows or shrinks, the pane is shown, the window is resized), and at its
+            # paint. While it is painted it is watched (rwatch, rrec): a change to the page and a scroll each ask for one placement
+            # at the next animation frame (rwant, rframe), so however many arrive in a frame the badge is placed once in it (round
+            # 2, regression-1 and open call 10: each change ran a scan of the whole page, one style read per element, and a chat
+            # changes at each second's tick and each keystroke). The watch observes the container's own children and attributes,
+            # each sticky or fixed element in it (what it holds included), and the page outside it, never the container's other
+            # content, where a session's messages and their clocks change. A change that can add a control (an element added, or a
+            # class, style or hidden change on an element the last scan did not hold or that holds elements) scans again; any other
+            # (a text change such as the status line's timer, an element removed, a change to a control the last scan holds that
+            # holds no element, such as the composer's text field as it grows) and a scroll re-read the boxes the last scan found
+            # and the boxes that clip them. So a control that appears or moves under the badge moves it on, the viewer opened or the
+            # notice shown, and typing and the timer scan nothing. A sticky element that appears deep in the content, not as the
+            # container's own child, is found at the next scan, not at once. No timer. The search runs only while the badge is
+            # painted (rwatch starts at the paint and stops at the first frame a change or scroll asks for after the badge is
+            # down), so a healthy page scans nothing. Upstream's CSS rule stays
             # byte for byte (the inline top and right outrank it). A container that is not a scroll area keeps upstream's corner.
             # The scroll-area test is made at each placement, never once at load (finding of 2026-10-02, the served Firefox leg):
             # Firefox resolves no computed style in a frame that is not rendered, so in the phone's chat iframe, display:none while
@@ -70070,15 +70079,16 @@ def _pane_spin(cid, ignore_id=""):
             # picker, tag filter and + button. So the observer is made whenever the engine has one (Firefox's, made in the hidden
             # frame, reports at the frame's first show), and the badge is placed at the load, each resize event and its own paint.
             "function rscroll(){try{return /^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){return false;}}"
-            "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true]',rmo=null,rsc=false,rob=null;"
+            "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true]',rmo=null,rsc=false,rob=null,rhs=null,rpins=[],rfr=0,rfull=false;"
             "function rctl(e,s){return (e.matches&&e.matches(RCTL))||/^(pointer|grab|grabbing)$/.test(s.cursor);}"
             # what the badge must not cover: each shown control outside the container, and inside it each shown control that is
             # or sits in a sticky or fixed element, as [the control, the ancestors that clip it (rclip)]. Each element's style is
-            # kept for the scan (M), so rclip reads its ancestors' from there: document order puts an ancestor before its children
-            "function robs(){var o=[],d=document.body,pin=[],M=typeof Map==='function'?new Map():null;if(!d||!d.getElementsByTagName)return o;var a=d.getElementsByTagName('*');"
+            # kept for the scan (M), so rclip reads its ancestors' from there: document order puts an ancestor before its children.
+            # It keeps the controls it found (rhs) and the sticky or fixed elements in the container (rpins) for the watch
+            "function robs(){var o=[],d=document.body,pin=[],M=typeof Map==='function'?new Map():null,S=typeof Set==='function'?new Set():null;rhs=S;rpins=pin;if(!d||!d.getElementsByTagName)return o;var a=d.getElementsByTagName('*');"
             "for(var i=0;i<a.length;i++){var e=a[i];if(e===rb||rb.contains(e))continue;var s=getComputedStyle(e);if(M)M.set(e,s);if(e===c)continue;"
             "if(c.contains(e)){if(s.position==='sticky'||s.position==='fixed')pin.push(e);for(var j=0;j<pin.length&&!pin[j].contains(e);j++);if(j===pin.length)continue;}"
-            "if(rctl(e,s)&&s.visibility!=='hidden'&&s.display!=='none')o.push([e,rclip(e,s,M)]);}return o;}"
+            "if(rctl(e,s)&&s.visibility!=='hidden'&&s.display!=='none'){o.push([e,rclip(e,s,M)]);if(S)S.add(e);}}return o;}"
             # the ancestors whose overflow clips e, each as [element, clips across, clips down]. Overflow clips along the chain of
             # containing blocks, not the chain of parents: a fixed element escapes every ancestor but one that is its containing
             # block (a transform, filter, perspective or containment makes one), and an absolute one escapes every ancestor
@@ -70105,7 +70115,7 @@ def _pane_spin(cid, ignore_id=""):
             # composer's buttons below a list 20 px tall). `again` (a scroll) re-reads the boxes of the controls the last scan
             # found and of the ancestors that clip them: a scroll moves only what is inside the scrolled element
             "function rfit(y0,again){var b=rb.getBoundingClientRect(),w=b.width,h=b.height,de=document.documentElement,W=de.clientWidth,H,o=[],y=y0,x=8;"
-            "if(!w||!h||!W)return [y0,8];H=Math.min(de.clientHeight||1e9,c.getBoundingClientRect().bottom);if(!again||!rob)rob=robs();"
+            "if(!w||!h||!W)return [y0,8];H=Math.min(de.clientHeight||1e9,c.getBoundingClientRect().bottom);if(!again||!rob){rob=robs();rwire();}"
             "for(var i=0;i<rob.length;i++){var q=rvis(rob[i]);if(q)o.push(q);}"
             "for(var k=0;k<64;k++){var L=W-x-w,R=W-x,n=0,hl=W,hb=y;"
             "for(i=0;i<o.length;i++){var r=o[i];if(r.left<R&&r.right>L&&r.top<y+h&&r.bottom>y){n++;if(r.left<hl)hl=r.left;if(r.bottom>hb)hb=r.bottom;}}"
@@ -70119,12 +70129,25 @@ def _pane_spin(cid, ignore_id=""):
             "function rplace(again){if(!rb||!c||!rscroll())return;var t=Math.round(c.getBoundingClientRect().top),y=(t>0?t:0)+8,x=8;"
             "if(rb.classList.contains('on')){var f=rfit(y,again===true);y=f[0];x=f[1];}"
             "var ty=y+'px',tx=x===8?'':x+'px';if(rb.style.top!==ty)rb.style.top=ty;if(rb.style.right!==tx)rb.style.right=tx;}"
-            "function rnudge(e){if(rb.classList.contains('on'))rplace(!!e&&e.type==='scroll');else rwatch(false);}"
-            "function rwatch(on){try{if(on){if(!rmo&&typeof MutationObserver==='function'&&document.body){"
-            "rmo=new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var g=rs[i].target;if(g!==rb&&!rb.contains(g)){rnudge();return;}}if(!rb.classList.contains('on'))rwatch(false);});"
-            "rmo.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','hidden']});}"
+            # one placement at the next animation frame, a scan when any change since the last asked for one (rfull); with no
+            # requestAnimationFrame, at once
+            "function rwant(f){if(f)rfull=true;if(rfr)return;if(typeof requestAnimationFrame!=='function'){rframe();return;}rfr=requestAnimationFrame(rframe);}"
+            "function rframe(){rfr=0;var f=rfull;rfull=false;if(!rb.classList.contains('on')){rwatch(false);return;}rplace(!f);}"
+            "function rnudge(){rwant(false);}"
+            # what the watch observes, set again after each scan: the container (its children and attributes), each sticky or
+            # fixed element in it with all it holds, and outside it each ancestor up to the body (its children and attributes) with
+            # every other child of that ancestor and all it holds, the badge apart
+            "function rwire(){if(!rmo)return;rmo.disconnect();var F=['class','style','hidden'],O={childList:true,subtree:true,attributes:true,attributeFilter:F},N={childList:true,attributes:true,attributeFilter:F};"
+            "rmo.observe(c,N);for(var i=0;i<rpins.length;i++)rmo.observe(rpins[i],O);"
+            "for(var p=c;p&&p!==document.body&&p.parentElement;p=p.parentElement){var u=p.parentElement;rmo.observe(u,N);for(var k=u.firstElementChild;k;k=k.nextElementSibling)if(k!==p&&k!==rb)rmo.observe(k,O);}}"
+            # a change scans again when it can add a control: an element added, or an attribute changed on an element the last
+            # scan did not hold or that holds elements; any other change re-reads the boxes
+            "function rrec(rs){var any=false,f=false;for(var i=0;i<rs.length;i++){var m=rs[i],g=m.target;if(g===rb||rb.contains(g))continue;any=true;"
+            "if(m.type==='childList'){for(var j=0;j<m.addedNodes.length;j++)if(m.addedNodes[j].nodeType===1)f=true;}else if(!rhs||!rhs.has(g)||g.firstElementChild)f=true;}if(any)rwant(f);}"
+            "function rwatch(on){try{if(on){if(!rmo&&typeof MutationObserver==='function'&&document.body){rmo=new MutationObserver(rrec);rwire();}"
             "if(!rsc&&document.addEventListener){document.addEventListener('scroll',rnudge,true);rsc=true;}}"
-            "else{rob=null;if(rmo){rmo.disconnect();rmo=null;}if(rsc){document.removeEventListener('scroll',rnudge,true);rsc=false;}}}catch(e){}}"
+            "else{rob=null;rhs=null;rpins=[];rfull=false;if(rfr){if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(rfr);rfr=0;}if(rmo){rmo.disconnect();rmo=null;}"
+            "if(rsc){document.removeEventListener('scroll',rnudge,true);rsc=false;}}}catch(e){}}"
             "if(rb&&c&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(function(){rplace();});rro.observe(c);rro.observe(document.documentElement);}catch(e){}}"
             "rplace();"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not

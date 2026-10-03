@@ -227,9 +227,13 @@ global.clearTimeout = (id) => { for (const t of TIMERS) if (t.id === id) t.live 
 global.setInterval = (fn, ms) => { const id = nextId++; TIMERS.push({ id, fn, ms, at: NOW + ms, live: true, every: ms }); return id; };
 global.clearInterval = global.clearTimeout;
 // the placement's watch (rwatch) makes one observer at the paint and disconnects it when the badge is down; MOS keeps each made
-// observer's callback, target and state so the fit cases can deliver a change to the page as the engine would
+// observer's callback and what it observes (regs: one {t, o} per target, a target observed again takes its new options, and
+// disconnect() drops them all), so the fit cases can deliver a change to the page as the engine would (deliver(), below): only to
+// an observer whose options ask for that kind of record on that node (round 2, tests-3: the fake once ignored them)
 const MOS = [];
-global.MutationObserver = class { constructor(cb) { this.cb = cb; this.on = false; MOS.push(this); } observe(t, o) { this.on = true; this.target = t; this.opts = o; } disconnect() { this.on = false; } };
+global.MutationObserver = class { constructor(cb) { this.cb = cb; this.regs = []; MOS.push(this); }
+  observe(t, o) { this.regs = this.regs.filter((r) => r.t !== t); this.regs.push({ t, o: o || {} }); }
+  disconnect() { this.regs = []; } get on() { return this.regs.length > 0; } };
 const cls = (S) => ({ add: (c) => S.add(c), remove: (c) => S.delete(c), contains: (c) => S.has(c),
   toggle: (c, on) => { if (on) S.add(c); else S.delete(c); return !!on; } });
 const SHEET = { classList: cls(SHEETCLS) };
@@ -754,25 +758,47 @@ document.body = { getElementsByTagName: (t) => (t === '*' ? ALL : []) };
 let STYLE_READS = 0;
 global.getComputedStyle = (el) => { STYLE_READS++; return el === CONTENT ? { overflowY: COVER, overflowX: COVER === 'visible' ? 'visible' : 'auto', position: 'static', cursor: 'auto', visibility: 'visible', display: 'block' } : el.cs; };
 // the list's padding box is its whole box (no border; a scrollbar is not drawn in these cases)
+// the list and the body-level elements are the body's children, in document order (the badge apart: the page's last element)
+Object.defineProperty(document.body, 'firstElementChild', { get: () => ALL.find((x) => x === CONTENT || !x.parent) || null });
+Object.defineProperties(CONTENT, { parentElement: { get: () => document.body }, firstElementChild: { get: () => ALL.find((x) => x.parent === CONTENT) || null },
+  nextElementSibling: { get: () => { const sib = ALL.filter((x) => x === CONTENT || !x.parent); return sib[sib.indexOf(CONTENT) + 1] || null; } } });
 Object.defineProperties(CONTENT, { clientLeft: { get: () => 0 }, clientTop: { get: () => 0 }, clientWidth: { get: () => { const r = CONTENT.getBoundingClientRect(); return r.right - r.left; } },
   clientHeight: { get: () => { const r = CONTENT.getBoundingClientRect(); return r.bottom - r.top; } } });
 const inside = (anc, n) => { for (let e = n; e; e = e.parent) if (e === anc) return true; return false; };
 CONTENT.contains = (n) => inside(CONTENT, n);
 // add(parent, box [left, top, width, height], { position, cursor, sel, overflow, overflowX, overflowY, contain, transform, display }):
 // an element under `parent` (null: the body, outside the list); `overflow` sets both axes
-const add = (parent, box, o) => { o = o || {}; const e = { parent, box: box.slice(), sel: o.sel || '',
+const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, box: box.slice(), sel: o.sel || '',
   cs: { position: o.position || 'static', cursor: o.cursor || 'auto', visibility: 'visible', display: o.display || 'block',
         overflowX: o.overflowX || o.overflow || 'visible', overflowY: o.overflowY || o.overflow || 'visible', contain: o.contain || 'none',
         transform: o.transform || 'none', filter: 'none', perspective: 'none', willChange: 'auto' },
   get parentElement() { return this.parent || null; },
+  get firstElementChild() { return ALL.find((x) => x.parent === this) || null; },
+  get nextElementSibling() { const sib = this.parent ? ALL.filter((x) => x.parent === this.parent) : ALL.filter((x) => x === CONTENT || !x.parent); return sib[sib.indexOf(this) + 1] || null; },
   get clientLeft() { return 0; }, get clientTop() { return 0; }, get clientWidth() { return this.box[2]; }, get clientHeight() { return this.box[3]; },
   getBoundingClientRect() { const [l, t, w, h] = this.box; return { left: l, top: t, right: l + w, bottom: t + h, width: w, height: h }; },
   contains(n) { return inside(this, n); }, matches(list) { return !!this.sel && list.split(',').indexOf(this.sel) >= 0; } };
   const at = parent ? ALL.lastIndexOf(ALL.filter((x) => inside(parent, x)).pop()) + 1 : ALL.length; ALL.splice(at, 0, e); return e; };
 const rightOf = () => (BADGE.style.right ? BADGE.style.right : '8px');
 const at = () => ({ top: topOf(), right: rightOf(), painted: painted() });
-const mo = () => MOS.filter((m) => m.on && m.target === document.body).length;   // the badge's watch (the sheet's own observer watches the list)
-const change = (target) => task(() => MOS.filter((m) => m.on && m.target === document.body).forEach((m) => m.cb([{ type: 'childList', target }])));
+// the badge's watch: an observer that asks for attributes (the sheet's own observer watches the list's children alone)
+const watchers = () => MOS.filter((m) => m.on && m.regs.some((r) => r.o.attributes));
+const mo = () => watchers().length;
+// a record reaches an observer that observes its target, or an ancestor of it with subtree, with the options its kind needs: childList,
+// or attributes with the attribute in attributeFilter when there is one (the body is every element's ancestor here)
+const sees = (r, rec) => (r.t === rec.target || (r.o.subtree && (r.t === document.body || inside(r.t, rec.target)))) &&
+  (rec.type === 'childList' ? !!r.o.childList : !!r.o.attributes && (!r.o.attributeFilter || r.o.attributeFilter.indexOf(rec.attributeName) >= 0));
+const deliver = (rec) => task(() => MOS.filter((m) => m.regs.some((r) => sees(r, rec))).forEach((m) => m.cb([rec])));
+const ELEM = { nodeType: 1 }, TEXT = { nodeType: 3 };
+const change = (target) => deliver({ type: 'childList', target, addedNodes: [ELEM], removedNodes: [] });          // an element added inside `target`
+const added = (el) => deliver({ type: 'childList', target: el.parent || document.body, addedNodes: [el], removedNodes: [] });   // `el` added to its parent
+const text = (target) => deliver({ type: 'childList', target, addedNodes: [TEXT], removedNodes: [TEXT] });        // `target`'s text written (textContent)
+const attr = (target, name) => deliver({ type: 'attributes', target, attributeName: name || 'style', addedNodes: [], removedNodes: [] });
+// the frame clock: the watch asks for a placement at the next animation frame; frame() runs the frames asked for so far
+const FRAMES = [];
+global.requestAnimationFrame = (fn) => { FRAMES.push(fn); return FRAMES.length; };
+global.cancelAnimationFrame = (id) => { if (FRAMES[id - 1]) FRAMES[id - 1] = null; };
+const frame = () => task(() => { const fs = FRAMES.splice(0); fs.forEach((fn) => fn && fn(NOW)); });
 const scroll = () => task(() => (DOCL.scroll || []).slice().forEach((f) => f({ type: 'scroll' })));
 // a short view and a short list (a landscape phone with the keyboard up): the page's height and the list's bottom
 const shortList = (viewH, bottom) => { document.documentElement.clientHeight = viewH; CONTENT.getBoundingClientRect = () => ({ top: CTOP, left: 0, right: 390, bottom }); };
@@ -801,11 +827,12 @@ out({ atLoad, atPaint, watching: mo() });""")
         o = self._fit(r"""
 fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
 const notice = add(null, [42, 54, 307, 29], { cursor: 'pointer' });
-change(BADGE); const ownChange = at();                                 // a change to the badge alone (its own place written) moves nothing
-change(notice); const shown = at();
-out({ atPaint, ownChange, shown });""")
+change(BADGE); frame(); const ownChange = at();                        // a change to the badge alone (its own place written) moves nothing
+added(notice); const beforeFrame = at(); frame(); const shown = at();   // the notice added to the page: placed at the next frame
+out({ atPaint, ownChange, beforeFrame, shown });""")
         self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True})
         self.assertEqual(o["ownChange"], {"top": "52px", "right": "8px", "painted": True}, "the badge's own mutations are not a change to the page")
+        self.assertEqual(o["beforeFrame"], {"top": "52px", "right": "8px", "painted": True}, "the change asks for a placement at the next frame, not in its own task")
         self.assertEqual(o["shown"], {"top": "91px", "right": "8px", "painted": True}, "the notice shown under it moves it below the notice (54 + 29 + 8)")
 
     def test_a_narrow_control_at_the_right_edge_moves_the_badge_left_of_it(self):
@@ -846,16 +873,16 @@ out({ atPaint: at() });""")
 const head = add(CONTENT, [0, 300, 390, 29], { position: 'sticky' }); add(head, [300, 304, 80, 20], { sel: 'button' });   // its button at the right end
 fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
 head.box[1] = 60; ALL[2].box[1] = 64;                                 // the list scrolls: the header comes up under the badge
-scroll(); const scrolled = at();
-const reads = STYLE_READS; scroll(); const rereads = STYLE_READS - reads;
+scroll(); frame(); const scrolled = at();
+const reads = STYLE_READS; scroll(); frame(); const rereads = STYLE_READS - reads;
 fire('romp:wsfresh'); const cleared = { painted: painted(), watching: mo(), scrollListeners: (DOCL.scroll || []).length };
-change(head); const afterChange = { watching: mo(), scrollListeners: (DOCL.scroll || []).length };
+change(head); frame(); const afterChange = { watching: mo(), scrollListeners: (DOCL.scroll || []).length };
 out({ atPaint, scrolled, rereads, cleared, afterChange });""")
         self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True})
         self.assertEqual(o["scrolled"], {"top": "92px", "right": "8px", "painted": True}, "the scroll moves it below the header's button (64 + 20 + 8)")
         self.assertLessEqual(o["rereads"], 1, "a scroll re-reads the boxes the last scan found; it does not scan the page's styles again")
         self.assertIs(o["cleared"]["painted"], False)
-        self.assertEqual(o["afterChange"], {"watching": 0, "scrollListeners": 0}, "with the badge down, the next change ends the watch: no observer, no scroll listener")
+        self.assertEqual(o["afterChange"], {"watching": 0, "scrollListeners": 0}, "with the badge down, the frame the next change asks for ends the watch: no observer, no scroll listener")
 
     # What an overflow container hides does not count (round 2, correctness-1, 2026-10-03). The desktop chat's tab strip (#tabbar,
     # max-height 150 px, overflow-y auto) and the pinned-notes strip (max-height min(11em, 30vh), overflow-y auto) scroll what does
@@ -950,11 +977,98 @@ out({ atPaint: at() });""")
         o = self._strip_fit(r"""
 const panel = add(null, [200, 40, 190, 10], { overflow: 'hidden' }); add(panel, [300, 40, 60, 40], { sel: 'button' });
 fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
-panel.box[3] = 40; const reads = STYLE_READS; scroll(); const scrolled = at();
+panel.box[3] = 40; const reads = STYLE_READS; scroll(); frame(); const scrolled = at();
 out({ atPaint, scrolled, reads: STYLE_READS - reads });""")
         self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True}, "the control's visible 10 px (40 to 50) does not reach the first place")
         self.assertEqual(o["scrolled"], {"top": "88px", "right": "8px", "painted": True}, "shown whole by the panel's new box, the control moves the badge below it (80 + 8)")
         self.assertLessEqual(o["reads"], 1, "the scroll re-read the boxes and the clip, and scanned no style")
+
+    # The watch's cost (round 2, 2026-10-03: regression-1 and open call 10). At a4262a94d every change anywhere in the body scanned the
+    # whole page while the badge was painted, one style read per element, and a chat changes the page at each second's tick and at
+    # each keystroke. Now a change or a scroll asks for one placement at the next animation frame; the watch observes the list's own
+    # children and attributes, each sticky or fixed element in it, and the page outside it, never the rest of the list's content;
+    # and only a change that can add a control scans again (an element added, or an attribute changed on an element the last scan
+    # did not hold or that holds elements), every other one re-reads the boxes. A scan reads every element's style once (and the
+    # placement reads the list's own once more, the scroll-area test), so a placement with no scan makes one read.
+    _PAGE = r"""
+const header = add(null, [0, 0, 390, 44], { sel: 'button' }); header.id = 'header';
+const head = add(CONTENT, [0, 300, 390, 29], { position: 'sticky' }); head.id = 'head'; add(head, [300, 304, 80, 20], { sel: 'button' });
+const row = add(CONTENT, [0, 400, 390, 80]); row.id = 'row'; const inRow = add(row, [10, 410, 200, 20]); inRow.id = 'inRow';
+const footer = add(null, [0, 760, 390, 84]); footer.id = 'footer';
+const timer = add(footer, [10, 764, 60, 16]); timer.id = 'timer';                      // the status line's work timer: text, no control
+const field = add(footer, [10, 784, 300, 40], { sel: 'textarea' }); field.id = 'field';  // the composer's text field: a control with no element in it
+const send = add(footer, [320, 784, 60, 40], { sel: 'button' }); send.id = 'send'; add(send, [340, 794, 20, 20]);   // a button that holds an icon
+let ASKS = 0; { const raf = global.requestAnimationFrame; global.requestAnimationFrame = (fn) => { ASKS++; return raf(fn); }; }
+const scan = () => ALL.length + 1;                                                      // the style reads of a placement that scans
+"""
+
+    def _watch_fit(self, scenario):
+        return self._run(scenario, pre=self._PLACE_PRE + self._FIT_PRE + self._PAGE)
+
+    def test_the_watch_places_the_badge_once_a_frame_however_many_changes_and_scrolls_arrive(self):
+        o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+const notice = add(null, [42, 54, 307, 29], { cursor: 'pointer' });
+const reads = STYLE_READS, asks = ASKS;
+added(notice); change(CONTENT); scroll(); attr(field); text(timer); scroll(); added(add(null, [0, 600, 10, 10]));
+const beforeFrame = { place: at(), reads: STYLE_READS - reads, asks: ASKS - asks };
+frame(); const afterFrame = { place: at(), reads: STYLE_READS - reads, asks: ASKS - asks };
+out({ atPaint, beforeFrame, afterFrame, scan: scan() });""")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True})
+        self.assertEqual(o["beforeFrame"], {"place": {"top": "52px", "right": "8px", "painted": True}, "reads": 0, "asks": 1},
+                         "seven changes and scrolls in one frame ask for one frame and read nothing in their own tasks")
+        self.assertEqual(o["afterFrame"], {"place": {"top": "91px", "right": "8px", "painted": True}, "reads": o["scan"], "asks": 1},
+                         "the frame places the badge once, with one scan (an element was added), below the notice (54 + 29 + 8)")
+
+    def test_the_watch_observes_the_list_its_sticky_elements_and_the_page_outside_it_never_the_lists_other_content(self):
+        o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T);
+const nm = (t) => (t === document.body ? 'body' : t === CONTENT ? 'list' : t.id || '?');
+const regs = watchers()[0].regs.map((r) => [nm(r.t), !!r.o.childList, !!r.o.subtree, !!r.o.attributes, (r.o.attributeFilter || []).join(',')]).sort();
+const reads = STYLE_READS, asks = ASKS;
+change(row); attr(inRow, 'class'); text(inRow); frame();
+out({ regs, deep: { reads: STYLE_READS - reads, asks: ASKS - asks } });""")
+        F = "class,style,hidden"
+        self.assertEqual(o["regs"], sorted([["body", True, False, True, F], ["list", True, False, True, F], ["head", True, True, True, F],
+                                            ["header", True, True, True, F], ["footer", True, True, True, F]]),
+                         "the list (its children and attributes), its sticky element with all it holds, the body's own children and attributes, and every "
+                         "other child of the body with all it holds; nothing observes the list's other content, and neither the body nor the list is "
+                         "observed with all it holds")
+        self.assertEqual(o["deep"], {"reads": 0, "asks": 0}, "a change inside a message in the list wakes nothing")
+
+    def test_the_status_lines_tick_and_the_composers_growth_re_read_the_boxes_and_scan_nothing(self):
+        o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T);
+let reads = STYLE_READS; text(timer); frame(); const tick = STYLE_READS - reads;
+reads = STYLE_READS; attr(field, 'style'); frame(); const key = STYLE_READS - reads;
+field.box = [200, 50, 180, 40]; reads = STYLE_READS; attr(field, 'style'); frame(); const grown = { place: at(), reads: STYLE_READS - reads };
+out({ tick, key, grown });""")
+        self.assertEqual(o["tick"], 1, "the timer's text written: a re-read (the scroll-area test's one read), no scan")
+        self.assertEqual(o["key"], 1, "a style written on the composer's text field, a control the scan holds with no element in it: a re-read, no scan")
+        self.assertEqual(o["grown"], {"place": {"top": "98px", "right": "8px", "painted": True}, "reads": 1},
+                         "the re-read still moves the badge off the field when its new box reaches the badge (50 + 40 + 8), with no scan")
+
+    def test_a_change_that_can_add_a_control_scans_again(self):
+        o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T);
+let reads = STYLE_READS;
+const sub = add(CONTENT, [0, 52, 390, 31], { position: 'sticky' }); sub.id = 'sub'; add(sub, [360, 58, 20, 20], { sel: '[role=button]' });
+added(sub); frame(); const subHead = { place: at(), scanned: STYLE_READS - reads === scan() };
+const pin2 = add(sub, [240, 58, 100, 20], { sel: 'button' }); reads = STYLE_READS; added(pin2); frame(); const inSub = { place: at(), scanned: STYLE_READS - reads === scan() };
+const wrap = add(null, [200, 90, 190, 40]); const shown = add(wrap, [200, 90, 190, 40], { sel: 'button' }); shown.cs.visibility = 'hidden';
+reads = STYLE_READS; added(wrap); frame(); const hiddenStill = at();
+shown.cs.visibility = 'visible'; reads = STYLE_READS; attr(wrap, 'class'); frame(); const revealed = { place: at(), scanned: STYLE_READS - reads === scan() };
+reads = STYLE_READS; attr(send, 'class'); frame(); const iconButton = STYLE_READS - reads === scan();
+out({ subHead, inSub, hiddenStill, revealed, iconButton });""")
+        self.assertEqual(o["subHead"], {"place": {"top": "52px", "right": "38px", "painted": True}, "scanned": True},
+                         "a sticky header with a pin added as the list's own child: a scan, and the badge goes left of the pin (390 - 360 + 8)")
+        self.assertEqual(o["inSub"], {"place": {"top": "86px", "right": "8px", "painted": True}, "scanned": True},
+                         "a control added inside that header, which the scan it caused made the watch observe: a scan, and the badge goes below the "
+                         "header's controls (58 + 20 + 8), as left of both would not fit")
+        self.assertEqual(o["hiddenStill"], {"top": "86px", "right": "8px", "painted": True}, "a hidden control added outside the list: scanned, not counted")
+        self.assertEqual(o["revealed"], {"place": {"top": "138px", "right": "8px", "painted": True}, "scanned": True},
+                         "a class change on its wrapper, an element the scan did not hold, shows it: a scan, and the badge goes below it (90 + 40 + 8)")
+        self.assertIs(o["iconButton"], True, "a class change on a control the scan holds that holds an element (its icon): a scan")
 
     # The list too short for the badge (the rehearsed check of round 1, 2026-10-03): with no clear place above the list's visible
     # bottom the search kept the first place, and a landscape phone with the keyboard up and a long pinned note left a list 20 px
