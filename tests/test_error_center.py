@@ -6,7 +6,8 @@ entries behind the bell in the bottom bar's action cluster. This EXECUTES the re
 _LANDING_ERRS_JS in node against a DOM stub (the test_remotes_panel_render.py pattern — source pins
 can't catch scope slips in this class of inline JS) and drives the full story:
 
-  a visible pane's WS drop logs an entry + reddens the bell with an unread count; a repeat of the same
+  a visible pane's WS drop whose reconnect fails logs an entry + reddens the bell with an unread count (the
+  drop alone writes nothing since iOS item 4b, 2026-10-03: tests/test_conn_lost_on_failure.py); a repeat of the same
   drop coalesces (event-exact, no time window); a HIDDEN pane's drop logs nothing; opening the popover
   marks everything seen; panes can post {romp:'notify'}; per-row clear and Clear all empty the store;
   entries persist in localStorage.
@@ -101,16 +102,20 @@ function notes() { return JSON.parse(STORE['romp:notices'] || '[]'); }
 DRIVER = r"""
 const out = {};
 // 1) a VISIBLE pane's drop logs an entry + reddens the bell (no count badge — it clipped, 2026-07-27)
+// ...once its reconnect fails (iOS item 4b, 2026-10-03: the shim's wsFail word, a dial that closed without opening; the drop alone writes nothing)
 post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsFail', app: 'chat' });
 out.afterDrop = { n: notes().length, text: notes()[0].text,
   red: EL['rail-errs']._cls.has('has'), mred: EL['merr']._cls.has('has'),
   num: bellNum(), mnum: EL['merr']._num.textContent };
 // 2) up then down again — the SAME error coalesces into one entry with a count (no flood)
 post({ romp: 'wsState', app: 'chat', state: 'up' });
 post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsFail', app: 'chat' });
 out.afterRepeat = { n: notes().length, times: notes()[0].n };
-// 3) a HIDDEN pane's drop logs nothing (fleet is toggled off)
-post({ romp: 'wsState', app: 'fleet', state: 'down' });
+// 3) a HIDDEN pane's drop logs nothing, its failed reconnect included (the Waiting pane: no po-waiting class here)
+post({ romp: 'wsState', app: 'waiting', state: 'down' });
+post({ romp: 'wsFail', app: 'waiting' });
 out.afterHidden = { n: notes().length };
 // 4) panes can feed the center directly
 post({ romp: 'notify', kind: 'warn', text: 'TESTHOST delivery failed' });
@@ -141,6 +146,7 @@ out.filterBar = { n: EL['rerr-fgrid'].children.length,
 // 10) muting offline: its entries stop rendering, stop counting, and the live-down cue stays dark
 EL['rerr-fgrid'].children[0].fire('click');
 post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsFail', app: 'chat' });
 out.afterMute = { stored: STORE['romp:errFilters'], n: notes().length,
   red: EL['rail-errs']._cls.has('has'),
   emptyText: EL['rerr-list'].children[0].textContent };
@@ -480,8 +486,10 @@ window.__rompNotify = function (kind, text, tgt) { if (kind === 'conn') CONN.pus
 post({ romp: 'wsState', app: 'chat', state: 'parked' });
 out.afterPark = { n: notes().length, conn: CONN.length, red: EL['rail-errs']._cls.has('has'), mred: EL['merr']._cls.has('has') };
 // a real drop after the park (the tap's dial refused) logs the entry and lights the cue, as any drop does: the tracking
-// line reads prev as parked, not down, so the up->down rule fires
+// line reads prev as parked, not down, so the up->down rule fires, and the refused dial's wsFail word writes the entry
+// (iOS item 4b, 2026-10-03: the drop alone writes nothing)
 post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsFail', app: 'chat' });
 out.afterDrop = { n: notes().length, conn: CONN.length, red: EL['rail-errs']._cls.has('has'), text: notes()[0] ? notes()[0].text : '' };
 EL['rail-errs'].fire('click');   // read the entry: from here the live cue alone keeps the bell red
 out.afterRead = { red: EL['rail-errs']._cls.has('has') };
@@ -499,7 +507,7 @@ class ParkedPaneCue(unittest.TestCase):
     """D2 (2026-09-18): the center against a parked pane's words. A pane off screen on the phone parks its return redial
     until its tab is tapped and posts wsState 'parked'; the shell keeps that as its own state, never 'down', so the live
     cue stays dark and no "connection lost" entry is logged: nothing is lost and nothing is reconnecting. A real drop after
-    the park logs and lights as before; a re-park clears the live cue; an open reads up."""
+    the park logs (once its dial fails, the wsFail word) and lights as before; a re-park clears the live cue; an open reads up."""
 
     @classmethod
     def setUpClass(cls):
@@ -519,7 +527,7 @@ class ParkedPaneCue(unittest.TestCase):
         self.assertEqual(self.out["afterPark"], {"n": 0, "conn": 0, "red": False, "mred": False}, "parked is not down: no conn call, no entry, no red on either bell")
 
     def test_a_real_drop_after_the_park_logs_and_lights_as_before(self):
-        # P2: a later down on the same pane still logs, because prev reads parked, not down
+        # P2: a later down on the same pane still logs once its reconnect fails, because prev reads parked, not down
         a = self.out["afterDrop"]
         self.assertEqual(a["n"], 1)
         self.assertEqual(a["conn"], 1, "the transition rule fires: prev was parked, not down")
