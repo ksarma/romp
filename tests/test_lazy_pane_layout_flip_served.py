@@ -24,15 +24,14 @@ extension deps or a Chromium (CI installs Chromium and runs the *_served.py file
 sessions only; no real data; the lab kernel uses its own port, asserted on /healthz before any request."""
 import json
 import lab_dist
+import lab_ports
 import os
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -41,7 +40,7 @@ BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab                                      # noqa: E402  (kernel_env: every lab kernel's environment)
-from test_return_from_background_served import _seed, _free_port, _rows      # noqa: E402  the return harness's lab seed and helpers (functions only, never its TestCase)
+from test_return_from_background_served import _seed, _rows      # noqa: E402  the return harness's lab seed and helpers (functions only, never its TestCase)
 
 # Hermetic state BEFORE anything: this module loads no romp code in-process (the kernel is a subprocess under
 # kernel_env's roots), but the floor costs two lines and a later edit that adds a load must not write real state.
@@ -74,19 +73,14 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         lab_dist.copy_dist(dist)
         cls.state, claude = _seed(cls.lab)
         cls.diag = os.path.join(cls.state, "client-diag.jsonl")
-        cls.port, cls.token = _free_port(), "testtok-flip"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-flip"
         seams = {"ROMP_HOST_NAME": HOST}
         cls.env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, **seams)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=cls.env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -97,6 +91,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
                 pass
             cls.kernel.wait()
         if cls.lab:
+            lab_ports.release(cls.lab)
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     def _drive(self, case, recover=None):

@@ -21,6 +21,7 @@ import unittest
 import urllib.request
 from pathlib import Path
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -28,7 +29,7 @@ BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab                                  # noqa: E402  the lab kernel's environment
-from test_fold_checkpoints_served import ChatClient, _free_port   # noqa: E402  the websocket client
+from test_fold_checkpoints_served import ChatClient   # noqa: E402  the websocket client
 from test_asm_checkpoint_served import transcript                # noqa: E402  the compacting synthetic transcript
 
 WEB = "aaaaaaaa-4444-4222-8333-444444444444"
@@ -66,10 +67,11 @@ class StageMarksOnAServedBoot(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        lab_ports.release(cls.lab)
         shutil.rmtree(cls.lab, ignore_errors=True)
 
     def _boot(self, index_cap=None):
-        port = _free_port()
+        port = lab_ports.reserve(self.lab)
         seams = {"ROMP_HOST_NAME": "TESTHOST", "ROMP_PERF_STACKS": "1"}
         if index_cap is not None:
             seams["ROMP_ASM_INDEX_CAP"] = str(index_cap)   # a tiny resident cap: every reader rebuilds what an earlier one built and the LRU
@@ -77,15 +79,10 @@ class StageMarksOnAServedBoot(unittest.TestCase):
         env = _lab.kernel_env(self.lab, self.claude, self.dist, port, self.token, **seams)
         logp = os.path.join(self.lab, "kernel-%d.log" % port)
         k = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(logp, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(200):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(k, env, tries=200)
+        if why:
             k.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         return k, port, logp
 
     def _get(self, port, path):
