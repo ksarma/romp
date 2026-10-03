@@ -891,7 +891,9 @@ def header_band_faults(root, bands):
     ranges = [(int(a), int(b)) for a, b in _RANGE.findall(m.group("list"))] if m else []
     if not ranges:
         return ["%s's header has no sentence 'It also sits under every band ...: <ranges>.' with a range in it" % MANAGER_PORTS]
-    others = [(lo, hi) for lo, hi, where in bands if where != "the ephemeral range" and not where.startswith(MANAGER_PORTS)]
+    # The file's own blocks aside. The ephemeral range needs no exclusion: only a range that reaches it could hold it,
+    # and such a range is refused first.
+    others = [(lo, hi) for lo, hi, where in bands if not where.startswith(MANAGER_PORTS)]
     out = []
     for lo, hi in ranges:
         if hi >= LOW:
@@ -1379,6 +1381,13 @@ class HeaderBands(unittest.TestCase):
                 faults = self._plant(ranges, *([sentence] if sentence else []))
                 self.assertEqual(len(faults), 1, faults)
                 self.assertIn(want, faults[0])
+        with self.subTest("no header file"):
+            d = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, d, True)
+            os.makedirs(os.path.join(d, "tests"))
+            faults = header_band_faults(d, bind_bands(d))
+            self.assertEqual(len(faults), 1, faults)
+            self.assertIn("cannot be read", faults[0])
 
 
 if __name__ == "__main__":
