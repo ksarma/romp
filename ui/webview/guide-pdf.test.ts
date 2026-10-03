@@ -95,7 +95,7 @@ test("the paragraph speaks the person's words and carries no identifiers; so doe
   // this file's assertion messages print to the person on failure, so it scans itself, with the guard's own
   // regex line set aside (the precedent is file-comments.test.ts)
   const SELF = root("ui", "webview", "guide-pdf.test.ts").split("\n").filter((l) => !l.includes("/fleet/i")).join("\n");
-  for (const [name, text] of [["guide.md PDFs", PARA], ["guide-pdf.test.ts", SELF]] as const) {
+  for (const [name, text] of [["reference.md PDFs", PARA], ["guide-pdf.test.ts", SELF]] as const) {
     assert.doesNotMatch(text, /fleet/i, name + ": no new prose with the banned word");
     assert.doesNotMatch(text, /\/home\/[a-z]/, name + ": no absolute home paths");
   }

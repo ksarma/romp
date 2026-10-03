@@ -394,10 +394,10 @@ tailscale serve --bg 29855
 ```
 
 On the phone, open `https://<machine>.<tailnet>.ts.net/`. Romp answers with a
-page asking for your access token: paste in the one `romp` prints, and a
-year-long cookie remembers the phone afterwards. Only devices signed in to your
-Tailscale account can reach it, and nothing is exposed to your local network or
-to the internet.
+page asking for your access token: paste in the one `romp` prints, and the
+phone stays signed in afterwards. Only devices signed in to your Tailscale
+account can reach it, and nothing is exposed to your local network or to the
+internet.
 
 If you change the kernel's port later, re-run that command. The proxy remembers
 the port you gave it, so a stale mapping leaves the phone on a dead page while
@@ -438,14 +438,22 @@ sessions.
 The token is 144-bit random and lives at `~/.local/state/romp/serve-token` with
 mode `0600` (readable only by your own user account). Local tools (the CLI,
 hooks, the bus, the editor extension) read that file and send it automatically,
-so you never type it. Only liveness probes and the few files a browser fetches
-to install Romp on a Home Screen are exempt.
+so you never type it.
 
 A browser cannot read that file, which is why the link `romp` prints carries the
-token in it. The first visit trades it for a year-long cookie, so the bare
-`http://127.0.0.1:29855/` works from then on; `romp url` prints the link again
-for a new browser or after clearing cookies. The cookie is a credential in its
-own right, so treat a machine holding one as signed in.
+token in it. The first visit signs the browser in with a year-long cookie and a
+key the page keeps in the site's storage, so the bare `http://127.0.0.1:29855/`
+works from then on. For a new browser, or one that has lost its sign-in,
+`romp url` prints the link again.
+
+The cookie on its own opens only the page's code; the page sends the key with
+each request for data or an action. Together they are a credential in their own
+right, so treat a machine holding them as signed in.
+
+A few requests need neither the token nor a sign-in: liveness probes, the
+sign-in page, the files a browser fetches to install Romp on a Home Screen, and
+a device's report that a notification was shown or tapped. That report carries
+the notification's own unguessable id instead.
 
 **Remote machines.** Every machine mints its own token. When you attach a host,
 your machine reads that host's token over ssh and stores it locally (in

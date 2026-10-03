@@ -26,8 +26,11 @@ const flat = (s) => s.replace(/\s+/g, ' ');
 const plan = read('plans', 'file-review.md');
 const viewerPlan = flat(read('plans', 'markdown-viewer.md'));
 // the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front
-// pages are the project's, CLAUDE.md "The documentation front pages"), so `guide` reads the reference and the pins hold there
+// pages are the project's, CLAUDE.md "The documentation front pages"), so `guide` reads the reference and the pins hold there.
+// The checks that a retired wording is gone read DOCS, the guide and the reference together, so the wording coming back on
+// either page turns them red.
 const guide = flat(read('docs', 'reference.md'));
+const DOCS = flat(read('docs', 'guide.md') + '\n\n' + read('docs', 'reference.md'));
 const mod = read('ui', 'webview', 'md-literal-tags.ts');
 const view = read('ui', 'webview', 'file-view.ts');
 const map = read('ui', 'webview', 'anchor-map.ts');
@@ -175,8 +178,8 @@ test('anchor-map.ts holds no one-cell rule: ONE_CELL, cellsRule, coveredCells an
 
 test('the guide says a selection across several cells can be commented from the Rendered view and names a formula as what cannot be mapped, and its own-HTML paragraph says an unclosed inline tag is shown as the characters typed', () => {
   assert.ok(guide.includes('A table cell, a selection across several cells of a table and a line of a code block can be commented from the Rendered view like any passage; a comment across cells quotes the pipes between them as the file holds them. When a passage cannot be mapped from the Rendered view (a formula), the panel says so, keeps your comment, and offers the Raw view with the passage selected.'));
-  assert.ok(!guide.includes('(a selection across two cells of a table, a formula)'), 'the parenthetical before decision 53 is gone');
-  assert.ok(!guide.includes('select within one cell'), 'the guide promises no one-cell refusal');
+  assert.ok(!DOCS.includes('(a selection across two cells of a table, a formula)'), 'the parenthetical before decision 53 is gone');
+  assert.ok(!DOCS.includes('select within one cell'), 'the guide promises no one-cell refusal');
   // the rule's sentence as the guide states it since the second round (the placeholder typed mid-sentence), the opening of the
   // HTML-block passage that follows it, and the closing sentence; the passage's clauses are held one by one by
   // tools/guide-own-html-block-tag.test.mjs

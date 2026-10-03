@@ -14,6 +14,7 @@ offered a reload.
 Every test here reds at the base on BEHAVIOUR (the 1919 read): a pane's file is written by hand the way the door writes it,
 and what is asserted is the landing, the routes, the keepalive frame and the executed scripts, never a name.
 Synthetic fixtures only (the notes-api demo world; TESTHOST)."""
+import ast
 import contextlib
 import html as html_mod
 import inspect
@@ -38,7 +39,7 @@ ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
-from landing_slices import slices   # noqa: E402  the code panes' rendering, sliced (the fixture was made with the same function)
+import landing_slices   # noqa: E402  the slicer the fixture was made with; slices() below is its copy, held to it by TheCodePanesRender
 
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
@@ -139,6 +140,32 @@ def _lacks(tc, needle, page, msg=""):
     tc.assertTrue(needle not in page, "present in the page: %r %s" % (needle, msg))
 
 
+def _at(page, needle):
+    # page.index(needle) for a marker only a render with data panes carries: the served-pins census judges a literal position pin
+    # over the landing against the hermetic render, which has no data pane, so such a pin reads through this helper as _has does
+    # (a missing marker still raises)
+    return page.index(needle)
+
+
+def slices(html):
+    """tests/landing_slices.py's slices(), the slicer the fixture was made with, copied here: the served-pins census
+    (tests/test_served_pins_read_elements.py) follows a function this module defines one level and reads what it reads of the
+    landing, while a landing handed to an imported helper is a read it cannot classify. Every statement but this docstring is the
+    slicer's own, held to it by TheCodePanesRender's copy test. {name: text}; a slice that cannot be found is the empty string,
+    so a comparison against the fixture fails on the slice by name."""
+    body = re.search(r"<body class='[^']*'[^>]*>", html)
+    row_a, row_b = html.find("<div class=row>"), html.find("<div id=gv-ghost>")
+    return {
+        "body_tag": body.group(0) if body else "",
+        "rail_buttons": "".join(re.findall(r"<div class=rail-btn data-pane=[^>]*>[^<]*</div>", html)),
+        "phone_tabs": "".join(re.findall(r"<button data-pane=[^>]*>[^<]*</button>", html)),
+        "pane_row": html[row_a:row_b] if 0 <= row_a < row_b else "",
+        "column_css": "".join(r for css in re.findall(r"<style>(.*?)</style>", html, re.S)
+                              for r in re.findall(r"(?<=[};])[^{};]*(?:-pane\b|#gv-|\.m-on)[^{}]*\{[^}]*\}", css)),   # -pane\b: never -panel (the 1919 read: four unrelated panels' rules rode in the panes' slice)   # the STYLE blocks only: the inline scripts name panes too; .m-on: the phone's shown-frame rules (the 1922 read: #f-artifacts.m-on fell outside the slice)
+        "gutter_calls": "\n".join(re.findall(r"gutter\('gv-[a-z]',[^\n]*", html)),
+    }
+
+
 def _attr_rows(page):
     m = re.search(r"<body class='po-chat po-feed po-timeline' data-panes=\"([^\"]*)\">", page)
     return json.loads(html_mod.unescape(m.group(1))) if m else None
@@ -175,6 +202,18 @@ class TheCodePanesRender(unittest.TestCase):
         self.w.unseed("notes")
         self.assertTrue(km._landing() == h0, "define then remove: the bytes are back")
 
+    def test_01_the_slicer_this_module_runs_is_the_one_the_fixture_was_made_with(self):
+        # slices() above is tests/landing_slices.py's copy (its docstring says why): statement for statement the same function, the
+        # docstrings apart, so the pin compares the rendering with the slicer that made its fixture
+        def statements(fn):
+            node = ast.parse(inspect.getsource(fn)).body[0]
+            self.assertIsInstance(node.body[0].value, ast.Constant, "%s opens with its docstring" % fn.__module__)
+            return [ast.dump(st) for st in node.body[1:]], [a.arg for a in node.args.args]
+        mine, theirs = statements(slices), statements(landing_slices.slices)
+        self.assertTrue(mine[0], "the copy has statements")
+        self.assertEqual(mine, theirs, "slices() here differs from tests/landing_slices.py's: copy the slicer's change here (or the "
+                                       "reverse) and regenerate the fixture if the slices changed")
+
 
 # ── the doors ─────────────────────────────────────────────────────────────────────────────────────────────────────
 class TheDoors(unittest.TestCase):
@@ -195,7 +234,10 @@ class TheDoors(unittest.TestCase):
     def _req(self, path, body=None, token=True):
         headers = {"Content-Type": "application/json"}
         if token:
-            headers["X-Romp-Token"] = os.environ["ROMP_SERVE_TOKEN"]
+            # the token this module's kernel bound at import (km.TOKEN), never the environment read now: every module's module-level
+            # writes run at collection, before any test, and a later module that sets ROMP_SERVE_TOKEN outright (tests/test_waiting_pane.py
+            # does) leaves the environment naming a token this kernel never loaded, so every request here was refused 403
+            headers["X-Romp-Token"] = km.TOKEN
         data = None if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), data=data, headers=headers, method="POST" if data is not None else "GET")
         try:
@@ -489,8 +531,9 @@ class TheLanding(unittest.TestCase):
         _has(self, '<div class=gv id=gv-docs></div><div class=pane id=docs-pane><iframe id=f-docs data-src="http://TESTHOST:9/docs/" data-protocol=none sandbox="allow-scripts allow-forms allow-popups"></iframe></div>', page,
              "a URL pane: the URL as given (no ?v=, no token), sandboxed, marked protocol none")
         _has(self, '<iframe id=f-lab data-src="/feed" data-protocol=romp></iframe>', page, "a kernel route as given")
-        self.assertLess(page.index("id=artifacts-pane"), page.index("id=gv-docs")); self.assertLess(page.index("id=gv-docs"), page.index("id=gv-notes"))
-        self.assertLess(page.index("id=gv-notes"), page.index("<div id=gv-ghost>"), "the data panes sit in the pane row, after the shipped columns")
+        # the data panes' gutters through _at: only this seeded render carries them (the helper's comment says why)
+        self.assertLess(page.index("id=artifacts-pane"), _at(page, "id=gv-docs")); self.assertLess(_at(page, "id=gv-docs"), _at(page, "id=gv-notes"))
+        self.assertLess(_at(page, "id=gv-notes"), page.index("<div id=gv-ghost>"), "the data panes sit in the pane row, after the shipped columns")
         _has(self, "#notes-pane{flex:var(--g-notes,40) 1 0}body:not(.po-notes) #notes-pane{display:none}", page)
         # .po-waiting: the fork's Waiting pane is a shipped column, so the records put it in each data gutter's chain (fold 4, slice 2)
         _has(self, "body:not(.po-docs) #gv-docs,body:not(.po-chat):not(.po-fleet):not(.po-feed):not(.po-waiting):not(.po-files):not(.po-artifacts) #gv-docs{display:none}", page,
@@ -715,9 +758,9 @@ class TheInlineScripts(unittest.TestCase):
                 sw += 1; continue
             m = re.match(r"addEventListener\('message',function\(e\)\{", html[i:i + 80])   # the guard reads `e`, so the listener is a function of e
             if not m or not html[i + m.end():].startswith(GUARD):   # the FIRST statement, not anywhere in the next 200 characters (the 1919 read)
-                open_ones.append(html[i:i + 140])
+                open_ones.append(i)   # the offset: the listener's text is sliced below, where the served-pins census classifies the read
         self.assertEqual(sw, 1, "the service worker's notificationClick listener, on the worker's channel")
-        self.assertEqual(open_ones, [], "every inline listener reads the check, fail-closed, as its first statement")
+        self.assertEqual([html[i:i + 140] for i in open_ones], [], "every inline listener reads the check, fail-closed, as its first statement")
         self.assertIn("window.__rompPaneSourceOk=function(e)", km._LANDING_BOOT_JS, "defined by the first script on the page")
         self.assertLess(html.index("window.__rompPaneSourceOk=function(e)"), regs[0], "before any listener is registered")
         names = sorted(set(re.findall(r"src=/dist/([a-z-]+)\.js", html)))

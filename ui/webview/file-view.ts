@@ -407,7 +407,7 @@ export const REASON_MISSING = "missing";
  *  section named" would be false of it. */
 export const HIDDEN_SECTION = "That section is hidden in the rendered view; opened at the top.";
 /** The Outline button's label (plans/markdown-viewer.md Slice 6, item 2): the action that lists a rendered note's headings by
- *  depth and lands the picked one at the top of the body. The plan's word, a document viewer's usual one; the guide says
+ *  depth and lands the picked one at the top of the body. The plan's word, a document viewer's usual one; the reference says
  *  "the file's headings" beside it so the sessions pane's outline is never confused with it (the brief's open question 2). */
 export const OUTLINE_LABEL = "Outline";
 /** The line a failed render stands under (plans/markdown-viewer.md Slice 7, item 1): when marked, the sanitizer or a DOM pass
@@ -415,7 +415,7 @@ export const OUTLINE_LABEL = "Outline";
  *  dress as the body's first child (its second, under EMPTY_FILE's line, over an empty file whose render still threw:
  *  renderFellLine), and the file's text as Raw rows under it (codeBlock), so a render that fell shows the text
  *  and says why, where the old catch wrote the source into the Rendered box as one unannounced paragraph. No hint row (the
- *  title bar names the path) and no Download (the text is showing). Without a terminal period so the guide can carry the words;
+ *  title bar names the path) and no Download (the text is showing). Without a terminal period so the reference can carry the words;
  *  the line's text is this constant, the message in parentheses, then the period (renderFellLine). */
 export const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";
 /** The `.fileview-err` line for a render that fell (RENDER_FELL, above), naming what threw: the body's first child above the
@@ -445,7 +445,7 @@ function fellMessage(err: unknown): string {
  *  fact, then the authored source and the alt in parentheses when there is one, in one line (`Image failed to load: figs/p95.png
  *  (p95 by day)`), where the browser drew a wordless broken-image glyph or nothing. The img's `error` event carries no status, so
  *  the label names the fact and the source, never a reason, and the viewer makes no second request to learn one (the Comments
- *  panel's poll already HEADs the figure and its card says absent). Without a terminal period so the guide can carry the words. */
+ *  panel's poll already HEADs the figure and its card says absent). Without a terminal period so the reference can carry the words. */
 export const FIGURE_FAILED = "Image failed to load:";
 /** The line an empty file shows in place of its text (plans/markdown-viewer.md Slice 7, item 6). A zero-byte file painted zero
  *  Raw rows or an empty Rendered box and nothing else, a blank pane with Edit shown, so nothing told the reader an empty file from
@@ -456,7 +456,7 @@ export const FIGURE_FAILED = "Image failed to load:";
  *  shown (an empty file is editable; the editor mounts over ""), the Outline button hides (no heading), error() is null (the
  *  content, all none of it, shows) and mode() follows the buttons; a reload that lands bytes repaints without the line. Keyed on
  *  the text the landing applied, never on a byte count or a timer. The one constant of the slice with its own terminal period:
- *  the line shows it alone (contract C5), and the guide carries the words. */
+ *  the line shows it alone (contract C5), and the reference carries the words. */
 export const EMPTY_FILE = "This file is empty.";
 /** The `.fileview-err` line for an empty file (EMPTY_FILE, above): prepended to the body right after the text paint's swap in
  *  both viewers, so it stands above the empty root and outside it. */
@@ -509,7 +509,7 @@ export const LATIN1_NOTICE = "This file is not UTF-8 on disk, so it can be read 
  *  offset but becomes another character, so a record whose text crosses one no longer matches, and the save writes LF where
  *  the file had CR under records anchored to the disk bytes. Before this slice the refusal named CRLF alone and keyed on CRLF
  *  alone, so a CR-only file's pending changes went into an editor that rewrote every ending under them. Shown with the panel's
- *  own refusal after it (contract C5: `CR_REFUSAL + " " + pending.refusal`); the guide carries the words. Without pending
+ *  own refusal after it (contract C5: `CR_REFUSAL + " " + pending.refusal`); the reference carries the words. Without pending
  *  changes the editor mounts as before, over the LF view of the text (norm), and the save door writes the lone CRs back where
  *  the buffer has LF (eolCR, the CRLF restore's shape), so a CR-only file keeps its endings through an edit (the Slice 7
  *  review's round 1; before, a save wrote LF where the file had CR, a data change the reader did not make). */
@@ -1710,7 +1710,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // plans/markdown-viewer.md, item 7; CR_REFUSAL says how: norm rewrites a CRLF or a lone CR to LF before the mount, as
   // CodeMirror's document model would as it loads the string), which moves or mismatches the offsets the records
   // hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked. The
-  // CR refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same). The
+  // CR refusal states its consequence literally: it is copy the person acts on (docs/reference.md says the same). The
   // words for what `begin()` returned, or null when the editor may carry it — asked at the CLICK (so a refusal needs no
   // consent popup first) and again at the MOUNT over the begin() whose records the editor takes (enterEdit): the consent
   // read between the two is a kernel round-trip, and a status landing inside it (the poll's tick, the panel's mount-time
@@ -4709,7 +4709,7 @@ function keepAuthoredSpellings(root: ParentNode): void {
  *  and the two readers above take it as a directory named `~` beside the file, and the kernel's `~` expansion
  *  (_resolve_open_path) never sees it because the joined path no longer starts with it. A LINK's `~/…` is the
  *  opposite on purpose (joinDocPath leaves it for the kernel to expand): a link has one reader, the kernel at click
- *  time; a figure has three that must name one file (file-view-figures-absolute.test.ts pins both, and docs/guide.md
+ *  time; a figure has three that must name one file (file-view-figures-absolute.test.ts pins both, and docs/reference.md
  *  states them). Untouched: a src with a scheme (http:, https:, data:, blob:, …), a protocol-relative URL
  *  (`//host/…`, which the browser and every markdown reader take as a web address), and an empty one. `..` segments and `./` pass through
  *  as written: the kernel resolves the path and gates it, and a client-side normalization would be a second, weaker

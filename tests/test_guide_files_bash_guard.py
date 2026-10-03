@@ -114,10 +114,13 @@ class TrackChangesParagraphNamesTheRefusal(unittest.TestCase):
         self.assertIn("A shape outside these classes that reaches a tracked file is a rule to state, not a residual.", _flat(install))
 
     def test_the_guide_carries_no_copy_of_the_developer_paragraph(self):
-        # round 6's heading and its verbatim paragraph are gone from the whole guide, not moved inside another section; the
-        # guide's Files text is docs/reference.md's Files pane since fold 4, so both are read (the reference's installer
-        # section carries the developer paragraph on purpose, and is not read here)
-        guide = _read("docs", "guide.md") + "\n\n" + _files_section()
+        # round 6's heading and its verbatim paragraph are gone from the whole guide, not moved inside another section. Fold 4
+        # moved the fork guide's paragraphs into docs/reference.md (the Files pane, and also the chat's, the Waiting on you
+        # pane and the token file), so the scan reads docs/guide.md plus all of docs/reference.md except the installer's
+        # section, which carries the developer paragraph on purpose
+        ref = _read("docs", "reference.md")
+        installer = _ref_section(ref, "What the installer links into `~/.claude/`")
+        guide = _read("docs", "guide.md") + "\n\n" + ref.replace(installer, "")
         self.assertNotIn("### The write guard on tracked files", guide)
         for text in ("residual property", "THE RESIDUAL PROPERTY", "extract's switch", "RESIDUAL TABLE", "B2 as ruled",
                      "stated since the first commit of this round"):

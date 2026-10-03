@@ -185,7 +185,8 @@ once the kernel has restarted. A browser that never loads the dashboard again
 keeps `romp_token`, whose value is the serve token and stays valid until the
 token is rotated. Rotate the token after upgrading to retire every such
 cookie. The steps, and what a rotation signs out, are under "Rotating the
-token" in the guide's Security and trust section (`docs/guide.md`).
+token" in the reference's section "The token file: minting, permissions and
+refusals" (`docs/reference.md`).
 
 Going back to an earlier version signs browsers in with `romp_token` again,
 and a browser keeps this version's session cookie beside it. When this version

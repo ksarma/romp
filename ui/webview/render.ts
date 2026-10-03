@@ -8081,7 +8081,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // placeholder id the ack replaces, which no union carries afterwards (round 7); a union only remote hosts' tags make has no
   // local id; and a local tag deleted and created again under the same name has a new id, so the same-named union holds the copy,
   // as the strip's section, keyed by the name, still shows it. A copy the name alone carries is lost to a rename pushed while the
-  // session is under two or more groups (the row leaves, a click writes nothing), the limit the guide states for every group the menu
+  // session is under two or more groups (the row leaves, a click writes nothing), the limit the reference states for every group the menu
   // knows by its name alone: the remote-only group, the tag whose create was unanswered when the menu started following the tab, and
   // the tag made again under its name (round 8). The click's guard compares the row's section and the resolution through
   // sameSection (the ids when both are local, else the names, so two remote-only sections are two), so a copy re-identified under
@@ -8270,7 +8270,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     // after the click and the Hide tab row still named the group (the x's tooltip promises everywhere). Every mutating handler names
     // its union by the ref it was built from and resolves it from unionFor() at the click, the live store, never the build-time union.
     // THE RESOLUTION IS heldCopy's (round 8): the ref's local id over every union first, its name only when no union carries that id,
-    // the rule the guide states for the group the menu knows. So a union whose local half was deleted under the press while a remote
+    // the rule the reference states for the group the menu knows. So a union whose local half was deleted under the press while a remote
     // same-named tag still holds the session is found by its name (round 7 matched a ref that carried an id by the id alone, so the x,
     // Move to and the pin row refused where the Hide tab row's guard, which compares names when either side lacks an id, wrote), a
     // remote-only union is found by its name (its ref has no id), a tag renamed under the press by its id, and a tag deleted and made
@@ -8584,7 +8584,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // prune site, so the strip repaints on TABGROUPS_EVENT and the group's header counts the hidden member
   // after the "+"; the pane's Show button stays the way back, and the sub-line names where it is, the
   // group's view (which click opens that view differs by fold state, an open group's count or a folded
-  // group's header, and the guide says so; the sub-line stays short and true in both). Present only while
+  // group's header, and the reference says so; the sub-line stays short and true in both). Present only while
   // the strip is sectioned and the right-clicked copy has a home section, and never on the phone layout
   // (phoneLayout, the gate the Group tabs by tag switch uses: planStrip flattens there, so a hide would
   // write and show nothing; the refresh and the click read the gate through one helper, rowHome, and the

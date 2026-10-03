@@ -616,7 +616,7 @@ test("pins: the delegate action, the header's order, the store's key and default
   assert.match(literal[0].replace("changesInline: true", "changesInline: true, later: false"), DEFAULT_ON, "…read by value: a setting appended after it keeps the pin green");
   assert.doesNotMatch(literal[0].replace("changesInline: true", "changesInline: false"), DEFAULT_ON, "…and a flipped default turns it red");
   assert.match(SETTINGS, /const KEY = "romp:settings";/, "the store this suite's stub localStorage holds");
-  // the guide: both views, both marks, the toggle by its label
+  // the reference's Files pane: both views, both marks, the toggle by its label
   const files = REF_FILES.replace(/\s+/g, " ");
   for (const phrase of ["**Show changes inline**", "in both views", "deletion is struck", "insertion is tinted", "**Reveal**"]) assert.ok(files.includes(phrase), "guide: " + phrase);
   assert.doesNotMatch(files, /A deletion has nothing to mark in the Rendered view/, "the old sentence is gone");

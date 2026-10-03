@@ -185,8 +185,8 @@ _PASS_JOBS_AFTER_ATTRIBUTION = ("retryUpgrade", "heldWorking")
 
 # The cycle jobs that joined _pusher_cycle_jobs after the same change: the docs' stages_ms entry names the nine cycle jobs whose rows
 # MOVED to pusher.cycleJobsMs on 2026-09-18, and a job born on the pusher after it moved nothing. One so far, with the upstream fold of
-# 2026-10-03: artifactsSignal (upstream PR 1911, on the pusher per PR 1951). Each must still be a cycle job (_moved_cycle_jobs reds
-# otherwise), and a cycle job added later and absent here still turns the naming check red.
+# 2026-10-03: artifactsSignal (upstream PR 1951; its _artifacts_signal from PR 1925). Each must still be a cycle job (_moved_cycle_jobs
+# reds otherwise), and a cycle job added later and absent here still turns the naming check red.
 _CYCLE_JOBS_AFTER_ATTRIBUTION = ("artifactsSignal",)
 
 
@@ -1779,7 +1779,8 @@ class JobRowsByOwner(unittest.TestCase):
     def test_the_census_is_the_two_lists_and_the_flat_seed_is_the_pass_list(self):
         P = km._PerfStats
         self.assertEqual(P.JOBS, P.CYCLE_JOBS + P.PASS_JOBS, "JOBS stays the census")
-        self.assertEqual(len(P.CYCLE_JOBS), 10)   # artifactsSignal joined the pusher's cycle (upstream PR 1911, census per PR 1951)
+        # artifactsSignal joined the pusher's cycle (upstream PR 1951; its _artifacts_signal from PR 1925)
+        self.assertEqual(len(P.CYCLE_JOBS), 10)
         self.assertFalse(set(P.CYCLE_JOBS) & set(P.PASS_JOBS), "no job on both lists")
         self.assertEqual(len(P.JOBS), len(set(P.JOBS)), "no name twice")
         self.assertTrue({"jobs." + j for j in P.PASS_JOBS} <= set(P.STAGES), "the flat seed lists every pass job")

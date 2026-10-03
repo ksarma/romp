@@ -4,7 +4,7 @@
 // (in the dashed cue), so the open card's actions were Reply and Resolve alone: the words named a button the card did not
 // have. Now a guessed copy's card offers Reveal too, which switches to Raw and scrolls to the guessed copy, and its title
 // says what the save does (a new comment on the copy chosen; this card keeps its tag until it is resolved, as
-// docs/guide.md says). (2) A copy the host confirmed at a place the view's text has since moved past (the poll's reload
+// docs/reference.md says). (2) A copy the host confirmed at a place the view's text has since moved past (the poll's reload
 // paints before the fresh status lands; a refused refresh keeps the old status) is painted as a guess nearest THAT place,
 // the paint's hint, while the tag, the open card and the mark said it was the copy nearest the stored position, which
 // can be another copy. The words now name the confirmed place in that state (PanelCard.confirmedAt). Driven over the DOM

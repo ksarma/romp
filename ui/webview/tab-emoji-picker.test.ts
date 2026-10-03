@@ -1,6 +1,6 @@
 // The tab menu's Emoji… opens a PICKER (2026-09-07), not a bare text field: search, a Recent row, the grid by
 // category with a jump strip, and a footer for typing or pasting one plus Clear. Source pins against
-// render.ts, styles.css and the guide (the dialog builds DOM at click time; no jsdom for the chat render, the
+// render.ts, styles.css and the reference (the dialog builds DOM at click time; no jsdom for the chat render, the
 // tab-color-picker idiom). The pure half (filter, recents, sections, the keyboard model) runs for real in
 // emoji-picker.test.ts; the curated list's shape in emoji-data.test.ts; the contract inherited from the
 // one-field dialog (ack before post, the kernel's verdict drives the dialog, the warn router) stays pinned

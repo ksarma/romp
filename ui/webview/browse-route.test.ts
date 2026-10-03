@@ -12,7 +12,7 @@
 // bundles it, and the shell's own arms relay into it): the relay lists the folder in the pane and brings the pane
 // forward, a picked file opens over the listing with a way back and enters Recent, Escape peels one layer at a
 // time, and the pane tells the shell once, when nothing is left up. The shell's arms are also pinned and run under
-// node in the Python lane (tests/test_files_pane.py BrowseRelay); the source pins here read the sheets and the guide too. The
+// node in the Python lane (tests/test_files_pane.py BrowseRelay); the source pins here read the sheets and the reference too. The
 // browser legs skip, and say why, without the playwright package or a browser it can launch (the extension
 // CI job installs the package with its dependencies and downloads a browser only after its test step, for the
 // pane bench). Synthetic values only: the notes-api demo world, placeholder session ids.

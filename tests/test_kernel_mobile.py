@@ -3372,10 +3372,12 @@ console.log(JSON.stringify(out));
 def _head_pane_enabled():
     """The head script's reader of the gear's Panes setting (window.__rompPaneEnabled), lifted whole from the served landing. On the
     page it is defined before either script runs, and the fork's lazy panes read it: their promote() refuses a pane the gear has off
-    (the stage 0 loader in _LANDING_MOBILE_JS), so a stub world without it would load a gear-disabled tab the page never loads."""
-    html = km._landing()
-    i = html.index("window.__rompPaneEnabled=function(k){")
-    return html[i:html.index("};", i) + 2]
+    (the stage 0 loader in _LANDING_MOBILE_JS), so a stub world without it would load a gear-disabled tab the page never loads.
+    Read in the head script's code (_live_scripts, _head_code), the parser road this module keeps: the census in
+    tests/test_served_pins_read_elements.py fails a slice of the raw page in a module that imports served_css."""
+    code = _head_code(_live_scripts(km._landing()))
+    i = code.index("window.__rompPaneEnabled=function(k){")
+    return code[i:code.index("};", i) + 2]
 
 
 def _run_two(rows, store, mobile):

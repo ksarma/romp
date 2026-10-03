@@ -9,6 +9,8 @@ named for the reply (never the shell command the sandbox refuses), set_working l
 the sentences copied from the bus pinned against the bus module itself, loaded by path the way
 tests/test_postal_live_only.py loads it (the kernel never imports it: the bus is its own process). The bus's own half is
 here too: the push banner names the tool for a Codex recipient, and `romp mail send` from a Codex shell points at it.
+One class runs the whole road with no fake on it: a send over a real loopback socket into the bus's own server and
+handler, whose refusal reaches the Codex result word for word (ACodexSendRefusalIsTheBusText).
 Synthetic ids and the notes-api demo's session names only; the fakes carry no token."""
 import contextlib
 import io
@@ -16,6 +18,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import unittest
 from unittest import mock
 from types import SimpleNamespace
@@ -29,6 +32,12 @@ BIN = os.path.join(ROOT, "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)                    # a live kernel's export outranks the XDG floor
+# the private state root minted above, `session-hosts` off in it (the repo rule for a test that builds its own state
+# root); the bus loaded below files under its postal/ directory
+_ROOT = os.path.join(os.environ["XDG_STATE_HOME"], "romp")
+os.makedirs(_ROOT, exist_ok=True)
+with open(os.path.join(_ROOT, "session-hosts"), "w") as _f:
+    _f.write("off\n")
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")      # the seam every kernel test uses: no token file is minted
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 load_source("romp_judge", os.path.join(BIN, "romp-judge"))
@@ -152,6 +161,103 @@ class SendMessage(unittest.TestCase):
         self.assertFalse(ok)
         self.assertNotIn("check_sent", text)
         self.assertIn("could not be reached", text)
+
+
+class ACodexSendRefusalIsTheBusText(unittest.TestCase):
+    """The instructions' name paragraph is true on the Codex road because the refusal text is the bus's. A Codex
+    thread reads (POSTAL_INSTRUCTIONS in kernel/codex_backend.py, the bus's MCP_INSTRUCTIONS paragraph carried
+    verbatim) that a name more than one live session answers to is refused with the candidates listed as
+    `host:name`, each with the start of its session id where two share one `host:name`, and that its own name is
+    refused outright. The kernel spells none of that: _codex_postal_send posts the send to the bus's /send, and on
+    any answer but a 200 returns _codex_postal_fault's text, the bus's own error verbatim, which the backend hands
+    the thread as the tool result unchanged (_postal_tool_call, pinned in tests/test_codex_backend.py). So the
+    paragraph holds for a Codex session only while the bus's text arrives whole. Run here with no fake on the road:
+    the kernel's real _codex_postal_call over a real loopback socket into the bus's own server class and handler
+    (pm._LoopbackServer with pm.Handler) on a port of its own, the kernel's bus port the one thing redirected; the
+    namesakes filed by the bus's own exchange recorder (peer_exchange_handle) from one far host's dial, as
+    tests/test_postal_remote_sids_mirror.py's _far_dials_us files them; the local listing, the Codex session api
+    alone, through the bus's sessions-file seam. Two pairs of namesakes named web under one host:name (ids that
+    differ in their first 8 characters, and ids alike there), then a send to the sender's own name: each Codex
+    result is the refusal the bus's resolve_recipient gives over the same state, word for word, and says what the
+    paragraph says. Red when _codex_postal_fault returns only its status sentence. The halves are pinned apart
+    too: test_a_bus_refusal_is_a_failed_result_carrying_its_text above (the pass-through, over a fake socket) and
+    the cost (i) tests of tests/test_postal_remote_sids_mirror.py (the bus's listing)."""
+
+    FAR = "TESTHOST-far"                                 # the far host whose dial names both namesakes
+    PAIRS = ((("b6b6b6b6-0001-4000-8000-000000000001", "c7c7c7c7-0002-4000-8000-000000000002"), 8),
+             (("a5a5a5a5-0001-4000-8000-000000000001", "a5a5a5a5-0002-4000-8000-000000000002"), 13))
+
+    def setUp(self):
+        self.assertEqual(str(pm.STATE.parent), _ROOT, "the bus files under this module's private root")
+        self.assertEqual(km.TOKEN, pm.SERVE_TOKEN, "the kernel and the bus hold one serve token, as on a machine")
+        # the seams the bus reads at call time, each put back as found
+        for name in ("ROMP_SESSIONS_FILE", "ROMP_POSTAL_HOST", "ROMP_POSTAL_PEERS"):
+            self.addCleanup(restore_env, name, os.environ.get(name))
+        os.environ.pop("ROMP_POSTAL_PEERS", None)        # peer mode, the default: a far host's rows are candidates
+        os.environ["ROMP_POSTAL_HOST"] = "TESTHOST"
+        seam = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        self.addCleanup(os.unlink, seam.name)
+        with seam:
+            json.dump([{"id": SID, "name": "api", "state": "working", "backend": "codex", "dir": "/TESTDIR/api",
+                        "lastSid": SID}], seam)
+        os.environ["ROMP_SESSIONS_FILE"] = seam.name
+        saved = dict(pm.PEER_STATE)
+
+        def restore_peers():
+            pm.PEER_STATE.clear()
+            pm.PEER_STATE.update(saved)
+        self.addCleanup(restore_peers)
+        pm.STATE.mkdir(parents=True, exist_ok=True)      # where the dial's mirror write lands, removed after
+        self.addCleanup((pm.STATE / "remote-sids").unlink, missing_ok=True)
+        pm.PEER_STATE.clear()
+        # the bus's own server class and handler, on a loopback port of its own; the stop is registered as soon as the
+        # thread runs, so a failed assertion cannot leave the server serving
+        srv = pm._LoopbackServer(("127.0.0.1", 0), pm.Handler)
+        self.addCleanup(srv.server_close)
+        serving = threading.Thread(target=srv.serve_forever, name="codex-refusal-bus", daemon=True)
+        serving.start()
+        self.addCleanup(serving.join, 5)
+        self.addCleanup(srv.shutdown)
+        # the one redirect: the kernel's bus port (_bus_port answers the environment's BUS_PORT for a kernel that
+        # ensured no bus of its own); the port census's memory is put back too, so a later dial says nothing new
+        self.addCleanup(setattr, km, "BUS_PORT", km.BUS_PORT)
+        self.addCleanup(km._BUS_PORT_SAID.__setitem__, 0, km._BUS_PORT_SAID[0])
+        km.BUS_PORT = srv.server_address[1]
+        self.assertEqual(km._bus_port(), srv.server_address[1], "the kernel dials the bus started here")
+
+    def _far_dials_in(self, presence):
+        """One dial from the far host through the bus's own exchange recorder, naming `presence`."""
+        resp, status = pm.peer_exchange_handle({"host": self.FAR, "busId": self.FAR + "-bus", "epoch": 1,
+                                                "proto": pm.PEER_PROTO, "presence": presence,
+                                                "presenceAnswered": True, "holds": [], "relays": [], "acks": [],
+                                                "bounces": [], "wait": False})
+        self.assertEqual(status, 200, resp)
+
+    def _codex_send(self, to):
+        return call("send_message", {"to": to, "body": "which port does staging use?", "kind": "question"})
+
+    def test_two_namesakes_under_one_host_name_reach_the_codex_result_as_the_bus_lists_them(self):
+        for (one, two), width in self.PAIRS:
+            with self.subTest(ids=(one, two)):
+                pm.PEER_STATE.clear()                    # a dial adds names and drops none: each pair on a clean table
+                self._far_dials_in([{"id": one, "name": "web"}, {"id": two, "name": "web"}])
+                ok, text = self._codex_send("web")
+                theirs = pm.resolve_recipient("web", SID)
+                self.assertEqual((theirs["kind"], theirs.get("status")), ("error", 409), theirs)
+                self.assertEqual((ok, text), (False, theirs["error"]),
+                                 "the Codex result is the bus's refusal, word for word")
+                # what the paragraph says, spelled from the fixture: both candidates under one host:name, each with
+                # the start of its id, and the hint pointing at that start
+                for sid in (one, two):
+                    self.assertIn("%s:web [%s]" % (self.FAR, sid[:width]), text)
+                self.assertIn("address the one you mean by that id", text)
+
+    def test_the_senders_own_name_reaches_the_codex_result_as_the_bus_refuses_it(self):
+        ok, text = self._codex_send("api")
+        theirs = pm.resolve_recipient("api", SID)
+        self.assertEqual((theirs["kind"], theirs.get("status")), ("error", 409), theirs)
+        self.assertEqual((ok, text), (False, theirs["error"]), "the Codex result is the bus's refusal, word for word")
+        self.assertTrue(text.startswith("'api' is THIS session's own name."), text)
 
 
 class OtherTools(unittest.TestCase):
@@ -310,11 +416,12 @@ class OtherTools(unittest.TestCase):
 
 
 # The fork's bus carries five tools the project's does not (between set_working and check_sent in MCP_TOOLS), and the
-# Codex road does not carry them yet: a Codex thread is registered with the project's six, and _codex_postal_call in
-# kernel/kernel.py has no arm for these five, so a call naming one answers Unknown tool. Porting them (each spec byte
-# for byte from the bus, in its order, plus an arm per tool reaching the bus handler's own checks) is a separate fork
-# pull request, not part of this fold. Until it lands, the table pin below compares the Codex copy with the bus minus
-# exactly this set; the port empties the set, and a sixth fork-only bus tool turns the pin red.
+# Codex road does not carry them yet: a Codex thread is registered with the project's six, so the backend refuses a
+# call naming one of these five as Unknown tool (_POSTAL_TOOL_ARGS in kernel/codex_backend.py), and _codex_postal_call
+# in kernel/kernel.py has no arm for them either. Porting them (each spec byte for byte from the bus, in its order,
+# plus an arm per tool reaching the bus handler's own checks) is a separate fork pull request, not part of this fold.
+# Until it lands, the table pin below compares the Codex copy with the bus minus exactly this set; the port empties
+# the set, and a sixth fork-only bus tool turns the pin red.
 FORK_BUS_TOOLS_NOT_ON_CODEX = ("set_emoji", "add_user_todo", "withdraw_user_todo", "pin_note", "unpin_note")
 
 

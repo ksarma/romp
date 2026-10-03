@@ -533,7 +533,10 @@ class Focus(ViaOp):
 
 
 def _has(tc, needle, hay):
-    tc.assertIn(needle, hay)
+    # assertTrue over the membership, as tests/test_files_pane.py's _has: the served-pins census follows this helper one level and
+    # reads `needle in hay` as a membership, where a served text handed to tc.assertIn is a read it cannot classify (and a failure
+    # names the needle without printing the page)
+    tc.assertTrue(needle in hay, "missing: %r" % (needle,))
 
 
 class Shell(unittest.TestCase):

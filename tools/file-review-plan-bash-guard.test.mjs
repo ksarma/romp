@@ -34,6 +34,9 @@ const hooksReadme = read('hooks', 'README.md');
 // the guide's Files section (the user-facing text) live in docs/reference.md since fold 4 moved the fork's sections out of
 // docs/install.md and docs/guide.md (the front pages are the project's, CLAUDE.md "The documentation front pages"). The
 // surfaces keep their old labels below where the hook header, decision 47 and the ledger entry still name them that way.
+// The two scans that keep the developer paragraph and the deleted ninth class out of user-facing text read all of
+// docs/reference.md outside the installer section, not the Files pane alone: fold 4 moved more of the fork guide there (the
+// chat's paragraphs, the Waiting on you pane, the token file), and those scans covered the whole fork guide before.
 const reference = read('docs', 'reference.md');
 function refSection(heading) {
   const m = new RegExp('^' + heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\n([\\s\\S]*?)(?=^#{2,3} |(?![\\s\\S]))', 'm').exec(reference);
@@ -1157,7 +1160,7 @@ test("round 6, second commit: THE RESIDUAL PROPERTY is stated identically on the
   const body = PROPERTY.slice(PROPERTY.indexOf('the guard refuses a write only when'));
   for (const [name, text] of Object.entries(surfaces)) assert.ok(norm(text).includes(body), `${name} carries THE RESIDUAL PROPERTY identical`);
   // the user-facing surfaces carry none of the developer paragraph: not its statement, not its label, not a clause of its provenance
-  const userFacing = { 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'docs/guide.md': read('docs', 'guide.md'), 'the Files pane section of docs/reference.md': filesSection };
+  const userFacing = { 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'docs/guide.md': read('docs', 'guide.md'), 'docs/reference.md outside the installer section': reference.replace(installSection, '') };
   for (const [name, text] of Object.entries(userFacing)) {
     const n = norm(text);
     assert.ok(!n.includes(body.slice(0, 200)) && !n.includes('the residual property') && !n.includes("stated since the first commit of this round") && !n.includes('b2 as ruled, with its boundary'), `${name} carries no part of the developer paragraph of THE RESIDUAL PROPERTY`);
@@ -1363,7 +1366,7 @@ test("round 6, thirteenth commit: decision 47 and the hook header record the emp
   // refused and pinned in the guard's test ("round 7, twenty-fifth commit, the rows"), and the class is gone from every surface the property stands on
   // and from RESIDUAL_CLASSES; the records above keep the thirteenth commit's filing as history, and each surface's record of the deletion is read here
   const CLASS = "a positional the resolver reads at the word by a model the shell does not keep, an element's emptiness, a binding a later shift or unset removed, zsh's subscript grammar beyond one index";
-  const surfaces = { 'the hook header': hook, 'decision 47': d47, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'hooks/README.md': hooksReadme, 'docs/install.md': installSection, 'docs/guide.md': read('docs', 'guide.md'), 'the Files pane section of docs/reference.md': filesSection, 'the ledger entry': read('upstream', '2026-09-18-track-guard-non-literal-targets.md') };
+  const surfaces = { 'the hook header': hook, 'decision 47': d47, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'hooks/README.md': hooksReadme, 'docs/install.md': installSection, 'docs/guide.md': read('docs', 'guide.md'), 'docs/reference.md outside the installer section': reference.replace(installSection, ''), 'the ledger entry': read('upstream', '2026-09-18-track-guard-non-literal-targets.md') };
   for (const [name, text] of Object.entries(surfaces)) assert.ok(!text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes(CLASS), `${name} no longer states the ninth class`);
   for (const [name, text] of [['decision 47', d47], ['the hook header', hook], ['the ledger entry', surfaces['the ledger entry']]]) assert.ok(text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase().includes("round 7's twenty-fifth commit") || text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes('ROUND 7 OF FORK PR #780 REVIEW, TWENTY-FIFTH COMMIT (2026-09-23'), `${name} records the deletion`);
   const guardTest = read('tools', 'romp-track-bash-guard.test.mjs');

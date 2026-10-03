@@ -3,7 +3,7 @@
 // user-todo flag, what the session is doing now, when it last did anything, its last message on hover. Executed
 // on the pure model from synthetic frame data; the pane's wiring is tab-snapshot-pane.test.ts and the view helpers
 // tab-snapshot-view.test.ts. This fork's row vocabulary (the emoji cell, the user todos, the plan's hides) rides the
-// same cases, and two source pins at the end read render.ts and docs/guide.md for the fork-only parts. The demo
+// same cases, and two source pins at the end read render.ts and docs/reference.md for the fork-only parts. The demo
 // world only: a notes-api with web / api / tests sessions, invented text.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -216,7 +216,7 @@ test("executed: the words: the heading's count and label, the row's spoken label
   assert.equal(rowWords(m.rows[2]).title, "No messages yet.\nClick to open this session.");
 });
 
-// ── this fork's pins over render.ts and the guide: the parts upstream's pane test cannot see ─────────────────────
+// ── this fork's pins over render.ts and the reference: the parts upstream's pane test cannot see ─────────────────
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
 const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
