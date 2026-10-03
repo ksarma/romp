@@ -70065,10 +70065,12 @@ def _pane_spin(cid, ignore_id=""):
             # 2, regression-1 and open call 10: each change ran a scan of the whole page, one style read per element, and a chat
             # changes at each second's tick and each keystroke). The watch observes the container's own children and attributes,
             # each sticky or fixed element in it (what it holds included), and the page outside it, never the container's other
-            # content, where a session's messages and their clocks change. A change that can add a control (an element added, or a
-            # class, style or hidden change on an element the last scan did not hold or that holds elements) scans again; any other
-            # (a text change such as the status line's timer, an element removed, a change to a control the last scan holds that
-            # holds no element, such as the composer's text field as it grows), a scroll and the end of a CSS transition re-read the
+            # content, where a session's messages and their clocks change. A change that can add a control (an element added to an
+            # element the last scan did not hold, or a class, style or hidden change on an element the last scan did not hold or
+            # that holds elements) scans again; any other (a text change such as the status line's timer, an element removed, an
+            # element added inside a control the last scan holds, such as the status line's mode icon, which the chat writes again
+            # every second, a change to a control the last scan holds that holds no element, such as the composer's text field as
+            # it grows), a scroll and the end of a CSS transition re-read the
             # boxes the last scan found and the boxes that clip them (the end of a transition: the scroll marks move to their new
             # places by a 180 ms transition, so the frame after the change that starts the move reads them mid-move, and only the
             # transition's end says where they stop; WebKit left the badge over a mark after a scroll; round 2, open call 7). So a control that appears or moves under the badge moves it on, the viewer opened or the
@@ -70151,10 +70153,12 @@ def _pane_spin(cid, ignore_id=""):
             "function rwire(){if(!rmo)return;rmo.disconnect();var F=['class','style','hidden'],O={childList:true,subtree:true,attributes:true,attributeFilter:F},N={childList:true,attributes:true,attributeFilter:F};"
             "rmo.observe(c,N);for(var i=0;i<rpins.length;i++)rmo.observe(rpins[i],O);"
             "for(var p=c;p&&p!==document.body&&p.parentElement;p=p.parentElement){var u=p.parentElement;rmo.observe(u,N);for(var k=u.firstElementChild;k;k=k.nextElementSibling)if(k!==p&&k!==rb)rmo.observe(k,O);}}"
-            # a change scans again when it can add a control: an element added, or an attribute changed on an element the last
-            # scan did not hold or that holds elements; any other change re-reads the boxes
-            "function rrec(rs){var any=false,f=false;for(var i=0;i<rs.length;i++){var m=rs[i],g=m.target;if(g===rb||rb.contains(g))continue;any=true;"
-            "if(m.type==='childList'){for(var j=0;j<m.addedNodes.length;j++)if(m.addedNodes[j].nodeType===1)f=true;}else if(!rhs||!rhs.has(g)||g.firstElementChild)f=true;}if(any)rwant(f);}"
+            # a change scans again when it can add a control: an element added to an element the last scan did not hold, or an
+            # attribute changed on an element the last scan did not hold or that holds elements; any other change re-reads the
+            # boxes (an element added inside a control the scan holds lies in a box the badge already avoids: the status line's
+            # mode icon, which the chat writes again every second)
+            "function rrec(rs){var any=false,f=false;for(var i=0;i<rs.length;i++){var m=rs[i],g=m.target;if(g===rb||rb.contains(g))continue;any=true;var h=!!rhs&&rhs.has(g);"
+            "if(m.type==='childList'){if(!h)for(var j=0;j<m.addedNodes.length;j++)if(m.addedNodes[j].nodeType===1)f=true;}else if(!h||g.firstElementChild)f=true;}if(any)rwant(f);}"
             "function rwatch(on){try{if(on){if(!rmo&&typeof MutationObserver==='function'&&document.body){rmo=new MutationObserver(rrec);rwire();}"
             "if(!rsc&&document.addEventListener){document.addEventListener('scroll',rnudge,true);document.addEventListener('transitionend',rnudge,true);rsc=true;}}"
             "else{rob=null;rhs=null;rpins=[];rfull=false;if(rfr){if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(rfr);rfr=0;}if(rmo){rmo.disconnect();rmo=null;}"

@@ -1079,8 +1079,8 @@ out({ atPaint, scrolled, reads: STYLE_READS - reads });""")
     # whole page while the badge was painted, one style read per element, and a chat changes the page at each second's tick and at
     # each keystroke. Now a change or a scroll asks for one placement at the next animation frame; the watch observes the list's own
     # children and attributes, each sticky or fixed element in it, and the page outside it, never the rest of the list's content;
-    # and only a change that can add a control scans again (an element added, or an attribute changed on an element the last scan
-    # did not hold or that holds elements), every other one re-reads the boxes. A scan reads every element's style once (and the
+    # and only a change that can add a control scans again (an element added to an element the last scan did not hold, or an
+    # attribute changed on an element the last scan did not hold or that holds elements), every other one re-reads the boxes. A scan reads every element's style once (and the
     # placement reads the list's own once more, the scroll-area test), so a placement with no scan makes one read.
     _PAGE = r"""
 const header = add(null, [0, 0, 390, 44], { sel: 'button' }); header.id = 'header';
@@ -1139,6 +1139,18 @@ out({ tick, key, grown });""")
         self.assertEqual(o["key"], 1, "a style written on the composer's text field, a control the scan holds with no element in it: a re-read, no scan")
         self.assertEqual(o["grown"], {"place": {"top": "98px", "right": "8px", "painted": True}, "reads": 1},
                          "the re-read still moves the badge off the field when its new box reaches the badge (50 + 40 + 8), with no scan")
+
+    def test_an_element_added_inside_a_control_the_scan_holds_re_reads_and_scans_nothing(self):
+        # the chat's 1 s interval writes the status line's mode icon again (innerHTML on the icon's span inside its button): an element
+        # added inside a control the scan holds lies in a box the badge already avoids; measured in the lab at f1a720ef2, one scan a
+        # second from that write alone
+        o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T);
+let reads = STYLE_READS; change(send); frame(); const icon = STYLE_READS - reads;
+reads = STYLE_READS; change(footer); frame(); const unheld = STYLE_READS - reads;
+out({ icon, unheld, scan: scan() });""")
+        self.assertEqual(o["icon"], 1, "an element added inside the send button, a control the scan holds: a re-read, no scan")
+        self.assertEqual(o["unheld"], o["scan"], "an element added inside the footer, which the scan does not hold: a scan")
 
     def test_a_change_that_can_add_a_control_scans_again(self):
         o = self._watch_fit(r"""
