@@ -70727,11 +70727,11 @@ function paneLabel(k){k=String(k||'');return PN[k]||(k?k.charAt(0).toUpperCase()
 // column closed) is dropped.
 // The Log keeps no timer of its own, but a dial's connect cut is a timer (15 s: the shim's watchdog, the shell's SH_CONNECT_MS), and a
 // close it made (`cut`, on the word or the call) fails nothing while a socket of this page is open (stands(): the shell's link, a
-// pane's or a column's). The kernel is answering that socket, and Chromium and Firefox hold each WebSocket handshake to a host until
-// the one ahead of it is done (RFC 6455 section 4.1), so on a slow network the dials a return makes together wait in line and the
-// last of them can reach its cut while every handshake is succeeding (the review of item 4b, 2026-10-03: a desktop return at 3.5 s
-// per handshake logged the Files pane at +22 s). A refused dial fails whatever stands; with nothing open, a hung outage, the first
-// cut writes, at 15 s.
+// pane's or a column's). The kernel is answering that socket, and Chromium and Firefox hold each socket's opening handshake to a
+// host until the one ahead of it is done (RFC 6455 section 4.1), so on a slow network the dials a return makes together wait in line
+// and the last of them can reach its cut while every handshake is succeeding (the review of item 4b, 2026-10-03: a desktop return at
+// 3.5 s per handshake logged the Files pane at +22 s). A refused dial fails whatever stands; with nothing open, a hung outage, the
+// first cut writes, at 15 s.
 var lost={};
 function stands(){if(window.__rompLink&&window.__rompLink().up)return true;for(var k in st){if(st[k]==='up')return true;}for(var c in stc){if(stc[c]==='up')return true;}return false;}
 function lostFail(k){var x=lost[k];if(!x)return;if((x.col?stc[x.col]:st[x.app])!=='down'){delete lost[k];return;}
