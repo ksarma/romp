@@ -2530,14 +2530,31 @@ class Checkout(_Base):
         self.assertNotEqual(main, head, "premise: origin/main is not the swept head")
         return w, main, head
 
+    @staticmethod
+    def other_remote_refs(w, symref_target):
+        """Give the batcher's repository remote-tracking refs beside origin/main, none of which a checkout may hold:
+        refs/remotes/origin/other and refs/remotes/upstream/main at HEAD, and refs/remotes/origin/HEAD, a symbolic ref
+        to `symref_target`. The World's batcher holds no remote-tracking ref but origin/main, so without these a runner
+        that copied every remote-tracking ref of the batcher's (every origin/* and upstream/* ref, in a clone with both
+        remotes) into each checkout, origin/main from the snapshot and the rest as they stand, passed every pin of this
+        family (the verify pass on main_snapshot, its first finding)."""
+        for ref in ("refs/remotes/origin/other", "refs/remotes/upstream/main"):
+            w.git("update-ref", ref, w.head())
+        w.git("symbolic-ref", "refs/remotes/origin/HEAD", symref_target)
+        return sorted(w.git("for-each-ref", "--format=%(refname)", "refs/remotes").split())
+
     def test_every_jobs_checkout_holds_origin_main_at_the_commit_read_before_the_first_leg(self):
         """The coordinator's brief of 2026-10-03, items 1 and 4: the runner reads the batcher's refs/remotes/origin/main
         once, before the first leg, and writes that commit into every job's checkout under the same name, so a test that
         reads main (tests/gitleaks-config.bats' history case as fork PR 954 scopes it) finds it there as in the
         batcher's clone; the result records the commit (runner.checkout.main). Every leg of every job sees that ref, at
         that commit, beside no other ref and no remote. Before it each checkout held no ref, and the history case scanned
-        all of HEAD's history."""
+        all of HEAD's history. The batcher holds three more remote-tracking refs (other_remote_refs), and no checkout
+        holds any of them."""
         w, main, head = self.main_world()
+        self.assertEqual(self.other_remote_refs(w, "refs/remotes/origin/main"),
+                         ["refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/other",
+                          "refs/remotes/upstream/main"], "premise: the batcher holds remote-tracking refs beside origin/main")
         w.ctl({"record_refs": True})
         p = w.run(check=0)
         calls = w.calls()
@@ -2605,9 +2622,14 @@ class Checkout(_Base):
     def test_a_batcher_with_no_origin_main_gives_no_checkout_one_and_records_null(self):
         """The brief's item 3: a batcher's repository with no refs/remotes/origin/main (a local main, the World's, beside
         it) gives no checkout any ref, and the checkout record's main is null. Red under a runner that falls back to the
-        batcher's local main, which would hand every checkout a main the batcher's clone does not call origin/main."""
+        batcher's local main, which would hand every checkout a main the batcher's clone does not call origin/main. The
+        batcher holds other remote-tracking refs (other_remote_refs, origin/HEAD naming origin/other here), and no
+        checkout holds any of them."""
         w, main, head = self.main_world()
         w.git("update-ref", "-d", "refs/remotes/origin/main")
+        self.assertEqual(self.other_remote_refs(w, "refs/remotes/origin/other"),
+                         ["refs/remotes/origin/HEAD", "refs/remotes/origin/other", "refs/remotes/upstream/main"],
+                         "premise: the batcher holds remote-tracking refs, origin/main not among them")
         self.assertEqual(w.git("rev-parse", "--verify", "-q", "refs/heads/main"), main, "premise: a local main is there")
         w.ctl({"record_refs": True})
         p = w.run(check=0)
