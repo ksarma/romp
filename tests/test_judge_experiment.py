@@ -826,7 +826,7 @@ class Harness(unittest.TestCase):
         after = set(glob.glob(os.path.join(_tf.gettempdir(), "je-em-*")))
         self.assertEqual(after - before, set(), "no je-em-* scratch root is left behind: %r" % (after - before))
 
-    # ── round on ksarma's review of 1937 (folded on main after 1946) ──
+    # ── round on the second contributor's review of #1937 (folded on main after #1946) ──
     def _archive_cleared_top(self, sid, cut_t, cleared_at):
         """A cleared top in goals-archive (where the kernel's compaction moves it), with a closer done before the cut and the
         user's clear at `cleared_at`; the clear also rides the override journal, as append_clear writes it."""
@@ -842,7 +842,7 @@ class Harness(unittest.TestCase):
         return node
 
     def test_a_cleared_top_in_the_archive_is_visible_to_all_four_readers(self):
-        """ksarma's review: the kernel's compaction moves a cleared top into goals-archive/<sid>.json, and the harness read only
+        """The second contributor's review of #1937: the kernel's compaction moves a cleared top into goals-archive/<sid>.json, and the harness read only
         the live store, so the top was missing from the done times, the eligibility mark, tier one and the seed (the plan counts
         640 clears against 22 resolves, so the finished signal lived mostly there). store_with_archive unions the archive in."""
         fn = getattr(self.je, "store_with_archive", None)
@@ -864,7 +864,7 @@ class Harness(unittest.TestCase):
         self.assertIn(self._ending(m2, sid, 1)["id"] + ":gA", seed["nodes"], "the top cleared after the cut is in the ending's seed")
 
     def test_the_window_excludes_the_next_turns_done(self):
-        """ksarma's review: the window ran to cut + SETTLE_S, but no done carries an evidence time after its own cut, so a done
+        """The second contributor's review of #1937: the window ran to cut + SETTLE_S, but no done carries an evidence time after its own cut, so a done
         in that tail is the next turn's; the window ends at the cut."""
         self.assertTrue(self.je.in_turn_window(1000.0, 900.0, 1000.0), "a done at the cut is in the window")
         self.assertFalse(self.je.in_turn_window(1000.5, 900.0, 1000.0), "a done after the cut belongs to the next turn")
