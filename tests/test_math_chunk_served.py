@@ -32,10 +32,10 @@ SYNTHETIC fixtures only; skips LOUDLY without the extension deps or a Playwright
 import gzip
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -80,14 +80,6 @@ def ranking_reply():
         parts.append("READ-%02d: this paragraph has no formula; it is the text a reader would be looking at further down the "
                      "same reply, after every identity above has been laid out, long enough to wrap on a phone." % j)
     return "\n\n".join(parts) + "\n"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -499,6 +491,9 @@ class ServedMathChunk(unittest.TestCase):
     def setUp(self):
         self.lab = tempfile.mkdtemp(prefix="math-chunk-")
         self.addCleanup(shutil.rmtree, self.lab, True)
+        # the lab's ports (its kernel's serve port, and the postal port kernel_env reserves under the lab), freed after _stop
+        # has killed and reaped the kernel and before the lab is removed: cleanups run last registered first
+        self.addCleanup(lab_ports.release, self.lab)
         self.dist = os.path.join(self.lab, "dist")
         lab_dist.copy_dist(self.dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(self.lab, "xdg", "romp")
@@ -532,21 +527,16 @@ class ServedMathChunk(unittest.TestCase):
             {"type": "user", "timestamp": iso(self.t0), "uuid": "u1", "parentUuid": None, "promptSource": "typed",
              "sessionId": SID, "message": {"role": "user", "content": "summarize the notes-api README"}},
             reply("a1", "u1", self.t0 + 5, FIRST_REPLY)]))
-        self.port = _free_port()
+        self.port = lab_ports.reserve(self.lab)
         self.token = "testtok-mathchunk"
         env = _lab.kernel_env(self.lab, claude, self.dist, self.port, self.token)
         self.klog = os.path.join(self.lab, "kernel.log")
         self.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                        stdout=open(self.klog, "w"), stderr=subprocess.STDOUT, env=env)
         self.addCleanup(self._stop)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % self.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(self.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     def _stop(self):
         self.kernel.kill()
