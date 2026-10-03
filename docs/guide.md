@@ -1258,12 +1258,14 @@ of both Tailscale and the kernel.
 When you come back to Romp after the phone has had it in the background, the page
 reconnects to the kernel on its own. If that takes more than a second, the pane you
 are looking at (Chat, Feed, Outline or Waiting) shows **reconnecting…** near its top
-right, clear of its buttons, until fresh content arrives, however long that takes.
-What is on screen stays readable. The Sessions and Files tabs show no badge. On every
-tab, the Log (the triangle in the bottom bar) says what the page is doing: waiting
-for the kernel to respond, or trying again after a try got no response or could not
-connect, with the number of tries. A pane page opened on its own, outside the
-dashboard, takes the badge down after 30 seconds.
+right until fresh content arrives, however long that takes. This badge stays clear of
+the pane's buttons when there is room for it. When there is not, as on a landscape
+phone with the keyboard up, it can cover part of a button, and a tap there still
+reaches the button. What is on screen stays readable. The Sessions and Files tabs
+show no badge. On every tab, the Log (the triangle in the bottom bar) says what the
+page is doing: waiting for the kernel to respond, or trying again after a try got no
+response or could not connect, with the number of tries. A pane page opened on its
+own, outside the dashboard, takes the badge down after 30 seconds.
 
 Two settings are worth changing while you are in the admin console. Turn on
 **device approval**, so a new device has to be approved before it can join, and

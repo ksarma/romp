@@ -763,6 +763,8 @@ const at = () => ({ top: topOf(), right: rightOf(), painted: painted() });
 const mo = () => MOS.filter((m) => m.on && m.target === document.body).length;   // the badge's watch (the sheet's own observer watches the list)
 const change = (target) => task(() => MOS.filter((m) => m.on && m.target === document.body).forEach((m) => m.cb([{ type: 'childList', target }])));
 const scroll = () => task(() => (DOCL.scroll || []).slice().forEach((f) => f({ type: 'scroll' })));
+// a short view and a short list (a landscape phone with the keyboard up): the page's height and the list's bottom
+const shortList = (viewH, bottom) => { document.documentElement.clientHeight = viewH; CONTENT.getBoundingClientRect = () => ({ top: CTOP, left: 0, right: 390, bottom }); };
 """
 
     def _fit(self, scenario):
@@ -838,12 +840,55 @@ out({ atPaint, scrolled, rereads, cleared, afterChange });""")
         self.assertIs(o["cleared"]["painted"], False)
         self.assertEqual(o["afterChange"], {"watching": 0, "scrollListeners": 0}, "with the badge down, the next change ends the watch: no observer, no scroll listener")
 
-    def test_with_no_clear_place_the_badge_keeps_its_first_place(self):
+    # The list too short for the badge (the rehearsed check of round 1, 2026-10-03): with no clear place above the list's visible
+    # bottom the search kept the first place, and a landscape phone with the keyboard up and a long pinned note left a list 20 px
+    # tall, so the badge sat over the composer's buttons just below it. Now it takes the place in the pane's view, at the right
+    # edge, 8 px above or below a control's edge, that covers the least of the controls, nearest the first place: a clear one
+    # wherever the view has one.
+    def test_a_list_shorter_than_the_badge_sends_it_above_the_controls_just_below_the_list(self):
+        o = self._fit(r"""
+shortList(179, 119); resize(99);                                      // the list runs from 99 to 119: a header and a long pinned note above it
+add(null, [0, 0, 390, 45], { sel: 'button' });                        // the header's session picker, across the page
+add(null, [250, 121, 60, 20], { sel: 'button' }); add(null, [320, 121, 60, 20], { sel: 'button' });   // the composer's two buttons, just below the list
+add(null, [40, 147, 300, 30], { sel: 'textarea' });                   // its text field
+const atLoad = at();
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atLoad, atPaint: at() });""")
+        self.assertEqual(o["atLoad"], {"top": "107px", "right": "8px", "painted": False})
+        self.assertEqual(o["atPaint"], {"top": "88px", "right": "8px", "painted": True},
+                         "8 px above the composer's buttons (121 - 8 - 25), over the pinned note's text, which holds no control: the nearest clear place in "
+                         "the view (below the header, at 53 px, is clear too but farther), not the first place at 107 px over the buttons")
+
+    def test_with_the_view_above_the_list_taken_the_badge_goes_below_the_controls_under_it(self):
+        o = self._fit(r"""
+shortList(260, 119); resize(99);
+add(null, [0, 0, 390, 45], { sel: 'button' });                        // the header
+add(null, [300, 60, 85, 39], { sel: 'button' });                      // a control at the pinned note's right end, just above the list
+add(null, [250, 121, 60, 20], { sel: 'button' }); add(null, [320, 121, 60, 20], { sel: 'button' });   // the composer's buttons, just below the list
+add(null, [40, 200, 300, 40], { sel: 'textarea' });                   // its text field, lower down
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "149px", "right": "8px", "painted": True},
+                         "8 px below the composer's buttons (121 + 20 + 8), clear of everything: every place above them covers a control, and the clear "
+                         "place above the text field (167 px) is farther")
+
+    def test_with_no_clear_place_in_the_view_the_badge_takes_the_place_that_covers_the_least(self):
+        o = self._fit(r"""
+shortList(179, 119); resize(99);
+add(null, [0, 0, 390, 95], { cursor: 'pointer' });                    // a control across the chrome above the list, to 4 px above its top
+add(null, [0, 125, 390, 54], { sel: 'textarea' });                    // the composer's text field across the page, from 6 px below the list
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "103px", "right": "8px", "painted": True},
+                         "8 px below the chrome's control: 3 rows over the text field, against 7 at the first place (107 px); 8 px above the text field "
+                         "(92 px) covers 3 rows of the chrome's control too but is farther; nothing off the view is taken")
+
+    def test_with_every_place_equally_covered_the_badge_keeps_its_first_place(self):
         o = self._fit(r"""
 add(null, [0, 0, 390, 844], { cursor: 'pointer' });                  // a control over the whole page
 fire('romp:wsdown'); after(RHOLD_T);
 out({ atPaint: at() });""")
-        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True}, "nowhere above the list's bottom is clear: the first place, not off the page")
+        self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True}, "every place in the view covers the control whole: the first place, not off the page")
 
     def test_the_search_runs_only_while_the_badge_is_painted(self):
         o = self._fit(r"""

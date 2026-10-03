@@ -70039,11 +70039,15 @@ def _pane_spin(cid, ignore_id=""):
             # (the chrome, and what is drawn over the container from outside it, such as the landing notice and the scroll marks),
             # and inside it the whole box of a sticky or fixed element that is or holds a control (the viewer's header, a Feed
             # column head), so the badge goes below such a header, never onto it. From the first place it steps down below what it
-            # would cover, or left of it when that is the shorter move (a narrow control at the right edge, a scroll mark); if no
-            # place above the container's visible bottom is clear, it keeps the first place. A control is anything RCTL matches or
-            # anything drawn with a pointer or grab cursor (the Feed's drag chip has its cursor and nothing else). Controls in the
-            # content itself (the top row of messages or cards) are not avoided: they scroll out from under the badge, and taps
-            # pass through it (ruling 9 of round 0).
+            # would cover, or left of it when that is the shorter move (a narrow control at the right edge, a scroll mark). If no
+            # place above the container's visible bottom is clear (a list shorter than the badge), it takes the place in the pane's
+            # view, at the right edge and 8 px above or below one of those controls, that covers the least of them, the nearest
+            # the first place among equals: a clear one wherever the view's right edge has room for the badge with 8 px to spare
+            # above and below, which may be over the chrome's text above the list; only a view without that room leaves it over a
+            # control (taps still pass through it). A control is anything RCTL matches or anything drawn with a pointer or grab
+            # cursor (the Feed's drag chip has its cursor and nothing else). Controls in the content itself (the top row of
+            # messages or cards) are not avoided: they scroll out from under the badge, and taps pass through it (ruling 9 of
+            # round 0).
             # When: the badge is placed at load and at each resize event of the container or the page (a scroll area's box moves
             # only with a size change: the chrome above grows or shrinks, the pane is shown, the window is resized); at its paint;
             # and while it is painted, at each change to the page's elements (a MutationObserver on the body: the viewer opened,
@@ -70068,15 +70072,25 @@ def _pane_spin(cid, ignore_id=""):
             "if(c.contains(e)){if(s.position==='sticky'||s.position==='fixed')pin.push(e);for(var j=0;j<pin.length;j++){if(pin[j].contains(e)){if(o.indexOf(pin[j])<0&&rctl(e,s))o.push(pin[j]);break;}}continue;}"
             "if(rctl(e,s)&&s.visibility!=='hidden'&&s.display!=='none')o.push(e);}return o;}"
             # the nearest clear place from the first one: past the boxes it would cover, down below them or left of them, whichever
-            # is the shorter move; the first place when none is clear above the container's visible bottom. `again` (a scroll)
-            # re-reads the boxes of the elements the last scan found: a scroll of the container moves only what is inside it
+            # is the shorter move. When none is clear above the container's visible bottom (a list shorter than the badge: a
+            # landscape phone with the keyboard up and a long pinned note), the place in the pane's view, at the right edge and 8 px
+            # above or below the edge of one of those boxes, that covers the least of them, the nearest the first place among
+            # equals: a clear one wherever the view's right edge has room for it with 8 px to spare above and below, and the first
+            # place when every place covers as much (the rehearsed check of round 1: before this the first place stood, over the
+            # composer's buttons below a list 20 px tall). `again` (a scroll) re-reads the boxes of the elements the last scan
+            # found: a scroll of the container moves only what is inside it
             "function rfit(y0,again){var b=rb.getBoundingClientRect(),w=b.width,h=b.height,de=document.documentElement,W=de.clientWidth,H,o=[],y=y0,x=8;"
             "if(!w||!h||!W)return [y0,8];H=Math.min(de.clientHeight||1e9,c.getBoundingClientRect().bottom);if(!again||!rob)rob=robs();"
             "for(var i=0;i<rob.length;i++){var q=rob[i].getBoundingClientRect();if(q.width>0&&q.height>0)o.push(q);}"
             "for(var k=0;k<64;k++){var L=W-x-w,R=W-x,n=0,hl=W,hb=y;"
             "for(i=0;i<o.length;i++){var r=o[i];if(r.left<R&&r.right>L&&r.top<y+h&&r.bottom>y){n++;if(r.left<hl)hl=r.left;if(r.bottom>hb)hb=r.bottom;}}"
             "if(!n)return [y,x];var nx=Math.ceil(W-hl)+8,ny=Math.ceil(hb)+8;if(W-nx-w>=8&&nx-x<=ny-y)x=nx;else y=ny;if(y+h>H-8)break;}"
-            "return [y0,8];}"
+            "var V=de.clientHeight||H,cl=W-8-w,cr=W-8,by=y0,ba=rcov(o,cl,cr,y0,h),bd=0,cs=[];"
+            "for(i=0;i<o.length;i++)cs.push(Math.floor(o[i].top-8-h),Math.ceil(o[i].bottom+8));"
+            "for(i=0;i<cs.length;i++){var cy=cs[i];if(cy<8||cy+h>V-8)continue;var ca=rcov(o,cl,cr,cy,h),cd=Math.abs(cy-y0);if(ca<ba||(ca===ba&&cd<bd)){by=cy;ba=ca;bd=cd;}}"
+            "return [by,8];}"
+            # the area of those boxes a badge from l to r and from y to y+h would cover
+            "function rcov(o,l,r,y,h){var a=0;for(var i=0;i<o.length;i++){var q=o[i],dx=Math.min(r,q.right)-Math.max(l,q.left),dy=Math.min(y+h,q.bottom)-Math.max(y,q.top);if(dx>0&&dy>0)a+=dx*dy;}return a;}"
             "function rplace(again){if(!rb||!c||!rscroll())return;var t=Math.round(c.getBoundingClientRect().top),y=(t>0?t:0)+8,x=8;"
             "if(rb.classList.contains('on')){var f=rfit(y,again===true);y=f[0];x=f[1];}"
             "var ty=y+'px',tx=x===8?'':x+'px';if(rb.style.top!==ty)rb.style.top=ty;if(rb.style.right!==tx)rb.style.right=tx;}"
