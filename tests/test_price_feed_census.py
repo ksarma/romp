@@ -8997,7 +8997,8 @@ AT_FILES = tuple((t, _ae_module(t, swaps)) for t, _w, swaps, _o in AT_PLANTS)
 # which its UTF-8 bytes carry as a byte order mark, refused (zbf, read at the reviewed head); page text holding a NUL, by which a browser
 # may read interleaved NULs as UTF-16, refused (the closing round: znb, a bytes constant encoding a page UTF-16LE with no byte order
 # mark, whose ASCII-and-NUL bytes the bytes arm read one to a character at the reviewed head, silent there, while a browser decodes it
-# as UTF-16 and runs its fetch; zns, the same page as a str constant, read there; znx, the bytes form under application/xhtml+xml);
+# as UTF-16 and runs its fetch; zns, the same page as a str constant, read there; znx, the bytes form under application/xhtml+xml; znf,
+# the page in an f-string's literal part beside a field, its NUL-bearing literal refused);
 # page text declaring a charset other than
 # utf-8 refused, its text not read (zbm, an ASCII bytes constant's meta charset before a fetch, read at the reviewed head; zij, a meta
 # charset of iso-2022-jp with an escape inside fetch, which that decoder drops, silent there; zhe, a content attribute's charset before
@@ -9044,6 +9045,7 @@ RD_ZD = (("zij", 'return self._send(200, "<meta charset=\\"iso-2022-jp\\">%s", "
                  '"application/xhtml+xml")' % (RD_ESC % "zxe")),
          ("zjn", 'return self._send(200, "<meta char" + "set=iso-2022-jp><script>fe" + "tch(\'https://example.invalid/zjn\')</script>", "text/html")'),
          ("zfs", 'return self._send(200, f"<meta charset=\\"iso-2022-jp\\">%s{_PROBE_ZFS}", "text/html")' % (FGH_PAGE % "zfs")),
+         ("znf", 'return self._send(200, f"%s{_PROBE_ZFS}", "text/html")' % _rd_u16("znf")),
          ("zcs", 'return self._send(200, "<p>zcs</p>%s", "text/html; charset=iso-2022-jp")' % (RD_ESC % "zcs")),
          ("zmu", 'return self._send(200, "<meta charset=\\"utf-8\\">%s", "text/html")' % (FGH_PAGE % "zmu")),
          ("zxu", 'return self._send(200, "<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?><html xmlns=\\"http://www.w3.org/1999/xhtml\\">%s</html>", '
@@ -9118,6 +9120,7 @@ RD_REFUSED = (("rdzb", "zbu", 1, "a bytes constant holding a byte past ASCII", 1
               ("rdzd", "zxe", 1, "text declaring encoding=iso-2022-jp, a charset other than utf-8", 1),
               ("rdzd", "zjn", 1, "builds a served page from a join of string constants (text declaring charset=iso-2022-jp", 1),
               ("rdzd", "zfs", 1, "text declaring charset=iso-2022-jp, a charset other than utf-8", 1),
+              ("rdzd", "znf", 1, "text holding a NUL", 1),
               ("rdzd", "zcs", 1, "serves a response whose content type names a charset other than utf-8 (charset=iso-2022-jp", 1),
               ("rdcr", "crx", 1, _RD_CTYPE, 1), ("rdcr", "cry", 1, _RD_CTYPE, 1), ("rdcr", "crm", 1, _RD_CTYPE + "_PROBE_CRM in", 1),
               ("rdcr", "crr", 1, _RD_CTYPE, 1), ("rdcr", "crl", 1, _RD_CTYPE, 1), ("rdcr", "crd", 2, _RD_CTYPE, 1),
@@ -9136,7 +9139,7 @@ RD_READ = ("zmu", "zxu", "zcn", "zcp", "zcq", "chg", "cho", "chv", "chp")
 RD_LIMIT = ("zln", "zlh", "zlb")
 # the texts no reader scans: each refused plant's page or what its header carries, the limit's witnesses' header text, and the
 # digestmod class's text
-RD_UNREAD = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe", "zxe", "zjn", "zfs", "zcs", "crx", "cry", "crm", "crr", "crl", "crd", "chcx", "chkx",
+RD_UNREAD = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe", "zxe", "zjn", "zfs", "znf", "zcs", "crx", "cry", "crm", "crr", "crl", "crd", "chcx", "chkx",
              "chyx", "chbx", "chqx", "chnx", "chmx", "chtx", "chgx", "chvx", "chpx", "hdmx")
 AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES + AT_FILES + RD_FILES
 
