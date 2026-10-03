@@ -73773,9 +73773,12 @@ var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8
 // that puts it down (review round 2, 2026-09-18: a pane awaiting in that tick filed a false link-backstop row and dialed on
 // its own). The field keeps its name: the pane reads connT, and its derivation pin (tests/test_kernel_ws_heartbeat.py) too.
 window.__rompLink=function(){return {up:!!(shWs&&shWs.readyState===1&&Date.now()-shLastRecv<=SH_STALE_MS),connT:Math.max(shConnT,shTickT)};};
-// [fork] iOS item 4 (2026-10-02): the reconnect cue's detail, one tap from the glance. The glance is each pane's corner badge
-// ('reconnecting…', _pane_spin), with no count. The detail is a live line at the top of the Log (#rerr-live, inserted before
-// #rerr-list so the Log's own re-render leaves it alone), shown while this shell's socket is down after it once opened: on
+// [fork] iOS item 4 (2026-10-02): the reconnect cue's detail. The glance is each pane's corner badge ('reconnecting…',
+// _pane_spin), with no count. The detail is a live line at the top of the Log (#rerr-live, inserted before #rerr-list so the
+// Log's own re-render leaves it alone), which the phone opens from the triangle in its bottom bar (#merr) and the desktop from
+// the gear's Debug tab, its Open log button, which carries the Log's unread count (T290 took the Log's opener off the desktop
+// bar; round 2 of the review, fresh-1: this said one tap away on every layout). It is shown while this shell's socket is down
+// after it once opened: on
 // at an abandon (a return's fast path, the watchdog's quiet arm) or a close, off at the next open, with no success line.
 // shCueTries counts the dials that never opened since the link went down or the return began, whichever is later;
 // shCueCuts those the connect cut closed (the close the dial's own cut timer made, shCutHere, or a never-opened close at

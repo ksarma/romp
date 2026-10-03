@@ -3447,7 +3447,8 @@ _CUE_REFUSED1 = "Trying again: the first try could not connect to the kernel."
 
 
 class ReconnectCueDetail(unittest.TestCase):
-    """iOS item 4 (2026-10-02): the reconnect cue's detail, one tap from the glance (the Log's live first line). Shown while the
+    """iOS item 4 (2026-10-02): the reconnect cue's detail, the Log's live first line (the phone opens the Log from the triangle in
+    its bottom bar, the desktop from the gear's Open log, which carries the Log's count; round 2 of the review). Shown while the
     shell's socket is down after it once opened, cleared at the next open with no success line, its every change keyed on the
     shell's own events (abandon, close, open). The two states a user sees after a return are pinned: the first try in flight
     (the wait line, no count) and, from the close of the cut that ends it, the retry line that names the cause once. Refusals

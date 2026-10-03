@@ -625,10 +625,13 @@ out({ before, atPark, justBefore, atHold, waiting, afterFresh: painted(), runs: 
         self.assertEqual([r["on"] for r in o["runs"]], [True, False, True, False], "painted on screen, pulled back at the park, painted a hold after the tap, cleared at the fresh frame")
         self.assertEqual(o["runs"][2]["t"], 2 * self.HOLD + 20000, "the second paint is a hold after the tap, not after the park")
 
-    # The badge's place (finding of 2026-10-02): 8 px below the top of the pane's content container when that container is the
-    # pane's scroll area (every pane page: a header over a scrolling list), so it covers none of the header's controls (upstream's
-    # top:8px hid the phone chat's tag filter and + button, the desktop strip's tag filter and gear, and the phone Outline's tag
-    # filter and search). The served legs measure the real geometry (_badge_clear_of_chrome); these cases run the logic in node.
+    # The badge's first place (finding of 2026-10-02): 8 px below the top of the pane's content container when that container is
+    # the pane's scroll area. The chat, the Outline and the Waiting pane have a header above the list, so the first place covers
+    # none of the header's controls (upstream's top:8px hid the phone chat's tag filter and + button, the desktop strip's tag
+    # filter and gear, and the phone Outline's tag filter and search); the Feed's list has no header above it, so its first place
+    # is upstream's 8 px. That is the first place only: since round 1 the painted badge also moves off controls that stay put when
+    # the list scrolls (the clear-place cases below). The served legs measure the real geometry (_badge_clear_of_chrome); these
+    # cases run the logic in node.
     _PLACE_PRE = r"""
 const ROS = [], OBSERVED = [];
 global.ResizeObserver = class { constructor(cb) { ROS.push(cb); } observe(el) { OBSERVED.push(el === CONTENT ? 'content' : el && el.id); } };
