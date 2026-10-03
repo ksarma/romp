@@ -850,6 +850,7 @@ out({ atPaint, scrolled, rereads, cleared, afterChange });""")
 shortList(179, 119); resize(99);                                      // the list runs from 99 to 119: a header and a long pinned note above it
 add(null, [0, 0, 390, 45], { sel: 'button' });                        // the header's session picker, across the page
 add(null, [250, 121, 60, 20], { sel: 'button' }); add(null, [320, 121, 60, 20], { sel: 'button' });   // the composer's two buttons, just below the list
+add(null, [0, 121, 60, 20], { sel: 'button' });                       // its attach button at the left, level with them and outside the badge's column (248 to 382)
 add(null, [40, 147, 300, 30], { sel: 'textarea' });                   // its text field
 const atLoad = at();
 fire('romp:wsdown'); after(RHOLD_T);
@@ -857,7 +858,9 @@ out({ atLoad, atPaint: at() });""")
         self.assertEqual(o["atLoad"], {"top": "107px", "right": "8px", "painted": False})
         self.assertEqual(o["atPaint"], {"top": "88px", "right": "8px", "painted": True},
                          "8 px above the composer's buttons (121 - 8 - 25), over the pinned note's text, which holds no control: the nearest clear place in "
-                         "the view (below the header, at 53 px, is clear too but farther), not the first place at 107 px over the buttons")
+                         "the view (below the header, at 53 px, is clear too but farther), not the first place at 107 px over the buttons; the attach "
+                         "button beside the column counts for no place (weighed as a negative area it made 114 px, 8 px above the text field and over "
+                         "the buttons, look best)")
 
     def test_with_the_view_above_the_list_taken_the_badge_goes_below_the_controls_under_it(self):
         o = self._fit(r"""
