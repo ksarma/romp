@@ -5,20 +5,29 @@ Every return to the app logged the entry for the chat and the Feed, with an unre
 sockets came back at once: the shell's Log wrote it at each pane's up-to-down transition, and a return always makes one (the
 shim puts a stale socket down before it redials; a thawed page receives the FIN of a socket the OS dropped). The entry now
 waits in the Log's `lost` until the event that says the reconnect failed, a dial that closed without ever opening, and a
-socket that reopens first drops it unwritten. Three pieces, each executed here under node against the code as served:
+socket that reopens first drops it unwritten. A close the connect cut made (a timer) fails nothing while another socket of the
+page is open (the review of item 4b, 2026-10-03: on a slow network the dials a return makes together wait in line for their
+handshakes, and the last of them reached the cut while every handshake was succeeding). Four pieces, each executed here under
+node against the code as served:
 
-  ShimFailureWord        kernel/kernel.py _shim: a dial that never opened posts {romp:'wsFail',app} to the shell after its
-                         down word (refused, or cut by the watchdog's CONNECTING arm); an opened socket's close, the
-                         return's abandon() and a park post none. Through tests/test_pane_shim_return.py's harness.
+  ShimFailureWord        kernel/kernel.py _shim: a dial that never opened posts {romp:'wsFail',app,cut} to the shell after
+                         its down word, cut true when the watchdog's CONNECTING arm closed it and false for a refusal; an
+                         opened socket's close, the return's abandon() and a park post none. Through
+                         tests/test_pane_shim_return.py's harness.
   ShellLinkFailure       _LANDING_MOBILE_JS: the shell socket's close of a dial that never opened (refused, or its own
-                         connect cut) calls window.__rompLinkFailed once; an opened socket's close, the return's abandon and
-                         a superseded socket's late close call nothing. Through tests/test_kernel_mobile.py's probe harness.
+                         connect cut) calls window.__rompLinkFailed once, with true when its own cut timer or the tick's
+                         backstop made the close; an opened socket's close, the return's abandon and a superseded socket's
+                         late close call nothing. Through tests/test_kernel_mobile.py's probe harness.
   LogWaitsForTheFailure  _LANDING_ERRS_JS: a drop alone writes nothing (the live red cue shows it); a failure word, or the
                          link's failure for every waiting pane, writes one entry per drop; an up drops the waiting entry; a
                          pane not shown keeps waiting and is written once shown; a parked pane is dropped; a split column
                          waits under its own key. Through tests/test_error_center.py's DOM stub.
+  ACutFailsNothingWhileASocketStands
+                         _LANDING_ERRS_JS: a cut word, or the link's failure with true, writes nothing while the shell's link,
+                         another pane's socket or a column's stands; a refusal writes whatever stands; with nothing open (a
+                         parked pane holds no socket) the cut writes. The same DOM stub.
 
-The composition in real engines (phone and desktop, healthy and failing returns) is tests/test_conn_lost_log_served.py.
+The composition in real engines (phone and desktop, healthy, slow and failing returns) is tests/test_conn_lost_log_served.py.
 Synthetic only: no network, no real DOM, no real session data.
 """
 import json
@@ -118,6 +127,19 @@ shOut({afterReturn:afterReturn,cut:cut,beforeClose:beforeClose,afterClose:LF,how
         self.assertEqual(r["beforeClose"], 0)
         self.assertEqual(r["afterClose"], 1, "the cut dial never opened: its close is the failure")
         self.assertEqual(r["how"], ["cut"], "marked cut (shCutHere): the Log does not count it while a pane's socket stands")
+
+    def test_a_cut_timer_that_fires_a_ms_short_of_the_bound_is_marked_cut_by_its_own_flag(self):
+        # a timer can fire while the wall clock still reads a ms short of SH_CONNECT_MS (iOS item 1a's shCutHere): the mark reads
+        # the cut's own flag, not the clock alone, or this close would count as a refusal whatever stands
+        r = _mob._run_probe(LINKFAIL + r"""
+shOpen();shRecv({type:'ka'});shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();
+var hung=shSock();var own=SHTIMERS.filter(function(t){return t.live&&t.fn.name==='shCut';});
+SHNOW+=14999;own.forEach(function(t){t.live=false;t.fn();});var cut=hung.readyState;   // the dial's own cut, early by the clock
+hung.onclose({code:1006});
+shOut({own:own.length,cut:cut,how:LFC});""")
+        self.assertEqual(r["own"], 1)
+        self.assertEqual(r["cut"], 3, "the dial's own cut timer closed it")
+        self.assertEqual(r["how"], ["cut"], "marked cut by shCutHere although the clock reads 14999 ms")
 
     def test_the_watchdogs_backstop_cut_is_marked_cut_too(self):
         r = _mob._run_probe(LINKFAIL + r"""
