@@ -74,7 +74,8 @@ only under the Test step, before the job installs a browser. `inBrowser`'s read 
 `inBrowser`'s own skip alone: a leg's own skip is not turned into a failure by it, and its own failed
 launch is not `inBrowser`'s failure naming the switch. Chromium is the one engine the job installs, so a
 leg's Firefox and WebKit runs happen only in a local run. A Firefox or WebKit test in a rostered file
-breaks the roster rule, since `inBrowser` launches Chromium alone. On the runner its skip is red, and a
+breaks the roster rule, since the job installs Chromium alone and `inBrowser` launches the engine a leg
+names, Chromium by default. On the runner its skip is red, and a
 failed launch the leg does not swallow is node's red, but a leg can be built that holds such a test and
 reads green there when the bundle has a passing test of its own (the witness spelling: one that registers
 the test only where that engine is installed): a leg built to pass without a browser is outside what the
