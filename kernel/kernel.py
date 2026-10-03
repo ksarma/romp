@@ -70003,8 +70003,10 @@ def _pane_spin(cid, ignore_id=""):
             # romp:wsfresh still clears, and a painted badge stays painted on a repeat drop (no flicker); hiding the page cancels a
             # pending hold, and turning visible re-holds a pending or painted badge. (2) On a page with a shell, upstream's 30 s
             # failsafe never runs: a painted badge stays until this pane's first fresh frame, however long the wait. The page has a
-            # shell once it hears the shell's link word (link:'up' or 'down', in the panes word or in the link word a frame that
-            # hears no panes word gets: the words the shim's await also hears), which the shell sends at each frame's load (rsh).
+            # shell once it hears the shell's link word (rsh), link:'up' or 'down', the words the shim's await also hears: in the
+            # panes word, which the shell sends to each pane frame at its load and at each re-tell, or in the link word, which a
+            # frame that hears no panes word (a split chat column) gets at each re-tell, that is at each change of the shell's
+            # link; such a frame counts as a page with no shell until its first one.
             # Before this the failsafe hid the badge at 30 s while romp was still dialing, and after round 1 of its review
             # (ruling B, 2026-10-03) it no longer restarts at the link-up word or at this pane's own reopen either, so no timer
             # takes a painted badge down before the fresh frame. A page with no shell hears no link word and keeps upstream's
