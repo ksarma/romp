@@ -76165,7 +76165,11 @@ def _landing():
             # usage-limit / judge-degraded — which got in the way): the bell in the bottom bar's action
             # cluster goes RED when an error lands; clicking it opens the Log as a centered modal
             # (the one panel treatment, the user 2026-08-08), newest first, per-row clear + Clear all.
-            "#merr.has{color:#ff6b6b}"   # red bell = something unread / a live problem; no count badge (it clipped, and the number added nothing — the user 2026-07-27)
+            # The selector names #mtabs for precedence, not for scope (2026-10-03): the mobile block's action grey, `#mtabs
+            # button.mact` (one id, one class, one type), outranked a bare `#merr.has` (one id, one class) whatever the order,
+            # so the triangle never turned red. Two ids also outrank the light theme's `body.theme-light #mtabs button`; the
+            # light theme's own red is beside that rule. tests/test_log_triangle_served.py reads the colour in three engines.
+            "#mtabs #merr.has{color:#ff6b6b}"   # red triangle = something unread or a live problem; no count badge (it clipped, and the number added nothing, the user 2026-07-27)
             # centered like every other panel (the user 2026-08-08: one modal treatment — centered card,
             # 0.55 dim, dashboard unchanged behind it; it used to sit bottom-right over the feed)
             "#rerr-back{position:fixed;inset:0;z-index:210;display:flex;align-items:center;justify-content:center;"
@@ -76347,6 +76351,9 @@ def _landing():
             "body.theme-light #mtabs{background:#E7DED2;border-top-color:#DCD2C4}"
             "body.theme-light #mtabs button{color:#5D574E}"
             "body.theme-light #mtabs button.on{color:#C2410C}"
+            # the Log triangle's red in the light palette's error red (as .ah-err above): the dark #ff6b6b is 2.1:1 on this
+            # bar, fainter than the idle grey's 5.4:1, where #B02A1C is 4.9:1 (2026-10-03)
+            "body.theme-light #mtabs #merr.has{color:#B02A1C}"
             "body.theme-light #mtabs .mtabs-div{background:#DCD2C4}"
             "</style></head><body class='po-chat po-feed po-timeline'>"
             + _THEME_READER +
