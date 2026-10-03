@@ -3,7 +3,7 @@ title: The phone bar's Log triangle turns red while the Log holds something unre
 status: candidate
 where: kernel/kernel.py (the shell's #mtabs #merr.has rule and its light theme twin, body.theme-light #mtabs #merr.has); tests/test_log_triangle_served.py and tests/log_triangle_browser.mjs (the triangle's computed colour at each Log state on the phone, in Chromium, WebKit and Firefox, with every other bar button's colour); upstream/2026-10-03-phone-log-triangle-red.md (this entry)
 added: 2026-10-03
-pr:
+pr: 964
 tier: fix
 offered:
 closed:
