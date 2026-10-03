@@ -36,6 +36,24 @@ def _read(*parts):
         return f.read()
 
 
+def _ref_section(md, heading):
+    """The body of the `## ` or `### ` heading `heading` in docs/reference.md, up to the next `## ` or `### ` heading."""
+    m = re.search(r"^#{2,3} " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} |\Z)", md, re.S | re.M)
+    assert m, "docs/reference.md has no section %r" % heading
+    return m.group(1)
+
+
+def _files_section():
+    """The guide's Files section as docs/reference.md holds it since fold 4 moved the fork's paragraphs out of docs/guide.md
+    (the front pages are the project's, CLAUDE.md "The documentation front pages"): the body of "## The Files pane", then the
+    paragraphs of the three viewer sections the reference keeps with the chat pane ("Links inside a file", "Text size and
+    width", "A file's own HTML"), which sat in the guide's Files section on this fork."""
+    ref = _read("docs", "reference.md")
+    parts = [_ref_section(ref, "The Files pane").strip("\n")]
+    parts += [_ref_section(ref, h).strip("\n") for h in ("Links inside a file", "Text size and width", "A file's own HTML")]
+    return "\n\n".join(parts) + "\n"
+
+
 def _section(md, heading):
     """The body of one `### heading` up to the next heading of any level."""
     m = re.search(r"^### " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} )", md, re.S | re.M)
@@ -75,13 +93,12 @@ WAITING = ("click it and the file opens in the Files pane when that pane is on s
 
 class TheGuideSaysSo(unittest.TestCase):
     def setUp(self):
-        guide = _read("docs", "guide.md")
-        self.files = _section(guide, "Files")
-        self.waiting = _flat(_section(guide, "Waiting on you"))
+        self.files = _files_section()
+        self.waiting = _flat(_ref_section(_read("docs", "reference.md"), "The Waiting on you pane"))
         self.opening = _paragraph(self.files, "The Files pane holds the file viewer")
         self.place = _paragraph(self.files, "**Your place in the file.**")
         self.markdown = _paragraph(self.files, "**How a markdown file reads.**")
-        self.links = _paragraph(self.files, "**Links in a file.**")
+        self.links = _flat(_ref_section(_read("docs", "reference.md"), "Links inside a file"))
 
     def test_a_recent_row_reopens_the_file_at_the_place_it_was_left(self):
         self.assertIn(RECENT, self.opening)
@@ -131,7 +148,7 @@ class TheGuideSaysSo(unittest.TestCase):
         self.assertLess(self.waiting.index(WAITING), self.waiting.index("Click the chip and the file opens the same way"))
         # tests/test_files_pane.py reads the opening paragraph's folder lines with their hard wraps; the Recent clause
         # sits after them and rewrapped none of them
-        raw = _read("docs", "guide.md")
+        raw = _read("docs", "reference.md")
         self.assertIn("The folder under the chat (the session's working directory) opens a\nlisting of that folder by "
                       "the same rule", raw)
         self.assertIn("otherwise over the chat. Pick a file in the listing and\nit opens where the listing is.", raw)

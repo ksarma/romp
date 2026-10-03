@@ -1,9 +1,11 @@
 # Reference
 
-This page lists every command and knob. It is here for driving Romp from the
-terminal, for scripting against it, and for debugging: you do not need any of it
-for ordinary use, where the user interface covers everything. Everything here
-runs on the machine that hosts the kernel.
+This page lists every command and knob, and the full detail behind each feature
+the [guide](guide.md) introduces. You do not need any of it for ordinary use,
+where the user interface covers everything: it is here for driving Romp from the
+terminal, for scripting against it, for debugging, and for the moment you want
+to know exactly how something behaves. Every command runs on the machine that
+hosts the kernel.
 
 ## The `romp` command
 
@@ -312,7 +314,11 @@ yields nothing rather than an error.
 
 ### Notice cards: a feed card without a judge
 
-`romp card --key <key> --title <text> [--body <markdown> | --body-file <path>] [--session <name>] [--attach <path>] [--needs-you] [--expires <seconds>] [--producer <label>]` posts a **notice card** to the feed: a card the kernel makes from what you hand it, with no judge involved (design: plans/notice-cards.md). Inside a session the card belongs to that session; `--session <name>` names another. The `--key` is the card's stable name and is required: a second post under the same key is a **revision** of the card (it replaces the earlier one on the board, and shows again even if you had dismissed the earlier one, since it carries new information, and its number counts the archived posts of the key too, so a dismissed card's id is never minted again); a different key is a new card. `--needs-you` files it under Blocked, else under Completed. `--attach` names an image, a PDF or a text file the card shows inline or by name; the kernel judges the path the way the file preview does (your home or the session's folder, no secrets-shaped names, the size caps) and keeps a pinned copy of an image as posted. A card leaves the board on your dismissal (Clear; Undo restores it, copying its rows back out of the archive when the retention pass has already moved them), on a revision, or at `--expires` seconds from the post. The kernel keeps every post in `notices/<session>.jsonl` under the state directory and archives dismissed, expired and superseded rows to `notices-archive/`; a session shows at most fifty live keys at once, the oldest superseded past that. The same door is `POST /notice` on the kernel (the `/watch` shape: `{"id"|"name", "key", "title", "body"?, "attachment"?, "needsYou"?, "expiresAt"?, "producer"?}`), and producers inside romp use it for cards such as the messages dropped at a restart.
+`romp card -t <title> [-m <text>] [-k <key>] [-s <session> | --no-session] [-b <board>] [-c <category>] [--body-file <path>] [--attach <path>] [--needs-you] [--expires <seconds>] [--producer <label>]`, or the shorthand `romp card "title" "text"`, posts a **notice card** to the feed: a card the kernel makes from what you hand it, with no judge involved (design: plans/notice-cards.md). With no session named the card is **owner-less** and shows at the **top** of the feed under the name Notes, above every session's cards (outside a session that is the default; inside one `ROMP_SID` owns the card unless you pass `--no-session`); `-s <name>` gives it to a session. `-k` names the card: a second post under the same key is a **revision** (it replaces the earlier card on the board, and shows again even if you had dismissed the earlier one, since it carries new information, and its number counts the archived posts of the key too, so a dismissed card's id is never minted again); with no `-k` the command mints a key and prints it, so a later `romp card -k <key> ...` revises the card. The body is markdown, rendered through the chat's sanitizer; `--attach` names a file the card shows inline when it is an image (the kernel judges it as the hover preview does: your home or the session's folder, no secrets-shaped names, the size caps, and keeps a pinned copy of an image as posted; an owner-less card's attachment is judged against your home alone). A card leaves the board on your dismissal (Clear; Undo restores it, copying its rows back out of the archive when the retention pass has already moved them), on a revision, or at `--expires` seconds from the post. `--needs-you` files it under Needs you. The kernel keeps every post in `notices/<session>.jsonl` under the state directory (`notices/notes.jsonl` for owner-less cards) and archives dismissed, expired and superseded rows to `notices-archive/`; a home shows at most fifty live keys at once, the oldest superseded past that. The same door is `POST /notice` on the kernel (the `/watch` shape: `{"id"|"name", "key", "title", "body"?, "attachment"?, "needsYou"?, "expiresAt"?, "producer"?}`; with neither `id` nor `name` the card is owner-less; `{"id"|"name", "expire": "<key>"}` retires a card early), and producers inside romp call the kernel's `post_notice` in process. An owner-less card carries no actions. `-b <board>` files the card on a board of yours (`plans/card-boards.md`): an unknown board is created on first use with the category `-c` names (or `notes`), a category unknown to your board is added to it, and the posted line names the board and says when the post created it, so a typo in `-b` is a new board you can see at once (`romp board list` names it, `romp board remove` takes it away while no card stands on it). `-c` alone names a feed category (`working`, `needs_input`, `completed`). `--needs-you` on a board is that board's needs-you category, and is refused when its definition names none.
+
+### Card boards: your own categories
+
+`romp board define <id> (--from <path> | --json <text>) | list | show <id> | remove <id>` manages the **card boards** beyond the built-in feed (`plans/card-boards.md`). A board's definition is one JSON object: its `id`, a `title`, one to eight `categories` (each an `id`, a `title` and a `chip` from `working`, `blocked`, `completed` or `neutral`), a `defaultCategory`, post-time `rules` (each `{when: {needsYou?, producer?, keyPrefix?}, category}`, the first match filing a card), a `sort` and optional `subSorts` (`{key: t | session | owner | title, dir: asc | desc}`), `groupBy` (`"session"` or `null`), `order` rules, the `notify` list (the categories whose entry rings the bell) and the `needsYou` category (the one the app badge counts), and `kinds`. The kernel validates every member and refuses an unknown one by name; `define` replaces a board whole but refuses to drop a category that still holds standing cards, and `remove` refuses while a card names the board. The feed itself is code-defined and cannot be redefined. Definitions live under the state root in `boards/<id>.json` and reach the dashboard on the next frame; a file edited in place there is read on the next frame too, and a file outside the schema is skipped with a line in the kernel log. The feed pane shows one board at a time: the View menu gains a **Board** row per board the kernel carries (the feed first) once a second board exists, the pick survives a reload, and a board created by `romp card -b` is a row on the next frame; a data board's cards sit under its own categories, sorted by its definition, with no session grouping unless the definition asks for it. A feed page opened with `?board=<id>` shows that board with the Board rows hidden, the hook a pane per board mounts on. A pick naming a board the frame no longer carries shows the feed and says so on the View button.
 
 ### Moving a session to another folder
 
@@ -362,8 +368,23 @@ hook, so nothing on Romp's side re-runs.
 ### A session's tab emoji
 
 A session's tab can carry one emoji before its name, so you can tell the
-sessions apart at a glance by role or state. It can be set from three places,
-which share one validator and one store:
+sessions apart at a glance by role or state: a moon on the one left running
+overnight, a flag on the release manager. Right-click the tab and choose **Emoji…**
+to open a picker: search by name or keyword, reuse one from the **Recent** row,
+browse the categories, or type or paste one the list does not have. Or run
+`romp emoji <session> <emoji>` (`romp emoji <session> --clear` removes it; with
+no emoji argument it prints the current one). A session can also set or change
+its own, with the `set_emoji` tool it gets alongside its mail tools, so you can
+ask one to show a moon while it works unattended and a checkmark when it is
+done. Exactly one emoji is accepted (a skin tone, a flag or a joined sequence
+counts as one); letters, digits, a bare text symbol such as `©`, or a second
+emoji are refused with the reason. The tab draws the emoji with the viewing
+machine's own emoji font, so one from the newest Unicode release, accepted by
+Romp, can still show as an empty box on a machine whose font predates it. The
+emoji is stored with the session's name and color, so every dashboard shows the
+same one, including a dashboard on another machine that has linked to this one.
+
+It can be set from three places, which share one validator and one store:
 
 - **The tab.** Right-click it and choose **Emoji…** for the picker: a search
   box over a curated list (name and keyword prefixes, no network), a **Recent**
@@ -662,6 +683,49 @@ confirmation. If the CLI refuses the toggle (for example, the account has
 extra usage turned off), a toast says why and the pick reverts to off;
 the control never silently disappears.
 
+### Always fast, and retrying an upgrade after a downgrade
+
+Two switches under **Settings**, **Automation**, **Model**, both off by default, both
+kernel-side (stored on the kernel like the judges' Fast mode boxes, stamped, and
+following to every connected machine's kernel):
+
+- **Always fast** runs every session in fast mode whenever its model allows it
+  (Opus-only, billed at a premium). The kernel arms the CLI's fast-mode opt-in at
+  each connect for a session whose model is Opus, and when a session lands on Opus
+  later, by a pick or by an automatic fallback, it reconnects to arm it as soon as
+  the session is quiet: no turn in flight, queued, or opened by the CLI itself (a
+  background task's notification starts one), no question waiting on you, no
+  subagent, no background task, so
+  nothing is cut (the wait is said once in the kernel log, with what is running;
+  the kernel looks once more the instant before the reconnect and stands down if
+  the CLI has started work since); turning the switch on or off reaches every
+  running session the same way. A session you set to **Slow** from its
+  statusline stays slow until you set it to **Fast** again, and a comment thread
+  launched slow, or forked from a slow session, counts as such a pick. If the CLI refuses fast mode for a
+  session with a reason (extra usage off, an organisation gate), the kernel log
+  says so once and that session runs at normal speed until the reason clears (the
+  CLI reporting fast on for it, or your own Fast or Slow pick on it); the switch is
+  never the literal `/fast on`, which on a non-Opus session would make the CLI
+  change model.
+- **Retry upgrades after downgrades** acts when a session's model changes to a
+  lower tier without a pick, the automatic fallback the Completed card reports
+  (`Model changed automatically: … → …`). Every ten minutes the kernel asks for
+  the picked model again by reconnecting the session as soon as it is quiet, the
+  same rule as above, so nothing is cut; a fresh CLI starts on the pick
+  (or the account default when nothing is picked). A session that already sits
+  below its pick when you turn the switch on is taken up at once. A fallback that
+  happens again is logged once per attempt; its card follows the board's usual
+  rule, nothing new while the swap's card stands, a fresh one once you cleared it. When a turn is served on the picked tier, a second
+  Completed card says the session is back (`Model back on …`) and the retry ends.
+  A pick of your own ends it too, as does turning the switch off. While a
+  fallback stands, the session's model picker, in the chat statusline and in the
+  timeline's lane picker alike, marks the requested model with a yellow tick
+  beside the blue tick on the model that answers; its tooltip says why
+  (the safety classifiers and their category, once the CLI has named them, which it
+  does within seconds of the swap; a fallback that predates the kernel is read off
+  the transcript when the kernel attaches) and whether romp is
+  retrying, with the cadence and the next attempt, or where to turn retries on.
+
 ### Per-session billing (login vs API key)
 
 A Claude Code session bills the machine's Claude login (subscription usage) or
@@ -898,8 +962,14 @@ The usage rail reflects a mixed machine: the window bars (5 hours / 7 days /
 Fable 5) are drawn once, aggregated across every connected host's login as the
 worst reading per window, and an `API` cell beside them carries the
 key-billed dollars (the last day and the last 30 days, numbers only). Hovering
-breaks both down per host, one column per host, side by side, and a host
-can show its login's windows and its key's spend together. A click on the
+breaks the windows down by ACCOUNT: one block per distinct login (the account
+line as its head, the meters written once, since they are the account's
+allowance), beneath them one line naming the machines logged into it in the
+tab strip's quiet host dress, a machine whose own reading lagged the freshest
+named as lagging beside its name, and one updated-ago line per block (the
+oldest report of the group); two accounts are two blocks side by side; a
+machine attached but not yet reporting is named after the blocks rather than
+given a column; the key spend stays one section for every machine. A click on the
 readout opens the spend detail: a chart of spend over time stacked by session,
 and under it the list of sessions with their dollars, turns and tokens. The
 list follows the chart's range (one day by hour, seven days by hour, ninety
@@ -1168,6 +1238,168 @@ does **Send to session**: the send is recorded in the comments log, so with the
 consent off it is refused and the panel offers the consent and sends again on
 yes. The gear reports a machine that is missing node or the comment tools.
 
+### What the installer links into `~/.claude/`
+
+Everything the installer puts under `~/.claude/` is a symlink back into the clone, so updating
+the clone updates it:
+
+- Romp's own hooks, in `~/.claude/hooks/`, registered in `~/.claude/settings.json` (a merge that
+  leaves your other hooks alone).
+- `romp-postal.mcp.json` (the sessions' mailbox), `romp-session-prompt.md` (appended to a
+  session's system prompt), and the `romp-postal` skill in `~/.claude/skills/`.
+- The agent-side tooling for [file comments and tracked changes](#the-files-pane), from the copy of
+  track-changents bundled in the clone (`vendor/track-changents/`): the `track-edit`,
+  `track-comment`, `track-reply` and `track-config` commands and the `track-guard.mjs` hook in
+  `~/.claude/hooks/`, and the `tracked-changes` skill in `~/.claude/skills/`. The guard is
+  registered as a `PreToolUse` hook on `Write|Edit|MultiEdit`; it stops a session from writing a
+  tracked file silently, and it does nothing in a Claude Code session Romp did not start. Romp's
+  own `romp-track-bash-guard.mjs`, registered on `Bash`, does the same for a write made through a
+  shell command (a `cp` or `tee` onto the file, a `>` redirection, `sed -i`). In a project that
+  tracks files it also refuses a shell write whose target it cannot read (a variable, a
+  substitution, a glob or brace list it cannot expand) and asks for the path spelled out; a copy
+  whose name it cannot read into a folder where a tracked file could land is refused wherever the
+  command is run from, and so is a relative path after a `cd` the guard cannot follow (to a name
+  the shell fills in, inside an `if` or a loop, or to a folder that does not exist yet), with the
+  reason. A temp file named only by the shell's process id (`$$`), at an absolute path where no
+  tracked file could land (outside the project you are working in, and not in a folder of another
+  project where a tracked file could land), still runs; a name built from `$RANDOM` or `$SECONDS`
+  is refused, since a script can reassign those, and the same `$$` name written as a relative path,
+  from a session in such a project, is refused. It also reads the common command wrappers `setsid`,
+  `flock`, `taskset`, `chrt` and `numactl` to the write inside them, runs `env -C DIR`, `env
+  --chdir=DIR` and `sudo -D DIR` in DIR, refuses a `cp`/`mv`/`install`/`ln` option it does not know
+  (spell the command without it), treats `$HOME` and `~` as unreadable once the command reassigns
+  HOME, and refuses a variable or substitution whose literal head is above or under a tracked
+  project (its value could name or climb into one). A second pass (2026-09-19) added six more rules:
+  the option tables accept a glued short form (`sort -oFILE`), and `env -S` (read then as a shell
+  string) is refused outright since the third pass, below; an assignment to HOME in any form
+  (`HOME+=`, `read HOME`, `printf -v HOME`, `export`/`declare`/`local HOME`, `for HOME in`, and since
+  the third pass any mention of HOME outside an expansion) makes `$HOME` and `~` unreadable for the
+  whole command; an earlier `rm`, `mv`, hard `ln`, `cp -l` or `cp -s` that removes, renames or
+  aliases a path makes a later write under it unreadable; a stat or config-read error other than
+  not-found anywhere on a path it checks (a mode-000 folder, `.trackchanges` or project) refuses from
+  any working directory, naming the error; a `.git`, `.obsidian` or `.trackchanges` between a tracked
+  project and the file refuses, naming both markers; and a `cd` it cannot know ran in this shell
+  (after `&&`/`||`, in a pipeline, backgrounded, under a wrapper, `pushd -n`, a physical `cd -P` or
+  `set -P`, or a call of a function that cd's) leaves the directory unknown, so a later relative write
+  refuses. A third pass (2026-09-19) re-keyed six of those rules on what the guard can see, not on a
+  list of spellings: the bare identifier HOME anywhere in the command outside a `$`-expansion (a
+  nameref, `select HOME in`, a glued `printf -vHOME`, `unset HOME`, a mention in an argument) makes
+  `~` and `$HOME` unreadable and a bare `cd` or `cd ~` unknown; every wrapper it peels (`env`,
+  `sudo`, `nice`, `nohup`, `time`, `timeout`, `ionice`, `stdbuf`, `setsid`, `flock`, `taskset`,
+  `chrt`, `numactl`, `command`, `builtin`, `exec`, and since the seventh pass zsh's precommand
+  modifiers `noglob`, `nocorrect` and `-`, which hid the writer behind them) is parsed in full
+  against its own option table or
+  the command is refused naming the option (an unknown, abbreviated or non-literal one: spell the
+  long form the guard knows, or drop the wrapper), a glued `env -Cdocs` is a chdir, a nested `env -C a
+  env -C b` enters a then b under a, `env -S` and sudo's `-e`, `-i`, `-s`, `-R` and `-h` are refused
+  outright, and `time -o FILE` is a write of FILE; an `ln -s` whose source is not literal makes the
+  link name unknown, so a later write through it refuses; a `set`, `shopt`, `setopt` or `unsetopt`
+  option not on the inert allowlist (`set -e`, `-u`, `-x`, `-v`, `-n`, `-C`, `-o errexit`, `nounset`,
+  `pipefail`, `xtrace`, `verbose`, `noclobber`, and the options about history recording, completion,
+  prompts and job control pass; anything that changes how a word is expanded, matched or split, where a
+  relative path resolves, or which grammar is in force, `set -f`, `noglob`, `set -P`, `set -o
+  chaselinks`, `shopt -s globstar`, `set -k`, does not) leaves the directory unknown, so a later
+  relative write refuses (spell the target absolutely);
+  the parent-prefix rule finds a tracked project at any depth under the literal head, so
+  `../../$x/docs/report.md` refuses when `$x` could spell the way down to one; an option a writer's
+  table does not know (`cp --targ`) refuses wherever the writer is reached, its operands judged by
+  their own project from any cwd; `chdir` (zsh's and dash's cd) leaves the directory unknown, and
+  coreutils `link` is a hard-link maker. The costs are measured against
+  `tools/romp-track-bash-guard-corpus.json` (164 ordinary developer commands stay allowed; the
+  refusals added are a `~/` write beside a mention of HOME, an `env -S` line, a relative write after
+  `shopt -s globstar`, a write through a link whose source is a variable, and a variable-named file in
+  a folder with a tracked project anywhere beneath it). The fifth commit (2026-09-19) closed what a
+  fourth attack found, each keyed on a visible construct: a variable name the shell fills in on an
+  assignment, declaration, nameref, export, typeset, local, readonly, read, mapfile, getopts, unset,
+  `printf -v`, `let` or `(( ))` (`export ${h}${m}=...`, `declare -n r=${h}${m}`, `read -r "$(printf
+  HOME)"`) makes `~` and `$HOME` unreadable, since a name the guard cannot read may be HOME; zsh's
+  clobber-override redirections (`>!`, `>>!`, `&>!`, `>>|` and their kin, spaced or glued) are
+  writes, judged in bash's and zsh's readings (dash reads `>! f` as bash does, a file named `!`,
+  rejects `>>| f` and `>&| f`, and writes f through `&>| f`, measured 2026-09-20); `[[ a > f ]]`
+  and `(( a > f ))` compare in bash and zsh and are read in dash's grammar too since round 5's fifth
+  addendum (2026-09-20: a command named `[[` performing the `>`, a subshell running the `(( ))` body
+  as a command list), so a tracked f there refuses naming dash and the construct, a process
+  substitution among the test's operands runs in bash (`[[ -f <(echo x > f) ]]` writes f) and an
+  operator glued to the closing `]]` is a redirection or list operator (`[[ a ]]>f` writes f in
+  every shell), each judged as anywhere since the addendum's fix-up (2026-09-20), since its second fix-up
+  the same day an expansion nested in a `${...}` word (`${x:-$(cp a b)}`, a backtick, a `<(...)`) is read as
+  the command it runs in every position, and a literal echo or printf piped into a shell reading stdin is
+  that shell's script (a producer the guard cannot see, `cat f | bash`, stays unread, as does a script
+  handed to a shell outside the set it reads, busybox sh or ash among them), and since its third fix-up the same day an unquoted here-document body's expansions are read as the commands they run and the expanded body is the consumer's script (a quoted delimiter keeps the body as written), a `$(echo '...')` or a backtick with literal operands is the text it prints where the shell puts it (so `bash -c "$(echo 'cp a b')"` and `$(echo cp) a b` copy), a `${x:-word}` alone is read as a script under its default word, zsh's `=(cmd)` runs its command, a shell fed through a subshell, a group, an if or loop body, a `/dev/stdin` operand, a `<(echo '...')` script, a redirection on the compound's closer or a `-c` script's inner shell reads what was piped or redirected to it, and a copying writer whose one unquoted operand the shell may split into two refuses while a project is in play (a `${...}` word the guard cannot read as a script, a producer outside its output model (since round 6's second commit, 2026-09-21, the model reads a subshell or a group of echo, printf and silent commands as what it prints), a redirection on the closing brace of zsh's brace-body compound and a command whose name is an expansion the resolver never reads stay unread and are named), and `[[ $a > $b ]]`
+  with `$b` the guard cannot read refuses from a tracked cwd (the remedy: `expr`, or a cwd outside
+  the project); a link the command makes is followed into a numeric
+  name's folder too, and one whose source is not literal refuses a numeric write through it; a
+  python or node path that is a plain string is judged by its text whatever it holds (a `$` is
+  text), while one built from an f-string, `.format(`, `%` or a template literal with `${}` is
+  refused as unreadable; a hard link, `cp -l`, `cp -s`, `link` or a link whose source is not literal
+  puts the project its SOURCE lies in in play from any working directory, and one whose source the
+  guard cannot read refuses from any; the inert shell-option lists carry their criterion (an option
+  is inert only if it changes neither how a word is expanded, matched or split, nor where a relative
+  path resolves, nor which grammar is in force; `set -f`, `noglob`, `nomatch`, `markdirs`,
+  `cdsilent`, `pushdminus`, `extquote`, `set -k` and their kin are off them, and bash's `set -k` is
+  read both ways); and the remedy line quotes its `--file` path in single quotes, so a path holding
+  a `$` pastes back unchanged. Its second commit (B2 as the reviewer ruled it, option (c) on the
+  measured delta: the resolution half kept, the refusal half dropped) reads the values it can: a
+  name the command sets to a plain string earlier (`x='../sub'`, `export x=...`, at the top level in
+  plain sequence), HOME, PWD, OLDPWD, `~+` and `~-`, resolving them in every word and judging the
+  real path (so `x=other.md; echo hi > docs/$x` is judged by name and allowed, and
+  `x='../docs/report.md'; cp base/report.md scratch/$x` refuses by name), and reads none of HOME,
+  PWD and OLDPWD once the command names the name outside an expansion or may fill it in (so
+  `PWD=<dir>; cp x $PWD/docs/report.md` from a tracked cwd is refused as not literal, the reason
+  naming the mention); what stays opaque (a name the command never sets, one set in a body, after
+  `&&`, in a subshell, by a `read`, a loop, an eval, a sourced file or a function call, a `$(...)`)
+  keeps the verdict the working directory gives it, refused as not literal from a cwd in a tracked
+  project and allowed from a cwd in no project. The principle: a guard is strictest where its
+  subject is and loosest where its subject is not; this guard's subject is tracked files inside
+  projects, and from a cwd in no project it must not refuse on a value it cannot know (a user in a
+  scratch directory writing `$USER.log` or `$(date +%s).md` is ordinary work, and a guard that
+  refuses ordinary work gets switched off). The residual, with its boundary: a literal head outside
+  every project followed by an opaque expansion whose value can climb with `..` is allowed from a
+  cwd in no project; from a tracked cwd the refusal stands unchanged. The cost is measured against
+  the corpus, a sample: none of the 164 ordinary commands changes verdict; of 44 shapes with a
+  literal head outside every project followed by an expansion, run from a cwd in no project and from
+  a tracked one, the 22 readable ones refuse 3 times after resolution, each by name on a tracked
+  file (20 refusals from the tracked cwd became allowances), and the 22 opaque ones keep their 22
+  refusals from the tracked cwd and their 22 allowances from the cwd in no project. A pin addendum
+  (2026-09-19) pinned the fifth pass's unpinned claims from the tracked cwd, where an unresolved
+  name is refused and a resolved one judged by name, and closed what its attacker found, each a
+  stated rule applied to a construct the guard could already see: `cp --parents` lands each source
+  at its whole path under the destination, so `cp --parents docs/report.md ../web/` is judged on
+  web/docs/report.md; python's `-c` is read inside its option cluster with the code glued on
+  (`-c'...'`, `-uc'...'`, `-Xutf8 -c'...'`) and node's `--eval=` with its code (`--print=` takes
+  none, node then reads the script from stdin); and a triple-quoted python path is the plain string
+  it is, while a template literal holding a quote is still a template. None of the 164 ordinary
+  commands newly refuses. A seventh pass (2026-09-19) closed what the sixth pass's attacker found,
+  77 in-model overwrites in 13 spelling classes of one miss, with the readability rule stated below
+  (a name is readable only after plain top-level `NAME=plain-string` writes and nothing else: a
+  tilde opening a value, a transforming declaration flag, a nameref, a name the shell fills in, a
+  pipeline or a piped group, a wrapper's argument, a `function NAME {` definition called later or a
+  subscript each leaves it unreadable, and a plain `unset` frees it again), reads a plain top-level
+  `HOME=<path>` for the commands after it (the prefix `HOME=<path> cmd` excluded, since the shells
+  expand that command's `$HOME` and `~` first), and makes the refusal for a `cd` under `builtin`,
+  `command` or `time` say which shells move. This guard is best-effort against known write forms: it
+  refuses the shell writes it models and, by design, allows anything it does not recognise, so it
+  never blocks ordinary work it cannot read; it is a backstop, not a complete boundary. The
+  allow-by-default for an unmodelled writer is deliberately not flipped, since flipping it would
+  refuse almost all normal work. What it does refuse, while a tracked project is in play, is a write
+  it reads but cannot place: a target it cannot read, a path it cannot check (a stat error other
+  than not-found), an option on a modelled writer or wrapper it does not parse in full, an env -S
+  string, a shell option it does not know to be inert for paths, a link whose source it cannot read,
+  a `~` or `$HOME` write beside a mention of HOME or beside a variable name the shell fills in, a
+  template or format string as an interpreter's write path, and, from any working directory, a write
+  through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it
+  cannot read) whose source lies in a tracked project or is one it cannot read. Deleting or moving a tracked file away (`rm`, `unlink`, `mv` to another name, `find -delete`) is not a write it refuses: the contract is the write that lands on a tracked file, and whether the tracked set shrinking is such a write is a scope question raised with the round's review and not decided here. A value it can read
+  is resolved first and the real path judged. A name is readable only when every write to it in the
+  command is a plain top-level `NAME=plain-string` the shell performs as spelled: no tilde opening
+  the value, no declaration flag at all, no `declare`, `typeset` or `local` (dash has none of the three; `export` and `readonly` with no option word are the two declarations every shell performs), no nameref reaching it, no name the shell fills
+  in, no subshell, pipeline, piped group or body scope, no `{ }` group opened after `&&`, `||` or `|`, no wrapper argument, no call of a function
+  the command defines in any spelling, no subscript; any other construct that can write the name,
+  listed here or not, leaves it unreadable, the doctrine a `read` and a loop variable already had.
+  HOME, PWD, OLDPWD, `~+` and `~-` are read the same way: HOME after a plain top-level `HOME=<path>`
+  assignment of its own, and none of the three once the command names or may fill in the name in any
+  other form. THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can place or cannot read, or when a command whose name, script or piped script it does not read names a tracked file as a literal operand. Every write that still reaches a tracked file is one the guard does not resolve to such a writer through such a road, whether or not its text stands in the command, and falls in one of these classes, each measured by execution in tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the population this statement is over): a writer outside the model, a program, or a write form of a program the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk's print redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, bash's history -w, zsh's sysopen and mapfile modules, sed's e command and a w command in a sed script the resolver cannot read, busybox's applets); a reader outside the roads, a program that runs a command or a script the hook does not follow into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources, a function's call of itself, which the replay does not follow again); a command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${SHELL}, $0, $BASH, $ZSH_ARGZERO, $_ after a command), a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set` this shell ran since round 6's sixth commit), handed no literal operand that names a tracked file (the operand a directory, or a word the resolver does not read): since round 7's twenty-fifth commit a command so named, or a script or piped script the resolver does not read, whose literal operand names a tracked file is refused by name (the reviewer's Q1: the target known, the writer not); a script held in a variable, a value the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh shell's script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD CANDIDATES since round 6's fourth commit, and a `${name:=word}` gives word since the sixth); a producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running one, from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution); zsh's glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a residual. If you had installed track-changents yourself, the installer
+  re-points those links at the bundled copy, which carries fixes the checkout lacks, and says so.
+
 ### Judge concurrency
 
 - `ROMP_JUDGE_CONCURRENCY=<1..16>` sets how many judge calls run at once,
@@ -1353,6 +1585,7 @@ not change what the kernel runs at its next restart. On a machine that runs
 romp as a service, pin it anyway: `ROMP_PYTHON=/usr/bin/python3.12` in
 `service.env` makes the choice explicit and holds if the venv is deleted or
 rebuilt. Pin the versioned path, not `python3`, which an upgrade repoints.
+
 Whatever the pick, 3.10 is the floor for an interpreter that reports a version:
 `bin/romp-serve` runs the picked interpreter once for its version (its first
 execution), reads the sentinel line the probe prints (`romp-pyver X.Y`, carriage
@@ -1406,6 +1639,95 @@ the kernel adds only the site-packages built for its own tag from it as well;
 nothing on the restart path runs the script, so a move needs its own re-run of
 `bin/romp-codex-setup`, and until then the kernel logs the mismatch once,
 naming that remedy, and refuses Codex sessions.
+
+#### Which Python runs the kernel
+
+The kernel runs on the Python its Agent SDK venv was built with: the venv's
+compiled extensions import into the kernel process, so the two must agree.
+`romp-serve` picks the interpreter each time it starts the kernel (`pick_python`
+in `bin/romp-serve`), trying these in order:
+
+1. `ROMP_PYTHON`, if set. It is refused with one line when it does not name an
+   executable interpreter.
+2. The interpreter the SDK venv's `pyvenv.cfg` records, if it still runs and is
+   still the version and build the venv was built for.
+3. Another Python of that same version and build on `PATH` or in `~/.local/bin`,
+   with a line saying so.
+4. The newest `python3.X` on `PATH` or in `~/.local/bin` (`python3.14` down to
+   `python3.10`), else `python3`: the rule for a machine with no venv yet.
+   Reached with a venv in place, it also prints that the venv must be rebuilt
+   for the pick.
+
+`bin/romp-sdk-setup` and `bin/romp-codex-setup` apply the same rule, so each
+venv is built with the interpreter the kernel runs. `install.sh` runs that same
+pick as its preflight (`bin/romp-serve --print-python`) and stops, naming the
+interpreter and the install command, when it is older than 3.10, the floor the
+kernel and the Agent SDK share; `bin/romp-serve` refuses to start the kernel on
+one below it, so a manager never respawns a kernel that cannot run. [The
+kernel's Python](#the-kernels-python), above, has the full
+rule, what a mismatch reports, and how the kernel keys the match.
+
+The kernel also runs on free-threaded CPython 3.14t, the build with the GIL off.
+The test suite passes there, CI runs it, and the kernel's shared caches are
+written for threads that run at the same time (`tests/test_free_threaded_caches.py`
+holds the cases). The kernel's builders, judge tiers and request handlers are
+threads, so on that build they run in parallel. Nothing selects the free-threaded
+build on its own. Name it: for a foreground `romp`, export
+`ROMP_PYTHON=/path/to/python3.14t` in the shell; for the login service, put that
+line in `~/.config/romp/service.env`, which the manager reads when it starts. The
+Claude Code backend's venv must be built with the same interpreter
+(`romp-sdk-setup` reads `ROMP_PYTHON` from its own environment, not from that
+file). Web Push works on that build: `cryptography`, its soft dependency, ships
+free-threaded wheels, and CI installs it on the 3.14t cell.
+
+Installing another interpreter does not move the kernel: `uv python install
+<version>` puts a `python3.X` shim in `~/.local/bin`, which steps 3 and 4
+search, and a machine whose venv's interpreter still runs stops at step 2. One
+hazard remains: with no SDK venv, or with the venv's recorded interpreter gone
+and no other Python of its version and build found, the pick reaches step 4,
+so at the next restart the kernel runs the newest Python found, that shim
+included, and the venv must be rebuilt for it. If romp runs as a service, pin
+the interpreter anyway, by its versioned path: `ROMP_PYTHON=/usr/bin/python3.12`
+in `~/.config/romp/service.env` holds through a deleted or rebuilt venv, where
+`python3` would follow the next upgrade.
+
+Install extra interpreters with `uv python install --no-bin <version>` and reach
+them through `uv python find <version>` or a venv, never as a bare `python3.X`
+on `PATH`.
+
+A move to another Python, 3.14t included, goes in this order:
+
+1. Put `ROMP_PYTHON=<path>` in `~/.config/romp/service.env`. The manager reads
+   it for the kernel; the setup scripts never read it.
+2. Rebuild the SDK venv with the same value in the command's own environment:
+   `ROMP_PYTHON=<path> bin/romp-sdk-setup`. If the Codex backend is set up,
+   re-run `bin/romp-codex-setup` after it: it follows the SDK venv's record, so
+   a plain run rebuilds `codexvenv` for the new interpreter.
+3. Run the test suite with that interpreter: `<path> -m pytest -q` when it has
+   pytest. When it has none, run the suite from a venv built on it (a distro or
+   uv-managed Python refuses installs into itself, PEP 668): on Debian and
+   Ubuntu install the `python3.X-venv` package first; then
+   `<path> -m venv <dir>`, `<dir>/bin/pip install pytest` and
+   `<dir>/bin/python -m pytest -q`. The venv's `bin/python` is that
+   interpreter.
+4. Restart the manager: `romp down`, then `romp up`. Only a manager start reads
+   `service.env`; `romp refresh` leaves the manager running, and the kernels it
+   restarts inherit the environment the manager started with ([Two things
+   still need a restart](#two-things-still-need-a-restart)),
+   unless `bin/romp-manager` itself changed since the manager started: then a
+   supervised manager exits on the refresh and the service starts a new one,
+   which reads the file, while a foreground manager warns and restarts the
+   kernels. For a foreground `romp` with `ROMP_PYTHON` exported in its shell,
+   stop it with `Ctrl+C` and run `romp up` from a shell carrying the new
+   export.
+
+Run plainly, with no `ROMP_PYTHON` in its environment, `bin/romp-sdk-setup`
+keeps the venv's recorded interpreter while it still runs as the venv's version
+and build, and rebuilds only in the cases the [architecture
+page](architecture.md#what-the-installer-sets-up) lists: the venv's own
+`bin/python` or `bin/pip` missing, or that interpreter no longer its version
+and build with no other Python of that version and build on `PATH` or in
+`~/.local/bin`, when it moves to the newest Python found.
 
 ### Service environment and credentials
 
@@ -2224,6 +2546,92 @@ CLI's own scope and its memory limits are unchanged; the boot sweep stops a
 dead host's scope by its lease. On macOS the host is a plain detached process
 and everything else is the same.
 
+A host upgrades itself in place when the kernel that attaches runs newer code.
+Until 2026-09-18 a host kept the code it started with for as long as its
+session lived, so a host bug outlived every kernel deploy (the lease census
+reported each such host as `lease.version-skew`, thousands of rows a week, and
+one host carried a stale open-turn count for three days). Now, at an attach
+whose lease names another code version, the kernel first rewrites the host's
+`spawn.json` with its own version and asks the host to re-exec (a `reexec`
+frame carrying the kernel's interpreter, its own `bin/romp-session-host` and
+its version). The host answers at once: `ok` with `when` `now` when its CLI is
+idle, `at-turn-end` when a turn is open (the exec waits for that turn's
+`result`, the event, never a timer), or `ok` false with a reason when it cannot
+hand its descriptors over, in which case the kernel attaches to the old host as
+before and files a `host.reexec-refused` row. To re-exec, the host holds its
+stdout reader (no further record is taken off the CLI; bytes not yet read stay
+in the pipe, which survives the exec), drains its stdin pump and its journal
+writer, drains the attached kernel's socket backlog to the last byte (five
+seconds at most), and then decides with nothing awaited between the decision
+and the exec: the CLI is quiet, meaning no turn re-opened and the reader's
+stream buffer holds no bytes, or the exec is deferred to the next `result`,
+the event, and the reader runs on meanwhile (a `reexec-deferred` line names
+the reason: output arriving, or a kernel that did not drain in time). Quiet, it
+writes any record read during the drains to the journal itself so the count
+it hands over and the journal agree, writes a handoff file
+(`hosts/<sid>/reexec.json`: the CLI's pid, start time, spawn time and
+conversation id, the three pipe descriptors, the read count, the open turns,
+the open requests and the acknowledged offset), marks the descriptors
+inheritable, writes `reexec-now` to the kernel (its backlog empty, the frame
+reaches the socket at once; a kernel whose socket is full at that instant
+misses it and reads the close as unplanned, the lease holding for its next
+connect), closes its socket, and calls `execv` on the same pid: the CLI stays
+its child, the pipes stay open (descriptors survive an execve), the lease
+holder's pid and start time are unchanged, so `hostAck` still names this host
+and the replay offset holds, and the journal is reopened from its segment
+files (the index rebuilt from the files entry for entry as the live one held
+it, the next offset from the last record, a deleted segment's offsets
+unreadable). The new host confirms the inherited descriptors against the
+CLI's own `/proc` descriptors on Linux before trusting the handoff, adopts the
+CLI through the pipe transport over them, re-serves the socket, writes the
+lease with the new version (in that order, so a kernel that reads the new
+version finds a listener; the kernel's wait for the re-executed host also
+connects before it trusts the lease), and waits for the kernel's attach; the
+kernel, told `reexec-now`, treats the socket's close as the planned handover,
+not a host death: no `host.died` row, no orphan replay, no resume, one
+re-attach from the same acknowledged offset, and a `host.reexeced` row. A
+re-exec that fails before the exec leaves the old host running and says so (a
+`reexec-failed` line in the host's log; a `fault` to an attached kernel, which
+files a `host.reexec-failed` row, as does a kernel whose wait for the
+re-executed host runs out); one that fails inside the new process, on a
+handoff that does not check out, makes the new host exit with the CLI still
+running, which the kernel's existing orphan road handles as a host death: the
+CLI finishes its turn on end-of-file and the session resumes from the
+transcript. The worst case is the pre-host behaviour for one session, never a
+dead one. What the guarantee covers: every record parsed off the CLI before
+the exec is in the journal, numbered as the kernel was told; every byte still
+in the pipe reaches the new host. What it cannot cover is a line the SDK's
+reader has split across two chunks (its framer holds the first part between
+reads), which with the stream buffer empty at the check is a record the CLI
+is mid-write on at that instant, outside any turn: lost to the journal only,
+never to the CLI.
+
+The parked-op drain says so when a stale count holds a queue. The drain
+delivers a session's parked input once the session is quiet, and its working
+gate reads the backend's open-turn count, which under a host is the count the
+host handed over at the attach. A stale count (the shape of the stuck-Working
+defect: a host counted a message folded into a running turn as its own turn,
+and every kernel adopted the count for days) holds the queue with the count
+alone: a turn counted open and nothing queued to start. That is the one
+source the belt reads, never the composite busy signal, which also holds for
+a queued turn about to run and for a feeder waiting with the count at zero
+(a parked deploy restart, an armed reconnect after a settings switch, a
+pending rewind), holds that are correct. The drain records the hold on its
+own thread; the jobs thread reads the session's transcript once per pass, and
+when the count says open while the transcript, at rest, shows its last turn
+closed, files a `pending-ops.held-working` problem row once per hold: the
+ledger, the kernel log and the error center's ring, naming the session and
+how many items wait, with the remedy (ending and reviving the session
+replaces the count; a kernel restart does not, since the attach adopts the
+count). The transcript is read only at rest, once per version of the file,
+through the kernel's shared parse, and never on the pusher's thread; a
+transcript that is absent, that parses to no turns or that keeps changing (a
+turn streaming) is no verdict, and a later version that shows a turn open
+files a `pending-ops.held-working-retracted` row. The belt never delivers:
+the queue stays held until the count clears or the session is replaced, and
+cancelling the queued chip clears the belt's state, so the next hold on that
+session says again.
+
 A message the kernel cannot handle does not end the session's CLI. The kernel
 handles each streamed message on its own: when a handler raises, it logs the
 exception type and the failing frame (file, line and function, first on the line
@@ -2905,16 +3313,63 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (cycles that set no wake, sent no payload and saved no goal store: what a
   longer wait between cycles would have skipped; a conservative undercount,
   since a wake set by another thread or a periodic repost of an unchanged
-  frame marks a cycle busy).
+  frame marks a cycle busy), and `chatFullWhy` (every whole session frame the
+  uuid-anchored chat wire sent, counted once the frame has left, so a frame the
+  per-client dedup swallowed is no more one here than under `sends`; by the
+  reason the sender had for it: `noBase`
+  for a first send, a reset, the repost of a session whose built list is
+  empty and the first content frame after it (an empty list records no base,
+  so a just-created session is re-sent whole once per client per repost
+  window until it has content; the reconnect-only reads of the held set are
+  unaffected, since a client whose redial is unresolved holds no base for any
+  session), and the re-entry of a tab that left the strip (the pusher forgets
+  every client's base for it along with its baseline, since the page tore the
+  tab down when the strip stopped listing it; one exception, stated not fixed:
+  the page keeps a strip-omitted tab the frame's `live` field lists, so for a
+  live session that the strip omits, the pusher forgets bases the page still
+  holds, and the re-listing is a row-less `noBase` full per client, since the
+  dedup slot is popped with the base); `baseGone` for a fork or a
+  rewind; `lastGone:<family>` for a held last edge the next list no longer
+  carried; `changeAt0` for a change at the list's first event against a held
+  base: a genuine first-event change (a floor advance that moved the list's
+  first event reads here too), or a change of 0 against a held base, which
+  only a sender that read the shared baseline absent produces (a sid's first
+  whole frame to reach a client seeds the baseline, whichever sender sent it,
+  so its later senders diff against it instead of re-sending the whole
+  session), in three faces, the boot's ordinary interleaving in either order
+  (the cycle's cold build of the watched tab beside the attach handshake's
+  targeted push): a strand's repair, when the sender's list was the older one
+  and a whole-frame writer landed inside its build, so its seed popped the
+  baseline and marked the session, and the next cycle whose loop reads the
+  baseline absent sends every base holder the full and takes the mark off
+  with its write (a cycle that sent tails leaves it for the next one); the
+  detector's accepted false positive, when the sender's list was the newer
+  one, so it marks the session with no client stale and sends one full and
+  one row per client where a tail went before, and the next cycle's full
+  goes once more only when the session frame moved or the 60-second repost
+  window passed since, else it dedups on the client's slot and files no row;
+  and the cycle itself as the sender that read the baseline absent with a
+  seed landing inside its build, a race the detector does not mark (nothing
+  marked, no strand), one full and one row per base holder where a tail went
+  before, and tails with no new row at the next cycle; in the
+  `chatFull` row below every change-0 face has `changeFrom` 0 with both edges
+  held, the floor's has `firstHeld` false);
+  `changeBelowFirst` for a change at or before the held first edge;
+  `inverted` for a base whose last edge sits before its first; `empty` for a
+  list with no events sent to a client holding a base; and `other` for a
+  shape none of these names, also the label the rest fold under once the map
+  holds as many labels as the sends map; a caught-up client is owed
+  deltas, so `lastGone` is the recurrence meter for a base anchored on a key
+  that vanished, an input echo's or the command chip's).
   `cycleJobsMs` (2026-09-18): `{job: ms}`, the pusher thread's cumulative
-  wall per cycle job, the nine listed at zero from the start
+  wall per cycle job, the ten listed at zero from the start
   (`beginCheckpointCycle`, `sessionsListing`, `applyPendingOps`,
-  `turnNotify`, `persistCheckpoints`, `convergeCheckpoints`,
-  `bootRowBackstop`, `kernelSample`, `apiHealth`). A `jobs.<job>` stage the
-  thread that owns the pusher's cycle closes counts here and not in
-  `stages_ms`, whose `jobs.<job>` rows are the jobs thread's; the nine sum to
-  at most `stages_ms.jobs` over closed cycles (the `stages_ms` entry says how
-  a snapshot inside one reads).
+  `artifactsSignal`, `turnNotify`, `persistCheckpoints`,
+  `convergeCheckpoints`, `bootRowBackstop`, `kernelSample`, `apiHealth`). A
+  `jobs.<job>` stage the thread that owns the pusher's cycle closes counts
+  here and not in `stages_ms`, whose `jobs.<job>` rows are the jobs thread's;
+  the ten sum to at most `stages_ms.jobs` over closed cycles (the `stages_ms`
+  entry says how a snapshot inside one reads).
   The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in the kernel): a cycle starts
   no sooner than that after the previous one began unless the live tail of a
   chat tab a connected client is watching changed (a Claude Code session's
@@ -3149,7 +3604,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (`_THREAD_KINDS` and `_THREAD_KIND_PREFIXES`, beside the route table in
   `kernel/kernel.py`), never the thread's name itself: the name up to the
   naming convention's colon when that part is a registered prefix (`sdk` and
-  `sdk-intr` for a session's threads, `codex` for a Codex session's worker,
+  `sdk-intr` for a session's threads, `sdk-fbcause` for a session reading a
+  standing fallback's cause off its transcript at an attach, `codex` for a
+  Codex session's worker,
   `end-host` for a session's end hook, `sdk-slot` for a session waiting for
   a relaunch slot after a change of the machine's default billing, `port-up`
   for a dial's port watch, `peer` for a postal peer loop, `romp-refused-mark` for the refused-echo
@@ -3604,7 +4061,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stages before its `push`, and a capture pair can read the children ahead
   of the container by the one push in flight; every bound in this section
   that sets rows against their container reads the same way (a seam against
-  its stage, the connect stages against `ms_sum`, the nine cycle jobs
+  its stage, the connect stages against `ms_sum`, the ten cycle jobs
   against `stages_ms.jobs`, and the `romp perf` shares against the cycle
   time, which `cycle_ms_sum` takes after both containers close). A push
   stage from a thread that neither owns the pusher's cycle nor carries a
@@ -3734,7 +4191,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   same tab counts again on every later push until the page asks for it, 2026-09-14),
   `active_built` and `bg_built` (rebuilds of the watched tab
   against rebuilds of a background tab), `moved` (builds not cached because
-  an input moved while they ran; the next cycle builds them again) and
+  an input moved while they ran; the next cycle builds them again),
+  `baselineRaced` (the chat wire's shared delta baseline was popped by the
+  seed's detector and the session marked: two whole-frame senders raced on a
+  session with no baseline, or the detector's accepted false positive named
+  under `changeAt0` above; the mark's only other trace is the next cycle's
+  `changeAt0` rows, filed only for a base holder alive then whose repair did
+  not dedup), `baselineRepaired` (a cycle whose loop read the baseline absent
+  sent every base holder the full and its write took a standing mark off;
+  raced minus repaired is the marks still standing plus the tabs that left the
+  strip, whose eviction clears the mark with no repair) and
   `bg_miss`, a map from each labelled component of that signature
   (`transcript`, `states`, `store`, `hold`, `archive`, `episodes`, `reg`,
   `gone`, `tasks`, `todos`, `pins`, `cut`, `live`, `row`, `clock`, `backend`,
@@ -3778,7 +4244,21 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `miss_by`'s `auth`, the machine's key on hand), `retry`, `agents`, `tasks`,
   plus `presence` for a row that appeared, left or changed shape): the key
   folds only the row fields a card reads, so a context refresh or a
-  background agent's tool call moves no key. `reg` is the SDK registry
+  background agent's tool call moves no key. `failed` counts the card builds
+  that raised (a memoized entry's decode, the key, the derivation, its
+  dependency key, the serialization or the memo put), cumulative, and
+  `failing` the sessions whose last build did, a standing fault rather than
+  history. `coldLive` counts, per session per build, each living session not
+  hidden from the feed, with a transcript, whose cache-only parse read
+  missed; a session nothing has parsed at its current version (no client's
+  tab, no judge, no background warm, none of the card build's own parse
+  paths, nor any other road that parses through the parse store) rides it
+  every build, and the warm gate leaves an unmoved, idle session cold by
+  design, so a standing count is those sessions, not a fault.
+  `coldFlip` counts the subset the memo held warm and re-read in place with
+  one kernel parse (also under `parses.kernel`) instead of deriving cold;
+  `coldFlip` climbing every build for one session with no appends means its
+  parse never stores, which should not occur. `reg` is the SDK registry
   record's state plus the two fields a card reads, `bgLedger` and
   `spawnedAt`, and the death marker's identity; the record's other fields
   move `reg` no further, and a transcript-less live row's `cwd`, `lastSid`
@@ -3810,7 +4290,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   parse each, counted under `parses` too).
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
-  was built and compared, then not sent.
+  was built and compared, then not sent. Every frame the targeted one-session
+  push sent, its tab strip and the cold-tab gate's status included, is counted
+  under its slot with a `.targeted` suffix (`chat.targeted`,
+  `status.targeted`, `taborder.targeted`), so a full from that road reads
+  apart from the pusher's cycle. The suffix is the road's, whatever the stage
+  mark: the two backend hand-offs (the SDK connect handshake, the Codex
+  backend's stream events) run under the `push.session` stage above as their
+  thread's default mark, while a create, a fork or a promote calls the push
+  from a request handler and runs under that request's
+  `http.<METHOD>.<route>` mark.
 - `goals`: `loads`, `saves`, `writes` on the goal stores through the writer's
   loader (`load_goals`) and `save_goals`; the pusher's read-only loads go
   through the shared store cache and show under `memos.shared`, not here.
@@ -4125,10 +4614,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   once per agent whose owner it was consulted for, and the next call folds
   it again;
   `nudgeGate` is the auto-nudge walk's
-  planner-placement gate, derived once per (parse, store) and served while
-  both stand, and on this fork while `cleared.jsonl` stands too, its stat a
-  fourth term of the key since the plan units read that file live (`served`,
-  `derived`, and `failed`: the derivations that raised;
+  planner-placement gate, derived once per (parse, store, episode log, clears
+  log) and served while all four stand (`served`, `derived`, and `failed`: the
+  derivations that raised;
   the except leg answers NOT unplanned, so the walk skips the planner-queue
   hold and proceeds on the closer gate alone, and a non-zero `failed` means
   nudges were waved PAST the planner gate, not held; zero on a healthy box, and
@@ -4522,9 +5010,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `pendingDead`) and `other`. Every field whose value can carry a string
   (`ledgers`, `selfHost`, `working`, `awaiting`, `stateUnknown`, `order`,
   `sessions`, `userTodos`, `userTodoRows`, `views`, `viewsFault`,
-  `judgeLimit`, `bgServices`, `clearedForeign`, `clearNotices`, `sdkNotices`
-  and `syncNotices`: the checked-in list `FEED_BY_FOLDED` beside it) is
-  folded into `other` when the block is reported, and a key outside
+  `judgeLimit`, `bgServices`, `clearedForeign`, `clearNotices`, `sdkNotices`,
+  `syncNotices` and `boards`: the checked-in list `FEED_BY_FOLDED` beside
+  it) is folded into `other` when the block is reported, and a key outside
   `FEED_FRAME_FIELDS` and the off frame's lists is counted under `other` when
   the table is built. A row of its own for one of the folded fields would
   have been the length of one string (the machine's hostname under
@@ -4589,7 +5077,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   Two residuals remain, stated here in the words of the kernel's
   `FEED_COMPOSITION_RESIDUALS` and of the ledger entry (a test holds the
   three equal). First: On a board with no session, no open todo, no tag, no
-  notice, no cleared id, no judge-limit latch, an empty stored session order
+  notice, no cleared id, no judge-limit latch, no data-defined board, an
+  empty stored session order
   and a clean tags read, `other` is a constant plus the hostname's length
   and the digit width of `views.seq`, which the frame's whole length on
   `push.send` and the served body has always carried; with a session it is
@@ -4988,7 +5477,11 @@ announces `chatProto2` in its `caps`:
   no row on screen re-windows once around the named point;
 - the kernel's per-client base is TAIL-ONLY: a reply moves the base's first edge
   only when its span reaches the tail run, so the tail's deltas keep flowing to a
-  reader in older history; a reconnect's `ready` starts a fresh base. A run whose
+  reader in older history; a reconnect's `ready` starts a fresh base. The base's
+  `last` skips the live overlay cards and the kernel's transient keys (an input
+  echo, the command chip), which ride the suffix of the deltas after them like
+  the overlays: the landing that replaces an echo with its record is a delta
+  after the record before it, never a full frame. A run whose
   edges left the transcript (a `/clear`, a fork, a rewind) gets a full frame; a
   `missing` reply on a held key is a gap the page answers with `needFull`. A
   reply that reaches the head carries the head cards first.
@@ -5018,10 +5511,9 @@ answers exactly one `{"op":"done","seq","wallMs","tierStarts","tierCpuMs","worke
 "recordCache","asmCheckpoint","parses","goalIo","tierGate"}` per pass. The request's `now`: absent or null, the tiers read
 their own clock during the pass, the in-process producer's behaviour, so a measured comparison of the two roads isolates
 the process split from the clock semantics; a number is the explicit clock variant, truncated to the second and handed
-to both tiers for the whole pass, available for a measurement that wants it on its own (2026-09-18). This kernel sends a
-live clock on every pass (`tests/test_judges_process.py` pins the request's fields), so the absent-or-null road is the
-child's tolerance rather than a road this kernel takes, and a comparison of the two roads on it does not isolate the
-process split from the clock semantics. Every counter on
+to both tiers for the whole pass, available for a measurement that wants it on its own (2026-09-18). This kernel sends
+`now: null` by default and the wake's time only while the `judges-process-clock` file reads `request` (the switch's
+paragraph below; `tests/test_judges_process.py` pins the request's fields). Every counter on
 the done line is a PER-PASS figure: `wallMs`, `tierCpuMs` and `workerCpuMs` are
 the pass's own, `failures` its tier crashes, and the five blocks (`recordCache` and `asmCheckpoint` from the event model,
 `parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes, `tierGate` as the tiers'
@@ -5343,6 +5835,14 @@ frames it received is measured in the panes themselves, by
   cannot be written is said on stderr once, since the reading rule holds only while
   writes succeed. A planned per-app split of the connect push (perf work) will read
   the same `kind`.
+- The kernel files one `chatFull` row (surface `kernel`) per whole session frame
+  the uuid-anchored chat wire sends to a client that already holds a base for the
+  session, filed once the frame has left (a frame the per-client dedup swallowed
+  files nothing): such a client is owed deltas, and the page treats a full for a
+  held session as a reconnect repair. The row carries the client's `cid` and `kind`, the
+  session, the `reason` (the `chatFullWhy` label under `/perf`), the change index,
+  the list's length, and which base edges the list still held; a first send files
+  nothing.
 - The kernel rotates `client-diag.jsonl` once it reaches 8 MB: the file
   becomes `client-diag.jsonl.1` (replacing the previous one) and a new file
   starts, so at most two files, about 16 MB, are kept. A minute row runs to
@@ -6564,8 +7064,53 @@ gesture-stamped setting uses, and an applied flip is echoed to the socket that m
 when the gear greys its dependents and tells the shell. A refused write (a full disk, a read-only state directory) is
 told on the same socket instead (a `settingStale` frame naming the fault and the kept value), so the gear snaps back to
 the kernel's value and the rail and the panes stay as they were. It is one value across attached machines: the click
-reaches every attached kernel, and a kernel attached later adopts the newest stamp, the road Auto Nudge, Suggest
-/compact and file editing take.
+reaches every attached kernel; a kernel attached later, or polling one, used to adopt the newest stamp, the road Auto
+Nudge, Suggest /compact and file editing took. Since phase one A of plans/settings-across-machines.md (2026-09-18) a remote
+machine's newer value is a PROPOSAL, never a silent apply: the polling kernel (and a kernel a hub pushes to over
+`/mesh-settings`) writes a record per proposing MACHINE under `settings-proposals.json` (the value, the peer's stamp, the
+local value at the time; a peer is named by the key its row carries, the alias it was attached under; a poll with the
+token learns the peer's own name from its `/version` and writes it on the row, saved with it, so a push naming itself
+resolves to the row's key, a record a push filed under the self-name before the first poll moves onto the row's key, and a
+detached row takes its records and kept stamps with it) and applies nothing; the same value under a newer stamp lifts the local stamp only; a pinned store raises
+none; the record drops when the values come to equal or the peer's stamp is no longer newer. The user answers through
+`POST /setting-proposal` (`{"store", "host", "gt", "answer": "apply" | "keep" | "pin"}`, this kernel's own record from that
+machine only, the stamp checked: a stamp the machine has since moved past is refused, that machine changed its mind and
+the line is refreshed): Apply runs the store's own gt-gated setter under the peer's stamp (a click on this machine that
+already outranks the record is refused and drops it), Keep drops that machine's record and remembers the stamp as answered
+so it is not proposed again, Pin sets the machine's pin and drops every record for the store. The pin (`settings-pins.json`, set
+from this dashboard's own kernel by `setSettingPin`, never broadcast) keeps this machine's value against every remote input:
+a proposal is never raised for a pinned store, and a gear click that reaches this kernel from a dashboard attached to
+another machine (the broadcast carries `origin`, `local` or `remote`; a message without it is read as remote) stands down
+with a `settingStale` frame carrying `pinned` and the kept value (the gear's toast: kept, that machine's value is pinned),
+while this machine's own dashboard's click applies as ever; the pin itself (`setSettingPin`) is taken from the local origin
+alone, and a stale pin gesture is said in the log with no frame. `/version` carries `settingsPinned` (the pinned stores) to
+every caller and, to a caller with the token (the gear, a polling peer), `settingsProposals` (the pending records, a list
+per store, the local value live) and `host` (this machine's name), all additive; the gear draws the pending proposal under the affected row (which machine, from what to what) with Apply and Keep
+mine, and a pinned store's note; and every proposal is a needs-you NOTICE CARD on the owner-less Notes run (phase one B: the
+producer `settings`, the key `proposal.<store>.<machine>`, one card per proposing machine, a new revision when the stamp
+moves, expired when the record drops for any reason) with Apply, Keep mine and Keep mine and pin this machine as actions of
+the `setting-proposal` kind, which the kernel alone posts and which hands the stored body to `/setting-proposal`'s own checks;
+answering on the card or in the gear clears both.
+Phase two (2026-09-19): with more than one kernel connected the settings card carries a MACHINE SELECTOR above its tabs.
+"All kernels" is the synchronized view (a click broadcasts as ever, subject to each machine's pin) and a synchronized row
+whose kernels disagree wears the flag "differs" in the warning tone, the machines and their values on hover, with the count
+of differing rows on the selector itself. Picking one or several kernels scopes the four synchronized rows to their values (a
+remote's from its `/tunnels` row, this machine's from `/version`) and a change there applies to those kernels alone and PINS
+the store there: the message carries `scope: "pinned"` beside `origin` (`hosts` names the kernels; federation stamps each
+copy), the pin gate passes a scoped remote-origin gesture, and the arm pins under the gesture's stamp; a broadcast never
+carries the scope. Each synchronized row wears a pin glyph at its right edge, lit while the picked kernel (this machine under
+All) pins the store, its hover naming the pinned value beside the other machines'; a click toggles `setSettingPin` on the
+picked kernels (`hosts`, the scope), and an un-pin returns the row to the synchronized value, the newest stamp across the
+attached machines read from this kernel's own per-machine records (a pinned store keeps a peer's newer value as a HELD record:
+no card, not in the gear's map; it becomes a proposal when the pin lifts), never a dial at click time. The `/tunnels` row
+carries `settingsGt` and `settingsPinned` beside `settings`, and a machine that pins any store wears a "pinned" mark in the
+Remote kernels popover (and in the VS Code strip's network rows), the stores on hover. A peer's pinned store raises no proposal
+here (its value stands there by its user's word; the flag says the machines disagree) and this kernel keeps a store it pinned to
+itself (no push). The selector hides with one kernel; a store this machine pins keeps its glyph, so the un-pin is one click away.
+In a mixed mesh a kernel from before phase two ignores `scope`: with the store pinned there a scoped change is refused as a
+broadcast is, and with it unpinned the value applies but pins nothing, so the next broadcast walks it back; update the kernel. A peer that reports a store pinned is not pushed our value for it. A MIXED
+mesh: an older kernel without this change still adopts the value a one-A kernel pushes to it and still applies our poll's
+value on its side, so the two converge one way (toward the newer kernel's proposals being answered) until it updates.
 
 **Across attached machines** the browser merges every host's feed frame into one. A host whose frame is the off stand-in
 is named in the merged frame (`offHosts`, beside the per-host build counters), a host that is attached but has not yet
@@ -6627,7 +7172,10 @@ reads one `done` line from its stdout; the kernel's bookkeeping (the episode bou
 compact, the recovery re-arm, the generation bump) stands around the request in the loop's order. Absent, or anything
 but `on`, the tiers run in the kernel as before and no child starts; a file that cannot be read or decoded reads as
 off and says so once (a sync notice). Effective on the next pass; the child is ended on the pass where the switch
-turns off.
+turns off. Each request carries `now: null` by default, so the child's tiers read their own clock as the in-process
+tiers do; a second file, `judges-process-clock`, reading `request` makes the request carry the wake's time instead,
+which the child hands to both tiers truncated to the second. It is the measurement knob of the split's comparison
+(the child's gate admittance differed between the two clocks), read on every request.
 
 Bounds and counters, all on `/perf` under `judge`:
 
@@ -6664,6 +7212,1299 @@ Bounds and counters, all on `/perf` under `judge`:
   snapshot is meant to be pasteable (2026-09-18). `tierStarts` is counted at the request, so a long pass reads it
   during the pass.
 
+## The interface, feature by feature
+
+The sections below hold the detail behind the interface the [guide](guide.md)
+walks through: the chat pane's own behaviour, the panes beside it, mail, remote
+access and notifications. The guide gives each of these a paragraph; this is the
+rest of it.
+
+## The chat pane in detail
+
+The [guide](guide.md#the-chat) names these in a line each. Here is each one in full.
+
+### Dropping a file onto the chat
+
+Drop an image or any file anywhere on the chat pane and it attaches to
+the message box of the session you are looking at; a dashed ring shows the pane is the target
+while you drag, and in a split each column takes its own drops. Dropped anywhere else on the
+dashboard, a file is refused (the cursor says so) rather than opened in place of the page.
+
+### Quoting a passage into the composer
+
+Select any passage in the file viewer and it lands in the
+composer as a quote chip, labeled with the file and the line the passage lives on. Type
+what should change and press **⌘⏎** to set the note aside; keep reading, select the next
+passage, and repeat: each staged note remembers its quote and its place. The list above
+the composer shows about four staged notes and scrolls for the rest; its caret collapses
+it to the count. **⏎** sends everything you staged along with whatever is in the box as
+one message, so the session applies the lot in one pass, and you never copy a line out of
+the document by hand. The line in each label is checked against the file at the moment
+you select, so numbers that moved under you are caught rather than quietly carried. Chips
+are one-off notes: they go out with the message and are not kept. For anything worth
+keeping with the file, use the viewer's **Comments** panel, described under Files: a file
+comment is stored beside the file, the session replies into it, and its edits to a tracked
+file come back as changes for you to accept or reject. When several sessions work in the
+same repository, or in worktrees of it, the viewer's title bar says which one you opened the
+file from: a chip with the session's name, in the same color as its tab. The title bar's
+**GitHub ↗** button opens the file on GitHub. While the check runs, the button waits dimmed
+with pulsing dots beside it.
+When there is nothing to open, the button stays in place, dimmed, and a caption beside it
+says why (the file is not in a git repository, or not committed: untracked, staged but in no
+commit, or on a branch with no commits yet; or the repository has no origin remote, its origin
+is not on GitHub, or the path is relative and no session's directory resolves it); the
+button's tooltip repeats the reason. A file on a branch that is not on origin keeps its link,
+drawn with a dashed border, and the caption says the branch is not on origin yet. That check
+trusts your clone's own refs: a branch deleted on GitHub reads as present until `git fetch
+--prune`, and one pushed from another clone reads as absent until a fetch. A branch that has
+never been pushed is asked of origin once and the answer kept until a push or fetch from this
+clone writes its tracking ref; where nothing local could refresh the answer (a
+`--single-branch` clone, or a branch on origin this clone has not fetched) origin is asked on
+each open.
+A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
+`owner/repo#123`) links to that pull request on GitHub, in the repository the session's
+directory has as its `origin` remote; when that remote is not on GitHub, the number stays
+plain text.
+
+### Naming another session with `@`
+
+Type `@` and the first letters of a session's name in the
+message box, and the sessions whose names match are listed above it, twelve at most; when
+more match, the last row says how many, and more letters narrow the list. Arrow to one and
+press **⏎** or **Tab**, or click it, and `@name` goes into the message as plain text, the
+name the session's mail tools take. Which form goes in depends on the session you are
+writing to. When you write to a session on this machine, a session on another machine goes
+in as `@host:name`, the way this machine knows it. When you write to a session on another
+machine, every name goes in bare, because the dashboard cannot see what that machine calls
+its peers; if the bare name is ambiguous there, the session's mail tools refuse the send and
+list the candidates as `host:name`, and the session picks one. **Escape** closes the list
+without inserting, and it stays closed for that `@` until you delete it: more letters, or a
+caret move away and back, do not reopen it. In the sent message, a name that matches a live
+session is shown as a chip: the name without its `@`, in that session's color on a dark
+backing, the way the Awaiting chip names the session it waits on. Hover it for how that
+session is doing; the message itself still carries the `@name` you typed, and so does a
+copy of it.
+
+### A message that has not gone yet
+
+Send to a busy session and your message waits as a
+dashed bubble under an hourglass until the session takes it: while it compacts, while a
+turn runs, or in the beat before the kernel confirms the send. Until then it is still
+yours: the **✎** in its corner takes it out of the queue and puts it back into the message
+box (the words, the quote chips it was written against and its attachments), so you can
+change it and send it again, or clear the box to drop it. Once the session has taken the
+message it is no longer yours to recall: the bubble's dashes close, its header reads **with
+the session**, and the ✎ goes. It stays that way until the message lands in the
+conversation: inside a running turn that is the session's next step, so a message sent
+mid-turn can sit there while the current step finishes. Several messages sent during one
+turn (a composer message, then a todo reply) reach the session one at a time, in the order
+you sent them: the next waits, shown as queued, until the session has taken the one before
+it, so two messages are never joined into one. A queued slash command, and a
+notice romp itself queued, carry a **✕** instead: there is nothing to reword, so they just
+cancel. If the session took the message before you pressed, the bubble says so and the
+box is left as it was, so nothing is sent twice. One case to know about: a chat page
+from before an update, still open on the new kernel. The page never reloads itself. A
+line near the top of the window says a newer romp build is ready, with **Reload** and
+**Not now**: Reload keeps your place, your drafts, your tab and the notification center,
+and Not now keeps the line away for that build (a later build asks again). Until you
+reload, the old page keeps working against the new kernel: reading, sending and switching
+tabs are unaffected, and the one thing that can go differently is an action the new kernel
+no longer knows in the old page's form, which falls back to the older path (a pencil on a
+queued message reverts and the message stays queued). When that happens the line says the
+page is behind the kernel, so you know the reload is what puts it right. A restart of the
+kernel onto the same build changes nothing on screen: the panes reconnect, and no line
+appears.
+
+### Sending while the session is working
+
+The session takes your message at its next
+step. In a Claude Code session the message stays where you sent it: it sits below everything
+that had already happened, the steps the session runs in the meantime appear below it, and when
+the session takes it, it lands in that same place.
+
+### While a message is on its way
+
+A message you have sent shows as a dashed bubble
+marked "sending…" until the session records it, however long that takes; the bubble
+never gives up on its own. If the connection drops before romp has confirmed it received
+the message, the bubble reads "not confirmed"; it returns to "sending…" once romp
+confirms, and clears when the message lands. ✕ puts the text back in the composer to
+send again. Each bubble reports its own state, so one dropped message and one still on
+its way read "not confirmed · sending…", and ✕ acts on the bubble you press it on.
+Sending the same text twice shows two bubbles; romp confirms them one at a time, as it
+receives each copy, and each clears when its own copy lands.
+
+### Opening a markdown document
+
+A markdown link in the chat opens in the file viewer,
+rendered, with **Raw** one click away. The link can be a path on the session's machine, or a
+link to a file served from the dashboard's own address (a published report, an evidence doc).
+Figures
+and links inside the document resolve relative to the document, so a `![fig](fig.png)`
+beside it shows, and a link to a sibling document opens in the same viewer. Links to files
+on other sites open in a new tab, as before, and a ctrl- or ⌘-click still opens the file in
+a tab. The document is set for reading: a sans face at a slightly larger size, headings in
+proportion, a centred column about 80 characters wide, and task lists, keyboard keys and
+aligned table columns as GitHub shows them. Every code block is numbered by line and carries a
+**Copy** button that copies the block as the file holds it, tabs included; fences labelled
+`rust`, `go`, `c`, `java`, `sql` or `toml` are highlighted, in addition to the languages the
+chat already knows. Printing the page while a rendered file is open prints the file alone,
+black on white, across as many pages as it needs.
+
+### A file's own HTML
+
+The Rendered view keeps the HTML a markdown file carries, under rules
+modelled on those GitHub applies to a README, so nothing in a file can move, hide or cover the
+viewer's own controls. A `<style>` block is dropped whole. A form, its controls and a
+`<dialog>` are dropped but their text stays as prose. A task-list checkbox stays but cannot be
+ticked. An inline `style` keeps only its `color` and `background-color`, and only when the
+value is a color name, a hex code, or `rgb()`, `rgba()`, `hsl()` or `hsla()`; a span colored
+with any other function, such as `var()`, loses its color. A `background=` attribute is
+dropped, since it would load a remote image the moment the file opens. An inline `svg`, a
+`canvas` or a `video` shrinks to the column, as a picture does. An element's `id` or `name` is
+prefixed `user-content-`, as on GitHub; the viewer's own heading ids are not, so a link to a
+heading in the file still lands on it, and a link to an element's own `id` or `<a name>` lands
+on it under the prefix. A link in the file is handled by its target, not by the element that
+carries it, a link drawn inside an inline SVG included: a web address opens a tab, a file
+target opens the file in the viewer, and a section link scrolls to it. An image map (`<map>`,
+`usemap`) is dropped. An HTML comment is dropped and the text around it is kept. An HTML
+`<title>` is dropped with its text, since a browser shows one nowhere outside the page's head;
+the `<title>` of an inline `svg`, the drawing's tooltip, stays. The same rules apply to the
+HTML in a chat message, where a link to an element's own `id` or `<a name>` lands on it under
+the prefix.
+A tag opened in a line of prose and not closed in the same paragraph, heading, list item or
+table cell (a placeholder typed mid-sentence as `<table>`, say) is shown as the characters
+typed, not read as HTML, and can be commented on like any passage; a tag closed in the same
+block, a tag that never takes an end tag such as `<br>` or `<img>`, and a tag written with a
+slash before its `>` (`<x/>`) are HTML as before. A tag the viewer reads as an HTML block
+rather than as prose is HTML as before too: a tag first on its line, after a list marker or a
+`>` included, whose name is on CommonMark's HTML-block list (`<table>`, `<div>`, `<p>` and
+`<pre>` are on it; `<span>`, `<b>` and an invented name are not), or a tag alone on a line where
+a paragraph would begin. The same placeholder typed first on its line is therefore read as
+HTML: the browser shows no `<table>`, and a comment on the passage goes through the Raw view.
+A chat message is not read this way. A `<title>`, `<script>`, `<style>` or `<iframe>` that
+stays HTML takes everything after it out of the Rendered view, up to an end tag of its name,
+or the end of the file when there is none: a browser reads `<title/>` as `<title>`, so the tag
+written with the slash mid-sentence does this, and so does the tag first on its line; a
+`<textarea>` in either place shows that stretch as unformatted characters instead: after the
+tag first on its line the file's own text, and after the tag written with the slash
+mid-sentence the HTML the viewer built from the rest of its paragraph and the blocks after it,
+tags such as `</p>` and `<h2>` among the characters. Inside an
+inline `svg` or `math`, a child tag left open
+(`<svg><title>icon</svg>`, say) disappears from the Rendered view: the same rule makes it text,
+but the text lands inside the drawing, which the browser draws without it, or inside the
+`math`, which the viewer drops whole, so a comment on it goes through the Raw view, which shows
+it. A child closed with its own end tag, the drawing's `<title>` included, is HTML as before.
+
+### Text size and width
+
+The **A−** and **A+** buttons in the viewer's title bar make
+the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown
+file's Rendered and Raw views, the code view of every other text file, and a document
+opened from a link on the dashboard's own address. They appear wherever the viewer opens
+(over the chat, over the feed, in the Files pane), and not for a picture or a PDF, which have
+no text to size. Ctrl (or Cmd) and the mouse wheel over the text do the same. Once the
+size is off 100%, the percentage appears between the buttons; click it to go back. The
+choice is kept in this browser and applies to every file you open here. The prose of a
+rendered markdown file is a column of about
+eighty characters, centred in the pane. A step up in text size widens the column to keep
+its eighty characters while the pane has room for them; in a pane too narrow for that, the
+column fills the pane, leaving a small gutter on each side, and each step up fits fewer
+characters on a line. Code blocks keep the column and wrap long lines. A table no wider
+than the column sits with the prose. A wider one grows out of the column evenly, up to the
+width of the pane, and scrolls inside its own box beyond that; a table inside a quote or a
+list item stays within the prose width. Pictures shrink to fit, so resizing the pane never
+leaves the page wider than the pane, and a picture sized in pixels by its `width` and
+`height` attributes keeps its shape as it shrinks; one whose width is a percentage keeps
+the height it names.
+
+### Opening a PDF
+
+A PDF the session mentions, or one you click in the file browser, opens
+inside the dashboard like an image: the chat's PDF card opens it full-view, a path or a
+file-browser row opens it in the file viewer. Cmd-click it instead (Ctrl on Windows and
+Linux), or middle-click, and it opens in a new browser tab in the browser's own viewer, the
+way a paper opens from OpenReview: full size, and it stays open beside the dashboard while
+you keep working. If the browser blocks that new tab, the PDF opens inside the dashboard
+instead; a PDF too large to show offers a download in its place. Commenting on a PDF, and
+what the viewer does while the **Comments** panel is open, is described under Files.
+
+### Links inside a file
+
+Wherever the viewer shows a file's text, over the chat, over
+the feed, or in the Files pane, the links in that text work. A web address opens in a
+new browser tab. A file path opens that file in the viewer, in place of the one
+you were reading: a relative path such as `docs/guide.md` is taken from the
+folder of the file you are reading, an absolute or `~/` path as written, on the
+machine of the session the file belongs to, and a line written after the path
+(`src/app.py:12`, or `src/app.py#L12`) scrolls the Raw view to that line. A
+Markdown file opens in its Raw view for that one open, since the Rendered view
+has no lines; your Raw/Rendered choice is unchanged. A line past the end of the
+file lands on the last line, with a notice saying so. A line or a section
+written after a path in a todo's text or detail (`docs/report.md:12`,
+`docs/report.md#results`) opens the file there too; a section the file does not
+have leaves the file at its top, with a notice naming the section. The Raw view
+has no sections, so when you read Markdown in Raw the file opens at its top and
+lands on the section, or shows the notice, once you click **Rendered**. In a
+Markdown file, a `[link](target)` follows the same two rules: a web target opens
+a tab, a file target opens the file (a host with a port, `127.0.0.1:3000` or
+`api.example.com:8443`, is neither, and says so). A link to a section of
+another file (`report.md#results`) opens that file at the section. A link to a
+section of the same document scrolls to it
+when the document has a heading or an anchor by that name (`<a name="install">`
+included), and otherwise says so when you hover it; it scrolls under every
+click, since a section of the shown file has no tab of its own. One click does
+one thing: a plain click acts in the dashboard, and a Cmd-click (Ctrl on Windows
+and Linux) or a middle-click opens the link in a browser tab of its own. Where a comment highlight or a change mark covers a
+link, a plain click opens the comment or the change and leaves the link alone.
+Inside a file the test for a path is stricter than the one a todo or a chat
+message gets, and a fenced code block in a chat message follows the file's test
+too, linking a path only once the kernel has verified it is a file: a path links
+only when it has a slash and a file extension, starts
+on its own, at the start of a line or after a space, a quote, a bracket, a comma, a
+semicolon, an equals sign, a pipe or Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and
+`C:/Users/x.txt` stay text), is not part of a web address, does not start with a site name
+(`www.example.org/docs/index.html`), and is not the package an `import`
+statement or a `require()` call names, whether the statement fits one line or
+its `from` starts the next (a relative import such as `./app.css` still links,
+and so does a path after the English word "from" in prose, unless that line
+holds nothing but `from` and the quoted path). After a `*` the path must be
+the whole emphasised text, closed by a `*` of its own: `*docs/a.md*` and
+`**./scripts/setup.sh**` link; a glob's `**/docs/a.md`, an operand's
+`w*h/img.size` and the first path in `**docs/a.md and docs/b.md**` stay text. Web
+addresses and paths found in the text wear a dotted underline that
+turns solid under the pointer; a Markdown link that names a file keeps the
+ordinary link look. Selecting text across a link, and commenting on a line that
+holds one, work as before, and a drag that starts or ends on a link selects
+rather than opens.
+
+### The rings on a tab
+
+A tab wears a dashed red ring while its session is stopped on a
+permission or picker prompt. When the feed shows one of the session's cards under Blocked (it
+asked you something, it is waiting on a decision, a peer's message is waiting for your say, or
+a stalled task needs a look), the tab wears a dashed yellow ring instead, whether the session
+is idle, waiting on background work or still working, so the sessions that need you stand out
+in the strip without a click through each of them; a working session keeps its gold dot inside
+the ring. The ring follows the feed, one refresh behind it at most, and goes when the card
+does: answer it, resolve it or clear it and the tab is plain again. A red ring outranks the
+yellow one; the amber ring of a session retrying an API error on its own gives way to it. The
+three rings are rows of **Settings**, **Chat**, **Tab widgets** (**Needs you**, **Waiting on
+you**, **Retrying**), each with its own switch, listed in that order because a tab wears one
+ring at a time and the first that applies wins: red over yellow over amber. A ring switched off
+leaves the tab with its dot; the small dot on a folded group's header and the phone's picker
+follow the same switches. With
+notifications on, the card entering Blocked is also what notifies you (see [Notifications on
+your phone](guide.md#notifications-on-your-phone)): the ring is that card, shown in the strip, and it
+stays as long as the card does, including across a kernel restart, which announces nothing. On
+a phone, the session picker marks the same sessions with a yellow bar at the row's left edge,
+and the button that names the current session wears the dashed yellow border.
+
+### Tags and groups in the tab strip
+
+A tag is a named, colored set of sessions; a session can be in
+several. Right-click a tab and open **Tags** to add or remove them. Tags filter every
+surface (the tag button in the strip narrows the tabs to the tags you pick), and they group
+the tabs: as soon as any session carries a tag, the strip shows one section per tag, in your
+tag order, each with a header in the tag's color, and the untagged sessions after a divider
+at the end. A session with several tags appears under each of them; every copy is the same
+session (click either to open it, and closing either ends it). Each header shows the tag's color and name, then a chevron and a
+member count. Click a header, or press Enter on it, to fold its section down to the header
+alone; the count then says how many tabs are folded away, and a small dot after it shows when
+one of them is busy or needs you: red when one is blocked or waiting on you, otherwise yellow
+when one has something waiting on you, otherwise gold when one is working, otherwise amber
+when one hit an API error and is retrying on its own (hover it for their names). A folded header keeps the ⚑ flag
+of any session in it that has asked you for something; when several have, the flag shows how
+many, and hovering it names them. Click the flag to open the section. To keep one tab visible
+while its section is folded, right-click the tab and pick **Show when folded** under **Tags**;
+the header's count and flag then leave that tab out; when every tab in a section is set to
+show, the folded header shows the full count and its tooltip says nothing is hidden. Pick it
+again to fold the tab with the rest. A tab set to show when folded keeps that setting when its
+group is renamed. The section of the tab you are reading folds like any other; its header marks
+that it holds the tab (the tag's name is underlined), and folded, the header stands in for the tab:
+focus lands on it, and the left and right arrows step from there. The `archived` section starts
+folded. Drag a header to reorder the groups, which
+reorders the tags on every surface (the timeline's tag table shows the same order). To move
+a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
+adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. A
+change from another pane or another dashboard can take the tab out of that group just before you click,
+or remove the group's tag and make it again under the same name: the click then moves nothing, the row
+flashes, and its tooltip says to click again. If the change moved the tab into the group you picked, that
+row is gone instead (the tag is one of the tab's own now, with a **✕** beside it); if it only added that
+group, the row is still there and the click drops the group you right-clicked it in, the move you asked
+for. **Show when folded** refuses the same way while the tab is still in that group or has left it for
+exactly one other group whose tag already exists. When the tab has left for no group, for two or more (the
+menu cannot tell which copy you mean), or for a tag that is still being created, there is nothing to pin:
+its row leaves the flyout and the menu stays open. **Hide tab** refuses
+the same way on a re-created tag, while the **✕** beside a tag and the row's **+** act on the re-created
+tag at once. The row's **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
+button's menu, turns the sections off for this browser. On a phone the session picker, which stands in
+for the strip, lists the sessions the same way: each under its tag's heading, in the same order,
+nothing folded and nothing hidden (its tag menu has the same switch). The Sessions pane has the same
+sections: **Group by tag** in its Filter menu (off until you turn it on, per browser) lays the
+lanes out one section per tag in the same order, each session under every tag it carries and
+the untagged sessions behind a divider, with the tag's chip, the caret and the count on a row
+of its own; a section folded in either place is folded in both, and while grouped the lanes
+follow the tag order (dragging a lane pans, it does not reorder). A session reached from a card or the chat while its section is folded unfolds that section, in the strip too, and the arrow keys walk the rows on screen. The gear at the strip's right end, the same gear as the one at the bottom right of every romp page, opens a small menu: **Lock the tabs in place** freezes every tab move (a drag, a Move to, the Sessions pane's lanes) until you turn it off, and **Tab widgets…** opens the settings on the Chat tab's widget rows. The strip's tag button, at the other end of the controls from the gear, shows no chips of its own: the tags show in the strip's sections when the tabs are grouped, and the button wears the accent while a filter is on. The groups follow one another across the
+strip and wrap as they need (a header left at a row's end with its first tab on the next row moves
+down to join it, when the two fit on one row); the gear's **One tag group per row in the tab strip**
+starts every group on its own row instead. When every group starts on its own row, folded groups that
+follow one another in the tag order share one row, since each is only its header; an open group always
+starts a row of its own, and so do the untagged sessions, so a folded group between two open ones keeps
+its row too. With the groups following one another, the untagged
+sessions sit behind a thin divider. The **Status line** section, next to Tab widgets in the same Chat tab, does the same for the line above the composer: the folder and the git branch are on by default, the session's name and the host of a remote session are there to switch on, and in both sections the rows reorder by dragging a row's grip or with the arrow keys on it, each section previewing the result below its rows; in Tab widgets a line marking the session name's place divides the list, and a row dragged above or below it renders on that side of the name; the three rings around a tab are listed below those rows without a place in the order, since a ring has no side of the name.
+
+### A tag section at a glance
+
+Clicking a tag section's header also shows the section in the transcript's place:
+one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a
+prompt or an API error only you can clear, amber retrying an API error on its own, teal compacting,
+green waiting on background work, none while it is idle), a state chip when the state is worth a
+word, a ⚑ when it has asked you for something, what it is doing now in a few words, and how long
+ago it last did anything. The chip is the one the bar under the transcript wears for the session
+you are reading, with the same words and colours: **Blocked** when the feed shows one of the
+session's cards under Blocked (a request it flagged for you counts here once the session is idle
+on it) or the session is stopped on a prompt (**API error** when it is stopped on one only you can
+clear), and **Awaiting** with what is awaited (**Awaiting 3 agents**, **Awaiting watch**, the
+peer's name) when it is waiting on background work; the flag and its count show as soon as it
+flags one. A session that asked a question and went quiet shows the chip
+with no dot: the dot follows the session's own state, the chip follows the feed. What it is doing now comes from its current task, else from the headline of
+its work so far, else from the last task it had; a session that has published a note of what it is
+working on shows the note as a quieter second line. Hover a row for its last message, shown without
+its formatting; click one to open that session, which also opens its section if the section is
+folded (with several tags, the first folded group of them that does not hide it; a section that
+hides the session stays as it was; see the next paragraph). Right-click a row, or press the
+menu key while the row has the focus, to open the menu a right-click on the session's tab opens, with
+the same rows. **Rename** from that menu edits the name on the row while this view shows it. The rows update as
+the sessions work and change only when something about a session changes; the **Blocked** chip
+follows the feed, at most a moment behind it. The section of the tab you are reading folds like
+any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
+The transcript comes back when you pick a session, press Escape, or click that header again while
+its section is open and holds the tab you are reading. Sections, and this view with them, are for
+the desktop layout; the phone layout keeps its flat list.
+
+### Hiding a session inside its group
+
+Each row in this view has a **Hide** button, or **Show**
+once the session is hidden. Hiding a session takes its tab off the strip while its group is open
+and moves its row under a **Hidden (N)** fold at the foot of the view, one click away; the row's
+**Show** button puts the tab back at once. You can also hide a session from its tab: right-click
+the tab and pick **Hide tab**. The line under the label names the group the session hides in and
+where to show it again: the group's view, where its row has the **Show** button. Which click opens
+that view depends on the fold: an open group's count opens the view and leaves the group open; a
+folded group's header opens the group and the view together. While the menu is open, the row
+follows the copy you right-clicked, through your edits in the **Tags** flyout and through changes
+that arrive from elsewhere (another pane, another dashboard). The menu knows the group by its
+tag's id, and by its name when no tag has that id: a tag renamed meanwhile keeps the row under its
+new name, and a tag removed and made again under the same name keeps it too. A group the menu
+knows by its name alone is lost to a rename while the session is under two or more groups: the row
+leaves, and a click writes nothing. Three kinds of group are known that way: a group that only
+another machine's tags make, a tag that was still being created when the menu started following
+the tab under it (you typed its name into the **Tags** flyout while the tab had no group, or you
+right-clicked the tab while the tag's row under **Tags** said creating), and a tag removed and made
+again under the same name, which the menu knows by its name from then on. Moving it to another group
+changes the group the line names. Removing that group's tag takes the row away, unless the session is left under
+exactly one other tag, whose group the line then names: under two or more, the menu cannot tell
+which copy you mean. If the removed tag comes back (a removal the kernel refused, or the tag added
+again from another pane), the line names your group again, unless you added a tag from the flyout
+while the line named the one remaining group: that add keeps the line on that group, and the tag
+coming back does not move it. While the row is away, adding a tag brings it back for that group, unless
+the copy's tag is still being created: an add then keeps the copy under the pending tag, and the
+row stays away until that tag exists. A removal that leaves one tag brings it back for that one.
+Removing one of the session's other tags leaves the line alone. If the group changes under the menu
+just before you click, the click hides nothing. While the tab is still in the group the line named,
+or has left it for exactly one other group, the line redraws for the group the tab is in now, the
+menu stays open, and a second click acts on what it says; when the words would not change (the
+same group under a new tag), the line flashes instead and its tooltip says to click again. If the
+tab has left that group and is under none, or under two or more (the menu cannot tell which copy
+you mean), or the tabs were ungrouped from another pane, the menu closes and nothing is hidden.
+The menu has **Hide tab** only while
+the tabs are grouped by tag and the tab is in a group, since nothing is hidden on the flat strip,
+on a phone, or for the untagged sessions after the divider. A tag that is still being created (its
+row under **Tags** says creating) has no **Hide tab** yet; the row appears once the tag exists. A hidden
+session has no tab to right-click, so this view's **Show** button puts it back. A right-click on its row
+here opens the tab's menu, where **Hide tab** reads **Show tab**. Hiding is separate
+from folding: fold the group and open it again, and the hidden sessions stay hidden while the rest
+come back. Nothing is lost by
+hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
+when one of them needs you), and its count shows two numbers, **6+2** for six on the strip and two
+hidden (the tooltip spells it out). When a hidden session needs you, the fold's head says so in
+red before you open it, and its row wears the **Blocked** chip, or the ⚑ alone for a request it
+flagged while still working. While the group is open, its count opens this view without folding the
+group, so hiding a session never needs a fold; the dot and the flag, which appear once something is
+hidden, do the same. On a folded header
+the flag opens the group, as before. While this view shows an open group, its count, dot and flag take
+you back to the transcript. Clicking a hidden session's row shows its transcript, with the header
+standing in for the tab, and leaves it hidden, its group folded or open as it was, unless the
+session has another tag whose group is folded and does not hide it: that group opens and the tab
+shows there, the hide standing where it was. A session set to **Show when folded** stays hidden
+while it is hidden: the hide wins, and the setting resumes when you show it again. A hidden
+session keeps the setting when its group is renamed, and shows again wherever it lands when it
+leaves the group. Like the sections, hiding is per browser and for the desktop layout.
+
+### Coming back after a dropped connection
+
+When the dashboard's link to the kernel
+drops and comes back (a laptop lid closed and opened, a network change, a phone that
+slept), the page does not fetch every session again. The kernel sends the session you
+were reading in full and lists the others as skeleton tabs: the strip is complete at
+once, each tab with its name, color and status, and a transcript arrives only when it
+is wanted. Click a skeleton tab and the romp loader stands in until its transcript
+lands; the tabs you do not click fill in one at a time while the page is idle, never
+while the browser tab is hidden. On a phone, after it comes back, the other tabs stay
+skeletons and load only when you tap them, until the connection drops again. Until then a skeleton tab's hover tooltip says it is
+not loaded yet.
+
+![After a reconnect, the tab you were reading is back in full while the other tabs wait as skeletons](assets/guide/reconnect-skeleton-tabs.png){ width="32%" }
+![Clicking a skeleton tab puts up the loader until its transcript arrives](assets/guide/reconnect-skeleton-click.png){ width="32%" }
+![The clicked tab, loaded](assets/guide/reconnect-skeleton-loaded.png){ width="32%" }
+
+### On a small screen
+
+To keep more of the transcript in view, turn on the gear's
+**Compact tabs and agents** setting. It tightens the rows in the background-work panel above the
+composer (the one headed **Awaiting** or **In the background**) and shows about four of its rows,
+scrolling for the rest; the cap lifts while a row's details are open. Where the tab strip is showing,
+it also shrinks the tabs and group headers; on a phone the session picker stands in for the strip, so
+there the setting tightens the panel alone. Like the other chat settings, it is per browser.
+
+### Columns, and a hot key per tab
+
+The chat can be split into columns, so two or three sessions
+sit side by side instead of behind each other's tabs. Every column is one full chat with its
+own tab strip and its own composer, and each session lives in exactly one column: the first
+column holds every session not shown elsewhere. Drag a tab to the right edge of the chat and a
+new column opens there on that session; drag a tab onto another column and the session moves
+to it. Without the mouse, **⌘** / **Ctrl** with the backslash key, or **Move this session to a
+new column** in the command palette, moves the session you are on to a new column at the right;
+**Move this session to the next column** and **Move this session to the previous column** in
+the palette walk it across the columns you have. Your unsent draft travels with the session.
+Drag the gutter between two columns to resize them. The **×** in a column's top-right corner
+closes it and returns its sessions to the first column, as does **Close this column** in the
+palette (the column you are in, or the last one when you are in the first); a column whose last
+tab leaves, whether moved away or ended, closes on its own (a column with a session still being
+created in it waits for that session to open). Clicking a card in the feed or a
+notification, or picking a session from the **+** picker, the switcher, an at-mention or a link
+in a transcript when it is shown in another column, lands you in the column that holds it, so
+no session is ever shown twice. The arrangement, each column's sessions and widths, is
+remembered per browser across reloads. Four columns at most; the phone shows one pane at a time
+and never splits.
+
+A tab can have a **hot key**: right-click it, pick **Hot key…**, press a combination, and the
+combination shows on the tab after its name; pressing it switches to that session, in the column that holds it. Once one is set the row reads
+**Update hot key…**: press a new combination to change it, or Backspace or its **Remove**
+button to take it away. **Focus the next chat column** and
+**Focus the previous chat column** in **Keyboard shortcuts** take a hot key too, and cycle the
+focus between the columns; **Toggle notifications for this session** flips the bell of the
+session you are looking at (the tab menu's **Notify me**) and flashes "Notifications enabled
+for web" or "disabled"; once it has a key, the menu's row shows it.
+
+## The feed's layout controls
+
+The **View** button in the feed's footer holds the layout choices: the sort
+direction, a single-column layout, grouping each column's cards by session, and
+**Show focused session**. That last switch puts the session you are reading in
+the chat at the top of the feed, above a divider (a two-pixel rule, a step
+up from the hairlines), under a label reading
+**Current session:** followed by the session's name. Clicking the name opens the
+session; clicking the label or its caret folds the whole section to that one
+line, which then shows the session's card count, and clicking again unfolds it.
+Under the label the session's cards sit in the same three blocks as the board
+below, which stays as it is. The blocks have their own controls: the six-dot
+grip on each block drags it to another slot within the section (the arrow keys
+move a focused grip's block the same way), the gutter between two blocks resizes
+them against each other (width only; the section's height follows its cards),
+and each block's caret folds it to its head, a choice that holds for whichever
+session is focused next. The section's blocks follow the board's arrangement
+until the first drag in the section; from then on the two are arranged
+independently.
+
+## The Waiting on you pane
+
+One list of every user todo a session has flagged for you, oldest first,
+across every session and every attached machine: a decision it needs, a
+credential, a pick between two designs. Each row names its session and shows
+how long the todo has waited. Reply sends your answer straight into that
+session, waking it if it has gone quiet; Dismiss clears the todo without a
+reply. A file path in a todo's text or its detail is a link: click it and the
+file opens in the Files pane when that pane is on screen, and otherwise in a
+viewer over this pane; a line or a section written after the path
+(`docs/report.md:12`, `docs/report.md#results`) opens the file at that place
+(for a section, once the file is in its Rendered view; see Files). Absolute
+paths, `~/`, `./` and `../` paths and `file://` URIs link as they are; any other
+relative path links only when its last segment has a file extension
+(`notes/plan.md`, not `notes/plan`). A todo that names its file also shows the
+file's name as a chip on the row and in the Reply box, with the full path on
+hover; the session's own todo card in the chat shows the same chip. Click the
+chip and the file opens the same way; a **Send to session** from that file can
+then answer the todo (see Files). A web address in a todo's text or detail is a
+link that opens in a new tab, and a todo that carries its own address shows it
+as a second chip beside the file's, the whole address on hover. The pane is off by default, like the outline;
+turn it on from the bottom bar. Sessions flag todos only where
+the gear's **User todos** switch is on, and the switch is per machine: while it
+is off on this one, the pane says so and still lists the
+other machines' todos. A todo you expected can be missing for two reasons. A
+session that has ended keeps its todos out of the list until you revive it
+(click **+**; closed sessions are listed under **Recent**). A session you have
+hidden from the feed (right-click its tab, **Hide from feed**) keeps them out
+too, though its tab still shows the ⚑ mark; **Show in feed** on the same menu
+brings them back. The file the todo named is still on disk.
+
+## The Files pane
+
+The Files pane holds the file viewer in a column of its own, beside the chat
+and the feed, so an open file covers neither. While the pane is open, a file
+link clicked in the chat opens here. When it is closed, a link opens over the
+pane you clicked; there is no setting to decide otherwise, the open pane is the
+rule. On a phone, closing the file takes you back to the tab you came from.
+The folder under the chat (the session's working directory) opens a
+listing of that folder by the same rule: in this pane while it is open,
+otherwise over the chat. Pick a file in the listing and
+it opens where the listing is. The **Directory** row of the **System context** card and
+**Browse files** on a tab's right-click menu open the same listing. Selecting
+a passage in it puts the quote in the chat's composer, as it does from the
+viewer over the chat. When no file is open, the pane lists the files most
+recently open here; click one to open it again, and the file opens at the
+place you left it. The pane is off by default: the gear's **Files** row (Settings, General, Panes)
+adds a Files toggle to the bottom bar (on a phone, a Files tab like the others), and that
+toggle turns the pane on.
+
+**How a markdown file reads.** The Rendered view shows a markdown file the way GitHub
+shows a README, set for reading as *Opening a markdown document* in the chat chapter
+describes: the face and size, the headings, task lists, keys and tables, the numbered
+code blocks with their **Copy** buttons, the highlighted fences and the print layout.
+The details that paragraph leaves out: the text is a little larger than the dashboard's
+own (15 pixels where the chat is 13); headings step down from twice the text size to the
+text size at the fourth level, with a rule under the first two and the fifth and sixth
+dimmed; a table's header row is bold on a faint fill and every second row is tinted; the
+languages the viewer colours are bash, python, javascript, typescript, json, xml and html,
+css, markdown, diff, yaml, rust, go, c, java, sql and toml (an ini file's grammar), a block
+that names any other language stays plain rather than being guessed at, and comments in
+coloured code are readable against the block. TeX math renders wherever the file is shown:
+`$x^2$` inline and a `$$` block on its own, the same in the chat, the feed and the Files
+pane. The **Outline** button above a rendered file lists the file's headings; pick one and
+the view scrolls to put it at the top, opening a closed fold around it. The printed page
+leaves out the title bar, the Comments panel and the Copy buttons.
+When a file cannot be shown as rendered Markdown, its text is shown as written, the way Raw
+shows it, under a line that says so and names the error; **Rendered** stays chosen, and the
+next reload or click of that button tries again.
+
+**Files written for Obsidian.** The constructs an Obsidian vault uses render as they do there.
+Front matter, the `---` block of keys at the top of a file, folds under a **Front matter** line;
+click it to read the keys. A footnote reference such as `[^1]` is a numbered link to its
+definition, and the definition (`[^1]: ...`) stands where it is written, with a link back to the
+text. A callout (`> [!note] Title` and the body under it) is a titled block tinted by its type;
+GitHub's `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` and `[!CAUTION]` render the same way,
+and a callout written `[!note]-` or `[!note]+` folds closed or open. `==text==` is highlighted.
+A wikilink such as `[[Note]]`, `[[Note|shown text]]` or `[[Note#Section]]` opens `Note.md` from
+the folder of the file you are reading, at the section when one is named, the way a
+`[link](Note.md#Section)` does; `[[#Section]]` scrolls to a section of the same file. An embed
+`![[picture.png]]` shows the picture from the file's folder (`![[picture.png|300]]` sets its
+width), and `![[Note]]` is a link to that file. In the chat, where a reply has no folder to
+resolve against, a wikilink shows as dotted text that says so when you hover it.
+
+**Your place in the file.** The passage at the top of the view stays where it is when
+the file is read again after a session writes it, when you switch between Rendered and
+Raw, when the pane is resized or the Comments panel opens or closes, and when the text
+size changes. When the viewer cannot tell which passage is at the top, as with an HTML
+block that wraps the markdown after it, it leaves the view where the browser puts it, and
+the passage at the top might change. A notice from the viewer (a line past the end of the
+file, an edit the viewer refuses) sits above the file's text, wherever you have scrolled
+to, and stays through a switch of view and a reload until the next notice replaces it or
+you open the editor. A notice raised while you edit (a save that failed) goes when you
+leave the editor; a warning about the comments log stays when the save that raised it
+closes the editor. The file takes the keyboard when it opens, so the arrow keys, PageDown
+and Space scroll it at once; a box you were typing in keeps the keyboard. When a file
+changes on disk while you read it with the Comments panel closed, a line above the text says
+so the next time you return to the dashboard, and **Reload** reads it again with your place
+kept.
+With the Comments panel open, the panel itself reads the file again; when that read fails, a line
+at the top of its cards says so (**The file could not be read again**), gives the reason in
+parentheses, and offers **Reload**.
+An empty file says so in place of its text (**This file is empty**), and **Edit** still opens
+it.
+A file whose only bytes are a byte order mark says so instead (**This file holds only a byte
+order mark**).
+
+**Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
+the file, where each card sits level with the passage it is about and scrolls with the text;
+when the column is narrow the panel drops below the file and lists the cards instead. The card
+you click sits level with its passage whatever stands above it, and a long card folds to a few
+lines with **Show more** at its foot. Neither happens in the list under a narrow column, where a
+long card shows whole. Select a
+passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection (it
+hides when you scroll and appears again when you select, and it follows a selection you make or change from the
+keyboard); type the comment
+(Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
+**Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
+Saving leaves the text where it is. When the new card lands out of view, a line at the foot of the panel, **Saved · the card is above** (or **below**), says where it went; click the line to bring the card into view, or leave it: it goes with your next scroll, click, tap, or key, except Tab or a modifier key pressed on its own, so you can reach it from the keyboard.
+In the list under a narrow column, the line stands under the panel's header instead.
+**Comment on this file** leaves a comment on the file as a whole, which every file takes. A table cell, a selection
+across several cells of a table and a line of a code block can be commented from the Rendered view like any passage; a
+comment across cells quotes the pipes between them as the file holds them. When a passage cannot be mapped from the
+Rendered view (a formula), the panel says so, keeps your comment, and offers the Raw view with the passage selected. A comment on a formula that stands on its own line (a `$$` block)
+highlights the whole formula. Comments are stored beside the file, in the
+`.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
+folder that already holds one; a file with none gets the folder created beside it), in the
+format the session's own tools read. A comment made here and a reply the session writes are
+the same object, and the two other editors that read the format see them too. Each comment
+is a card in the panel: click it to expand or resolve it, and **Reply** opens the reply box inside
+the card, under the comment and its replies. The passage it
+refers to is highlighted in the file, and a comment on text that occurs more than once stays
+on the occurrence you chose. When the file has changed around that occurrence, the comment's own
+record of where it was, which copy it is and the heading above it places it again. When none of
+those can tell which copy the comment meant, its highlight is dashed and the card carries a
+**passage recurs** tag: the copy shown is a guess, and the card says so. Saving the comment again
+from the right copy, as the card asks, adds a new card on that copy with no tag; the old card keeps
+its tag, so resolve it once the new one is saved. Where two comments cover the same text, the text
+carries one highlight, and a click where they overlap opens both cards, the one you clicked in
+front. When the session has
+rewritten the passage, the card
+says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
+show it. Going to a comment whose passage sits inside a closed fold (a `<details>` block, a
+callout written `[!note]-`) opens the fold first.
+
+**Figures.** On an image, whether it is a file of its own or a figure in a markdown page,
+drag a rectangle to comment on that part of it. The rectangle stays on the picture with the
+author's chip, and the card shows that part of the image. When the image's bytes change the
+comment is shown as stale until you resolve it, or press **Re-place** and drag the rectangle
+again where it belongs now; the comment keeps its words and its replies, and only the
+rectangle changes. A figure embedded in a markdown file, such as `![](plot.png)`, is loaded
+from the file's own folder, so a relative path shows in the Rendered view, and so are a
+`<video>`, an `<audio>`, a `<source>` and a `<video poster>` written as HTML; a `data:` image is
+left as written. A figure from the web loads when the file opens only if its host is on the
+gear's **Pictures from the web in files** list (github.com and its image hosts, `localhost` and
+`127.0.0.1` to begin with). A figure from any other host shows a box naming the host in its
+place, and makes no request until you click the box; the click loads every figure from that
+host in the file, and the host stays loaded until the page reloads. An inline `<svg>` whose
+`fill`, `stroke`, `filter`, `clip-path`, `mask` or marker attribute points at another host
+with `url(...)` is a figure from the web too, and waits behind the same box. Edit the list
+in the gear, one host per line: an address pasted whole is stored as its host alone, a line
+that is not a host name is pointed out under the list, and an emptied list loads nothing
+from the web without a click. A figure path that starts with `~/` is not expanded to your
+home folder: it names a folder called `~` next to the file, as other markdown viewers read it,
+while a link that starts with `~/` does open under your home folder. A comment on an embedded
+figure is stored on its embed line,
+with the rectangle: the session's tools and the other editors place it on that line, and this
+viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or a trackpad;
+on a phone, comment on the file as a whole instead.
+A figure that cannot be loaded, because its file is missing or is not an image, shows a line
+where the picture would be: **Image failed to load**, then the figure's path as written in the
+file, and its alt text when it has one.
+A picture opened as a file of its own whose bytes will not decode, because it is still being
+written or was cut short, shows a line in its place (**this image failed to decode: it may be
+mid-write or truncated**), then the file's path, and **Download**, which saves the file to your
+device.
+An SVG picture loads from the file's address after the file is read; when that load fails, the
+viewer reads the file again. If the file cannot be read, the reason shows in the picture's place
+with the file's path; if it can and the picture fails again, a line says so (**this image failed
+to load or decode: the connection may have dropped, or the file may be mid-write or
+truncated**), then the file's path, and **Download**. Either way, the viewer then tries again by
+itself when the connection returns, and on the next few updates it receives. When the file is read
+again for another reason (**Reload**, or the Comments panel after the file changes) and that read
+fails, the reason shows the same way, and the viewer does not try again by itself.
+
+**PDFs.** A PDF opens in the browser's own PDF viewer. While **Comments** is open, the viewer
+draws the pages itself instead, one below the other, so a rectangle can be dragged on a page
+the same way as on an image; the comment names its page, and its card shows that part of the
+page once the page has been drawn. Pages are drawn as you scroll near them, so until then the
+card shows a line naming the page, and clicking it scrolls the page in. A rectangle drawn on
+one page can be placed again on another. Pages are drawn only up to 25 MB of PDF; above that,
+or when the page renderer cannot be loaded or the file cannot be opened, the browser's viewer
+stays with a line above it saying why, and a comment on the whole file still works. The
+renderer ships without pdf.js's standard fonts and CMaps, and without its JPEG 2000, JBIG2, and
+fax (CCITT) image decoders, so a PDF that does not embed its fonts may show some text in a
+system font, and an image in one of those encodings is left blank, with a line at the top of
+the page saying how many; the rest of the page still draws, and the browser's own viewer shows
+the whole page.
+
+**Track changes** records a session's edits to the file as changes for you to accept or
+reject, instead of letting them land silently. Turn it on for the file or for its folder,
+and turn it on for the folder a session will write into *before* it writes: only edits made
+while tracking is on are recorded, and a folder can be tracked before its files exist.
+Each change is a card in the panel, grouped by the paragraph it falls in, and is marked in
+the file in both views: an insertion is tinted, a deletion is struck at its point, and a
+substitution shows both, the struck old text before the tinted new text. **Show changes
+inline**, beside Track changes, hides the marks and shows them again; with the marks hidden,
+the file reads as it is and the cards alone show the changes. The setting is kept for every
+file you open. Once a file has a comment or a change, **All**, **Comments**, and **Changes**
+appear under those two toggles and choose what the panel lists; Comments and Changes show
+their counts. **Comments** lists only the comments, comments about changes among them, and hides
+the change marks in the file; **Changes** lists only the changes, each counting the comments
+about it, and hides the comment highlights and the rectangles on figures; **All** lists both. The
+choice is kept like the marks setting and changes only what is shown: **Send to session**
+still sends everything unsent. Every card names its kind, **Comment**, **Change**, or
+**Region**, before the author's chip, and its left edge is colored by kind, the accent for a
+comment and a muted tone for a change, so the two are told apart at a glance. **Accept** keeps the text as it is and drops the record. **Reject** puts the old
+text back in the file. **Accept all** and **Reject all** decide every change at once; Reject
+all asks you to confirm. A deletion's card offers **Reveal**, which opens the Raw view at the
+deletion, since a point is easy to miss; a change the current view does not mark, because it
+cannot or because the marks are hidden, offers it too. **Comment on this change** on a change's
+card opens the comment box over the change's text with **about this change** checked, so the
+comment names the change and the message tells the session which change it is about; a deletion,
+whose text is no longer in the file, takes a comment about the change alone, laid beside its mark (in the list
+under a narrow column, listed like any other card).
+A comment is never shown inside a change's card: every comment is its own card, and the comment
+and the change each carry a tag for the other, **about a change** on the comment (hover it to ring
+the change's marks) and **N comments** on the change (click it to open the first). Selecting text
+inside a change and pressing Comment leaves an ordinary comment on those words, with the same
+**about** box checked for the change your selection touches (**about N changes** when it touches
+several); uncheck it for a plain comment on the passage. A click on a change mark or a comment
+highlight opens its card, and a selection made by dragging inside one leaves a comment on those
+words. A comment an older session's edit answered wears **answered by a change** instead. A session's
+tools refuse to rewrite an image or a PDF as text, so a tracked folder may hold figures. A session
+that tries to write a tracked file any other way, with its editing tools or a shell command such
+as `cp`, `tee`, `sed -i` or a `>` redirection, is refused and pointed at its track-edit command,
+so its edits still come to you as changes. In a project that tracks files, a shell write whose
+target Romp cannot read (a substitution, a name the command never sets to a plain string, or a
+glob it cannot expand) is refused too, and the session is asked for the literal path. What a shell command can still do to a tracked file is set out in full in this reference, in its section on the tooling the installer puts in `~/.claude/`.
+
+**Edit** works while changes are pending. The editor shows them inline, an insertion tinted
+and a deletion struck, and typing around them moves them with the text. Click a change to
+accept it; Alt-click (Cmd-click on a Mac, Ctrl-click elsewhere) rejects it; undo restores
+either, so nothing is final until you save. On a phone or a tablet, a tap on a change places the
+caret and decides nothing: Save or Cancel first, then accept or reject from the cards. **Save**
+writes the file and the changes together.
+A save that is refused, because the file or its changes moved on disk while you were editing,
+keeps your text and offers **Reload file**, which asks before discarding it; while you edit,
+the panel says when the file changed under you. The session's own track-edit keeps working
+throughout. A file with CR or CRLF line endings cannot be edited while changes are pending,
+because the editor rewrites its line endings, which would move them; accept or reject them
+first. Without pending changes such a file can be edited, and when its lines all end in CR, or
+all in CRLF, it is saved with those endings. A file that is not UTF-8 on disk can be read but
+not edited, and a line above the text says why: a save would rewrite its bytes as UTF-8.
+
+**Send to session** hands everything unsent to the session that owns the file as one
+message, in your words: the comments and replies you wrote since the last send, each with
+what it refers to, the changes it is about, and the commands the session needs to answer it. The number on the button
+is what will go, and the confirm lists it, with a box for anything you want to add in your own
+words, which go first in the message; words alone send too. When a
+todo under Waiting on you names this file, or you opened the file from a todo, a checkbox
+answers that todo with the same send; when several todos name the file, a row of choices
+picks the one to answer, or none. When tracking is off, another checkbox
+turns it on first, so the session's revisions come back as changes. When changes are pending,
+a third checkbox, **accept the pending changes you have seen**, accepts before the send the
+pending changes you have looked at: the ones already there when you first opened the panel, and
+any that arrived later whose card was in view when you scrolled, clicked, tapped, or pressed a
+key. That way the session's later edits arrive as new changes instead of folding into an old one.
+A change you have not seen stays pending, and the checkbox says how many do, or, when you have
+seen none of them, that nothing is accepted until you look, and is then off. A change the session edits again after you looked at it counts as unseen until you look again. The message then
+says how many changes you accepted and rejected. All are checked by default. One send
+answers one todo; a todo that named several files is answered by the first, and later sends
+no longer offer it. The panel then says **Sent to** the session and when, or **Queued for**
+it when the session has gone quiet, in which case the message goes when it wakes.
+
+While the panel is open it checks the file, its comments, and the project's tracking list
+every few seconds, so a reply the session writes appears without a reload and a file the
+session rewrote is shown as it is now.
+A line under the panel's header counts the changes, comments, and replies the session added since you last looked, and each of their cards wears a dot until you scroll or click with it in view; click the line to open the first of them.
+Nothing resolves a comment but you: **Resolve** on its card, or **Resolve answered (N)** in the panel's header, shown once
+the session has replied to N of your open comments since you last wrote on them (a revision counts as a reply), which
+resolves those N after a plain confirm and offers **Reopen all** where the sent acknowledgment stands (in the list under
+a narrow column, under the panel's header) until your next scroll, click, tap, or key. The first comment, like the first
+save, asks once
+whether the dashboard may write files on that machine; the same switch, **File editing** in
+the gear, turns it off again, and while it is off a send is refused too (it writes the log)
+and asks for the consent back. The **Log** at the foot of the panel is the comments log: what
+was sent and when, the changes you accepted or rejected, tracking turned on or off, and your
+direct edits to the file, kept beside the comments in the same folder so git keeps it when the
+project does. Once a change is decided, its card is gone and the Log keeps the decision: the row
+gives the count, and clicking it shows the old and new text of each change. Whether
+`.trackchanges/` is committed is the project's call; a `.gitignore` line keeps it out. Sessions are
+asked to include the folder when they commit their own work, so the comments and the changes are
+kept with it; your commits are yours, and nothing here stages or commits anything.
+
+If the **Comments** action is missing on a file, the gear's **File comments** row says why:
+the kernel that owns the file has no node on its PATH, or it predates the feature. The same
+row warns when sessions on that machine cannot reply because their tooling is not linked
+into `~/.claude`; running romp's `install.sh` there links it.
+
+## The Artifacts pane (experimental)
+
+A column listing the files a session's thread put in: a grid of large
+thumbnails for its images, then a row per file with its name, its folder, one
+word for how it got there (`written`, `edited`, `notebook`, `shown`,
+`dropped`) and how long ago. Clicking a thumbnail opens the chat's lightbox,
+whose arrows cycle that session's images; clicking a row opens the file in the
+Files pane when that pane is on screen, otherwise in this pane's own viewer.
+The bar's picker names the session, and its padlock decides whether the pane
+follows the chat's active tab or stays on the session you picked.
+
+The pane is experimental and off by default: its row is the last one in
+Settings, General, Panes, and anything but a stored `true` reads as off. Turn
+it on and its column and its rail button appear, along with the palette's
+**Show or hide the Artifacts pane**. It has no tab on a phone, and the Panes
+rows are shown on the dashboard only, not in the editor extension's gear.
+
+What it lists is read from the session's transcript alone, with no judge and no
+model call: the paths of `Write`, `Edit`, `MultiEdit` and `NotebookEdit` calls;
+paths the chat linked or rendered from what the agent wrote; and files you
+dropped into the session. Commands the agent ran are deliberately not read. One
+entry per path, newest first, five hundred at most. A file that has since gone
+is listed struck through rather than hidden, a kind the preview cannot show is
+listed plain, and a path under the Claude configuration directory is refused.
+The pane only reads: it writes nothing and puts nothing into a session.
+
+## Pane docking
+
+Off by default, per browser, at Settings, General, Panes, **Pane docking**.
+With it on, the panes stop being a fixed row and become a layout you arrange
+yourself.
+
+You move a pane by its empty space, never by a title bar: the frame around it,
+the gap in its top row, Option (Alt) held anywhere over it, or the pane's own
+empty background (the feed between cards, the Sessions band outside its lanes,
+the Outline below its rows, the Files pane's empty state). The pointer is an
+open hand over a surface you can grab and a closed hand while you hold one. A
+press lifts only after a few pixels of travel, so a click, a text selection and
+a scroll are never a drag, and Escape cancels. An outline in the accent color
+shows where the pane will land: the left, right, top or bottom half of the pane
+under the pointer. Dropping splits that pane, and every internal edge becomes a divider
+you can drag.
+
+A session tab is a payload too. Drag one into a pane's half and it becomes a
+chat pane there; drop it on another chat pane's tab strip and it joins that
+column. A whole pane dropped on a strip is refused, since a pane is not a tab,
+and the refusal says so.
+
+Every pane on screen takes part: the chat and each column of it, the Outline,
+the Feed, the Files pane, the Sessions band and any other pane the kernel
+carries, the Artifacts pane included. A pane switched off at the rail parks
+with its content still mounted, so nothing reloads and no connection drops.
+The arrangement is kept in this browser under a key of its own, written only
+while docking is on; switching it off restores the shipped layout exactly, and
+that switch is the only way back to it. Desktop only: the engine does not start
+on the phone layout.
+
+## Settings across machines
+
+Settings sit in two stores. What a page looks like is kept in the browser you
+are looking at: the theme, the transcript's density, which panes exist here,
+the tab widgets, the backend a new session starts on. None of it travels.
+
+What the kernel acts on is kept by the kernel, and most of those rows say
+**Follows to every connected machine's kernel.** under them: one click there
+is sent to every kernel you are connected to. Four rows go further and
+converge, so two machines that were set differently while apart end up
+agreeing: **Auto Nudge** and **Suggest /compact** (Automation, Nudges),
+**Allow file editing** (General, Permissions) and **Task tracking**.
+
+Converging never overwrites your machine quietly. A peer holding a newer pick
+raises a proposal: a second line under that row reading, for example,
+`web proposes off; this machine is on`, with **Apply** and **Keep mine**, and
+an owner-less needs-you card on the feed's Notes run carrying **Apply**,
+**Keep mine** and **Keep mine and pin this machine**. Acting either way
+settles it, and the same proposal is not raised again.
+
+The machine picker sits above the settings tabs and appears once a remote
+kernel is up. It reads **All kernels** by default, with a count of the rows
+the kernels disagree on beside it (`1 differs`, `2 differ`), and its rows are
+this machine (named by its kernel, or **this machine** when it has no name)
+and each connected one. Pick one or more machines and the four converging rows
+apply there alone, which pins the value there; the pin glyph at a row's right
+edge lights, and clicking it returns that row to the shared value.
+
+A few kernel settings stay on the machine that holds them, because they
+describe it: **Conserve memory**, **Thinking summaries**, **Whole chat
+frames**, and the **Default directory** for new sessions, a path that means
+nothing on another machine. **Updates install automatically** is sent to every
+kernel when you click it but is not one of the converging four: each install
+keeps its own boot policy.
+
+Two marks say the machines differ. A quiet **mixed** on an ordinary kernel row
+means picking here sets every machine the same way. A louder **differs** on
+one of the four means the kernels disagree: under **All kernels** a click sets
+them all, and picking a machine above sets that one alone.
+
+The settings open from the gear at the bottom right, or the palette's **Open
+settings**, in seven tabs: General, Chat, Feed, Sessions, Automation, Task
+tracking and Debug. The tab you used last is remembered in this browser.
+
+## Renaming and ending a session from the Outline
+
+Right-click a session's name in the Outline pane, or press the Menu key (or
+Shift and F10) on the focused row, for two items: **Rename** and **Delete**.
+
+**Rename** turns the name into an input with the current name selected. Enter
+commits, Escape cancels, and clicking away commits as Enter does. The name is
+a label: mail, goals and history follow the session, not the word. Nothing
+changes locally until the kernel confirms, so a name it refuses leaves the old
+one standing; on a session from another machine the `host:` prefix stays fixed
+beside the input and you edit the bare name.
+
+**Delete** raises the same confirmation the tab strip uses. It names the
+session's open top-level goals and says that the session shuts down while its
+history stays on disk, to revive any time from the picker or the timeline.
+**End session** ends it, **Cancel** does nothing, and the row leaves on the
+kernel's next push rather than ahead of it.
+
+The pane itself is the rail's **Outline** button, off at the rail until you
+press it. Whether it exists in this browser at all is General, Panes,
+**Outline**, on by default, and with Task tracking off it is gone along with
+the feed.
+
+## Token usage: the two panels
+
+**Sessions against judges.** Settings, Debug, Diagnostics, **Token usage
+analytics** opens the **Token usage** panel: two bars, **Sessions** and
+**Judges**, over the last `1h`, `6h`, `24h` (the default), `7d` or `30d`. The
+judges' bar stacks **By judge** or by **Index vs triage**, the measure is
+**Tokens** or **Cost ($)**, and a line under the legend reads the judges as a
+percentage of the session tokens, with the combined figure. The judge dollars
+are the exact cost each judge call reported; the session dollars are the CLI's
+own per-turn cost from romp's spend ledger, plus an estimate from transcript
+tokens and a price table for any part of the period the ledger predates (the
+footnote names each amount; the estimate stands alone only where there is no
+ledger).
+
+**What the API is costing.** The bottom bar's spend readout opens **API
+spend**, which the palette reaches as **Token usage** too: **Totals**, **Spend
+over time** and **By session**, over one day by hour, seven days by hour (the
+default) or ninety days by day, measured in dollars or tokens, ordered by
+spend or in your own order, and optionally merged by tag. The panel's choices
+are kept in this browser.
+
+## When a session's tab disappears
+
+The chat pane never jumps to another session on its own. If the tab you are
+on disappears (a kernel restart that hides a remote host's sessions until the
+host reconnects, a relay down, a session that ended), the pane goes blank: no
+tab is selected, the body names the session that vanished (and says it is
+reconnecting when that is known), and the message box is disabled with no
+session name in it. When that same session's tab returns, the pane goes back
+to it. A kernel restart does not reload the page: the panes reconnect and the
+board stays where it was. After a reload (one you take from the newer-build line,
+or your browser's own) the page remembers the tab you were
+on: until that session is listed again the pane stays blank and names it as not
+listed yet, and it never settles on another session meanwhile; if it never
+returns, the blank body stays until you pick a tab (a remembered tab that can
+never return, a subagent's viewer or a session still being created, says so at
+once). A tab view that stops showing your session keeps it on the strip as the
+peek. From the blank pane an arrow key or Next Tab lands on the first visible
+tab. Focus moves to a different session only when
+you pick a tab, or when you close the active tab yourself (then the pane returns
+to the tab you used before it).
+
+## A postal card's head and its delivery mark
+
+The head names both ends, the other session and this one, each in its session's
+color, and carries the delivery mark at its right edge: sent, delivered, read,
+parked while the recipient is unreachable, bounced, or recalled. A send that
+failed has no mark at all, and the tool call's result says what happened. An
+incoming message that waited while the session was offline wears the parked
+mark. Hovering a mark gives the state and when it was reached.
+
+## A comment thread's mail
+
+A comment thread's mail is off, both directions, until you break it out: peers
+cannot see or mail the thread, and its own mail is refused with a line saying
+so. The comment box itself says nothing about it (the tab hover's Mail row and
+the Sessions pane show the state), except a count when messages are actually
+held for the thread; they land within seconds of a break-out. The moment you
+break the thread out it is a session like any other, mail on unless you toggle
+its mailbox off. Only peer mail is gated: what you type into the thread's
+box yourself, and plain text the kernel's own send route carries, is yours and
+still goes through; that is the human channel, by design, not a hole in the
+gate.
+
+## The tags a new session inherits
+
+A session started from another one joins its tags. Forking a session, breaking
+a comment thread out into its own session, and running `romp new` inside a
+session's shell all put the new session in the parent's groups, so a session's
+children land beside it in the tab strip. `romp new --no-inherit` starts one
+outside them; `romp new --in <tag>` names the tags directly (repeatable). The
+**+** picker shows the tags of the tab you are looking at pre-selected in its
+**Tags** row, where you can unpick or add before creating. Opening a name that
+already runs inherits nothing: `romp new --in` still applies to it, while from
+the picker, a name that already runs is focused and the Tags row is not applied
+(a message says so; the row is a prefill, and applying it would move the
+running session). Comment threads have no tab and inherit nothing until they
+are broken out; `romp new` run inside a thread inherits from the session the
+thread belongs to.
+
+## romp's mail tools, and Claude Code's own
+
+Not the same tools: romp peers are discovered only through the postal service's `list_agents`. Claude Code also ships its own `ListAgents` and `SendMessage` tools, which list the account's Anthropic cloud sessions and this session's own subagents: a different system, and a cloud session in that list is easy to mistake for a romp peer. The recommended setting is `"permissions": { "deny": ["ListAgents"] }` in the Claude Code settings, so the only list of agents a session sees is romp's; `SendMessage` must stay allowed, because continuing a subagent uses it.
+
+## The VS Code port forwarder and the browser dashboard
+
+The dashboard's panes are long-lived sockets, and how a forwarder treats them
+decides whether a closed pane is really closed. OpenSSH forwards each
+browser socket one-to-one and propagates closes, so a pane that goes away is
+gone on both ends.
+
+!!! warning "The VS Code port forwarder is not a good path for the browser dashboard"
+
+    VS Code's Remote and Tunnels port forwarder multiplexes every forwarded
+    socket over one channel and does not close the far end when the browser
+    side goes away. The dashboard's panes are long-lived WebSockets that stream
+    view updates, and each pane reconnects when it hears nothing for thirty
+    seconds, so through that forwarder every reconnect left a dead connection
+    behind on the kernel's side, all of them still receiving full view payloads
+    over the one shared channel, and the live panes starved. One such incident
+    counted 84 connections from three real panes.
+
+    The kernel now protects itself: it pings every pane on each heartbeat and
+    drops one whose ping goes unanswered, a reconnecting pane retires its own
+    previous socket at once, and the timeline and feed cross the wire as
+    deltas instead of whole payloads. That keeps a forwarded dashboard usable,
+    but the forwarder still carries every byte over a channel it shares with
+    your editor, so prefer a path that gives each pane its own socket: plain ssh
+    port forwarding, which the guide sets up under
+    [From another machine](guide.md#from-another-machine), or
+    [Tailscale](#reaching-romp-from-a-phone-the-full-tailscale-setup). The VS
+    Code romp view is a different case: its sockets run on the kernel's own
+    machine and close when a panel closes, so it never leaks connections, but
+    under Remote or Tunnels the extension still relays each whole view payload
+    to the local window as it changes. It does not yet take the deltas the
+    browser panes do.
+    A pane that falls 16 MB behind is dropped and reconnects on its own; the
+    drop is logged in the kernel log and shows in the Log (the settings panel's "Open log" button carries the unread count on the desktop; the phone's bottom bar reddens its bell), so a
+    link that cannot keep up reads as what it is rather than as a flaky network.
+
+## Reaching romp from a phone: the full Tailscale setup
+
+The user interface is a web page, so your phone can run it against a kernel on
+another machine. The obstacle is reaching that machine: the kernel listens only
+on `127.0.0.1`, which your phone is not on.
+
+[Tailscale](https://tailscale.com) closes that gap, and is free for personal
+use. It puts your own devices on a private encrypted network, so your phone can
+reach your laptop directly whatever network either one is on. Install it on both
+devices and sign in to the same account on each.
+
+In the Tailscale admin console, enable **HTTPS Certificates**, and leave
+**MagicDNS** on (it is on by default): the `ts.net` certificate names come from
+MagicDNS, so turning it off makes certificate provisioning fail in confusing
+ways.
+
+Three settings in the Tailscale app on the kernel's machine decide whether your
+phone can reach it at all:
+
+- **Allow incoming connections** must be on. Without it the machine joins the
+  network but serves nothing to it, which reads as Romp being broken rather than
+  as a Tailscale setting.
+- **Use Tailscale DNS settings** must be on. This is MagicDNS on the client, and
+  it is what makes the `ts.net` name resolve.
+- **Launch Tailscale at login** is worth turning on. The proxy below survives a
+  reboot, but it can only serve while Tailscale is running, so without this the
+  machine drops off the network until you next open the app.
+
+Then, on that same machine, one command opens Romp to your other devices:
+
+```bash
+tailscale serve --bg 29855
+```
+
+The bare-port form needs Tailscale 1.56 or newer; on older clients write
+`tailscale serve https / http://127.0.0.1:29855`. On macOS the `tailscale`
+command is not on your `PATH` until you enable **CLI integration** in the app's
+settings.
+
+Two commands go with it, for later rather than now. `tailscale serve status`
+prints where the proxy currently points, which is the first thing to check when
+a device cannot reach Romp. `tailscale serve reset` undoes the setup and returns
+the machine to local-only, so run it when you want remote access off, not as
+part of turning it on.
+
+!!! warning "If you change the kernel's port"
+
+    `tailscale serve` remembers the port you gave it, not whatever Romp is
+    running on now. Change `ROMP_KERNEL_PORT` and the proxy goes on pointing at
+    the old one, so the phone gets a dead page while everything looks healthy on
+    the machine itself. Re-run `tailscale serve --bg <new port>`: it replaces
+    the existing mapping rather than adding to it.
+
+On the phone, open `https://<machine>.<tailnet>.ts.net/`. Romp answers with a
+page asking for your access token; paste in the one `romp` prints. The phone
+stays signed in afterwards, through a year-long session cookie and a key the
+page keeps in the site's storage; neither is the token. Prefer this to putting
+`?token=<token>` in the address, which works but leaves the token in your
+browser history and in anything you share the link through. If the phone loses
+the site's storage (its data cleared, or a browser that clears a site's storage
+after a week without a visit), the page asks for the token again. A signed-in
+phone can reach your sessions, so only do this on a phone you control.
+
+Only devices signed in to your Tailscale account can reach Romp: Tailscale
+checks each device's identity and encrypts the traffic between them, and nothing
+is exposed to your local network or to the internet. The proxy survives restarts
+of both Tailscale and the kernel.
+
+Two settings are worth changing while you are in the admin console. Turn on
+**device approval**, so a new device has to be approved before it can join, and
+leave key expiry enabled on the phone. Do not use `tailscale funnel`, the
+public-internet variant: it would leave the token as the only thing between the
+internet and your agents, with no device check in front of it.
+
+!!! warning "If other people are on your tailnet"
+
+    `tailscale serve` exposes Romp to **every** device on the tailnet, not just
+    yours. On a family or team tailnet, the access token becomes the only thing
+    standing between other members and your agents. Either keep the tailnet to
+    your own devices, or write an ACL restricting the kernel machine to them.
+
+## Notifications on a phone or browser
+
+Romp can buzz your phone when a session needs you or finishes a task, so you can
+put the phone down while the sessions work. Every notification is titled with
+the session's name: **Romp needs you: web** when that session is waiting on you,
+and **Romp: web** for anything else (a task finished, a turn ended); the line
+under it says what happened. On an iPhone, first add Romp to the
+Home Screen (share sheet, then **Add to Home Screen**) and open it from there:
+iOS only lets an installed app receive notifications, so in a plain Safari tab
+the option stays off and says so. The installed app keeps site storage of its
+own, so the first time you open it, it may ask for the access token once; paste
+it in. On Android and on a desktop browser the page
+itself can receive them.
+
+Then tap the bell. On a phone it sits in the bar along the bottom; on a desktop
+it is in the bottom-right cluster. A small card opens with a main switch, two
+switches indented under it, and a button:
+
+- **Notifications** is the main switch. Off silences every device and the
+  desktop of every machine you have attached; the bells on individual sessions
+  and cards are mutes under it. While it is off, the two switches beneath it are
+  dimmed but still work, so you can set a phone up first and switch everything
+  on when you are ready.
+- **This device**, under it, turns them on for the phone or browser you are
+  holding. The first time, the browser asks for permission. If you refuse, the
+  row goes grey and tells you where to allow it again (on an iPhone, Settings,
+  then Notifications, then Romp; in a desktop browser, the site permission
+  beside the address). Turning this off silences only this device. With the
+  main switch off, the row says the device is set up but nothing arrives until
+  the main switch is on. What the kernel needs for this, the Python
+  `cryptography` package, the installer sets up; if the row says the package is
+  missing, run `bin/romp-sdk-setup` on the machine running Romp and turn it on
+  again.
+- **Also when a turn finishes**, also under it, adds a notification every time
+  any session finishes a turn you started, with the session's name and the
+  first line of what it said. Turns a session starts on its own, such as
+  reacting to one of its background agents finishing, or to a reminder, stay
+  quiet: nothing there was waiting on you. With many sessions running this is
+  still a lot of buzzing, so it is off unless you want it. A turn that ends by
+  asking you something buzzes once, not twice.
+- **Send a test notification** sends one notification to the device you are
+  holding, whatever the switches say, and prints the push service's answer under
+  the button, so you can see at once whether the phone is set up or why it is
+  not. The test is addressed to the session you were looking at when you
+  pressed the button, so you can switch to another session or another browser
+  tab, tap the notification, and check that it brings you back. With the main
+  switch off, the answer adds that real notifications will not arrive until it
+  is on.
+
+A restart of the kernel (an update deploys one) announces nothing by itself.
+What Romp has told you about is written down beside its other state, so the
+cards already waiting on you or already finished when it comes back stay
+quiet. A card that stops needing you and then needs you again is announced
+once, not at every turn, unless you acted on the card in between (answered
+it, resolved it, crossed it off) or it finished in the meantime.
+
+Tapping a notification brings Romp forward on the session it was about. On an
+iPhone with the app already open in the background, the switch happens as the
+app comes forward; a notification you swipe away instead is read the same way,
+so the next time you open the app it may land on that session. With the app in
+front, nothing moves until you next come back to it.
+
+The bell itself shows the state of the device you are looking at: lit when the
+main switch is on and this device is set up, and crossed out otherwise. Its
+tooltip says which of the two is off.
+
+## The token file: minting, permissions and refusals
+
+**One token, required on every request, directly or through a browser sign-in
+made with it.** The kernel and the postal bus both demand the token on every
+request, local ones included, and a browser signed in to the kernel presents
+that sign-in instead (below). Loopback is not a security boundary: on a
+multi-user machine every local account can reach your ports, so without this
+any other user could inject prompts into your live sessions. The token is
+144-bit random and lives at `~/.local/state/romp/serve-token` with mode `0600`
+(readable only by your own user account). Local tools (the CLI, hooks, the bus,
+the editor extension) read that file and send it automatically, so you never
+type it.
+
+The kernel and the bus mint the token file when it is missing, one mint between
+them under a sibling lock file, `serve-token.lock`. An existing token is never
+replaced: a file left looser than `0600` is tightened at the next start (its
+value is kept, so every client stays valid), and a token that exists but cannot
+be read, or a symlink at that path, refuses to start instead of minting a
+replacement nobody else holds. Under the service that refusal repeats in
+`manager.log` every 10 seconds until you repair the file; the kernel then comes
+back on its own.
+
+A few routes answer without the token or a browser sign-in: the liveness probes `/healthz`,
+`/version` and `/busy` on the kernel and `/ping` on the bus; the sign-in page, `/login`, a
+fixed form; and the install files `/manifest.webmanifest` and the three home-screen icons
+under `/media/` (`romp-touch-180.png`, `romp-app-192.png`, `romp-app-512.png`, a fixed list
+of names rather than a path prefix). The files and the sign-in page are fixed (the app's
+name, colors and icon art, the form) and read no session state, and a browser fetches the
+manifest and its icons with credentials omitted, so a gate there would refuse them at the
+moment an install consults them. `/busy`'s count is exempt as a probe; its drain hold is a
+write and takes the token like any other. The notification worker's acknowledgement,
+`POST /push/ack`, is admitted by the notification's own unguessable id instead (below).
+SECURITY.md lists exactly what each of these requests can do.
+
+Two routes answer outside that shape. `POST /push/ack`, which the push worker
+uses to report that a notification was shown or tapped, is served ahead of the
+token check and authenticated by the per-push id instead: 128 random bits the
+kernel minted for one notification and handed only to the device that
+notification went to. A report on a valid id stamps that row's shown or tapped
+time, where the first stamp stands so a repeated report changes nothing, and
+records the worker's build string, which every report rewrites. A shown report
+also marks the older unsettled, untapped pushes for the same session on that
+device superseded, since the show replaced their notifications. And the
+request's origin, read from its `Origin` header, else its `Referer`, else the
+forwarded headers or `Host`, is recorded on that device's subscription when
+none is on file; a recorded origin stands, and a different one is logged as a
+conflict. An unknown id is a 404, and the body is capped at 2 KB before a byte
+of it is read.
+
+A token-less `GET /` is not refused either: the gate runs and fails, and the
+answer is the page that asks for the token rather than a 403, so a bare open of
+the dashboard has somewhere to paste it.
+
+A browser cannot read that file, which is why the link `romp` prints carries the
+token in it. Opening the link signs the browser in: it gets a year-long session
+cookie and a key the page keeps in the site's storage, neither of which is the
+token, so the bare `http://127.0.0.1:29855/` works from then on. The cookie on
+its own opens only the page's code; the page sends the key with each request
+for data or an action, and puts a per-file capability in each file address it
+builds ([SECURITY.md](https://github.com/romp-on/romp/blob/main/SECURITY.md)
+states what each value authenticates). A browser can lose the site's storage while it
+keeps the cookie (cleared site data, a private window, a browser that clears a
+site's storage after a week without a visit); it then lands on the sign-in page.
+Paste the token there, open the link `romp url` prints, or run `romp` on the
+machine to open a signed-in window. A browser that refuses site storage for the
+address cannot keep the key at all, and the page says so; once site data is
+allowed for the address, a reload shows the sign-in page. A signed-in browser can reach your sessions,
+so treat a machine holding a sign-in as you would one holding the token.
+
+**Rotating the token.** Rotating replaces the token and ends every browser
+sign-in at once. Do it to sign every browser out, and once after upgrading from
+a version that kept the token in the dashboard's cookie, which retires those
+cookies (SECURITY.md, "Upgrading from a version whose cookie held the token").
+Stop Romp, delete the token file and start Romp again, which mints a new token;
+then restart the kernel and the postal bus so that both read it:
+
+```bash
+romp down
+rm ~/.local/state/romp/serve-token
+romp up
+romp refresh
+```
+
+Without a login service, `romp up` runs in the foreground; run `romp refresh`
+from a second terminal. Everything that held the old token then needs the new
+one. Each browser signs in again: `romp url` prints the new link, and an open
+dashboard shows the sign-in page when you reload it. Reload VS Code windows,
+whose panels were handed the token when they opened. A session's messaging
+tools read the token when the session starts, so a session that stays up
+across the rotation cannot reach the bus until it restarts. Every machine that
+attached this one must attach it again, which fetches the new token over ssh.
+A `kernels.json` profile's kernel keeps its own token file in its state
+directory; delete that file as well to rotate it. When `ROMP_SERVE_TOKEN`
+supplies the token, change that value instead of deleting the file.
+
 ## Switches
 
 Effective immediately, no restart.
@@ -6671,3 +8512,9 @@ Effective immediately, no restart.
 `touch` to **disable**, `rm` to re-enable:
 
 - `~/.claude/romp-postal-off`: the postal service
+
+## License
+
+Romp is [Apache-2.0](https://github.com/romp-on/romp/blob/main/LICENSE); the file viewer draws PDF
+pages with [pdf.js](https://mozilla.github.io/pdf.js/), bundled with the interface under the same
+Apache-2.0 license.

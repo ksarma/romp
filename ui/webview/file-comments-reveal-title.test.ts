@@ -1,7 +1,7 @@
 // Reveal's title with Show changes inline off (the inline-display follow-on to plans/file-review.md, 2026-09-07; the
 // review's finding): with the marks off every change card offers Reveal, as the plan requires, and paintChanges paints
 // no mark in Raw either — so a title that promised "Show the change in the Raw view" named a mark the click would not
-// show. Off, the title promises what Reveal does — opens the Raw view at the change, the guide's words — and says why
+// show. Off, the title promises what Reveal does — opens the Raw view at the change, the reference's words — and says why
 // nothing is marked there; on, the Slice 2 title stands. Driven AS A PANEL over the inline-toggle suite's DOM stand-in:
 //   • Rendered, marks on → off → on: the title of every offered Reveal, its line number, the click (Raw, the change's start);
 //   • Raw with a store that says off: the same title on every card, and the flip back;

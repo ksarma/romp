@@ -75,7 +75,8 @@ test("federation: userTodoRows get sid+name prefixed inbound, todo ids untouched
     { sid: "11111111-2222", name: "web", color: null, todos: [{ id: "ut-0a0a0a0a", text: "Need the port", createdT: 1 }] },
   ] });
   assert.deepEqual(pre.userTodoRows, [
-    { sid: "TESTHOST:11111111-2222", name: "TESTHOST:web", color: null, todos: [{ id: "ut-0a0a0a0a", text: "Need the port", createdT: 1 }] },
+    // itemId: federation.ts _prefixIdBearing (upstream 1831) writes it on every OBJ_SID row; a row with no item id gets undefined
+    { sid: "TESTHOST:11111111-2222", name: "TESTHOST:web", color: null, itemId: undefined, todos: [{ id: "ut-0a0a0a0a", text: "Need the port", createdT: 1 }] },
   ]);
 });
 

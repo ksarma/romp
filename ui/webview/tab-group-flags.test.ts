@@ -18,7 +18,9 @@ import { standInPip } from "./tab-snapshot";
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
 const CSS = ui("webview", "styles.css");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// the fork's tab-groups paragraph lives in docs/reference.md ("### Tags and groups in the tab strip") since the front pages
+// became the project's (CLAUDE.md "The documentation front pages"; fold 4 merged it there with the project's copy)
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
 
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 // the header's stand-in block, where the member-derived marks live: from `if (hidden.length) {` (folded, the unpinned
@@ -186,8 +188,8 @@ test("the flag wears the tab glyph's class and the header's count size; the butt
   assert.doesNotMatch(CSS.match(/\.tab-group-flag \{[^}]*\}/)![0], /font-size/, "no new font-size: the glyph and count keep their own");
 });
 
-test("docs: the guide's tab-groups paragraph says a folded section keeps the flag and the click opens it", () => {
-  assert.match(GUIDE, /A folded header keeps the ⚑ flag\s+of any session in it that has asked you for something; when several have, the flag shows how\s+many, and hovering it names them\. Click the flag to open the section\./);
+test("docs: the reference's tab-groups paragraph says a folded section keeps the flag and the click opens it", () => {
+  assert.match(REF, /A folded header keeps the ⚑ flag\s+of any session in it that has asked you for something; when several have, the flag shows how\s+many, and hovering it names them\. Click the flag to open the section\./);
 });
 
 test("executed + pinned: BOTH member-derived marks ride a folded header — the state pip, then the flag — over the hidden members only; open headers carry neither", () => {

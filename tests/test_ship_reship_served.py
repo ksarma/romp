@@ -122,7 +122,7 @@ class SourcePins(unittest.TestCase):
         page = src[src.index("def _chat_page():"):src.index("\ndef ", src.index("def _chat_page():") + 10)]
         self.assertLess(page.index("<script>%s</script>"), page.index("/dist/render.js"), "the shim's script precedes the bundle in the chat page")
         self.assertIn('_shim("chat", v', page)   # this fork's call carries caps=READY_GATE_CAP (the ready gate); the shim is the same
-        shim = src[src.index('def _shim(app, v=0, caps="", no_stale=False):'):src.index("\ndef ", src.index('def _shim(app, v=0, caps="", no_stale=False):') + 10)]   # the fork's def line (F1: the caps slot)
+        shim = src[src.index('def _shim(app, v=0, caps="", no_stale=False, pv=None, data=None):'):src.index("\ndef ", src.index('def _shim(app, v=0, caps="", no_stale=False, pv=None, data=None):') + 10)]   # the fork's caps slot (F1) before upstream's pv and data (panes as data)
         self.assertIn("window.__rompPaneBusy=function(){", shim, "the shim defines the hook the pane wraps (its body, the sends hold and its bound, is run by ui/webview/pane-shim-stale.test.ts)")
 
     def test_a_reload_loss_is_loud_never_a_silent_vanish(self):

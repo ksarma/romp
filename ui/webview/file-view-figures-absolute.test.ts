@@ -162,7 +162,7 @@ test("the three readers of an embed's destination agree: the path the viewer loa
 // that must name one file (the picture shown, the poll's HEAD and the host's hash); the model and the host join `~`
 // under the directory already, so a home-expanding viewer alone would paint a picture the poll never watches. A LINK
 // in the same document is the opposite on purpose (joinDocPath, md-links.test.ts): a link has one reader, the kernel at
-// click time, whose _resolve_open_path expands `~`. docs/guide.md states both in one sentence, pinned here.
+// click time, whose _resolve_open_path expands `~`. docs/reference.md states both in one sentence, pinned here.
 test("a `~/`-anchored src is a relative path whose first segment is `~`: joined under the file's directory like any other, the three readers agreeing; a link's `~/` is left for the kernel to expand", async () => {
   const fc = await import("./file-comments");
   const model = await import("./file-comments-model");
@@ -179,9 +179,10 @@ test("a `~/`-anchored src is a relative path whose first segment is `~`: joined 
   assert.ok(fc.srcIsEmbed(home.getAttribute("src")!, "~/plots/a.png", FILE), "so the panel matches the loaded picture to its embed line");
   // the same document's link: not joined, so the kernel expands it (joinDocPath's contract, pinned in md-links.test.ts)
   assert.equal(links.joinDocPath(FILE, "~/notes/x.md"), "~/notes/x.md", "a link's `~/` reaches the kernel as written and opens under the home folder");
-  // the guide states the two readings in one sentence, in the user's terms
-  const guide = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8").replace(/\s+/g, " ");
-  assert.match(guide, /A figure path that starts with `~\/` is not expanded to your home folder: it names a folder called `~` next to the file, as other markdown viewers read it, while a link that starts with `~\/` does open under your home folder\./);
+  // the docs state the two readings in one sentence, in the user's terms: the fork's Figures paragraph, in docs/reference.md's
+  // "The Files pane" since the front pages became the project's (CLAUDE.md "The documentation front pages")
+  const ref = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8").replace(/\s+/g, " ");
+  assert.match(ref, /A figure path that starts with `~\/` is not expanded to your home folder: it names a folder called `~` next to the file, as other markdown viewers read it, while a link that starts with `~\/` does open under your home folder\./);
 });
 
 // ── Slice 4 of plans/markdown-viewer.md: every attribute a figure fetches through, not img[src] alone ────────────────

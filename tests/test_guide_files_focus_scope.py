@@ -23,6 +23,24 @@ def _read(*parts):
         return f.read()
 
 
+def _ref_section(md, heading):
+    """The body of the `## ` or `### ` heading `heading` in docs/reference.md, up to the next `## ` or `### ` heading."""
+    m = re.search(r"^#{2,3} " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} |\Z)", md, re.S | re.M)
+    assert m, "docs/reference.md has no section %r" % heading
+    return m.group(1)
+
+
+def _files_section():
+    """The guide's Files section as docs/reference.md holds it since fold 4 moved the fork's paragraphs out of docs/guide.md
+    (the front pages are the project's, CLAUDE.md "The documentation front pages"): the body of "## The Files pane", then the
+    paragraphs of the three viewer sections the reference keeps with the chat pane ("Links inside a file", "Text size and
+    width", "A file's own HTML"), which sat in the guide's Files section on this fork."""
+    ref = _read("docs", "reference.md")
+    parts = [_ref_section(ref, "The Files pane").strip("\n")]
+    parts += [_ref_section(ref, h).strip("\n") for h in ("Links inside a file", "Text size and width", "A file's own HTML")]
+    return "\n\n".join(parts) + "\n"
+
+
 def _section(md, heading):
     """The body of one `### heading` up to the next heading of any level."""
     m = re.search(r"^### " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} )", md, re.S | re.M)
@@ -42,7 +60,7 @@ SCOPE = "Neither happens in the list under a narrow column, where a long card sh
 
 class TheScopeFollowsTheFoldSentence(unittest.TestCase):
     def setUp(self):
-        self.section = _flat(_section(_read("docs", "guide.md"), "Files"))
+        self.section = _flat(_files_section())
 
     def test_the_scope_sentence_follows_the_fold_sentence(self):
         # the qualifier stands right after the two claims it scopes, before the paragraph moves on to selecting a passage

@@ -44,7 +44,6 @@ const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..",
 const RENDER = ui("webview", "render.ts");
 const CTX = ui("webview", "ctx-menu.ts");
 const CSS = ui("webview", "styles.css");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
 const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
 
 /** a verbatim slice of render.ts between two markers, both of which must exist */
@@ -815,9 +814,16 @@ test("the sheet: the row's editor rule, tokens and metrics only; the docs: the g
   // hidden slice had run to the feed heading, 9,354 chars over four paragraphs, three of them never edited by this change, and the
   // minimum alone let that pass: an em dash written into one of those three would have turned this test red naming the hidden
   // paragraph. Each ceiling sits under the slice plus the paragraph after it, so a slice that widens by a paragraph fails here
-  const guidePara = (from: string, to: string) => { const a = GUIDE.indexOf(from), b = GUIDE.indexOf(to, a + 1); assert.ok(a >= 0 && b > a, `the guide's markers moved: ${from} .. ${to}`); return GUIDE.slice(a, b); };
-  const overview = guidePara("**A section at a glance.**", "**Hiding a session inside its group.**");
-  const hidden = guidePara("**Hiding a session inside its group.**", "**Coming back after a dropped connection.**");
+  // Since fold 4 the two paragraphs are docs/reference.md's (the fork's chat paragraphs moved there when the front pages became the
+  // project's, CLAUDE.md "The documentation front pages"), each the paragraph of its own section: a slice runs from the line after
+  // the section's heading to the next section's heading, so it is still one paragraph alone
+  const refPara = (heading: string, next: string) => {
+    const h = REF.indexOf("\n" + heading + "\n"), a = REF.indexOf("\n\n", h + 1) + 2, b = REF.indexOf("\n" + next + "\n", a);
+    assert.ok(h >= 0 && b > a, `the reference's sections moved: ${heading} .. ${next}`);
+    return REF.slice(a, b);
+  };
+  const overview = refPara("### A tag section at a glance", "### Hiding a session inside its group");
+  const hidden = refPara("### Hiding a session inside its group", "### Coming back after a dropped connection");
   for (const [name, s, ceiling] of [["overview", overview, 3000], ["hidden", hidden, 6000]] as const) {
     assert.ok(s.length > 500 && s.length < ceiling, `the guide's ${name} paragraph, whole and alone: ${s.length} chars against a ceiling of ${ceiling}`);
     assert.ok(!s.trimEnd().includes("\n\n"), `the guide's ${name} slice holds a paragraph break: it runs past its paragraph`);
