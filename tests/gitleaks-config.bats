@@ -67,11 +67,102 @@ probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; 
     [ "$status" -eq 0 ]
 }
 
-@test "every commit in this branch's history is clean" {
-    # Each merge by its first-parent diff, as CI scans it.
+# The history case below reads the commits this branch adds over main, not every commit HEAD can
+# reach. Until 2026-10-02 it read all of HEAD's history, so its cost grew with every commit: about
+# 155 s at 13,762 commits on a development box at load 17, and past the 180 s that CI's Run bats
+# step allows a test (BATS_TEST_TIMEOUT) on a busier one. The commits main already holds are read
+# by CI's secret-scan job, which checks out all of history (fetch-depth: 0) and scans it with --all
+# on every PR and every push to main, so this case owes only what the branch adds.
+#
+# history_scan_range <repo> sets two variables: scan_revs, the revisions the case hands git log
+# through gitleaks' --log-opts (empty when there is nothing to scan), and scan_scope, what they
+# cover, in words, which the case prints. Its choice, in order:
+# - A shallow clone: HEAD, the history the clone holds. Its graph stops at its depth, so a merge
+#   base read from it need not be the base on the full graph, and branch commits past the cut lie
+#   outside any range drawn from it. CI's Shell job checks out one commit (actions/checkout with no
+#   fetch-depth), so there the case reads the tip alone, as it did before.
+# - main is refs/remotes/origin/main: the remote's main as this clone last fetched it (the branch
+#   scripts/batch.py lands on). Its commits are on the remote's main, which CI's secret-scan job
+#   reads (above). A local main (refs/heads/main) is not evidence that CI read its commits: it can
+#   hold commits made there and never pushed, and a range drawn from it would leave them out (below
+#   the base, or all of them when HEAD is that main). So a clone with no origin/main gets HEAD, the
+#   whole history, whether or not it has a local main, and the scope says why. Not upstream/main: in
+#   a fork that is the project's main, and a range over it would hold every commit the fork carries;
+#   branches are cut from origin/main and land there, in the project's own clones as in a fork.
+# - With main found, <base>..HEAD, base being what git merge-base HEAD <main> answers. Under
+#   criss-cross merges git names one of several bases, and the range then also holds commits main
+#   has: more than the branch adds, the safe side. A HEAD that shares no commit with main (an
+#   unrelated history) gets HEAD, the whole history, and the scope says why.
+# - HEAD the base itself (HEAD is main, or an ancestor of it): nothing. The case skips with the
+#   scope as its reason rather than pass on a scan of no commits, which gitleaks exits 0 on.
+# The case passes --diff-merges=first-parent over whichever range this chooses, so a merge on the
+# branch (main merged in, a conflict resolved) is still read by its first-parent diff.
+history_scan_range() {   # <repo>: sets scan_revs and scan_scope
+    local repo=$1 head shallow ref name base rc n
+    scan_revs="" scan_scope=""
+    head=$(git -C "$repo" rev-parse --verify --quiet HEAD) || {
+        echo "history_scan_range: $repo has no HEAD commit to scan from" >&2; return 1; }
+    shallow=$(git -C "$repo" rev-parse --is-shallow-repository) || {
+        echo "history_scan_range: whether $repo is a shallow clone could not be read" >&2; return 1; }
+    case $shallow in
+        true)
+            n=$(git -C "$repo" rev-list --count HEAD) || return 1
+            scan_revs=HEAD
+            scan_scope="the history this shallow clone holds, $n commit(s) from HEAD: its graph stops at its depth, so no merge base with main is read from it"
+            return 0 ;;
+        false) ;;
+        *) echo "history_scan_range: git rev-parse --is-shallow-repository answered \"$shallow\", neither true nor false" >&2
+           return 1 ;;
+    esac
+    if git -C "$repo" rev-parse --verify --quiet refs/remotes/origin/main > /dev/null; then
+        ref=refs/remotes/origin/main name=origin/main
+    elif git -C "$repo" rev-parse --verify --quiet refs/heads/main > /dev/null; then
+        n=$(git -C "$repo" rev-list --count HEAD) || return 1
+        scan_revs=HEAD
+        scan_scope="all of HEAD's history, $n commit(s): the clone has no origin/main, and a local main is not evidence that CI read its commits"
+        return 0
+    else
+        n=$(git -C "$repo" rev-list --count HEAD) || return 1
+        scan_revs=HEAD
+        scan_scope="all of HEAD's history, $n commit(s): the clone has no origin/main to scope the scan by"
+        return 0
+    fi
+    # merge-base exits 1 with no output when the two share no commit; any other failure is loud.
+    base=$(git -C "$repo" merge-base HEAD "$ref") && rc=0 || rc=$?
+    case $rc in
+        0) ;;
+        1) [ -z "$base" ] || { echo "history_scan_range: git merge-base HEAD $ref exited 1 and answered \"$base\"" >&2; return 1; }
+           n=$(git -C "$repo" rev-list --count HEAD) || return 1
+           scan_revs=HEAD
+           scan_scope="all of HEAD's history, $n commit(s): HEAD shares no commit with $name, so there is no merge base to scope the scan by"
+           return 0 ;;
+        *) echo "history_scan_range: git merge-base HEAD $ref exited $rc" >&2; return 1 ;;
+    esac
+    if [ "$base" = "$head" ]; then
+        if [ "$(git -C "$repo" rev-parse --verify "$ref")" = "$head" ]; then
+            scan_scope="nothing to scan: HEAD is $name itself (${head:0:10}), so the branch adds no commits over main"
+        else
+            scan_scope="nothing to scan: HEAD (${head:0:10}) is an ancestor of $name, so the branch adds no commits over main"
+        fi
+        return 0
+    fi
+    n=$(git -C "$repo" rev-list --count "$base..HEAD") || return 1
+    scan_revs="$base..HEAD"
+    scan_scope="the $n commit(s) HEAD adds over $name (merge base ${base:0:10})"
+}
+
+@test "the commits this branch adds over main are clean, or the history the clone holds when no merge base with main is reachable" {
+    # The range, and why it is not all of history: history_scan_range, above. Each merge by its
+    # first-parent diff, as CI scans it. The scope goes to fd 3, which bats prints for a passing case
+    # too, so every run says what it read.
+    history_scan_range "$ROMP_DIR"
+    [ -n "$scan_revs" ] || skip "$scan_scope"
+    echo "# history scan: $scan_scope" >&3
     run "$GL" git "$ROMP_DIR" --no-banner --redact --exit-code 2 --config "$CFG" \
-        --log-opts="HEAD --diff-merges=first-parent"
-    [ "$status" -eq 0 ]
+        --log-opts="$scan_revs --diff-merges=first-parent"
+    [ "$status" -eq 0 ] || {
+        echo "the history scan of $scan_scope did not pass (exit $status: 2 is a credential found, 1 gitleaks failing):"
+        echo "$output"; false; }
 }
 
 @test "a planted credential is caught" {
@@ -179,6 +270,279 @@ probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; 
     printf 'headers = {"Sec-WebSocket-Key": "%s%s"}\n' "9kLm2QpXvTz7" "RbNc4WdY1A==" > "$TEST_DIR/probe.py"
     run scan
     [ "$status" -eq 2 ]
+}
+
+# ── the history case's range, on synthetic repositories ───────────────────
+# history_scan_range's choices, each on a repository built here, and the history case itself run
+# end to end over some of them as a child bats (history_case_over). The probe is probe_token's,
+# written at run time, as everywhere in this file. A repository that is to have a range drawn sets
+# origin/main (synth_origin_main) once main holds its commits: a local main alone draws none
+# (history_scan_range says why).
+
+# A synthetic repository: main's first commit, with HEAD on main whatever init.defaultBranch says.
+# Files are added by name, never with add -A, so the copy of this suite that history_case_over puts
+# in the tree stays out of every commit.
+synth_repo() {   # <dir>
+    git init -q "$1"
+    git -C "$1" symbolic-ref HEAD refs/heads/main
+    synth_commit "$1" base.txt base "main: first"
+}
+
+synth_commit() {   # <repo> <file> <line> <message>: the file holding the line, committed
+    printf '%s\n' "$3" > "$1/$2"
+    git -C "$1" add -- "$2"
+    git -C "$1" commit -qm "$4"
+}
+
+synth_probe() {   # <repo> <file> <message>: the probe in the file, committed
+    printf 'token = "%s"\n' "$(probe_token)" > "$1/$2"
+    git -C "$1" add -- "$2"
+    git -C "$1" commit -qm "$3"
+}
+
+synth_origin_main() {   # <repo>: refs/remotes/origin/main at main's tip, as a fetch of that main leaves it
+    git -C "$1" update-ref refs/remotes/origin/main refs/heads/main
+}
+
+# The history case run over a synthetic repository, by a child bats as tests/gitleaks-require.bats
+# runs this suite. This suite (the file bats is running, so a scratch copy under test copies
+# itself), its git-hermetic helper and the config are copied into the repository's tree, untracked
+# and so in none of its commits. That makes the copy's ROMP_DIR the synthetic repository, so the
+# case's own body, range and flags are what run. The filter matches the history case's title alone
+# (no case in this section begins with it), and each caller checks the plan line says one case ran.
+history_case_over() {   # <repo>
+    mkdir -p "$1/tests"
+    cp "$BATS_TEST_FILENAME" "$1/tests/gitleaks-config.bats"
+    cp "$BATS_TEST_DIRNAME/git-hermetic.bash" "$1/tests/"
+    cp "$CFG" "$1/.gitleaks.toml"
+    ROMP_GITLEAKS="$GL" bats --filter '^the commits this branch adds over main' "$1/tests/gitleaks-config.bats" < /dev/null
+}
+
+# The child's TAP line for the history case: exactly one line that begins "ok 1" or "not ok 1"
+# with the case's title words, printed. Fails when there is not exactly one.
+history_case_line() {   # <the child's output>
+    local l n=0 hit=""
+    while IFS= read -r l; do
+        case $l in
+            "ok 1 the commits this branch adds over main"* | "not ok 1 the commits this branch adds over main"*) n=$((n + 1)); hit=$l ;;
+        esac
+    done <<< "$1"
+    [ "$n" -eq 1 ] || { echo "expected one TAP line for the history case in the child's output, found $n:" >&2; echo "$1" >&2; return 1; }
+    printf '%s\n' "$hit"
+}
+
+@test "the history case over a synthetic main: a credential in a commit the branch adds is refused (exit 2), and the same branch without it passes, naming the commits it read" {
+    R="$TEST_DIR/repo"; synth_repo "$R"
+    synth_commit "$R" main2.txt two "main: second"
+    synth_origin_main "$R"
+    git -C "$R" checkout -q -b clean
+    synth_commit "$R" f1.txt one "branch: first"
+    synth_commit "$R" f2.txt two "branch: second"
+    git -C "$R" checkout -q -b probe main
+    synth_commit "$R" f1.txt one "branch: first"
+    synth_probe "$R" probe.py "branch: the probe"
+    main=$(git -C "$R" rev-parse main)
+    # The range history_scan_range picks, scanned with the case's flags.
+    history_scan_range "$R"
+    [ "$scan_revs" = "$main..HEAD" ] || { echo "expected the range $main..HEAD, got \"$scan_revs\" ($scan_scope)"; false; }
+    run "$GL" git "$R" --no-banner --redact --exit-code 2 --config "$CFG" --log-opts="$scan_revs --diff-merges=first-parent"
+    [ "$status" -eq 2 ] || { echo "the scoped scan did not report the probe the branch adds (exit $status):"; echo "$output"; false; }
+    # The case itself, end to end: refused, with the scanner's exit and the scope in its output.
+    run history_case_over "$R"
+    [ "$status" -eq 1 ] && [ "${lines[0]}" = "1..1" ] || { echo "expected the history case to fail alone (exit 1, plan 1..1), got exit $status:"; echo "$output"; false; }
+    line=$(history_case_line "$output")
+    [[ "$line" == "not ok 1 "* ]] || { echo "the history case did not fail: $line"; echo "$output"; false; }
+    [[ "$output" == *"the history scan of the 2 commit(s) HEAD adds over origin/main (merge base ${main:0:10}) did not pass (exit 2:"* ]] || {
+        echo "the failure does not name the scope and exit 2:"; echo "$output"; false; }
+    [[ "$output" != *"$(probe_token)"* ]]        # --redact: the value stays out of the log
+    # The same shape without the probe passes, and its output says what it read.
+    git -C "$R" checkout -q clean
+    run history_case_over "$R"
+    [ "$status" -eq 0 ] && [ "${lines[0]}" = "1..1" ] || { echo "expected the history case to pass alone, got exit $status:"; echo "$output"; false; }
+    line=$(history_case_line "$output")
+    [[ "$line" == "ok 1 "* && "$line" != *" # skip "* ]] || { echo "the history case did not pass: $line"; echo "$output"; false; }
+    [[ "$output" == *"# history scan: the 2 commit(s) HEAD adds over origin/main (merge base ${main:0:10})"* ]] || {
+        echo "the passing case does not say what it read:"; echo "$output"; false; }
+}
+
+@test "the history case over a synthetic main: a credential typed only into a merge on the branch (main merged in, the probe added while resolving it) is refused through the merge's first-parent diff" {
+    R="$TEST_DIR/repo"; synth_repo "$R"
+    git -C "$R" checkout -q -b feature
+    synth_commit "$R" f1.txt one "branch: first"
+    git -C "$R" checkout -q main
+    synth_commit "$R" main2.txt two "main: second"
+    synth_origin_main "$R"
+    git -C "$R" checkout -q feature
+    git -C "$R" merge -q --no-commit main
+    # the probe lands ONLY in the merge's tree, in neither parent
+    printf 'token = "%s"\n' "$(probe_token)" > "$R/evil.py"
+    git -C "$R" add -- evil.py
+    git -C "$R" commit -qm "branch: main merged in, the probe added in the resolution"
+    main=$(git -C "$R" rev-parse main)
+    # main's tip is the merge base now, so the range is the branch's first commit and the merge.
+    history_scan_range "$R"
+    [ "$scan_revs" = "$main..HEAD" ] || { echo "expected the range $main..HEAD, got \"$scan_revs\" ($scan_scope)"; false; }
+    # The premise, over the same range: without the flag git log shows the merge no diff and the
+    # scan finds nothing. A gitleaks that reads merge diffs by default makes the flag redundant, not
+    # wrong, so that is a skip, as in the merge case above.
+    run "$GL" git "$R" --no-banner --redact --exit-code 2 --config "$CFG" --log-opts="$scan_revs"
+    [ "$status" -ne 1 ]
+    [ "$status" -eq 0 ] || skip "this gitleaks reads merge diffs by default; the flag is redundant here"
+    run "$GL" git "$R" --no-banner --redact --exit-code 2 --config "$CFG" --log-opts="$scan_revs --diff-merges=first-parent"
+    [ "$status" -eq 2 ] || { echo "the scoped scan did not report the probe in the merge (exit $status):"; echo "$output"; false; }
+    run history_case_over "$R"
+    [ "$status" -eq 1 ] && [ "${lines[0]}" = "1..1" ] || { echo "expected the history case to fail alone (exit 1, plan 1..1), got exit $status:"; echo "$output"; false; }
+    line=$(history_case_line "$output")
+    [[ "$line" == "not ok 1 "* ]] || { echo "the history case did not fail: $line"; echo "$output"; false; }
+    [[ "$output" == *"the history scan of the 2 commit(s) HEAD adds over origin/main (merge base ${main:0:10}) did not pass (exit 2:"* ]] || {
+        echo "the failure does not name the scope and exit 2:"; echo "$output"; false; }
+}
+
+@test "the history case over a synthetic main: a credential added and removed in commits below the tip, on a side branch merged into the branch, is refused (exit 2)" {
+    # What this pins: the case reads the commits of a side branch merged into the branch, and not
+    # only HEAD's tip commit or the commits on its first-parent line. The probe is added and removed
+    # on the side branch, so neither HEAD's tree nor the merge's first-parent diff holds it (and a
+    # branch commit follows the merge, so the merge is not the tip): a case body that scanned the tip
+    # alone (--max-count=1) or walked first parents only (--first-parent) finds nothing here, and this
+    # case fails on either.
+    R="$TEST_DIR/repo"; synth_repo "$R"
+    synth_origin_main "$R"
+    git -C "$R" checkout -q -b side
+    synth_probe "$R" probe.py "side: the probe"
+    git -C "$R" rm -q probe.py
+    git -C "$R" commit -qm "side: the probe removed"
+    git -C "$R" checkout -q -b feature main
+    synth_commit "$R" f1.txt one "branch: first"
+    git -C "$R" merge -q --no-ff -m "branch: side merged in" side
+    synth_commit "$R" f2.txt two "branch: after the merge"
+    main=$(git -C "$R" rev-parse main)
+    history_scan_range "$R"
+    [ "$scan_revs" = "$main..HEAD" ] || { echo "expected the range $main..HEAD, got \"$scan_revs\" ($scan_scope)"; false; }
+    # The premise: the probe is off the first-parent line. HEAD's tree lacks the file, and a
+    # first-parent walk of the range, whose first commit is the tip, finds nothing.
+    [ -z "$(git -C "$R" ls-tree HEAD -- probe.py)" ]
+    run "$GL" git "$R" --no-banner --redact --exit-code 2 --config "$CFG" --log-opts="$scan_revs --diff-merges=first-parent --first-parent"
+    [ "$status" -eq 0 ] || { echo "a first-parent walk of the range was not clean, so the probe is not on the side branch alone (exit $status):"; echo "$output"; false; }
+    # The case itself, end to end: refused, with the scanner's exit and the scope in its output.
+    run history_case_over "$R"
+    [ "$status" -eq 1 ] && [ "${lines[0]}" = "1..1" ] || { echo "expected the history case to fail alone (exit 1, plan 1..1), got exit $status:"; echo "$output"; false; }
+    line=$(history_case_line "$output")
+    [[ "$line" == "not ok 1 "* ]] || { echo "the history case did not fail: $line"; echo "$output"; false; }
+    [[ "$output" == *"the history scan of the 5 commit(s) HEAD adds over origin/main (merge base ${main:0:10}) did not pass (exit 2:"* ]] || {
+        echo "the failure does not name the scope and exit 2:"; echo "$output"; false; }
+    [[ "$output" != *"$(probe_token)"* ]]        # --redact: the value stays out of the log
+}
+
+@test "the history case over a synthetic main: a credential main already holds, below the branch's base, is outside the range, so the case passes naming the commits it read (CI's secret-scan job reads main's history)" {
+    R="$TEST_DIR/repo"; synth_repo "$R"
+    synth_probe "$R" probe.py "main: the probe"
+    git -C "$R" rm -q probe.py
+    git -C "$R" commit -qm "main: the probe removed"
+    synth_origin_main "$R"
+    git -C "$R" checkout -q -b feature
+    synth_commit "$R" f1.txt one "branch: first"
+    main=$(git -C "$R" rev-parse main)
+    # The probe is in main's history, where a scan of all of HEAD's history (this case before
+    # 2026-10-02) reports it, so the pass below is the range at work, not a probe nothing finds.
+    run "$GL" git "$R" --no-banner --redact --exit-code 2 --config "$CFG" --log-opts="HEAD --diff-merges=first-parent"
+    [ "$status" -eq 2 ] || { echo "a scan of all of HEAD's history did not report the probe in main's history (exit $status):"; echo "$output"; false; }
+    run history_case_over "$R"
+    [ "$status" -eq 0 ] && [ "${lines[0]}" = "1..1" ] || { echo "expected the history case to pass alone, got exit $status:"; echo "$output"; false; }
+    line=$(history_case_line "$output")
+    [[ "$line" == "ok 1 "* && "$line" != *" # skip "* ]] || { echo "the history case did not pass: $line"; echo "$output"; false; }
+    [[ "$output" == *"# history scan: the 1 commit(s) HEAD adds over origin/main (merge base ${main:0:10})"* ]] || {
+        echo "the passing case does not say what it read:"; echo "$output"; false; }
+}
+
+@test "history_scan_range: <base>..HEAD over origin/main when the clone has it, ahead of a stale local main, and HEAD, the whole history, with a local main alone (a local main is not evidence that CI read its commits)" {
+    R="$TEST_DIR/repo"; synth_repo "$R"
+    c1=$(git -C "$R" rev-parse HEAD)
+    # A commit main gained on the remote and the clone fetched, never pulled into its local main.
+    git -C "$R" checkout -q -b fetched
+    synth_commit "$R" main2.txt two "main: second"
+    c2=$(git -C "$R" rev-parse HEAD)
+    git -C "$R" update-ref refs/remotes/origin/main "$c2"
+    git -C "$R" checkout -q -b feature
+    git -C "$R" branch -q -D fetched
+    synth_commit "$R" f1.txt one "branch: first"
+    [ "$(git -C "$R" rev-parse refs/heads/main)" = "$c1" ]     # the local main is stale
+    history_scan_range "$R"
+    [ "$scan_revs" = "$c2..HEAD" ] || { echo "expected $c2..HEAD over origin/main, got \"$scan_revs\" ($scan_scope)"; false; }
+    [ "$scan_scope" = "the 1 commit(s) HEAD adds over origin/main (merge base ${c2:0:10})" ] || { echo "scope: $scan_scope"; false; }
+    # The remote-tracking ref gone, a local main alone: its commits can be ones no remote holds, so
+    # it draws no range, on a branch cut from it (where its commits would fall below the base) or on
+    # main itself (where the range would be empty).
+    git -C "$R" update-ref -d refs/remotes/origin/main
+    history_scan_range "$R"
+    [ "$scan_revs" = HEAD ] || { echo "expected HEAD with a local main alone, got \"$scan_revs\" ($scan_scope)"; false; }
+    [ "$scan_scope" = "all of HEAD's history, 3 commit(s): the clone has no origin/main, and a local main is not evidence that CI read its commits" ] || { echo "scope: $scan_scope"; false; }
+    git -C "$R" checkout -q main
+    history_scan_range "$R"
+    [ "$scan_revs" = HEAD ] || { echo "expected HEAD on a local main alone, got \"$scan_revs\" ($scan_scope)"; false; }
+    [ "$scan_scope" = "all of HEAD's history, 1 commit(s): the clone has no origin/main, and a local main is not evidence that CI read its commits" ] || { echo "scope: $scan_scope"; false; }
+}
+
+@test "history_scan_range: in a shallow clone, HEAD, the history the clone holds, even where a merge base can be read from it (CI's one-commit checkout of main among them)" {
+    R="$TEST_DIR/repo"; synth_repo "$R"
+    synth_commit "$R" main2.txt two "main: second"
+    git -C "$R" checkout -q -b feature
+    synth_commit "$R" f1.txt one "branch: first"
+    # CI's shape on a push to main: one commit, origin/main the commit itself, so a merge base read
+    # from the clone would make the range empty.
+    S="$TEST_DIR/ci"
+    git clone -q --depth 1 -b main "file://$R" "$S"
+    [ "$(git -C "$S" rev-parse --is-shallow-repository)" = true ]
+    [ "$(git -C "$S" merge-base HEAD refs/remotes/origin/main)" = "$(git -C "$S" rev-parse HEAD)" ]
+    history_scan_range "$S"
+    [ "$scan_revs" = HEAD ] || { echo "expected HEAD in the one-commit clone, got \"$scan_revs\" ($scan_scope)"; false; }
+    [[ "$scan_scope" == "the history this shallow clone holds, 1 commit(s) from HEAD: "* ]] || { echo "scope: $scan_scope"; false; }
+    # A deeper clone of the branch, where a merge base below HEAD can be read from the cut graph.
+    S="$TEST_DIR/deep"
+    git clone -q --depth 2 --no-single-branch -b feature "file://$R" "$S"
+    [ "$(git -C "$S" rev-parse --is-shallow-repository)" = true ]
+    [ "$(git -C "$S" merge-base HEAD refs/remotes/origin/main)" = "$(git -C "$R" rev-parse main)" ]
+    history_scan_range "$S"
+    [ "$scan_revs" = HEAD ] || { echo "expected HEAD in the shallow clone of the branch, got \"$scan_revs\" ($scan_scope)"; false; }
+    [[ "$scan_scope" == "the history this shallow clone holds, "* ]] || { echo "scope: $scan_scope"; false; }
+}
+
+@test "history_scan_range: with neither origin/main nor main, or a HEAD that shares no commit with main, HEAD, the whole history, and the scope says why" {
+    R="$TEST_DIR/repo"; git init -q "$R"
+    git -C "$R" symbolic-ref HEAD refs/heads/trunk
+    synth_commit "$R" a.txt a "trunk: first"
+    synth_commit "$R" b.txt b "trunk: second"
+    history_scan_range "$R"
+    [ "$scan_revs" = HEAD ] || { echo "expected HEAD with no main ref, got \"$scan_revs\" ($scan_scope)"; false; }
+    [ "$scan_scope" = "all of HEAD's history, 2 commit(s): the clone has no origin/main to scope the scan by" ] || { echo "scope: $scan_scope"; false; }
+    U="$TEST_DIR/unrelated"; synth_repo "$U"
+    synth_origin_main "$U"
+    git -C "$U" checkout -q --orphan other
+    git -C "$U" rm -q --cached base.txt      # an orphan's index keeps main's files; this history holds none of them
+    synth_commit "$U" o.txt o "other: first"
+    [ "$(git -C "$U" rev-list --count HEAD)" -eq 1 ]
+    history_scan_range "$U"
+    [ "$scan_revs" = HEAD ] || { echo "expected HEAD for an unrelated history, got \"$scan_revs\" ($scan_scope)"; false; }
+    [ "$scan_scope" = "all of HEAD's history, 1 commit(s): HEAD shares no commit with origin/main, so there is no merge base to scope the scan by" ] || { echo "scope: $scan_scope"; false; }
+}
+
+@test "history_scan_range: HEAD is main, or an ancestor of it: an empty range and a stated scope, and the history case skips with that statement rather than pass on a scan of no commits" {
+    R="$TEST_DIR/repo"; synth_repo "$R"
+    c1=$(git -C "$R" rev-parse HEAD)
+    synth_commit "$R" main2.txt two "main: second"
+    synth_origin_main "$R"
+    c2=$(git -C "$R" rev-parse HEAD)
+    history_scan_range "$R"
+    [ -z "$scan_revs" ] || { echo "expected an empty range with HEAD on main, got \"$scan_revs\""; false; }
+    [ "$scan_scope" = "nothing to scan: HEAD is origin/main itself (${c2:0:10}), so the branch adds no commits over main" ] || { echo "scope: $scan_scope"; false; }
+    # The case, end to end: a skip whose reason is that statement, not a pass.
+    run history_case_over "$R"
+    [ "$status" -eq 0 ] && [ "${lines[0]}" = "1..1" ] || { echo "expected the history case to run alone and not fail, got exit $status:"; echo "$output"; false; }
+    line=$(history_case_line "$output")
+    [[ "$line" == "ok 1 "*" # skip $scan_scope" ]] || { echo "the history case did not skip with the statement: $line"; echo "$output"; false; }
+    git -C "$R" checkout -q --detach "$c1"
+    history_scan_range "$R"
+    [ -z "$scan_revs" ] || { echo "expected an empty range with HEAD an ancestor of main, got \"$scan_revs\""; false; }
+    [ "$scan_scope" = "nothing to scan: HEAD (${c1:0:10}) is an ancestor of origin/main, so the branch adds no commits over main" ] || { echo "scope: $scan_scope"; false; }
 }
 
 # ── the hook, with the real scanner ────────────────────────────────────────

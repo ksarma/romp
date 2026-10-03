@@ -69544,12 +69544,15 @@ if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUp
 // and say why loudly (a link-backstop diag row). The stamp renews every tick while the shell has a socket in any state,
 // so an alive loop reads under one tick stale whatever its socket's age (before the stamp, a long-standing OPEN shell
 // socket crossing the quiet bound published its hours-old dial time for the tick that put it down, and a pane awaiting
-// in that tick filed a false link-backstop row and dialed on its own). 25 s is the shell's whole alive cycle on a hung path,
-// from its named constants (_LANDING_MOBILE_JS): the 15 s CONNECTING cut (SH_CONNECT_MS), the watchdog tick that
-// performs it (up to one SH_TICK_MS late) and the 2 s blind redial that follows (SH_BLIND_MS), 22 s, rounded up to
-// the next tick as a margin for late timers; tests/test_kernel_ws_heartbeat.py pins the sum against those constants
-// (review round 1, 2026-09-18: the 20 s bound omitted the redial, so a pane tick landing in the loop's last two
-// seconds called an alive loop dead). It approximates the one event nobody can hear (that loop dying).
+// in that tick filed a false link-backstop row and dialed on its own). 25 s bounds the shell's whole alive cycle on a hung
+// path, from its named constants (_LANDING_MOBILE_JS): the 15 s CONNECTING cut (SH_CONNECT_MS), the watchdog tick that
+// performs it when the dial's own cut timer is lost (up to one SH_TICK_MS late) and the 2 s blind redial that follows
+// (SH_BLIND_MS), 22 s, rounded up to the next tick as a margin for late timers. On the dial's own timer (iOS item 1a,
+// 2026-10-02) the cycle is shorter: the cut at 15 s and the blind redial, 17 s, or under 19 s for a refusal inside the
+// cut on the ladder's top 4 s rung (SH_LADDER), and that timer keeps a loop whose tick was lost cutting and redialing
+// inside the bound. tests/test_kernel_ws_heartbeat.py pins the bound against those constants (review round 1,
+// 2026-09-18: the 20 s bound omitted the redial, so a pane tick landing in the loop's last two seconds called an alive
+// loop dead). It approximates the one event nobody can hear (that loop dying).
 setInterval(function(){if(!awaitLink||ws)return;var L=parentLink();if(L===undefined)return;
 if(L.up){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();return;}
 if(L.connT&&Date.now()-L.connT>25000){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;staleDiag("link-backstop","");connect();}},5000);
@@ -73700,9 +73703,11 @@ var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart sig
 // in flight, a lastRecv / freeze-resume clock, a 5 s watchdog with the shim's three arms, a return probe filed per
 // return, and a redial cadence), so a 30 s outage costs one socket's retries, not thirteen. romp-manager ruled the shell
 // keeps its OWN copy of these rules rather than sharing the shim's (the shim is upstream text the fold touches weekly);
-// tests/test_kernel_ws_heartbeat.py pins the two copies to agree on the constants and the tick. The connect cut is a
-// named constant at today's 15 s (SH_CONNECT_MS, no behaviour change); the 5 s cut experiment is a later harness leg.
-var shWs=null,shLastRecv=0,shConnT=0,shResumeProvisional=0,shHiddenAt=0,shForegroundedAt=0,shFrozeAt=0,shResumedAt=0,shFailed=0,shFirstFailT=0,shRestartAnnounced=0,shReturnProbe=null,shRung=0,shTimer=0,shTickT=0;   // shTimer: the ONE pending redial timer (review round 1, 2026-09-18: a dial clears it, so a return while the pre-return close's blind timer is pending makes one chain, not two on the ladder side by side); shTickT: the watchdog's last tick with a socket to watch, the loop-alive stamp __rompLink publishes as connT beside the dial time (review round 2)
+// tests/test_kernel_ws_heartbeat.py pins the two copies to agree on the constants and the tick. The connect cut is the
+// named constant SH_CONNECT_MS, 15 s. Since iOS item 1a (2026-10-02) each dial arms its own cut timer at SH_CONNECT_MS, so
+// a hung dial is cut at 15 s and not up to one tick later; the watchdog's CONNECTING arm stays as the backstop for a timer
+// the browser loses, and the shim keeps its cut on its own tick. A shorter return-window cut is a later step (1b).
+var shWs=null,shLastRecv=0,shConnT=0,shResumeProvisional=0,shHiddenAt=0,shForegroundedAt=0,shFrozeAt=0,shResumedAt=0,shFailed=0,shFirstFailT=0,shRestartAnnounced=0,shReturnProbe=null,shRung=0,shTimer=0,shTickT=0,shCutT=0;   // shCutT: the current dial's pending connect cut (iOS item 1a, 2026-10-02; a dial arms it, its open or close clears it). shTimer: the ONE pending redial timer (review round 1, 2026-09-18: a dial clears it, so a return while the pre-return close's blind timer is pending makes one chain, not two on the ladder side by side); shTickT: the watchdog's last tick with a socket to watch, the loop-alive stamp __rompLink publishes as connT beside the dial time (review round 2)
 var SH_STALE_MS=30000,SH_PROVISIONAL_MS=15000,SH_CONNECT_MS=15000,SH_REDIAL_MS=8000,SH_TICK_MS=5000,SH_BLIND_MS=2000,SH_LADDER=[1000,2000,4000,4000];   // SH_BLIND_MS: the redial after an ordinary drop outside any window (today's shell), named so the pane's link backstop is derived from it (kernel.py _shim)
 // the shell publishes the page's link: a synchronous read for the same-origin pane iframes (their parentLink), and the
 // panes word (link:'up'|'down', _LANDING_COLLAPSE_JS panesMsg) re-told on this socket's open, close and abandon. up only
@@ -73717,10 +73722,13 @@ window.__rompLink=function(){return {up:!!(shWs&&shWs.readyState===1&&Date.now()
 // #rerr-list so the Log's own re-render leaves it alone), shown while this shell's socket is down after it once opened: on
 // at an abandon (a return's fast path, the watchdog's quiet arm) or a close, off at the next open, with no success line.
 // shCueTries counts the dials that never opened since the link went down or the return began, whichever is later;
-// shCueCuts those the connect cut closed (a never-opened close at least SH_CONNECT_MS after its dial, the complement of
-// the refused-ladder test in ws.onclose). The two states a user sees after a return: the first try in flight (the wait
-// line) and, after the watchdog cuts it, the retry line that names the cause once ('got no response'). Refusals take the
-// connect line, with the count from the second on. Every change is one of those events; nothing here runs on a timer.
+// shCueCuts those the connect cut closed (the close the dial's own cut timer made, shCutHere, or a never-opened close at
+// least SH_CONNECT_MS after its dial, the tick's backstop for a lost timer: the complement of the refused-ladder test in
+// ws.onclose). The two states a user sees after a return: the first try in flight (the wait line) and, from the close of
+// the cut that ends it, the retry line that names the cause once ('got no response'). Since iOS item 1a (2026-10-02) that
+// cut is the dial's own timer, SH_CONNECT_MS after the dial, so the retry line comes at 15 s and not at the next watchdog
+// tick, which cuts only a dial whose timer the browser lost. Refusals take the connect line, with the count from the second
+// on. Every change is one of those events; the cue arms no timer of its own.
 var shCueOn=false,shCueTries=0,shCueCuts=0,shCueEl=null;
 function shCueText(){if(!shCueOn)return '';if(!shCueTries)return 'Waiting for the kernel to respond. The dashboard updates on its own when it does.';
 var hung=shCueCuts===shCueTries;if(shCueTries===1)return hung?'Trying again: the first try got no response.':'Trying again: the first try could not connect to the kernel.';
@@ -73748,9 +73756,10 @@ shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
 var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid())+(window.__rompKeyQ?window.__rompKeyQ():''));   // +k=: the page key the socket class needs, added by the page-key script
 shWs=ws;var shOpened=false;   // [fork] D3: this dial's socket for the liveness machinery, and whether it ever opened (the return probe's attempt count keys on it)
+var shCutHere=false;clearTimeout(shCutT);var shCutMe=shCutT=setTimeout(function shCut(){if(shCutT===shCutMe)shCutT=0;if(ws.readyState!==0)return;shCutHere=true;try{ws.close();}catch(e){}},SH_CONNECT_MS);   // [fork] iOS item 1a (2026-10-02): the connect cut on this dial's own timer, SH_CONNECT_MS after the dial (the watchdog tick cut it up to SH_TICK_MS later). The open, the close and the next dial clear it (an abandon is always followed by a dial); the open and the close clear it by this dial's own handle (shCutMe), so an older socket's late event never cancels a newer dial's cut; a callback that runs anyway finds its own socket no longer CONNECTING and closes nothing; all three reset shCutT only while shCutT is still their dial's. shCutHere: the close this timer made, which this dial's onclose reads as a hung attempt by the event, not by the clock
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
-ws.onopen=function(){shOpened=true;shLastRecv=Date.now();shResumeProvisional=0;shRung=0;try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}
+ws.onopen=function(){clearTimeout(shCutMe);if(shCutT===shCutMe)shCutT=0;shOpened=true;shLastRecv=Date.now();shResumeProvisional=0;shRung=0;try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}   // [fork] iOS item 1a: the open clears this dial's OWN connect cut (shCutMe) and resets shCutT only while it is still this dial's, so an older socket's open delivered after a newer dial leaves that dial's cut in force (review round 1, 2026-10-02)
 shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket; the queue holds clientDiag rows alone, so one re-read of the kill switch at the open holds them all when a mute was flipped on while the socket was down, as the pane shim's flush does (review find, 2026-09-18)
 if(shReturnProbe){shReturnProbe.ms=Date.now()-shForegroundedAt;shReturnProbe.attempts=shFailed;shReturnProbe.firstFailMs=shFirstFailT?Date.now()-shFirstFailT:-1;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;shFailed=0;shFirstFailT=0;}   // [fork] D3: ONE shell row per return - the decision, the hidden/quiet gap, and the path's own recovery (attempts, firstFailMs, foreground->open ms)
 shTell();   // [fork] D3: link up - re-tell the panes
@@ -73782,18 +73791,23 @@ else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateO
 // the API health detail's pause acknowledgment rides this socket: a press it carried cannot be answered now (the
 // redial's ready re-sends the last frame verbatim), so the detail is told before the redial (_LANDING_APIH_JS)
 ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost();}catch(e){}if(shellSock===ws)shellSock=null;shTell();   // [fork] D3: link down - re-tell the panes. shWs keeps the CLOSED socket (review round 1, 2026-09-18): the watchdog's CLOSED arm below reads it to recover a lost redial timer; shellWS's guard skips a socket that is neither CONNECTING nor OPEN and __rompLink requires readyState 1, so a CLOSED shWs is harmless
-if(!shOpened){if(!shFailed)shFirstFailT=Date.now();shFailed++;}   // [fork] D3: a handshake that never opened - the return probe's attempt count
-if(!shOpened){shCueTries++;if(Date.now()-shConnT>=SH_CONNECT_MS)shCueCuts++;}shCue(true);   // [fork] iOS item 4: a try that never opened counts, and whether the connect cut made its close (an open socket's close finds the count its open zeroed)
+clearTimeout(shCutMe);if(shCutT===shCutMe)shCutT=0;if(ws!==shWs)return;if(!shOpened){if(!shFailed)shFirstFailT=Date.now();shFailed++;}   // [fork] iOS item 1a: the close clears this dial's OWN connect cut (shCutMe) and resets shCutT only while it is still this dial's: the watchdog's CLOSED arm can dial while an older socket's close event is still queued, and that late close must leave the newer dial's cut in force (review round 1, 2026-10-02). A close of a socket that is no longer shWs (its close delivered after a newer dial) stops there, after clearing its own handle: it neither counts a failure toward the return probe nor arms a redial, so it cannot leave a second pending redial beside the newer dial's, or file a return-probe row with attempts from a socket put down before the return (review round 2, 2026-10-02; the per-dial cut widened this road, since a tick can now land right after a cut). D3: a handshake that never opened - the return probe's attempt count
+if(!shOpened){shCueTries++;if(shCutHere||Date.now()-shConnT>=SH_CONNECT_MS)shCueCuts++;}shCue(true);   // [fork] iOS item 4: a try that never opened counts, and whether the connect cut made its close: the close this dial's own cut timer made (shCutHere, iOS item 1a, read by the event, so a timer that fires while the wall clock reads a ms short of SH_CONNECT_MS still counts as a cut) or a close at least SH_CONNECT_MS after the dial (the tick's backstop for a lost timer), the complement of the refused-ladder test below (an open socket's close finds the count its open zeroed). Below the late-close return above, so a superseded socket's close counts no try and turns the line on over no newer dial, as it counts nothing toward the return probe
 var shInWin=shForegroundedAt&&Date.now()-shForegroundedAt<SH_STALE_MS,shd;   // [fork] D3: the redial cadence (ruling 4, 2026-09-18)
 if(shRestartAnnounced&&Date.now()-shRestartAnnounced<30000)shd=250;   // an announced restart keeps its tight redial (the kernel's own word)
-else if(!shOpened&&Date.now()-shConnT<SH_CONNECT_MS){shd=SH_LADDER[shRung<SH_LADDER.length?shRung:SH_LADDER.length-1];shRung++;}   // a REFUSED attempt (an onclose within the connect cut): back off on the bounded ladder 1/2/4/4 s, reset by an open, so a fast-refusing path is not a dial storm (the harness baseline: 236 dials/pane in 30 s at 250 ms)
-else if(shInWin)shd=250;   // a HUNG attempt the 15 s cut paced, inside a return window: prompt
+else if(!shOpened&&!shCutHere&&Date.now()-shConnT<SH_CONNECT_MS){shd=SH_LADDER[shRung<SH_LADDER.length?shRung:SH_LADDER.length-1];shRung++;}   // a REFUSED attempt (an onclose within the connect cut that the cut did not make: shCutHere, iOS item 1a, so a timer that fires while the wall clock reads a ms short of SH_CONNECT_MS still paces a hung attempt below): back off on the bounded ladder 1/2/4/4 s, reset by an open, so a fast-refusing path is not a dial storm (the harness baseline: 236 dials/pane in 30 s at 250 ms)
+else if(shInWin)shd=250;   // a HUNG attempt the connect cut paced (the dial's own timer, or the tick's backstop), inside a return window: prompt
 else shd=SH_BLIND_MS;   // the blind cadence for an ordinary drop outside any window (today's shell)
 shTimer=setTimeout(shellWS,shd);};}catch(e){}}   // the one pending redial timer (a dial clears it, shellWS)
 // [fork] D3: the shell's progress watchdog - the shim's three arms with the shell's own copy of the bounds. An OPEN
 // socket quiet past the bound (PROVISIONAL_MS while a resumed keep awaits a confirming frame, STALE_MS otherwise) is
 // abandoned and redialed; a CONNECTING one past the 15 s cut is closed (its onclose then redials); a CLOSED one past
-// the redial bound dials (a redial timer the browser lost; onclose keeps shWs so this arm can see it). Inert when
+// the redial bound dials (a redial timer the browser lost; onclose keeps shWs so this arm can see it). Since iOS item 1a
+// (2026-10-02) the CONNECTING arm is the backstop for a dial whose own cut timer the browser lost: on time that timer
+// always fires first (it is due at SH_CONNECT_MS, and the arm acts only past it). After a timer cut, a tick that lands
+// between the cut's close and its pending redial finds the socket CLOSED past SH_REDIAL_MS and dials then, ahead of that
+// redial, still one chain (the dial clears the redial timer); before 1a the tick made every cut, so the next tick came
+// a whole SH_TICK_MS later. Inert when
 // there is no socket (after an abandon), so an awaiting page runs nothing here. Each tick with a socket stamps shTickT,
 // the loop-alive stamp __rompLink publishes as connT (review round 2, 2026-09-18): after the guard, so a shell left with
 // no socket at all goes stale and the pane's 25 s backstop can still call its loop dead.

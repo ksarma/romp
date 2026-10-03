@@ -37,7 +37,8 @@ What is recorded per leg, from `<lab xdg>/romp/client-diag.jsonl` (the shim's ro
 the driver's own log, into `<lab>/return-harness-<shell>-<regime>-<s>s.json` and, at the end, one combined
 `return-harness-measurements.json` (copied to $RETURN_HARNESS_OUT when set): per pane the `return` decision and
 `hiddenMs`, `wsconnfail` attempts, `wsclose` count, `watchdog-close` by why, `return-fresh` ms / bytesSince / redialed,
-the shell's `return-probe` rows (none today), federation `hostconn` rows by ev and why (none without an attached host),
+the shell's `return-probe` rows (one per return since D3) and, since iOS item 1a, its first cut after the return
+(`shellFirstCutMs`, the page's reading and the route's), federation `hostconn` rows by ev and why (none without an attached host),
 the kernel's `wsopen` rows per app at boot and in the return window (the storm as the kernel saw it), the beacon's `perf`
 rows with `vis`, `wsBytes`, `free`, `rafGap`, `marks` when present (perfShare is on in the lab's romp:settings), the
 sockets dialed per return by verdict, and the order in which the eight documents' visibilitychange handlers ran (the shell, the settings frame at about:blank and the six panes).
@@ -71,15 +72,14 @@ any request. Synthetic sessions only; no real data.
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 import urllib.error
 import urllib.request
@@ -142,10 +142,6 @@ def cue_hold_ms():
     m = re.search(r"^_RECONN_BADGE_HOLD_MS = (\d+)$", src, re.M)
     assert m, "kernel.py defines _RECONN_BADGE_HOLD_MS"
     return int(m.group(1))
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def _transcript(sid, tag, cwd, pairs):
@@ -298,6 +294,14 @@ def measure(rows, r):
             page_load[key] = page_load.get(key, 0) + 1
     shell = [{"what": x.get("what"), **{k: (x.get("data") or {}).get(k) for k in ("attempts", "firstFailMs", "ms")}}
              for x in mine if x.get("surface") == "shell" and x.get("what") == "return-probe" and x.get("t", 0) >= s_return]
+    # iOS item 1a (2026-10-02): the shell's first cut after the return, read twice. The page's: its return-probe row times the
+    # first failed attempt from the foreground, where the fast path dials, so ms minus firstFailMs is the return dial's life
+    # (only when that row counts an attempt and both figures are real). The route's: the first shell dial after the return,
+    # the page's close of it minus its arrival, both on the driver's clock (null when the page never cut it).
+    first_cut_page = next((p["ms"] - p["firstFailMs"] for p in shell if (p.get("attempts") or 0) >= 1
+                           and isinstance(p.get("ms"), int) and isinstance(p.get("firstFailMs"), int) and p["ms"] >= 0 and p["firstFailMs"] >= 0), None)
+    first_shell = next((d for d in (r.get("dials") or []) if d.get("app") == "shell" and d.get("t", 0) >= t.get("return", 0)), None)
+    first_cut_route = int(first_shell["cutT"] - first_shell["t"]) if first_shell and first_shell.get("cutByPage") and first_shell.get("cutT") else None
     wsopen = [x for x in mine if x.get("surface") == "kernel" and x.get("what") == "wsopen"]
     boot_open, return_open = {}, {}
     for x in wsopen:
@@ -341,6 +345,7 @@ def measure(rows, r):
         "t": t, "pageErrors": len(r.get("errors") or []), "overrideErrors": r.get("overrideErrors") or [],
         "return": ret, "returnFresh": fresh, "wsconnfail": connfail, "wsclose": wsclose, "watchdogClose": wd,
         "hostconn": hostconn, "dialDeferred": deferred, "shellReturnProbe": shell,
+        "shellFirstCutMs": {"page": first_cut_page, "route": first_cut_route},
         "wsopenBoot": boot_open, "wsopenReturn": {a: len(v) for a, v in return_open.items()}, "wsopenReturnRows": return_open,
         "dialsAfterReturn": {"total": len(dials), "byVerdict": by_verdict, "perApp": per_app,
                              "cutByPage": sum(1 for d in dials if d.get("cutByPage")), "firstPerApp": timeline},
@@ -374,7 +379,7 @@ class ReturnFromBackground(unittest.TestCase):
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state, claude = _seed(cls.lab)
         cls.diag = os.path.join(cls.state, "client-diag.jsonl")
-        cls.port, cls.token = _free_port(), "testtok-return"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-return"
         # ROMP_WS_KEEPALIVE=2: WS_DEAD_S 6 s, a floor for a socket the driver's close at the suspend misses. The records show
         # none does (every kernel-side leg closed 13 to 25 ms after the suspend, code 1006), so the kernel sees an immediate
         # drop here where the phone's kernel keeps pushing into a dead socket until WS_DEAD_S (review round 1).
@@ -383,14 +388,9 @@ class ReturnFromBackground(unittest.TestCase):
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"),
                                       stderr=subprocess.STDOUT, env=cls.env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -410,6 +410,7 @@ class ReturnFromBackground(unittest.TestCase):
                 pass
             cls.kernel.wait()
         if cls.lab:
+            lab_ports.release(cls.lab)
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
@@ -482,6 +483,7 @@ class ReturnFromBackground(unittest.TestCase):
         if unmarked:
             self._unmarked(name, r, rows, tap)   # first on the unmarked leg: a detector that calls the served document a failure re-parks it, and every later read is of a re-parked pane
         self._shapes(name, r, m, regime)
+        self._shell_cut(name, m, regime, outage_s)
         self._parked(name, r, m)
         self._lazy(name, r, m, None if unmarked else tap)   # the unmarked document has no shim: the lazy counts are a no-tap boot's
         self._dial(name, r, boot_tab, tap)
@@ -979,6 +981,32 @@ class ReturnFromBackground(unittest.TestCase):
                 self.assertEqual(ls.get("loaderDisplay"), "flex", where + "…with the romp loader inside it: %r" % (ls,))
                 self.assertGreater(ls.get("height", 0), 0, where + "…with a box: %r" % (ls,))
                 self.assertLessEqual(ls.get("bottom", 1e9), ls.get("barTop", 0) + 1, where + "…that stops at the tab bar (the bar stays tappable): %r" % (ls,))
+
+    # ---- iOS item 1a (2026-10-02): the shell's first cut after a hung return, a smoke check in a real browser ----
+    def _shell_cut(self, name, m, regime, outage_s):
+        """Since iOS item 1a the shell cuts each dial on the dial's own timer (SH_CONNECT_MS, 15 s); before it the 5 s watchdog
+        tick made the cut, anywhere from 15 to 20 s after the dial. Read on a hung leg whose outage outlasts the cut (the 30 s
+        legs): the page's figure (measure: the return-probe row's ms minus firstFailMs, the return dial's life as the page saw
+        it) lands within 1 s of 15,000 ms, slack for a loaded box's timer and close-event latency. The route's figure for the
+        same cut is recorded beside it in the artifact.
+
+        This is a smoke check that the cut lands near SH_CONNECT_MS in a real browser, not proof that the dial's own timer made
+        it (the coordinator's ruling of 2026-10-02): a tick cut at the base can land inside the same window. At 919fde73b
+        WebKit read 15,802, 16,004 and 16,024 ms in three runs, one inside the window and two just past it; Chromium, on this
+        harness's near-fixed timeline, read 16.8 to 16.9 s, outside it. The pins of the timer are ShellLinkProbe's test_1a_*
+        cases in tests/test_kernel_mobile.py. The harness
+        hangs a dial by never answering its route, and cannot produce the phone's accepted-but-unanswered handshake."""
+        if regime != "hung" or outage_s * 1000 <= 15000 + 1000:
+            return
+        where = name + ": "
+        probes = m["shellReturnProbe"]
+        self.assertEqual(len(probes), 1, where + "one shell return-probe row for the one return: %r" % (probes,))
+        self.assertGreaterEqual(probes[0].get("attempts") or 0, 1, where + "the hung outage outlasted the shell's first attempt: %r" % (probes,))
+        cut = m["shellFirstCutMs"]["page"]
+        self.assertIsInstance(cut, int, where + "the row times the first cut: %r" % (probes,))
+        self.assertGreaterEqual(cut, 15000 - 50, where + "the first cut came no earlier than SH_CONNECT_MS after the dial: %r ms (row %r)" % (cut, probes[0]))
+        self.assertLessEqual(cut, 15000 + 1000, where + "the first cut came within 1 s of SH_CONNECT_MS: %r ms (row %r; route %r ms)"
+                             % (cut, probes[0], m["shellFirstCutMs"]["route"]))
 
     # ---- D2's count pin (2026-09-18): which panes parked, through the wsState words the driver recorded ----
     def _parked(self, name, r, m):

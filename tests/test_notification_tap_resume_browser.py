@@ -48,12 +48,13 @@ Three scenarios against the REAL shell, the REAL worker and the REAL kernel (her
 
 Skips LOUDLY without the extension deps or a playwright browser (CI installs none). All fixtures synthetic. No network.
 """
+import itertools
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -83,14 +84,7 @@ SID_D = "dddddddd-1111-2222-3333-444444444444"   # docs: likewise
 # under a second, so the ceiling costs nothing green.
 SETTLE_S = 30.0
 DEADLINE_MS = int(SETTLE_S * 1000)   # the same ceiling inside the browser drivers (waitForFunction / the ledger waits)
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
+ENDPOINT_SEQ = itertools.count(1)    # a distinct tail for each device endpoint the run subscribes (a number, not a port)
 
 
 # the click road (Chrome): the REAL push handler on the declarative JSON as e.data, the REAL click handler on the
@@ -528,6 +522,7 @@ class ServedTapLanding(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served tap needs them")
         cls.lab = tempfile.mkdtemp(prefix="tap-landing-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
@@ -548,22 +543,16 @@ class ServedTapLanding(unittest.TestCase):
                 {"sid": sid, "name": name, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid,
                  "alive": True, "model": "claude-fable-5-1", "liveModel": "Fable 5.1"}))
             Path(proj, sid + ".jsonl").write_text(_transcript(sid, prompt, reply))   # a CLOSED turn: nothing to resume
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-taplanding"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)   # the lab kernel's environment: a list of names, never a copy of the runner's (main, 2026-09-10)
         cls.klog_path = os.path.join(cls.lab, "kernel.log")
         cls.klog = open(cls.klog_path, "w")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=cls.klog, stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -572,6 +561,7 @@ class ServedTapLanding(unittest.TestCase):
             cls.kernel.wait()
         if getattr(cls, "klog", None):
             cls.klog.close()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _drive(self, driver_src, **extra):
@@ -670,7 +660,7 @@ class ServedTapLanding(unittest.TestCase):
         b64u = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
         priv = ec.generate_private_key(ec.SECP256R1())
         p256dh = b64u(priv.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint))
-        ep = "https://%s/push/%s-%d" % (host, tag, _free_port())
+        ep = "https://%s/push/%s-%d" % (host, tag, next(ENDPOINT_SEQ))
         code, res = self._kernel("POST", "/push/subscribe", {"endpoint": ep, "keys": {"p256dh": p256dh, "auth": b64u(os.urandom(16))},
                                                              "origin": "http://127.0.0.1:%d" % self.port})
         self.assertEqual(code, 200, res)

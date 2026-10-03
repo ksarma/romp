@@ -23,16 +23,15 @@ One hermetic kernel, one seeded session whose tail is a fixed four-paragraph mar
 placeholder uuid, hostname TESTHOST, no real data). Synthetic only."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -67,10 +66,6 @@ PARAS = [
     "keyed on the files it read; a boot that finds a memo whose inputs are unchanged skips the work, and one whose "
     "inputs moved rebuilds behind the memo, so the first pass after a deploy is fast without ever trusting a stale sum.",
 ]
-
-
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def _transcript(t0):
@@ -178,18 +173,14 @@ class ChatLineRaster(unittest.TestCase):
             {"sid": SID, "name": "api", "cwd": cwd, "mode": "auto", "effort": "high",
              "lastSid": SID, "alive": True, "model": "claude-opus-5", "liveModel": "Opus 5"}))
         Path(proj, SID + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in _transcript(now - 3600)))
-        cls.port, cls.token = _free_port(), "testtok-raster"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-raster"
         env = _lab.kernel_env(sub, claude, os.path.join(cls.lab, "dist"), cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
         cls.procs = [cls.kernel]
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1); break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            cls.kernel.kill(); raise unittest.SkipTest("kernel never served /healthz")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            cls.kernel.kill(); raise unittest.SkipTest("kernel never served /healthz: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -198,6 +189,7 @@ class ChatLineRaster(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _result(self):
