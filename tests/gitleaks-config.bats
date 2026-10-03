@@ -734,14 +734,28 @@ hook_constant() {   # <CAP | V>
 # The hook's piecing awk, CRED_PIECES_AWK, read from the hook's own text and never restated here:
 # the text between the quote that opens its one assignment and the next quote, which closes it (the
 # hook holds the text in single quotes, so it contains none). No assignment opening a line (a
-# rename, a move) or two, and the premise is gone, so say so.
+# rename, a move) or two, and the premise is gone, so say so; say so too when no quote closes it.
+# The hook is read a line at a time and the text written out as it is read, up to the closing
+# quote, every pattern matched against one line, so the helper's time is linear in the bytes it
+# reads (when no quote closes the text, what it wrote is not the text: its status says so). Until
+# 2026-10-02 it read the whole hook into one string and cut it at the assignment with
+# ${text#*$'\n'"CRED_PIECES_AWK='"}, whose time grows with about the square of the bytes ahead of
+# the assignment, under bash 5.2 as under 3.2: with the assignment 441,187 bytes into the hook the
+# helper took over two minutes on Linux, and G4 reached its 180 s bound in CI's macOS cell (bash
+# 3.2.57). The last case in this file plants the premise's three refusals.
 hook_pieces_awk() {
-    local hook="$ROMP_DIR/.githooks/pre-push" n text
+    local hook="$ROMP_DIR/.githooks/pre-push" open="CRED_PIECES_AWK='" n line found=""
     n=$(grep -c "^CRED_PIECES_AWK='" "$hook" || true)
     [ "$n" -eq 1 ] || { echo "expected exactly one line of the hook ($hook) opening CRED_PIECES_AWK='...', found $n" >&2; return 1; }
-    text=$(< "$hook")
-    text=${text#*$'\n'"CRED_PIECES_AWK='"}
-    printf '%s' "${text%%"'"*}"
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ -z "$found" ]; then
+            case $line in "$open"*) found=1; line=${line#"$open"} ;; *) continue ;; esac
+        fi
+        case $line in *"'"*) printf '%s' "${line%%"'"*}"; return 0 ;; esac
+        printf '%s\n' "$line"
+    done < "$hook"
+    echo "the hook's ($hook) line opening CRED_PIECES_AWK='... has no quote after it to close the text" >&2
+    return 1
 }
 
 # The hook's piecing awk run as its feed runs it at a file's first added line: choose over the
@@ -956,4 +970,45 @@ witness_cases() {   # <the title's words after "round 10b (C, ">
             echo "renamed or gone, it leaves the message above pointing at nothing"
             false; }
     done
+}
+
+# ── G4's reader of the piecing awk: its premise, planted ─────────────────────
+# hook_pieces_awk (above G4) reads the hook a line at a time since 2026-10-02 (the closing check's
+# item 2) and keeps the premise its comment states: a copy of the hook with a second line opening
+# the assignment, one with the assignment renamed, and one whose text no quote closes are each
+# refused, the refusal saying which; the hook itself is read, the control. Red under the reader
+# before that day on the third copy alone (it answered 0 with the rest of the copy as the text);
+# the two counts were refused there too, by the same grep.
+# The control's text is then compared byte for byte with a reading that shares no code with the
+# reader: one awk pass with the quote as its record separator, printing the record after the one
+# that ends in a line opening the assignment. G4 cannot see a reader that loses bytes at the edges
+# of lines: a read without IFS= strips the blanks there, the awk G4 runs ignores them, and G4 stays
+# green (the closing check's audit, 2026-10-02, which planted that read). This comparison is red.
+@test "G4's reader of the piecing awk refuses a copy of the hook with two lines opening CRED_PIECES_AWK='...', one with none and one whose text no quote closes, saying which, and reads the hook itself, byte for byte the text one awk pass splitting the hook at its quotes reads" {
+    local hook="$ROMP_DIR/.githooks/pre-push" n d
+    n=$(grep -n "^CRED_PIECES_AWK='" "$hook" | cut -d: -f1)
+    [ -n "$n" ] && [ "$n" -gt 1 ] || { echo "the hook has no single line opening CRED_PIECES_AWK='...' past its first ($n)"; false; }
+    for d in two none open; do mkdir -p "$TEST_DIR/$d/.githooks"; done
+    { sed -n '1p' "$hook"; echo "CRED_PIECES_AWK='planted'"; sed -n '2,$p' "$hook"; } > "$TEST_DIR/two/.githooks/pre-push"
+    sed "s/^CRED_PIECES_AWK='/RENAMED_PIECES_AWK='/" "$hook" > "$TEST_DIR/none/.githooks/pre-push"
+    { sed -n "1,$((n - 1))p" "$hook"; echo "CRED_PIECES_AWK='"; echo 'BEGIN { no_quote_follows = 1 }'; } > "$TEST_DIR/open/.githooks/pre-push"
+    run hook_pieces_awk
+    [ "$status" -eq 0 ] && [ -n "$output" ] || { echo "the reader did not read the hook itself (status $status):"; echo "$output"; false; }
+    hook_pieces_awk > "$TEST_DIR/reader.txt"
+    LC_ALL=C awk -v RS="'" 'p { printf "%s", $0; exit }
+        { r = "\n" $0; t = "\nCRED_PIECES_AWK="; if (length(r) >= length(t) && substr(r, length(r) - length(t) + 1) == t) p = 1 }' \
+        "$hook" > "$TEST_DIR/one-pass.txt"
+    [ -s "$TEST_DIR/one-pass.txt" ] || { echo "one awk pass over the hook found no text after a line opening CRED_PIECES_AWK='"; false; }
+    cmp "$TEST_DIR/reader.txt" "$TEST_DIR/one-pass.txt" || {
+        echo "the reader's text ($(wc -c < "$TEST_DIR/reader.txt") bytes) is not the text one awk pass reads between the hook's quotes ($(wc -c < "$TEST_DIR/one-pass.txt") bytes)"
+        false; }
+    ROMP_DIR=$TEST_DIR/two run hook_pieces_awk
+    [ "$status" -eq 1 ] && [[ "$output" == *"opening CRED_PIECES_AWK='...', found 2" ]] || {
+        echo "a copy with two lines opening the assignment was not refused by its count (status $status):"; echo "$output"; false; }
+    ROMP_DIR=$TEST_DIR/none run hook_pieces_awk
+    [ "$status" -eq 1 ] && [[ "$output" == *"opening CRED_PIECES_AWK='...', found 0" ]] || {
+        echo "a copy with no line opening the assignment was not refused by its count (status $status):"; echo "$output"; false; }
+    ROMP_DIR=$TEST_DIR/open run hook_pieces_awk
+    [ "$status" -eq 1 ] && [[ "$output" == *"has no quote after it to close the text" ]] || {
+        echo "a copy whose text no quote closes was not refused, saying so (status $status):"; echo "$output"; false; }
 }

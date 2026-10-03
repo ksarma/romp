@@ -105,6 +105,20 @@ is 8.25.0 because the hook's flags need 8.24.0 and this repository's
 from 8.25.0 on; CI pins 8.28.0, above that floor. Under an older gitleaks the
 hook refuses a push that has something to scan and names the version it found.
 
+The `pre-push` hook scans under bash 5.1 or later. Under an older bash, such as
+the `/bin/bash` 3.2 that macOS ships, it runs itself again under a bash 5.1 or
+later at `/opt/homebrew/bin/bash` or `/usr/local/bin/bash`, where
+`brew install bash` puts one, and refuses the push when neither path has one.
+A clone with neither scan set up needs no newer bash: when the hook can tell
+that nothing is at the private-strings path, and either `ROMP_NO_GITLEAKS=1` is
+set or no gitleaks is on `PATH` with `ROMP_GITLEAKS` unset, it passes the push
+under any bash, printing that gitleaks is not installed unless
+`ROMP_NO_GITLEAKS=1` is set. When the hook cannot tell whether anything is at
+that path, for example because a directory above it cannot be searched, a
+symlink at the path leads nowhere, or `HOME` is unset with neither
+`ROMP_PRIVATE_STRINGS` nor `XDG_CONFIG_HOME` set, it refuses the push under
+every bash.
+
 The Python and shell suites are also the CI gate, across Python 3.10 to 3.13 on
 Linux; the macOS cells run on demand from the Actions tab (they are billed even
 on a public repo, so they are not part of the per-push matrix).
