@@ -883,6 +883,18 @@ out({ atPaint: at() });""")
                          "8 px below the chrome's control: 3 rows over the text field, against 7 at the first place (107 px); 8 px above the text field "
                          "(92 px) covers 3 rows of the chrome's control too but is farther; nothing off the view is taken")
 
+    def test_with_no_clear_place_the_first_place_stays_when_it_covers_the_least(self):
+        # the first place is one of the places weighed, so the fallback never moves the badge onto more of a control than it covered
+        o = self._fit(r"""
+shortList(179, 119); resize(99);
+add(null, [0, 0, 390, 103], { cursor: 'pointer' });                   // a control across the chrome, drawn 4 px over the list's top from outside it
+add(null, [0, 130, 390, 49], { sel: 'textarea' });                    // the composer's text field across the page, from 11 px below the list
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+        self.assertEqual(o["atPaint"], {"top": "107px", "right": "8px", "painted": True},
+                         "the first place covers 2 rows of the text field; 8 px below the chrome's control (111 px) covers 6 rows of the text field, and 8 px "
+                         "above the text field (97 px) 6 rows of the chrome's control")
+
     def test_with_every_place_equally_covered_the_badge_keeps_its_first_place(self):
         o = self._fit(r"""
 add(null, [0, 0, 390, 844], { cursor: 'pointer' });                  // a control over the whole page
