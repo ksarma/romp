@@ -1,0 +1,11 @@
+---
+title: The phone bar's Log triangle turns red while the Log holds something unread: its rule outranks the bar's action grey
+status: candidate
+where: kernel/kernel.py (the shell's #mtabs #merr.has rule and its light theme twin, body.theme-light #mtabs #merr.has); tests/test_log_triangle_served.py and tests/log_triangle_browser.mjs (the triangle's computed colour at each Log state on the phone, in Chromium, WebKit and Firefox, with every other bar button's colour); upstream/2026-10-03-phone-log-triangle-red.md (this entry)
+added: 2026-10-03
+pr:
+tier: fix
+offered:
+closed:
+---
+On the phone the Log opens from the warning triangle in the bottom bar's action cluster (#merr). The Log's script puts the class has on it while an entry is unread or a visible pane's socket is down, and the shell's #merr.has{color:#ff6b6b} was meant to paint it red, but it never did: the mobile block's action grey, #mtabs button.mact (one id, one class, one type), outranks #merr.has (one id, one class) whatever the order, and in the light theme body.theme-light #mtabs button (one id, one class, two types) outranks it as well. So the triangle stayed grey with the Log holding unread entries, on every tab and with a pane's socket down. The rule now names #mtabs for precedence (two ids outrank both), and the light theme gets its own red, the light palette's error red #B02A1C, since the dark red is 2.1:1 on the light bar against the idle grey's 5.4:1. The active tab's accent, the other tabs' grey and the other actions' grey are unchanged, and the served test reads each of them at every step. Upstream's main carries the same three rules (read 2026-10-03), so its phone triangle never turns red either. The desktop has no triangle since the Log's opener left the rail (T290).
