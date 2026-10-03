@@ -86,11 +86,13 @@ The pins, each red on the kernel before the lock for the reason it names:
 
 Subprocess pins run bin/romp-kernel under sys.executable in a private lab. The environment comes from kernel_env
 (tests/test_ship_reship_served.py, the safe lab-kernel recipe: named variables only, the lab's roots, session hosts
-floored off, a free kernel port, a postal bus that is never started) with ROMP_STATE_DIR on the lab's state root, no
-serve token, and ROMP_POSTAL_PORT on a listener this test owns and counts connections on. Each child leads its own
-session, and the group kill plus wait is registered before it is spawned, so every road (pass, fail, the bound) ends
-the tree. Pin 8's holder is a plain Python process (sys.executable -I -c, the standard library only) that leads its own
-session the same way. All fixtures synthetic."""
+floored off, a postal bus that is never started) with a kernel port reserved under the lab through tests/lab_ports.py,
+ROMP_STATE_DIR on the lab's state root, no serve token, and ROMP_POSTAL_PORT on a listener this test owns and counts
+connections on. Each child leads its own session, and the group kill plus wait is registered before it is spawned, so
+every road (pass, fail, the bound) ends the tree; the lab's reservations (its kernel ports, and the postal port
+kernel_env reserves that the listener's port replaces) are released after that, on every road too. Pin 8's holder is
+a plain Python process (sys.executable -I -c, the standard library only) that leads its own session the same way. All
+fixtures synthetic."""
 import ast
 import contextlib
 import errno
@@ -129,6 +131,7 @@ MODULE_STATE_ROOT = Path(os.environ["XDG_STATE_HOME"]) / "romp"
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  kernel_env, the lab kernel's environment (the module, not its classes:
 #                                   an imported TestCase would be collected here a second time)
+import lab_ports   # noqa: E402  the lab's kernel ports, and the postal port kernel_env reserves; _Lab releases them
 
 km = load_source("romp_kernel_instance_lock", KERNEL)
 jd = km.jd
@@ -360,12 +363,16 @@ def _assert_state_root_fault_line(tc, line, path, cause):
 
 class _Lab(unittest.TestCase):
     """One private lab per test: the state root (xdg/romp), the Claude config dir (claude), a postal listener this test
-    owns, and the kernel children, each ended by its group kill registered before the spawn."""
+    owns, the kernel children, each ended by its group kill registered before the spawn, and the ports reserved under
+    the lab (tests/lab_ports.py), released after the children are ended."""
     maxDiff = None
 
     def setUp(self):
         self.lab = tempfile.mkdtemp(prefix="kernel-lock-")
         self.addCleanup(shutil.rmtree, self.lab, True)
+        # registered before any reserve and before any spawn, so it runs after every child's group kill and reap (the
+        # cleanups run last-registered first) and on a setUp that fails part way
+        self.addCleanup(lab_ports.release, self.lab)
         self.xdg = os.path.join(self.lab, "xdg")
         self.state = os.path.join(self.xdg, "romp")
         self.claude = os.path.join(self.lab, "claude")
@@ -378,7 +385,7 @@ class _Lab(unittest.TestCase):
         self.listener.bind(("127.0.0.1", 0))
         self.listener.listen(64)
         self.listener.setblocking(False)
-        self.port = _lab._free_port()
+        self.port = lab_ports.reserve(self.lab)
         self.env = _lab.kernel_env(self.lab, self.claude, os.path.join(self.lab, "dist"), self.port, "unused-token",
                                    ROMP_STATE_DIR=self.state,
                                    ROMP_POSTAL_PORT=str(self.listener.getsockname()[1]))
@@ -785,7 +792,8 @@ class TheHolderAtTheDeadline(_Lab):
         h = self.holder(deadline)
         a = self.spawn()
         first_env = dict(self.env)
-        self.env = dict(self.env, ROMP_KERNEL_PORT=str(_lab._free_port()))   # a port of its own for the second kernel
+        # a port of its own for the second kernel, reserved under the lab like the first
+        self.env = dict(self.env, ROMP_KERNEL_PORT=str(lab_ports.reserve(self.lab)))
         b = self.spawn()
         self.env = first_env
         for p in (a, b):
