@@ -3,7 +3,7 @@ title: test_ws_liveness's c3 waits for its second ping to reach the peer before 
 status: candidate
 where: tests/test_ws_liveness.py (PhantomPanesAreDropped.test_c3_a_peer_is_never_judged_while_its_handler_is_inside_a_dispatch: the settle on the peer's second ping before _note_ws_inbound; PhantomPanesAreDropped.test_c3_widened_c3_holds_when_its_second_ping_leaves_late, new); upstream/2026-10-03-tests-ws-liveness-c3-ping-race.md (this entry)
 added: 2026-10-03
-pr:
+pr: 956
 tier: docs
 offered:
 closed:
