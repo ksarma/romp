@@ -3896,6 +3896,10 @@ def peer_update(data, write=True):
             # The next exchange from it REPLACES the row (peer_exchange_handle, peer_exchange_apply) and so
             # clears the mark: the event, not the up notify (round 2 of fork PR #897, the reviewer's ruling).
             PEER_STATE[host]["linkDown"] = True
+        if not up:
+            # The same event closes the host's inbound link, in the same hold (2026-10-03): only its next arrival,
+            # numbered after this close, reopens it, as only its next exchange clears the mark (_inbound_links)
+            _inbound_link_down(host)
     _peer_threads_reconcile(host)                    # an up peer gets its dialer; a down one is woken to exit
     if write:                                        # the seed's rows write nothing here: serve() writes once after its bind
         _write_remote_sids()                         # the link state gates reachability: the mirror follows the notify at once
@@ -6235,7 +6239,8 @@ _PEER_STATE_LOCK = threading.Lock()        # PEER_STATE's one lock (round 6 of f
 #                                            writes another's, and the canonicalization reads every row. Lock order: _REMOTE_SIDS_LOCK,
 #                                            then this one; a holder of this one never takes _REMOTE_SIDS_LOCK, never calls
 #                                            _write_remote_sids and never takes this one again (it does not re-enter). It may take
-#                                            _inbound_links_lock, a leaf, inside its hold (the handler's arrival, the fold's forget).
+#                                            _inbound_links_lock, a leaf, inside its hold (the handler's arrival, the fold's forget,
+#                                            the down notify's close).
 #                                            tests/test_postal_remote_sids_mirror.py PeerStateLock derives the populations by AST and
 #                                            checks, each rule with plants it refuses by name (_peer_state_lock_census states each rule
 #                                            and its limits): every writer and every iteration of the table sits under the lock,
@@ -6285,7 +6290,8 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                            Keyed on the name the handler files the dialer under, its PEER_STATE key, which
 #                                            is what peer_route answers and outbox_put wakes. The state moves on EVENTS only,
 #                                            n being the exchange's arrival number (_inbound_seq), or, for a dial with no
-#                                            arrival, a number minted at its outcome:
+#                                            arrival, a number minted at its outcome, and for the kernel's down notify, one
+#                                            minted at the notify:
 #                                            - ARRIVAL: in the handler, in the hold that stores the row, just before the
 #                                              store, and only when the /peer-exchange route passes its `link` out-parameter
 #                                              carrying the exchange's socket (a direct call of the handler records nothing,
@@ -6358,13 +6364,52 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                              minted at its outcome, so it outranks every exchange that arrived before
 #                                              then.
 #                                            - FOLD: _drop_peer_name_dupes forgets the entry of each name it forgets.
+#                                            - DOWN NOTIFY: every down notify the kernel sends for a host closes the link
+#                                              filed under that name until a dial filed under it arrives, whether the row was
+#                                              up, held down, portless or absent (_inbound_link_down, 2026-10-03).
+#                                              peer_update, in the hold that marks the row linkDown, supersedes the entry
+#                                              filed under the notify's host at a number minted then: the notify is an event
+#                                              this side attributes to the host, so it outranks every exchange that arrived
+#                                              before it, a dial still parked or ending ok after it included, and only the
+#                                              host's next arrival reopens the link, as only its next exchange clears the
+#                                              mark. No entry is nothing. It reaches the entry filed under the notify's host,
+#                                              the port row's name, alone: a dial of the same host filed under another name
+#                                              (it declares another name, and the busId fold did not file it under the row's
+#                                              name) keeps its own link as it was. It changes only the link's reading and
+#                                              leaves the names and busIds the entry's arrivals brought as they were, so
+#                                              after the reopen ARRIVAL's supersessions and reset read them as before the
+#                                              notify: a process whose busId stayed in the set supersedes the reopened link
+#                                              when it dials under another name, even while a newer process's dials carry the
+#                                              mail (the busId clause's false unreachable, as without the notify). The costs,
+#                                              each a link that reads closed while the host's dials still carry its mail, and
+#                                              each a send that reading PEERS alone also answered unreachable, the row being
+#                                              down: a dial that arrived before the notify carries the mail a send wakes it
+#                                              for until it writes; and where the host's dials stay healthy, the false
+#                                              unreachable lasts until that dialer's next request arrives. The notify's wake
+#                                              releases the host's parked dial, and that request waits on two reads of a
+#                                              kernel's session listing, each up to about 6 s (_kernel_sessions_checked):
+#                                              this bus's read of its own, for the response it writes to the released dial,
+#                                              and then the host's read of its own, slowest when that kernel's slow answer is
+#                                              what failed the poll; a dial that cleared the wake on its way to its park
+#                                              holds up to EXCHANGE_WAIT or until a send's wake. Examples, not a list:
+#                                              notifies while the host's dials stay healthy (a check-in row's flap at one
+#                                              unanswered poll; between two machines that attach each other, this side's
+#                                              tunnel dropping or the far kernel not answering; a switch to isolated), and
+#                                              re-tells of a row held down, each closing the link until a dial filed under
+#                                              that name arrives (a change of its trust; each restart of the kernel or of
+#                                              this bus, since the kernel's first sighting of a bus process re-tells every
+#                                              row; the re-send of a notify the bus did not acknowledge within the kernel's
+#                                              2 s timeout; a check-in row's re-check-in), with the notifies at the attach
+#                                              dedupe's absorption of an alias and at a detach.
 #                                            READ (_inbound_open): a live exchange newer than `superseded` keeps the link
 #                                            open while it is writing or while its socket shows no EOF, whatever a newer
 #                                            exchange says: the pre-write probe's close and the outcome's close end their own
 #                                            exchange alone while another exchange under the name is live, since a dialer
 #                                            that left says nothing of another dial, so an older live dial, a namesake's or
 #                                            a second one from the same bus, still carries the mail and the link reads open
-#                                            (2026-10-03). A supersession outranks every exchange that arrived before it.
+#                                            (2026-10-03). A supersession (an arrival's, the outcome's for a dial with no
+#                                            arrival, refused or raised on before it, or the down notify's) outranks every
+#                                            exchange that arrived before it, live or ending ok after it.
 #                                            Otherwise, once no live exchange reads open, the newest number decides among
 #                                            ok, closed, superseded and the live exchanges at EOF: open when it is ok. So a
 #                                            newer dial's close outranks an older exchange's ok that lands after it, and the
@@ -6372,9 +6417,20 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                            No entry is closed: a restarted bus starts closed, and with PEER_STATE empty
 #                                            /send cannot route there anyway. Never stored in PEER_STATE's rows, never a
 #                                            PEERS row, and the deadness mirror's _link_up / _link_down do not read it.
-#                                            THE RESIDUE, disclosed and not closed: in these shapes no event this side can
-#                                            attribute to the host reaches it, so the link reads open while no exchange will
-#                                            deliver the mail, and /send says queued.
+#                                            THE RESIDUE, disclosed and not closed: in these shapes the link reads open while
+#                                            no exchange will deliver the mail, and /send says queued, until an event this
+#                                            side can attribute to the host reaches the link. The kernel's down notify for
+#                                            the host's port row is one: it closes the link, and the host's next arrival
+#                                            reopens it (DOWN NOTIFY above). So for a host whose port row the kernel holds up
+#                                            when it goes silent (a check-in peer, whose one ssh carries the -L to this bus
+#                                            and the -R this bus dials back through, or two machines that attach each other),
+#                                            a send answers relaying while the row is up, and unreachable from that notify
+#                                            until the host's next arrival. A host's going silent brings no such event when
+#                                            it has no port row or a portless one, when its link is filed under another name
+#                                            than the row's (DOWN NOTIFY above), or when its port row is held down already (a
+#                                            row already down does not change); a later re-tell of a down row closes the link
+#                                            as any down notify does (DOWN NOTIFY above). Until one comes, the shapes below
+#                                            hold as stated.
 #                                            - The dialer goes away with no FIN: a silent partition, at any point, parked or
 #                                              between exchanges; its bus dies between exchanges, after a returned write; or
 #                                              its kernel marks this machine down while leaving the tunnel up, as during a
@@ -6405,22 +6461,26 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                            again, or for that name's own tunnel when it has a port row the kernel still
 #                                            dials (each send that parks posts /redial for a port row not up, whatever the
 #                                            link says). An alias the kernel's attach dedupe absorbed keeps a port row here,
-#                                            held down by the dedupe's down notify, but the kernel no longer dials it: the
-#                                            dedupe popped it from the kernel's _remotes, and kernel.py's _demand_redial
-#                                            returns for a host not there, so the kernel drops each /redial for it and only
-#                                            a dial filed under the alias delivers. A link superseded under such an alias
-#                                            says unreachable, which is accurate. Two moves share neither: a host whose
-#                                            next process declares another name under a new busId (renamed and restarted),
-#                                            and an older peer that sends no busId and declares another name. Either is
-#                                            filed under the new name, and when its old process left no EOF this side saw
-#                                            (the first shape above) or the move came between exchanges, no event reaches
-#                                            the link it left, which reads what the old process's last exchange there left:
-#                                            open after an ok exchange or while a parked dial shows no EOF, and then /send
-#                                            says queued while the mail waits for a dial filed under the link's name again,
-#                                            or for that name's own tunnel when it has a port row the kernel still dials
-#                                            (each send asks the kernel to redial it). For a link left under an alias the
-#                                            attach dedupe absorbed, that tunnel never comes: /send says queued while only
-#                                            a dial filed under the alias delivers.
+#                                            held down by the dedupe's down notify, which also closes its link until a dial
+#                                            filed under the alias arrives (DOWN NOTIFY above), but the kernel no longer
+#                                            dials it: the dedupe popped it from the kernel's _remotes, and kernel.py's
+#                                            _demand_redial returns for a host not there, so the kernel drops each /redial
+#                                            for it and only a dial filed under the alias delivers. A link superseded under
+#                                            such an alias says unreachable, which is accurate. Two moves share neither: a
+#                                            host whose next process declares another name under a new busId (renamed and
+#                                            restarted), and an older peer that sends no busId and declares another name.
+#                                            The renamed host is filed under the name it declares, unless a second alias's
+#                                            row carries its new busId and it is filed under that alias, and the older peer
+#                                            under the name it declares; either way, when its old process left no EOF this
+#                                            side saw (the first shape above) or the move came between exchanges, no event
+#                                            reaches the link it left but the kernel's down notify for its name (DOWN NOTIFY
+#                                            above), and until one comes the link reads what the old process's last exchange
+#                                            there left: open after an ok exchange or while a parked dial shows no EOF, and
+#                                            then /send says queued while the mail waits for a dial filed under the link's
+#                                            name again, or for that name's own tunnel when it has a port row the kernel
+#                                            still dials (each send asks the kernel to redial it). For a link left under an
+#                                            alias the attach dedupe absorbed, that tunnel never comes: /send says queued
+#                                            while only a dial filed under the alias delivers.
 #                                            THE NAMESAKE COST, disclosed: the other way round, the link can read closed
 #                                            while a dial carries the mail, when a second bus declares the same name as the
 #                                            name's own bus. Refused, the namesake's dial supersedes that bus's link, filed
@@ -6452,10 +6512,12 @@ _inbound_links_lock = threading.Lock()     # _inbound_links' own LEAF lock: ever
 #                                            _inbound_seq holds it, and its holder takes no other lock (it reads and writes
 #                                            the table and probes a socket without blocking, nothing else). Lock order:
 #                                            _PEER_STATE_LOCK, then this one (the arrival in the handler's hold, the fold's
-#                                            forget); never the other way. tests/test_postal_peers.py InboundLinkLockDiscipline
-#                                            pins both rules by AST, with plants it refuses
-_inbound_seq = itertools.count(1)          # the exchanges' arrival numbers, and the supersession by a dial with no arrival
-#                                            (refused or raised on before it) at its outcome, minted under the leaf lock
+#                                            forget, the down notify's close in peer_update's); never the other way.
+#                                            tests/test_postal_peers.py InboundLinkLockDiscipline pins both rules by AST,
+#                                            with plants it refuses
+_inbound_seq = itertools.count(1)          # the exchanges' arrival numbers, the supersession by a dial with no arrival
+#                                            (refused or raised on before it) at its outcome, and the down notify's
+#                                            supersession at the notify, minted under the leaf lock
 
 def _host_name_candidates():
     """Raw machine-name candidates for the self_host fallback, most meaningful first. macOS keeps
@@ -7633,6 +7695,19 @@ def _inbound_forget(host):
     filed under that name again. Called in the recorders' _PEER_STATE_LOCK hold; takes the leaf lock inside it."""
     with _inbound_links_lock:
         _inbound_links.pop(host, None)
+
+
+def _inbound_link_down(host):
+    """DOWN NOTIFY: the kernel's down notify for `host` closes `host`'s inbound link (_inbound_links, 2026-10-03). It
+    supersedes the entry at a number minted now, so it outranks every exchange that arrived before the notify, a parked
+    dial that ends ok after it included, and only the host's next arrival reopens the link, as only the host's next
+    exchange clears the row's linkDown mark. No entry is nothing: no link, nothing to close. Called in peer_update's
+    _PEER_STATE_LOCK hold, beside that mark; takes the leaf lock inside it (the order is _PEER_STATE_LOCK, then the
+    leaf)."""
+    with _inbound_links_lock:
+        ent = _inbound_links.get(host)
+        if ent is not None:
+            ent["superseded"] = max(ent["superseded"], next(_inbound_seq))
 
 
 def _inbound_open(host):
