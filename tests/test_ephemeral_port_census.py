@@ -1140,6 +1140,7 @@ class Plants(unittest.TestCase):
                 ("an option and its number apart, or a short option", "test_x.py",
                  'subprocess.run(["romp", "--port"] + ["%d"])\nsubprocess.run(["romp", "-p", "%d"])\n' % (n, n)),
                 ("a short option in shell", "z.bats", "    romp serve -p %d\n" % n),
+                ("an option and its number apart in JavaScript", "w.test.mjs", "spawn(bin, ['--port'].concat(['%d']));\n" % n),
                 ("a computed key", "test_x.py", 'K = "port"\nrow = {K: %d}\n' % n),
                 ("code text that does not parse", "test_x.py", 'FRAG = "    km._notify_bus_peer(\'h\', %d, True)"\n' % n)):
             with self.subTest(label):
