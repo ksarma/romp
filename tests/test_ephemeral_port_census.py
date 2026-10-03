@@ -126,6 +126,26 @@ is a change to this list):
   a file outside THE FILES (a support file such as ui/test-dom-shim.ts, a lab tool under tools/).
 Each planted shape below is red, with the rule it names among the rules that read it, and each excluded shape is green.
 
+THE SENTINELS (SentinelPorts; the ruling of round 1 on fork PR 966, (b)). tests/test_hermetic_kernel_postal.py's children
+read back values a test wrote to a port name (ROMP_POSTAL_PORT, ROMP_KERNEL_PORT, BUS_PORT), and
+tests/test_postal_fixed_port_belt.py names a hermetic bus's own port, which the belt lets the bus bind. Those values are
+7, 8 and 9: below 1024, where on Linux at the default an unprivileged bind is refused, and in no band a test binds. The
+pin reads, in those two modules, every number written as text a process could take for a port (sentinel_values(): a
+quoted digit string, since the environment holds strings; a number after a loopback host and a colon; an int assigned
+to a port-named name, BUS_PORT = N), and fails on any that falls in a bind band.
+THE BIND BANDS are derived from THE FILES (bind_bands()):
+  the ephemeral range, LOW-HIGH (a bind to port 0, tests/lab_ports.py's reserve());
+  each per-test base of a shell file, a port-named name set to B plus ${BATS_TEST_NUMBER} in an arithmetic expansion
+  (tests/romp-postal.bats): B to B plus the file's count of tests, moved by every constant the file adds to that name
+  in an arithmetic expansion (the squat test's), and by every retry step a helper adds to a port-named name (port +
+  try * S, inside a function: S times each try below the most its callers ask for);
+  each draw from randint(a, b) with a at or above 1024: a call in Python, or the text in a shell file (the probe of
+  tests/free-port.bash);
+  each block keyed by a test file's name, 'name.test.js': [lo, hi] (tests/manager-ports.js).
+The machine's own fixed ports (the postal bus's, the kernel's, the manager's) are not among them: no test binds them,
+and the two modules write them on purpose, to show the belt and the licences refusing them. A band made any other way
+is not read.
+
 Synthetic: reads the tree only; no socket, no kernel, no subprocess.
 """
 import ast
@@ -749,6 +769,101 @@ def render(hits):
     return "\n".join("  %s:%d: %d, %s" % h for h in hits)
 
 
+# The sentinels and the bind bands (THE SENTINELS, in the docstring).
+SENTINEL_MODULES = (os.path.join("tests", "test_hermetic_kernel_postal.py"), os.path.join("tests", "test_postal_fixed_port_belt.py"))
+PRIVILEGED = 1024                                   # below this, on Linux at the default, an unprivileged bind is refused
+SHELL_FILES = (".bats", ".bash", ".sh")
+_PER_TEST = re.compile(r"\b(?P<name>\w+)=\$\(\([ \t]*(?P<base>\d+)[ \t]*\+[ \t]*\$\{?BATS_TEST_NUMBER\b")
+_SHELL_ADD = re.compile(r"\$\(\([ \t]*\$?(?P<v>\w+)[ \t]*\+[ \t]*(?:(?P<k>\w+)[ \t]*\*[ \t]*)?(?P<c>\d+)[ \t]*\)\)")
+_SHELL_FN = re.compile(r"^[ \t]*(?:function[ \t]+)?(\w+)[ \t]*\(\)[ \t]*\{", re.M)
+_DRAW_TEXT = re.compile(r"\brandint\([ \t]*(\d+)[ \t]*,[ \t]*(\d+)[ \t]*\)")
+_BLOCK = re.compile(r"""["'][\w.-]+\.test\.[cm]?[jt]s["'][ \t]*:[ \t]*\[[ \t]*(\d+)[ \t]*,[ \t]*(\d+)[ \t]*\]""")
+_QUOTED_DIGITS = re.compile(r"""(["'])(\d{1,5})\\?\1""")
+_AFTER_HOST = re.compile(r"(?:" + _HOST + r"):(\d{1,5})(?![\d.])")
+_PORT_INT = re.compile(r"\b(?P<name>\w+)[ \t]*=[ \t]*(?P<n>\d{1,5})(?![\w.])")
+
+
+def _shell_bands(text):
+    """[(lo, hi)]: the ports each per-test base of the shell file `text` makes, with its offsets and retry steps."""
+    out = []
+    tests = len(re.findall(r"^[ \t]*@test\b", text, re.M))
+    for m in _PER_TEST.finditer(text):
+        name, base = m.group("name"), int(m.group("base"))
+        if not names_a_port(name):
+            continue
+        offsets, steps = {0}, {0}
+        for a in _SHELL_ADD.finditer(text):
+            if not names_a_port(a.group("v")):
+                continue
+            c = int(a.group("c"))
+            if a.group("k") is None:
+                if a.group("v") == name:
+                    offsets.add(c)
+                continue
+            fns = list(_SHELL_FN.finditer(text, 0, a.start()))
+            if fns:
+                helper = re.escape(fns[-1].group(1))
+                tries = [int(t) for t in re.findall(r"\b" + helper + r"[ \t]+(?:\"[^\"\n]*\"|\S+)[ \t]+(\d+)\b", text)]
+                steps |= {c * i for i in range(max(tries, default=1))}
+        out += [(base + o + st, base + tests + o + st) for o in sorted(offsets) for st in sorted(steps)]
+    return out
+
+
+def _python_draws(tree):
+    """[(a, b)]: every call to randint(a, b) in `tree` whose arguments are int literals."""
+    out = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and _callee(n.func) == "randint" and len(n.args) == 2 and not n.keywords \
+                and all(isinstance(a, ast.Constant) and type(a.value) is int for a in n.args):
+            out.append((n.args[0].value, n.args[1].value))
+    return out
+
+
+def bind_bands(root):
+    """[(lo, hi, where)]: every band of ports a test binds, derived from THE FILES under `root` (THE BIND BANDS)."""
+    out = [(LOW, HIGH, "the ephemeral range")]
+    for p in files(root):
+        rel = os.path.relpath(p, root)
+        try:
+            with open(p, encoding="utf-8") as fh:
+                text = fh.read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        draws = []
+        if p.endswith(SHELL_FILES):
+            out += [(lo, hi, "%s: a per-test base" % rel) for lo, hi in _shell_bands(text)]
+            draws = [(int(a), int(b)) for a, b in _DRAW_TEXT.findall(text)]
+        elif p.endswith(".py") and "randint(" in text:
+            draws = _python_draws(parse_cache.source_and_tree(p)[1])
+        out += [(a, b, "%s: a draw" % rel) for a, b in draws if a >= PRIVILEGED]
+        if p.endswith((".js", ".mjs", ".cjs", ".ts")):
+            out += [(int(a), int(b), "%s: a block" % rel) for a, b in _BLOCK.findall(text)]
+    return out
+
+
+def sentinel_values(text):
+    """[(line, number, why)]: every number the module `text` writes as text a process could take for a port."""
+    out = []
+    for rx, group, why in ((_QUOTED_DIGITS, 2, "a quoted digit string"), (_AFTER_HOST, 1, "a number after a loopback host"),
+                           (_PORT_INT, "n", "an int assigned to a port-named name")):
+        for m in rx.finditer(text):
+            if group == "n" and not names_a_port(m.group("name")):
+                continue
+            out.append((text.count("\n", 0, m.start()) + 1, int(m.group(group)), why))
+    return out
+
+
+def sentinel_faults(root, bands, modules=SENTINEL_MODULES):
+    """[(module, line, number, why, band's where, lo, hi)]: each number the `modules` write as a port that a band holds."""
+    out = []
+    for rel in modules:
+        with open(os.path.join(root, rel), encoding="utf-8") as fh:
+            text = fh.read()
+        for line, v, why in sentinel_values(text):
+            out += [(rel, line, v, why, where, lo, hi) for lo, hi, where in bands if lo <= v <= hi]
+    return out
+
+
 # The pins.
 class NoFixedEphemeralPort(unittest.TestCase):
     @classmethod
@@ -1079,6 +1194,111 @@ class Plants(unittest.TestCase):
                  "argument ports of listen_all()")):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why)
+
+
+class SentinelPorts(unittest.TestCase):
+    """THE SENTINELS: no number tests/test_hermetic_kernel_postal.py or tests/test_postal_fixed_port_belt.py writes as text
+    a process could take for a port falls in a bind band, and every kind of band is found in the tree."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bands = parse_cache.derived("ephemeral_port_bind_bands", lambda: bind_bands(ROOT))
+
+    def test_no_sentinel_falls_in_a_bind_band(self):
+        faults = sentinel_faults(ROOT, self.bands)
+        if faults:
+            self.fail("%d number(s) written as a port by the sentinel modules fall in a band a test binds, so a bus that "
+                      "reads one could bind inside another suite's band. Use a port below 1024 that no band holds (7, 8 and 9 "
+                      "are the sentinels); this module's docstring, THE SENTINELS, says how the bands are derived:\n%s"
+                      % (len(faults), "\n".join("  %s:%d: %d, %s, inside %s (%d-%d)" % f for f in faults)))
+
+    def test_every_kind_of_band_and_each_sentinel_module_is_found(self):
+        kinds = {where for _lo, _hi, where in self.bands}
+        for where in ("the ephemeral range", os.path.join("tests", "romp-postal.bats") + ": a per-test base",
+                      os.path.join("tests", "free-port.bash") + ": a draw", os.path.join("tests", "manager-ports.js") + ": a block"):
+            self.assertIn(where, kinds, "a band of this kind is derived from the tree")
+        for rel in SENTINEL_MODULES:
+            with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+                values = {v for _l, v, _w in sentinel_values(fh.read())}
+            self.assertTrue(values - {0, 1}, "%s writes numbers the pin reads, beyond the floors' 0 and 1" % rel)
+
+
+class SentinelPlants(unittest.TestCase):
+    """Each band shape THE BIND BANDS names is read from a planted file, and each way sentinel_values() reads a number is
+    red inside a band and green below 1024."""
+    B, STEP, OFFSET = 26000, 100, 300             # a planted per-test base, a helper's retry step, a test's offset
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+        os.makedirs(os.path.join(self.d, "tests"))
+
+    def _write(self, rel, text):
+        """`text` at `rel` under the scratch root, by a rename-over (Plants._write says why)."""
+        p = os.path.join(self.d, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p + ".new", "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(p + ".new", p)
+
+    def _shell(self):
+        """A bats file whose two tests each take B plus their number, through a helper that retries STEP higher as many
+        times as its callers ask (twice), and one of whose tests offsets the port by OFFSET and spawns there."""
+        return ('setup() {\n'
+                '    export ROMP_POSTAL_PORT=$((%d + ${BATS_TEST_NUMBER:-0}))\n'
+                '    spawn "$ROMP_POSTAL_PORT" 2\n'
+                '}\n\n'
+                'spawn() {\n'
+                '    local port=$1 tries=${2:-1} try=0\n'
+                '    export ROMP_POSTAL_PORT=$((port + try * %d))\n'
+                '}\n\n'
+                '@test "a" {\n'
+                '    local squat=$((ROMP_POSTAL_PORT + %d))\n'
+                '    spawn "$squat" 2\n'
+                '}\n\n'
+                '@test "b" {\n'
+                '    :\n'
+                '}\n') % (self.B, self.STEP, self.OFFSET)
+
+    def _bands(self):
+        return sorted((lo, hi) for lo, hi, where in bind_bands(self.d) if where != "the ephemeral range")
+
+    def test_each_band_shape_is_read(self):
+        b, s, o = self.B, self.STEP, self.OFFSET
+        draw = "random.randint(%d, %d)"                                   # a template, so this file holds no such call
+        cases = (
+            ("a per-test base with its offset and its retry steps", "romp-x.bats", self._shell(),
+             [(b + x + y, b + 2 + x + y) for x in (0, o) for y in (0, s)]),
+            ("a draw in a shell file", "free-x.bash", "p = %s\nq = %s\n" % (draw % (b - 5000, b - 4001), draw % (0, 99)),
+             [(b - 5000, b - 4001)]),
+            ("a draw in Python, a call and not a string", "helper_x.py",
+             "import random\nP = %s\nDOC = %r\n" % (draw % (b - 4000, b - 3901), draw % (b - 3000, b - 2901)), [(b - 4000, b - 3901)]),
+            ("a block keyed by a test file's name", "ports-x.js", "const RANGES = {\n  'a.test.js': [%d, %d],\n};\n" % (b - 13000, b - 12489),
+             [(b - 13000, b - 12489)]))
+        for label, name, text, want in cases:
+            with self.subTest(label):
+                self._write(os.path.join("tests", name), text)
+                got = self._bands()
+                os.unlink(os.path.join(self.d, "tests", name))              # before the assertion, so a red case leaves no plant
+                self.assertEqual(got, sorted(want), text)
+
+    def test_a_sentinel_inside_a_band_is_red_and_one_below_1024_green(self):
+        self._write(os.path.join("tests", "romp-x.bats"), self._shell())
+        inside, above = self.B + 1, self.B + 3                            # a test's port; one past the last test's
+        for rel in SENTINEL_MODULES:
+            for label, tmpl, why in (
+                    ("a quoted digit string", 'os.environ["ROMP_POSTAL_PORT"] = "%d"\n', "a quoted digit string"),
+                    ("an escaped one inside code text", 'SRC = "os.environ[\\"ROMP_POSTAL_PORT\\"] = \\"%d\\""\n',
+                     "a quoted digit string"),
+                    ("a number after a loopback host", 'URL = "http://127.0.0.1:%d/v1/models"\n', "a number after a loopback host"),
+                    ("an int assigned to a port-named name", '_km.BUS_PORT = %d\n', "an int assigned to a port-named name")):
+                with self.subTest(rel=rel, shape=label):
+                    self._write(rel, tmpl % inside)
+                    faults = sentinel_faults(self.d, bind_bands(self.d), (rel,))
+                    self.assertEqual([(f[2], f[3]) for f in faults], [(inside, why)], tmpl)
+                    for v in (7, above):
+                        self._write(rel, tmpl % v)
+                        self.assertEqual(sentinel_faults(self.d, bind_bands(self.d), (rel,)), [], tmpl % v)
 
 
 if __name__ == "__main__":
