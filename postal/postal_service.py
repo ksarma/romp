@@ -6402,17 +6402,25 @@ _inbound_links = {}                        # host -> {"live": {n: {"conn": socke
 #                                            at another machine while the machine it reached keeps dialing; or if it
 #                                            carries a busId the link holds, as for a process renamed while it runs. From
 #                                            then the mail reads unreachable; it waits for a dial filed under that name
-#                                            again, or for that name's own tunnel when it has a port row (the /send relay
-#                                            leg posts /redial for every port row, whatever the link says). Two moves share
-#                                            neither: a host whose next process declares another name under a new busId
-#                                            (renamed and restarted), and an older peer that sends no busId and declares
-#                                            another name. Either is filed under the new name, and when its old process
-#                                            left no EOF this side saw (the first shape above) or the move came between
-#                                            exchanges, no event reaches the link it left, which reads what the old
-#                                            process's last exchange there left: open after an ok exchange or while a
-#                                            parked dial shows no EOF, and then /send says queued while the mail waits for
-#                                            a dial filed under the link's name again, or for that name's own tunnel when
-#                                            it has a port row (each send asks the kernel to redial it).
+#                                            again, or for that name's own tunnel when it has a port row the kernel still
+#                                            dials (each send that parks posts /redial for a port row not up, whatever the
+#                                            link says). An alias the kernel's attach dedupe absorbed keeps a port row here,
+#                                            held down by the dedupe's down notify, but the kernel no longer dials it: the
+#                                            dedupe popped it from the kernel's _remotes, and kernel.py's _demand_redial
+#                                            returns for a host not there, so the kernel drops each /redial for it and only
+#                                            a dial filed under the alias delivers. A link superseded under such an alias
+#                                            says unreachable, which is accurate. Two moves share neither: a host whose
+#                                            next process declares another name under a new busId (renamed and restarted),
+#                                            and an older peer that sends no busId and declares another name. Either is
+#                                            filed under the new name, and when its old process left no EOF this side saw
+#                                            (the first shape above) or the move came between exchanges, no event reaches
+#                                            the link it left, which reads what the old process's last exchange there left:
+#                                            open after an ok exchange or while a parked dial shows no EOF, and then /send
+#                                            says queued while the mail waits for a dial filed under the link's name again,
+#                                            or for that name's own tunnel when it has a port row the kernel still dials
+#                                            (each send asks the kernel to redial it). For a link left under an alias the
+#                                            attach dedupe absorbed, that tunnel never comes: /send says queued while only
+#                                            a dial filed under the alias delivers.
 #                                            THE NAMESAKE COST, disclosed: the other way round, the link can read closed
 #                                            while a dial carries the mail, when a second bus declares the same name as the
 #                                            name's own bus. Refused, the namesake's dial supersedes that bus's link, filed
