@@ -357,6 +357,66 @@ def measure(rows, r):
     }
 
 
+class CueRecorderCap(unittest.TestCase):
+    """The frame recorder's cap (round 2 of the review, 2026-10-03, fresh-3), executed: the recorder (cueRec, read from the driver)
+    runs under node over a fake page whose one control moves under the painted badge at every frame, past the cap of 200 records.
+    Before the fix it stopped adding records at the cap and said nothing, so _badge_clear_of_chrome checked the first 200 and the
+    leg stayed green over every later painted state. Now the record says it was capped, and the check fails on that, naming the
+    cap. Needs node only: no lab kernel, no browser."""
+
+    FAKE = r"""
+'use strict';
+let NOW = 1000000; Date.now = () => NOW;
+const FR = []; global.requestAnimationFrame = (fn) => { FR.push(fn); return FR.length; };
+const MO = []; global.MutationObserver = class { constructor(cb) { this.cb = cb; MO.push(this); } observe() {} disconnect() {} };
+const W = {}; global.window = global; global.addEventListener = (t, f) => { (W[t] = W[t] || []).push(f); };
+global.location = { pathname: '/chat' };
+const rect = (l, t, w, h) => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h });
+const BADGE = { id: 'pane-reconn', classList: { contains: (c) => c === 'on' }, textContent: 'reconnecting…', contains: (n) => n === BADGE, getBoundingClientRect: () => rect(248, 52, 134, 25) };
+const CONTENT = { id: 'content', tagName: 'DIV', className: '', contains: (n) => n === CONTENT, getBoundingClientRect: () => rect(0, 44, 390, 656) };
+let Y = 300;
+const CTRL = { id: 'ctl', tagName: 'BUTTON', className: 'moving', parentElement: null, matches: () => true, getAttribute: () => null, textContent: 'go',
+  getBoundingClientRect: () => rect(10, Y, 60, 20) };
+global.getComputedStyle = () => ({ display: 'flex', position: 'static', cursor: 'auto', visibility: 'visible', overflowX: 'visible', overflowY: 'visible', contain: 'none', transform: 'none', filter: 'none', perspective: 'none', willChange: 'auto' });
+global.document = { getElementById: (id) => (id === 'pane-reconn' ? BADGE : id === 'content' ? CONTENT : null), documentElement: { clientWidth: 390 },
+  body: { getElementsByTagName: () => [CONTENT, CTRL] } };
+"""
+
+    def _record(self, frames):
+        node = shutil.which("node")
+        if not node:
+            raise unittest.SkipTest("node not installed")
+        src = Path(DRIVER).read_text(encoding="utf-8")
+        a = src.index("const cueRec = () => {")
+        b = src.index("\n};\n", a) + 3
+        script = self.FAKE + src[a:b] + "\ncueRec();\n" + (
+            "for (let i = 0; i < %d; i++) { Y += 1; NOW += 16; MO.forEach((m) => m.cb([])); FR.splice(0).forEach((fn) => fn(NOW)); }\n"
+            "const c = window.__labCue; console.log(JSON.stringify({ badge: c.badge, moves: c.moves, movesCapped: c.movesCapped }));\n" % frames)
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, "rec.js")
+            Path(path).write_text(script, encoding="utf-8")
+            r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertEqual(r.returncode, 0, "the recorder ran over the fake page: " + r.stderr[-800:])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_the_recorder_flags_its_cap_and_the_chrome_check_fails_on_it(self):
+        rec = self._record(260)
+        self.assertEqual(len(rec["moves"]), 200, "the recorder kept 200 of the 259 moves")
+        self.assertIs(rec.get("movesCapped"), True, "...and says it reached its cap")
+        with self.assertRaises(AssertionError) as cm:
+            ReturnFromBackground._badge_clear_of_chrome(self, "capped: ", rec["badge"], moves=rec["moves"], moves_capped=rec.get("movesCapped"))
+        self.assertIn("cap of 200 records", str(cm.exception), "the failure names the cap")
+
+    def test_a_record_under_the_cap_is_not_flagged_and_passes_the_check(self):
+        rec = self._record(50)
+        self.assertEqual(len(rec["moves"]), 49, "every move kept")
+        self.assertIs(rec.get("movesCapped"), False)
+        ReturnFromBackground._badge_clear_of_chrome(self, "uncapped: ", rec["badge"], moves=rec["moves"], moves_capped=rec.get("movesCapped"))
+
+
 class ReturnFromBackground(unittest.TestCase):
     """One lab kernel for every leg (setUpClass); each leg is one driver run, one measurement, one artifact."""
     maxDiff = None
@@ -516,7 +576,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertGreaterEqual(cue.get("lastT", 0), t["fresh"], where + "...through the fresh frame, so 'never painted' was read, not assumed")
         badge = cue.get("badge") or []
         self._badge_text(where, badge)
-        self._badge_clear_of_chrome(where, badge, moves=cue.get("moves"))
+        self._badge_clear_of_chrome(where, badge, moves=cue.get("moves"), moves_capped=cue.get("movesCapped"))
         self.assertEqual([b for b in badge if b["on"] and sus <= b["t"] < ret], [], where + "nothing painted while the page read hidden: %r" % (badge,))
         self.assertFalse([b for b in badge if b["t"] < ret] and [b for b in badge if b["t"] < ret][-1]["on"], where + "the badge was off entering the return: %r" % (badge,))
         fresh = [x for x in (cue.get("fresh") or []) if x >= ret]
@@ -566,7 +626,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertTrue(badge and all("text" in b for b in badge), where + "the recorder read the badge's text with each change: %r" % (badge,))
         self.assertEqual([b for b in badge if b["on"] and b["text"] != BADGE_TEXT], [], where + "the painted badge reads %r and nothing else: %r" % (BADGE_TEXT, badge))
 
-    def _badge_clear_of_chrome(self, where, badge, need_controls=True, moves=None):
+    def _badge_clear_of_chrome(self, where, badge, need_controls=True, moves=None, moves_capped=None):
         """A painted badge covers none of the controls in the pane's chrome, the document outside its content container (finding of
         2026-10-02): at upstream's top:8px the chat's covered 78 percent of the phone header's tag filter and of its + button and the
         desktop strip's tag filter and gear, and the phone Outline's covered its tag filter and search, for the whole wait. Each
@@ -578,7 +638,10 @@ class ReturnFromBackground(unittest.TestCase):
         to the badge's box added while it was painted (the recorder's), each checked the same way, so a control that appears under
         a painted badge is measured too. Each control's box is the part its overflow ancestors leave in view (round 2 of the review,
         2026-10-03, correctness-1), so a control a strip scrolls out of view is not counted, and only controls count, never the boxes
-        that hold them or a scrollbar (open calls 2 and 9)."""
+        that hold them or a scrollbar (open calls 2 and 9). moves_capped: the recorder reached its cap (MOVES_CAP, 200 records) and
+        dropped later moves, which then went unchecked; that fails, named (round 2 of the review, fresh-3)."""
+        self.assertIs(moves_capped, False, where + "the recorder kept every move of the painted badge: it reached its cap of 200 records (%d kept) "
+                      "and dropped the later ones unread: %r" % (len(moves or []), moves_capped))
         painted = [b for b in badge if b["on"]] + list(moves or [])
         for b in painted:
             self.assertIn("box", b, where + "the painted badge's box was read: %r" % (b,))
@@ -614,7 +677,7 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertNotIn("postTapError", r, where + "the tap after the return ran: %r" % (r.get("postTapError"),))
         badge = rec.get("badge") or []
         self._badge_text(where, badge)
-        self._badge_clear_of_chrome(where, badge, need_controls, moves=rec.get("moves"))
+        self._badge_clear_of_chrome(where, badge, need_controls, moves=rec.get("moves"), moves_capped=rec.get("movesCapped"))
         ons = [b["t"] - tap for b in badge if b["on"] and b["t"] >= tap]
         rel_fresh = fresh[0] - tap
         type(self).measurements.setdefault(name, {})["postTapCue"] = {"pane": pt.get("pane"), "holdMs": hold, "armedOn": (rec.get("armed") or {}).get("on"),

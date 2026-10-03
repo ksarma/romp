@@ -284,7 +284,8 @@ const flip = (hidden) => page.evaluate((h) => {
 const cueRec = () => {
   const w = window; if (w.__labCue) return "again";
   const b0 = document.getElementById("pane-reconn");
-  const c = w.__labCue = { badge: [], moves: [], fresh: [], hold: [], frames: 0, lastT: 0, armed: { t: Date.now(), on: !!(b0 && b0.classList.contains("on")) } };
+  const MOVES_CAP = 200;
+  const c = w.__labCue = { badge: [], moves: [], movesCapped: false, fresh: [], hold: [], frames: 0, lastT: 0, armed: { t: Date.now(), on: !!(b0 && b0.classList.contains("on")) } };
   const st = w.setTimeout;
   w.setTimeout = function (fn, ms) {
     if (typeof fn !== "function" || fn.name !== "rpaint") return st.apply(w, arguments);
@@ -349,9 +350,14 @@ const cueRec = () => {
     c.badge.push(e); last = k; dirty = false; }
     else if (v.on) {
       // a move is recorded only while the badge is drawn (a pane hidden by another tab draws nothing: a zero box) and only when its
-      // box or the chrome's boxes changed, so a page that keeps mutating without moving anything adds no record
+      // box or the chrome's boxes changed, so a page that keeps mutating without moving anything adds no record. At most MOVES_CAP
+      // records are kept; a move past the cap sets movesCapped, which the test fails on (round 2 of the review, fresh-3: the cap
+      // dropped every later painted state unread while the leg stayed green)
       const bb = box(document.getElementById("pane-reconn")), bx = JSON.stringify(bb);
-      if (bb[2] && bb[3] && (dirty || bx !== lastBox) && c.moves.length < 200) { const ch = chrome(), sg = sig(bb, ch); if (sg !== lastSig) { c.moves.push({ t: c.lastT, on: true, box: bb, chrome: ch, hidden: hiddenNow, content: !!content, ctop: content ? Math.round(content.getBoundingClientRect().top) : null, vw: document.documentElement.clientWidth }); lastSig = sg; } }
+      if (bb[2] && bb[3] && (dirty || bx !== lastBox)) { const ch = chrome(), sg = sig(bb, ch); if (sg !== lastSig) {
+        if (c.moves.length < MOVES_CAP) c.moves.push({ t: c.lastT, on: true, box: bb, chrome: ch, hidden: hiddenNow, content: !!content, ctop: content ? Math.round(content.getBoundingClientRect().top) : null, vw: document.documentElement.clientWidth });
+        else c.movesCapped = true;
+        lastSig = sg; } }
       lastBox = bx; dirty = false; }
     requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
@@ -871,7 +877,7 @@ try {
   out.wsNow = await page.evaluate(() => window.__labWsNow || {});
   out.overrideErrors = await page.evaluate(() => window.__labErrors || []);
   out.cue = {   // the reconnect cue's record (iOS item 4): the chat's painted badge changes, its fresh stamps, its frame loop, the Log line's changes
-    ...(cueChat ? await cueChat.evaluate(() => { const c = window.__labCue || {}; return { badge: c.badge || [], moves: c.moves || [], fresh: c.fresh || [], hold: c.hold || [], frames: c.frames || 0, lastT: c.lastT || 0 }; }).catch((e) => ({ err: String(e).slice(0, 80) })) : {}),
+    ...(cueChat ? await cueChat.evaluate(() => { const c = window.__labCue || {}; return { badge: c.badge || [], moves: c.moves || [], movesCapped: !!c.movesCapped, fresh: c.fresh || [], hold: c.hold || [], frames: c.frames || 0, lastT: c.lastT || 0 }; }).catch((e) => ({ err: String(e).slice(0, 80) })) : {}),
     log: await page.evaluate(() => window.__labCueLog || []).catch(() => null),
   };
   if (cfg.overflowStrip) out.overflowStripEnd = await stripRows(cfg.overflowStrip);
