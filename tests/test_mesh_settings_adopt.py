@@ -331,7 +331,7 @@ class _Mesh:
         km._remote_kernel_call = self._saved
 
     def row(self, trust="directed"):
-        return {"host": "TESTHOST", "local_port": 51000, "token": "tok", "trust": trust, "status": "up"}
+        return {"host": "TESTHOST", "local_port": 1, "token": "tok", "trust": trust, "status": "up"}
 
     def converge(self, trust="directed"):
         """A's supervisor step against B's /version — synchronously, so the test reads the outcome."""

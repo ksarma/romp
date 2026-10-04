@@ -180,7 +180,7 @@ class OneCommitOneVersion(unittest.TestCase):
         self.assertEqual(v.rstrip("+"), want, "the number both machines can see in their own tree")
 
     def test_a_host_on_this_commit_wears_this_machines_release(self):
-        row = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 51000, "token": "tok",
+        row = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "token": "tok",
                "status": "up", "sids": [], "kernel_sha": (km._local_head(short=True) or "abc1234"),
                "kernel_ver": "v0.1.0+", "proc": None}
         pub = km._remote_public(row)
@@ -189,7 +189,7 @@ class OneCommitOneVersion(unittest.TestCase):
                          "one commit cannot be two releases; the stale tag graph doesn't get a vote")
 
     def test_a_host_on_another_commit_keeps_its_own_release(self):
-        row = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 51000, "token": "tok",
+        row = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "token": "tok",
                "status": "up", "sids": [], "kernel_sha": "0000000", "kernel_ver": "v0.1.0", "proc": None}
         pub = km._remote_public(row)
         self.assertEqual(pub["kernelVer"], "v0.1.0",

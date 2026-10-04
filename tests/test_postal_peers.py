@@ -91,13 +91,13 @@ class PeerMode(unittest.TestCase):
         self.assertFalse(pm.peers_on(), "explicit 0 selects the legacy scheme")
 
     def test_peer_update_and_snapshot(self):
-        payload, status = pm.peer_update({"host": "TESTHOST", "port": 50002, "up": True})
+        payload, status = pm.peer_update({"host": "TESTHOST", "port": 1, "up": True})
         self.addCleanup(_end_dialer, "TESTHOST")
         self.assertEqual(status, 200)
         self.assertEqual(payload["up"], 1)
         snap = pm.peers_snapshot()["peers"]["TESTHOST"]
-        self.assertEqual((snap["port"], snap["up"]), (50002, True))
-        payload, status = pm.peer_update({"host": "TESTHOST", "port": 50002, "up": False})
+        self.assertEqual((snap["port"], snap["up"]), (1, True))
+        payload, status = pm.peer_update({"host": "TESTHOST", "port": 1, "up": False})
         self.assertEqual(pm.peers_snapshot()["peers"]["TESTHOST"]["up"], False,
                          "a down transition keeps the row for introspection, marked down")
         self.assertEqual(payload["up"], 0)
@@ -105,17 +105,17 @@ class PeerMode(unittest.TestCase):
     def test_peer_update_refuses_a_non_boolean_up_and_records_nothing(self):
         # `up` used to be coerced with bool(), so a notify carrying the STRING "false" marked the peer UP
         for bad in ("false", "true", 1, 0, "up"):
-            payload, status = pm.peer_update({"host": "TESTHOST", "port": 50002, "up": bad})
+            payload, status = pm.peer_update({"host": "TESTHOST", "port": 1, "up": bad})
             self.assertEqual(status, 400, (bad, payload))
             self.assertEqual(payload["error"], "'up' must be true or false, got %s" % json.dumps(bad))
         self.assertEqual(pm.PEERS, {}, "a refused notify records no row")
-        payload, status = pm.peer_update({"host": "TESTHOST", "port": 50002, "up": False})
+        payload, status = pm.peer_update({"host": "TESTHOST", "port": 1, "up": False})
         self.assertEqual((status, pm.PEERS["TESTHOST"]["up"]), (200, False), "a real false rides through as itself")
 
     def test_peer_update_reads_an_explicit_null_up_as_absent(self):
         # the rule _as_bool states (review find, 2026-09-08): null is the absent case spelled out, so it
         # takes the field's default (down), where a string or a number is refused
-        payload, status = pm.peer_update({"host": "TESTHOST", "port": 50002, "up": None})
+        payload, status = pm.peer_update({"host": "TESTHOST", "port": 1, "up": None})
         self.assertEqual(status, 200, payload)
         self.assertEqual(pm.PEERS["TESTHOST"]["up"], False)
 
@@ -136,12 +136,12 @@ class PeerMode(unittest.TestCase):
         self.assertEqual((row["port"], row["up"], row["trust"], row.get("originOnly")),
                          (None, False, "trusted", True))
         # applied to a CONNECTED row it touches only the trust — port/up/token survive
-        pm.peer_update({"host": "HUB", "port": 50007, "up": True, "token": "tk", "trust": "trusted"})
+        pm.peer_update({"host": "HUB", "port": 1, "up": True, "token": "tk", "trust": "trusted"})
         self.addCleanup(_end_dialer, "HUB")
         pm.peer_update({"host": "HUB", "trust": "directed", "originOnly": True})
         row = pm.peers_snapshot()["peers"]["HUB"]
         self.assertEqual((row["port"], row["up"], row["token"], row["trust"], row.get("originOnly")),
-                         (50007, True, "tk", "directed", None))
+                         (1, True, "tk", "directed", None))
 
     def test_origin_only_validates(self):
         for bad in ({"originOnly": True}, {"host": "h", "originOnly": True},
@@ -159,7 +159,7 @@ class PeerMode(unittest.TestCase):
                 {"name": "c", "id": "3", "via": "FARBOX"},
                 {"name": "d", "id": "4", "via": "PEERED"},      # directly peered here → excluded
             ], "seenAt": int(_t.time())}
-            pm.peer_update({"host": "PEERED", "port": 50008, "up": True})
+            pm.peer_update({"host": "PEERED", "port": 1, "up": True})
             self.addCleanup(_end_dialer, "PEERED")
             pm.peer_update({"host": "FARBOX", "trust": "isolated", "originOnly": True})
             rows = pm.via_reach()

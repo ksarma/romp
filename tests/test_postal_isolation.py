@@ -1890,7 +1890,7 @@ class ThreadOwnSendRefused(unittest.TestCase):
         self.assertTrue(pm.peers_on(), "peer mode: a name on a peer host is a relay destination")
         pm.PEER_STATE[far_host] = {"presence": [{"id": far, "name": "far"}], "epoch": 1, "holds": [],
                                    "seenAt": int(pm.time.time()), "presenceAnswered": True}
-        pm.PEERS[far_host] = {"port": 50002, "up": True, "at": 0, "token": "", "trust": "trusted"}   # up: the park needs no redial
+        pm.PEERS[far_host] = {"port": 2, "up": True, "at": 0, "token": "", "trust": "trusted"}   # up: the park needs no redial
         self.addCleanup(pm.PEER_STATE.pop, far_host, None); self.addCleanup(pm.PEERS.pop, far_host, None)
         outbox = pm.OUTBOX / far_host
         shutil.rmtree(outbox, ignore_errors=True); self.addCleanup(shutil.rmtree, outbox, ignore_errors=True)
