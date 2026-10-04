@@ -1482,6 +1482,30 @@ out({ shape: [shape.attributeName, shape.oldValue], written, removed, addedEl, s
         self.assertEqual(o["removed"], {"reads": 1, "asks": 1}, "an element removed from the footer: one frame, a re-read")
         self.assertEqual(o["addedEl"], {"reads": o["scan"], "asks": 1}, "an element added to the footer, which the scan does not hold: one frame, which scans")
 
+    # Round 3 (2026-10-04, tests-2): rrec reads every node a childList record adds. An engine reports an innerHTML write or an
+    # append(a, b) into a held control as ONE record carrying every node, and each held-control case above delivers one node per
+    # record, so a watch that read only a record's first added node passed them. One record into the send button (a control the
+    # scan holds) adds an icon inside its box and then a button far outside it: the frame scans and moves the badge below that
+    # button. A record whose two nodes both lie inside the button re-reads, so the case cannot pass by scanning every record of two
+    # nodes; and a record of a text node then an element into the footer, which the scan does not hold, scans (the loop's other
+    # branch)
+    def test_every_node_a_record_adds_is_read_not_only_the_first(self):
+        o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T);
+const rec = (target, nodes) => { const reads = STYLE_READS; deliver(kids(target, nodes, [])); frame(); const n = STYLE_READS - reads; return { reads: n, scanned: n === scan(), place: at() }; };
+const bothIn = rec(send, [add(send, [340, 794, 20, 20]), add(send, [324, 788, 12, 12])]);
+const inThenOut = rec(send, [add(send, [340, 794, 20, 20]), add(send, [240, 52, 140, 40], { position: 'absolute', sel: 'button' })]);
+const textThenEl = rec(footer, [TEXT, add(footer, [80, 764, 40, 16])]);
+out({ bothIn, inThenOut, textThenEl });""")
+        at52 = {"top": "52px", "right": "8px", "painted": True}
+        self.assertEqual(o["bothIn"], {"reads": 1, "scanned": False, "place": at52}, "two nodes in one record, both inside the send button's box: a re-read, no scan")
+        with self.subTest("an icon, then a button outside"):
+            self.assertEqual((o["inThenOut"]["scanned"], o["inThenOut"]["place"]), (True, {"top": "100px", "right": "8px", "painted": True}),
+                             "an icon inside the button, then a button far outside it, in one record: a scan, which finds the second node's button and "
+                             "moves the badge below it (52 + 40 + 8)")
+        with self.subTest("a text node, then an element"):
+            self.assertIs(o["textThenEl"]["scanned"], True, "a text node then an element in one record into the footer, which the scan does not hold: a scan")
+
     # Ruling 1 at 79dce614c (2026-10-04): on the desktop the chat writes the reply chips' hidden attribute at each scroll step, to the
     # value it had, and the chips (fixed, outside the list, holding elements, no control) are an element the watch must scan for when
     # an attribute changes, so the lab measured a scan of every element at each scroll step. Each attribute record now carries the
