@@ -134,19 +134,23 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   secrets', by the callee's name) as the values it can return, so 20000 + os.getpid() % 20000 is 20000-39999 and
   counts, and so does random.randint(40000, 50000). Each argument of such a call is given by position or by its
   parameter's name (randint's a and b, randrange's start, stop and step, randbelow's exclusive_upper_bound; a keyword
-  that names none, or names one a positional argument fills, is passed over), and the call is read by the arguments
-  that fill its parameters from the first up to the first left empty: random.randint(a=40000, b=50000) counts as
-  random.randint(40000, 50000) does, randrange(start=S) and randrange(start=S, step=K) read as randrange(S), and
-  neither randint(b=N) nor randrange(stop=E) is read. A randrange(start, stop, step) whose start's interval lies wholly
-  below its stop's (start is below stop for every value each can take) is read as start to stop less one whatever its
-  step, bounded or not: every step but a positive one then raises, and a positive one returns a value in that span
-  (random.randrange(40000, 50000, k) is 40000-49999, and so are random.randrange(40000, 50000, step=k) and
-  random.randrange(40000, stop=50000, step=k)). Any other randrange with an unbounded step is not read (where the two
-  intervals overlap, start can lie above stop, and a negative step then returns values above stop less one). A sum or
-  difference with an unbounded operand counts when one of its operands alone is a constant expression (one interval()
-  bounds with no unknown in it) whose value is in the range, found through str() and int() and down a chain of sums and
-  differences: 40000 + i is built on 40000, and so is 40000 * 1 + i (offset_base()); one with no such operand (base +
-  i) is not read.
+  that names none is passed over), and the call is read by the arguments that fill its parameters from the first up to
+  the first left empty: random.randint(a=40000, b=50000) counts as random.randint(40000, 50000) does,
+  randrange(start=S) reads as randrange(S), and neither randint(b=N) nor randrange(stop=E) is read. Two shapes Python
+  refuses for the way the arguments are passed are not read: a keyword that names a parameter a positional argument
+  fills (random.randint(40000, 50000, a=1)), and a randrange whose stop is left empty and whose step is given
+  (random.randrange(start=50000, step=7)), unless that step is the int 1 written there, randrange's default and the
+  one step Python takes without a stop: random.randrange(start=50000, step=1) reads as randrange(50000), and with a
+  step that is 1 only at run time (a name bound to 1) the call is not read. A randrange(start, stop, step) whose
+  start's interval lies wholly below its stop's (start is below stop for every value each can take) is read as start
+  to stop less one whatever its step, bounded or not: every step but a positive one then raises, and a positive one
+  returns a value in that span (random.randrange(40000, 50000, k) is 40000-49999, and so are
+  random.randrange(40000, 50000, step=k) and random.randrange(40000, stop=50000, step=k)). Any other randrange with an
+  unbounded step is not read (where the two intervals overlap, start can lie above stop, and a negative step then
+  returns values above stop less one). A sum or difference with an unbounded operand counts when one of its operands
+  alone is a constant expression (one interval() bounds with no unknown in it) whose value is in the range, found
+  through str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so is 40000 * 1 +
+  i (offset_base()); one with no such operand (base + i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -264,8 +268,9 @@ THE BIND BANDS are derived from THE FILES (bind_bands()):
   try * S, inside a function: S times each try below the most its callers ask for);
   each draw from randint(a, b) with a at or above 1024: a call in Python whose two arguments are int literals, each
   given by position or by its parameter's name as THE RULE reads a random call (_random_args(): randint(a=A, b=B) is
-  randint(A, B), and randint(b=B) is no draw), since every reader of a random call reads its arguments one way; or the
-  text in a shell file, by position (the probe of tests/free-port.bash);
+  randint(A, B), and neither randint(b=B) nor randint(A, B, a=C), which Python refuses, is a draw), since every reader
+  of a random call reads its arguments one way; or the text in a shell file, by position (the probe of
+  tests/free-port.bash);
   each block keyed by a test file's name, 'name.test.js': [lo, hi] (tests/manager-ports.js).
 The machine's own fixed ports (the postal bus's, the kernel's, the manager's) are not among them: no test binds them,
 and the two modules write them on purpose, to show the belt and the licences refusing them. A band made any other way
@@ -546,15 +551,23 @@ def interval(node, bound=None):
 def _random_args(call):
     """The arguments of a random call (RANDOM_CALLS) in its parameters' order, up to the first parameter left empty: each
     positional argument in its place, then each keyword in the place of the parameter it names (randint(a=A, b=B) is
-    randint(A, B)), a keyword that names no parameter, or one a positional argument fills, passed over; None when an
-    argument is starred or the positional arguments outnumber the parameters."""
+    randint(A, B)), a keyword that names no parameter passed over; None when an argument is starred, the positional
+    arguments outnumber the parameters, or Python refuses the call for the way its arguments are passed: a keyword names
+    a parameter a positional argument fills, or a randrange's stop is left empty and its step is given as anything but
+    the int 1 written there (randrange's default step, the one step Python takes without a stop)."""
     params = RANDOM_CALLS[_callee(call.func)]
     if len(call.args) > len(params) or any(isinstance(a, ast.Starred) for a in call.args):
         return None
     got = dict(zip(params, call.args))
     for kw in call.keywords:
-        if kw.arg in params and kw.arg not in got:
+        if kw.arg in got:
+            return None                             # Python: got multiple values for argument
+        if kw.arg in params:
             got[kw.arg] = kw.value
+    step = got.get("step")
+    if step is not None and "stop" not in got \
+            and not (isinstance(step, ast.Constant) and type(step.value) is int and step.value == 1):
+        return None                                 # Python: Missing a non-None stop argument
     out = []
     for p in params:
         if p not in got:
@@ -996,7 +1009,7 @@ def _python_draws(tree):
     """[(a, b)]: every call to randint(a, b) in `tree` whose two arguments are int literals, each given by position or
     by its parameter's name: the arguments THE RULE's port reading takes from a random call (_random_args()), since
     every reader of a random call is one population (randint(a=A, b=B) and randint(A, b=B) are randint(A, B);
-    randint(b=B) is no draw)."""
+    randint(b=B) is no draw, and neither is randint(A, B, a=C), which Python refuses)."""
     out = []
     for n in ast.walk(tree):
         if isinstance(n, ast.Call) and _callee(n.func) == "randint":
@@ -1551,9 +1564,8 @@ class Plants(unittest.TestCase):
     def test_a_random_call_with_keyword_arguments(self):
         """THE RULE's random calls, with arguments given by their parameters' names (randint(a=..., b=...)), read as their
         positional forms are. Each green twin is in a file the census opens: a call whose first parameter is left empty
-        (randint and randrange), a randrange whose stop is left empty and whose step is given (read as randrange(start),
-        by the arguments up to the first parameter left empty), one whose keyword names no parameter of the call, and
-        keyword bounds below the range (that file opened by the randint( form alone)."""
+        (randint and randrange), one whose keyword names no parameter of the call, and keyword bounds below the range
+        (that file opened by the randint( form alone)."""
         lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
         for label, src, why, first in (
                 ("randint by keyword", 'port = random.randint(a=%d, b=%d)\n' % (lo, hi), "computed into %d-%d" % (lo, hi), lo),
@@ -1572,11 +1584,34 @@ class Plants(unittest.TestCase):
         for label, src in (
                 ("randint with its first parameter left empty", 'port = random.randint(b=%d)\n' % hi),
                 ("randrange with its first parameter left empty", 'port = random.randrange(stop=%d)\n' % hi),
-                ("randrange with its stop left empty and its step given", 'port = random.randrange(start=1024, step=%d)\n' % hi),
                 ("randint with a keyword that names no parameter of it", 'port = random.randint(%d, high=%d)\n' % (lo, hi)),
                 ("randint by keyword below the range", 'port = random.randint(a=1024, b=2048)\n')):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
+
+    def test_a_random_call_python_refuses_for_its_arguments_is_not_read(self):
+        """A random call Python refuses for the way its arguments are passed is not read. Each green plant is in a file
+        the census opens and is a call the old reading counted: a randrange whose stop is left empty and whose step is
+        given, by keyword or after a positional start (Python: Missing a non-None stop argument), and a keyword that
+        repeats a positional argument (Python: got multiple values for argument), in each of the three calls. Python
+        accepts a stop left empty beside a step of 1, its default (and refuses True there), so randrange(start=S,
+        step=1) reads as randrange(S), red."""
+        lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
+        for label, src in (
+                ("randrange with its stop left empty and its step given", 'port = random.randrange(start=%d, step=7)\n' % hi),
+                ("randrange with its start by position, its stop left empty and its step given",
+                 'port = random.randrange(%d, step=k)\n' % hi),
+                ("randrange with its stop left empty and a step of True, a bool Python refuses there",
+                 'port = random.randrange(%d, step=True)\n' % hi),
+                ("randrange with a keyword that repeats its stop", 'port = random.randrange(%d, %d, stop=3)\n' % (lo, hi)),
+                ("randint with a keyword that repeats its a", 'port = random.randint(%d, %d, a=1)\n' % (lo, hi)),
+                ("randbelow with a keyword that repeats its bound",
+                 'port = secrets.randbelow(%d, exclusive_upper_bound=3)\n' % hi)):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", src)
+        with self.subTest("randrange with its stop left empty and a step of 1"):
+            self.assertRed("test_plant.py", 'port = random.randrange(start=%d, step=1)\n' % hi, "computed into 0-%d" % (hi - 1),
+                           n=LOW)
 
     def test_a_randrange_whose_step_is_unbounded(self):
         """randrange(start, stop, step) with a step the census cannot bound, given by position or by its name, the stop
@@ -1825,9 +1860,9 @@ class SentinelPlants(unittest.TestCase):
             ("a draw in Python, a call and not a string", "helper_x.py",
              "import random\nP = %s\nDOC = %r\n" % (draw % (b - 4000, b - 3901), draw % (b - 3000, b - 2901)), [(b - 4000, b - 3901)]),
             ("a draw in Python by keyword, read as THE RULE reads a random call", "helper_y.py",
-             "import random\nP = %s\nQ = %s\nR = %s\nLOW = %s\nHALF = %s\n"
+             "import random\nP = %s\nQ = %s\nR = %s\nLOW = %s\nHALF = %s\nREP = %s\n"
              % (kw[0] % (b - 2000, b - 1901), kw[1] % (b - 901, b - 1000), kw[2] % (b - 6000, b - 5901),
-                kw[0] % (10, 99), "random.randint(b=%d)" % (b - 7000)),
+                kw[0] % (10, 99), "random.randint(b=%d)" % (b - 7000), "random.randint(%d, %d, a=1)" % (b - 8000, b - 7901)),
              [(b - 2000, b - 1901), (b - 1000, b - 901), (b - 6000, b - 5901)]),
             ("a block keyed by a test file's name", "ports-x.js", "const RANGES = {\n  'a.test.js': [%d, %d],\n};\n" % (b - 13000, b - 12489),
              [(b - 13000, b - 12489)]))
