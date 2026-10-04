@@ -53,8 +53,8 @@
 // life's first failure, the shim's reconnect (romp:wsup) and the window's `online` each set one flag (it does
 // not stack), and the next fill that meets a formula uses it up (not the failure's own fill, the arrival's
 // fill over the document or the viewer's repaint at the settle, which run inside the settle). So a chunk that
-// 404s for good costs two requests per page life plus one per reconnect, at any render rate (the review of
-// iOS item 6, round 1; the editor and PDF loaders retry the same way since 2026-09-06, on a gesture). A page
+// 404s for good costs at most two requests per page life, plus one per reconnect or online event, at any render rate (the
+// review of iOS item 6, round 1; the editor and PDF loaders retry the same way since 2026-09-06, on a gesture). A page
 // with no bundle tag to derive the URL from fails the same way every time and arms nothing. Whichever attempt
 // succeeds first, a retry or an earlier attempt landing after its backstop (the chunk, or the faces), runs the
 // arrival, once: the marked fallbacks become placeholders again and the fill over the document lays out every

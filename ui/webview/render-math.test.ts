@@ -307,8 +307,8 @@ test("the fill's bounds stand ahead of the one katex.render call, in order: the 
     assert.doesNotMatch(rule, /#[0-9a-fA-F]{3,8}\b/, sheet + ": no colour literal in the rule");
   }
   // render.ts's highlighter leaves the fallback alone (auto-detection over 20,000 characters of TeX cost 250 ms and dressed
-  // it in a guessed grammar's tokens); it spells the class rather than importing it, since render.ts imports only the
-  // renderer's arrival hook from math.ts
+  // it in a guessed grammar's tokens); it spells the class rather than importing it, since render.ts takes only the arrival's
+  // hook and the two tests (onMathSettled, mathPendingIn, mathFailedIn) from math.ts
   const render_ = UI("render.ts");
   const hl = render_.slice(render_.indexOf("function highlight(container: HTMLElement"), render_.indexOf("function copyText("));
   assert.match(hl, new RegExp('if \\(code\\.classList\\.contains\\("' + MATH_SOURCE_CLASS + '"\\)\\) \\{ const host = code\\.parentElement; if \\(host && host\\.tagName === "PRE"\\) addCopyBtn\\(host as HTMLElement, raw\\); return; \\}'),
