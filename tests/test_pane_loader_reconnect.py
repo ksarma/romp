@@ -26,6 +26,7 @@ Source-pinning, like the other _pane_spin tests (this JS has no jsdom harness).
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -960,6 +961,39 @@ out({ atLoad, atPaint: at() });""")
                          "8 px below the header (45 + 8), clear of everything: the first place (69 px) covers the handle's top 7 px, the walk "
                          "below it passes the list's bottom and the handle spans the width, so the clear place in the view is taken "
                          "(79dce614c: 69 px, over the handle)")
+
+    # The same rule in the served recorder (ruling 3 at 79dce614c: a resize cursor makes a control in rctl and in the recorder alike).
+    # The served legs reach the recorder's rule through one resize keyword, the composer's handle's ns-resize, so a recorder that
+    # dropped col-resize and row-resize passed them. Here CSS's keywords run through both rules, the regular expression rctl tests in
+    # the script _pane_spin returns and the recorder's CURSOR, executed in node, and each must count the same 17: pointer, grab,
+    # grabbing and the 14 resize cursors
+    def test_the_served_recorder_counts_a_cursor_as_a_control_exactly_when_rctl_does(self):
+        node = shutil.which("node")
+        if not node:
+            raise unittest.SkipTest("node not installed")
+        js = km._pane_spin("content", "live-ask")
+        script = js[js.index("<script>") + len("<script>"):js.index("</script>")]
+        mine = re.findall(r"function rctl\(e,s\)\{return \(e\.matches&&e\.matches\(RCTL\)\)\|\|(/[^/\n]+/[a-z]*)\.test\(s\.cursor\);\}", script)
+        self.assertEqual(len(mine), 1, "rctl's cursor rule is found once in the loader script")
+        self.assertEqual(script.count(".test(s.cursor)"), 1, "and it is the only cursor rule the loader script tests")
+        with open(os.path.join(HERE, "return_from_background_browser.mjs"), encoding="utf-8") as f:
+            rec = f.read()
+        theirs = re.findall(r"^\s*const CURSOR = (/[^/\n]+/[a-z]*);$", rec, re.M)
+        self.assertEqual(len(theirs), 1, "the recorder's CURSOR is found once")
+        self.assertEqual(re.findall(r"[\w.]+\.test\(cs\.cursor\)", rec), ["CURSOR.test(cs.cursor)"], "the recorder's control test reads CURSOR, and no other cursor rule")
+        fx = tempfile.mkdtemp()
+        path = os.path.join(fx, "cursors.js")
+        with open(path, "w") as f:
+            f.write("const K = %s, R = %s, C = %s;\nconsole.log(JSON.stringify({ rctl: C.filter((c) => K.test(c)), recorder: C.filter((c) => R.test(c)) }));\n"
+                    % (mine[0], theirs[0], json.dumps(self.CSS_CURSORS)))
+        r = subprocess.run([node, path], capture_output=True, text=True, timeout=30)
+        shutil.rmtree(fx, ignore_errors=True)
+        self.assertEqual(r.returncode, 0, r.stderr[:800])
+        o = json.loads(r.stdout.strip().splitlines()[-1])
+        counted = ["pointer", "grab", "grabbing"] + [k for k in self.CSS_CURSORS if k.endswith("-resize")]
+        self.assertEqual(len(counted), 17)
+        self.assertEqual(sorted(o["rctl"]), sorted(counted), "rctl counts pointer, grab, grabbing and the 14 resize cursors, and no other keyword")
+        self.assertEqual(sorted(o["recorder"]), sorted(o["rctl"]), "the served recorder counts exactly the keywords rctl counts")
 
     def test_a_control_in_a_fixed_element_in_the_list_moves_the_badge_off_it(self):
         o = self._fit(r"""
