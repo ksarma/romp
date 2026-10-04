@@ -3469,6 +3469,64 @@ class AHostThatDialsUsIsReachedOnItsNextExchange(_TwoBusHarness):
         relay = self._send_on_b("and the reindex?")
         self.assertTrue(relay.get("note", "").startswith("relaying to 'alpha' on hosta"), "the row is up: %r" % relay)
 
+    def _up_notify_at_the_link_read(self, prior):
+        """B's kernel's up notify for hosta's port row, landed at a send's link read, for the pins whose row for hosta
+        before the notify is not the held-down port row (`prior` names it in the messages). A's exchange ends ok, so the
+        link is open. A wrapper around B's _inbound_open sends the up notify over B's /peer route (peer_update) at its
+        first call for hosta, the send's link read (the one _inbound_open call in /send), and then runs the real read.
+        With no port row before the notify the send posts no /redial, so nothing else sits between its row read and its
+        link read. The notify closes nothing, so the send answers queued, as it does with no notify, and the next send
+        answers relaying (the row is up). B's dialer, which an up notify starts, is not under test, so peer_update's
+        _peer_threads_reconcile is stubbed, as in the held-down row's pin. The pins start no thread: the wrapper runs on
+        the handler thread B's server gave the send, and the server serves the notify on a handler thread of its own."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the link is open (prior row: %s)" % prior)
+        reconcile, real_open = pmb._peer_threads_reconcile, pmb._inbound_open
+        notified = []
+
+        def open_brings_the_up_notify(host):
+            if host == "hosta" and not notified:
+                try:
+                    notified.append(self._up_notify_on_b())
+                except Exception as e:                # recorded, asserted below
+                    notified.append(repr(e))
+            return real_open(host)
+
+        pmb._peer_threads_reconcile, pmb._inbound_open = (lambda host: None), open_brings_the_up_notify
+        self.addCleanup(setattr, pmb, "_peer_threads_reconcile", reconcile)
+        self.addCleanup(setattr, pmb, "_inbound_open", real_open)
+        resp = self._send_on_b("is the export done?")
+        self.assertEqual(notified, [(200, True)],
+                         "the up notify landed at the send's link read (prior row: %s)" % prior)
+        self.assertIs(pmb.PEERS["hosta"]["up"], True, "the row is up")
+        self._assert_queued(resp, "an up notify closes nothing: the link the send read after it is open (prior row: %s)"
+                            % prior)
+        self.assertEqual(self.posted, [], "no /redial: the send read no port row (prior row: %s)" % prior)
+        relay = self._send_on_b("and the reindex?")
+        self.assertTrue(relay.get("note", "").startswith("relaying to 'alpha' on hosta"), "the row is up: %r" % relay)
+
+    def test_an_up_notify_for_a_host_with_no_row_closes_nothing(self):
+        """AN UP NOTIFY CLOSES NOTHING, a first one for a host B holds no row for included (DOWN NOTIFY at
+        _inbound_links). B holds no row for A, and A dials B: its exchange ends ok, so the link is open. B's kernel
+        tells the bus at each change of a row's up or trust from its last tell, and a remote it has just attached has
+        no last tell, so its first tell for hosta can be up; _up_notify_at_the_link_read lands that notify at a send's
+        link read. The send answers queued and the next send relaying. Red at fork main at its precondition (no link
+        table there); a guard against a close on an up notify for a host B held no row for, under which the notify
+        superseded the link between the send's row read and its link read and the send answered unreachable."""
+        self.assertNotIn("hosta", pmb.PEERS, "precondition: B holds no row for A")
+        self._up_notify_at_the_link_read("none")
+
+    def test_an_up_notify_after_an_origin_only_row_closes_nothing(self):
+        """AN UP NOTIFY CLOSES NOTHING, one for a host whose row was portless included (DOWN NOTIFY at _inbound_links).
+        B's kernel files an origin-only row for hosta over B's /peer route (a trust for a host it holds no tunnel to),
+        and A dials B: its exchange ends ok, so the link is open. B's kernel then attaches A and tells the new port row
+        up; _up_notify_at_the_link_read lands that notify at a send's link read. The send answers queued and the next
+        send relaying. Red at fork main at its precondition (no link table there); a guard against a close on an up
+        notify whose row before it had no port, absent or origin-only, under which the notify superseded the link
+        between the send's row read and its link read and the send answered unreachable."""
+        self._origin_only_row_on_b()
+        self._up_notify_at_the_link_read("origin-only")
+
     def test_an_arrival_at_the_down_notify_s_second_lock_entry_stores_a_row_the_notify_does_not_mark(self):
         """THE MARK AND THE STORE SHARE THE CLOSE'S HOLD (DOWN NOTIFY at _inbound_links). B holds a port row for A, up,
         and A's exchange ended ok. While B's kernel's down notify runs, an exchange from A arrives at the notify
