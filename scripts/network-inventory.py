@@ -1181,13 +1181,17 @@ perf_export perf_public spend_repair
 # through it, each a site of the family in line_scan), http (the manager, the extension, its attach helper and the timeline view
 # reach the kernel on the loopback, each a site), ws (the extension's websocket to the kernel, a site) and vscode (the editor
 # API: its `openExternal` hands a URL to the operating system's default browser, a site of the clicked-link road); every other
-# one opens nothing: the node built-ins for files, paths, hashing and assertions; the TypeScript compiler; and the browser
-# libraries the webview bundles (markdown, math, sanitising, highlighting, the editor widget, PDF rendering). `module` opens
-# nothing itself, but its createRequire makes a require the import gate cannot read, so a `createRequire(` call is refused by
-# name (_js_unread_requires), and the one at this head, a test helper's, is placed by JS_ALLOW with its reason.
+# one opens nothing: the node built-ins for files, paths, hashing and assertions; zlib, Node's compression module, which only
+# compresses and decompresses in memory (inflate, deflate and its other formats) and has no network or file road, entered
+# under the name the gate reduces both `node:zlib` and `zlib` to (the first file the walk reads that imports it is a
+# browser-test helper that decodes a screenshot PNG, ui/webview/file-figure-open-stacking.ts, from fork PR #862); the
+# TypeScript compiler; and the browser libraries the webview bundles (markdown, math, sanitising, highlighting, the editor
+# widget, PDF rendering). `module` opens nothing itself, but its createRequire makes a require the import gate cannot read, so
+# a `createRequire(` call is refused by name (_js_unread_requires), and the one at this head, a test helper's, is placed by
+# JS_ALLOW with its reason.
 KNOWN_JS_IMPORTS = set("""
 child_process http ws
-assert crypto fs module os path url util vscode typescript
+assert crypto fs module os path url util zlib vscode typescript
 marked katex dompurify highlight.js pdfjs-dist
 @codemirror/autocomplete @codemirror/commands @codemirror/lang-css @codemirror/lang-html @codemirror/lang-javascript
 @codemirror/lang-json @codemirror/lang-markdown @codemirror/lang-python @codemirror/language @codemirror/legacy-modes
