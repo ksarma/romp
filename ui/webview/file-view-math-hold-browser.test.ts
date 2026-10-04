@@ -24,7 +24,11 @@
 // The arrival's repaint waits out a press on the card through a hold of its own (the review's round 2, ui-1): a press on an Outline
 // row held across a retry's success lands its pick, its row still in the page at the click, and the note is laid out after the
 // release; a reload landing parked under a press survives an arrival in the same press and paints the new text at the release; a
-// viewer closed while its repaint is parked paints nothing at the release (the run re-checks that the viewer is up).
+// viewer closed while its repaint is parked paints nothing at the release (the run re-checks that the viewer is up). Nothing in the
+// body moves under the press either: the arrival leaves a failed load's sources in both viewers' bodies to the held repaint (math.ts
+// MATH_REPAINT_ATTR), so a press on a link below two display formulas, held across the retry's success, clicks the link, still in
+// the page, and its fragment lands, in both viewers (before, the in-place re-fill grew the formulas and the release met another
+// element; at f760868a6 the repaint removed the link).
 // `window.__paints` counts the seam's onRendered. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -509,3 +513,38 @@ test("chromium: the Files pane's viewer: a viewer closed while the arrival's rep
     assert.deepEqual(errors, []);
   });
 });
+
+// two tall display formulas on the first screen, then a link to the section below: their growth from a source block to KaTeX's layout
+// moves the link by more than its own height
+const LINKED = "# Ratios\n\nThe ratio $\\frac{a}{b}$ holds.\n\n$$\\sum_{i=0}^{n} \\frac{\\frac{a_i}{b_i}}{\\frac{c_i}{d_i}}$$\n\n$$\\prod_{j=1}^{m} \\frac{\\frac{x_j}{y_j}}{\\frac{u_j}{v_j}}$$\n\n"
+  + "Jump [to the second section](#second) from here.\n\n" + FILLER + "\n\n## Second\n\nTarget paragraph here.\n\n" + FILLER + "\n";
+
+for (const viewer of ["file", "url"] as const) {
+  test(`chromium: ${viewer === "file" ? "the Files pane's viewer" : "the URL viewer"}: a press on a link below two display formulas, held across a retry's success, clicks the link, still in the page, and its fragment lands; nothing in the body moved under the press`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const retry = gate(); const requests: string[] = [];
+      const { page, errors } = await failedThenRetryOut(browser, retry, requests, viewer, LINKED);
+      const link = page.locator(".fileview-body .fileview-md a", { hasText: "to the second section" });
+      const box = await link.boundingBox();
+      assert.ok(box, "the link on the first screen");
+      const top0 = await page.evaluate(() => { const a = Array.from(document.querySelectorAll(".fileview-body .fileview-md a")).find((x) => (x.textContent || "").includes("to the second section")) as HTMLElement; return a.getBoundingClientRect().top; });
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await retryLandsNow(page, retry);
+      // read under the press, asserted after the release, so a lost click, what the reader sees, reds first
+      const held = await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; const a = Array.from(b.querySelectorAll(".fileview-md a")).find((x) => (x.textContent || "").includes("to the second section")) as HTMLElement | undefined;
+        return { top: a ? a.getBoundingClientRect().top : null, src: b.querySelectorAll("code.md-math-src").length, katex: b.querySelectorAll(".katex").length }; });
+      await page.mouse.up();
+      await frames(page, 8);
+      const clicks = await page.evaluate(() => (window as any).__clicks);
+      assert.ok(clicks.some((c: any) => c.text === "to the second section" && c.connected), "the release clicked the link, still in the page: " + JSON.stringify({ clicks, held, top0 }));
+      const l = await landing(page);
+      assert.ok(l.heading !== null && l.heading >= 0 && l.heading < 60, "its fragment landed: the section's heading at the body's top: " + JSON.stringify(l));
+      assert.deepEqual(held, { top: top0, src: 3, katex: 0 }, "under the press nothing in the body moved: the link where it was pressed, the three formulas still their sources: " + JSON.stringify(held));
+      const b = await overNow(page);
+      assert.deepEqual([b.katex, b.src, b.loader], [3, 0, false], "after the release the note is laid out: " + JSON.stringify(b));
+      assert.equal(requests.length, 2);
+      assert.deepEqual(errors, []);
+    });
+  });
+}

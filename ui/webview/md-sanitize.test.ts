@@ -344,10 +344,11 @@ test("the math fill is registered as a sanitizeMd post-pass by the module that i
   assert.doesNotMatch(read("render.ts"), /renderMathPlaceholders\(/, "render.ts renders no math of its own: the fill rides every sanitizeMd call");
   assert.doesNotMatch(read("file-view.ts"), /renderMathPlaceholders|from "\.\/chat-md"/, "the viewer imports no grammar of its own: md-config.ts, which it applies, carries the grammar and its fill into every bundle that hosts it (Slice 4 of plans/markdown-viewer.md)");
   // what each renderer does take from math.ts since KaTeX became an on-demand chunk (iOS item 6): the arrival's hook, the
-  // pending test and the failed-source test (a later success lays those out: round 1 of the PR's review), and nothing else
-  // (render-math.test.ts pins the one import line in each)
-  for (const f of ["render.ts", "file-view.ts"]) {
-    assert.deepEqual(read(f).match(/^import [^\n]* from "\.\/math";/gm), ['import { onMathSettled, mathPendingIn, mathFailedIn } from "./math";'], f + " takes the arrival's hook from math.ts, no grammar and no fill");
+  // pending test and the failed-source test (a later success lays those out: round 1 of the PR's review), and the viewer the
+  // attribute its bodies wear for its own repaint at the arrival (round 2), and nothing else (render-math.test.ts pins the one
+  // import line in each)
+  for (const [f, names] of [["render.ts", "onMathSettled, mathPendingIn, mathFailedIn"], ["file-view.ts", "onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR"]]) {
+    assert.deepEqual(read(f).match(/^import [^\n]* from "\.\/math";/gm), ['import { ' + names + ' } from "./math";'], f + " takes the arrival's hook from math.ts, no grammar and no fill");
   }
 });
 

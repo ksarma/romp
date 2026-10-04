@@ -58,8 +58,8 @@
 // with no bundle tag to derive the URL from fails the same way every time and arms nothing. Whichever attempt
 // succeeds first, a retry or an earlier attempt landing after its backstop (the chunk, or the faces), runs the
 // arrival, once: the marked fallbacks become placeholders again and the fill over the document lays out every
-// formula, those included, while the chat keeps its reader's line and the viewer its place as at a first
-// arrival.
+// formula, those included, while the chat keeps its reader's line; the viewers' bodies (MATH_REPAINT_ATTR) are left
+// to their own settle handlers, which paint the note again, its place kept, once any press on the card is released.
 //
 // The delimiter problem: `$` is everywhere in chat text that is NOT math (shell variables,
 // prices), and a naive $..$ tokenizer strikes a formula through half a sentence the way the
@@ -367,6 +367,16 @@ export const MATH_CHUNK_BACKSTOP_MS = 60_000;
 export const MATH_FAILED_ATTR = "data-math-failed";
 const FAILED_SEL = "[" + MATH_FAILED_ATTR + "]";
 
+/** The attribute a root carries when its owner repaints it at the renderer's arrival: both viewers' bodies (file-view.ts), whose
+ *  settle handlers paint the note again from its text. The arrival leaves the failure's marked fallbacks under such a root as they
+ *  are, so nothing in it moves before its owner's one repaint, which a press on the viewer's card holds until the release (the
+ *  review of iOS item 6, round 2: re-filled in place under a press, a formula's growth moved the line under the still pointer, and
+ *  the release clicked the paragraph instead of the link it pressed). The chat and the feed carry none: the arrival re-fills their
+ *  fallbacks in place, and the chat keeps its reader's line around that. Set by the owner on its own element; the sanitizer keeps
+ *  no data-* attribute an author wrote, so no author's markup opts out. */
+export const MATH_REPAINT_ATTR = "data-math-repaints";
+const REPAINTED_SEL = "[" + MATH_REPAINT_ATTR + "]";
+
 let mathCalls = 0;                                        // the group numbers handed out so far
 // The load, for the page's life: idle until the first formula, loading while the first attempt's chunk and faces are out, ready
 // once an attempt has settled as a success, failed after a failure (until a success; a retry runs while the state stays failed,
@@ -500,10 +510,11 @@ function attemptFailed(why: string): void {
 
 /** Each source fallback the load's failure made under `root` back to the placeholder it was (its tag, its mode, its TeX and its
  *  call's group), for the fill that follows a success to lay out. A fallback for one of the fill's bounds carries no mark and
- *  stays. */
+ *  stays, and so does one under a root its owner repaints (MATH_REPAINT_ATTR: the viewers' bodies). */
 function restoreFailedFormulas(root: ParentNode): void {
   root.querySelectorAll(FAILED_SEL).forEach((node) => {
     const shown = node as HTMLElement;
+    if (shown.closest(REPAINTED_SEL)) return;              // its owner paints it again from its text (the viewers' settle handlers)
     const code = shown.tagName === "CODE" ? shown : shown.querySelector("code." + MATH_SOURCE_CLASS);
     if (!code) return;
     const ph = shown.ownerDocument.createElement(shown.tagName === "PRE" ? "div" : "span");
@@ -517,7 +528,8 @@ function restoreFailedFormulas(root: ParentNode): void {
 
 /** The load is over, as a failure (the first of the page life's load) or a success (the first, whichever attempt it was): the
  *  handlers, then one fill over the document (each pending formula rendered, or shown as source on a failure), then what the
- *  handlers returned. A success after a failure first puts the failure's fallbacks back as placeholders (restoreFailedFormulas),
+ *  handlers returned. A success after a failure first puts the failure's fallbacks back as placeholders (restoreFailedFormulas; not
+ *  under a root its owner repaints, MATH_REPAINT_ATTR),
  *  so the fill lays out every formula, those included. The fills inside use no retry (settling, requestEngine). */
 function engineSettled(failure: string | null): void {
   engineLoad = failure === null ? "ready" : "failed";

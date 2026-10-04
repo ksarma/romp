@@ -19,7 +19,7 @@ import hljs from "highlight.js/lib/core";
 import { marked, type Token, type Tokens } from "marked";
 import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
-import { onMathSettled, mathPendingIn, mathFailedIn } from "./math";   // a paint of a note with math waits for the math renderer's arrival (the hold in renderBody)
+import { onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR } from "./math";   // a paint of a note with math waits for the math renderer's arrival (the hold in renderBody); both bodies are repainted by their own settle handlers (MATH_REPAINT_ATTR)
 import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start tag with no end tag in its block renders as literal text, on this parse's tokens (plans/file-review.md, decision 52)
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
@@ -1912,6 +1912,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // stays the plain overflow block the editor's height: 100% relies on — the row wrapper is what changed.
   const main = el("div", "fileview-main");
   const body = el("div", "fileview-body");
+  body.setAttribute(MATH_REPAINT_ATTR, "");   // the renderer's arrival leaves a failed load's sources here to this viewer's own repaint (math.ts MATH_REPAINT_ATTR), which waits out a press (mathHold)
   // A Tab stop, so the scroll box can hold the keyboard (plans/markdown-viewer.md Slice 6, item 1): PageDown, Space, the
   // arrows, Home and End then scroll it natively, and takeKeyboard below gives it the keyboard after a paint the reader asked
   // for. Set once per open and never touched again: the Comments panel's press-time strip (file-comments.ts pressedMarks)
@@ -5165,6 +5166,7 @@ export function openUrlView(href: string): void {
 
   const body = el("div", "fileview-body");
   const stampBodyWidth = watchBodyWidth(body);        // the body's content width, for a top-level table's cap (the sheets read --fv-body-w)
+  body.setAttribute(MATH_REPAINT_ATTR, "");             // the renderer's arrival leaves a failed load's sources here to this viewer's own repaint (math.ts MATH_REPAINT_ATTR; mathHold below)
   textSize.bindWheel(body);                            // Ctrl/Cmd + wheel over the text steps the size
   // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the
   // local viewer's pattern. No fv-open here — a URL document's sibling links are made absolute and
