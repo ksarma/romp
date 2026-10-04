@@ -131,11 +131,11 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   parameter's name (randint's a and b, randrange's start, stop and step, randbelow's exclusive_upper_bound; a keyword
   that names none, or names one a positional argument fills, is passed over), and the call is read by the arguments
   that fill its parameters from the first up to the first left empty: random.randint(a=40000, b=50000) counts as
-  random.randint(40000, 50000) does, randrange(start=S) reads as randrange(S), and randint(b=N) is not read. A sum or
-  difference with an unbounded operand counts when one of its operands alone is a constant expression (one interval()
-  bounds with no unknown in it) whose value is in the range, found through str() and int() and down a chain of sums
-  and differences: 40000 + i is built on 40000, and so is 40000 * 1 + i (offset_base()); one with no such operand
-  (base + i) is not read.
+  random.randint(40000, 50000) does, randrange(start=S) and randrange(start=S, step=K) read as randrange(S), and
+  neither randint(b=N) nor randrange(stop=E) is read. A sum or difference with an unbounded operand counts when one of
+  its operands alone is a constant expression (one interval() bounds with no unknown in it) whose value is in the
+  range, found through str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so
+  is 40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -1505,9 +1505,10 @@ class Plants(unittest.TestCase):
 
     def test_a_random_call_with_keyword_arguments(self):
         """THE RULE's random calls, with arguments given by their parameters' names (randint(a=..., b=...)), read as their
-        positional forms are. Each green twin is in a file the census opens: a call whose first parameter is left empty,
-        one whose keyword names no parameter of the call, and keyword bounds below the range (that file opened by the
-        randint( form alone)."""
+        positional forms are. Each green twin is in a file the census opens: a call whose first parameter is left empty
+        (randint and randrange), a randrange whose stop is left empty and whose step is given (read as randrange(start),
+        by the arguments up to the first parameter left empty), one whose keyword names no parameter of the call, and
+        keyword bounds below the range (that file opened by the randint( form alone)."""
         lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
         for label, src, why, first in (
                 ("randint by keyword", 'port = random.randint(a=%d, b=%d)\n' % (lo, hi), "computed into %d-%d" % (lo, hi), lo),
@@ -1525,6 +1526,8 @@ class Plants(unittest.TestCase):
                 self.assertRed("test_plant.py", src, why, n=first)
         for label, src in (
                 ("randint with its first parameter left empty", 'port = random.randint(b=%d)\n' % hi),
+                ("randrange with its first parameter left empty", 'port = random.randrange(stop=%d)\n' % hi),
+                ("randrange with its stop left empty and its step given", 'port = random.randrange(start=1024, step=%d)\n' % hi),
                 ("randint with a keyword that names no parameter of it", 'port = random.randint(%d, high=%d)\n' % (lo, hi)),
                 ("randint by keyword below the range", 'port = random.randint(a=1024, b=2048)\n')):
             with self.subTest(label):
