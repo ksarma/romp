@@ -830,9 +830,13 @@ const deliverAll = (recs) => task(() => MOS.forEach((m) => { const mine = recs.f
   .map((rec) => (m.regs.some((r) => sees(r, rec) && r.o.attributeOldValue) ? rec : Object.assign({}, rec, { oldValue: null }))); if (mine.length) m.cb(mine); }));
 const deliver = (rec) => deliverAll([rec]);
 const ELEM = { nodeType: 1 }, TEXT = { nodeType: 3 };
-const change = (target) => deliver({ type: 'childList', target, addedNodes: [ELEM], removedNodes: [] });          // an element added inside `target`
-const added = (el) => deliver({ type: 'childList', target: el.parent || document.body, addedNodes: [el], removedNodes: [] });   // `el` added to its parent
-const text = (target) => deliver({ type: 'childList', target, addedNodes: [TEXT], removedNodes: [TEXT] });        // `target`'s text written (textContent)
+// a childList record as the engine gives it: attributeName and oldValue are null on it, as on every record that is not an attribute
+// one (round 3, tests-1: the harness left both undefined, which getAttribute(undefined) never equals, so a skip that dropped its type
+// check stayed green here while an engine, where both are null and getAttribute(null) is null, would skip every childList record)
+const kids = (target, addedNodes, removedNodes) => ({ type: 'childList', target, attributeName: null, oldValue: null, addedNodes, removedNodes });
+const change = (target) => deliver(kids(target, [ELEM], []));                                                    // an element added inside `target`
+const added = (el) => deliver(kids(el.parent || document.body, [el], []));                                       // `el` added to its parent
+const text = (target) => deliver(kids(target, [TEXT], [TEXT]));                                                  // `target`'s text written (textContent)
 // an attribute written to a new value (`value`, by default one it never had; null removes it): the record carries the value it had
 let WRITES = 0;
 const attrRec = (target, name, value) => { name = name || 'style'; const old = attrOf(target, name), v = value === undefined ? (old || '') + ' w' + (++WRITES) : value;
@@ -1459,6 +1463,24 @@ out({ popup, inner, seen, clipped, upOnly, rightOnly, leftOnly, unseen });""")
                        ("unseen", "an element added inside a tab the strip scrolls wholly out of view: a scan, since no part of that tab can be seen")):
             with self.subTest(k):
                 self.assertIs(o[k]["scanned"], True, why)
+
+    # Round 3 (2026-10-04, tests-1): the unchanged-value skip reads attribute records alone. An engine gives every childList record
+    # attributeName null and oldValue null (Chromium's, probed by the round's refuter; the harness's records carry both, kids), and
+    # getAttribute(null) is null, so a skip that dropped its type check would skip every childList record. Each kind of childList
+    # record here reaches the watch and asks for its frame: a text written, an element removed, and an element added, which scans
+    def test_the_unchanged_value_skip_never_skips_a_child_list_record(self):
+        o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T);
+const step = (fn) => { const reads = STYLE_READS, asks = ASKS; fn(); frame(); return { reads: STYLE_READS - reads, asks: ASKS - asks }; };
+const shape = kids(footer, [], []);
+const written = step(() => text(timer));
+const removed = step(() => deliver(kids(footer, [], [timer])));
+const addedEl = step(() => added(add(footer, [80, 764, 40, 16])));
+out({ shape: [shape.attributeName, shape.oldValue], written, removed, addedEl, scan: scan() });""")
+        self.assertEqual(o["shape"], [None, None], "the harness's childList records carry attributeName and oldValue null, as the engine's do")
+        self.assertEqual(o["written"], {"reads": 1, "asks": 1}, "the status line's timer text written: one frame, a re-read (the skip read no attribute)")
+        self.assertEqual(o["removed"], {"reads": 1, "asks": 1}, "an element removed from the footer: one frame, a re-read")
+        self.assertEqual(o["addedEl"], {"reads": o["scan"], "asks": 1}, "an element added to the footer, which the scan does not hold: one frame, which scans")
 
     # Ruling 1 at 79dce614c (2026-10-04): on the desktop the chat writes the reply chips' hidden attribute at each scroll step, to the
     # value it had, and the chips (fixed, outside the list, holding elements, no control) are an element the watch must scan for when
