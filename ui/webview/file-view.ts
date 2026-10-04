@@ -2711,9 +2711,24 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let mathHeld = false;
   let landOwed = false;
   const endHold = (): void => { if (mathHeld) { mathHeld = false; landOwed = true; } };
+  // The arrival's repaint waits out a press on the card, as a reload's landing does (the PR's review, round 2, ui-1: a press on an
+  // Outline row or a link when a retry's success landed lost its click, the repaint having removed the pressed node; ui/CLAUDE.md,
+  // click-safe). It has a hold of its own (mathHold, on the card like the landing's), since the card's hold parks one run at a time
+  // and the repaint must never displace a landing parked under the same press. What to repaint is decided at the settle, before
+  // math.ts lays out anything in the document: a held paint (mathHeld), or the paint whose root shows a failed load's sources. The
+  // run re-checks when it fires: the viewer still up (wrap.isConnected), and no paint since the settle (a Raw pick, a takeover, or a
+  // landing parked under the same press, which runs first, its release listener installed first, and paints with the renderer in).
+  const mathHold = pressHold(box);
   closeHooks.push(onMathSettled(() => {
-    if (mathHeld) { mathHeld = false; renderBody(); landTarget(); }
-    else if (shownText !== null && mathFailedIn(body)) renderBody();
+    const held = mathHeld;
+    const shown = !held && shownText !== null && mathFailedIn(body) ? body.querySelector(":scope > .fileview-md") : null;
+    if (!held && !shown) return;
+    void mathHold.defer(() => {   // a throw from the run (renderBody catches its build and swap; one past them is a bug) rejects: a page error
+      if (!wrap.isConnected) return;
+      if (held ? !mathHeld : !shown || shown.parentNode !== body) return;   // a paint since the settle: what it painted stands
+      if (held) { mathHeld = false; renderBody(); landTarget(); }
+      else renderBody();
+    });
   }));
   const renderBody = () => {
     const rendered = isMd && fmt.md === "rendered";
@@ -5204,9 +5219,19 @@ export function openUrlView(href: string): void {
   };
   body.addEventListener("scroll", () => { if (heldPlace && body.scrollTop !== heldScrollTop) heldPlace = null; }, { passive: true });
   let mathHeld = false;                                // a Rendered paint waiting for the math renderer: the local viewer's hold (renderBody there)
-  closeHooks.push(onMathSettled(() => {                // and a paint a failed load left with sources, repainted by a later success (the local viewer's)
-    if (mathHeld) { mathHeld = false; renderBody(); }
-    else if (shownText !== null && mathFailedIn(body)) renderBody();
+  // and a paint a failed load left with sources, repainted by a later success: decided at the settle, run through this viewer's own
+  // press hold on the card and re-checked when it fires (the local viewer's mathHold says why)
+  const mathHold = pressHold(box);
+  closeHooks.push(onMathSettled(() => {
+    const held = mathHeld;
+    const shown = !held && shownText !== null && mathFailedIn(body) ? body.querySelector(":scope > .fileview-md") : null;
+    if (!held && !shown) return;
+    void mathHold.defer(() => {   // a throw from the run rejects: a page error (the local viewer's)
+      if (!wrap.isConnected) return;
+      if (held ? !mathHeld : !shown || shown.parentNode !== body) return;   // a paint since the settle: what it painted stands
+      mathHeld = false;
+      renderBody();
+    });
   }));
   const renderBody = () => {
     for (const [mode, b] of segBtns) {

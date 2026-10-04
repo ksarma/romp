@@ -21,10 +21,14 @@
 // pane, and the renderer's arrival, a success or a failure, leaves the pane standing with the seam's error() keeping its sentence
 // (before, the arrival painted the last text over it); the editor entered while held stays through the arrival, and its Cancel
 // lands the open's offset in the Raw rows, as an exit before the arrival does (before, the arrival spent the offset into the editor).
+// The arrival's repaint waits out a press on the card through a hold of its own (the review's round 2, ui-1): a press on an Outline
+// row held across a retry's success lands its pick, its row still in the page at the click, and the note is laid out after the
+// release; a reload landing parked under a press survives an arrival in the same press and paints the new text at the release; a
+// viewer closed while its repaint is parked paints nothing at the release (the run re-checks that the viewer is up).
 // `window.__paints` counts the seam's onRendered. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, bundleViewer, frames, paintsReach, topBlock, putAtTop, REPORT, PARA, ORIGIN } from "./real-viewer-leg";
+import { inBrowser, openViewer, bundleViewer, frames, paintsReach, topBlock, putAtTop, REPORT, PARA, ORIGIN, MT2 } from "./real-viewer-leg";
 import { chunkBundle, gate, type Gate } from "./math-chunk-leg";
 
 const NOTE = "# Ratios\n\nThe ratio $\\frac{a}{b}$ holds.\n\n$$\\sum_{i=0}^{n} i^2$$\n\nAfter the formula.\n";
@@ -400,6 +404,108 @@ test("chromium: the editor entered while a math note opened at an offset is held
     });
     assert.ok(raw.scrollTop > 0 && raw.target !== null && raw.target.top >= 0 && raw.target.bottom <= raw.clientHeight, "the Cancel's Raw paint lands the open's offset: its row in view: " + JSON.stringify(raw));
     assert.equal(requests.length, 1);
+    assert.deepEqual(errors, []);
+  });
+});
+
+// ── the arrival's repaint waits out a press on the card (the review's round 2, ui-1), through its own hold ──
+
+/** The retry scene's start (the two-formula note, the first chunk answered 404, the second held by `retry`): the failed load's
+ *  paint, then Raw and Rendered, whose fill sends the retry, the note on screen with its formulas as source. */
+async function failedThenRetryOut(browser: any, retry: Gate, requests: string[], viewer: "file" | "url", note = TARGETED2) {
+  const opened = await open(browser, { [REPORT]: note }, ["404", "serve"], null, requests, null, {
+    gates: [null, retry], ...(viewer === "url" ? { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: note } } : {}),
+  });
+  const { page } = opened;
+  await page.waitForFunction(() => !!document.querySelector(".fileview-body .fileview-md code.md-math-src"), null, { timeout: 15000 });
+  await frames(page, 4);
+  await button(page, "Raw");
+  await frames(page, 4);
+  await button(page, "Rendered");
+  await page.waitForFunction(() => !!document.querySelector(".fileview-body .fileview-md code.md-math-src"), null, { timeout: 15000 });
+  await frames(page, 4);
+  assert.equal(requests.length, 2, "the Rendered paint's fill sent the retry the failure armed, held");
+  // every click the page sees, with its target's text and whether the target was still in the page when the click reached it
+  await page.evaluate(() => { (window as any).__clicks = []; document.addEventListener("click", (e) => { const t = e.target as HTMLElement; (window as any).__clicks.push({ text: (t.textContent || "").trim().slice(0, 40), cls: t.className || "", connected: t.isConnected }); }, true); });
+  return opened;
+}
+/** The retry served under a press, its arrival run: KaTeX registered, then frames for the faces' settle and the arrival. */
+async function retryLandsNow(page: any, retry: Gate): Promise<void> {
+  retry.open();
+  await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+  await frames(page, 6);
+}
+
+test("chromium: the Files pane's viewer: a press on an Outline row held across a retry's success lands its pick, the row still in the page at the click, and the note is laid out after the release", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    await page.locator(".fileview-outline-btn").click();
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-outline .fileview-outline-row").length > 0, null, { timeout: 10000 });
+    const row = page.locator(".fileview-outline").getByText("Second", { exact: true });
+    const box = await row.boundingBox();
+    assert.ok(box, "the Outline row for the section");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    const paints0 = await page.evaluate(() => (window as any).__paints - (window as any).__reflows);
+    await retryLandsNow(page, retry);
+    const pressed = await page.evaluate(() => { const o = document.querySelector(".fileview-outline"); return { popover: !!o && o.isConnected, paints: (window as any).__paints - (window as any).__reflows }; });
+    assert.deepEqual([pressed.popover, pressed.paints], [true, paints0], "while the press is held, the arrival's repaint waits: the popover and its pressed row stand, nothing painted: " + JSON.stringify(pressed));
+    await page.mouse.up();
+    await frames(page, 8);
+    assert.equal(await page.evaluate(() => (window as any).__paints - (window as any).__reflows), paints0 + 1, "the release ran the repaint the settle decided on, once: the seam's hooks heard the laid-out note");
+    const clicks = await page.evaluate(() => (window as any).__clicks);
+    assert.ok(clicks.some((c: any) => c.text === "Second" && c.connected), "the release clicked the row, still in the page: " + JSON.stringify(clicks));
+    const l = await landing(page);
+    assert.ok(l.heading !== null && l.heading >= 0 && l.heading < 60, "the pick landed: the section's heading at the body's top: " + JSON.stringify(l));
+    const b = await overNow(page);
+    assert.deepEqual([b.katex, b.src, b.loader], [2, 0, false], "after the release the note is laid out, both formulas: " + JSON.stringify(b));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a reload landing parked under a press survives the retry's arrival in the same press, and the release paints the new text, laid out", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    const para = page.locator(".fileview-body .fileview-md p", { hasText: "Paragraph 2:" }).first();
+    const box = await para.boundingBox();
+    assert.ok(box, "a paragraph to press on");
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    const fetched = await page.evaluate(() => (window as any).__fetches);
+    await page.evaluate(([p, text, mt]: [string, string, string]) => { (window as any).__docs[p] = text; (window as any).__mtime = mt; (window as any).__seam.reload(); }, [REPORT, TARGETED2 + "\nWritten by the reload, after the press began.\n", MT2]);
+    await page.waitForFunction((n: number) => (window as any).__fetches > n, fetched, { timeout: 10000 });
+    await frames(page, 4);
+    assert.equal(await page.evaluate(() => (document.querySelector(".fileview-body")!.textContent || "").includes("Written by the reload")), false, "the landing is parked under the press");
+    await retryLandsNow(page, retry);
+    await page.mouse.up();
+    await frames(page, 8);
+    const after = await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; return { reload: (b.textContent || "").includes("Written by the reload, after the press began."), katex: b.querySelectorAll(".katex").length, src: b.querySelectorAll("code.md-math-src").length }; });
+    assert.deepEqual(after, { reload: true, katex: 2, src: 0 }, "the parked landing painted the reload's text at the release, with the renderer in: " + JSON.stringify(after));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a viewer closed while the arrival's repaint is parked under a press paints nothing at the release", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    const para = page.locator(".fileview-body .fileview-md p", { hasText: "Paragraph 2:" }).first();
+    const box = await para.boundingBox();
+    assert.ok(box, "a paragraph to press on");
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    await retryLandsNow(page, retry);
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.getElementById("romp-fileview"), null, { timeout: 10000 });
+    const closed = await page.evaluate(() => (window as any).__paints);
+    await page.mouse.up();
+    await frames(page, 8);
+    assert.equal(await page.evaluate(() => (window as any).__paints), closed, "the parked repaint found the viewer gone and painted nothing: no hook of the closed viewer heard a paint");
+    assert.equal(requests.length, 2);
     assert.deepEqual(errors, []);
   });
 });
