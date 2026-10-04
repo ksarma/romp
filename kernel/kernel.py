@@ -70704,6 +70704,10 @@ if(NOTES.length>MAX)NOTES=NOTES.slice(-MAX);}
 // closed, for a line the reader had seen. A muted kind's entry stays unread here as at an opening. The last entry is the one
 // just written, pushed or coalesced. A line written for the next page life (nextLife) is not marked: the reload takes the page
 // before anyone reads the open list, so the line arrives unread in the next page life (the round-1 review, 2026-10-04).
+// Seen means listed (the same review's ruling): an entry counts as seen when the open Log lists it, scrolled into view or
+// not, at each of the three marks. An opening restores the list's scroll and marks rows out of view; an arrival into a list
+// scrolled away from its top is marked though its row is not drawn in view; an unmute marks its kind's rows, which may sit
+// below the fold. No mark tests what is in view.
 if(!back.hidden&&!nextLife)markSeen(NOTES[NOTES.length-1]);
 save();paint();};
 // pane iframes can feed the center too; sid/itemId ride along as the entry's jump target. An entry naming a CARD
