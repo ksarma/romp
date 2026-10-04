@@ -78,7 +78,13 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
     %d, %i or %s, and then the whole right operand is read, each element of a tuple, whatever placeholder it fills;
     for format, a field takes the operand str.format gives it (by its number, its name or the next automatic number),
     and takes its automatic number before the fields nested in its format spec take theirs, so
-    "http://{:{}}:{}/".format(h, w, N) reads N, and "http://{:{}}:{}/".format(h, N, 1) reads nothing;
+    "http://{:{}}:{}/".format(h, w, N) reads N, and "http://{:{}}:{}/".format(h, N, 1) reads nothing. A format
+    template is not read when string.Formatter().parse refuses its text or a field's format spec, when a field nested
+    in a spec has an opening brace in its own spec ("http://{:{:{}}}:{}/", where str.format refuses a field nested two
+    deep), or when automatic fields ({}) and numbered ones ({1}) mix ("http://{}:{1}/", where str.format refuses the
+    switch). Nothing else that str.format refuses is checked, so a template it refuses for any other reason still has
+    its port's operand read: a field with no operand ("http://{}:{}/{}".format(h, N) reads N), an unknown conversion, a
+    spec an operand refuses;
     a port concatenated onto an address: the right operand of a + whose left side, read as text (string literals, names
     bound to one, f-strings' literal parts) with every other operand as a placeholder, ends in an address, then a colon
     ("http://127.0.0.1:" + str(N), "http://" + host + ":" + P);
@@ -651,12 +657,21 @@ class _Scan:
 
     def _formatted(self, tmpl, args, keywords):
         """Each operand str.format places right after an address's colon in the template `tmpl`. A field takes the next
-        automatic number before the fields nested in its format spec take theirs ("{:{}}" takes two)."""
+        automatic number before the fields nested in its format spec take theirs ("{:{}}" takes two). The template is not
+        read when string.Formatter().parse refuses it or a field's spec, when a field nested in a spec has an opening
+        brace in its own spec, or when automatic and numbered fields mix: str.format refuses each of those for the text
+        alone. Nothing else it refuses is checked (a field with no operand, an unknown conversion, a spec an operand
+        refuses)."""
         try:
-            fields = [(lit, field, [f for _l, f, _s, _c in string.Formatter().parse(spec or "") if f is not None])
+            fields = [(lit, field, [(f, s) for _l, f, s, _c in string.Formatter().parse(spec or "") if f is not None])
                       for lit, field, spec, _conv in string.Formatter().parse(tmpl)]
         except ValueError:
             return
+        heads = [re.match(r"[^.\[]*", f).group(0) for _lit, field, nested in fields if field is not None
+                 for f in [field] + [f for f, _s in nested]]          # each field's name before any . or [, in str.format's order
+        numbering = {"automatic" if h == "" else "numbered" for h in heads if h == "" or h.isdigit()}
+        if len(numbering) > 1 or any("{" in s for _lit, _field, nested in fields for _f, s in nested):
+            return                                  # str.format refuses a switch of numbering, and a field nested two deep
         rendered, auto = "", 0
         for lit, field, nested in fields:
             rendered += _as_text(lit)
@@ -669,7 +684,7 @@ class _Scan:
                 arg = args[int(head)] if int(head) < len(args) else None
             else:
                 arg = keywords.get(head)
-            auto += sum(1 for f in nested if re.match(r"[^.\[]*", f).group(0) == "")   # the spec's automatic fields
+            auto += sum(1 for f, _s in nested if re.match(r"[^.\[]*", f).group(0) == "")   # the spec's automatic fields
             if arg is not None and head == field and not isinstance(arg, ast.Starred) and _ADDR_END.search(rendered):
                 self._value(arg, "an operand formatted into an address")
             rendered += "\x00"
@@ -1445,6 +1460,32 @@ class Plants(unittest.TestCase):
                 ("the nested width of the port's own field", 'u = "http://127.0.0.1:{:{}}/x".format(1, %d)\n' % n)):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
+
+    def test_a_format_template_str_format_refuses_for_its_text_is_not_read(self):
+        """THE RULE's str.format reading, for a template str.format refuses whatever its operands: a field nested two deep
+        (an opening brace in the spec of a field nested in a spec), and automatic and numbered fields mixed, in either
+        order or inside a spec. Each green form puts the number in the range at every operand the port's field could be
+        numbered to, so it is green because the template is refused, and its red twin differs only there: nested one
+        deep, or numbered one way throughout. The red plants pin what THE RULE says goes unchecked: a template str.format
+        refuses for another reason (a field with no operand, an unknown conversion) still has its port's operand read."""
+        n = _n()
+        for label, green, red in (
+                ("a field nested two deep", 'u = "http://{:{:{}}}:{}/x".format(h, %d, %d, %d)\n' % (n, n, n),
+                 'u = "http://{:{:}}:{}/x".format(h, %d, %d, %d)\n' % (n, n, n)),
+                ("an automatic field, then a numbered one", 'u = "http://{}:{1}/x".format(h, %d)\n' % n,
+                 'u = "http://{}:{}/x".format(h, %d)\n' % n),
+                ("a numbered field, then an automatic one", 'u = "http://{1}:{}/x".format(%d, h)\n' % n,
+                 'u = "http://{1}:{0}/x".format(%d, h)\n' % n),
+                ("a numbered field nested in an automatic field's spec", 'u = "http://{:{1}}:{}/x".format(h, %d, %d)\n' % (n, n),
+                 'u = "http://{0:{1}}:{2}/x".format(h, %d, %d)\n' % (n, n))):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", green)
+                self.assertRed("test_plant.py", red, "formatted into an address")
+        for label, src in (
+                ("another field with no operand", 'u = "http://{}:{}/{}".format(h, %d)\n' % n),
+                ("another field with an unknown conversion", 'u = "http://{}:{}/{!x}".format(h, %d, p)\n' % n)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, "formatted into an address")
 
     def test_a_random_call_with_keyword_arguments(self):
         """THE RULE's random calls, with arguments given by their parameters' names (randint(a=..., b=...)), read as their
