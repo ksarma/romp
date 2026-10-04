@@ -3,7 +3,7 @@ title: The Log's filter grid fits a phone: as many equal columns as fit at 96px,
 status: candidate
 where: kernel/kernel.py (_landing: the #rerr-fgrid rule); tests/test_error_center.py (ErrorCenterWiring: the rule's source pin); tests/test_log_filter_grid_served.py (LogFilterGrid, new); tests/log_filter_grid_browser.mjs (its driver, new); upstream/2026-10-04-log-filter-grid-phone.md (this entry)
 added: 2026-10-04
-pr:
+pr: 972
 tier: fix
 offered:
 closed:
