@@ -1193,13 +1193,19 @@ test('the script exists, is executable, runs one node --test per rostered leg (n
  *  seconds, which never reaps that child, and exits 0 (a node --test whose one process under it at the bound has already
  *  ended and is not yet reaped, a zombie); a call whose bundle CBL_STUB_LINGER names (pairs of the same shape) replaces
  *  itself with a sleep of those seconds and exits 0 (a node --test that outlives the bound with no process under it, or a
- *  leg that finishes later than the ones after it); and any other
+ *  leg that finishes later than the ones after it); a call whose bundle CBL_STUB_UNREAPED names (pairs of the same shape)
+ *  waits until the leg's subshell, its parent, has written its pid (the file beside the reporter's destination, i.pid
+ *  beside i.rec, up to 5 s), starts a process outside its own tree (from a subshell that exits at once) that sends that
+ *  subshell a SIGCONT after those seconds, stops the subshell (SIGSTOP) and exits 0, so it stays a zombie that its
+ *  subshell has not reaped, and the leg's "done" is not posted, until the SIGCONT (a node --test that has exited as the
+ *  grace runs out); and any other
  *  call exits the code CBL_STUB_EXITS names for its bundle (pairs of the same shape), else CBL_STUB_EXIT (0 unless set). Returns a
  *  runner over roster text (null removes the file) that runs the script with the switch set to 1 as the step does
  *  (stub.switch names another value; null runs it unset, as a local run may; stub.check runs --check as the first
  *  argument; stub.argv is a list of arguments passed after it; stub.report is the record the stub writes; stub.exit its
- *  exit; stub.exits the exits per bundle, stub.zombie the zombie's sleeps per bundle and stub.linger the lingers per
- *  bundle, each an object from bundle to value, as above; stub.wedge the bundle whose call stays up; stub.hold the seconds each call holds and the count it takes, as
+ *  exit; stub.exits the exits per bundle, stub.zombie the zombie's sleeps per bundle, stub.linger the lingers per bundle
+ *  and stub.unreaped the seconds before the SIGCONT per bundle, each an object from bundle to value, as above; stub.wedge
+ *  the bundle whose call stays up; stub.hold the seconds each call holds and the count it takes, as
  *  above; stub.timeout a bound in ms on the script's run, past which the run is red rather than hung; stub.env more
  *  variables for the script, the per-file bound's knobs among them; stub.real runs the real node); `node` in its result is
  *  the list of the node --test calls, each its arguments without the reporter flags, in the roster order of the bundle
@@ -1251,12 +1257,14 @@ function syntheticTree(t, prefix = 'cbl-') {
     '  rm -f "' + path.join(root, 'running') + '/$$"',
     'fi',
     'prev=""',
+    'dest=""',
     'for a in "$@"; do',
-    '  case "$a" in --test-reporter-destination=*) if [ "$prev" = "--test-reporter=./scripts/ci-browser-legs-reporter.mjs" ] && [ -n "${CBL_STUB_REPORT:-}" ] && mkdir "' + wrote + '" 2>/dev/null; then printf \'%s\\n\' "$CBL_STUB_REPORT" > "${a#--test-reporter-destination=}"; fi;; esac',
+    '  case "$a" in --test-reporter-destination=*) [ "$prev" != "--test-reporter=./scripts/ci-browser-legs-reporter.mjs" ] || dest=${a#--test-reporter-destination=}; if [ "$prev" = "--test-reporter=./scripts/ci-browser-legs-reporter.mjs" ] && [ -n "${CBL_STUB_REPORT:-}" ] && mkdir "' + wrote + '" 2>/dev/null; then printf \'%s\\n\' "$CBL_STUB_REPORT" > "${a#--test-reporter-destination=}"; fi;; esac',
     '  prev="$a"',
     'done',
     'for kv in ${CBL_STUB_ZOMBIE:-}; do case "$kv" in "$last="*) sh -c \'exit 0\' & exec sleep "${kv#"$last="}";; esac; done',
     'for kv in ${CBL_STUB_LINGER:-}; do case "$kv" in "$last="*) exec sleep "${kv#"$last="}";; esac; done',
+    'for kv in ${CBL_STUB_UNREAPED:-}; do case "$kv" in "$last="*) pp=$PPID; w=0; while [ ! -s "${dest%.rec}.pid" ] && [ "$w" -lt 500 ]; do sleep 0.01; w=$((w + 1)); done; ( ( sleep "${kv#"$last="}"; kill -CONT "$pp" ) & ); kill -STOP "$pp"; exit 0;; esac; done',
     'code=${CBL_STUB_EXIT:-0}',
     'for kv in ${CBL_STUB_EXITS:-}; do case "$kv" in "$last="*) code=${kv#"$last="};; esac; done',
     'exit "$code"',
@@ -1267,7 +1275,7 @@ function syntheticTree(t, prefix = 'cbl-') {
   // otherwise, and the stub's variables as the stub argument names them
   const envFor = (tmp, stub) => {
     const env = { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH, TMPDIR: tmp, ...(stub.env || {}) };
-    delete env.CBL_STUB_REPORT; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_EXITS; delete env.CBL_STUB_LINGER; delete env.CBL_STUB_ZOMBIE; delete env.CBL_STUB_REAL_NODE; delete env.CBL_STUB_WEDGE; delete env.CBL_STUB_HOLD; delete env.NODE_TEST_CONTEXT;
+    delete env.CBL_STUB_REPORT; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_EXITS; delete env.CBL_STUB_LINGER; delete env.CBL_STUB_ZOMBIE; delete env.CBL_STUB_UNREAPED; delete env.CBL_STUB_REAL_NODE; delete env.CBL_STUB_WEDGE; delete env.CBL_STUB_HOLD; delete env.NODE_TEST_CONTEXT;
     env[SWITCH] = '1';
     if (stub.switch === null) delete env[SWITCH]; else if (stub.switch !== undefined) env[SWITCH] = stub.switch;
     if (stub.report !== undefined) env.CBL_STUB_REPORT = stub.report;
@@ -1276,6 +1284,7 @@ function syntheticTree(t, prefix = 'cbl-') {
     if (stub.exits !== undefined) env.CBL_STUB_EXITS = pairs(stub.exits);
     if (stub.linger !== undefined) env.CBL_STUB_LINGER = pairs(stub.linger);
     if (stub.zombie !== undefined) env.CBL_STUB_ZOMBIE = pairs(stub.zombie);
+    if (stub.unreaped !== undefined) env.CBL_STUB_UNREAPED = pairs(stub.unreaped);
     if (stub.wedge !== undefined) env.CBL_STUB_WEDGE = stub.wedge;
     if (stub.hold !== undefined) env.CBL_STUB_HOLD = stub.hold;
     if (stub.real) env.CBL_STUB_REAL_NODE = process.execPath;
@@ -1808,7 +1817,7 @@ test('the per-file bound ends a leg that outlives it, with every process under i
   assert.ok(ended.out.includes('passes before the hang') && ended.out.includes('leg b passes'), 'the spec output carries both legs\' passes:\n' + ended.out);
 });
 
-test('a TERM to the script ends each leg still running with every process under it (the hanging leg\'s node --test, its node process, the processes it started in a session of its own and in the file\'s own group, their children, and the grandchild left in a group outside the tree), prints the output it held (the hanging leg\'s pass before the hang, and the whole output of a leg that finished behind it), its output closing within 10 s of its exit, and leaves its TMPDIR empty; each leg\'s start line is printed while the legs run and their spec output is held; executed with the real node and with the bound and the grace unset, as the step runs them, the hanging leg\'s bound timer read up at the default bound before the TERM and gone after it', async (t) => {
+test('a TERM to the script ends each leg still running with every process under it (the hanging leg\'s node --test, its node process, the processes it started in a session of its own and in the file\'s own group, their children, and the grandchild left in a group outside the tree), prints the output it held (the hanging leg\'s pass before the hang, after a line naming its node --test\'s exit on the kill, 137, and the whole output of a leg that finished behind it), its output closing within 10 s of its exit, and leaves its TMPDIR empty; each leg\'s start line is printed while the legs run and their spec output is held; executed with the real node and with the bound and the grace unset, as the step runs them, the hanging leg\'s bound timer read up at the default bound before the TERM and gone after it', async (t) => {
   const { start, root, ext, A, B } = syntheticTree(t);
   const { mark, roles } = hangingLeg(ext, A);
   fs.writeFileSync(path.join(ext, B), 'const { test } = require("node:test");\ntest("leg b passes behind the hang", () => {});\n');
@@ -1845,7 +1854,7 @@ test('a TERM to the script ends each leg still running with every process under 
   const up = pids.filter(([, pid]) => alive(pid)).map(([role, pid]) => role + ' (pid ' + pid + ')');
   assert.ok(ended !== null, 'the script ended within 10 s of the TERM: ' + (Date.now() - termed) + ' ms');
   assert.deepEqual(up, [], 'after the TERM no process of the leg still running is alive; alive: ' + JSON.stringify(up));
-  assert.equal(ended.status, 143, 'the script exits 143 on a TERM (its TERM trap), after its EXIT trap ends the legs');
+  assert.equal(ended.status, 143, 'the script exits 143 on a TERM (its TERM trap), after its EXIT trap ends the legs; stderr so far:\n' + r.now().err);
   const closed = await within(r.closed, 10000);
   assert.ok(closed, 'the script\'s output closed within 10 s of its exit, so no process of the run still holds it');
   // the hanging leg's bound timer, read up before the TERM (the control above), is gone after it: the EXIT trap kills each
@@ -1854,11 +1863,12 @@ test('a TERM to the script ends each leg still running with every process under 
   for (const until = Date.now() + 2000; left.length > 0 && Date.now() < until; left = timersOf(root, /^sleep \d+\.\d{3}$/)) await pause(25);
   assert.deepEqual(left, [], 'no timer of the run is left after the TERM: the EXIT trap kills the hanging leg\'s bound timer, read up as sleep ' + secs + ' before the TERM');
   assert.ok(closed.out.includes('passes before the hang'), 'the EXIT trap prints the output it held for the leg it ended, its pass before the hang among it:\n' + closed.out);
+  assert.ok(closed.out.includes('ci-browser-legs: ' + A + ' (node --test exited 137):'), 'the EXIT trap waits for the ended leg\'s subshell, which writes its node --test\'s exit on the kill (137) before the held output is printed after the line naming it:\n' + closed.out);
   assert.ok(closed.out.includes('ci-browser-legs: ' + B + ' (node --test exited 0):') && closed.out.includes('leg b passes behind the hang'), 'the EXIT trap prints the whole output of the leg that finished behind the one still running, after the line naming it and its exit:\n' + closed.out);
-  assert.deepEqual(fs.readdirSync(r.tmp), [], 'the run\'s TMPDIR is empty after the TERM, its directory removed by the EXIT trap: ' + JSON.stringify(fs.readdirSync(r.tmp)));
+  assert.deepEqual(fs.readdirSync(r.tmp), [], 'the run\'s TMPDIR is empty after the TERM, its directory removed by the EXIT trap: ' + JSON.stringify(fs.readdirSync(r.tmp)) + '; stderr:\n' + closed.err);
 });
 
-test('a second TERM to the script, 100 ms after the first, while its EXIT trap ends the legs, cuts that short nowhere: the hanging leg\'s node --test, its node process and every process under it are gone, none of them left stopped, the script exits 143 and its output closes within 10 s, executed with the real node', async (t) => {
+test('a second TERM to the script, 100 ms after the first, while its EXIT trap ends the legs, cuts that short nowhere: the hanging leg\'s node --test, its node process and every process under it are gone, none of them left stopped, the script exits 143, prints the leg\'s output after a line naming its node --test\'s exit on the kill, 137, leaves its TMPDIR empty, and its output closes within 10 s, executed with the real node', async (t) => {
   const { start, root, ext, A } = syntheticTree(t);
   const { mark, roles } = hangingLeg(ext, A);
   const t0 = Date.now();
@@ -1881,9 +1891,11 @@ test('a second TERM to the script, 100 ms after the first, while its EXIT trap e
   assert.ok(ended !== null, 'the script ended within 10 s of the second TERM: ' + (Date.now() - termed) + ' ms after the first');
   const up = pids.filter(([, pid]) => alive(pid)).map(([role, pid]) => role + ' (pid ' + pid + ', state ' + stateOf(pid) + ')');
   assert.deepEqual(up, [], 'after a second TERM 100 ms after the first no process of the leg still running is alive, running or stopped (state T): the EXIT trap ignores a further INT, TERM or HUP, so the second TERM cannot end the script between a stop and its kill; alive: ' + JSON.stringify(up));
-  assert.equal(ended.status, 143, 'the script exits 143, the first TERM\'s status, after its EXIT trap ends the legs');
+  assert.equal(ended.status, 143, 'the script exits 143, the first TERM\'s status, after its EXIT trap ends the legs; stderr so far:\n' + r.now().err);
   const closed = await within(r.closed, 10000);
   assert.ok(closed, 'the script\'s output closed within 10 s of its exit, so no process of the run still holds it');
+  assert.ok(closed.out.includes('ci-browser-legs: ' + A + ' (node --test exited 137):'), 'the EXIT trap waits for the ended leg\'s subshell, which writes its node --test\'s exit on the kill (137) before the held output is printed after the line naming it:\n' + closed.out);
+  assert.deepEqual(fs.readdirSync(r.tmp), [], 'the run\'s TMPDIR is empty after the two TERMs, its directory removed by the EXIT trap after the ended leg\'s subshell had written its exit: ' + JSON.stringify(fs.readdirSync(r.tmp)) + '; stderr:\n' + closed.err);
 });
 
 test('a SIGKILL to the script leaves no process of the run waiting on the event pipe, whichever posts last: the leg running then runs on to its end and writes its exit, and its subshell and its bound\'s timer each post through the pipe\'s descriptor it inherited and exit, with the leg ending before its bound (its timer posts last) and after it (its subshell posts last); the run\'s directory stays in TMPDIR, as no trap runs; executed with the real node and a short bound set by the knob', async (t) => {
@@ -1920,7 +1932,7 @@ test('a SIGKILL to the script leaves no process of the run waiting on the event 
   }
 });
 
-test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the other leg\'s record read and no timer left behind; a node --test still running at the grace\'s end when the bound cut nothing is killed and named too, red by that red alone; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
+test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the other leg\'s record read and no timer left behind; a node --test still running at the grace\'s end when the bound cut nothing is killed and named too, red by that red alone; a node --test that has exited and is not yet reaped at the grace\'s end, a zombie with nothing under it, is not, and its exit 0 is the leg\'s status; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
   const { run, root, rec, A, B } = syntheticTree(t);
   // what a red run left behind, if anything, scoped to this tree (runProcs), killed by the pids read here
   t.after(() => { for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
@@ -1952,6 +1964,22 @@ test('the per-file bound through the stub: a node --test that does not end after
   assert.ok(heldOnly.err.includes('ci-browser-legs: ' + A + ': its node --test had not ended 403 ms after the per-file bound, so the script killed it too'), 'the grace\'s end is named with nothing cut:\n' + heldOnly.err);
   assert.equal(heldOnly.status, 1, 'the grace\'s end with nothing cut is red, exit 1: its node --test\'s exit is set aside and nothing else is red, so the held red sets the status; stderr:\n' + heldOnly.err);
   assert.ok(!alive(heldOnly.pids[0]), 'the node --test killed at the grace\'s end (pid ' + heldOnly.pids[0] + ') is gone');
+  // the grace's end after the node --test has exited and is not yet reaped: A's node --test (the stub) writes A's pass, stops
+  // its subshell and exits 0, so it stays a zombie, and the leg's "done" is not posted, until a SIGCONT 2.5 s after the
+  // stub started. At the bound (601 ms) the walk finds nothing under it, and at the grace's end (403 ms later, about 1 s
+  // before the SIGCONT) the node --test has ended, a zombie, with nothing under it, so there is nothing to kill: the leg is
+  // not held, nothing is red, and node --test's exit 0, read once the SIGCONT lets the subshell reap it, is the leg's
+  // status. A grace's end that held every leg it reached would print the held red beside that exit 0 and exit 1. The
+  // control is the case above, the same knobs over a node --test still running at the grace's end, held and red
+  const t1 = Date.now();
+  const unreaped = run(A + '\n', { report: pass(A), unreaped: { [A]: '2.5' }, timeout: 30000, env: { ROMP_BROWSER_LEGS_FILE_MS: '601', ROMP_BROWSER_LEGS_GRACE_MS: '403' } });
+  const unreapedMs = Date.now() - t1;
+  assert.ok(unreapedMs >= 2500, 'the leg ended only after the SIGCONT 2.5 s after its start, so its node --test was a zombie its subshell had not reaped through the grace\'s end (601 + 403 ms): ' + unreapedMs + ' ms');
+  assert.ok(!unreaped.err.includes('had not ended') && !unreaped.err.includes('ran past the per-file bound'), 'a node --test that had exited by the grace\'s end, a zombie with nothing under it, is not held and not cut, so neither red is printed:\n' + unreaped.err);
+  assert.equal(unreaped.status, 0, 'its node --test\'s exit 0 is the leg\'s status, and nothing is red: green, exit 0; stderr:\n' + unreaped.err);
+  assert.equal(unreaped.err, '', 'nothing on stderr');
+  assert.ok(unreaped.out.includes('ci-browser-legs: ' + A + ' (node --test exited 0):'), 'the leg\'s output follows the line naming its node --test\'s exit 0, which its subshell wrote once the SIGCONT let it reap the zombie:\n' + unreaped.out);
+  assert.deepEqual(timersOf(root, /^sleep (0\.601|0\.403)\b/), [], 'no timer of the run is left behind');
   // a node --test that outlives the bound with no process under it, as node --test does while it ends after its file's
   // process exited: the stub writes A's pass and replaces itself with a 1.5 s sleep, so at the bound (601 ms) the walk finds
   // nothing to kill. No cut, and the leg reads green; the grace (5003 ms) never ends, its timer killed with the leg's end.
