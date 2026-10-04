@@ -309,7 +309,7 @@ TEXT_RULES = (
     ("key", re.compile(r"(?:^|[{,(\[;])[ \t]*[\"'`]?(?P<name>[\w$.-]+)[\"'`]?[ \t]*[:=][ \t]*" + _NUM, re.M)),
     ("decl", re.compile(r"\b(?:const|let|var|local|export|readonly|declare(?:[ \t]+-\w+)?)[ \t]+(?P<name>[\w$]+)[ \t]*=[ \t]*" + _NUM)),
     ("env", re.compile(r"\b(?P<name>[A-Z][A-Z0-9_]*)[\"'`]?\]?[ \t]*[:=][ \t]*" + _NUM)),
-    ("flag", re.compile(r"--(?P<name>" + _OPT + r")(?:=|[ \t]+|[\"'`]\s*,\s*|[\"'`][ \t]+)" + _NUM)),   # or quoted: the next element, or after spaces
+    ("flag", re.compile(r"--(?P<name>" + _OPT + r")(?:=|[ \t]+|[\"'`]\s*,\s*|[\"'`][ \t]+)" + _NUM)),   # quoted: in a list, or then spaces
     ("authority", re.compile(r"(?:" + _HOST + r"|//[\w.-]+)[ \t]*:[ \t]*(?:[\"'`]\s*\+\s*[\"'`]?)?(?P<n>" + _D5
                              + r")(?![\w.])")),   # the number right after the colon, or concatenated onto it
     ("address", re.compile(r"\([ \t]*[\"'](?:127\.0\.0\.1|localhost|0\.0\.0\.0|::1?|)[\"'][ \t]*,[ \t]*(?P<n>" + _D5 + r")[ \t]*[,)]")),
