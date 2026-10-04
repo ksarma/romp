@@ -5,13 +5,15 @@
 // (math-chunk.ts, built with the shipped webview config) at /dist/math-chunk.js, answered as a scene asks: served, held until
 // the scene lets it go, a 404, or a script that registers nothing. The page carries katex.min.css with its fonts answered
 // from the package (or held), and the real styles.css less its KaTeX import, so the pending dress is the sheet's own. Every
-// request is logged. A scene builds message bodies through `window.__md(src)` (the probe's md(): sanitizeMd over marked.parse,
+// request is logged. A scene that needs the 60 s backstop installs Playwright's clock before the page loads and fast-forwards
+// past MATH_CHUNK_BACKSTOP_MS (math.ts), so the backstop's end runs in a real page in seconds. A scene builds message bodies through `window.__md(src)` (the probe's md(): sanitizeMd over marked.parse,
 // as render.ts md() composes them less the PR-reference walk) into `#out`, a `.md` box like a chat message's. Test-only: no
 // webview bundle imports it. Synthetic values only.
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { MATH_CHUNK_BACKSTOP_MS } from "./math";
 
 export const EXT = process.cwd();                                       // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -77,6 +79,8 @@ export type PageOpts = {
   inline?: boolean;
   /** the VS Code webview's shape: buildHtml's Content-Security-Policy (script-src by nonce alone) and the nonce on the tag */
   webview?: boolean;
+  /** Playwright's clock installed before the page loads, so a scene can fast-forward past MATH_CHUNK_BACKSTOP_MS */
+  clock?: boolean;
 };
 /** consoleErrors: every console error but the browser's own line for a missing resource (the sheet's media fonts, which the leg
  *  does not serve); a failed chunk shows in the box and in math.ts's own line, which is kept. */
@@ -122,6 +126,7 @@ export async function withPage(browser: any, o: PageOpts, body: (s: Scene) => Pr
     return route.fulfill({ status: 404, contentType: "text/plain", body: "" });
   });
   try {
+    if (o.clock) await page.clock.install();
     await page.goto(ORIGIN + "/page");
     await page.waitForFunction(() => typeof (window as any).__md === "function", null, { timeout: 10000 });
     await body({ page, requests, consoleErrors, pageErrors, chunkRequests: () => requests.filter((r) => r.startsWith("/dist/math-chunk.js")).length });
@@ -156,6 +161,18 @@ export const box = (page: any): Promise<Box> => page.evaluate(() => {
 /** Wait until the box holds no formula still waiting. */
 export const settled = (page: any, timeout = 20000): Promise<unknown> =>
   page.waitForFunction(() => !document.querySelector("#out .md-math-inline, #out .md-math-display"), null, { timeout });
+
+/** Whether every formula in the box is laid out within `timeout` (no placeholder, no source fallback, at least one KaTeX root):
+ *  false, not a throw, when the time runs out, so the scene's own assertion on the box says what stands instead. */
+export const allLaidOut = (page: any, timeout = 15000): Promise<boolean> =>
+  page.waitForFunction(() => !document.querySelector("#out .md-math-inline, #out .md-math-display, #out code.md-math-src") && !!document.querySelector("#out .katex"), null, { timeout })
+    .then(() => true, () => false);
+
+/** math.ts's own console lines (every one starts "math: "). */
+export const said = (s: Scene): string[] => s.consoleErrors.filter((e) => e.startsWith("math: "));
+
+/** The backstop's title, whatever the rest of the title says. */
+const BACKSTOP_TITLE = new RegExp("^Not rendered: the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds[.;]");
 
 // ── the scenes: each opens its own page; the Chromium leg runs them through the shared launcher, the WebKit leg in WebKit ──
 
@@ -303,6 +320,94 @@ export const SCENES: SceneDef[] = [
         const b = await box(s.page);
         assert.deepEqual(b.src.map((x) => x.title), ["Not rendered: no bundle script on this page to derive the math renderer's URL from; reload the page to try again."]);
         assert.equal(s.chunkRequests(), 0);
+      });
+    },
+  },
+  {
+    name: "with the chunk in and its faces still loading, a formula met then waits too: nothing is laid out before the faces, and the arrival lays out both",
+    timeout: 60000,
+    run: async (browser) => {
+      const fg = gate();
+      await withPage(browser, { fontGate: fg }, async (s) => {
+        await show(s.page, "first $a^2$ here");
+        await s.page.waitForFunction(() => !!(window as any).__rompKatex, null, { timeout: 10000 });
+        await drain(s.page);
+        await show(s.page, "then $b^2$ and\n\n$$c^2 + d^2$$\n");
+        await drain(s.page);
+        let b = await box(s.page);
+        assert.deepEqual([b.katex, b.pending.length], [0, 3], "the chunk has registered and the faces have not: the later formulas wait with the first, none laid out early: " + JSON.stringify(b));
+        fg.open();
+        await settled(s.page);
+        b = await box(s.page);
+        assert.deepEqual([b.katex, b.src.length, s.chunkRequests()], [3, 0, 1], "the arrival lays out all three");
+      });
+    },
+  },
+  {
+    name: "a chunk that stalls past the backstop (MATH_CHUNK_BACKSTOP_MS) leaves each waiting formula as its source, the backstop's reason in its title, said once on the console",
+    timeout: 60000,
+    run: async (browser) => {
+      const g = gate();   // never opened: the chunk's answer stays out for the page's life
+      await withPage(browser, { chunkGate: g, clock: true }, async (s) => {
+        await show(s.page, "a $\\frac{1}{2}$ half\n\n$$e^{i\\pi}$$\n");
+        await drain(s.page);
+        let b = await box(s.page);
+        assert.deepEqual([b.pending.length, b.katex, s.chunkRequests()], [2, 0, 1], "both wait while the chunk is out");
+        await s.page.clock.fastForward(MATH_CHUNK_BACKSTOP_MS + 1000);
+        await settled(s.page);
+        b = await box(s.page);
+        assert.equal(b.katex, 0);
+        assert.deepEqual(b.src.map((x) => x.text), ["\\frac{1}{2}", "e^{i\\pi}"], "each formula's TeX, never a blank");
+        for (const x of b.src) assert.match(x.title, BACKSTOP_TITLE);
+        assert.equal(said(s).length, 1, "said once: " + JSON.stringify(s.consoleErrors));
+        assert.match(said(s)[0], /^math: the math renderer did not load within 60 seconds; /);
+      });
+    },
+  },
+  {
+    name: "faces that stall past the backstop with the chunk in: each formula is its source, said once; when the faces land after all, every formula is laid out, the backstop's fallbacks included",
+    timeout: 60000,
+    run: async (browser) => {
+      const fg = gate();
+      await withPage(browser, { fontGate: fg, clock: true }, async (s) => {
+        await show(s.page, "a formula $\\alpha + \\beta$ here\n\n$$\\sum_{i=0}^{n} i^2$$\n");
+        await s.page.waitForFunction(() => !!(window as any).__rompKatex, null, { timeout: 10000 });
+        await drain(s.page);
+        let b = await box(s.page);
+        assert.deepEqual([b.katex, b.pending.length], [0, 2], "the chunk is in and the faces are not: both wait");
+        await s.page.clock.fastForward(MATH_CHUNK_BACKSTOP_MS + 1000);
+        await settled(s.page);
+        b = await box(s.page);
+        assert.deepEqual([b.katex, b.src.length], [0, 2], "the backstop's failure shows each formula as its source, though the chunk had registered: " + JSON.stringify(b));
+        for (const x of b.src) assert.match(x.title, BACKSTOP_TITLE);
+        assert.equal(said(s).length, 1, "said once: " + JSON.stringify(s.consoleErrors));
+        fg.open();
+        const laid = await allLaidOut(s.page);
+        b = await box(s.page);
+        assert.ok(laid, "the faces landing after the backstop is a success: " + JSON.stringify(b));
+        assert.deepEqual([b.katex, b.src.length, b.pending.length, s.chunkRequests()], [2, 0, 0, 1], "every formula laid out, the fallbacks included, with the one request");
+        assert.equal(said(s).length, 1, "and nothing more said");
+      });
+    },
+  },
+  {
+    name: "a chunk that lands after the backstop is a success: every formula is laid out, the backstop's fallbacks included",
+    timeout: 60000,
+    run: async (browser) => {
+      const g = gate();
+      await withPage(browser, { chunkGate: g, clock: true }, async (s) => {
+        await show(s.page, "a $\\frac{1}{2}$ half\n\n$$e^{i\\pi}$$\n");
+        await drain(s.page);
+        await s.page.clock.fastForward(MATH_CHUNK_BACKSTOP_MS + 1000);
+        await settled(s.page);
+        let b = await box(s.page);
+        assert.deepEqual([b.katex, b.src.length], [0, 2], "the backstop showed both as source");
+        g.open();
+        const laid = await allLaidOut(s.page);
+        b = await box(s.page);
+        assert.ok(laid, "the late chunk lays out the backstop's fallbacks: " + JSON.stringify(b));
+        assert.deepEqual([b.katex, b.src.length, s.chunkRequests()], [2, 0, 1], "both laid out, one request");
+        assert.equal(said(s).length, 1, "the late success says nothing more");
       });
     },
   },

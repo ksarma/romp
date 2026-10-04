@@ -2,10 +2,11 @@
 // run through the shared launcher (real-viewer-leg.ts inBrowser), so in the CI step that runs the rostered legs a lost browser
 // fails here instead of skipping. What they hold: a page that shows no math requests no chunk; the first formula requests it once, its TeX
 // shown in the pending dress (the sheet's dim tier, a display formula in KaTeX's display box) until the chunk and the two
-// common faces are in, then KaTeX's layout in its place; the per-message budget charged per message across the wait; a failed
-// load (a 404, a script that registers nothing, a page with no bundle tag) leaves each formula as its source with the reason
-// in its title, said once on the console and not retried; a page shaped like the VS Code webview loads the chunk under its
-// nonce-only policy. math-chunk-load-webkit-browser.test.ts runs the same scenes in WebKit. Synthetic values only.
+// common faces are in, then KaTeX's layout in its place, and a formula met after the chunk registered but before its faces
+// waits too; the per-message budget charged per message across the wait; a failed load (a 404, a script that registers
+// nothing, a page with no bundle tag, the 60 s backstop over a stalled chunk or stalled faces) leaves each formula as its
+// source with the reason in its title, said once on the console, and a chunk or faces that land after the backstop lay out
+// every formula, the fallbacks included; a page shaped like the VS Code webview loads the chunk under its nonce-only policy. math-chunk-load-webkit-browser.test.ts runs the same scenes in WebKit. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

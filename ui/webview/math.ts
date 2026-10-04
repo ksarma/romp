@@ -40,10 +40,15 @@
 // declares them font-display: block, so laying out before they arrive would show a blank formula). When the
 // chunk has run and the faces have settled, the settle handlers run (onMathSettled: the chat keeps the
 // reader's place around the swap, the viewer repaints a paint it held) and then one fill over the whole
-// document renders every pending placeholder still in it. A load that fails, registers nothing or has not
+// document renders every pending placeholder still in it. The fill lays out with KaTeX only once the load has
+// SETTLED as a success: a chunk that has registered while its faces still load, or one that lands after the load
+// failed, lays nothing out early (the review of iOS item 6, round 1: a formula met in either window was laid
+// out at once, past the face wait and the viewer's hold). A load that fails, registers nothing or has not
 // settled within MATH_CHUNK_BACKSTOP_MS is a failure: every pending formula becomes the source fallback with
-// a title naming the failure, the console says so once, and later formulas take the same fallback until the
-// page is reloaded, so a broken load is visible and is never retried in a loop by every render.
+// a title naming the failure, marked as one the failure made (MATH_FAILED_ATTR, with its call's group), the
+// console says so once, and later formulas take the same fallback. An answer of the failed attempt that
+// succeeds after all (the chunk, or the faces, landing after the backstop) is a success: the marked fallbacks
+// become placeholders again and the fill over the document lays out every formula, those included.
 //
 // The delimiter problem: `$` is everywhere in chat text that is NOT math (shell variables,
 // prices), and a naive $..$ tokenizer strikes a formula through half a sentence the way the
@@ -342,7 +347,17 @@ const PLACEHOLDER_SEL = "." + MATH_INLINE_CLASS + ", ." + MATH_DISPLAY_CLASS;
  *  because the wait includes a fetch), and it never fires in the load path: the chunk is about 86 KB served. */
 export const MATH_CHUNK_BACKSTOP_MS = 60_000;
 
+/** The attribute a source fallback carries when the load's failure made it, and not one of the fill's bounds: the formula's
+ *  mode ("display" or "inline"), beside MATH_CALL_ATTR for its call's group, so a later success puts the placeholder back as it
+ *  was and lays it out with the rest (restoreFailedFormulas). Set by the fill alone: the sanitizer keeps no data-* attribute an
+ *  author wrote, so no author marks a code element of theirs as a formula. */
+export const MATH_FAILED_ATTR = "data-math-failed";
+const FAILED_SEL = "[" + MATH_FAILED_ATTR + "]";
+
 let mathCalls = 0;                                        // the group numbers handed out so far
+// The load, for the page's life: idle until the first formula, loading while the chunk and the faces are out, ready once they
+// have settled as a success, failed after a failure (until a success). The fill lays out with KaTeX only while idle (a bundle that
+// imported the chunk for its side effect asks for nothing) or ready.
 let engineLoad: "idle" | "loading" | "ready" | "failed" = "idle";
 let engineFailure = "";                                   // what went wrong, for the fallback's title
 const settleHandlers: Array<() => (() => void) | void> = [];
@@ -361,7 +376,8 @@ export function onMathSettled(handler: () => (() => void) | void): () => void {
 }
 
 /** The two faces nearly every formula uses, loaded beside the chunk: katex.min.css declares every KaTeX face
- *  font-display: block, so a formula laid out before its face arrives is invisible ink. Settled either way, never thrown. */
+ *  font-display: block, so a formula laid out before its face arrives is blank for the font's block period (a few seconds)
+ *  and then drawn in a fallback face until its own lands. Settled either way, never thrown. */
 function katexFaces(): Promise<unknown> {
   const faces = (document as { fonts?: { load(font: string): Promise<unknown> } }).fonts;
   if (!faces || typeof faces.load !== "function") return Promise.resolve();
@@ -369,42 +385,70 @@ function katexFaces(): Promise<unknown> {
 }
 
 /** Ask for the chunk, once per page life: a script tag beside the page's bundle (chunk-url.ts), the faces in parallel. Every
- *  end settles through engineSettled, never synchronously, so a fill that asks is never re-entered by its own failure. */
+ *  end settles through engineSettled, never synchronously, so a fill that asks is never re-entered by its own failure. The
+ *  attempt fails once, at its first failure end (an error, a load that registered nothing, the backstop), and a later failure
+ *  end of it is silent; an answer of it that SUCCEEDS after that (the chunk, or the faces, landing after the backstop) is a
+ *  success all the same, the one way a failure is undone. */
 function requestEngine(): void {
   if (engineLoad !== "idle" || typeof document === "undefined") return;
   engineLoad = "loading";
   const tag = chunkScript("math-chunk.js");
   if (!tag) { queueMicrotask(() => engineSettled("no bundle script on this page to derive the math renderer's URL from")); return; }
   const faces = katexFaces();
-  let done = false;
-  const finish = (failure: string | null): void => {
+  let failed = false, done = false;
+  const fail = (why: string): void => {
+    if (failed || done) return;
+    failed = true;
+    clearTimeout(backstop);
+    engineSettled(why);
+  };
+  const succeed = (): void => {
     if (done) return;
     done = true;
     clearTimeout(backstop);
-    engineSettled(failure);
+    engineSettled(null);
   };
-  const backstop = setTimeout(() => finish("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
+  const backstop = setTimeout(() => fail("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
   const sc = document.createElement("script");
   sc.src = tag.src;
   if (tag.nonce) sc.nonce = tag.nonce;
   // a load that registers nothing (a script cut short, an engine too old to run it) is a failure, like an error
-  sc.onload = () => { if (!engine()) finish("the math renderer loaded but registered nothing"); else void faces.then(() => finish(null)); };
-  sc.onerror = () => finish("the math renderer failed to load");
+  sc.onload = () => { if (!engine()) fail("the math renderer loaded but registered nothing"); else void faces.then(succeed); };
+  sc.onerror = () => fail("the math renderer failed to load");
   (document.head || document.documentElement).appendChild(sc);
 }
 
+/** Each source fallback the load's failure made under `root` back to the placeholder it was (its tag, its mode, its TeX and its
+ *  call's group), for the fill that follows a success to lay out. A fallback for one of the fill's bounds carries no mark and
+ *  stays. */
+function restoreFailedFormulas(root: ParentNode): void {
+  root.querySelectorAll(FAILED_SEL).forEach((node) => {
+    const shown = node as HTMLElement;
+    const code = shown.tagName === "CODE" ? shown : shown.querySelector("code." + MATH_SOURCE_CLASS);
+    if (!code) return;
+    const ph = shown.ownerDocument.createElement(shown.tagName === "PRE" ? "div" : "span");
+    ph.className = shown.getAttribute(MATH_FAILED_ATTR) === "display" ? MATH_DISPLAY_CLASS : MATH_INLINE_CLASS;
+    ph.textContent = code.textContent || "";
+    const call = shown.getAttribute(MATH_CALL_ATTR);
+    if (call) ph.setAttribute(MATH_CALL_ATTR, call);
+    shown.replaceWith(ph);
+  });
+}
+
 /** The load is over: the handlers, then one fill over the document (each pending formula rendered, or shown as source on a
- *  failure), then what the handlers returned. A failure is said once on the console and stands for the page's life. */
+ *  failure), then what the handlers returned. A failure is said once on the console; a success after it first puts the
+ *  failure's fallbacks back as placeholders (restoreFailedFormulas), so the fill lays out every formula, those included. */
 function engineSettled(failure: string | null): void {
   if (failure !== null) {
     engineLoad = "failed";
     engineFailure = failure;
-    console.error("math: " + failure + "; formulas are shown as their TeX source until the page is reloaded");
+    console.error("math: " + failure + "; formulas are shown as their TeX source");
   } else engineLoad = "ready";
   const after: Array<() => void> = [];
   for (const h of settleHandlers.slice()) {
     try { const a = h(); if (typeof a === "function") after.push(a); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
   }
+  if (failure === null) restoreFailedFormulas(document);
   renderMathPlaceholders(document);
   for (const a of after) {
     try { a(); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
@@ -579,8 +623,10 @@ export const mathInline: TokenizerAndRendererExtension = {
  *  (the div a display paragraph of its own becomes) turns into a code block; a span, display mode or not, into a code
  *  span, so the paragraph it sits in survives the serialization to innerHTML (a <pre> inside a <p> splits the paragraph
  *  when the HTML is parsed again). The code element wears MATH_SOURCE_CLASS, the hook for the sheets' dress and the
- *  highlighter's exemption, whichever shape it takes; the title sits on the outer element, the whole of what is shown. */
-function showSource(el: HTMLElement, tex: string, why: string): void {
+ *  highlighter's exemption, whichever shape it takes; the title sits on the outer element, the whole of what is shown. A
+ *  fallback the load's failure made (`failedCall`, its call's group) is marked on the outer element with the formula's mode
+ *  and that group (MATH_FAILED_ATTR, MATH_CALL_ATTR), so a later success can lay it out; a bound's fallback is not. */
+function showSource(el: HTMLElement, tex: string, why: string, failedCall?: string): void {
   const doc = el.ownerDocument;
   const code = doc.createElement("code");
   code.className = MATH_SOURCE_CLASS;
@@ -588,6 +634,10 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
   let shown: HTMLElement = code;
   if (el.tagName === "DIV") { shown = doc.createElement("pre"); shown.appendChild(code); }
   shown.setAttribute("title", why);
+  if (failedCall !== undefined) {
+    shown.setAttribute(MATH_FAILED_ATTR, el.classList.contains(MATH_DISPLAY_CLASS) ? "display" : "inline");
+    shown.setAttribute(MATH_CALL_ATTR, failedCall);
+  }
   el.replaceWith(shown);
 }
 
@@ -620,14 +670,18 @@ function showSource(el: HTMLElement, tex: string, why: string): void {
  *  again with throwOnError: false, KaTeX's own flagged text (span.katex-error, the TeX in the theme's error
  *  ink, MATH_ERROR_COLOR) as on main; a residual throw (an internal error)
  *  takes the belt, the source the same way and a word on the console once per call, so a formula can never
- *  blank a message. Until the engine has loaded, a formula that passes the four bounds is left as its
- *  placeholder, stamped with this call's group, and the chunk is asked for (requestEngine); the fill over
+ *  blank a message. Until the load has settled as a success, a formula that passes the four bounds is left as
+ *  its placeholder, stamped with this call's group, and the chunk is asked for (requestEngine); the fill over
  *  the document at the engine's arrival renders it, and after a failed load the fill shows it as source
- *  with the failure in its title. With the engine loaded, a second run over the same root is a no-op: no
- *  placeholder survives the first. Plain and exported: md-config.ts registers it as sanitizeMd's
- *  post-pass, the arrival runs it over the document, and the tests call it directly. */
+ *  with the failure in its title, marked with its group so a later success lays it out (showSource). With the
+ *  engine loaded, a second run over the same root is a no-op: no placeholder survives the first. Plain and
+ *  exported: md-config.ts registers it as sanitizeMd's post-pass, the arrival runs it over the document, and
+ *  the tests call it directly. */
 export function renderMathPlaceholders(root: ParentNode): void {
-  const katex = engine();    // null until the chunk has run: then a formula that passes every bound waits for it
+  // KaTeX only once the load has settled as a success: while the chunk or the faces are out, or after a failure, an engine the
+  // chunk has registered is not used (a formula would skip the face wait and the viewer's hold, or render beside the failure's
+  // fallbacks); idle with an engine is a bundle that imported the chunk for its side effect, which renders at once
+  const katex = engineLoad === "loading" || engineLoad === "failed" ? null : engine();
   const meters = new Map<string, number>();   // characters of TeX handed to KaTeX so far, per call group: the budget's meters
   let group = "";            // this call's own group number, minted when its first formula waits for the engine
   let reported = false;      // the belt's console report, once per call
@@ -658,7 +712,7 @@ export function renderMathPlaceholders(root: ParentNode): void {
     rendered += tex.length;
     meters.set(call, rendered);
     if (!katex) {
-      if (engineLoad === "failed") { showSource(el, tex, "Not rendered: " + engineFailure + "; reload the page to try again."); return; }
+      if (engineLoad === "failed") { showSource(el, tex, "Not rendered: " + engineFailure + "; reload the page to try again.", call || group || (group = String(++mathCalls))); return; }
       if (!call) el.setAttribute(MATH_CALL_ATTR, group || (group = String(++mathCalls)));
       requestEngine();
       return;
