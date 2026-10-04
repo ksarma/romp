@@ -358,6 +358,34 @@ export const SCENES: SceneDef[] = [
     },
   },
   {
+    name: "a failed load's fallbacks keep each message's group, so the retry's success charges the per-message budget per message: two messages each under it, shown as source by the failure, are laid out whole by the served retry",
+    timeout: 120000,
+    run: async (browser) => {
+      const first = gate();
+      await withPage(browser, { chunk: ["404", "serve"], chunkGates: [first] }, async (s) => {
+        await show(s.page, message(3));
+        await show(s.page, message(3));
+        let b = await box(s.page);
+        assert.deepEqual([b.pending.length, new Set(b.pending.map((p) => p.call)).size], [6, 2], "two messages of three formulas wait, each message under the budget, two groups");
+        first.open();
+        await settled(s.page);
+        b = await box(s.page);
+        assert.deepEqual([b.katex, b.src.length], [0, 6], "the failure shows all six as source");
+        // read now, asserted after the layout below, so a fallback that lost its group reds on what the reader sees first
+        const groups: (string | null)[] = await s.page.evaluate(() => Array.from(document.querySelectorAll("#out [data-math-failed]")).map((e) => e.getAttribute("data-math-call")));
+        await show(s.page, "then $z$");   // the next formula uses the retry the failure armed; served, its success lays out every formula
+        const laid = await allLaidOut(s.page, 90000);
+        b = await box(s.page);
+        assert.ok(laid, "the served retry lays out every formula of both messages: " + JSON.stringify(b.src.map((x) => x.title)));
+        assert.deepEqual([b.katex, b.src.length, b.pending.length, s.chunkRequests()], [7, 0, 0, 2],
+          "seven formulas laid out, none left as source: each message is charged its own 56,997 characters, not the two together's 113,994");
+        assert.equal(groups.length, 6, "the failure marked all six");
+        assert.ok(groups.every((g) => !!g), "each fallback the failure made carries its call's group: " + JSON.stringify(groups));
+        assert.equal(new Set(groups).size, 2, "the two messages' groups, one per message: " + JSON.stringify(groups));
+      });
+    },
+  },
+  {
     name: "a chunk that 404s for good costs two requests at any render rate, then one per online or reconnect event, each of the two arming on its own, and events before a formula arm one retry between them",
     timeout: 60000,
     run: async (browser) => {
