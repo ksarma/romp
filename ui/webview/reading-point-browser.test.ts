@@ -182,10 +182,18 @@ test("chromium: the anchor is the first line at the viewport top, not a later on
       const before = { top: w.yOf("READ-02"), next: w.yOf("READ-03"), formula: w.lastFormulaBottom() };
       const p = w.cap();
       w.swap();
-      w.apply(p);
-      return { before, after: { top: w.yOf("READ-02"), next: w.yOf("READ-03") }, p };
+      const shift = w.apply(p);
+      return { before, after: { top: w.yOf("READ-02"), next: w.yOf("READ-03") }, p, shift };
     }, [html]);
     assert.ok(r.before.top < 0 && r.before.formula > 0 && r.before.formula < 420, "the paragraph straddles the top and the formula is on screen below it: " + JSON.stringify(r));
+    // the point itself (the review's round 1, tests-6: the scene passed with no point at all, or a point above the top or on the
+    // line after): READ-02, the turn's third block, past its first line, on the line whose top is at or above the edge the capture
+    // reads (the scroller's top plus 1 px) and whose bottom is below it, a 22.4 px line here
+    assert.ok(r.p !== null && r.p !== undefined, "a point was captured: " + JSON.stringify(r));
+    assert.equal(r.p.block, 2, "READ-02's block, the turn's third: " + JSON.stringify(r.p));
+    assert.ok(r.p.char > 0, "past the paragraph's first line: " + JSON.stringify(r.p));
+    assert.ok(r.p.y > -22.4 && r.p.y <= 1, "the first line at the top, not the one above it or the next: " + JSON.stringify(r.p));
+    assert.ok(r.shift !== null && Math.abs(r.shift) <= 1, "the swap below the line moves it by under 1 px, so the restore's shift is about 0: " + JSON.stringify(r));
     assert.ok(Math.abs(r.after.top - r.before.top) <= 1, "the line at the top stays: " + JSON.stringify(r));
     assert.ok(r.after.next - r.before.next > 50, "the formula grew downward, pushing what follows it: " + JSON.stringify(r));
     assert.deepEqual(errors, []);
