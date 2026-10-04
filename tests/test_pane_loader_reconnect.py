@@ -1652,14 +1652,18 @@ out({ unchanged, unchangedHeld, changedFirst, changedLast, shown, again, then, s
                 self.assertEqual(v, {"reads": 0, "asks": 0}, k + " written to the value it had: skipped, no frame asked and no style read")
                 self.assertEqual(o["then"][k], {"reads": o["scan"], "asks": 1}, k + " written to a new value next: one frame, which scans (the record reaches the watch)")
 
-    # Round 3 (2026-10-04, extra5-1, disclosed): a scroll through a transcript that is not from today scans, because the chat moves its
-    # day label (.rail-day, its style top) and shows or hides its sticky stamp (.time-marker.rail-sticky, its display) at the handoffs
-    # between the rail's stamps: fixed elements outside the list that no scan holds, so each changed write asks for a scan (the build's
-    # lab probe: ten wheel steps up gave the rail's writes 2 scans in Chromium and in Firefox and 4 to 8 in WebKit). The narrowing that
-    # would spare them was declined, since a class or hidden write on such an element can show a control elsewhere through a sibling or
-    # :has() selector, so the scans stand and the texts say so. The case runs the writes; the text check holds the kernel's comment and
-    # the placement entry to naming them, which on its own proves nothing about behaviour
-    def test_the_rail_writes_of_a_transcript_not_from_today_scan_and_the_texts_say_so(self):
+    # Round 3 (2026-10-04, extra5-1, disclosed): a scroll scans as the chat shows or hides its sticky stamp (.time-marker.rail-sticky,
+    # its display) at the handoffs between the rail's stamps, in any transcript, and in a transcript that is not from today also as it
+    # moves its day label (.rail-day, its style top): fixed elements outside the list that no scan holds, so each changed write asks for
+    # a scan. Ten wheel steps up from the bottom gave 2 scans in each engine on a transcript from today, the jump button's and the
+    # sticky stamp's (in Firefox one of the two the probe could not attribute; the round-3 closing check's probe, which found the
+    # stamp's write there, where round 3's texts had tied both writes to a transcript not from today), and the rail's writes 2 in
+    # Chromium and in Firefox and 4 to 8 in WebKit on the same transcript dated 2024-01-01 (the build's probe). The narrowing that
+    # would spare them was declined, since a class or hidden write on such an element can show a control elsewhere through a sibling
+    # or :has() selector, so the scans stand and the texts say so. The case runs the writes, the stamp's in a frame of its own; the
+    # text check holds the kernel's comment and the placement entry to naming them and to tying the stamp's write to any transcript,
+    # which on its own proves nothing about behaviour
+    def test_the_rails_sticky_stamp_in_any_transcript_and_a_past_days_label_scan_and_the_texts_say_so(self):
         o = self._watch_fit(r"""
 const day = add(null, [11, 41, 60, 14], { position: 'fixed' }); day.attrs.style = 'left: 11px; top: 41px';      // the day label
 const stamp = add(null, [3, 50, 56, 14], { position: 'fixed' }); stamp.attrs.style = 'left: 3px; top: 50px';    // the sticky stamp
@@ -1670,17 +1674,21 @@ const hidden = step(() => { stamp.cs.display = 'none'; attr(stamp, 'style', 'lef
 const unchanged = step(() => same(day, 'style'));
 out({ moved, hidden, unchanged, scan: scan() });""")
         self.assertEqual(o["moved"], {"reads": o["scan"], "asks": 1}, "the day label's top written to a new value: one frame, which scans")
-        self.assertEqual(o["hidden"], {"reads": o["scan"], "asks": 1}, "the sticky stamp hidden by its style: one frame, which scans")
+        self.assertEqual(o["hidden"], {"reads": o["scan"], "asks": 1}, "the sticky stamp hidden by its style, with no day label write in the frame (a transcript from today): one frame, which scans")
         self.assertEqual(o["unchanged"], {"reads": 0, "asks": 0}, "the day label's style written to the value it had: skipped")
         root = os.path.dirname(HERE)
         with open(os.path.join(root, "kernel", "kernel.py"), encoding="utf-8") as f:
             src = f.read()
         with open(os.path.join(root, "upstream", "2026-10-02-reconnect-badge-below-pane-header.md"), encoding="utf-8") as f:
             entry = f.read()
-        for what, text in (("the kernel's comment", src[src.index("def _pane_spin"):src.index("def _chat_page")]), ("the placement entry", entry)):
-            for name in (".rail-day", ".time-marker.rail-sticky", "not from today"):
+        comment = re.sub(r"\s*\n\s*# ", " ", src[src.index("def _pane_spin"):src.index("def _chat_page")])
+        for what, text in (("the kernel's comment", comment), ("the placement entry", entry)):
+            for name in (".rail-day", ".time-marker.rail-sticky", "not from today", "in any transcript"):
                 with self.subTest(what=what, name=name):
                     self.assertTrue(name in text, what + " names " + name + " among the changes that still scan (the case above runs them)")
+            with self.subTest(what=what, name="no scan-free scroll"):
+                self.assertNotIn("a scroll through a transcript from today scan nothing", text,
+                                 what + ": a scroll through a transcript from today scans too, at each frame the sticky stamp shows or hides")
 
     # The slash keystroke (romp-manager's call 6 on round 3, 2026-10-04): the slash menu is a fixed element outside the list that no
     # scan holds, and the chat redraws it at each keystroke, so an element added to it scans. The lab's session lists no commands, so
