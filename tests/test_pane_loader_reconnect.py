@@ -1303,7 +1303,9 @@ out({ icon, deep, unheld });""")
 
     # Ruling 2 at 79dce614c (2026-10-04): an element added inside a held control re-reads only when every box of the added subtree lies
     # inside the part of that control a person can see (its box cut by the ancestors that clip it, rvis); one that reaches outside it,
-    # such as a popup child of a control, scans as before, so a control it brings is found
+    # such as a popup child of a control, scans as before, so a control it brings is found. The popup and the inner child each reach
+    # out past the left and the top edge at once, so a test that dropped either comparison still scanned them; each edge is therefore
+    # tried alone too, by a child within the button's span on the other axis, and so is a control no part of which can be seen
     def test_an_element_added_inside_a_held_control_that_reaches_outside_its_visible_box_scans(self):
         o = self._watch_fit(r"""
 fire('romp:wsdown'); after(RHOLD_T);
@@ -1315,7 +1317,14 @@ const tabs = add(null, [0, 760, 390, 30], { overflow: 'hidden' }); const tab = a
 added(tabs); frame();
 const seen = step(add(tab, [310, 772, 20, 10]));
 const clipped = step(add(tab, [310, 794, 20, 10]));
-out({ popup, inner, seen, clipped });""")
+// one edge at a time; the send button is [320, 784, 60, 40]
+const upOnly = step(add(send, [324, 724, 52, 56], { position: 'absolute' }));          // a popup that opens straight up, within the button's width
+const rightOnly = step(add(send, [360, 790, 30, 20], { position: 'absolute' }));       // past the right edge alone, within the button's height
+const leftOnly = step(add(send, [310, 790, 30, 20], { position: 'absolute' }));        // past the left edge alone, within the button's height
+// a tab the strip scrolls wholly out of view (it starts at 400, right of the strip's 390 px): the scan holds it, and no part of it can be seen
+const gone = add(tabs, [400, 765, 80, 20], { cursor: 'pointer' }); added(gone); frame();
+const unseen = step(add(gone, [410, 768, 20, 10]));
+out({ popup, inner, seen, clipped, upOnly, rightOnly, leftOnly, unseen });""")
         self.assertIs(o["popup"]["scanned"], True, "a popup child of the send button reaching above it: a scan, as before ruling 2's condition")
         self.assertEqual((o["inner"]["scanned"], o["inner"]["place"]), (True, {"top": "100px", "right": "8px", "painted": True}),
                          "an element inside the button whose own child reaches outside it: a scan, which finds that child's button and moves the badge "
@@ -1323,6 +1332,12 @@ out({ popup, inner, seen, clipped });""")
         self.assertEqual((o["seen"]["reads"], o["seen"]["scanned"]), (1, False), "an element added inside the part of the tab the strip leaves in view: a re-read, no scan")
         self.assertIs(o["clipped"]["scanned"], True, "an element added inside the tab's box but in the part the strip hides: a scan, since it lies outside "
                       "the part of the tab a person can see")
+        for k, why in (("upOnly", "a popup child that opens straight up from the send button, within its width: a scan (its top edge alone reaches out)"),
+                       ("rightOnly", "a child that reaches past the send button's right edge alone: a scan"),
+                       ("leftOnly", "a child that reaches past the send button's left edge alone: a scan"),
+                       ("unseen", "an element added inside a tab the strip scrolls wholly out of view: a scan, since no part of that tab can be seen")):
+            with self.subTest(k):
+                self.assertIs(o[k]["scanned"], True, why)
 
     # Ruling 1 at 79dce614c (2026-10-04): on the desktop the chat writes the reply chips' hidden attribute at each scroll step, to the
     # value it had, and the chips (fixed, outside the list, holding elements, no control) are an element the watch must scan for when
