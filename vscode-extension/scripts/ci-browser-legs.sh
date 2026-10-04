@@ -218,15 +218,16 @@ if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
 # timeout: value the tree test's bound pin reads in a rostered source, and the bound and the grace together sit under the
 # step's own timeout-minutes (.github/workflows/ci.yml), so a hung leg fails by name inside the step instead of the job
 # being cancelled nameless. That holds for a leg that starts within the step's first timeout-minutes less the bound, the
-# grace and the time the kills and the closing pass take: 50 s at the defaults, less that time. The grace's timer starts
+# grace and the time the kills and the closing pass take: 50 s at the defaults, less that time. The bound counts from
+# each leg's own start, so a leg queued later than that edge can be cut by the step first. The grace's timer starts
 # when the bound's walk returns, the bounds of legs cut at the same moment are walked one after another, and each
 # grace's end walks its leg's tree again before the post-run pass. The kills and that pass together took under a
 # second per leg cut at the same moment on a development box whose ps takes about 70 ms (0.6 to 0.8 s past the bound
-# plus the grace for one leg, 1.0 to 1.3 s for three, 4.4 to 5.0 s for ten). The bound counts from each leg's own start,
-# and a leg queued later than that can be cut by the step first. tools/ci-browser-legs.test.mjs holds those edges at
-# the defaults and holds the 50 s here and the two defaults the header states to the values below, and its bound pin
-# states the spellings it reads. A leg whose timeout is spelled outside them and whose file outlasts the bound is cut
-# here and named by the cut's red, not by its test.
+# plus the grace for one leg, 1.0 to 1.3 s for three, 4.4 to 5.0 s for ten). tools/ci-browser-legs.test.mjs holds, at
+# the defaults, the bound above every timeout: value its bound pin reads in a rostered source and the bound and the
+# grace together under the step's timeout-minutes, holds the 50 s here and the two defaults the header states to the
+# values below, and its bound pin states the spellings it reads. A leg whose timeout is spelled outside them and whose
+# file outlasts the bound is cut here and named by the cut's red, not by its test.
 BOUND_MS=${ROMP_BROWSER_LEGS_FILE_MS:-240000}
 GRACE_MS=${ROMP_BROWSER_LEGS_GRACE_MS:-10000}
 # GNU nproc honours OMP_NUM_THREADS and OMP_THREAD_LIMIT, which node's count of the CPUs does not, so nproc runs without
