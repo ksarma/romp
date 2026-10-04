@@ -660,6 +660,53 @@ export const SCENES: SceneDef[] = [
     },
   },
   {
+    name: "the backstop counts its 60 s from the chunk's request at the page's load, not from the formula: with the load held past MATH_CHUNK_BACKSTOP_MS and the chunk held after it, the formula still waits 2 s short of 60 s from the request, and 2 s past them it is its source with the backstop's reason, said once; the chunk landing after that lays it out",
+    timeout: 60000,
+    run: async (browser) => {
+      const lg = gate(), cg = gate();
+      await withPage(browser, { loadGate: lg, chunkGate: cg, clock: true }, async (s) => {
+        // the page's clock at the moment math.ts adds the chunk's tag, the step that arms the backstop (math.ts attempt, request)
+        await s.page.evaluate(() => {
+          new MutationObserver((recs) => {
+            for (const r of recs) for (const n of Array.from(r.addedNodes))
+              if (n instanceof HTMLScriptElement && n.src.includes("math-chunk.js") && (window as any).__tagAt === undefined) (window as any).__tagAt = Date.now();
+          }).observe(document.head, { childList: true });
+        });
+        await show(s.page, "early $\\frac{a}{b}$ here");
+        // past the backstop's time from the formula with the load held; read at once by evaluate, since while the page's load is held
+        // WebKit runs no animation frame and defers a fetch, so a frame or a round trip (drain) would wait for that very load
+        await s.page.clock.fastForward(MATH_CHUNK_BACKSTOP_MS + 5000);
+        let b = await box(s.page);
+        assert.deepEqual([b.pending.length, b.src.length], [1, 0], "past the backstop's time from the formula, the load held: the formula waits: " + JSON.stringify(b));
+        lg.open();
+        await s.page.waitForFunction(() => document.readyState === "complete", null, { timeout: 10000, polling: 100 });   // a timed poll: no frame runs until the load (WebKit)
+        await drain(s.page);
+        b = await box(s.page);
+        const tags: number = await s.page.evaluate(() => document.querySelectorAll('script[src*="math-chunk.js"]').length);
+        assert.deepEqual([tags, s.chunkRequests(), b.pending.length, b.src.length, said(s)], [1, 1, 1, 0, []],
+          "at the load the chunk's tag and its request go out, and the formula waits on them: " + JSON.stringify([tags, s.chunkRequests(), b, said(s)]));
+        // the clock jumps to two seconds short of the backstop's time from the request, measured on the page's clock from the tag's
+        // moment, so the real time the steps since the load took counts too; each read is at once, by evaluate
+        const since: number = await s.page.evaluate(() => Date.now() - (window as any).__tagAt);
+        await s.page.clock.fastForward(Math.max(0, MATH_CHUNK_BACKSTOP_MS - 2000 - since));
+        const short = await s.page.evaluate(() => ({ since: Date.now() - (window as any).__tagAt,
+          pending: document.querySelectorAll("#out .md-math-inline, #out .md-math-display").length, src: document.querySelectorAll("#out code.md-math-src").length }));
+        assert.deepEqual([short.pending, short.src], [1, 0], "two seconds short of the backstop's time from the request, the formula still waits: " + JSON.stringify(short));
+        await s.page.clock.fastForward(4000);
+        await settled(s.page, 10000).catch(() => null);
+        b = await box(s.page);
+        assert.ok(b.src.length === 1 && BACKSTOP_TITLE.test(b.src[0].title), "two seconds past the backstop's time from the request, the formula is its source with the backstop's reason: " + JSON.stringify(b));
+        assert.equal(said(s).length, 1, "said once: " + JSON.stringify(s.consoleErrors));
+        cg.open();
+        const laid = await allLaidOut(s.page);
+        b = await box(s.page);
+        assert.ok(laid, "the chunk landing after the backstop lays the formula out: " + JSON.stringify(b));
+        assert.deepEqual([b.katex, b.src.length, s.chunkRequests()], [1, 0, 1], "laid out, with the one request");
+        assert.equal(said(s).length, 1, "and the late success says nothing more");
+      });
+    },
+  },
+  {
     name: "a first-mode glossary term inside a formula still waiting for the renderer leaves the message's one link to the prose: the term pass skips a waiting formula as it skips a laid-out one, and the link outlasts the arrival",
     timeout: 60000,
     run: async (browser) => {
