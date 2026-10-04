@@ -43,9 +43,10 @@
 # --test's exit, so a leg's spec output appears when the leg and every leg before it in roster order have ended.
 # The step's status is node's own: the first non-zero exit among those runs, in roster order, a run the grace's end
 # killed aside. On an INT or a TERM the script ends each leg still running, as the grace's end below does, waits for
-# that leg's subshell to write its node --test's exit, and then prints in roster order every leg's output it still
-# holds, the ended legs' partial output among it, each after the line naming its exit; a further INT, TERM or HUP while
-# it does so is ignored, so it cannot cut that short. A SIGKILL runs no trap: the output still held then is lost, the
+# that leg's subshell to write its node --test's exit (a leg ended during its launch is ended with its subshell
+# instead, and its line reads "with no status"), and then prints in roster order every leg's output it still holds,
+# the ended legs' partial output among it, each after the line naming its exit; a further INT, TERM or HUP while it
+# does so is ignored, so it cannot cut that short. A SIGKILL runs no trap: the output still held then is lost, the
 # run's directory stays in TMPDIR, and the legs still running, the processes under them and their timers run on until
 # they end (each posts to the event pipe through the descriptor it inherited and holds open itself, so none waits for a
 # reader that is gone). The per-file bound: ROMP_BROWSER_LEGS_FILE_MS (default 240000) ms after a leg's node --test
@@ -287,12 +288,15 @@ kill_below() {
 # node --test is stopped first, so it starts nothing between the walk and its own kill (a guard, like the walk's own
 # stops, against a process that forks during the walk, which no case executes). The leg's subshell is left to post
 # its "done" (when the node --test never started, kill_below took what was under the subshell instead). With a second
-# argument (on an exit), a leg whose node --test has not written its pid yet (the exit came during its launch) is ended
-# with its subshell, stopped first and killed last as a node --test is, so the exit's wait for that subshell cannot sit
-# through a leg the subshell would start next (a guard no case executes: no case sends a signal during a launch).
+# argument (on an exit), a leg whose subshell has not yet written its node --test's pid (the exit came during its
+# launch) is ended with its subshell, stopped first and killed last as a node --test is, so the exit's wait for that
+# subshell cannot sit through a leg the subshell would start next (a guard no case executes: no case sends a signal
+# during a launch).
 # Returns 0 when it found a live process to kill (the node --test, read after its stop as kill_below reads a process,
 # or one under it), 1 when it found none: a node --test that had exited (gone, or a zombie its subshell had not yet
-# reaped, since that subshell posts "done" only after it reaps it) with nothing alive under it.
+# reaped, since that subshell posts "done" only after it reaps it) with nothing alive under it. The tree test executes
+# the zombie arm alone (its case "the per-file bound through the stub"). The gone arm, a grace's end read between the
+# subshell's reap and its post of "done", is a window no stub widens, and no case executes it.
 end_leg() {
   local p live=""; p=$(runner "$1")
   if [ "$p" != "${job[$1]:-}" ] || [ -n "${2:-}" ]; then

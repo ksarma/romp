@@ -67,18 +67,21 @@
 //     before the bound plus the grace has passed, and so is a TERM to the script with the bound and the grace unset,
 //     each leg's start line read printed while the legs run and their spec output held, and the leg's bound timer read
 //     up at the default bound, before it, after which no process of that leg (its node --test among them) and no timer
-//     of the run is left, the script's output closes within 10 s and the output the script held is printed; so is a
-//     second TERM 100 ms after the first, after which no process of the leg is left, running or stopped; and so is a
-//     SIGKILL to the script, after which the leg's subshell and its timer, posting through the event pipe's descriptor
-//     they inherited, end once the leg and its bound have; and through the stub: a node --test that outlives the grace
-//     is killed and named, after a cut and with nothing cut (where the grace's red alone sets the status), a node
-//     --test that outlives the bound with no process under it, or with only a zombie (a child that has ended and is not
-//     yet reaped) under it, is not cut, the knobs' refusals, the count of legs at once read with nproc's OpenMP
-//     variables set and unset, the status of legs that exit differently, and a roster longer than the legs run at once,
-//     the most calls running at once counted and the outputs printed in roster order although the legs finish in
-//     another. A roster line holding a backslash is held by seen_at's rows, and a tree under a directory whose name
-//     holds one by the post-run key's row, each read as the script's comment above seen_at or above its awk pass
-//     states;
+//     of the run is left, the script's output closes within 10 s and the output the script held is printed, the hanging
+//     leg's after a line naming its node --test's exit on the kill, 137; so is a second TERM 100 ms after the first,
+//     after which no process of the leg is left, running or stopped, that leg's output after the same line, and the
+//     run's TMPDIR empty; and so is a SIGKILL to the script, after which the leg's subshell and its timer, posting
+//     through the event pipe's descriptor they inherited, end once the leg and its bound have; and through the stub: a
+//     node --test that outlives the grace is killed and named, after a cut and with nothing cut (where the grace's red
+//     alone sets the status), a node --test that has exited and is not yet reaped at the grace's end is not held and
+//     its exit is the leg's status, a node --test that outlives the bound with no process under it, or with only a
+//     zombie (a child that has ended and is not yet reaped) under it, is not cut, the knobs' refusals, the count of
+//     legs at once read with nproc's OpenMP variables set and unset, the status of legs that exit differently, and a
+//     roster longer than the legs run at once, the most calls running at once counted and the outputs printed in roster
+//     order although the legs finish in another, and, with the real node, two legs run one at a time under a short
+//     bound each get their bound from their own start. A roster line holding a backslash is held by seen_at's rows, and
+//     a tree under a directory whose name holds one by the post-run key's row, each read as the script's comment above
+//     seen_at or above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -1967,7 +1970,7 @@ test('the per-file bound through the stub: a node --test that does not end after
   assert.ok(!alive(heldOnly.pids[0]), 'the node --test killed at the grace\'s end (pid ' + heldOnly.pids[0] + ') is gone');
   // the grace's end after the node --test has exited and is not yet reaped: A's node --test (the stub) writes A's pass, stops
   // its subshell and exits 0, so it stays a zombie, and the leg's "done" is not posted, until a SIGCONT 2.5 s after the
-  // stub started. At the bound (601 ms) the walk finds nothing under it, and at the grace's end (403 ms later, about 1 s
+  // stub started. At the bound (601 ms) the walk finds nothing under it, and at the grace's end (403 ms later, about 1.5 s
   // before the SIGCONT) the node --test has ended, a zombie, with nothing under it, so there is nothing to kill: the leg is
   // not held, nothing is red, and node --test's exit 0, read once the SIGCONT lets the subshell reap it, is the leg's
   // status. A grace's end that held every leg it reached would print the held red beside that exit 0 and exit 1. The
@@ -1975,7 +1978,7 @@ test('the per-file bound through the stub: a node --test that does not end after
   const t1 = Date.now();
   const unreaped = run(A + '\n', { report: pass(A), unreaped: { [A]: '2.5' }, timeout: 30000, env: { ROMP_BROWSER_LEGS_FILE_MS: '601', ROMP_BROWSER_LEGS_GRACE_MS: '403' } });
   const unreapedMs = Date.now() - t1;
-  assert.ok(unreapedMs >= 2500, 'the leg ended only after the SIGCONT 2.5 s after its start, so its node --test was a zombie its subshell had not reaped through the grace\'s end (601 + 403 ms): ' + unreapedMs + ' ms');
+  assert.ok(unreapedMs >= 2500, 'the run lasted at least 2.5 s, a lower bound the stub sets (it holds the leg\'s subshell stopped until a SIGCONT 2.5 s after the stub started), so this reads that the stub held the leg and not the order. That the grace\'s end (601 + 403 ms) came before the SIGCONT, while its node --test was a zombie its subshell had not reaped, rests on a margin of about 1.5 s: ' + unreapedMs + ' ms');
   assert.ok(!unreaped.err.includes('had not ended') && !unreaped.err.includes('ran past the per-file bound'), 'a node --test that had exited by the grace\'s end, a zombie with nothing under it, is not held and not cut, so neither red is printed:\n' + unreaped.err);
   assert.equal(unreaped.status, 0, 'its node --test\'s exit 0 is the leg\'s status, and nothing is red: green, exit 0; stderr:\n' + unreaped.err);
   assert.equal(unreaped.err, '', 'nothing on stderr');
