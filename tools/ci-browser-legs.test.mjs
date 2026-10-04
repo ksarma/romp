@@ -1206,7 +1206,8 @@ test('the script exists, is executable, runs one node --test per rostered leg (n
  *  exit; stub.exits the exits per bundle, stub.zombie the zombie's sleeps per bundle, stub.linger the lingers per bundle
  *  and stub.unreaped the seconds before the SIGCONT per bundle, each an object from bundle to value, as above; stub.wedge
  *  the bundle whose call stays up; stub.hold the seconds each call holds and the count it takes, as
- *  above; stub.timeout a bound in ms on the script's run, past which the run is red rather than hung; stub.env more
+ *  above; stub.timeout a bound in ms on the script's run, past which the script is killed with a SIGKILL, which runs no
+ *  trap, so an EXIT trap that does not end cannot hold the run, and the run is red rather than hung; stub.env more
  *  variables for the script, the per-file bound's knobs among them; stub.real runs the real node); `node` in its result is
  *  the list of the node --test calls, each its arguments without the reporter flags, in the roster order of the bundle
  *  each names (null when node was not started), `pids` the calls' pids in that order, and `peak` the most calls the stub
@@ -1302,7 +1303,7 @@ function syntheticTree(t, prefix = 'cbl-') {
   };
   const run = (roster, stub = {}) => {
     const tmp = fresh(roster);
-    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : []), ...(stub.argv || [])], { cwd: root, env: envFor(tmp, stub), ...(stub.timeout ? { timeout: stub.timeout } : {}) });
+    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : []), ...(stub.argv || [])], { cwd: root, env: envFor(tmp, stub), ...(stub.timeout ? { timeout: stub.timeout, killSignal: 'SIGKILL' } : {}) });
     const lines = (roster || '').split('\n');
     const named = fs.existsSync(calls) ? fs.readdirSync(calls).map((f) => ({ pid: Number(f), args: fs.readFileSync(path.join(calls, f), 'utf8').split('\n').filter(Boolean) })) : [];
     named.sort((x, y) => lines.indexOf(x.args[x.args.length - 1]) - lines.indexOf(y.args[y.args.length - 1]));
