@@ -1306,11 +1306,20 @@ out({ atPaint: at() });""")
             ("contain:content clips as overflow does", clip % "contain: 'content'", "52px"),
             ("the strip's padding box ends 10 px above its border box's bottom (a border or a scrollbar), over a control from 50 to 80 px",
              "const s = add(null, [0, 0, 390, 60], { overflow: 'hidden', clientHeight: 50 }); add(s, [300, 50, 60, 30], { sel: 'button' });", "52px"),
+            # this one cuts the control at the padding box's bottom edge (clientTop plus clientHeight, 60 px): the control lies wholly
+            # below the top border, so it does not pin the top edge's clientTop; the next case does
             ("the strip's padding box starts 10 px below its top (a border) and is 30 px tall: 6 px of a control from 54 to 74 px show",
              "const s = add(null, [0, 20, 390, 50], { overflow: 'hidden', clientTop: 10, clientHeight: 30 }); add(s, [300, 54, 60, 20], { sel: 'button' });", "68px"),
+            # the top edge (the round-3 closing check: with the top edge taken from the border box every other case stayed green)
+            ("the strip's padding box starts 20 px below its top (a border, 40 to 60 px): a control wholly in that border, 50 to 58 px, is not seen",
+             "const s = add(null, [0, 40, 390, 60], { overflow: 'hidden', clientTop: 20, clientHeight: 40 }); add(s, [300, 50, 60, 8], { sel: 'button' });", "52px"),
             ("across: the strip's padding box starts 20 px inside its left edge and is 100 px wide, over a control in its left border and one in its right",
              "const s = add(null, [250, 40, 140, 60], { overflow: 'hidden', clientLeft: 20, clientWidth: 100 }); add(s, [252, 54, 16, 20], { sel: 'button' }); "
              "add(s, [372, 54, 16, 20], { sel: 'button' });", "52px"),
+            # the right edge, clientLeft plus clientWidth from the strip's left (the closing check: computed without clientLeft it fell 20 px
+            # short, and the case above, whose controls sit in the borders, stayed green)
+            ("across: the padding box's right edge is 20 + 100 px from the strip's left, at 370 px: a control from 352 to 366 px is seen",
+             "const s = add(null, [250, 40, 140, 60], { overflow: 'hidden', clientLeft: 20, clientWidth: 100 }); add(s, [352, 54, 14, 20], { sel: 'button' });", "82px"),
             ("the witness: a fixed control in a strip that makes no containing block escapes it", fixed % "contain: 'none'", "82px"),
         ]
         for what, page, top in cases:
