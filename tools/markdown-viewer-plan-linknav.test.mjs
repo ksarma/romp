@@ -992,7 +992,8 @@ const legsOffRoster = (files, legs) => files.filter((f) => /^ui\/webview\/[\w-]+
  *  coordinator's decision 2 on it: the one gate's tap cells and stacking cells in WebKit and Firefox). BOUNDS_OFF: a leg whose whole
  *  run outlasts both of the step's bounds, its five minutes and the script's 240 s per file, so it runs locally alone and raising the
  *  step's bound is the owner's change to the workflow file (the coordinator's ruling on the roster after the file review's round
- *  19: the open leg, nearly ten minutes through the step's own command). Each is a derived leg whose header carries its words,
+ *  19: the open leg, nearly ten minutes run alone, 586.7 s through the step's own command when node held the per-file
+ *  bound). Each is a derived leg whose header carries its words,
  *  the plan names it with its own, and it is no roster line in either state of the pin below. The legs whose code names Firefox
  *  or WebKit as a string literal are exactly the entries of ENGINES_OFF. BOUNDS_OFF's reason is a measurement, which the PR's
  *  body records and no check in the tree reads, so its entry is held by its header's words and the plan's alone. PR 887 landed

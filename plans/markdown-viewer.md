@@ -9583,7 +9583,8 @@ named below: each is a line of the shared roster of browser legs, vscode-extensi
 path per line, run by the step "Browser legs (node --test over ci-browser-legs.txt)" of that job after its Chromium install
 under the switch ROMP_BROWSER_LEGS_REQUIRE, which inBrowser reads itself, the three on main since PR 887 landed (the legs
 joined the roster after the landing merge with main at 1d591384e, as PR 887's section on who owes what at the landing asks,
-their timeout values that reached node's 240 s per-file bound lowered under it, and the PR's body gives each rostered leg's
+their timeout values that reached the 240 s per-file bound (node's --test-timeout then) lowered under it, and the PR's
+body gives each rostered leg's
 measured seconds); in the Test step before that install each leg skips at launch (the gate-before-adoption section's Tests
 paragraph states that job's shape and tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), and a source pin in a leg
 runs there without a browser; the legs kept off the roster are ui/webview/file-figure-open-engines-browser.test.ts, which

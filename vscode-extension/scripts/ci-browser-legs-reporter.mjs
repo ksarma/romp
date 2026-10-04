@@ -2,10 +2,10 @@
 // leg's own node --test (--test-reporter=./scripts/ci-browser-legs-reporter.mjs --test-reporter-destination=<file>, a file
 // per leg) and reads the legs' streams, joined in roster order, after the run, so each result is attributed to a file by
 // node's own record of it (data.file: the bundle for a test registered in the bundle, the other file for a test registered
-// in a file the bundle loads at run time; a result that carries none is written with - and matches no roster line): node's
-// TAP record, in a run over many files, reports every test at the top level with no file name (a pass carries no location;
-// only a failure does), so a TAP reader cannot say which rostered leg a pass belongs to. One line per test:pass or
-// test:fail event, eight tab-separated fields:
+// in a file the bundle loads at run time; a result that carries none is written with - and matches no roster line): in
+// a run of one bundle, node's TAP record cannot tell a test registered in the bundle from one registered in a file the
+// bundle loads at run time (a pass carries no location; only a failure does), so a TAP reader cannot say whether a pass
+// is the leg's own. One line per test:pass or test:fail event, eight tab-separated fields:
 //   1 the absolute path of that file, the bundle's or the loaded file's (node's data.file, resolved from the process's
 //     physical working directory);
 //   2 pass or fail;
