@@ -70692,8 +70692,8 @@ try{ok=!!(window.__rompShellSend&&window.__rompShellSend({type:'openSession',id:
 if(!ok)window.__rompNotify('locate','Could not open the session: the dashboard has no live connection to the kernel');}
 // One write path. A repeat of the NEWEST entry (same kind+text — e.g. a reconnect loop dropping over and
 // over) coalesces into it with a count instead of flooding the feed: event-exact, no time window. nextLife: the line is written
-// for the page's next life (a pane shim's loss line, __rompShimPersist, which the reload core asks for just before
-// location.reload()), so it skips the arrival mark below.
+// for the page's next life (a pane shim's loss line, __rompShimPersist, which the reload core asks for just before it
+// reloads the page), so it skips the arrival mark below.
 window.__rompNotify=function(kind,text,tgt,nextLife){if(!text)return;
 var last=NOTES[NOTES.length-1];
 if(last&&last.kind===kind&&last.text===String(text)){last.n=(last.n||1)+1;last.t=Math.floor(Date.now()/1000);last.seen=false;if(tgt)last.tgt=tgt;}
