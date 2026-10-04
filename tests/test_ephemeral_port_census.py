@@ -80,8 +80,8 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
     bound to one, f-strings' literal parts) with every other operand as a placeholder, ends in an address, then a colon
     ("http://127.0.0.1:" + str(N), "http://" + host + ":" + P);
     an element of a list or tuple display right after a string element that is a --*port option whole: -- and a name
-    one of whose words is port or ports, so --port, --bus-port, --ports and --port-file alike (an argv: ["romp",
-    "serve", "--port", "N"], ("--bus-port", N)).
+    (word characters and dashes, in parts a dot may join) one of whose words is port or ports, so --port, --bus-port,
+    --ports, --port-file and --server.port alike (an argv: ["romp", "serve", "--port", "N"], ("--bus-port", N)).
   The values that count, in any of those positions, and no others:
     an int in the range (45_001 is 45001);
     a str (not bytes) that is five digits once str.strip() has taken off any leading and trailing whitespace ("N",
@@ -297,11 +297,12 @@ def _digits(v):
 # The text rules.
 _NUM = r"[\"'`]?(?:\$\(\([ \t]*)?(?P<n>" + _D5 + r")(?![\w.])"
 _HOST = r"(?:\b(?:127\.0\.0\.1|localhost|0\.0\.0\.0)\b|\[::1?\])"
+_OPT = r"[\w-]+(?:\.[\w-]+)*"                     # an option's name after --: word characters and dashes, in parts a dot joins
 TEXT_RULES = (
     ("key", re.compile(r"(?:^|[{,(\[;])[ \t]*[\"'`]?(?P<name>[\w$.-]+)[\"'`]?[ \t]*[:=][ \t]*" + _NUM, re.M)),
     ("decl", re.compile(r"\b(?:const|let|var|local|export|readonly|declare(?:[ \t]+-\w+)?)[ \t]+(?P<name>[\w$]+)[ \t]*=[ \t]*" + _NUM)),
     ("env", re.compile(r"\b(?P<name>[A-Z][A-Z0-9_]*)[\"'`]?\]?[ \t]*[:=][ \t]*" + _NUM)),
-    ("flag", re.compile(r"--(?P<name>[\w-]+)(?:=|[ \t]+|[\"'`][ \t]*,[ \t]*|[\"'`][ \t]+)" + _NUM)),   # or quoted: the next element, or after spaces
+    ("flag", re.compile(r"--(?P<name>" + _OPT + r")(?:=|[ \t]+|[\"'`][ \t]*,[ \t]*|[\"'`][ \t]+)" + _NUM)),   # or quoted: the next element, or after spaces
     ("authority", re.compile(r"(?:" + _HOST + r"|//[\w.-]+)[ \t]*:[ \t]*(?:[\"'`][ \t]*\+[ \t]*[\"'`]?)?(?P<n>" + _D5
                              + r")(?![\w.])")),   # the number right after the colon, or concatenated onto it
     ("address", re.compile(r"\([ \t]*[\"'](?:127\.0\.0\.1|localhost|0\.0\.0\.0|::1?|)[\"'][ \t]*,[ \t]*(?P<n>" + _D5 + r")[ \t]*[,)]")),
@@ -439,9 +440,9 @@ def _target_name(t):
 
 
 def _port_flag(node):
-    """The --*port option a string literal spells whole (--port, --bus-port), else None."""
+    """The --*port option a string literal spells whole (--port, --bus-port, --server.port), else None."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        m = re.fullmatch(r"--([\w-]+)", node.value)
+        m = re.fullmatch(r"--(" + _OPT + r")", node.value)
         if m and names_a_port(m.group(1)):
             return node.value
     return None
@@ -1337,6 +1338,30 @@ class Plants(unittest.TestCase):
                 ("a quoted option with one dash", "q5.bats", 'run romp serve "-p" %d\n' % n),
                 ("a quote that does not close the option", "q6.bats", 'echo "--port is" %d\n' % n),
                 ("a quoted option that ends its line", "q7.bats", 'run romp serve "--port"\necho %d\n' % n)):
+            with self.subTest(label):
+                self.assertGreen(name, src)
+
+    def test_a_dotted_option(self):
+        """THE RULE's --*port option, for a name in parts a dot joins (--server.port, the spelling some servers give their
+        settings), in Python's argv rule and in the text flag rule. Each green twin is a near miss in a file the census
+        opens: a dotted name with no port word, and a dot that ends the option (prose), which is no part of its name."""
+        n = _n()
+        for label, name, src, why in (
+                ("a dotted option, then a space", "d1.bats", "run java -jar srv.jar --server.port %d\n" % n, "rule flag"),
+                ("a dotted option and =", "d2.bats", "run java -jar srv.jar --server.port=%d\n" % n, "rule flag"),
+                ("a dotted option quoted, then a space", "d3.bats", 'run java -jar srv.jar "--server.port" %d\n' % n,
+                 "rule flag"),
+                ("a dotted option in a JavaScript argv", "d4.test.mjs",
+                 "spawn('java', ['-jar', 'srv.jar', '--server.port', '%d']);\n" % n, "rule flag"),
+                ("a dotted option in a Python argv", "test_plant.py",
+                 'subprocess.run(["java", "-jar", "srv.jar", "--server.port", "%d"])\n' % n, "after the flag --server.port")):
+            with self.subTest(label):
+                self.assertRed(name, src, why)
+        for label, name, src in (
+                ("a dotted option with no port word, in shell", "d5.bats", "run java -jar srv.jar --server.report %d\n" % n),
+                ("a dotted option with no port word, in Python", "test_x.py",
+                 'subprocess.run(["java", "-jar", "srv.jar", "--server.report", "%d"])\n' % n),
+                ("a dot that ends the option", "d6.bats", "# pass --port. %d was the old default\n" % n)):
             with self.subTest(label):
                 self.assertGreen(name, src)
 
