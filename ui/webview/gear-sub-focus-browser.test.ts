@@ -29,7 +29,7 @@
 // inBrowser through withGear, in Chromium alone, with nothing but reads of the tree's own sources before it (the roster rule
 // the roster's header states). Rostering is opt-in and nothing checks that every browser leg is rostered, so
 // tests/test_served_labs_under_ci.py pins this file's roster line. Each test's own timeout sits under the step's per-file bound
-// (the script's --test-timeout), which tools/ci-browser-legs.test.mjs holds over every rostered source.
+// (the default of the script's ROMP_BROWSER_LEGS_FILE_MS), which tools/ci-browser-legs.test.mjs holds over every rostered source.
 // A developer's machine with playwright's Chromium runs both in one `npm test`. The surface the browser legs exclude: Firefox
 // and WebKit (the three-engine readings in the review record came from a scratch matrix, not this file), and every engine
 // generation that lacks :has(), which the degradation leg below MODELS rather than installs. And the STATES the legs do not

@@ -17,12 +17,14 @@
 //     in the tree;
 //   - the step carries a timeout-minutes of its own that fits the margin under the job's cap at the measured head (the
 //     assertion's arithmetic over the step comment's measured figures and phrase and the cap comment's number and
-//     passage, read as the comments at those reads state), and the script passes node a --test-timeout above the
-//     timeout: values the bound pin reads (boundReds' docstring) in a rostered source and under the step's bound, so a
-//     hung leg fails by name before the step is cut. The spellings the bound pin reads and the ones it does not read are
-//     boundReds' to state: a value spelled outside them is not held here, and a leg whose file outlasts the file bound
-//     meets node's cut and the script's failed-as-a-whole red whatever its own timeout says (the check's guarantee is
-//     that no value it reads reaches the file bound, and a leg's whole-file seconds are measured in the PR's body);
+//     passage, read as the comments at those reads state), and the script's per-file bound (the default of its knob
+//     ROMP_BROWSER_LEGS_FILE_MS, the bound at which it kills a leg's node --test's file process and every process under
+//     it) sits above the timeout: values the bound pin reads (boundReds' docstring) in a rostered source, and the bound
+//     and its grace together under the step's bound, so a hung leg fails by name before the step is cut. The spellings the
+//     bound pin reads and the ones it does not read are boundReds' to state: a value spelled outside them is not held
+//     here, and a leg whose file outlasts the file bound meets the script's kill and its cut red whatever its own timeout
+//     says (the check's guarantee is that no value it reads reaches the file bound, and a leg's whole-file seconds are
+//     measured in the PR's body);
 //   - the roster is well formed: each line parseRoster keeps (its docstring) is a bundle path as wellFormed reads it (its
 //     docstring), no such line is duplicated, and each names a source that exists in the tree;
 //   - each home of the roster rule, read in its named section (RULE_HOMES' docstring), states it in the same words: the
@@ -34,10 +36,11 @@
 //     EXAMPLES, each failure marked as it happens, and a control that awaits the catch example's stand-in for inBrowser
 //     with no try reads red with the lost-browser remedy;
 //   - vscode-extension/.vscodeignore names the CI-only files (the roster, the script and its reporter);
-//   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable and runs node
-//     --test over the roster array (no xargs, so node's status is the step's on every platform) with the reporter
-//     scripts/ci-browser-legs-reporter.mjs beside the spec reporter; run on synthetic trees with a stub node on PATH
-//     that records the node --test call and writes the record a case hands it, run through a link to the tree on every
+//   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable and runs one node
+//     --test per rostered leg (no xargs, so node's status is the step's on every platform) with the reporter
+//     scripts/ci-browser-legs-reporter.mjs beside the spec reporter and no --test-timeout; run on synthetic trees with a
+//     stub node on PATH that records each node --test call and writes the record a case hands it, run through a link to
+//     the tree on every
 //     platform (so the post-run read's key, which the script's comment above its awk pass states, is held where the
 //     temporary directory is no link), it
 //     refuses a missing roster file, a stale line, a duplicate, a missing bundle and a malformed line (nine malformed
@@ -54,8 +57,13 @@
 //     nothing, failures inside a todo, a lost browser's failure, a bundle that throws at load, and a name holding a tab
 //     and a newline), and so is the composition: the script with the real node and the real reporter over those bundles
 //     as rostered legs, and over a leg whose test passes and whose error comes after the test ended. After one stub run
-//     and after the composition's first real-node run, the record file the script handed its reporter (the path the
-//     stub logged, in the fresh TMPDIR the run was given) is gone and that TMPDIR is empty. A roster line holding a
+//     and after the composition's first real-node run, the record files the script handed its reporter (the paths the
+//     stub logged, under the fresh TMPDIR the run was given) are gone and that TMPDIR is empty. The per-file bound is
+//     executed with the real node over a synthetic leg that outlives a short bound set by the knobs (a SIGTERM handler,
+//     a process in a session of its own and one in the file's own process group, each with a child), every process of it
+//     read gone by the bound plus the grace, and so is a TERM to the script, after which no process of that leg is left;
+//     and through the stub: a node --test that outlives the grace is killed and named, the knobs' refusals, and a roster
+//     longer than the legs run at once, the most calls running at once counted. A roster line holding a
 //     backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's row,
 //     each read as the script's comment above seen_at or above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
@@ -75,7 +83,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -694,14 +702,18 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   assert.ok(!step.lines.join('\n').includes(String.fromCharCode(0x2014)), 'no em dash');
 });
 
-/** The per-file bound the script passes node, in ms, read from the script's text, a comment included (one --test-timeout=
- *  spelling with digits, asserted, so a second one anywhere in the script is red here). */
-function testTimeoutMs() {
-  const m = read(SCRIPT).match(/--test-timeout=(\d+)/g) || [];
-  assert.equal(m.length, 1, 'the script passes node --test one --test-timeout: ' + JSON.stringify(m));
-  return Number(m[0].slice('--test-timeout='.length));
+/** The script's default for one of its knobs, in ms: the default in its one line `<VAR>=${<knob>:-<digits>}` (asserted: one
+ *  such line, so a second spelling of the knob's default is red here). The per-file bound is fileBoundMs, the default of
+ *  ROMP_BROWSER_LEGS_FILE_MS, and the grace after it graceMs, the default of ROMP_BROWSER_LEGS_GRACE_MS: the step runs with
+ *  neither set, so the defaults are the step's values. */
+function knobDefault(knob) {
+  const m = [...read(SCRIPT).matchAll(new RegExp('^[A-Z_]+=\\$\\{' + knob + ':-(\\d+)\\}$', 'gm'))];
+  assert.equal(m.length, 1, 'the script sets one default for ' + knob + ' (a line VAR=${' + knob + ':-<digits>}): ' + JSON.stringify(m.map((x) => x[0])));
+  return Number(m[0][1]);
 }
-/** The bound pin's reds over rostered sources ([{ bundle, src, text }]) against node's per-file bound `ms`. It reads the
+const fileBoundMs = () => knobDefault('ROMP_BROWSER_LEGS_FILE_MS');
+const graceMs = () => knobDefault('ROMP_BROWSER_LEGS_GRACE_MS');
+/** The bound pin's reds over rostered sources ([{ bundle, src, text }]) against the script's per-file bound `ms`. It reads the
  *  source as text, by two patterns. The first reads the word timeout bare or between quotes (' or ", each quote
  *  optional), the word not preceded by a word character or $, or a bracketed ', " or ` string holding the word alone
  *  (whitespace allowed inside the brackets), the bracket not preceded by a word character or $, either followed by only
@@ -717,17 +729,18 @@ function testTimeoutMs() {
  *  option is read by the same rule: a per-call bound above the file bound is a real cut too. Any other spelling of a key
  *  is not read, so its value is not held by this pin: among them a comment between the key and its colon or beside a
  *  shorthand, and a key computed by concatenation. A leg that spells its timeout so meets in the step what any leg meets
- *  whose file runs past the file bound, whatever its own timeout says and however it is spelled: node cancels the file
- *  at the bound, and the script prints its failed-as-a-whole red naming the bundle and testTimeoutFailure, not the test.
+ *  whose file runs past the file bound, whatever its own timeout says and however it is spelled: the script kills the
+ *  file's node process and every process under it at the bound, and prints its cut red naming the bundle and the bound,
+ *  not the test.
  *  Its table: BOUND_ROWS, run by the test after it, and the rows the bound test runs against the script's own bound. */
 function boundReds(sources, ms) {
   const reds = [];
-  const literal = ', which this pin cannot read as a number: spell the value as a literal (digits, _ separators allowed), so it is held under node\'s --test-timeout';
+  const literal = ', which this pin cannot read as a number: spell the value as a literal (digits, _ separators allowed), so it is held under the script\'s per-file bound';
   for (const s of sources) {
     for (const m of s.text.matchAll(/(?<![\w$])(?:\[\s*(['"`])timeout\1\s*\]|['"]?timeout['"]?)\s*:([^,})]*)/g)) {
       const token = m[2].trim(), at = s.bundle + ' (source ' + s.src + ') spells timeout: ' + token;
       if (!/^\d[\d_]*$/.test(token)) reds.push(at + literal);
-      else if (Number(token.replace(/_/g, '')) >= ms) reds.push(at + ' (' + Number(token.replace(/_/g, '')) + ' ms), which reaches node\'s --test-timeout (' + ms + ' ms): the file bound would cut the leg before its own bound fires, so raise --test-timeout in the script (under the step\'s bound) or lower the value');
+      else if (Number(token.replace(/_/g, '')) >= ms) reds.push(at + ' (' + Number(token.replace(/_/g, '')) + ' ms), which reaches the script\'s per-file bound (' + ms + ' ms): the file bound would cut the leg before its own bound fires, so raise the bound in the script (the default of ROMP_BROWSER_LEGS_FILE_MS, with its grace under the step\'s bound) or lower the value');
     }
     for (let i = (s.text.match(/(?<=[{,]\s*)timeout(?=\s*[,}])/g) || []).length; i > 0; i--) reds.push(s.bundle + ' (source ' + s.src + ') spells timeout as a shorthand property ({ timeout })' + literal);
   }
@@ -771,7 +784,7 @@ const BOUND_ROWS = [
   ['a call argument before the closing parenthesis', 'f(a, timeout)', 0],
 ];
 test('boundReds\' table: each row read or not read as boundReds\' docstring states', () => {
-  const KIND = { over: 'which reaches node\'s --test-timeout', literal: 'which this pin cannot read as a number', shorthand: 'spells timeout as a shorthand property' };
+  const KIND = { over: 'which reaches the script\'s per-file bound', literal: 'which this pin cannot read as a number', shorthand: 'spells timeout as a shorthand property' };
   const wrong = [];
   for (const [what, text, count, kind] of BOUND_ROWS) {
     const reds = boundReds([{ bundle: 'out-tests/ui/webview/probe-browser.test.js', src: 'ui/webview/probe-browser.test.ts', text }], 240000);
@@ -780,7 +793,7 @@ test('boundReds\' table: each row read or not read as boundReds\' docstring stat
   assert.deepEqual(wrong, [], 'each row of boundReds\' table is read or not read as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
 });
 
-test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment names that number; node\'s --test-timeout in the script sits above the timeout: values the bound pin reads in a rostered source (boundReds\' docstring) and under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
+test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment names that number; the script\'s per-file bound sits above the timeout: values the bound pin reads in a rostered source (boundReds\' docstring), and the bound and its grace together under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
   const job = extensionJob();
   const { cap, capLine } = jobCap(job);
   const step = steps(job).find((s) => s.name === STEP);
@@ -814,10 +827,11 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   assert.ok(about, 'the job comment holds one passage about the Browser legs step, from "The Browser legs step below" to "in the same PR."');
   assert.ok(!/\d+ min \d+ s/.test(about[0]) && !/\b\d+ s\b/.test(about[0]), 'the job comment\'s passage about this step carries a figure of the measured job time the margin is read from, or of the margin, whose one home is the step comment: ' + JSON.stringify((about[0].match(/\d+ min \d+ s|\b\d+ s\b/) || [''])[0]) + ' in ' + about[0]);
   assert.ok(about[0].includes('tools/ci-browser-legs.test.mjs'), 'that passage names this file as where the margin is derived: ' + about[0]);
-  // node's per-file bound: above the timeout: values the bound pin reads in a rostered source (else a legitimate slow leg
-  // is cut), under the step's bound (else the step is cut nameless first). First the reader, over synthetic sources against
-  // the script's own bound, rows beside BOUND_ROWS (boundReds' docstring states what it reads), each naming itself
-  const ms = testTimeoutMs();
+  // the script's per-file bound: above the timeout: values the bound pin reads in a rostered source (else a legitimate slow
+  // leg is cut), and with its grace under the step's bound (else the step is cut nameless first). First the reader, over
+  // synthetic sources against the script's own bound, rows beside BOUND_ROWS (boundReds' docstring states what it reads),
+  // each naming itself
+  const ms = fileBoundMs(), grace = graceMs();
   const probe = (text) => boundReds([{ bundle: 'out-tests/ui/webview/probe-browser.test.js', src: 'ui/webview/probe-browser.test.ts', text }], ms);
   const over = ms + 60000;
   const separated = String(over).replace(/\B(?=(\d{3})+$)/g, '_'), exponent = over.toExponential().replace('+', '');
@@ -841,8 +855,8 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
     if (!fs.existsSync(src)) continue;   // a stale line is the well-formed test's red
     sources.push({ bundle: e.bundle, src: path.relative(REPO, src), text: read(src) });
   }
-  assert.deepEqual(boundReds(sources, ms), [], 'the check\'s guarantee: no timeout: value the bound pin reads in a rostered source (boundReds\' docstring) reaches node\'s --test-timeout (' + ms + ' ms). A value spelled outside what it reads is not held here, and its leg meets what any leg whose file outlasts the bound meets: node cancels the file, and the script\'s failed-as-a-whole red names the bundle and testTimeoutFailure, not the test. The file bound cuts a file\'s whole run, so a leg whose timed tests together outlast it is cut all the same: a leg\'s whole-file seconds are measured in the PR\'s body, not here');
-  assert.ok(ms < bound * 60 * 1000, 'node\'s --test-timeout (' + ms + ' ms) is under the step\'s bound (' + bound + ' min = ' + bound * 60 * 1000 + ' ms), so a hung file fails by name before the step is cut');
+  assert.deepEqual(boundReds(sources, ms), [], 'the check\'s guarantee: no timeout: value the bound pin reads in a rostered source (boundReds\' docstring) reaches the script\'s per-file bound (' + ms + ' ms). A value spelled outside what it reads is not held here, and its leg meets what any leg whose file outlasts the bound meets: the script kills the file\'s node process and every process under it, and its cut red names the bundle and the bound, not the test. The file bound cuts a file\'s whole run, so a leg whose timed tests together outlast it is cut all the same: a leg\'s whole-file seconds are measured in the PR\'s body, not here');
+  assert.ok(ms + grace < bound * 60 * 1000, 'the script\'s per-file bound (' + ms + ' ms) and its grace (' + grace + ' ms) together are under the step\'s bound (' + bound + ' min = ' + bound * 60 * 1000 + ' ms), so a hung file is killed and named, and a node --test that outlives the kill is killed too, before the step is cut');
 });
 
 /** The install pin: over the steps before the step named Test, as steps() splits the job, it reads a Playwright install
@@ -1120,7 +1134,7 @@ test('the CI-only files under vscode-extension/ (the roster, the script and the 
 
 /** The failed-as-a-whole red's words after the file and node's failure: node's rule for failing a file as a whole, which
  *  holds whatever the cause, and where the cause is (the spec output above the red), so the red lists no causes to go stale. */
-const FILEFAIL_RULE = 'node fails a file as a whole when its process exits non-zero or is cut at the run\'s --test-timeout outside any one test\'s result: read the spec output above for the cause';
+const FILEFAIL_RULE = 'node fails a file as a whole when its process exits non-zero, or ends on a signal such as the per-file bound\'s kill, outside any one test\'s result: read the spec output above for the cause';
 
 function bash(args, opts = {}) {
   const r = spawnSync('bash', args, { encoding: 'utf8', ...opts });
@@ -1128,15 +1142,18 @@ function bash(args, opts = {}) {
   return r;
 }
 
-test('the script exists, is executable, runs node --test over the roster array (no xargs) with the reporter beside the spec reporter, and spells the empty-roster guard (each executed below through the stub)', () => {
+test('the script exists, is executable, runs one node --test per rostered leg (no xargs) with the reporter beside the spec reporter and no --test-timeout, and spells the empty-roster guard (each executed below through the stub)', () => {
   assert.ok(fs.existsSync(SCRIPT), 'the step\'s script exists at ' + path.relative(REPO, SCRIPT));
   assert.ok(fs.statSync(SCRIPT).mode & 0o111, 'the script is executable');
   assert.ok(fs.existsSync(REPORTER), 'the reporter the script passes to node --test exists at ' + path.relative(REPO, REPORTER));
   const src = read(SCRIPT);
   assert.match(src, /^REPORTER=\.\/scripts\/ci-browser-legs-reporter\.mjs$/m, 'the script names the reporter as REPORTER, by a path node resolves from vscode-extension/ (a line REPORTER=./scripts/ci-browser-legs-reporter.mjs, read for its presence)');
-  assert.equal((src.match(/--test-reporter="\$REPORTER" --test-reporter-destination="\$rep"/g) || []).length, 1, 'node --test is handed the reporter with a destination file the script reads after the run (executed below)');
+  assert.equal((src.match(/--test-reporter="\$REPORTER" --test-reporter-destination="\$d\.rec"/g) || []).length, 1, 'each leg\'s node --test is handed the reporter with a destination file of its own, which the script joins in roster order and reads after the run (executed below)');
   assert.ok(src.includes('echo "no legs in the roster"; exit 0'), 'the empty-roster guard is spelled in the script (executed below)');
-  assert.match(src, /^node --test .*"\$\{legs\[@\]\}" \|\| status=\$\?$/m, 'node --test runs the roster array directly and its status is kept, so the status is node\'s own on every platform (xargs would map a failed command\'s status to 123 on GNU and to 1 on BSD and macOS; executed below: 1 and 7 pass through)');
+  const nodeLines = src.split('\n').filter((l) => /^\s*node --test\b/.test(l));
+  assert.equal(nodeLines.length, 1, 'one line of the script starts node --test: ' + JSON.stringify(nodeLines));
+  assert.match(nodeLines[0], /^\s*node --test .* "\$\{legs\[\$i\]\}" >"\$d\.out" &$/, 'node --test runs one rostered bundle, the leg\'s own, in the background of the leg\'s subshell, which keeps its status, so the step\'s status is node\'s own on every platform (xargs would map a failed command\'s status to 123 on GNU and to 1 on BSD and macOS; executed below: 1 and 7 pass through): ' + nodeLines[0]);
+  assert.ok(!/--test-timeout/.test(nodeLines[0]), 'node --test is handed no --test-timeout: the per-file bound is the script\'s own kill, which reads the tree before anything signals the file\'s process (executed below: the stub reads no --test-timeout)');
   assert.ok(!src.split('\n').some((l) => !/^\s*#/.test(l) && /xargs/.test(l)), 'no xargs on a code line of the script, a line whose first non-blank character is not # (a comment line may name it; a comment after code on the same line is read as code, a loud red)');
   // the header states the post-run property as what the record proves, A TEST OF ITS BUNDLE PASSED, and names the boundary of
   // that proof (node's events carry no launch). A text pin on the header's prose, the lines scriptHeaderLines reads: it holds that the
@@ -1147,27 +1164,38 @@ test('the script exists, is executable, runs node --test over the roster array (
   assert.ok(scriptHeader.includes('derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED') && scriptHeader.includes('That is the whole of what the record can prove: node\'s events carry no launch'), 'the script header states the post-run property as A TEST OF ITS BUNDLE PASSED and its boundary, "That is the whole of what the record can prove: node\'s events carry no launch" (a text pin on the header\'s prose: it guards that the header states what the record proves and its boundary, so the property is not read as a launch record; the derivation is executed below. Holds the sentence: a reword of the header\'s two phrases moves this pin too)');
 });
 
-/** A synthetic tree: the script and the reporter under vscode-extension/scripts; under ui/webview two browser legs as SOURCES
- *  (a and b launch through inBrowser; a has a bundle, b none; a's second test has a newline and a # in its name, spelled \n
- *  and # in the source as node's record escapes them), whose text decides nothing here (the script reads a source's presence
- *  alone); and a stub node on PATH that records its arguments and then either runs the REAL node over them
- *  (CBL_STUB_REAL_NODE names it: the composition of the script, node and the real reporter) or writes CBL_STUB_REPORT (when
- *  set) to the reporter's destination and exits CBL_STUB_EXIT (0 unless set). Returns a runner over roster text (null removes
- *  the file) that runs the script with the switch set to 1 as the step does (stub.switch names another value; null runs it
- *  unset, as a local run may; stub.check runs --check as the first argument; stub.argv is a list of arguments passed after
- *  it; stub.report is the record the stub writes; stub.exit its exit;
- *  stub.real runs the real node); `node` in its result is the argument list of the node --test call without the reporter
- *  flags. The runner hands the script a fresh TMPDIR per run (removed and made again under the base directory), where the
- *  script's mktemp makes the record file: `tmp` in its result is that directory, and `record` is the path the script handed
- *  its reporter as the destination, read from the argument after --test-reporter=./scripts/ci-browser-legs-reporter.mjs in
- *  the stub's log (null when node was not started). The tree sits in a base directory beside a link to it, and `root` is
- *  the link: the script runs through it on every platform, so its post-run read's key (the script's comment above its
- *  awk pass states it) is held on a plain temporary directory too (ubuntu, where the vendored-tooling job runs), not only where
- *  os.tmpdir() sits behind a link: a key on the logical path would red every leg that passed. `ext` is
- *  the physical path of the tree's vscode-extension, as node spells a bundle in its record, and `rec(bundle, fields...)`
- *  spells one record line for that bundle (the reporter's eight fields, the path first). `prefix` is the base directory's
- *  name before the six characters mkdtemp adds: cbl- unless a case names another, as the case of a directory whose name
- *  holds a backslash does. */
+/** A synthetic tree: the script and the reporter under vscode-extension/scripts; under ui/webview two browser legs as
+ *  SOURCES (a and b launch through inBrowser; a has a bundle, b none; a's second test has a newline and a # in its name,
+ *  spelled \n and # in the source as node's record escapes them), whose text decides nothing here (the script reads a
+ *  source's presence alone); and a stub node on PATH. The script starts one node --test per rostered leg (its header's
+ *  "How the legs run"), so the stub runs once per leg, maybe several at once: each call writes its arguments, one per
+ *  line, to a file of its own in node-calls/ (named by its pid), then either runs the REAL node over them
+ *  (CBL_STUB_REAL_NODE names it: the composition of the script, node and the real reporter), or, when its last argument
+ *  (the bundle) is CBL_STUB_WEDGE, stays up for good, sleeping a second at a time (a node --test that does not end when
+ *  what is under it is killed), or else, with CBL_STUB_HOLD set, marks itself running in running/, sleeps that many
+ *  seconds, counts the calls marked running into peak/ (named by its pid), sleeps again and unmarks itself, and then
+ *  writes CBL_STUB_REPORT (when set) to the reporter's destination, in the one call that takes the report-written/
+ *  directory first, so the legs' records joined hold the report once, and exits CBL_STUB_EXIT (0 unless set). Returns a
+ *  runner over roster text (null removes the file) that runs the script with the switch set to 1 as the step does
+ *  (stub.switch names another value; null runs it unset, as a local run may; stub.check runs --check as the first
+ *  argument; stub.argv is a list of arguments passed after it; stub.report is the record the stub writes; stub.exit its
+ *  exit; stub.wedge the bundle whose call stays up; stub.hold the seconds each call holds and the count it takes, as
+ *  above; stub.timeout a bound in ms on the script's run, past which the run is red rather than hung; stub.env more
+ *  variables for the script, the per-file bound's knobs among them; stub.real runs the real node); `node` in its result is
+ *  the list of the node --test calls, each its arguments without the reporter flags, in the roster order of the bundle
+ *  each names (null when node was not started), `pids` the calls' pids in that order, and `peak` the most calls the stub
+ *  counted running at once (null without stub.hold). The runner hands the script a fresh TMPDIR per run (removed and made
+ *  again under the base directory), where the script's mktemp makes its run's directory: `tmp` in its result is that
+ *  TMPDIR, and `records` the paths the script handed its reporter as destinations, one per call, read from the argument
+ *  after --test-reporter=./scripts/ci-browser-legs-reporter.mjs in each call's file (null when node was not started). The
+ *  tree sits in a base directory beside a link to it, and `root` is the link: the script runs through it on every
+ *  platform, so its post-run read's key (the script's comment above its awk pass states it) is held on a plain temporary
+ *  directory too (ubuntu, where the vendored-tooling job runs), not only where os.tmpdir() sits behind a link: a key on
+ *  the logical path would red every leg that passed. `ext` is the physical path of the tree's vscode-extension, as node
+ *  spells a bundle in its record, and `rec(bundle, fields...)` spells one record line for that bundle (the reporter's
+ *  eight fields, the path first). `prefix` is the base directory's name before the six characters mkdtemp adds: cbl-
+ *  unless a case names another, as the case of a directory whose name holds a backslash does. `start` is the asynchronous
+ *  runner, its comment below. */
 function syntheticTree(t, prefix = 'cbl-') {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -1185,52 +1213,106 @@ function syntheticTree(t, prefix = 'cbl-') {
     + 'test("leg a keeps the slice\\nwhole # 2", async (t) => { await inBrowser(t, async (browser) => {}); });\n');
   web('b-browser.test.ts', shared + 'test("leg b opens the page", async (t) => { await inBrowser(t, async (browser) => {}); });\n');
   fs.writeFileSync(path.join(ext, 'out-tests', 'ui', 'webview', 'a-browser.test.js'), '');
-  const log = path.join(root, 'node-args.txt');
+  const calls = path.join(root, 'node-calls'), wrote = path.join(root, 'report-written');
   fs.writeFileSync(path.join(root, 'bin', 'node'), [
     '#!/bin/sh',
-    'printf \'%s\\n\' "$@" > "' + log + '"',
+    'mkdir -p "' + calls + '"',
+    'printf \'%s\\n\' "$@" > "' + calls + '/$$"',
     'if [ -n "${CBL_STUB_REAL_NODE:-}" ]; then exec "$CBL_STUB_REAL_NODE" "$@"; fi',
+    'last=""',
+    'for a in "$@"; do last="$a"; done',
+    'if [ -n "${CBL_STUB_WEDGE:-}" ] && [ "$last" = "$CBL_STUB_WEDGE" ]; then while :; do sleep 1; done; fi',
+    'if [ -n "${CBL_STUB_HOLD:-}" ]; then',
+    '  mkdir -p "' + path.join(root, 'running') + '" "' + path.join(root, 'peak') + '"',
+    '  : > "' + path.join(root, 'running') + '/$$"',
+    '  sleep "$CBL_STUB_HOLD"',
+    '  ls "' + path.join(root, 'running') + '" | wc -l | tr -d " " > "' + path.join(root, 'peak') + '/$$"',
+    '  sleep "$CBL_STUB_HOLD"',
+    '  rm -f "' + path.join(root, 'running') + '/$$"',
+    'fi',
     'prev=""',
     'for a in "$@"; do',
-    '  case "$a" in --test-reporter-destination=*) if [ "$prev" = "--test-reporter=./scripts/ci-browser-legs-reporter.mjs" ] && [ -n "${CBL_STUB_REPORT:-}" ]; then printf \'%s\\n\' "$CBL_STUB_REPORT" > "${a#--test-reporter-destination=}"; fi;; esac',
+    '  case "$a" in --test-reporter-destination=*) if [ "$prev" = "--test-reporter=./scripts/ci-browser-legs-reporter.mjs" ] && [ -n "${CBL_STUB_REPORT:-}" ] && mkdir "' + wrote + '" 2>/dev/null; then printf \'%s\\n\' "$CBL_STUB_REPORT" > "${a#--test-reporter-destination=}"; fi;; esac',
     '  prev="$a"',
     'done',
     'exit "${CBL_STUB_EXIT:-0}"',
     '',
   ].join('\n'), { mode: 0o755 });
   const A = 'out-tests/ui/webview/a-browser.test.js', B = 'out-tests/ui/webview/b-browser.test.js';
-  const run = (roster, stub = {}) => {
-    if (roster === null) fs.rmSync(path.join(ext, ROSTER), { force: true }); else fs.writeFileSync(path.join(ext, ROSTER), roster);
-    fs.rmSync(log, { force: true });
-    const tmp = path.join(base, 'tmp');
-    fs.rmSync(tmp, { recursive: true, force: true });
-    fs.mkdirSync(tmp);
-    const env = { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH, TMPDIR: tmp };
-    delete env.CBL_STUB_REPORT; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_REAL_NODE; delete env.NODE_TEST_CONTEXT;
+  // the environment of a run: the stub first on PATH, the fresh TMPDIR, the switch set to 1 unless stub.switch says
+  // otherwise, and the stub's variables as the stub argument names them
+  const envFor = (tmp, stub) => {
+    const env = { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH, TMPDIR: tmp, ...(stub.env || {}) };
+    delete env.CBL_STUB_REPORT; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_REAL_NODE; delete env.CBL_STUB_WEDGE; delete env.CBL_STUB_HOLD; delete env.NODE_TEST_CONTEXT;
     env[SWITCH] = '1';
     if (stub.switch === null) delete env[SWITCH]; else if (stub.switch !== undefined) env[SWITCH] = stub.switch;
     if (stub.report !== undefined) env.CBL_STUB_REPORT = stub.report;
     if (stub.exit !== undefined) env.CBL_STUB_EXIT = String(stub.exit);
+    if (stub.wedge !== undefined) env.CBL_STUB_WEDGE = stub.wedge;
+    if (stub.hold !== undefined) env.CBL_STUB_HOLD = stub.hold;
     if (stub.real) env.CBL_STUB_REAL_NODE = process.execPath;
-    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : []), ...(stub.argv || [])], { cwd: root, env });
-    const args = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : null;
-    const at = args ? args.indexOf('--test-reporter=./scripts/ci-browser-legs-reporter.mjs') : -1;
-    const dest = at >= 0 ? args[at + 1] : undefined;
-    const record = dest !== undefined && dest.startsWith('--test-reporter-destination=') ? dest.slice('--test-reporter-destination='.length) : null;
-    return { status: r.status, out: r.stdout, err: r.stderr, node: args && args.filter((a) => !a.startsWith('--test-reporter') && !a.startsWith('--test-timeout=')), reporters: args && args.filter((a) => a.startsWith('--test-reporter')), testTimeout: args && args.find((a) => a.startsWith('--test-timeout=')), tmp, record };
+    return env;
+  };
+  const fresh = (roster) => {
+    if (roster === null) fs.rmSync(path.join(ext, ROSTER), { force: true }); else fs.writeFileSync(path.join(ext, ROSTER), roster);
+    fs.rmSync(calls, { recursive: true, force: true });
+    fs.rmSync(wrote, { recursive: true, force: true });
+    for (const d of ['running', 'peak']) fs.rmSync(path.join(root, d), { recursive: true, force: true });
+    const tmp = path.join(base, 'tmp');
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.mkdirSync(tmp);
+    return tmp;
+  };
+  const run = (roster, stub = {}) => {
+    const tmp = fresh(roster);
+    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : []), ...(stub.argv || [])], { cwd: root, env: envFor(tmp, stub), ...(stub.timeout ? { timeout: stub.timeout } : {}) });
+    const lines = (roster || '').split('\n');
+    const named = fs.existsSync(calls) ? fs.readdirSync(calls).map((f) => ({ pid: Number(f), args: fs.readFileSync(path.join(calls, f), 'utf8').split('\n').filter(Boolean) })) : [];
+    named.sort((x, y) => lines.indexOf(x.args[x.args.length - 1]) - lines.indexOf(y.args[y.args.length - 1]));
+    const each = named.map((c) => c.args);
+    const destOf = (args) => {
+      const at = args.indexOf('--test-reporter=./scripts/ci-browser-legs-reporter.mjs');
+      const dest = at >= 0 ? args[at + 1] : undefined;
+      return dest !== undefined && dest.startsWith('--test-reporter-destination=') ? dest.slice('--test-reporter-destination='.length) : null;
+    };
+    const started = each.length > 0;
+    const peakDir = path.join(root, 'peak');
+    const peak = fs.existsSync(peakDir) ? Math.max(0, ...fs.readdirSync(peakDir).map((f) => Number(fs.readFileSync(path.join(peakDir, f), 'utf8')))) : null;
+    return { peak, status: r.status, out: r.stdout, err: r.stderr, node: started ? each.map((args) => args.filter((a) => !a.startsWith('--test-reporter') && !a.startsWith('--test-timeout='))) : null, reporters: started ? each.map((args) => args.filter((a) => a.startsWith('--test-reporter'))) : null, testTimeout: each.flat().find((a) => a.startsWith('--test-timeout=')), tmp, records: started ? each.map(destOf) : null, pids: started ? named.map((c) => c.pid) : null };
+  };
+  // the asynchronous runner, for a case that reads the processes of a run while it is still going: the script started
+  // with the real node through the stub (stub.real, whatever the stub argument says), in the environment run gives it, in
+  // a process group of its own, which kill() ends (term() sends the script alone a TERM); exited settles with its status
+  // when the script's process exits, and
+  // closed with { status, out, err } when its output closes too (a process left holding the output holds closed back)
+  const start = (roster, stub = {}) => {
+    const tmp = fresh(roster);
+    const child = spawn('bash', [path.join(ext, 'scripts', 'ci-browser-legs.sh')], { cwd: root, env: envFor(tmp, { ...stub, real: true }), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    child.stdout.on('data', (b) => { out += b; });
+    child.stderr.on('data', (b) => { err += b; });
+    const exited = new Promise((resolve) => child.on('exit', (status) => resolve(status)));
+    const closed = new Promise((resolve) => child.on('close', (status) => resolve({ status, out, err })));
+    const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is gone */ } };
+    const term = () => process.kill(child.pid, 'SIGTERM');
+    return { exited, closed, kill, term, tmp };
   };
   const real = fs.realpathSync(ext);
   const rec = (bundle, ...fields) => [path.join(real, bundle), ...fields].join('\t') + '\n';
-  return { run, root, ext: real, rec, A, B };
+  return { run, start, root, ext: real, rec, A, B };
 }
 
-/** The script removes its record file (its EXIT trap): read on a run that started node, from the record path the stub logged,
- *  so the emptiness check is not vacuous. That path is in the run's fresh TMPDIR and is gone after the run, and the TMPDIR is
- *  empty. `what` names the run in the messages. */
+/** The script removes its run's directory (its EXIT trap), the legs' record files in it: read on a run that started node, from
+ *  the record paths the stub logged, one per call, so the emptiness check is not vacuous. Each path is under the run's fresh
+ *  TMPDIR (where the script's mktemp makes its directory) and is gone after the run, and the TMPDIR is empty. `what` names
+ *  the run in the messages. */
 function assertRecordRemoved(r, what) {
-  assert.ok(r.record, what + ': the stub logged the destination the script handed its reporter: ' + JSON.stringify(r.reporters));
-  assert.equal(fs.realpathSync(path.dirname(r.record)), fs.realpathSync(r.tmp), what + ': the record file is in the run\'s fresh TMPDIR (the script\'s mktemp reads TMPDIR; compared as real paths, so the same directory spelled through a link counts): ' + r.record);
-  assert.ok(!fs.existsSync(r.record), what + ': the record file is gone after the run (the script\'s EXIT trap removes it): ' + r.record);
+  assert.ok(r.records && r.records.length > 0 && r.records.every(Boolean), what + ': the stub logged the destination the script handed its reporter in each call: ' + JSON.stringify(r.reporters));
+  const under = [r.tmp, fs.realpathSync(r.tmp)].map((d) => d + path.sep);
+  for (const rec of r.records) {
+    assert.ok(under.some((d) => rec.startsWith(d)), what + ': the record file is under the run\'s fresh TMPDIR (the script\'s mktemp reads TMPDIR; its path as given or as its real path): ' + rec);
+    assert.ok(!fs.existsSync(rec), what + ': the record file is gone after the run (the script\'s EXIT trap removes its directory): ' + rec);
+  }
   assert.deepEqual(fs.readdirSync(r.tmp), [], what + ': the run\'s fresh TMPDIR is empty after the run, so the run left no file there: ' + JSON.stringify(fs.readdirSync(r.tmp)));
 }
 
@@ -1239,9 +1321,9 @@ test('the script runs the rostered legs through node --test when the roster is w
   // the stub's record: a's one test passed (with no record a rostered leg is red as unrun, the property the post-run test executes)
   const ok = run('# header\n\n' + A + '\n', { report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
   assert.equal(ok.status, 0, 'a well-formed roster whose sources and bundles are present runs clean, exit 0; stderr:\n' + ok.err);
-  assert.deepEqual(ok.node, ['--test', A], 'node --test received the roster\'s one bundle');
-  assert.equal(ok.testTimeout, '--test-timeout=' + testTimeoutMs(), 'node --test received the per-file bound the script spells (its edges are pinned above)');
-  assert.deepEqual(ok.reporters.filter((a) => !a.startsWith('--test-reporter-destination=')), ['--test-reporter=spec', '--test-reporter=./scripts/ci-browser-legs-reporter.mjs'], 'the spec reporter for the log and the step\'s own reporter for the post-run read');
+  assert.deepEqual(ok.node, [['--test', A]], 'one node --test, over the roster\'s one bundle');
+  assert.equal(ok.testTimeout, undefined, 'node --test receives no --test-timeout: the per-file bound is the script\'s own kill (its edges are pinned above), and node\'s cancel at or under it would signal the file\'s process alone, which a leg\'s process outlived on node 22.23.2, before the kill reads the tree');
+  assert.deepEqual(ok.reporters.map((c) => c.filter((a) => !a.startsWith('--test-reporter-destination='))), [['--test-reporter=spec', '--test-reporter=./scripts/ci-browser-legs-reporter.mjs']], 'the spec reporter for the log and the step\'s own reporter for the post-run read');
   assert.ok(!ok.out.includes('no legs in the roster'));
   // the record file: the stub wrote a's pass to the path it logged and the script read it there (exit 0 needs that pass), and
   // after the run the path is gone and the run's TMPDIR is empty
@@ -1255,7 +1337,7 @@ test('the script runs the rostered legs through node --test when the roster is w
   // not read, so the step's run starts node over the roster
   const second = run('# header\n' + A + '\n', { argv: ['x', '--check'], report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
   assert.equal(second.status, 0, '--check as the second argument, the step\'s run over a well-formed roster: exit 0; stderr:\n' + second.err);
-  assert.deepEqual(second.node, ['--test', A], '--check as the second argument is not read: the step\'s run starts node --test over the roster');
+  assert.deepEqual(second.node, [['--test', A]], '--check as the second argument is not read: the step\'s run starts node --test over the roster');
   assert.ok(!second.out.includes('the roster is well formed'), '--check as the second argument prints no agreement line: ' + JSON.stringify(second.out));
   // a well_formed row (its comment in the script states the shape): a bundle straight under out-tests/, whose source is at
   // the tree's root, passes the pre-run checks
@@ -1276,7 +1358,7 @@ test('the script runs the rostered legs through node --test when the roster is w
   const passes = rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') + rec(B, 'pass', 'test', '-', 'test', 'leg b opens the page', '', '-');
   const oneLine = run(A, { report: passes });
   const twoLines = run(A + '\n' + B, { report: passes });
-  assert.deepEqual([oneLine.node, twoLines.node], [['--test', A], ['--test', A, B]], 'a roster whose last line has no newline hands node every line, a one-line roster and a two-line roster alike (the exit alone does not tell: the empty-roster path exits 0 too); stdout:\n' + oneLine.out + twoLines.out);
+  assert.deepEqual([oneLine.node, twoLines.node], [[['--test', A]], [['--test', A], ['--test', B]]], 'a roster whose last line has no newline hands node every line, one node --test per line, a one-line roster and a two-line roster alike (the exit alone does not tell: the empty-roster path exits 0 too); stdout:\n' + oneLine.out + twoLines.out);
   assert.equal(oneLine.status, 0, 'the one-line roster with no final newline runs clean; stderr:\n' + oneLine.err);
   assert.equal(twoLines.status, 0, 'the two-line roster whose last line has no newline runs clean; stderr:\n' + twoLines.err);
   // the post-run key's row (the script's comment above its awk pass states the key): a tree under a directory whose name
@@ -1351,7 +1433,7 @@ test('the script refuses, naming the line and the remedy, on: a missing roster f
   const SEEN_ROWS = [
     ['a line holding a backslash rostered twice, in the step\'s run: line 2 refused as a duplicate of line 1', K1 + '\n' + K1 + '\n', {}, (r) => r.status === 1 && r.err.includes(TWICE) && r.err.includes(SUMMARY) && r.node === null],
     ['a line holding a backslash rostered twice, under --check: line 2 refused as a duplicate of line 1', K1 + '\n' + K1 + '\n', { check: true }, (r) => r.status === 1 && r.err.includes(TWICE) && r.err.includes(SUMMARY) && r.node === null && !r.out.includes('the roster is well formed')],
-    ['that line beside the line holding two backslashes in its place, in the step\'s run: neither refused, node started over both', K1 + '\n' + K2 + '\n', { report: BOTH_PASS }, (r) => r.status === 0 && r.err === '' && isDeepStrictEqual(r.node, ['--test', K1, K2])],
+    ['that line beside the line holding two backslashes in its place, in the step\'s run: neither refused, node started over both', K1 + '\n' + K2 + '\n', { report: BOTH_PASS }, (r) => r.status === 0 && r.err === '' && isDeepStrictEqual(r.node, [['--test', K1], ['--test', K2]])],
     ['that line beside the line holding two backslashes in its place, under --check: neither refused, both rostered', K1 + '\n' + K2 + '\n', { check: true }, (r) => r.status === 0 && r.err === '' && r.out.includes('the roster is well formed and every line names a source in the tree: 2 rostered')],
   ];
   const seenWrong = [];
@@ -1367,7 +1449,7 @@ test('after node --test the script derives per rostered leg that a test of its b
   const PASS = rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-');
   const skipped = run(A + '\n', { report: PASS + rec(A, 'pass', 'test', 'skip', 'test', 'leg a keeps the slice\\nwhole # 2', 'no playwright chromium on this box', '-') });
   assert.equal(skipped.status, 1, 'a skip under the switch is red; stderr: ' + skipped.err);
-  assert.deepEqual(skipped.node, ['--test', A], 'the leg ran (the skip is read from the run, not refused before it)');
+  assert.deepEqual(skipped.node, [['--test', A]], 'the leg ran (the skip is read from the run, not refused before it)');
   assert.ok(skipped.err.includes('ci-browser-legs: skipped with ' + SWITCH + '=1: \'leg a keeps the slice\\nwhole # 2\' # SKIP no playwright chromium on this box (' + A + ')'), 'the skip names the test as the record spells it (a newline written \\n), its reason and its leg:\n' + skipped.err);
   assert.ok(skipped.err.includes('a rostered leg skipped a test with ' + SWITCH + '=1, so the step claims coverage it did not run'), 'the skip\'s red says the step claims coverage it did not run:\n' + skipped.err);
   assert.ok(skipped.err.includes('under the switch, inBrowser in ui/webview/real-viewer-leg.ts fails a launch it cannot make instead of skipping') && skipped.err.includes('until every test of the leg runs here, take its line out of ' + ROSTER), 'the skip\'s red carries the set-switch reason (under the switch, inBrowser fails a launch it cannot make instead of skipping) and the remedy that takes the line out of the roster:\n' + skipped.err);
@@ -1386,7 +1468,7 @@ test('after node --test the script derives per rostered leg that a test of its b
   const UNRUN = 'ci-browser-legs: ' + A + ': no test of this leg passed in this run (the record holds ';
   const none = run(A + '\n', { report: rec(A, 'pass', 'test', '-', 'file-level', A, '', '-') });
   assert.equal(none.status, 1, 'a file that registered nothing is red; stderr: ' + none.err);
-  assert.deepEqual(none.node, ['--test', A], 'the leg ran (the empty run is read from the record, not refused before it)');
+  assert.deepEqual(none.node, [['--test', A]], 'the leg ran (the empty run is read from the record, not refused before it)');
   assert.ok(none.err.includes(UNRUN + '0 skipped, 0 todo, 0 suite and 1 file-level results for it), so the step claims coverage it did not run') && none.err.includes('so take its line out of ' + ROSTER + ' until one runs'), 'a file that registered nothing is red as unrun with what the record held (1 file-level result) and the remedy that takes the line out of the roster:\n' + none.err);
   // the unrun red carries the boundary of what the record proves beside its remedy (read from the run's stderr): a pass is the
   // most the record proves, and, for a leg that follows the roster rule, the browser part's own run is read only by the skip
@@ -1414,13 +1496,13 @@ test('after node --test the script derives per rostered leg that a test of its b
   assert.equal(two.status, 1, 'two rostered legs, one that ran nothing: exit 1; stderr:\n' + two.err);
   assert.ok(two.err.includes('ci-browser-legs: ' + B + ': no test of this leg passed') && !two.err.includes('ci-browser-legs: ' + A + ': no test'), 'the leg that ran nothing is named and the one that passed is not:\n' + two.err);
   // a file that failed as a whole: node's file-level result failing, which node reports when the file's process exits
-  // non-zero or is cut at --test-timeout outside any one test's result; the red states that rule and points at the spec
-  // output for the cause, whatever the cause was, and says nothing of how many tests counted. First a counting pass beside a
-  // file-level timeout (a later test hung, or an open handle kept the process alive to the bound: the record cannot say
-  // which): red by node's rule, the pass counted, so no unrun red and no line saying the file ran no test that counts
+  // non-zero or ends on a signal outside any one test's result; the red states that rule and points at the spec output for
+  // the cause, whatever the cause was, and says nothing of how many tests counted. First a counting pass beside a
+  // file-level failure of a timeout's wording (the record cannot say what ended the file): red by node's rule, the pass
+  // counted, so no unrun red and no line saying the file ran no test that counts
   const passThenCut = run(A + '\n', { report: PASS + rec(A, 'fail', 'test', '-', 'file-level', A, 'test timed out after 240000ms', 'testTimeoutFailure'), exit: 1 });
   assert.equal(passThenCut.status, 1, 'a file cut at the bound after a counting pass is red; stderr:\n' + passThenCut.err);
-  assert.ok(passThenCut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 240000ms): ' + FILEFAIL_RULE), 'a file cut at --test-timeout after a counting pass is red naming the file and the failure type, worded by node\'s rule and pointing at the spec output for the cause:\n' + passThenCut.err);
+  assert.ok(passThenCut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 240000ms): ' + FILEFAIL_RULE), 'a file that failed as a whole after a counting pass is red naming the file and the failure type, worded by node\'s rule and pointing at the spec output for the cause:\n' + passThenCut.err);
   assert.ok(!passThenCut.err.includes('no test of this leg passed') && !passThenCut.err.includes('ran no test that counts'), 'the pass counts: no unrun red, and no line says the file ran no test that counts:\n' + passThenCut.err);
   const timedOut = run(A + '\n', { report: rec(A, 'fail', 'test', '-', 'file-level', A, 'test timed out after 300000ms', 'testTimeoutFailure'), exit: 1 });
   assert.equal(timedOut.status, 1, 'node\'s failure stands');
@@ -1573,6 +1655,150 @@ test('the composition, executed: the script with the real node and the real repo
   assert.ok(late.out.includes('a synthetic failure after the test ended'), 'the spec output above the red carries the error the red points at:\n' + late.out);
 });
 
+/** Whether a process is alive: it takes a signal 0 and ps does not show it as a zombie (a process killed and not yet reaped
+ *  takes signal 0 too). */
+function alive(pid) {
+  try { process.kill(pid, 0); } catch { return false; }
+  const stat = (spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout || '').trim();
+  return stat !== '' && !stat.startsWith('Z');
+}
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+/** The hanging leg the per-file bound's executed cases run, written as bundle `bundle` under `ext`: it writes its node
+ *  process's pid beside the mark, ignores SIGTERM (as a launched browser's handler kept a leg's process up past node's own
+ *  cancel on node 22.23.2), starts two keepers, passes one test and hangs in the next. A keeper writes its pid beside the
+ *  mark it is handed, starts a keeper of the next depth under it (in its own process group) while the depth is above 1, and
+ *  stays up. The two: one in a session of its own (detached, as Playwright starts Chromium, so outside the file's process
+ *  group, and leading a group of its own), and one in the file's own process group, which leads none, so only a walk by
+ *  parent links two levels below the file's process reaches its child. Returns the mark and the roles, each [the suffix of
+ *  its pid file, what it is]. */
+function hangingLeg(ext, bundle) {
+  fs.writeFileSync(path.join(ext, 'out-tests', 'keeper.cjs'), 'const fs = require("node:fs"); const { spawn } = require("node:child_process");\nconst [mark, depth] = process.argv.slice(2);\nfs.writeFileSync(mark + "." + depth, String(process.pid));\nif (Number(depth) > 1) spawn(process.execPath, [__filename, mark, String(Number(depth) - 1)], { stdio: "ignore" });\nsetInterval(() => {}, 1000);\n');
+  const mark = path.join(ext, bundle + '.pid');
+  const keeper = (k, detached) => 'spawn(process.execPath, [path.join(__dirname, "..", "..", "keeper.cjs"), ' + JSON.stringify(mark + '.' + k) + ', "2"], { detached: ' + detached + ', stdio: "ignore" });\n';
+  fs.writeFileSync(path.join(ext, bundle), 'const { test } = require("node:test"); const fs = require("node:fs"); const path = require("node:path"); const { spawn } = require("node:child_process");\n'
+    + 'fs.writeFileSync(' + JSON.stringify(mark) + ' + ".leg", String(process.pid));\n'
+    + 'process.on("SIGTERM", () => {});\n'
+    + keeper('s', true) + keeper('g', false)
+    + 'test("passes before the hang", () => {});\n'
+    + 'test("hangs past the bound", async () => { await new Promise((resolve) => setTimeout(resolve, 120000)); });\n');
+  return { mark, roles: [['leg', 'the leg\'s own node process'], ['s.2', 'the process it started in a session of its own'], ['s.1', 'that process\'s child'], ['g.2', 'the process it started in the file\'s own process group'], ['g.1', 'that process\'s child, reached by parent links alone']] };
+}
+/** The hanging leg's processes once each has written its pid (asserted, within 30 s of t0), as [what it is, pid], pushed to
+ *  `pids` as they are read; `ended()` says whether the run ended first. */
+async function hangingPids(mark, roles, t0, ended, pids) {
+  while (!roles.every(([k]) => fs.existsSync(mark + '.' + k)) && Date.now() - t0 < 30000 && !ended()) await pause(25);
+  for (const [k, role] of roles) {
+    assert.ok(fs.existsSync(mark + '.' + k), role + ' wrote its pid (' + mark + '.' + k + ') within 30 s of the run\'s start, so the processes the run must end were up; the run ' + (ended() ? 'ended first' : 'is still going'));
+    pids.push([role, Number(fs.readFileSync(mark + '.' + k, 'utf8'))]);
+  }
+}
+
+test('the per-file bound ends a leg that outlives it, with every process under it, executed with the real node and the real reporter: a synthetic leg that passes a test and then hangs, whose node process ignores SIGTERM (as a launched browser\'s handler kept a leg\'s process up past node\'s own cancel on node 22.23.2) and which starts a process in a session of its own with a child under it (as Playwright starts Chromium) and a process in its own process group with a child under it, is gone with all four of them by the bound plus the grace, set short by the knobs; the run reads the other leg\'s pass and the cut leg\'s pass before the hang, names the cut leg and its bound as red, and leaves none of its timers behind', async (t) => {
+  const { start, root, ext, A, B } = syntheticTree(t);
+  // odd values, so the timers' sleeps are told apart from any other process's by their arguments
+  const BOUND = 1513, GRACE = 1709, SLACK = 2500;
+  const shared = 'import { inBrowser } from "./real-viewer-leg";\n';
+  fs.writeFileSync(path.join(root, 'ui', 'webview', 'b-browser.test.ts'), shared + 'test("leg b passes", async (t) => { await inBrowser(t, async () => {}); });\n');
+  const { mark, roles } = hangingLeg(ext, A);
+  fs.writeFileSync(path.join(ext, B), 'const { test } = require("node:test");\ntest("leg b passes", () => {});\n');
+  const t0 = Date.now();
+  const r = start(A + '\n' + B + '\n', { env: { ROMP_BROWSER_LEGS_FILE_MS: String(BOUND), ROMP_BROWSER_LEGS_GRACE_MS: String(GRACE) } });
+  const pids = [];
+  t.after(() => { for (const [, pid] of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } r.kill(); });
+  let ended = null;
+  r.exited.then((status) => { ended = { status, ms: Date.now() - t0 }; });
+  // the leg and the processes under it are up (each wrote its pid), read before the bound
+  await hangingPids(mark, roles, t0, () => ended !== null, pids);
+  assert.ok(Date.now() - t0 < BOUND, 'the leg and the processes under it were up before the bound (' + BOUND + ' ms), so what is read below is the bound\'s doing: ' + (Date.now() - t0) + ' ms');
+  // the deadline: the bound, the grace and a slack for a loaded runner, from the run's start; read at the run's end when it
+  // ends first
+  let deadline;
+  await Promise.race([r.exited, new Promise((resolve) => { deadline = setTimeout(resolve, Math.max(0, t0 + BOUND + GRACE + SLACK - Date.now())); })]);
+  clearTimeout(deadline);
+  const at = Date.now() - t0;
+  const up = pids.filter(([, pid]) => alive(pid)).map(([role, pid]) => role + ' (pid ' + pid + ')');
+  const timers = (spawnSync('ps', ['-A', '-o', 'args='], { encoding: 'utf8' }).stdout || '').split('\n').filter((l) => /^sleep (1\.513|1\.709)\b/.test(l.trim()));
+  assert.deepEqual(up, [], 'at ' + at + ' ms after the run started, past the per-file bound (' + BOUND + ' ms) and its grace (' + GRACE + ' ms), no process of the leg that outlived the bound is alive: the bound ends the cut file\'s node process and every process under it, the one in a session of its own (outside the file\'s process group) and its child, and the one in the file\'s own group and its child, included; alive: ' + JSON.stringify(up));
+  assert.ok(ended !== null && ended.ms <= BOUND + GRACE + SLACK, 'the run itself ended by the bound plus the grace and the slack (' + (BOUND + GRACE + SLACK) + ' ms), so the cut leg does not hold the step to its own timeout: ' + (ended ? ended.ms + ' ms' : 'still going at ' + at + ' ms'));
+  assert.deepEqual(timers, [], 'no timer of the run is left behind at its exit (a sleep of the bound\'s or the grace\'s length)');
+  Object.assign(ended, await r.closed);
+  assert.equal(ended.status, 1, 'the cut is red, exit 1; stderr:\n' + ended.err);
+  assert.ok(ended.err.includes('ci-browser-legs: ' + A + ' ran past the per-file bound (' + BOUND + ' ms)'), 'the red names the cut leg and the bound:\n' + ended.err);
+  assert.ok(ended.err.includes('ci-browser-legs: ' + A + ' failed as a whole ('), 'node --test records the killed file as failed as a whole, which the run reads from the record:\n' + ended.err);
+  assert.ok(!ended.err.includes('had not ended'), 'the leg\'s node --test ended on its own after the bound\'s kill, within the grace, so it wrote its record whole:\n' + ended.err);
+  assert.ok(!ended.err.includes(A + ': no test of this leg passed') && !ended.err.includes(B + ': no test of this leg passed'), 'the cut leg\'s pass before the hang and the other leg\'s pass are read from the record, so neither leg is red as unrun:\n' + ended.err);
+  assert.ok(ended.out.includes('passes before the hang') && ended.out.includes('leg b passes'), 'the spec output carries both legs\' passes:\n' + ended.out);
+});
+
+test('a TERM to the script, as a cancelled step sends, ends each leg still running with every process under it (the hanging leg\'s node process, the process in a session of its own and the one in the file\'s own group, and their children), and the run leaves its TMPDIR empty, executed with the real node and the default bound', async (t) => {
+  const { start, ext, A } = syntheticTree(t);
+  const { mark, roles } = hangingLeg(ext, A);
+  const t0 = Date.now();
+  const r = start(A + '\n');
+  const pids = [];
+  t.after(() => { for (const [, pid] of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } r.kill(); });
+  let ended = null;
+  r.exited.then((status) => { ended = { status, ms: Date.now() - t0 }; });
+  await hangingPids(mark, roles, t0, () => ended !== null, pids);
+  const termed = Date.now();
+  r.term();
+  let deadline;
+  await Promise.race([r.exited, new Promise((resolve) => { deadline = setTimeout(resolve, 10000); })]);
+  clearTimeout(deadline);
+  const up = pids.filter(([, pid]) => alive(pid)).map(([role, pid]) => role + ' (pid ' + pid + ')');
+  assert.ok(ended !== null, 'the script ended within 10 s of the TERM: ' + (Date.now() - termed) + ' ms');
+  assert.deepEqual(up, [], 'after the TERM no process of the leg still running is alive; alive: ' + JSON.stringify(up));
+  assert.equal(ended.status, 143, 'the script exits 143 on a TERM (its TERM trap), after its EXIT trap ends the legs');
+  await r.closed;
+  assert.deepEqual(fs.readdirSync(r.tmp), [], 'the run\'s TMPDIR is empty after the TERM, its directory removed by the EXIT trap: ' + JSON.stringify(fs.readdirSync(r.tmp)));
+});
+
+test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the other leg\'s record read and no timer left behind; the knobs refuse a value that is not a whole number above 0, naming it, and no leg runs; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order', (t) => {
+  const { run, root, rec, A, B } = syntheticTree(t);
+  fs.writeFileSync(path.join(root, 'vscode-extension', B), '');
+  const C = 'out-tests/ui/webview/c-browser.test.js';
+  fs.writeFileSync(path.join(root, 'ui', 'webview', 'c-browser.test.ts'), '');
+  fs.writeFileSync(path.join(root, 'vscode-extension', C), '');
+  const pass = (bundle) => rec(bundle, 'pass', 'test', '-', 'test', 'a test of ' + bundle, '', '-');
+  // the grace's end: A's node --test (the stub, wedged) stays up after the bound kills what is under it, a sleep at a time;
+  // odd values, so the timers' sleeps are told apart from any other process's by their arguments
+  const t0 = Date.now();
+  const held = run(A + '\n' + B + '\n', { wedge: A, report: pass(B), timeout: 30000, env: { ROMP_BROWSER_LEGS_FILE_MS: '401', ROMP_BROWSER_LEGS_GRACE_MS: '403' } });
+  const took = Date.now() - t0;
+  assert.equal(held.status, 1, 'a node --test killed at the grace\'s end is red, exit 1; stderr:\n' + held.err);
+  assert.ok(held.err.includes('ci-browser-legs: ' + A + ' ran past the per-file bound (401 ms)'), 'the cut is named, with the bound:\n' + held.err);
+  assert.ok(held.err.includes('ci-browser-legs: ' + A + ': its node --test had not ended 403 ms after the bound\'s kill, so the script killed it too, with every process under it: its record may be cut short, so read its spec output above'), 'the grace\'s end is named, with the grace and what it means for the record:\n' + held.err);
+  assert.ok(!held.err.includes(B + ': no test of this leg passed'), 'the other leg\'s pass is read from its record:\n' + held.err);
+  assert.ok(took < 401 + 403 + 15000, 'the run ended soon after the bound and the grace (' + took + ' ms), not held by the node --test that did not end');
+  assert.deepEqual(held.node, [['--test', A], ['--test', B]], 'one node --test per leg');
+  assert.ok(!alive(held.pids[0]), 'the node --test that did not end (pid ' + held.pids[0] + ') is gone');
+  const timers = (spawnSync('ps', ['-A', '-o', 'args='], { encoding: 'utf8' }).stdout || '').split('\n').filter((l) => /^sleep (0\.401|0\.403)\b/.test(l.trim()));
+  assert.deepEqual(timers, [], 'no timer of the run is left behind (a sleep of the bound\'s or the grace\'s length)');
+  assertRecordRemoved(held, 'the run whose node --test was killed at the grace\'s end');
+  // the knobs' refusals: each value refused by name, exit 1, before any leg runs (an empty value is the default's, as for
+  // any ${VAR:-default})
+  const refusals = [];
+  for (const [knob, value] of [['ROMP_BROWSER_LEGS_FILE_MS', 'abc'], ['ROMP_BROWSER_LEGS_FILE_MS', '0'], ['ROMP_BROWSER_LEGS_GRACE_MS', '-5'], ['ROMP_BROWSER_LEGS_GRACE_MS', '1.5'], ['ROMP_BROWSER_LEGS_JOBS', '012'], ['ROMP_BROWSER_LEGS_JOBS', '2 ']]) {
+    const r = run(A + '\n', { report: pass(A), env: { [knob]: value } });
+    if (!(r.status === 1 && r.node === null && r.err.includes('ci-browser-legs: ' + knob + '=\'' + value + '\' is not a whole number above 0 (digits alone, no leading zero): fix it or unset it; no leg ran'))) refusals.push(knob + '=' + JSON.stringify(value) + ': exit ' + r.status + ', node ' + JSON.stringify(r.node) + ', stderr ' + JSON.stringify(r.err));
+  }
+  assert.deepEqual(refusals, [], 'each knob refuses a value that is not a whole number above 0, naming it, with no leg run; the rows read otherwise: ' + JSON.stringify(refusals));
+  // a roster longer than the legs run at once: one at a time, two at a time, and three (the whole roster) at once, each
+  // call holding 0.3 s twice and counting the calls running at its middle, so the most counted at once is the knob's value
+  // (with three, the control that the count sees calls run together); each leg run once and read, and the spec output's
+  // lines naming the legs in roster order
+  for (const jobs of ['1', '2', '3']) {
+    const r = run(A + '\n' + B + '\n' + C + '\n', { report: pass(A) + pass(B) + pass(C), hold: '0.3', timeout: 30000, env: { ROMP_BROWSER_LEGS_JOBS: jobs } });
+    assert.equal(r.peak, Number(jobs), 'with ROMP_BROWSER_LEGS_JOBS=' + jobs + ' the stub counted at most ' + jobs + ' node --test calls running at once: ' + r.peak);
+    assert.equal(r.status, 0, 'three legs, ' + jobs + ' at a time: green; stderr:\n' + r.err);
+    assert.equal(r.err, '', 'nothing on stderr: every leg\'s pass is read');
+    assert.deepEqual(r.node, [['--test', A], ['--test', B], ['--test', C]], 'each leg ran once, ' + jobs + ' at a time');
+    assert.ok(r.out.includes('ci-browser-legs: 3 rostered legs, ' + jobs + ' at a time'), 'the run says how many legs it runs at once:\n' + r.out);
+    const order = r.out.split('\n').filter((l) => / \(node --test exited \d+\):$/.test(l)).map((l) => l.replace(/^ci-browser-legs: | \(node --test exited \d+\):$/g, ''));
+    assert.deepEqual(order, [A, B, C], 'the legs\' outputs are printed in roster order, each after a line naming the leg and its exit:\n' + r.out);
+  }
+});
+
 test('each example the roster rule\'s homes name reads green, executed: the script with the real node and the real reporter over one synthetic rostered leg of each example in EXAMPLES exits 0 with nothing on stderr, each failure marked as it happens; a control that awaits the catch example\'s stand-in for inBrowser with no try reads red with the lost-browser remedy, so that green is the catch\'s doing', (t) => {
   // witnesses of what the step cannot see, the examples each home of the roster rule names. The witnesses model each example as
   // node's record shows it (a passing test, and for the todo example a todo beside it), so a change to the script or the
@@ -1589,7 +1815,7 @@ test('each example the roster rule\'s homes name reads green, executed: the scri
   const r = run(legs.map((l) => l.bundle).join('\n') + '\n', { real: true });
   assert.equal(r.status, 0, 'each example reads green (exit 0): a change to the script or the reporter that reads one of these examples from node\'s record turns this red, and the four homes of the roster rule drop that example, and EXAMPLES its entry, in the same change. The witnesses model each example as node\'s record shows it: a mechanism keyed on playwright\'s launch needs witnesses that launch, so the witness set is rewritten, not only re-read, when the follow-up lands; stderr:\n' + r.err);
   assert.equal(r.err, '', 'nothing on stderr for the examples (no red and no remedy line)');
-  assert.deepEqual(r.node, ['--test', ...legs.map((l) => l.bundle)], 'node --test ran every witness leg');
+  assert.deepEqual(r.node, legs.map((l) => ['--test', l.bundle]), 'a node --test ran each witness leg');
   for (const l of legs.filter((e) => e.marked)) {
     const mark = path.join(ext, l.bundle + '.mark');
     assert.ok(fs.existsSync(mark), l.marked + ' in this run (the mark beside ' + l.bundle + '), so the green above is read over the example, not over a leg that skipped it');

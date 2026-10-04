@@ -28,10 +28,33 @@
 # switch changes inBrowser's own skip alone, so a launch or a skip of the leg's own stands outside that read, and Chromium
 # is the one engine the job installs. A leg with no line runs only under the Test step, before the job installs a browser.
 # tools/ci-browser-legs.test.mjs (CI's Shell job, no node_modules) runs this script over synthetic trees, with a stub node
-# on PATH that records the node --test call and writes the record a case hands it, and with the real node and the real
+# on PATH that records each node --test call and writes the record a case hands it, and with the real node and the real
 # reporter. `--check`, read as the first argument alone, runs the pre-run checks alone and starts no node --test (it does
 # not check that the bundles are built, which the step's run does). The tree test's case "the script runs the rostered
 # legs" runs --check as the first argument, and as the second, where it is not read.
+# How the legs run. Each rostered leg runs as a node --test of its own over that one bundle, ROMP_BROWSER_LEGS_JOBS at a
+# time (by default one less than the CPUs that nproc, or getconf, counts, and at least one, as node's own
+# --test-concurrency defaults), started in roster order; each run's spec output and stderr are held and printed in
+# roster order, after a line naming the leg and its node --test's exit. The step's status is node's own: the first
+# non-zero exit among those runs, in roster order. The per-file bound: ROMP_BROWSER_LEGS_FILE_MS (default 240000) ms
+# after a leg's node --test starts, the script stops and kills every process under that node --test, found by parent
+# links over the whole process table (the file's own node process, and a browser Playwright launched, which runs in a
+# session of its own and so outside the file's process group, among them), with the process group each of them leads;
+# the file's process shares this script's own process group, so no kill signals that group. node --test then records the
+# file as failed as a whole (its process ended on a signal), beside the results the file recorded before the kill, and
+# the cut's red after the run names the leg and the bound. A node --test still running ROMP_BROWSER_LEGS_GRACE_MS
+# (default 10000) ms after that kill is killed too, with what is under it, and named. node's own --test-timeout is not
+# passed: on node 22.23.2 its cancel at the bound reports the file and signals the file's process alone, and node --test
+# then waits for that process, which a leg that had launched a browser outlived (recorded in a CI run of this step and
+# on a development box, not executed here); and a file's process that does end on that signal leaves what is under it to
+# outlive the file, before any walk reads the tree. The knobs are whole numbers above 0 (digits alone, no leading zero),
+# refused by name before any leg runs, and the step sets none of them. The tree test's case "the per-file bound ends a
+# leg that outlives it" runs, with the real node and a short bound, a synthetic leg whose node process ignores SIGTERM
+# and starts a process in a session of its own and one in the file's own process group, each with a child, and reads
+# every one of those processes gone by the bound plus the grace; its case "the per-file bound through the stub" runs the
+# grace's end, the knobs' refusals and a roster longer than the legs run at once. The timers and the event pipe use what
+# bash 3.2 has (no wait -n), as tests/shell-portability.bats holds for every shell script the repo ships. The legs'
+# records are joined in roster order into the one record the pass below reads.
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (the reporter's header states
 # what each line records) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result
 # attributed to it is a pass that carries no skip or todo, is a test and not a suite, and is not marked as node's
@@ -47,7 +70,8 @@
 # red naming the test, its reason and the switch's state in the run (with the switch unset, as a local run may have it,
 # the remedy is to run with it set); a failure inside a todo is red (node discards it: # fail 0, exit 0); a file that
 # failed as a whole (node's file-level result failing: node fails a file as a whole when its process exits non-zero or
-# is cut at the run's --test-timeout outside any one test's result) is red naming the file and pointing at the spec
+# ends on a signal, the bound's kill among them, outside any one test's result) is red naming the file and pointing at
+# the spec
 # output above for the cause; and a failed test whose message BEGINS with the phrase inBrowser fails with when it cannot
 # launch (the switch's name; a message that merely quotes that phrase after other text, as a leg embedding a child run's
 # output does, is an ordinary failure) is printed beside its leg with the remedy: the runner lost its browser, check the
@@ -58,8 +82,9 @@
 # remedy; and a leg whose bundle has neither a pass that counts nor a failure outside a todo is red as unrun, the red's
 # tally counting none of that file's results. One pass over the record (awk), linear in its length, executed by the tree
 # test's post-run and composition cases. From a checkout whose path holds a backslash, node refuses to load the reporter
-# (ERR_INVALID_MODULE_SPECIFIER, the backslash percent-encoded in the reporter's module path) and exits 7 before any leg
-# runs, so every rostered leg is red as unrun with a zero tally and the step exits 7 (executed under node 22). An empty
+# (ERR_INVALID_MODULE_SPECIFIER, the backslash percent-encoded in the reporter's module path) and each leg's node --test
+# exits 7 before its leg runs, so every rostered leg is red as unrun with a zero tally and the step exits 7 (executed
+# under node 22). An empty
 # roster prints "no legs in the roster" and exits 0 without starting node --test: with no file arguments node --test runs
 # its default glob, the whole suite again.
 set -euo pipefail
@@ -132,21 +157,155 @@ if [ "$fail" -ne 0 ]; then echo "ci-browser-legs: the roster is malformed or sta
 if [ "$check_only" -eq 1 ]; then echo "ci-browser-legs: the roster is well formed and every line names a source in the tree: ${#legs[@]} rostered (--check reads the roster alone and starts no node --test; the step's run also checks that each rostered bundle is built under out-tests/)"; exit 0; fi
 
 if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
-# The run's record goes to a file beside the spec output on stdout, one line per result (the reporter's header states the
-# eight fields); the pass below reads it once.
-rep=$(mktemp)
-trap 'rm -f "$rep"' EXIT
+
+# The per-file bound, its grace and the number of legs run at once, the knobs the header's "How the legs run" states, each
+# a whole number above 0, refused by name before any leg runs. The bound's default sits above every timeout: value the tree
+# test's bound pin reads in a rostered source, and the bound and the grace together sit under the step's own timeout-minutes
+# (.github/workflows/ci.yml), so a hung leg fails by name inside the step instead of the job being cancelled nameless;
+# tools/ci-browser-legs.test.mjs holds those edges, and its bound pin states the spellings it reads. A leg whose timeout is
+# spelled outside them and whose file outlasts the bound is cut here and named by the cut's red, not by its test.
+BOUND_MS=${ROMP_BROWSER_LEGS_FILE_MS:-240000}
+GRACE_MS=${ROMP_BROWSER_LEGS_GRACE_MS:-10000}
+cpus=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+JOBS=${ROMP_BROWSER_LEGS_JOBS:-$(( cpus > 1 ? cpus - 1 : 1 ))}
+whole() { case "$2" in ''|*[!0-9]*|0*) echo "ci-browser-legs: $1='$2' is not a whole number above 0 (digits alone, no leading zero): fix it or unset it; no leg ran" >&2; exit 1;; esac; }
+whole ROMP_BROWSER_LEGS_FILE_MS "$BOUND_MS"
+whole ROMP_BROWSER_LEGS_GRACE_MS "$GRACE_MS"
+whole ROMP_BROWSER_LEGS_JOBS "$JOBS"
+secs() { printf '%d.%03d' $(( $1 / 1000 )) $(( $1 % 1000 )); }
+
+# The run's files, in one directory under TMPDIR that the EXIT trap removes: per leg i (its place in the roster, from 0),
+# its spec output (i.out), its node --test's stderr (i.err), its record (i.rec; the reporter's header states the eight
+# fields of a line), its node --test's pid (i.pid) and exit (i.status), and a mark when the bound cut it (i.cut) or its node
+# --test outlived the grace (i.held); the record the pass below reads, the legs' records in roster order; and the event
+# pipe, on which each leg's subshell posts "done i" when its node --test exits and each timer posts "bound i" or "grace i"
+# when it runs out. This shell holds the pipe open for reading and writing on fd 3 until it exits, so a post never waits.
+job=(); tmr=(); fin=()
+started=0
+work=$(mktemp -d)
+# On any exit: each leg still running is ended (its timer's group killed, its node --test and every process under it
+# killed, as end_leg below does), then the run's directory is removed.
+cleanup() {
+  local i=0
+  while [ "$i" -lt "$started" ]; do
+    if [ -z "${fin[$i]:-}" ]; then
+      [ -z "${tmr[$i]:-}" ] || kill -TERM -- "-${tmr[$i]}" 2>/dev/null || true
+      end_leg "$i"
+    fi
+    i=$((i + 1))
+  done
+  rm -rf "$work"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+rep="$work/record"
+events="$work/events"
+mkfifo "$events"
+exec 3<>"$events"
+# The pid kill_below starts from for leg $1: its node --test's, or, before that pid is written, the leg's subshell's.
+runner() { local p=""; [ ! -s "$work/$1.pid" ] || read -r p < "$work/$1.pid"; echo "${p:-${job[$1]}}"; }
+# Every process under $1 (not $1 itself), found by parent links over the whole process table (ps -A): each one found is
+# stopped at once (SIGSTOP, so it forks nothing more), the table is read again until a read finds no new one, and then each
+# is killed (SIGKILL), the process group it leads first. A browser Playwright launched runs in a session of its own, outside
+# the file's process group, so a kill of the file's group alone would miss it; the group it leads is its own. A pid that is
+# not a number above 1 starts nothing.
+kill_below() {
+  local all=" " found p
+  case "$1" in ''|*[!0-9]*|0|1) return 0;; esac
+  while :; do
+    found=$(ps -A -o pid= -o ppid= | awk -v r="$1" -v seen="$all" '{ kids[$2] = kids[$2] " " $1 } END { q[1] = r; n = 1; for (i = 1; i <= n; i++) { m = split(kids[q[i]], c, " "); for (j = 1; j <= m; j++) { q[++n] = c[j]; if (index(seen, " " c[j] " ") == 0) printf "%s ", c[j] } } }')
+    [ -n "$found" ] || break
+    kill -STOP $found 2>/dev/null || true
+    all="$all$found"
+  done
+  [ "$all" != " " ] || return 0
+  for p in $all; do kill -KILL -- "-$p" 2>/dev/null || true; done
+  kill -KILL $all 2>/dev/null || true
+}
+# Ends leg $1's node --test with every process under it (at the grace's end, and on an exit before the legs ended): the
+# node --test is stopped first, so it starts nothing between the walk and its own kill. The leg's subshell is left to post
+# its "done" (when the node --test never started, kill_below took what was under the subshell instead).
+end_leg() {
+  local p; p=$(runner "$1")
+  [ "$p" = "${job[$1]}" ] || kill -STOP "$p" 2>/dev/null || true
+  kill_below "$p"
+  [ "$p" = "${job[$1]}" ] || kill -KILL "$p" 2>/dev/null || true
+}
+# A timer for leg $1: $3 ms after it starts it posts "$2 $1". Its sleep runs in a process group of its own (set -m), whose
+# id is tmr[$1], so the leg's end kills the sleep with its group; it is started from a subshell that exits at once, so the
+# process killed is never a job of this shell, and bash prints no job notice. It holds none of this script's output, so
+# nothing reading the step's output waits on a timer.
+timer() {
+  set -m
+  ( ( sleep "$(secs "$3")" && echo "$2 $1" > "$events" ) & ) >/dev/null 2>&1 3>&- &
+  set +m
+  tmr[$1]=$!
+}
+# Leg $1: its bound's timer, then its node --test over that one bundle, in a subshell that writes the pid and the exit and
+# posts "done $1". Node's stdin is /dev/null, as for any background job of a shell without job control.
+launch() {
+  local i=$1 d="$work/$1"
+  timer "$i" bound "$BOUND_MS"
+  (
+    set +e
+    node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER" --test-reporter-destination="$d.rec" "${legs[$i]}" >"$d.out" &
+    p=$!
+    echo "$p" > "$d.pid"
+    wait "$p"
+    echo "$?" > "$d.status"
+    echo "done $i" > "$events"
+  ) 2>"$d.err" 3>&- &
+  job[$i]=$!
+}
+# Leg $1's spec output to stdout and its node --test's stderr to stderr, after a line naming the leg and its exit.
+show() {
+  local d="$work/$1" st=""
+  [ ! -s "$d.status" ] || read -r st < "$d.status"
+  echo "ci-browser-legs: ${legs[$1]} (node --test exited ${st:-with no status}):"
+  [ ! -f "$d.out" ] || cat "$d.out"
+  [ ! -f "$d.err" ] || cat "$d.err" >&2
+}
+
+n=${#legs[@]}
+echo "ci-browser-legs: $n rostered legs, $JOBS at a time, each its own node --test, killed with every process under it $BOUND_MS ms after it starts"
+finished=0
+shown=0
+while [ "$started" -lt "$n" ] && [ "$started" -lt "$JOBS" ]; do launch "$started"; started=$((started + 1)); done
+while [ "$finished" -lt "$n" ]; do
+  read -r event i <&3
+  [ -z "${fin[$i]:-}" ] || continue   # a timer that ran out as its leg ended
+  case "$event" in
+    bound)
+      tmr[$i]=""
+      : > "$work/$i.cut"
+      kill_below "$(runner "$i")"
+      timer "$i" grace "$GRACE_MS";;
+    grace)
+      tmr[$i]=""
+      : > "$work/$i.held"
+      end_leg "$i";;
+    done)
+      fin[$i]=1
+      finished=$((finished + 1))
+      [ -z "${tmr[$i]:-}" ] || kill -TERM -- "-${tmr[$i]}" 2>/dev/null || true
+      tmr[$i]=""
+      if [ "$started" -lt "$n" ]; then launch "$started"; started=$((started + 1)); fi
+      while [ "$shown" -lt "$n" ] && [ -n "${fin[$shown]:-}" ]; do show "$shown"; shown=$((shown + 1)); done;;
+  esac
+done
+
+# The step's status is node's own: the first non-zero exit among the legs' node --test runs, in roster order, a run the
+# script killed at the grace's end aside (its exit is the kill's, and its red below sets the status). Node's exit reaches
+# it directly, with no xargs to map it (123 on GNU, 1 on BSD and macOS), so the status is node's own everywhere.
 status=0
-# --test-timeout bounds each FILE's whole run (node cancels that file and ends its process at the bound, naming it, and runs
-# the other files on; a leg's own { timeout } names its test and leaves the process alive on a live browser handle), so a
-# hung leg fails by name inside the step's own timeout-minutes (.github/workflows/ci.yml) instead of the job being cancelled
-# nameless. The value sits above every timeout: value the tree test's bound pin reads in a rostered source and under the
-# step's bound, and tools/ci-browser-legs.test.mjs holds both edges; its bound pin states the spellings it reads, and a leg
-# whose timeout is spelled outside them and whose file outlasts this bound is cut here and named as a file that failed as a
-# whole, testTimeoutFailure, not by its test. The roster array is node's argument list directly (no xargs, whose
-# mapping of a failed command's status differs by platform: 123 on GNU, 1 on BSD and macOS), so the status below is node's
-# own everywhere.
-node --test --test-timeout=240000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER" --test-reporter-destination="$rep" "${legs[@]}" || status=$?
+: > "$rep"
+i=0
+while [ "$i" -lt "$n" ]; do
+  [ ! -f "$work/$i.rec" ] || cat "$work/$i.rec" >> "$rep"
+  if [ "$status" -eq 0 ] && [ ! -e "$work/$i.held" ] && [ -s "$work/$i.status" ]; then read -r st < "$work/$i.status"; [ "$st" -eq 0 ] || status=$st; fi
+  i=$((i + 1))
+done
 
 # One pass over the record with the roster on stdin: per rostered leg a TALLY line (passes that count, fails that count,
 # skips, todos, todo failures, suites, file-level results); and one line per result the step reads a red from: SKIP, TODOFAIL,
@@ -189,7 +348,7 @@ while IFS=$'\t' read -r kind leg a b c d e f g; do
       echo "ci-browser-legs: $leg: '$a' failed inside a todo ($b): node discards the failure (# fail 0, exit 0), so the step would read green over a broken test: remove the todo, or fix the test and remove it" >&2
       [ "$status" -ne 0 ] || status=1;;
     FILEFAIL)
-      echo "ci-browser-legs: $leg failed as a whole ($a: $b): node fails a file as a whole when its process exits non-zero or is cut at the run's --test-timeout outside any one test's result: read the spec output above for the cause" >&2
+      echo "ci-browser-legs: $leg failed as a whole ($a: $b): node fails a file as a whole when its process exits non-zero, or ends on a signal such as the per-file bound's kill, outside any one test's result: read the spec output above for the cause" >&2
       [ "$status" -ne 0 ] || status=1;;
     LOST)
       echo "ci-browser-legs: $leg: '$a' failed under $switch_state because inBrowser could not launch ($b): the runner lost its browser: check the Chromium install step" >&2
@@ -204,4 +363,17 @@ if [ "$skipped" -ne 0 ]; then
   fi
   [ "$status" -ne 0 ] || status=1
 fi
+# The bound's reds, in roster order: a leg the bound cut, and a leg whose node --test the grace's end killed too.
+i=0
+while [ "$i" -lt "$n" ]; do
+  if [ -e "$work/$i.cut" ]; then
+    echo "ci-browser-legs: ${legs[$i]} ran past the per-file bound ($BOUND_MS ms), so the script killed its file's node process and every process under it, a browser it launched among them: the results it recorded before the kill are read here, and its spec output above shows where it stood; a leg that needs longer is split, or the bound (the default of ROMP_BROWSER_LEGS_FILE_MS in this script) is raised, under the step's timeout-minutes" >&2
+    [ "$status" -ne 0 ] || status=1
+  fi
+  if [ -e "$work/$i.held" ]; then
+    echo "ci-browser-legs: ${legs[$i]}: its node --test had not ended $GRACE_MS ms after the bound's kill, so the script killed it too, with every process under it: its record may be cut short, so read its spec output above" >&2
+    [ "$status" -ne 0 ] || status=1
+  fi
+  i=$((i + 1))
+done
 exit "$status"
