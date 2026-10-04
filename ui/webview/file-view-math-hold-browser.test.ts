@@ -8,6 +8,10 @@
 // real viewer in Chromium through the shared harness (real-viewer-leg.ts), its bundle built WITHOUT KaTeX (bundleViewer(false))
 // and loaded by src as the kernel's pages load theirs, so the chunk's URL derives from that tag as on a page (chunk-url.ts);
 // the chunk is the shipped build of math-chunk.ts (math-chunk-leg.ts chunkBundle), held until the leg lets it go.
+// A Rendered pick held over rows (held open, Raw, then Rendered; or a saved Raw preference, then Rendered with the chunk not yet
+// fetched) puts the romp loader up over the rows, hidden and inert under it, in both viewers, and the arrival paints once with the
+// place kept (file-view.ts holdOverBody; the review's round 1). The URL viewer opened at a #fragment on a math note holds the same
+// way and lands the heading at the arrival's paint (its settle handler's repaint, otherwise run by no CI leg).
 // An open's target waits with the held paint: a math note opened at a heading or at an offset before the chunk lands raises no
 // notice while the loader stands and lands on its target at the arrival's paint (file-view.ts landTarget stands down while a
 // paint is held; the arrival runs it after its paint), and a Raw pick that ends the hold first lands the offset in the rows.
@@ -252,3 +256,77 @@ for (const viewer of ["file", "url"] as const) {
     });
   });
 }
+
+// ── a Rendered pick held over rows (the review's round 1, ui-1): the loader goes up over the rows, which are hidden and inert, and
+// the arrival paints once with the place kept; in the Files pane's viewer (openFileView) and the URL viewer (openUrlView) ──
+
+
+for (const viewer of ["file", "url"] as const) {
+  for (const route of ["held open, Raw, then Rendered", "saved Raw, cold chunk, Rendered"] as const) {
+    test(`chromium: ${viewer === "file" ? "the Files pane's viewer" : "the URL viewer"}, ${route}: the loader stands over the hidden, inert rows while the paint is held, then one paint lays the note out with KaTeX, the place kept`, { timeout: 60000 }, async (t) => {
+      await inBrowser(t, async (browser) => {
+        const g = gate(); const requests: string[] = [];
+        const saved = route.startsWith("saved");
+        const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, null, {
+          raw: saved, before: countRoots, waitFor: saved ? ".fileview-body .fv-cl" : ".fileview-body",
+          ...(viewer === "url" ? { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: TARGETED } } : {}),
+        });
+        if (!saved) {
+          await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+          await frames(page, 4);
+          assert.equal((await overNow(page)).loader, true, "held at the open: the open's loader");
+          await button(page, "Raw");
+          await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+        } else {
+          await frames(page, 4);
+          assert.deepEqual(requests, [], "a saved Raw preference paints rows and fetches no chunk");
+        }
+        await frames(page, 2);
+        await putAtTop(page, "Paragraph 20");
+        await frames(page, 2);
+        const before = await topBlock(page);
+        assert.ok(before && before.view === "raw" && before.text.startsWith("Paragraph 20"), "the rows, Paragraph 20 at the top: " + JSON.stringify(before));
+        const rootsBefore = (await overNow(page)).roots;
+        await button(page, "Rendered");
+        await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+        await frames(page, 4);
+        const held = await overNow(page);
+        assert.deepEqual([held.loader, held.rowsShown, held.inert, held.md, held.roots], [true, false, true, false, rootsBefore],
+          "held: the loader up, the rows under it hidden and inert, nothing painted: " + JSON.stringify(held));
+        assert.ok(held.pressed.includes("Rendered") && !held.pressed.includes("Raw"), "under the pressed Rendered button: " + JSON.stringify(held));
+        g.open();
+        await page.waitForFunction(() => document.querySelectorAll(".fileview-body .katex").length === 1, null, { timeout: 15000 });
+        await frames(page, 6);
+        const after = await overNow(page);
+        assert.deepEqual([after.loader, after.md, after.katex, after.roots - rootsBefore], [false, true, 1, 1], "one paint, the formula laid out, the loader gone: " + JSON.stringify(after));
+        const top = await topBlock(page);
+        assert.ok(top && top.view === "rendered" && top.text === before!.text && Math.abs(top.top - before!.top) <= 2, "the place kept across the held pick: " + JSON.stringify([before, top]));
+        assert.equal(requests.length, 1);
+        assert.deepEqual(errors, []);
+      });
+    });
+  }
+}
+
+test("chromium: the URL viewer opened at a #fragment on a math note before the renderer is in keeps the loader, then paints once at the arrival with KaTeX, the heading at the body's top", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const href = URL_PATH + "#second";
+    const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, null, {
+      url: href, urls: { [ORIGIN + href]: TARGETED }, before: countRoots, waitFor: ".fileview-body",
+    });
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+    await frames(page, 6);
+    const held = await overNow(page);
+    assert.deepEqual([held.loader, held.md, held.roots], [true, false, 0], "held: the loader stands and no root is painted: " + JSON.stringify(held));
+    g.open();
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-body .katex").length === 1, null, { timeout: 15000 });
+    await frames(page, 8);
+    const after = await overNow(page);
+    assert.deepEqual([after.loader, after.md, after.katex, after.roots], [false, true, 1, 1], "the arrival repaints once (openUrlView's settle handler), the formula laid out, the loader gone: " + JSON.stringify(after));
+    const l = await landing(page);
+    assert.ok(l.heading !== null && l.heading >= 0 && l.heading < 60, "the fragment's heading at the body's top: " + JSON.stringify(l));
+    assert.deepEqual(requests, ["/dist/math-chunk.js?v=3"], "one request");
+    assert.deepEqual(errors, []);
+  });
+});

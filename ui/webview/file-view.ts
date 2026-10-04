@@ -324,6 +324,23 @@ function loaderEl(): HTMLElement {
   return load;
 }
 
+// A Rendered paint held for the math renderer (both viewers' renderBody: a block with a formula still waiting) over a body that
+// shows something else, the rows of a Raw pick or an earlier paint: the romp loader goes up over it, so the pressed Rendered button
+// and the body agree and the wait shows the loader (ui/CLAUDE.md's loading rule; the review of iOS item 6, round 1: the Raw rows
+// stood under a pressed Rendered button, no loader, until the chunk landed, up to the 60 s backstop). The rows stay in place,
+// hidden and inert (visibility, so they keep their boxes and take no click, selection or quote gesture), and the loader rides in a
+// zero-height sticky first child of the body, so nothing moves and keptPlace and the seat, which read the rendered root or the Raw
+// rows and never a .fileview-load, read the place under it as before. Whatever ends the hold paints through replaceChildren (the
+// arrival, a Raw pick, the failure's paint), which takes the loader and the hidden rows with it. A body that already shows the
+// loader (an open's) or this overlay is left as it is.
+function holdOverBody(body: HTMLElement): void {
+  if (body.querySelector(":scope > .fileview-load, :scope > .fileview-math-wait")) return;
+  for (const c of Array.from(body.children)) { (c as HTMLElement).style.visibility = "hidden"; c.setAttribute("inert", ""); }
+  const wait = el("div", "fileview-math-wait");
+  wait.appendChild(loaderEl());
+  body.prepend(wait);
+}
+
 // The 2 MB body cap for a URL document — a MIRROR of the kernel's _TEXT_MAX_BYTES (kernel.py), which
 // is what a local .md is already held to on the /file route. The URL viewer fetches from the browser,
 // so no kernel ever sees the body; the cap is applied here — a declared Content-Length refuses before
@@ -2615,7 +2632,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       try {
         const block = rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true);   // long lines always soft-wrap (the user 2026-08-24)
         mathHeld = held = rendered && mathPendingIn(block);   // a formula waiting for the renderer: nothing is swapped, the arrival paints
-        if (held) return;
+        if (held) { holdOverBody(body); return; }             // over rows a Raw pick left (or an earlier paint): the loader, the rows hidden under it
         body.replaceChildren(block);
         renderFell = null;
       } catch (err) {
@@ -4038,7 +4055,7 @@ export function openUrlView(href: string): void {
           ? mdBlock(text, { kind: "url", href: loc })  // relative refs resolve against where it LIVES
           : codeBlock(text, parts.base, true);         // basename → langFor → markdown highlighting
         mathHeld = fmt.md === "rendered" && mathPendingIn(block);   // a formula waiting for the renderer: nothing is swapped, the arrival paints
-        if (mathHeld) return;
+        if (mathHeld) { holdOverBody(body); return; }  // over rows a Raw pick left: the loader, the rows hidden under it (the local viewer's)
         body.replaceChildren(block);
         renderFell = null;
       } catch (err) {

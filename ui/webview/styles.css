@@ -5122,6 +5122,10 @@ body.filebrowse-open { overflow: hidden; }
    renderer is in, so this dress is the chat's and any other surface's. */
 .md-math-inline, .md-math-display { color: var(--dim); }
 .md-math-display { display: block; margin: 1em 0; text-align: center; }
+/* The romp loader over a held Rendered paint (file-view.ts holdOverBody): a zero-height sticky first child of the viewer's body,
+   so it moves nothing and stays at the top of the body's view, the loader drawn past its zero height over the rows hidden under
+   it. Byte-equal in both sheets (fileview-parity.test.ts): the viewer mounts on both pages. */
+.fileview-math-wait { position: sticky; top: 0; height: 0; overflow: visible; z-index: 1; }
 /* A table is a block as wide as its columns need, scrolling in its own box past its cap, whole words kept (overflow-wrap:
    normal against the root's anywhere). A table inside a quote or a list item is capped at its container. A table of the
    page's own (a direct child of the root) is capped at the BODY's width less the root's 18px inset, not the column's:
