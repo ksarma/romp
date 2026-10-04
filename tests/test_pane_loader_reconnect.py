@@ -770,9 +770,10 @@ out({ atLoad, atPaint: { painted: painted(), top: topOf() } });""", pre=self._PL
     # a control outside the list, or a control that is or sits in a sticky or fixed element in the list (rfit, robs). Since round 2
     # (2026-10-03) the controls count, not the sticky boxes that hold them (open call 2), and each counts by the part of it that
     # its overflow ancestors leave in view (correctness-1). These cases run the search over a page of fake elements: each has a
-    # box, a computed style (its position, cursor, overflow and containment), a parent, a padding box (clientLeft, clientTop,
-    # clientWidth, clientHeight: its whole box, no border or scrollbar, unless a case sets them) and answers matches() for the one
-    # selector entry it carries (so the product's RCTL list must name it) or its cursor. The served legs measure real engines.
+    # box, a computed style (its position, cursor, overflow, containment, transform, filter, perspective and will-change), a parent,
+    # a padding box (clientLeft, clientTop, clientWidth, clientHeight: its whole box, no border or scrollbar, unless its case sets them,
+    # as the padding-box cases of round 3 do) and answers matches() for the one selector entry it carries (so the product's RCTL list
+    # must name it) or its cursor. The served legs measure real engines.
     _FIT_PRE = r"""
 document.documentElement = { id: 'html', clientWidth: 390, clientHeight: 844 };
 const ALL = [CONTENT];                                                // the body's elements in document order
@@ -796,15 +797,18 @@ CONTENT.contains = (n) => inside(CONTENT, n);
 const attrOf = (t, n) => (t.attrs && Object.prototype.hasOwnProperty.call(t.attrs, n) ? t.attrs[n] : null);
 CONTENT.attrs = {}; CONTENT.getAttribute = (n) => attrOf(CONTENT, n); document.body.attrs = {}; document.body.getAttribute = (n) => attrOf(document.body, n);
 // add(parent, box [left, top, width, height], { position, cursor, sel, overflow, overflowX, overflowY, contain, transform, filter,
-// willChange, display }): an element under `parent` (null: the body, outside the list); `overflow` sets both axes
+// perspective, willChange, display, clientLeft, clientTop, clientWidth, clientHeight }): an element under `parent` (null: the body,
+// outside the list); `overflow` sets both axes; the four client values set its padding box (by default its whole box: 0, 0, its
+// width, its height), as a border or a scrollbar would
 const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, box: box.slice(), sel: o.sel || '', own: o.cursor || null,
   cs: { position: o.position || 'static', cursor: o.cursor || 'auto', visibility: 'visible', display: o.display || 'block',
         overflowX: o.overflowX || o.overflow || 'visible', overflowY: o.overflowY || o.overflow || 'visible', contain: o.contain || 'none',
-        transform: o.transform || 'none', filter: o.filter || 'none', perspective: 'none', willChange: o.willChange || 'auto' },
+        transform: o.transform || 'none', filter: o.filter || 'none', perspective: o.perspective || 'none', willChange: o.willChange || 'auto' },
   get parentElement() { return this.parent || document.body; },
   get firstElementChild() { return ALL.find((x) => x.parent === this) || null; },
   get nextElementSibling() { const sib = this.parent ? ALL.filter((x) => x.parent === this.parent) : ALL.filter((x) => x === CONTENT || !x.parent); return sib[sib.indexOf(this) + 1] || null; },
-  get clientLeft() { return 0; }, get clientTop() { return 0; }, get clientWidth() { return this.box[2]; }, get clientHeight() { return this.box[3]; },
+  get clientLeft() { return o.clientLeft || 0; }, get clientTop() { return o.clientTop || 0; },
+  get clientWidth() { return o.clientWidth === undefined ? this.box[2] : o.clientWidth; }, get clientHeight() { return o.clientHeight === undefined ? this.box[3] : o.clientHeight; },
   getBoundingClientRect() { const [l, t, w, h] = this.box; return { left: l, top: t, right: l + w, bottom: t + h, width: w, height: h }; },
   contains(n) { return inside(this, n); }, matches(list) { return !!this.sel && list.split(',').indexOf(this.sel) >= 0; },
   attrs: {}, getAttribute(n) { return attrOf(this, n); },
@@ -1281,6 +1285,42 @@ fire('romp:wsdown'); after(RHOLD_T);
 out({ atPaint: at() });""")
                 self.assertEqual(o["atPaint"], {"top": top, "right": "8px", "painted": True},
                                  what + (": counted, the badge goes 8 px below it (54 + 20 + 8)" if top == "82px" else ": not counted, the first place"))
+
+    # Round 3 (2026-10-04, tests-3): the clip's parts that no case reached. A perspective, a will-change of perspective or of filter,
+    # and contain strict or content each make the strip a fixed control's containing block, so the strip, whose overflow is hidden,
+    # clips it; contain strict and content each clip a static control as overflow does; and a control is cut to the strip's padding
+    # box, inside its border and scrollbar (clientLeft, clientTop, clientWidth, clientHeight), on each axis. Each scenario puts one
+    # control or two over the first place (52 to 77 px, from 248 to 382 px across) where the strip lets none of it be seen, so the
+    # badge keeps its first place, except the second padding-box case, where the strip leaves 6 px of the control in view; and a
+    # witness, an unclipped fixed control, which moves it
+    def test_perspective_will_change_containment_and_the_padding_box_on_both_axes_clip(self):
+        fixed = "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden', %s }); add(s, [300, 54, 60, 20], { position: 'fixed', sel: 'button' });"
+        clip = "const s = add(null, [0, 0, 390, 44], { %s }); add(s, [300, 54, 60, 20], { sel: 'button' });"
+        cases = [
+            ("a perspective makes the strip a fixed control's containing block, so the strip clips it", fixed % "perspective: '500px'", "52px"),
+            ("will-change:perspective makes the strip a fixed control's containing block", fixed % "willChange: 'perspective'", "52px"),
+            ("will-change:filter makes the strip a fixed control's containing block", fixed % "willChange: 'filter'", "52px"),
+            ("contain:strict makes the strip a fixed control's containing block", fixed % "contain: 'strict'", "52px"),
+            ("contain:content makes the strip a fixed control's containing block", fixed % "contain: 'content'", "52px"),
+            ("contain:strict clips as overflow does", clip % "contain: 'strict'", "52px"),
+            ("contain:content clips as overflow does", clip % "contain: 'content'", "52px"),
+            ("the strip's padding box ends 10 px above its border box's bottom (a border or a scrollbar), over a control from 50 to 80 px",
+             "const s = add(null, [0, 0, 390, 60], { overflow: 'hidden', clientHeight: 50 }); add(s, [300, 50, 60, 30], { sel: 'button' });", "52px"),
+            ("the strip's padding box starts 10 px below its top (a border) and is 30 px tall: 6 px of a control from 54 to 74 px show",
+             "const s = add(null, [0, 20, 390, 50], { overflow: 'hidden', clientTop: 10, clientHeight: 30 }); add(s, [300, 54, 60, 20], { sel: 'button' });", "68px"),
+            ("across: the strip's padding box starts 20 px inside its left edge and is 100 px wide, over a control in its left border and one in its right",
+             "const s = add(null, [250, 40, 140, 60], { overflow: 'hidden', clientLeft: 20, clientWidth: 100 }); add(s, [252, 54, 16, 20], { sel: 'button' }); "
+             "add(s, [372, 54, 16, 20], { sel: 'button' });", "52px"),
+            ("the witness: a fixed control in a strip that makes no containing block escapes it", fixed % "contain: 'none'", "82px"),
+        ]
+        for what, page, top in cases:
+            with self.subTest(what):
+                o = self._strip_fit(page + r"""
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+                self.assertEqual(o["atPaint"], {"top": top, "right": "8px", "painted": True},
+                                 what + {"52px": ": none of it can be seen, the first place", "68px": ": the 6 px that show (54 to 60) send the badge below them (60 + 8)",
+                                         "82px": ": counted, the badge goes 8 px below it (54 + 20 + 8)"}[top])
 
     def test_a_scroll_re_reads_the_clip_of_the_controls_the_last_scan_found(self):
         # a panel outside the list whose overflow hides all but the top 10 px of a control that reaches over the first place; a scroll
