@@ -97,8 +97,8 @@ class RepoRootStateFile(_ProbeCase):
 
     def test_the_kernel_persists_its_own_repo_root_at_boot(self):
         # the writer half of the contract: what THIS kernel writes is what a peer's probe reads.
-        # Re-run the writer the module-level boot call already ran once — another suite's SPAWNED
-        # kernel inherits this process's XDG env and can stomp the boot-time copy mid-run.
+        # main() writes it after the bind, under the instance lock, and an in-process load never
+        # runs main(), so the writer is run directly here.
         f = km.jd.STATE / "repo-root"
         f.unlink(missing_ok=True)
         km._persist_repo_root()

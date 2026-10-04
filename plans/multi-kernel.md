@@ -24,6 +24,25 @@ kernel is on, and let co-located kernels message each other through the postal f
    serve-token, goals, judge caches, every `bin/` tool, the hooks, the timeline view, the
    extension. Two kernels sharing that root share a token, a mailbox root, goal stores, and
    auto-nudge records — no isolation at all. One root-override isolates everything at once.
+   (2026-10-01: one kernel serves a state root, so every kernel needs a root no other kernel
+   uses. The manager never starts two kernels on one root: it starts the primary first, then the
+   kernels.json profiles in the file's order, and does not start a profile whose state root
+   resolves to a root another kernel holds (no `stateDir`, which is the primary's root, or one
+   naming another kernel's root). A running kernel keeps the root it was started on until it
+   stops, wherever its entry sits in the file; among profiles not running, the file's order
+   decides. That holds for one manager life: a manager restart (a stale manager's self-restart
+   under a supervisor included) starts the profiles in the file's order again, so the root can
+   go to a profile listed before the kernel that held it.
+   `/ensure` answers 409 for a kernel the manager refuses, and for a port a running kernel serves
+   answers for that kernel
+   (bin/romp-manager `idForPort`, `rootConflict`). The kernel's own lock, `kernel.lock`,
+   keeps kernels apart in the cases the manager does not decide: a kernel's successor and the
+   kernel draining before it, and the kernels started outside the manager (a kernel started by
+   hand, the far-host fallback, an orphaned kernel, the test labs); a kernel started on a root
+   another kernel serves is refused there with exit status 75. The remedy depends on how the
+   second kernel was started: a kernels.json profile needs a `stateDir` no other kernel uses, and
+   a kernel started by hand needs its own `ROMP_STATE_DIR`. See docs/reference.md, "What survives
+   a restart".)
 
 2. **The manager is multi-kernel by construction.** `bin/romp-manager` keeps kernels in a registry
    keyed by id, respawns per entry, and `restart-all` loops the registry; v1 registers only

@@ -4,16 +4,22 @@
 // that names this origin's /file route. So mdBlock keeps the authored spelling just before that pass (keepAuthoredSpellings):
 // the img's `src` in `data-fv-src`, and a srcset in `data-fv-srcset` unless the rewrite already stamped one. The comments panel
 // pairs a picture with its embed by that spelling (file-comments.ts pictureDest, embedFor, imgForRange), and a figure that
-// fails to load names it in its label (armFigureLabels). Without the stamp the capped URL stood in the img's `src` as its only
-// spelling: the picture paired with no embed, no embed's range found the picture, and the label named the capped URL.
+// fails to load names it in its label (armFigureLabels), as the viewer shows a source written with a scheme since the
+// link-navigation follow-on: its origin alone, never a path, a query or the cap (the file review's round 14, extra5-3), so the
+// label reads the same for the kept spelling and for the capped URL, which share that origin, and the pairing is what tells
+// them apart. Without the stamp the capped URL stood in the img's `src` as its only spelling: the picture paired with no embed
+// and no embed's range found the picture (the label's assertion was put to that rule at the landing merge of the fork's main at
+// 1d591384e into the follow-on's branch, where it had asked for the whole authored URL).
 // The pairing functions run from a second bundle of file-comments.ts (they read the DOM and the note's text, and keep no state).
-// Scenes: under a page key, the scheme figure (missing on disk, so it fails) keeps its spelling, pairs both ways and names it in
-// its label, while its src carries the cap and stays absolute; a relative figure pairs as before, and one whose src the cap pass
+// Scenes: under a page key, the scheme figure (missing on disk, so it fails) keeps its spelling, pairs both ways and names its
+// origin in its label with no cap, while its src carries the cap and stays absolute; a relative figure pairs as before, and one whose src the cap pass
 // writes back in its own query form keeps the spelling the rewrite stamped; a srcset of scheme URLs gets its authored
 // candidates stamped; a srcset mixing a path candidate and a scheme candidate keeps the rewrite's stamp, the author's spelling
 // of both. With no page key nothing is capped and nothing is stamped, and the scheme figure pairs by its src.
-// Skips LOUDLY without a playwright browser (CI installs none), as the other legs do. Synthetic values only: the notes-api
-// world, /repo/notes-api paths, the placeholder sid, a page key minted at run time.
+// Skips LOUDLY without a playwright browser, as the other legs do (in CI the Test step runs before the job's Chromium install,
+// so the leg skips there, and the Browser legs step after that install runs it from the shared roster of browser legs,
+// vscode-extension/ci-browser-legs.txt, where a launch the helper cannot make fails the leg in place of the skip). Synthetic
+// values only: the notes-api world, /repo/notes-api paths, the placeholder sid, a page key minted at run time.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
@@ -90,7 +96,7 @@ async function scene(browser: any, key: string | null): Promise<{ figs: Record<s
   return { figs, errors };
 }
 
-test("a figure written with its scheme keeps its authored spelling under a page key: it pairs with its embed both ways and its failure label names it, while its src carries the cap", async (t) => {
+test("a figure written with its scheme keeps its authored spelling under a page key: it pairs with its embed both ways and its failure label names its origin with no cap, while its src carries the cap", async (t) => {
   await inBrowser(t, async (browser) => {
     const key = randomBytes(32).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     const { figs, errors } = await scene(browser, key);
@@ -100,7 +106,7 @@ test("a figure written with its scheme keeps its authored spelling under a page 
     assert.equal(s.kept, SCHEME, "the authored spelling is kept in data-fv-src, where the comments panel reads it");
     assert.equal(s.embed, SCHEME, "the picture pairs with its embed (embedFor)");
     assert.ok(s.byRange, "and the embed's range finds the picture again (imgForRange)");
-    assert.ok(s.label !== null && s.label.includes(SCHEME) && !/cap=/.test(s.label), "the failure label names the authored source, not the capped URL: " + s.label);
+    assert.equal(s.label, "Image failed to load: " + new URL(SCHEME).origin + " (scheme figure)", "the failure label names the authored source as the viewer shows one written with a scheme, its origin alone, with no path, query or cap: " + s.label);
     const r = figs["relative figure"];
     assert.equal(r.kept, "figs/b.png", "a relative figure keeps its spelling from the rewrite, as before");
     assert.ok(r.embed === "figs/b.png" && r.byRange, "and pairs both ways: " + JSON.stringify(r));
