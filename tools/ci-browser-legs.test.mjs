@@ -1217,8 +1217,10 @@ test('the script exists, is executable, runs one node --test per rostered leg (n
  *  "How the legs run"), so the stub runs once per leg, maybe several at once: each call writes its arguments, one per
  *  line, to a file of its own in node-calls/ (named by its pid), then either runs the REAL node over them
  *  (CBL_STUB_REAL_NODE names it: the composition of the script, node and the real reporter), or, when its last argument
- *  (the bundle) is CBL_STUB_WEDGE, stays up for good, sleeping a second at a time (a node --test that does not end when
- *  what is under it is killed), or else, with CBL_STUB_HOLD set, marks itself running in running/, sleeps that many
+ *  (the bundle) is CBL_STUB_WEDGE, stays up for good, a 30 s sleep at a time (a node --test that does not end when
+ *  what is under it is killed; from its first sleep on, a sleep the bound's walk finds is under it until a kill ends
+ *  that sleep, where a loop of 1 s sleeps left a moment between two sleeps with nothing under it, and a bound that
+ *  fell in that moment cut nothing), or else, with CBL_STUB_HOLD set, marks itself running in running/, sleeps that many
  *  seconds, counts the calls marked running into peak/ (named by its pid), sleeps again and unmarks itself, and then
  *  writes CBL_STUB_REPORT (when set) to the reporter's destination, in the one call that takes the report-written/
  *  directory first, so the legs' records joined hold the report once; then a call whose bundle CBL_STUB_ZOMBIE names
@@ -1287,7 +1289,7 @@ function syntheticTree(t, prefix = 'cbl-') {
     'if [ -n "${CBL_STUB_REAL_NODE:-}" ]; then exec "$CBL_STUB_REAL_NODE" "$@"; fi',
     'last=""',
     'for a in "$@"; do last="$a"; done',
-    'if [ -n "${CBL_STUB_WEDGE:-}" ] && [ "$last" = "$CBL_STUB_WEDGE" ]; then while :; do sleep 1; done; fi',
+    'if [ -n "${CBL_STUB_WEDGE:-}" ] && [ "$last" = "$CBL_STUB_WEDGE" ]; then while :; do sleep 30; done; fi',
     'if [ -n "${CBL_STUB_HOLD:-}" ]; then',
     '  mkdir -p "' + path.join(root, 'running') + '" "' + path.join(root, 'peak') + '"',
     '  : > "' + path.join(root, 'running') + '/$$"',
@@ -2074,7 +2076,7 @@ test('the per-file bound through the stub: a node --test that does not end after
   fs.writeFileSync(path.join(root, 'ui', 'webview', 'c-browser.test.ts'), '');
   fs.writeFileSync(path.join(root, 'vscode-extension', C), '');
   const pass = (bundle) => rec(bundle, 'pass', 'test', '-', 'test', 'a test of ' + bundle, '', '-');
-  // the grace's end: B's node --test (the stub, wedged) stays up after the bound kills what is under it, a sleep at a time.
+  // the grace's end: B's node --test (the stub, wedged) stays up after the bound kills what is under it, a 30 s sleep at a time.
   // B is second in the roster, so the cut's and the grace's reds read the mark of the leg that was cut, not of the
   // roster's first; and one leg at a time, so C starts only behind B's cut and hold, whatever the machine's CPUs (a
   // script that started nothing behind a cut leg would hold the run to the stub runner's 30 s timeout, read red). Odd
