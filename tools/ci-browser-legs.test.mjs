@@ -65,15 +65,20 @@
 //     a process in a session of its own and one in the file's own process group, each with a child, and a grandchild
 //     left in the group of a process in a session of its own after its parent exited), every process of it read gone
 //     before the bound plus the grace has passed, and so is a TERM to the script with the bound and the grace unset,
-//     the leg's bound timer read up at the default bound before it, after which no process of that leg and no timer of
-//     the run is left and the output the script held is printed; and through the stub: a node --test that outlives the
-//     grace is killed and named, a node --test that outlives the bound with no process under it, or with only a zombie
-//     (a child that has ended and is not yet reaped) under it, is not cut, the knobs' refusals, the count of legs at
-//     once read with nproc's OpenMP variables set and unset, the status of legs that exit differently, and a roster
-//     longer than the legs run at once, the most calls running at once counted and the outputs printed in roster order
-//     although the legs finish in another. A roster line holding a backslash is held by seen_at's rows, and a tree
-//     under a directory whose name holds one by the post-run key's row, each read as the script's comment above seen_at
-//     or above its awk pass states;
+//     each leg's start line read printed while the legs run and their spec output held, and the leg's bound timer read
+//     up at the default bound, before it, after which no process of that leg (its node --test among them) and no timer
+//     of the run is left, the script's output closes within 10 s and the output the script held is printed; so is a
+//     second TERM 100 ms after the first, after which no process of the leg is left, running or stopped; and so is a
+//     SIGKILL to the script, after which the leg's subshell and its timer, posting through the event pipe's descriptor
+//     they inherited, end once the leg and its bound have; and through the stub: a node --test that outlives the grace
+//     is killed and named, after a cut and with nothing cut (where the grace's red alone sets the status), a node
+//     --test that outlives the bound with no process under it, or with only a zombie (a child that has ended and is not
+//     yet reaped) under it, is not cut, the knobs' refusals, the count of legs at once read with nproc's OpenMP
+//     variables set and unset, the status of legs that exit differently, and a roster longer than the legs run at once,
+//     the most calls running at once counted and the outputs printed in roster order although the legs finish in
+//     another. A roster line holding a backslash is held by seen_at's rows, and a tree under a directory whose name
+//     holds one by the post-run key's row, each read as the script's comment above seen_at or above its awk pass
+//     states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -1160,7 +1165,7 @@ test('the script exists, is executable, runs one node --test per rostered leg (n
   assert.ok(src.includes('echo "no legs in the roster"; exit 0'), 'the empty-roster guard is spelled in the script (executed below)');
   const nodeLines = src.split('\n').filter((l) => /^\s*node --test\b/.test(l));
   assert.equal(nodeLines.length, 1, 'one line of the script starts node --test: ' + JSON.stringify(nodeLines));
-  assert.match(nodeLines[0], /^\s*node --test .* "\$\{legs\[\$i\]\}" >"\$d\.out" &$/, 'node --test runs one rostered bundle, the leg\'s own, in the background of the leg\'s subshell, which keeps its status, so the step\'s status is node\'s own on every platform (xargs would map a failed command\'s status to 123 on GNU and to 1 on BSD and macOS; executed below: 1 and 7 pass through): ' + nodeLines[0]);
+  assert.match(nodeLines[0], /^\s*node --test .* "\$\{legs\[\$i\]\}" >"\$d\.out" 3>&- &$/, 'node --test runs one rostered bundle, the leg\'s own, in the background of the leg\'s subshell, which keeps its status, so the step\'s status is node\'s own on every platform (xargs would map a failed command\'s status to 123 on GNU and to 1 on BSD and macOS; executed below: 1 and 7 pass through), and is handed no fd 3, the event pipe the subshell posts through, so nothing the leg starts holds the pipe: ' + nodeLines[0]);
   assert.ok(!/--test-timeout/.test(nodeLines[0]), 'node --test is handed no --test-timeout: the per-file bound is the script\'s own kill, which reads the tree before anything signals the file\'s process (executed below: the stub reads no --test-timeout)');
   assert.ok(!src.split('\n').some((l) => !/^\s*#/.test(l) && /xargs/.test(l)), 'no xargs on a code line of the script, a line whose first non-blank character is not # (a comment line may name it; a comment after code on the same line is read as code, a loud red)');
   // the header states the post-run property as what the record proves, A TEST OF ITS BUNDLE PASSED, and names the boundary of
@@ -1305,9 +1310,10 @@ function syntheticTree(t, prefix = 'cbl-') {
   };
   // the asynchronous runner, for a case that reads the processes of a run while it is still going: the script started
   // with the real node through the stub (stub.real, whatever the stub argument says), in the environment run gives it, in
-  // a process group of its own, which kill() ends (term() sends the script alone a TERM); exited settles with its status
-  // when the script's process exits, and
-  // closed with { status, out, err } when its output closes too (a process left holding the output holds closed back)
+  // a process group of its own, which kill() ends (term() sends the script alone a TERM, sigkill() the script alone a
+  // SIGKILL); exited settles with its status when the script's process exits, and closed with { status, out, err } when
+  // its output closes too (a process left holding the output holds closed back); now() returns { out, err } as read so
+  // far, while the run is going
   const start = (roster, stub = {}) => {
     const tmp = fresh(roster);
     const child = spawn('bash', [path.join(ext, 'scripts', 'ci-browser-legs.sh')], { cwd: root, env: envFor(tmp, { ...stub, real: true }), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -1318,7 +1324,8 @@ function syntheticTree(t, prefix = 'cbl-') {
     const closed = new Promise((resolve) => child.on('close', (status) => resolve({ status, out, err })));
     const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is gone */ } };
     const term = () => process.kill(child.pid, 'SIGTERM');
-    return { exited, closed, kill, term, tmp };
+    const sigkill = () => process.kill(child.pid, 'SIGKILL');
+    return { exited, closed, kill, term, sigkill, now: () => ({ out, err }), tmp };
   };
   const real = fs.realpathSync(ext);
   const rec = (bundle, ...fields) => [path.join(real, bundle), ...fields].join('\t') + '\n';
@@ -1696,7 +1703,26 @@ function timersOf(root, re) {
   const ours = new Set(table.filter((m) => m[3].includes(root)).map((m) => m[1]));
   return table.filter((m) => ours.has(m[2]) && re.test(m[3])).map((m) => m[3]);
 }
+/** The processes of the script run over the synthetic tree at `root`: the script and each subshell forked from it, whose
+ *  arguments are the script's own (bash <root>/vscode-extension/scripts/ci-browser-legs.sh), and the processes directly
+ *  under one of them (a timer's sleep, a leg's node --test), as [pid, its state as ps prints it, its arguments]. Read over
+ *  ps -A, scoped to the run as timersOf is. */
+function runProcs(root) {
+  const script = path.join(root, 'vscode-extension', 'scripts', 'ci-browser-legs.sh');
+  const table = (spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'stat=', '-o', 'args='], { encoding: 'utf8' }).stdout || '').split('\n').map((l) => /^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(l.trim())).filter(Boolean);
+  const ours = new Set(table.filter((m) => m[4].includes(script)).map((m) => m[1]));
+  return table.filter((m) => ours.has(m[1]) || ours.has(m[2])).map((m) => [Number(m[1]), m[3], m[4]]);
+}
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+/** `promise`'s value when it settles within `ms`, else null: a case that awaits a run's exit or its output's close reads a
+ *  run that never gets there as red in bounded time instead of hanging the module. The timer is cleared either way, so it
+ *  holds the test's process no longer than the wait. */
+async function within(promise, ms) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); })]); } finally { clearTimeout(timer); }
+}
+/** A process's state as ps prints it (R, S, T for stopped, Z for a zombie, ...), or gone. */
+const stateOf = (pid) => (spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout || '').trim() || 'gone';
 /** The hanging leg the per-file bound's executed cases run, written as bundle `bundle` under `ext`: it writes its node
  *  process's pid beside the mark, ignores SIGTERM (as a launched browser's handler kept a leg's process up past node's own
  *  cancel on node 22.23.2), starts three keepers, passes one test and hangs in the next. A keeper writes its pid beside the
@@ -1741,7 +1767,7 @@ test('the per-file bound ends a leg that outlives it, with every process under i
   const t0 = Date.now();
   const r = start(A + '\n' + B + '\n', { env: { ROMP_BROWSER_LEGS_FILE_MS: String(BOUND), ROMP_BROWSER_LEGS_GRACE_MS: String(GRACE) } });
   const pids = [];
-  t.after(() => { for (const [, pid] of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } r.kill(); });
+  t.after(() => { for (const [, pid] of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } r.kill(); });
   let ended = null;
   r.exited.then((status) => { ended = { status, ms: Date.now() - t0 }; });
   // the leg and the processes under it are up (each wrote its pid), read before the bound
@@ -1771,7 +1797,9 @@ test('the per-file bound ends a leg that outlives it, with every process under i
   const at = Date.now() - t0;
   assert.ok(ended !== null && ended.ms <= BOUND + GRACE + SLACK, 'the run itself ended by the bound plus the grace and the slack (' + (BOUND + GRACE + SLACK) + ' ms), so the cut leg does not hold the step to its own timeout: ' + (ended ? ended.ms + ' ms' : 'still going at ' + at + ' ms') + '; every process of the leg was gone at ' + goneAt + ' ms');
   assert.deepEqual(timersOf(root, /^sleep (1\.513|1\.709)\b/), [], 'no timer of the run is left behind at its exit (a sleep of the bound\'s or the grace\'s length under a process of this run)');
-  Object.assign(ended, await r.closed);
+  const closed = await within(r.closed, 10000);
+  assert.ok(closed, 'the script\'s output closed within 10 s of its exit, so no process of the run still holds it');
+  Object.assign(ended, closed);
   assert.equal(ended.status, 1, 'the cut is red, exit 1; stderr:\n' + ended.err);
   assert.ok(ended.err.includes('ci-browser-legs: ' + A + ' ran past the per-file bound (' + BOUND + ' ms)'), 'the red names the cut leg and the bound:\n' + ended.err);
   assert.ok(ended.err.includes('ci-browser-legs: ' + A + ' failed as a whole ('), 'node --test records the killed file as failed as a whole, which the run reads from the record:\n' + ended.err);
@@ -1780,7 +1808,7 @@ test('the per-file bound ends a leg that outlives it, with every process under i
   assert.ok(ended.out.includes('passes before the hang') && ended.out.includes('leg b passes'), 'the spec output carries both legs\' passes:\n' + ended.out);
 });
 
-test('a TERM to the script ends each leg still running with every process under it (the hanging leg\'s node process, the processes it started in a session of its own and in the file\'s own group, their children, and the grandchild left in a group outside the tree), prints the output it held (the hanging leg\'s pass before the hang, and the whole output of a leg that finished behind it), and leaves its TMPDIR empty, executed with the real node and with the bound and the grace unset, as the step runs them, the hanging leg\'s bound timer read up at the default bound before the TERM and gone after it', async (t) => {
+test('a TERM to the script ends each leg still running with every process under it (the hanging leg\'s node --test, its node process, the processes it started in a session of its own and in the file\'s own group, their children, and the grandchild left in a group outside the tree), prints the output it held (the hanging leg\'s pass before the hang, and the whole output of a leg that finished behind it), its output closing within 10 s of its exit, and leaves its TMPDIR empty; each leg\'s start line is printed while the legs run and their spec output is held; executed with the real node and with the bound and the grace unset, as the step runs them, the hanging leg\'s bound timer read up at the default bound before the TERM and gone after it', async (t) => {
   const { start, root, ext, A, B } = syntheticTree(t);
   const { mark, roles } = hangingLeg(ext, A);
   fs.writeFileSync(path.join(ext, B), 'const { test } = require("node:test");\ntest("leg b passes behind the hang", () => {});\n');
@@ -1788,7 +1816,7 @@ test('a TERM to the script ends each leg still running with every process under 
   // two legs at once, whatever the CPUs, so the fast leg finishes while the hanging one runs and its output is held behind it
   const r = start(A + '\n' + B + '\n', { env: { ROMP_BROWSER_LEGS_JOBS: '2' } });
   const pids = [];
-  t.after(() => { for (const [, pid] of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } r.kill(); });
+  t.after(() => { for (const [, pid] of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } r.kill(); });
   let ended = null;
   r.exited.then((status) => { ended = { status, ms: Date.now() - t0 }; });
   await hangingPids(mark, roles, t0, () => ended !== null, pids);
@@ -1798,6 +1826,11 @@ test('a TERM to the script ends each leg still running with every process under 
   const ready = () => inRun('1.status') !== undefined && inRun('0.out') !== undefined && fs.readFileSync(inRun('0.out'), 'utf8').includes('passes before the hang');
   while (!ready() && Date.now() - t0 < 30000 && ended === null) await pause(25);
   assert.ok(ready(), 'before the TERM the fast leg had finished and the hanging leg had passed its first test, so the output read below was held by the script, not yet unwritten');
+  pids.push(['the hanging leg\'s node --test', Number(fs.readFileSync(inRun('0.pid'), 'utf8'))]);
+  // each leg's start is printed at once, while the hanging leg runs and both legs' spec output is still held (the control)
+  const live = r.now().out;
+  assert.ok(live.includes('ci-browser-legs: started ' + A + '\n') && live.includes('ci-browser-legs: started ' + B + '\n'), 'each leg\'s start is printed at once on a line naming it, so a log cut short while a leg runs still names it:\n' + live);
+  assert.ok(!live.includes('passes before the hang') && !live.includes('leg b passes behind the hang'), 'control: both legs\' spec output is still held while the hanging leg runs, so the start lines above were printed live, not with the held output:\n' + live);
   // with the bound and the grace unset, as the step runs, the hanging leg's bound timer is up with the default bound (the fast
   // leg's timer, killed as its done is read, given up to 5 s to go)
   const secs = (fileBoundMs() / 1000).toFixed(3);
@@ -1813,7 +1846,8 @@ test('a TERM to the script ends each leg still running with every process under 
   assert.ok(ended !== null, 'the script ended within 10 s of the TERM: ' + (Date.now() - termed) + ' ms');
   assert.deepEqual(up, [], 'after the TERM no process of the leg still running is alive; alive: ' + JSON.stringify(up));
   assert.equal(ended.status, 143, 'the script exits 143 on a TERM (its TERM trap), after its EXIT trap ends the legs');
-  const closed = await r.closed;
+  const closed = await within(r.closed, 10000);
+  assert.ok(closed, 'the script\'s output closed within 10 s of its exit, so no process of the run still holds it');
   // the hanging leg's bound timer, read up before the TERM (the control above), is gone after it: the EXIT trap kills each
   // running leg's timer with its group (given up to 2 s to go)
   let left = timersOf(root, /^sleep \d+\.\d{3}$/);
@@ -1824,8 +1858,72 @@ test('a TERM to the script ends each leg still running with every process under 
   assert.deepEqual(fs.readdirSync(r.tmp), [], 'the run\'s TMPDIR is empty after the TERM, its directory removed by the EXIT trap: ' + JSON.stringify(fs.readdirSync(r.tmp)));
 });
 
-test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the other leg\'s record read and no timer left behind; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
+test('a second TERM to the script, 100 ms after the first, while its EXIT trap ends the legs, cuts that short nowhere: the hanging leg\'s node --test, its node process and every process under it are gone, none of them left stopped, the script exits 143 and its output closes within 10 s, executed with the real node', async (t) => {
+  const { start, root, ext, A } = syntheticTree(t);
+  const { mark, roles } = hangingLeg(ext, A);
+  const t0 = Date.now();
+  const r = start(A + '\n');
+  const pids = [];
+  t.after(() => { for (const [, pid] of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } r.kill(); });
+  let ended = null;
+  r.exited.then((status) => { ended = { status, ms: Date.now() - t0 }; });
+  await hangingPids(mark, roles, t0, () => ended !== null, pids);
+  // the leg's node --test wrote its pid in the run's directory (the script's header names the file) before its file's
+  // process started, so it is there once the processes under it are up
+  const pidFile = fs.readdirSync(r.tmp).map((d) => path.join(r.tmp, d, '0.pid')).find((f) => fs.existsSync(f));
+  assert.ok(pidFile, 'the hanging leg\'s node --test wrote its pid in the run\'s directory before its file\'s process started');
+  pids.push(['the hanging leg\'s node --test', Number(fs.readFileSync(pidFile, 'utf8'))]);
+  const termed = Date.now();
+  r.term();
+  await pause(100);
+  try { r.term(); } catch { /* the script had already exited, so the second TERM had nothing to cut short */ }
+  await within(r.exited, 10000);
+  assert.ok(ended !== null, 'the script ended within 10 s of the second TERM: ' + (Date.now() - termed) + ' ms after the first');
+  const up = pids.filter(([, pid]) => alive(pid)).map(([role, pid]) => role + ' (pid ' + pid + ', state ' + stateOf(pid) + ')');
+  assert.deepEqual(up, [], 'after a second TERM 100 ms after the first no process of the leg still running is alive, running or stopped (state T): the EXIT trap ignores a further INT, TERM or HUP, so the second TERM cannot end the script between a stop and its kill; alive: ' + JSON.stringify(up));
+  assert.equal(ended.status, 143, 'the script exits 143, the first TERM\'s status, after its EXIT trap ends the legs');
+  const closed = await within(r.closed, 10000);
+  assert.ok(closed, 'the script\'s output closed within 10 s of its exit, so no process of the run still holds it');
+});
+
+test('a SIGKILL to the script leaves no process of the run waiting on the event pipe, whichever posts last: the leg running then runs on to its end and writes its exit, and its subshell and its bound\'s timer each post through the pipe\'s descriptor it inherited and exit, with the leg ending before its bound (its timer posts last) and after it (its subshell posts last); the run\'s directory stays in TMPDIR, as no trap runs; executed with the real node and a short bound set by the knob', async (t) => {
+  const { start, root, ext, A } = syntheticTree(t);
+  // what the runs left behind, if anything, scoped to this tree (runProcs), killed by the pids read here
+  const runs = [];
+  t.after(() => { for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } for (const r of runs) r.kill(); });
+  // a poster holding the pipe open lets the other open it by path, so each order is a row of its own: the last to post is
+  // the one that would wait for a reader. The bound is odd, so the timer's sleep is told apart by its argument
+  for (const [what, legMs, BOUND] of [['the leg ends before its bound, so its timer posts last', 1000, 1907], ['the leg ends after its bound, so its subshell posts last', 2400, 1409]]) {
+    fs.writeFileSync(path.join(ext, A), 'const { test } = require("node:test");\ntest("passes after a while", async () => { await new Promise((resolve) => setTimeout(resolve, ' + legMs + ')); });\n');
+    const t0 = Date.now();
+    const r = start(A + '\n', { env: { ROMP_BROWSER_LEGS_FILE_MS: String(BOUND) } });
+    runs.push(r);
+    const inRun = (name) => fs.readdirSync(r.tmp).map((d) => path.join(r.tmp, d, name)).find((f) => fs.existsSync(f));
+    while (inRun('0.pid') === undefined && Date.now() - t0 < 30000) await pause(25);
+    assert.ok(inRun('0.pid') !== undefined, what + ': the leg\'s node --test started (its pid written in the run\'s directory) within 30 s');
+    // the control for the empty read below: the script, the leg's subshell and its node --test, and the timer's subshell
+    // and its sleep are up (the timer starts before the leg, but its sleep may start after the leg's pid is written, so
+    // its sleep is waited for, up to 5 s)
+    const asleep = (procs) => procs.some(([, , args]) => args === 'sleep ' + (BOUND / 1000).toFixed(3));
+    let before = runProcs(root);
+    for (const until = Date.now() + 5000; !asleep(before) && Date.now() < until; before = runProcs(root)) await pause(10);
+    assert.ok(before.length >= 4 && asleep(before), what + ': control: the scoped read of the run\'s processes finds the script, the leg\'s subshell and its node --test, and the timer\'s subshell and its sleep before the SIGKILL, so its empty read at the end is not blind: ' + JSON.stringify(before));
+    r.sigkill();
+    const killed = Date.now();
+    assert.ok(killed - t0 < BOUND, what + ': the SIGKILL came before the bound (' + BOUND + ' ms from the run\'s start, which precedes the leg\'s), so the script never acted on it and the leg runs on: ' + (killed - t0) + ' ms');
+    // every process the run left is given until the later of the leg's end and the bound, plus 3 s, from the SIGKILL
+    let left = runProcs(root);
+    for (const until = killed + Math.max(legMs, BOUND) + 3000; left.length > 0 && Date.now() < until; left = runProcs(root)) await pause(50);
+    assert.deepEqual(left.map(([pid, stat, args]) => pid + ' ' + stat + ' ' + args), [], what + ': by ' + (Math.max(legMs, BOUND) + 3000) + ' ms after the SIGKILL no process of the run is left: the leg\'s subshell and the timer\'s subshell post through the event pipe\'s descriptor they inherited and hold open, so neither waits to open the pipe for a reader that is gone');
+    const status = inRun('0.status');
+    assert.ok(status !== undefined && fs.readFileSync(status, 'utf8').trim() === '0', what + ': the leg ran on to its end after the SIGKILL, its node --test exiting 0, and its subshell wrote that exit in the run\'s directory, which stays in TMPDIR since no trap ran');
+  }
+});
+
+test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the other leg\'s record read and no timer left behind; a node --test still running at the grace\'s end when the bound cut nothing is killed and named too, red by that red alone; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
   const { run, root, rec, A, B } = syntheticTree(t);
+  // what a red run left behind, if anything, scoped to this tree (runProcs), killed by the pids read here
+  t.after(() => { for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
   fs.writeFileSync(path.join(root, 'vscode-extension', B), '');
   const C = 'out-tests/ui/webview/c-browser.test.js';
   fs.writeFileSync(path.join(root, 'ui', 'webview', 'c-browser.test.ts'), '');
@@ -1845,6 +1943,15 @@ test('the per-file bound through the stub: a node --test that does not end after
   assert.ok(!alive(held.pids[0]), 'the node --test that did not end (pid ' + held.pids[0] + ') is gone');
   assert.deepEqual(timersOf(root, /^sleep (0\.401|0\.403)\b/), [], 'no timer of the run is left behind (a sleep of the bound\'s or the grace\'s length under a process of this run)');
   assertRecordRemoved(held, 'the run whose node --test was killed at the grace\'s end');
+  // the grace's end with nothing cut: A's node --test (the stub) writes A's pass and replaces itself with a 30 s sleep, so at
+  // the bound (601 ms) the walk finds nothing under it and nothing is cut, and at the grace's end (403 ms later) the script
+  // kills it and names it. Its node --test's exit is set aside then, the pass is in the record, and no cut red was printed,
+  // so the held red alone sets the step's status
+  const heldOnly = run(A + '\n', { report: pass(A), linger: { [A]: '30' }, timeout: 30000, env: { ROMP_BROWSER_LEGS_FILE_MS: '601', ROMP_BROWSER_LEGS_GRACE_MS: '403' } });
+  assert.ok(!heldOnly.err.includes('ran past the per-file bound'), 'nothing was under the node --test at the bound, so it was not cut and no cut red is printed:\n' + heldOnly.err);
+  assert.ok(heldOnly.err.includes('ci-browser-legs: ' + A + ': its node --test had not ended 403 ms after the per-file bound, so the script killed it too'), 'the grace\'s end is named with nothing cut:\n' + heldOnly.err);
+  assert.equal(heldOnly.status, 1, 'the grace\'s end with nothing cut is red, exit 1: its node --test\'s exit is set aside and nothing else is red, so the held red sets the status; stderr:\n' + heldOnly.err);
+  assert.ok(!alive(heldOnly.pids[0]), 'the node --test killed at the grace\'s end (pid ' + heldOnly.pids[0] + ') is gone');
   // a node --test that outlives the bound with no process under it, as node --test does while it ends after its file's
   // process exited: the stub writes A's pass and replaces itself with a 1.5 s sleep, so at the bound (601 ms) the walk finds
   // nothing to kill. No cut, and the leg reads green; the grace (5003 ms) never ends, its timer killed with the leg's end.
