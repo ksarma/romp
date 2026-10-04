@@ -448,9 +448,33 @@ class ConnLostLog(unittest.TestCase):
         self._reload("chromium", "reload-boot")
 
     def test_webkit_desktop_reload_during_the_returns_redial(self):
+        """In WebKit this leg and test_webkit_desktop_reload_during_the_boot_dials fail intermittently, and the cause is the
+        lab (diagnosed 2026-10-04): upAfter is false, or the driver died at boot. Playwright's WebKit network process
+        (WPENetworkProcess, its WPE build) crashes with SIGSEGV during a page load through the driver's proxy. A context
+        Playwright opens is ephemeral, so the context's cookie jar and localStorage are held in that process and are lost
+        with it: within 1 ms of the crash the page's storage fell to one key without the page key, and no later request
+        carried the session cookie. The page itself survives. Its sockets close with 1006, every redial passes the proxy and
+        closes 13 to 184 ms after it was made without opening, and the kernel answers each with 403 (token required, no
+        X-Romp-Reauth), the correct answer to a dial with no credential. The page-key script sends the top frame to /login
+        only at load or on a fetch refused with X-Romp-Reauth, and that refusal needs a valid session, so the page redials
+        and is refused until the driver's wait ends (25 s after the reload for upAfter, 30 s at the boot). The crash is tied
+        to the proxy, which sets Connection: close on each plain request it forwards: the kernel closes the connection after
+        one response, but the response does not say so, and WebKit treats the connection as persistent. Each crash came 1.2
+        to 1.3 s after a request on a fresh connection that the browser closed within about 1 ms of sending it, reported by
+        WebKit as "Connection terminated unexpectedly". Measured at 3e9c560f5 with an instrumented copy of the driver: 5 of
+        48 WebKit reload legs failed this way (1 of 8 in a fresh lab; 1 of 8 in a lab that first ran the whole module in all
+        three engines; 3 of 32 in a fresh lab, one of them at the leg's first load). Each failure matched a WPENetworkProcess
+        SIGSEGV in the machine's crash reporter log and followed that terminated request; none of the 53 legs that passed
+        with the proxy unchanged (Chromium, Firefox and WebKit) had one. With the proxy also writing Connection: close on
+        each response, 0 of 32 failed. The five earlier failures on record (at d8a1df87e, 9ee7dbd83 and fb62cb4cf) each
+        match a WPENetworkProcess SIGSEGV as well. A person's browser loads from the kernel directly, without the proxy's
+        rewrite."""
         self._reload("webkit", "reload-return")
 
     def test_webkit_desktop_reload_during_the_boot_dials(self):
+        """In WebKit this leg fails intermittently for the lab cause test_webkit_desktop_reload_during_the_returns_redial's
+        docstring gives: Playwright's WebKit network process crashes during a page load through the driver's proxy, and the
+        page loses its session cookie and page key with it."""
         self._reload("webkit", "reload-boot")
 
     def _reload_frame(self, scenario):
