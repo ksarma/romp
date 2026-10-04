@@ -1089,6 +1089,36 @@ out({ atPaint, mid, up: at() });""" % (json.dumps(sel), json.dumps(cls)))
                 self.assertEqual(o["mid"], below, sel + ": mid-drag the handle, whose cursor now equals its parent's, is still a control (RCTL names it)")
                 self.assertEqual(o["up"], below, sel + ": and after the drag")
 
+    # The cursor rule's residual (round 3's closing check, 2026-10-04): an element that only inherits a cursor is no control of its
+    # own; it counts through the element that sets the cursor, whose box holds it, unless it is drawn outside that box. The case runs
+    # both halves over a chip that sets a pointer cursor and matches no RCTL entry, with an absolute child that sets none: drawn
+    # outside the chip, over the first place, the child is not counted and the badge stays over it (the residual, disclosed); drawn
+    # inside the chip's box, it lies under the chip, which counts, and the badge goes below the chip. The text check holds the
+    # kernel's comment and the placement entry to stating the residual with its limit (the entry had stated it without the limit)
+    def test_an_element_that_only_inherits_a_cursor_counts_through_its_setter_unless_drawn_outside_its_box(self):
+        o = {}
+        for k, chip in (("outside", [200, 100, 190, 40]), ("inside", [200, 40, 190, 50])):
+            o[k] = self._fit(r"""
+const chip = add(null, %s, { cursor: 'pointer' });                    // sets a pointer cursor; no RCTL entry matches it
+const kid = add(chip, [300, 54, 60, 20], { position: 'absolute' });   // sets none and inherits the pointer; over the first place (52 to 77)
+bodyCursor('auto');                                                    // computes each element's cursor: the child's is the chip's pointer
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at(), kid: kid.cs.cursor });""" % json.dumps(chip))
+        self.assertEqual((o["outside"]["atPaint"], o["outside"]["kid"]), ({"top": "52px", "right": "8px", "painted": True}, "pointer"),
+                         "the child drawn outside the chip (100 to 140) inherits the pointer and is no control of its own: the badge stays over it")
+        self.assertEqual((o["inside"]["atPaint"], o["inside"]["kid"]), ({"top": "98px", "right": "8px", "painted": True}, "pointer"),
+                         "the child inside the chip's box: the chip counts, and the badge goes below it (40 + 50 + 8)")
+        root = os.path.dirname(HERE)
+        with open(os.path.join(root, "kernel", "kernel.py"), encoding="utf-8") as f:
+            src = f.read()
+        with open(os.path.join(root, "upstream", "2026-10-02-reconnect-badge-below-pane-header.md"), encoding="utf-8") as f:
+            entry = f.read()
+        comment = re.sub(r"\s*\n\s*# ", " ", src[src.index("def _pane_spin"):src.index("def _chat_page")])
+        clause = "An element that only inherits a cursor counts through the element that sets it, whose box holds it unless it is drawn outside that box."
+        for what, text in (("the kernel's comment", comment), ("the placement entry", entry)):
+            with self.subTest(what=what):
+                self.assertIn(clause, text, what + " states the residual with its limit, as the case above runs it")
+
     def test_a_control_in_a_fixed_element_in_the_list_moves_the_badge_off_it(self):
         o = self._fit(r"""
 const pop = add(CONTENT, [200, 50, 190, 40], { position: 'fixed' }); add(pop, [300, 54, 60, 20], { sel: 'button' });
