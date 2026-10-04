@@ -97,12 +97,15 @@ as the run's peak anonymous memory, 16.8 to 18.6 GiB without a collection before
 at this pull request's head of 2026-10-03; at its head of 2026-10-04, where the census module's builds already collect
 before their freeze and the module releases its derivations after its last case, memory.peak under a 16.5 GiB cap with
 no swap was 16.30 GiB without this collection and 15.64 GiB with it (16.22 and 15.78 GiB with no cap; four runs at
-once). An interpreter without that function (3.10 to 3.12) is read as having its GIL, so nothing changes on 3.10 or
-3.12, nor on a GIL build of 3.13 or later (it reports true); a free-threaded build run with its GIL on keeps that
-collector and is not collected here, since the test is the GIL. The count gc.get_freeze_count() reads is live, growing
-with each build here and dropping when a frozen object dies by reference count, and reading it WALKS the permanent
-generation's list: a tenth of a second per read over the eight million objects the census freezes, up to a second once a
-collection has scattered the heap, so nothing in this module reads it and a pin reads it at most twice.
+once). Across the capped runs at that head, memory.peak ranged 15.36 to 16.04 GiB (0.46 to 1.14 GiB under the cap),
+moving with page cache from run to run, and the peak anonymous memory, which leaves page cache out, was 15.10 to 15.50
+GiB, against 15.81 to 16.08 GiB in the capped runs without this collection. An interpreter without that function (3.10
+to 3.12) is read as having its GIL, so nothing changes on 3.10 or 3.12, nor on a GIL build of 3.13 or later (it reports
+true); a free-threaded build run with its GIL on keeps that collector and is not collected here, since the test is the
+GIL. The count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen object dies
+by reference count, and reading it WALKS the permanent generation's list: a tenth of a second per read over the eight
+million objects the census freezes, up to a second once a collection has scattered the heap, so nothing in this module
+reads it and a pin reads it at most twice.
 EVERY READER PAYS THAT after a derivation, not this module's pins
 alone: kernel/kernel.py's perf snapshot (_PerfStats.snapshot) reads gc.get_freeze_count() on every call, so a test that
 reads the snapshot after the census in the same process runs 2 to 60 times slower per read, about 2 s over a serial run
@@ -160,11 +163,15 @@ process that used both roads would hold two caches, one per module object (no ce
 
 THE COUNTERS, readable by tests. stats() -> {"parses": n, "derivations": n, "parse_hits": n, "derived_hits": n}: parses
 counts the ast.parse calls made here (attempts, whether or not the parse succeeded), derivations the build() calls, the
-hits the calls answered from the cache. parses_of(path) and builds_of(key) count the same per file and per key. The
-counters are CUMULATIVE for the process and clear() leaves them alone: a census that clears the cache between two
-derivations shows a second derivation in the counters, which is how a pin on the mechanism is shown red. A test pins the
-mechanism by reading them: after a census's derivation entry point has run twice, builds_of(its key) is 1, every module
-it read has parses_of 1, and a second parse of a cached module or a second derivation is red.
+hits the calls answered from the cache. parses_of(path) and builds_of(key) count the same per file and per key. They
+count ATTEMPTS, so builds_of does not say whether a key's derivation is held: a build that raised or that the
+after-check refused is counted and leaves nothing in the memo. held(key) says that, under the module's lock: True while
+the key's derivation is in the memo (a build returned and passed the after-check, and no clear of that key, or of
+everything, since), and it builds, freezes and counts nothing. The counters are CUMULATIVE for the process and clear()
+leaves them alone: a census that clears the cache between two derivations shows a second derivation in the counters,
+which is how a pin on the mechanism is shown red. A test pins the mechanism by reading them: after a census's derivation
+entry point has run twice, builds_of(its key) is 1, every module it read has parses_of 1, and a second parse of a cached
+module or a second derivation is red.
 
 Only the standard library is imported here: the module is imported into test modules above their state preamble.
 """
@@ -363,6 +370,16 @@ def clear(*keys):
             _DERIVED.pop(k, None)
             if isinstance(k, str):
                 _PARSED.pop(os.path.realpath(k), None)
+
+
+def held(key):
+    """True when `key`'s derivation is in the memo now: a build for it returned and passed the after-check, and no clear() of
+    that key, or of everything, has run since. A build that raised or that the after-check refused holds nothing, though
+    builds_of counts it as a build, and a key never asked for holds nothing. Under the module's lock, so a build of `key` under
+    way on another thread is waited for and its outcome read. It reads the memo alone: it builds, freezes and counts nothing
+    (THE COUNTERS, in the module docstring)."""
+    with _LOCK:
+        return key in _DERIVED
 
 
 def cached_trees():

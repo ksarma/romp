@@ -60,7 +60,10 @@ output byte for byte, so the entry's exit code, its --table road, the tree deriv
 against a real run. A run of the file thus covers the listing road over a full copy of the scanned scope and both roads
 over the tiny roots; no run of the file prints the full tree's table. The script loads no romp code and
 this module loads none beyond tests/romp_load.py's kernel/loadsource.py; the copy lives under the run's temp root (tests/__init__.py's hook removes it, and
-tearDownModule does too, then calls release(), which drops what the module holds for the rest of the process).
+tearDownModule does too, then calls release(), which drops the tree's derivation and the served pass, the copy's script modules,
+the shared runs' outputs and the kernel's census, and keeps tree_run's two rendered roads and the tree's own script module for
+tests/test_security_price_feed.py, which reads them after this module's last case; kernel/kernel.py's parse stays in
+tests/parse_cache.py).
 
 The third round of the review (2026-09-22) found the completeness claim holding for the Python half alone: the shell and
 browser scans were closed tool lists with no interpreter arm and no import gate, a program site in the browser or editor
@@ -679,15 +682,17 @@ def release():
     derivation and the served pass (parse_cache.clear of TREE_KEY and SERVED_KEY), the script modules loaded over the scope copy
     (every _SCRIPTS entry but the tree's own script), the shared runs' outputs (_SHARED) and the kernel's census (_CENSUS), then
     one full collection. Kept: tree_run's two rendered roads (_ROADS) and the tree's own script module, which the security
-    module's table and binding reads take after this module's last case. A derivation made in this process whose roads were
-    never rendered (a worker whose cases read _tree() and not tree_run) has them rendered first, so that reader still builds
-    none. What this frees: reference counting frees an object nothing refers to any more, frozen or not (parse_cache's derived
-    freezes every object tracked when a build returns), and the collection frees a dropped cycle no freeze has kept (each script
-    module is one, its functions referring to its namespace); a cycle a freeze kept stays for the process (the retention shape
-    in tests/parse_cache.py). The tree's own script module is such a cycle, loaded before the tree's build froze it: dropping it
-    would free nothing, and the security module's next binding read would load the script again (about 12 MB on 3.14t, measured
-    2026-10-04)."""
-    if not _ROADS and PC.builds_of(TREE_KEY):
+    module's table and binding reads take after this module's last case, and kernel/kernel.py's parse, which stays in
+    parse_cache (kernel_source). A derivation held in parse_cache's memo (PC.held) whose roads were never rendered (a worker
+    whose cases read _tree() and not tree_run) has them rendered first, so that reader still builds none; a tree build that
+    raised holds nothing, though builds_of counts it, so nothing is rendered (a render would build again and raise out of this
+    call) and the clear, the drops and the collection still run. What this frees: reference counting frees an object nothing
+    refers to any more, frozen or not (parse_cache's derived freezes every object tracked when a build returns), and the
+    collection frees a dropped cycle no freeze has kept (each script module is one, its functions referring to its namespace); a
+    cycle a freeze kept stays for the process (the retention shape in tests/parse_cache.py). The tree's own script module is
+    such a cycle, loaded before the tree's build froze it: dropping it would free nothing, and the security module's next
+    binding read would load the script again (about 12 MB on 3.14t, measured 2026-10-04)."""
+    if not _ROADS and PC.held(TREE_KEY):
         tree_run()
     PC.clear(TREE_KEY, SERVED_KEY)
     tree_script = os.path.realpath(os.path.join(ROOT, INVENTORY))
@@ -16144,11 +16149,51 @@ class TheModuleReleasesWhatItHoldsAfterItsLastCase(unittest.TestCase):
     cleanup registered before it is made): parse_cache.clear is called once with TREE_KEY and SERVED_KEY; every _SCRIPTS entry but
     the tree's own script goes; _SHARED and _CENSUS are emptied; _ROADS is the same mapping with the same roads; then one full
     collection runs, after the clear (counted from the collector's generation-2 starts, the collector held off around the call so
-    no automatic collection is counted). Where the roads were never rendered and the derivation was built in this process
-    (builds_of), tree_run renders them before the clear; where it was not built, nothing renders. tearDownModule removes the
-    scope copy and then calls release() once."""
+    no automatic collection is counted). Where the roads were never rendered and the derivation is held in parse_cache's memo
+    (held), tree_run renders them before the clear; where it is not held, nothing renders and the clear, the drops and the
+    collection still run, whether nothing was built or the build ran and raised (builds_of 1, held false; a render there would
+    build again and raise out of release()). tearDownModule removes the scope copy and then calls release() once. One case runs
+    the real release() over the real parse_cache in a child interpreter (CHILD), so this process's cache and derivation are
+    untouched: the tree's build is made to raise once through derived() (script_module replaced by one that raises, after the
+    tree's own script and a copy's are loaded), then release(), with no roads rendered, raises nothing, leaves builds_of(TREE_KEY)
+    at 1 (no second build) and drops the copy's script module, _SHARED and _CENSUS, keeping the tree's own script module."""
 
-    def _release(self, roads, built):
+    CHILD = "\n".join((
+        "import json, os, shutil, sys, tempfile",
+        "root = sys.argv[1]",
+        "sys.path.insert(0, root)",
+        "import tests.parse_cache as PC",
+        "import tests.test_price_feed_census as census",
+        "census.script_module(root)",
+        "copy = tempfile.mkdtemp(prefix='census-release-')",
+        "os.makedirs(os.path.join(copy, 'scripts'))",
+        "shutil.copy2(os.path.join(root, census.INVENTORY), os.path.join(copy, census.INVENTORY))",
+        "census.script_module(copy)",
+        "census._SHARED['walk'] = (0, 'out')",
+        "census._CENSUS.append({'url': {}})",
+        "def failing(r):",
+        "    raise RuntimeError('a planted scan failure')",
+        "census.script_module = failing",
+        "try:",
+        "    census._tree()",
+        "    raised = None",
+        "except RuntimeError as e:",
+        "    raised = str(e)",
+        "got = {'build_raised': raised, 'builds': PC.builds_of(census.TREE_KEY), 'held': PC.held(census.TREE_KEY)}",
+        "try:",
+        "    census.release()",
+        "    out = None",
+        "except Exception as e:",
+        "    out = '%s: %s' % (type(e).__name__, e)",
+        "tree_script = os.path.realpath(os.path.join(root, census.INVENTORY))",
+        "got.update(release_raised=out, builds_after_release=PC.builds_of(census.TREE_KEY),",
+        "           tree_module_kept=any(k[0] == tree_script for k in census._SCRIPTS),",
+        "           copy_modules=sum(1 for k in census._SCRIPTS if k[0] != tree_script),",
+        "           shared=len(census._SHARED), census=len(census._CENSUS), roads=len(census._ROADS))",
+        "shutil.rmtree(copy, ignore_errors=True)",
+        "print(json.dumps(got))"))
+
+    def _release(self, roads, built, held):
         import types
         g, calls = globals(), []
         for name in ("PC", "_SCRIPTS", "_SHARED", "_CENSUS", "_ROADS", "tree_run"):
@@ -16156,11 +16201,12 @@ class TheModuleReleasesWhatItHoldsAfterItsLastCase(unittest.TestCase):
         tree_key = (os.path.realpath(os.path.join(ROOT, INVENTORY)), (1, 2, 3, 4))
         copy_keys = [(os.path.join(tempfile.gettempdir(), "census-scope-x", INVENTORY), (n, 2, 3, 4)) for n in (5, 6)]
         g["PC"] = types.SimpleNamespace(clear=lambda *keys: calls.append(("clear", keys)),
-                                        builds_of=lambda key: (built if key == TREE_KEY else 0))
+                                        builds_of=lambda key: (built if key == TREE_KEY else 0),
+                                        held=lambda key: (held if key == TREE_KEY else False))
         g["_SCRIPTS"] = dict([(tree_key, "the tree's module")] + [(k, "a copy's module") for k in copy_keys])
         g["_SHARED"] = {"walk": (0, "out")}
         g["_CENSUS"] = [{"url": {}}]
-        g["_ROADS"] = held = dict(roads)
+        g["_ROADS"] = kept = dict(roads)
         g["tree_run"] = lambda *flags: calls.append(("tree_run", flags))
 
         def hook(phase, info):
@@ -16177,23 +16223,42 @@ class TheModuleReleasesWhatItHoldsAfterItsLastCase(unittest.TestCase):
             gc.enable()
         self.assertEqual(g["_SCRIPTS"], {tree_key: "the tree's module"}, "every entry but the tree's own script is dropped")
         self.assertEqual((g["_SHARED"], g["_CENSUS"]), ({}, []), "the shared runs' outputs and the kernel's census are dropped")
-        self.assertIs(g["_ROADS"], held, "the roads stay the same mapping")
-        return calls, held
+        self.assertIs(g["_ROADS"], kept, "the roads stay the same mapping")
+        return calls, kept
 
     def test_release_drops_the_derivations_and_the_copies_modules_and_keeps_the_roads(self):
         roads = {(): (0, "listing", ""), ("--table",): (0, "table", "")}
-        calls, held = self._release(roads, built=1)
-        self.assertEqual(held, roads, "the rendered roads are kept as they were")
+        calls, kept = self._release(roads, built=1, held=True)
+        self.assertEqual(kept, roads, "the rendered roads are kept as they were")
         self.assertEqual(calls, [("clear", (TREE_KEY, SERVED_KEY)), ("collect",)], "one clear of both keys, then one full collection")
 
-    def test_roads_never_rendered_are_rendered_before_the_clear_where_the_derivation_was_built(self):
-        calls, _ = self._release({}, built=1)
+    def test_roads_never_rendered_are_rendered_before_the_clear_where_the_derivation_is_held(self):
+        calls, _ = self._release({}, built=1, held=True)
         self.assertEqual(calls, [("tree_run", ()), ("clear", (TREE_KEY, SERVED_KEY)), ("collect",)],
                          "the roads rendered from the derivation before it is dropped")
 
     def test_roads_never_rendered_stay_unrendered_where_nothing_was_built(self):
-        calls, _ = self._release({}, built=0)
+        calls, _ = self._release({}, built=0, held=False)
         self.assertEqual(calls, [("clear", (TREE_KEY, SERVED_KEY)), ("collect",)], "no derivation built here, so nothing renders one")
+
+    def test_a_tree_build_that_raised_renders_nothing_and_still_clears_drops_and_collects(self):
+        calls, _ = self._release({}, built=1, held=False)
+        self.assertEqual(calls, [("clear", (TREE_KEY, SERVED_KEY)), ("collect",)],
+                         "the build ran and raised (builds_of 1, held false): nothing is held to render, so no render, which would "
+                         "build again, and the clear and the collection still run")
+
+    def test_after_a_tree_build_that_raised_the_real_release_builds_nothing_and_drops_in_a_child(self):
+        p = subprocess.run([sys.executable, "-c", self.CHILD, ROOT], capture_output=True, timeout=300, cwd=ROOT)
+        self.assertEqual(p.returncode, 0, "the child runs the build and release(): %s" % p.stderr.decode("utf-8", "replace")[-2000:])
+        got = json.loads(p.stdout.decode("utf-8").strip().splitlines()[-1])
+        self.assertEqual((got["build_raised"], got["builds"], got["held"]), ("a planted scan failure", 1, False),
+                         "the tree's build ran once through parse_cache.derived and raised, so nothing is held: %r" % got)
+        self.assertEqual({k: got[k] for k in ("release_raised", "builds_after_release", "tree_module_kept", "copy_modules", "shared",
+                                              "census", "roads")},
+                         {"release_raised": None, "builds_after_release": 1, "tree_module_kept": True, "copy_modules": 0, "shared": 0,
+                          "census": 0, "roads": 0},
+                         "release() after the failed build: it raises nothing, builds nothing (builds_of still 1), drops the copy's "
+                         "script module, the shared runs and the kernel's census, keeps the tree's own script and renders no road")
 
     def test_teardown_removes_the_copy_then_releases(self):
         g, seen = globals(), []

@@ -6347,6 +6347,49 @@ class ParseCacheCollectsWhereTheGilIsOff(unittest.TestCase):
                                          "collection its free-threaded exception runs just before the freeze")
 
 
+class ParseCacheHeld(unittest.TestCase):
+    """tests/parse_cache.py's held(key) (PR 878, 2026-10-04): True while `key`'s derivation is in the memo, which builds_of, a
+    count of build attempts, does not say. The census module's release() reads it to decide whether the tree's derivation can be
+    rendered without a build (tests/test_price_feed_census.py, TheModuleReleasesWhatItHoldsAfterItsLastCase). Two cases, over keys
+    of this class's own, each forgotten by a cleanup registered before its first build, so these run in any worker and need no
+    tree: a key's life (nothing held before any build; nothing after a build that raised, though builds_of reads 1; held after a
+    build that returned; nothing again after clear() of that key, the count unmoved), and a build the after-check refused (it
+    wrote on a parser singleton, the attribute's removal registered BEFORE the build), counted and not held. THE PLANT: held()
+    reading the count (`key in _BUILDS`) reds the reads after the raising build, the clear and the refused build."""
+    KEY = ("tests/test_thread_stop_census.py", "a planted key of ParseCacheHeld")
+
+    def test_a_key_is_held_from_a_build_that_returned_until_its_clear_and_not_after_a_build_that_raised(self):
+        key = self.KEY + ("a key's life",)
+        self.addCleanup(PC.clear, key)
+        self.assertEqual((PC.held(key), PC.builds_of(key)), (False, 0), "before any build nothing is held")
+
+        def raising_build():
+            raise RuntimeError("the build's own failure")
+        with self.assertRaises(RuntimeError):
+            PC.derived(key, raising_build)
+        self.assertEqual((PC.held(key), PC.builds_of(key)), (False, 1), "a build that raised is counted and leaves nothing held")
+        PC.derived(key, object)
+        self.assertEqual((PC.held(key), PC.builds_of(key)), (True, 2), "a build that returned is held")
+        PC.clear(key)
+        self.assertEqual((PC.held(key), PC.builds_of(key)), (False, 2), "after clear() of the key nothing is held, the count unmoved")
+
+    def test_a_build_the_after_check_refused_is_counted_and_not_held(self):
+        key = self.KEY + ("a build the after-check refused",)
+        self.addCleanup(PC.clear, key)
+        load = ast.parse("x").body[0].value.ctx
+        self.assertIs(load, ast.parse("y").body[0].value.ctx, "the parser's Load is one object per process")
+        self.addCleanup(ParseCacheKeyAndLock._unplant, load, "_held")   # BEFORE the build that writes it
+
+        def refused_build():
+            load._held = object()
+            return object()
+        with self.assertRaises(AssertionError) as cm:
+            PC.derived(key, refused_build)
+        self.assertIn("after the build", str(cm.exception))
+        ParseCacheKeyAndLock._unplant(load, "_held")
+        self.assertEqual((PC.held(key), PC.builds_of(key)), (False, 1), "the after-check refused the build: counted, nothing held")
+
+
 class IterativeHandCopier(unittest.TestCase):
     """_ast_copy, the census's copier for the hands and the helper bodies (the eleventh pass, 2026-09-22), each property on
     a node of this class's own, no tree needed: a deep hand copies under a recursion limit the stdlib's recursive copier
