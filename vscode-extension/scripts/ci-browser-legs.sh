@@ -75,17 +75,22 @@
 # the real node and a short bound, a synthetic leg whose node process ignores SIGTERM and starts a process in a session
 # of its own and one in the file's own process group, each with a child, and a process in a session of its own whose
 # child exits at once and leaves a grandchild in its group, reparented out of the tree, and reads every one of those
-# processes gone by the bound plus the grace; its case "a TERM to the script" reads each leg's start line printed while
-# the legs run, then those processes, the hanging leg's node --test and the run's timers gone after a TERM, and the held
-# output printed, the hanging leg's after a line naming its node --test's exit (137, the kill's); its case "a second
-# TERM to the script" reads them and that node --test gone when a second TERM comes 100 ms after the first, that leg's
-# output after the same line, and the run's TMPDIR empty; its case "a SIGKILL to the script" reads the leg's subshell
-# and its timer gone once the leg and its bound have ended; its case "the per-file bound through the stub" runs the
-# grace's end after a cut and with nothing cut, a node --test that has exited and is not yet reaped when the grace runs
-# out, a node --test that outlives the bound with nothing under it or with only a zombie under it, the knobs' refusals,
-# the status of legs that exit differently, and a roster longer than the legs run at once; its case "the per-file bound
-# counts from each leg's own start" runs, with the real node, two legs one at a time, each shorter than the bound and
-# the two together longer, and reads neither cut. The timers and the event pipe use what bash 3.2 has (no wait -n), as
+# processes gone by the bound plus the grace; its case "the bound's kill reaches the cut leg's processes alone" runs,
+# with the real node and two legs at a time, a leg still running at another leg's cut (it watches that leg's process, so
+# its green does not rest on timing) and a leg queued behind the cut, and with one leg at a time a leg queued behind a
+# cut leg, and reads only the cut leg named and the queued legs started and passed; its case "a TERM to the script"
+# reads each leg's start line printed while the legs run, then those processes, the hanging leg's node --test and the
+# run's timers gone after a TERM, and the held output printed, the hanging leg's after a line naming its node --test's
+# exit (137, the kill's); its case "a second TERM to the script" sends a second TERM while the trap holds that node
+# --test stopped between its stop and its kill (read so by a poll after the first), and reads them and that node --test
+# gone, that leg's output after the same line, and the run's TMPDIR empty; its case "a SIGKILL to the script" reads the
+# leg's subshell and its timer gone once the leg and its bound have ended; its case "the per-file bound through the
+# stub" runs the grace's end after a cut (the leg second in its roster, one leg at a time, a leg queued behind it) and
+# with nothing cut, a node --test that has exited and is not yet reaped when the grace runs out, a node --test that
+# outlives the bound with nothing under it or with only a zombie under it, the knobs' refusals, the status of legs that
+# exit differently, and a roster longer than the legs run at once; its case "the per-file bound counts from each leg's
+# own start" runs, with the real node, two legs one at a time, each shorter than the bound and the two together longer,
+# and reads neither cut. The timers and the event pipe use what bash 3.2 has (no wait -n), as
 # tests/shell-portability.bats holds for every shell script the repo ships. The legs' records are joined in roster order
 # into the one record the pass below reads.
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (the reporter's header states
