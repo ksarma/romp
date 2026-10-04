@@ -70078,7 +70078,11 @@ def _pane_spin(cid, ignore_id=""):
             # boxes the last scan found and the boxes that clip them (the end of a transition: the scroll marks move to their new
             # places by a 180 ms transition, so the frame after the change that starts the move reads them mid-move, and only the
             # transition's end says where they stop; WebKit left the badge over a mark after a scroll; round 2, open call 7). So a control that appears or moves under the badge moves it on, the viewer opened or the
-            # notice shown, and typing and the timer scan nothing. A sticky element that appears deep in the content, not as the
+            # notice shown, and the timer and plain typing scan nothing. Two cases measured in the lab still scan at each event,
+            # both changes outside the container that the watch sees because it observes the page outside it: each keystroke of a
+            # slash command (the slash menu, a fixed element outside the list, redraws its items) and, on the desktop, each scroll
+            # step (the chat writes the hidden attribute of the reply chips, a fixed element outside the list that holds elements,
+            # at each; the rehearsed check of round 2). A sticky element that appears deep in the content, not as the
             # container's own child, is found at the next scan, not at once. No timer. The search runs only while the badge is
             # painted (rwatch starts at the paint and stops at the first frame a change or scroll asks for after the badge is
             # down), so a healthy page scans nothing. Upstream's CSS rule stays
