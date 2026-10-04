@@ -76,6 +76,9 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
     ("http://127.0.0.1:%d/" % N, "http://%s:%d/" % (h, N), f"http://127.0.0.1:{P}/", f"ws://{h}:{P}/",
     "http://127.0.0.1:{}/".format(N)); for %, the template holds an address whose colon is followed at once by a plain
     %d, %i or %s, and then the whole right operand is read, each element of a tuple, whatever placeholder it fills;
+    for format, a field takes the operand str.format gives it (by its number, its name or the next automatic number),
+    and takes its automatic number before the fields nested in its format spec take theirs, so
+    "http://{:{}}:{}/".format(h, w, N) reads N, and "http://{:{}}:{}/".format(h, N, 1) reads nothing;
     a port concatenated onto an address: the right operand of a + whose left side, read as text (string literals, names
     bound to one, f-strings' literal parts) with every other operand as a placeholder, ends in an address, then a colon
     ("http://127.0.0.1:" + str(N), "http://" + host + ":" + P);
@@ -621,13 +624,15 @@ class _Scan:
         return "".join(out)
 
     def _formatted(self, tmpl, args, keywords):
-        """Each operand str.format places right after an address's colon in the template `tmpl`."""
+        """Each operand str.format places right after an address's colon in the template `tmpl`. A field takes the next
+        automatic number before the fields nested in its format spec take theirs ("{:{}}" takes two)."""
         try:
-            fields = list(string.Formatter().parse(tmpl))
+            fields = [(lit, field, [f for _l, f, _s, _c in string.Formatter().parse(spec or "") if f is not None])
+                      for lit, field, spec, _conv in string.Formatter().parse(tmpl)]
         except ValueError:
             return
         rendered, auto = "", 0
-        for lit, field, _spec, _conv in fields:
+        for lit, field, nested in fields:
             rendered += _as_text(lit)
             if field is None:
                 continue
@@ -638,6 +643,7 @@ class _Scan:
                 arg = args[int(head)] if int(head) < len(args) else None
             else:
                 arg = keywords.get(head)
+            auto += sum(1 for f in nested if re.match(r"[^.\[]*", f).group(0) == "")   # the spec's automatic fields
             if arg is not None and head == field and not isinstance(arg, ast.Starred) and _ADDR_END.search(rendered):
                 self._value(arg, "an operand formatted into an address")
             rendered += "\x00"
@@ -1393,6 +1399,26 @@ class Plants(unittest.TestCase):
                  "spawn(bin, ['serve', '--port',\n    // %d was the old port\n    String(port)]);\n" % n)):
             with self.subTest(label):
                 self.assertGreen(name, src)
+
+    def test_a_format_field_nested_in_a_spec_takes_its_own_operand(self):
+        """THE RULE's str.format reading, for a field nested in another field's format spec ("{:{}}", a width or a fill
+        given as an operand): a field takes its automatic number before the fields nested in its spec take theirs, so the
+        port's field after them takes the operand str.format gives it, and a nested field's operand is not read. A field
+        nested by name takes no number. Each green twin is in a file the census opens: the number in the range is a
+        nested field's operand (a width), and the port is 1."""
+        n = _n()
+        for label, src in (
+                ("a host's field with a nested field", 'u = "http://{:{}}:{}/x".format(h, w, %d)\n' % n),
+                ("a host's field with a fill and a nested width", 'u = "http://{:>{}}:{}/x".format(h, 9, %d)\n' % n),
+                ("a host's field with two nested fields", 'u = "http://{:{}{}}:{}/x".format(h, ">", w, %d)\n' % n),
+                ("a field nested by name takes no number", 'u = "http://{:{w}}:{}/x".format(h, %d, w=9)\n' % n)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, "formatted into an address")
+        for label, src in (
+                ("the nested width of the host's field", 'u = "http://{:{}}:{}/x".format(h, %d, 1)\n' % n),
+                ("the nested width of the port's own field", 'u = "http://127.0.0.1:{:{}}/x".format(1, %d)\n' % n)):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", src)
 
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
