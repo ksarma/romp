@@ -43,6 +43,10 @@
   --math-err: #ff6a6a;   /* mirrors styles.css: KaTeX's flagged text (math.ts MATH_ERROR_COLOR); the feed page loads this sheet alone */
   --err: #c0392b;   /* the block-red — mirrors styles.css; feed.css has its OWN :root, so the ⏸ block marks
                        (and the modal's red ⏸-ring) need it defined HERE or var(--err) falls back to gray */
+  --log-unread: #ff6b6b;   /* the Log's unread red, a status colour: the gear's Open log count (gear.css .rs-log-n) wears
+                              the red the phone bar's Log triangle wears (kernel.py #mtabs #merr.has), per theme; the light
+                              block re-inks it to that theme's triangle red (2026-10-04). Feed-only: the gear's page loads
+                              this sheet, and styles.css has no reader */
   --warn: #d7a23a;  /* the heads-up amber — mirrors styles.css; ONE amber for "attention, not an error":
                        the toast's left rule, the judge-warnings head (two near-twin hexes before 2026-08-26) */
   --warn-on-white: #9A6A00;  /* mirrors styles.css: the same heads-up, for text on a surface that is WHITE in every
@@ -203,6 +207,8 @@ body.theme-light {
   --box-border: rgba(0, 0, 0, 0.12);
   --err: #B02A1C;
   --math-err: #B02A1C;   /* the light theme's own error red, 5.51:1 on --bg (KaTeX's flagged text, math.ts MATH_ERROR_COLOR) */
+  --log-unread: #B02A1C;   /* the light Log triangle's red (body.theme-light #mtabs #merr.has): the dark #ff6b6b is 2.1:1 on
+                              the gear's light surface, under the 3:1 floor a status mark keeps */
   --accent: #C2410C; --accent-fg: #FFF8F2;
   --accent-wash: rgba(194, 65, 12, 0.10);
   --accent-tint: rgba(194, 65, 12, 0.04);

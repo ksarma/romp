@@ -7,7 +7,8 @@ palette's log.open and the mobile bar's #merr are unchanged; the Log's own behav
 
 Two guards: SourcePins runs everywhere; ServedOpener boots the hermetic kernel, loads the dashboard, and drives
 the gear's button in the settings iframe, the /settings page that hosts the gear since 2026-09-10 (skips loudly
-without the extension deps or a Playwright browser).
+without the extension deps or a Playwright browser). It also reads the button's unread count in both themes: the phone
+triangle's red in each (feed.css --log-unread, 2026-10-04), at 3:1 or better on the count's ground.
 All fixtures synthetic.
 """
 import inspect
@@ -15,6 +16,7 @@ import json
 import lab_dist
 import lab_ports
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -72,7 +74,17 @@ class SourcePins(unittest.TestCase):
         self.assertIn("if (m && m.romp === 'logUnseen') window.__rompSetLogCount(m.n);", g)
         self.assertIn("lgn.textContent = n <= 0 ? '' : ' \\u00b7 ' + (n > 9 ? '9+' : String(n));", g)
         self.assertIn("window.parent.postMessage({ romp: 'logUnseenQuery' }, '*');", g, "the panel asks when it opens")
-        self.assertIn(".rs-log-n { color: #ff6b6b; font-weight: 600; }", css, "the triangle's red, a status colour")
+        # the count wears the triangle's red in each theme (2026-10-04): through feed.css's --log-unread, whose dark and light
+        # values are the shell's two triangle rules' (the light count sat at 2.1:1 on its surface in the dark red). These are
+        # spelling pins; ServedOpener reads the computed colour, and its contrast, in both themes
+        self.assertIn(".rs-log-n { color: var(--log-unread, #ff6b6b); font-weight: 600; }", css, "the triangle's red, per theme")
+        feed = open(os.path.join(ROOT, "ui", "webview", "feed.css"), encoding="utf-8").read()
+        dark = feed[feed.index(":root {"):feed.index("\n}", feed.index(":root {"))]
+        light = feed[feed.index("body.theme-light {"):feed.index("\n}", feed.index("body.theme-light {"))]
+        self.assertIn("--log-unread: #ff6b6b;", dark, "the dark count's red")
+        self.assertIn('"#mtabs #merr.has{color:#ff6b6b}"', k, "…is the dark triangle's")
+        self.assertIn("--log-unread: #B02A1C;", light, "the light count's red")
+        self.assertIn('"body.theme-light #mtabs #merr.has{color:#B02A1C}"', k, "…is the light triangle's")
 
     def test_the_other_openers_are_unchanged(self):
         self.assertIn('registerCommand({ id: "log.open", title: "Open the log", run: () => { if (w.__rompOpenErrs) w.__rompOpenErrs(); } });', PALETTE)
@@ -106,11 +118,53 @@ const btn = await feed.evaluate(() => { const b = document.getElementById("rs-lo
 // the gear is in TABS since T379 (Open log sits on the System tab, hidden until that tab is picked): select it as a user would, by its pill
 await feed.click("#rsettings .rs-tab[data-tab=debug]");   // Open log lives on the Debug tab since T400 (System dissolved into it)
 await feed.waitForFunction(() => { const pn = document.querySelector("#rsettings .rs-pane[data-pane=debug]"); return !!pn && !pn.hidden; }, null, { timeout: 5000 });
+// the count's colour in each theme (2026-10-04): one entry logged through the shell's write path, so the count shows (the lab
+// may hold entries of its own, so the number is not fixed); the count read with its ground (the first box from the count up whose background is opaque, or why none could be read); then
+// the light theme picked the way the gear picks it (the settings object; the settings page hears the store's event), and the
+// count read again
+const readCount = () => feed.evaluate(async () => {
+  const n = document.querySelector("#rs-log-open .rs-log-n");
+  if (!n) return { missing: true };
+  // a theme's colours reach the button through its 0.12 s background transition (.ra-openbtn), so the read waits for every
+  // transition on the count and the boxes around it to finish: the ground read is the theme's, not a frame of the fade.
+  // Bounded: an animation still running after 3 s is reported (settled false), and the Python side fails on it
+  const mine = document.getAnimations().filter((a) => a.effect && a.effect.target && a.effect.target.contains && a.effect.target.contains(n));
+  const settled = await Promise.race([Promise.all(mine.map((a) => a.finished.catch(() => null))).then(() => true),
+                                      new Promise((r) => setTimeout(() => r(false), 3000))]);
+  let ground = null, groundOf = null, groundError = null;
+  for (let el = n; el && !ground && !groundError; el = el.parentElement) {
+    const st = getComputedStyle(el);
+    const tag = el.id ? "#" + el.id : el.tagName.toLowerCase() + (el.className ? "." + String(el.className).split(" ")[0] : "");
+    const bg = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)$/.exec(st.backgroundColor);
+    if (st.backgroundImage && st.backgroundImage !== "none") groundError = "a background image on " + tag + ": " + st.backgroundImage.slice(0, 120);
+    else if (!bg) groundError = "an unreadable background colour on " + tag + ": " + st.backgroundColor;
+    else {
+      const alpha = bg[4] === undefined ? 1 : parseFloat(bg[4]) / (bg[5] ? 100 : 1);
+      if (alpha >= 1) { ground = st.backgroundColor; groundOf = tag; }
+      else if (alpha > 0) groundError = "a translucent background on " + tag + ": " + st.backgroundColor;
+    }
+  }
+  if (!ground && !groundError) groundError = "no box from the count up has an opaque background";
+  return { text: n.textContent, hidden: n.hidden, color: getComputedStyle(n).color, ground, groundOf, groundError,
+           light: document.body.classList.contains("theme-light"), settled, animations: mine.length };
+});
+await page.evaluate(() => window.__rompNotify("warn", "Synthetic warning for the count's colour"));
+await feed.waitForFunction(() => { const n = document.querySelector("#rs-log-open .rs-log-n"); return !!n && !n.hidden && /[0-9]/.test(n.textContent); }, null, { timeout: 8000 });
+const countDark = await readCount();
+await page.evaluate(() => {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem("romp:settings") || "{}") || {}; } catch (e) { s = {}; }
+  s.theme = "yatharth-light";
+  localStorage.setItem("romp:settings", JSON.stringify(s));
+  window.dispatchEvent(new Event("romp:settings"));
+});
+await feed.waitForFunction(() => document.body.classList.contains("theme-light"), null, { timeout: 8000 });
+const countLight = await readCount();
 await feed.click("#rs-log-open");
 await page.waitForFunction(() => !document.getElementById("rerr-back").hidden, null, { timeout: 8000 });
 const after = await page.evaluate(() => ({ logHidden: document.getElementById("rerr-back").hidden, settingsOpen: document.body.classList.contains("settings-open") }));
 const modal = await feed.evaluate(() => document.getElementById("rsettings").hidden);
-fs.writeSync(1, "RESULT:" + JSON.stringify({ before, btn, after, settingsHidden: modal, feedGear }) + "\n");
+fs.writeSync(1, "RESULT:" + JSON.stringify({ before, btn, after, settingsHidden: modal, feedGear, countDark, countLight }) + "\n");
 await browser.close();
 process.exit(0);
 """
@@ -169,6 +223,39 @@ class ServedOpener(unittest.TestCase):
         self.assertFalse(r["after"]["logHidden"], "the click opened the shell's Log panel")
         self.assertFalse(r["after"]["settingsOpen"], "the settings modal closed first: the panels never stack")
         self.assertTrue(r["settingsHidden"])
+        # the count wears the phone triangle's red in each theme and reads at 3:1 or better on its ground (2026-10-04): in the
+        # light theme the dark red read 2.1:1 there
+        for key, light, red in (("countDark", False, "rgb(255, 107, 107)"), ("countLight", True, "rgb(176, 42, 28)")):
+            c = r[key]
+            self.assertEqual((c.get("hidden"), c.get("light"), c.get("settled"), c.get("groundError", "the driver read no ground")),
+                             (False, light, True, None), "%s: the count shown, the theme, its transitions done, its ground read: %r"
+                             % (key, c))
+            self.assertRegex(c["text"], r"[0-9]", key + ": the count shows a number: %r" % (c,))
+            ratio = _contrast(c["color"], c["ground"])
+            self.assertEqual(c["color"], red, "%s: the count wears the triangle's red in this theme (%.2f:1 on %s): %r"
+                             % (key, ratio, c["ground"], c))
+            self.assertGreaterEqual(ratio, 3.0, "%s: the count's red %s reads at %.2f:1 on its ground %s (%s), under 3:1"
+                                    % (key, c["color"], ratio, c["ground"], c["groundOf"]))
+
+
+def _rgb(css):
+    """An engine's computed colour, rgb() or rgba() with an alpha of 1, as three channels; anything else is an error."""
+    m = re.fullmatch(r"rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)", css or "")
+    if not m:
+        raise AssertionError("not an rgb() colour: %r" % (css,))
+    if m.group(4) is not None and float(m.group(4)) / (100 if m.group(5) else 1) < 1:
+        raise AssertionError("a translucent colour cannot be measured alone: %r" % (css,))
+    return tuple(float(m.group(i)) for i in (1, 2, 3))
+
+
+def _contrast(fg, bg):
+    """The WCAG 2 contrast ratio of two computed colours."""
+    def lum(c):
+        ch = [v / 255 for v in _rgb(c)]
+        ch = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in ch]
+        return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+    hi, lo = sorted((lum(fg), lum(bg)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
 
 
 if __name__ == "__main__":

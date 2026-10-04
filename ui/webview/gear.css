@@ -336,9 +336,10 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
   border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.35); padding: 14px 16px;
   width: min(480px, calc(100vw - 48px)); }
 
-/* the Open log button's unread count (T290): the red the bar's triangle wore when something was unread —
-   a STATUS colour (the accent/status split), so it is the same literal on every surface */
-.rs-log-n { color: #ff6b6b; font-weight: 600; }
+/* the Open log button's unread count (T290): the red the phone bar's Log triangle wears when something is unread, a
+   STATUS colour (the accent/status split). Per theme through feed.css's --log-unread, so the light theme's count wears that
+   theme's triangle red (2026-10-04: the dark literal was 2.1:1 on the light surface); the fallback is the dark literal */
+.rs-log-n { color: var(--log-unread, #ff6b6b); font-weight: 600; }
 
 /* the stored logins under the Account row (T346): one line per login (its label, its state, a Remove), the
    sub-line's size; a refused or expired one wears the blocked red, an expiring one the working amber */
