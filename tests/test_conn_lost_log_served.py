@@ -471,15 +471,18 @@ class ConnLostLog(unittest.TestCase):
         """A disclosed residual, pinned as it executes (review round 1 of item 4b, 2026-10-04; a fourth clear is a design call
         still open). After a navigation that fires beforeunload and does not unload, an outage of the panes alone, while the
         shell's link stands: every pane's socket dropped, every pane's dial refused, the shell's socket never touched. In
-        Chromium and WebKit the 204 closes nothing, so the leaving latch it set stays set; the panes' refusals post their wsFail
-        words, which the latch holds; nothing of the outage clears the latch (the shell never redials, no pageshow fires), and
-        the panes' opens at its end clear it and drop the waiting entries in the same step. So nothing is written, during the
-        outage or after it. Firefox closes every socket of the page at the 204, the shell's redial clears the latch, and the
-        outage writes an entry for every shown pane whose dial was refused. Red at d8a1df87e (no latch) and under a wsFail
-        listener that ignores the latch, in Chromium and WebKit (Firefox's leg is green at both). A clear that closes this road
-        (candidates: a pane's dial start, the shell link's next frame) turns the Chromium and WebKit legs red, and they become
-        an outage-is-written leg."""
-        name, r = self._drive_real(engine, "nav204-paneonly", outageMs=outage_ms, readsMs=[3000, outage_ms - 500])
+        Chromium and WebKit the 204 closes nothing, so the leaving latch it set stays set; the panes' refusals post their
+        wsFail words, which the latch holds; nothing of the outage clears the latch (the shell never redials, no pageshow
+        fires), and the panes' opens at its end clear it and drop the waiting entries in the same step. So nothing is
+        written, during the outage or after it. Firefox closes every socket of the page at the 204, the shell's redial clears
+        the latch, and the outage writes an entry for every shown pane whose dial was refused. Firefox holds a host's
+        handshakes in one line and delays a dial after a failed one, so in 10 s only two or three dials reach the kernel; its
+        leg drops and refuses the shown panes alone, so every dial that reaches the kernel is one that owes an entry. Red at
+        d8a1df87e (no latch) and under a wsFail listener that ignores the latch, in Chromium and WebKit (Firefox's leg is
+        green at both). A clear that closes this road (candidates: a pane's dial start, the shell link's next frame) turns
+        the Chromium and WebKit legs red, and they become an outage-is-written leg."""
+        extra = {"outageApps": list(HELD_AT_BOOT)} if engine == "firefox" else {}
+        name, r = self._drive_real(engine, "nav204-paneonly", outageMs=outage_ms, readsMs=[3000, outage_ms - 500], **extra)
         rec, gen = r["rec"], r["oldGen"]
         t_nav, t_out, t_end = r["t"]["nav"], r["t"]["outage"], r["t"]["outageEnd"]
         self.assertEqual(r["genAfterNav"], gen, name + ": the 204 left the page in place")
@@ -498,6 +501,7 @@ class ConnLostLog(unittest.TestCase):
         labels = pane_labels()
         conn = [n for n in rec["notify"] if n["kind"] == "conn" and n["t"] >= t_nav]
         if engine == "firefox":
+            self.assertEqual(shown, sorted(HELD_AT_BOOT), name + ": the panes the outage took down are the shown panes")
             want = sorted("Kernel connection lost: %s pane (reconnecting)" % labels[a] for a in failed if a in shown)
             self.assertTrue(want, name + ": a shown pane's dial was refused during the outage: %r" % failed)
             self.assertEqual(sorted(n["text"] for n in conn), want,

@@ -29,10 +29,11 @@
 //   nav204-outage  boot, read the Log, navigate the top document to a 204 (beforeunload fires, the page stays; Firefox also
 //                  closes every socket of the page, which redial), wait for every socket to be up again, then a real
 //                  outage (mode refuse, every socket dropped): the Log owes its entries.
-//   nav204-paneonly the same 204, then an outage of the panes alone: every pane's socket dropped and every pane's dial
-//                  refused, while the shell's link stands and its socket is never touched. A disclosed residual's witness
-//                  (review round 1 of item 4b): in Chromium and WebKit the 204 closes nothing, so the latch it set is
-//                  still set, and no event of this outage clears it before a pane's open, which drops the waiting entry.
+//   nav204-paneonly the same 204, then an outage of the panes alone: every pane's socket dropped and every pane's dial refused
+//                  (only cfg.outageApps' when it is set), while the shell's link stands and its socket is never touched. A
+//                  disclosed residual's witness (review round 1 of item 4b): in Chromium and WebKit the 204 closes nothing, so
+//                  the latch it set is still set, and no event of this outage clears it before a pane's open, which drops the
+//                  waiting entry.
 // The page's recorders write to localStorage (lab:ev, lab:notify, lab:sock), so what the OLD page did during its unload
 // survives the reload; every row carries its document's generation id (gen). Prints one `RESULT:` JSON line; exits 3 when
 // the browser does not launch (the Python side turns that into a skip). Never touches a live kernel: cfg.healthz names the
@@ -193,8 +194,8 @@ const readLog = () => page.evaluate(() => {
   return { t: Date.now(), entries: notes.map((x) => ({ kind: x.kind, text: x.text, seen: !!x.seen, n: x.n || 1 })),
            digit: n ? n.textContent : null, has: !!(el && el.classList.contains("has")) };
 });
-// every eager pane said up and the link reads up, counting only words of this document generation since sinceT
-const waitUp = async (sinceT, ms) => {
+// every eager pane (or each of apps) said up and the link reads up, counting only words of this document generation since sinceT
+const waitUp = async (sinceT, ms, apps) => {
   const deadline = now() + ms;
   while (now() < deadline) {
     try {
@@ -204,7 +205,7 @@ const waitUp = async (sinceT, ms) => {
         for (const x of a) if (x.ev === "wsState" && x.gen === window.__labGen && x.t >= t) s[x.app] = x.state;
         return { s, link: !!(window.__rompLink && window.__rompLink().up) };
       }, sinceT);
-      if (r.link && EAGER.every((a) => r.s[a] === "up")) return true;
+      if (r.link && (apps || EAGER).every((a) => r.s[a] === "up")) return true;
     } catch (e) { /* a navigation in progress */ }
     await sleep(100);
   }
@@ -276,9 +277,11 @@ try {
       out.navUp = await waitUp(0, cfg.upTimeoutMs || 25000);   // each socket's latest word: Firefox's redials, or Chromium's sockets that never closed
       if (!out.navUp) await result({ died: "after the 204: not every eager pane and the link said up again", rec: await store() });
       await sleep(cfg.settleMs || 1500);
-      if (panesOnly) PX.refuseApps = new Set(EAGER); else PX.mode = "refuse";
+      const outApps = cfg.outageApps || EAGER;
+      out.outApps = outApps;   // the panes the outage takes down: the ones whose up word ends it (another pane's socket never closed)
+      if (panesOnly) PX.refuseApps = new Set(outApps); else PX.mode = "refuse";
       out.t.outage = now();
-      out.dropped = drop(panesOnly ? ["shell"] : null);
+      out.dropped = drop(panesOnly ? ["shell"].concat(EAGER.filter((a) => !outApps.includes(a))) : null);
       out.reads = [];
       for (const at of cfg.readsMs || []) {
         await sleep(Math.max(0, out.t.outage + at - now()));
@@ -292,7 +295,7 @@ try {
     }
   }
   out.newGen = await page.evaluate(() => window.__labGen);
-  out.upAfter = await waitUp(out.t.outageEnd || 0, cfg.upTimeoutMs || 25000);
+  out.upAfter = await waitUp(out.t.outageEnd || 0, cfg.upTimeoutMs || 25000, out.outApps);
   out.t.up = now();
   await sleep(cfg.afterMs || 2000);   // anything the page still had to say lands in this window
   out.logAfter = await readLog();
