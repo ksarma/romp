@@ -5,12 +5,12 @@ The Log panel opens with a block of "show" toggles, one chip per kind of entry, 
 user 2026-07-28: every chip the same cell width, the fewest rows). Its columns were `repeat(5,1fr)`. A `1fr` track's minimum
 is its chips' min-content width, and the chips never wrap (white-space:nowrap), so the five columns could not be narrower
 than the widest chip of each side by side, about 341 px in WebKit and Firefox and 362 px in Chromium; the grid, a flex item
-with no min-width of its own, kept that width. The panel is min(700px, 94vw) wide, so below 414 px of viewport (WebKit and
-Firefox; 435 px in Chromium) the grid ran past the filter bar and the panel on the right. At 390 px the last column's three
-toggles ended 22 px (WebKit, Firefox) to 43 px (Chromium) past the bar's content edge and 10 to 31 px past the panel's, and in
-Chromium 19 px past the screen, so part of each was cut off; at 320 px three to six toggles were cut off by the screen and
-three could not be tapped at all. The page itself never scrolled sideways (the panel is in a fixed backdrop), so nothing
-brought them back.
+with no min-width of its own, kept that width. The panel is min(700px, 94vw) wide, so in WebKit and Firefox the grid ran
+past the filter bar's content edge on the right below 414 px of viewport, past the panel below 401 px and off the screen
+below 388 to 389 px; in Chromium below 435, 422 and 409 px. At 390 px the last column's three toggles ended 22 px (WebKit,
+Firefox) to 43 px (Chromium) past the bar's content edge and 10 to 31 px past the panel's, and in Chromium 19 px past the
+screen, so part of each was cut off; at 320 px three to six toggles were cut off by the screen and three could not be tapped
+at all. The page itself never scrolled sideways (the panel is in a fixed backdrop), so nothing brought them back.
 
 The columns are now `repeat(auto-fill,minmax(max(96px,20% - 5px),1fr))`: as many equal columns as fit at 96 px or more
 (the entry rows' chip column, wider than the widest chip), and never more than five, since five tracks of a fifth less one

@@ -76642,8 +76642,9 @@ def _landing():
             # other term, 20% - 5px, is a fifth of the grid less one 5px gap: five such tracks and their four gaps always fit and a
             # sixth never does, so the desktop's 700px panel keeps exactly the five equal columns it had. Those were
             # repeat(5,1fr), which could not narrow: a 1fr track's minimum is its chips' min-content width and the chips never
-            # wrap, so five columns stayed about 340 to 360px wide and ran past the panel, and off the screen, on a phone narrower
-            # than 414 to 435px, by engine. A phone now gets three columns from about 370px and two below it
+            # wrap, so five columns stayed about 340 to 360px wide. On a phone, in WebKit and Firefox, they ran past the filter
+            # bar's content edge below 414px of viewport, past the panel below 401px and off the screen below 388 to 389px; in
+            # Chromium below 435, 422 and 409px. A phone now gets three columns from about 370px and two below it
             # (tests/test_log_filter_grid_served.py measures them, and that every chip still holds its label).
             "#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(max(96px,20% - 5px),1fr));gap:5px}"
             ".rerr-fbtn{cursor:pointer;user-select:none;text-align:center}"
