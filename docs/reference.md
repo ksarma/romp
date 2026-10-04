@@ -1497,7 +1497,32 @@ header:
 - `POST /restart`: `romp-manager restart [kernel]`, one kernel. No romp verb and
   no front end uses it.
 - `POST /stop`: `romp down`.
-- `POST /ensure`: a front end asking for a kernel (the VS Code extension).
+- `POST /ensure`: a front end asking for a kernel on a port (the VS Code
+  extension). The manager maps the port to a kernel in this order: a running
+  kernel on that port; else the `kernels.json` profile on it; else the primary
+  kernel, for the manager's own kernel port (`ROMP_KERNEL_PORT` or the default,
+  even when `kernels.json` has moved the primary elsewhere); else the name
+  `k<port>`, which a profile may also carry. It answers 200 for a kernel that
+  runs (`spawned: false`) or that it starts, and 409, starting nothing, for one
+  it refuses. It never refuses the primary. It refuses a spec whose state root
+  resolves to a root another kernel holds: a running kernel keeps the root it
+  was started on until it stops, wherever its entry sits in the file, and among
+  the profiles that are not running, the file's order decides. A profile with
+  no `stateDir` resolves to the primary kernel's root, as does a `k<port>` the
+  manager would start for a port nothing else maps to, and a `stateDir` that
+  names another kernel's root through a symlink or with a trailing slash is
+  that root. The 409 body names the kernel, the kernel whose root it would
+  share (as running, when it is), the primary kernel's port and the remedy. If
+  `kernels.json` dropped a malformed entry for a port no profile names, the
+  body says so and why; for a dropped `main` entry, which carries a port only,
+  the remedy is to repair that port. The
+  manager never starts a refused profile at boot, on a restart or on a respawn
+  either.
+  It logs one line per distinct conflict per manager life (the refused kernel,
+  the kernel whose root it is, that root and why), plus one when a refusal ends
+  a running kernel, and nothing per retry or per tick: a conflict that differs
+  only in the primary kernel's port, or in whether the primary runs, is not a
+  new one. It logs each `kernels.json` error once per manager life.
 
 The token is the same 0600 file the kernel gates its own writes with
 (`~/.local/state/romp/serve-token`, or `ROMP_SERVE_TOKEN`). The manager accepts
@@ -2156,6 +2181,84 @@ a separate process the CLI started, and a CLI killed by SIGKILL runs no cleanup,
 so its shells are re-parented and may keep running. A kernel restart has never
 touched work a session deliberately detached: a tmux server it started itself,
 `setsid` children and other processes that outlive their shell.
+
+**One kernel per state root.** A kernel that finds another kernel serving its
+state root refuses to start: it exits with status 75 and prints one stderr line
+naming the lock file and the holder as the file's line reads (its pid, or that
+a new owner has not yet written its line, or, for a line that names no owner,
+the line's first 80 characters, quoted), having written nothing. Under the
+manager, the crash backoff starts it again. The mechanism is an exclusive lock
+on `kernel.lock` in the state root, which a kernel takes before it writes
+anything there and holds until it exits (a SIGKILL releases it too). The file's
+one line names the holder: `<pid> serving`, or `<pid> draining <deadline>` once
+its drain has started, where the deadline is the end of the drain's grace. A
+kernel started while the holder drains waits for the lock, up to that
+deadline, and serves once it takes the lock. If, at the deadline, the holder
+still holds the lock or another waiting kernel has taken it first (the refusal
+then names that kernel, or says that a new owner has not yet written its line),
+the new kernel is refused. A draining line whose deadline lies further ahead
+than the new kernel waits for (its own shutdown grace plus 30 seconds) refuses
+it at once, without waiting. A drainer whose shutdown grace is more than 30
+seconds longer than the new kernel's announces such a deadline, so a kernel
+started early in that drain is refused this way too, and under the manager the
+crash backoff starts it again. A kernel whose lock step fails with an error is
+refused the same way, with status 75 and one stderr line naming the lock file,
+the step that failed and the error, never a traceback: a `kernel.lock` this
+user cannot open (no permission, or a directory at the path), one whose line
+cannot be read while another process holds it (a FIFO), or a state root on a
+filesystem that cannot take an flock (`ENOLCK`, `EOPNOTSUPP` or `EINVAL`, as on
+an NFS mount whose lock manager does not answer). Such a state root served
+before the lock existed and is now refused: put the state root on a filesystem
+that supports flock, or set `ROMP_STATE_DIR` to a directory on one. A state
+root where the lock file cannot be made (missing where the kernel cannot create
+it, not a directory, or, with no `kernel.lock` in it yet, not writable by this
+user) is refused the same way, and the line names the state root and the
+remedy: a directory this user can write at that path, or `ROMP_STATE_DIR` set
+to one. Where `kernel.lock` already exists in a state root this user can
+search, a failure to open it is refused as a `kernel.lock` this user cannot
+open, even if this user cannot write the state root. A lock the
+kernel takes but whose serving line it cannot write (a FIFO no other process
+holds, a full disk) does not refuse it: the kernel serves without that label,
+and prints one stderr line saying the line was not written.
+
+The lock cannot tell one kernel from another on its root: the root goes to
+whichever kernel takes the lock first. So the manager keeps a second kernel off
+a root before it starts it. It starts the primary kernel first and the
+`kernels.json` profiles in the file's order, and never starts a profile whose
+state root resolves to a root another kernel holds (a profile with no
+`stateDir` resolves to the primary kernel's root, and a `stateDir` naming
+another kernel's root through a symlink or with a trailing slash is that root).
+A running kernel keeps the root it was started on until it stops, wherever its
+entry sits in the file, so a profile added or edited onto that root is refused
+even when it is listed first; among profiles that are not running, the one
+listed first gets the root. That holds for one manager's life, through the
+kernel's own restarts and crash respawns on that root; a restart after its entry
+names another root is a new start on that root, where the file's order
+applies. A manager restart starts the profiles
+in the file's order again, so the root can go to a profile listed before the
+kernel that held it. Such a restart includes the self-restart that
+`romp refresh`, a `/restart` or a crash respawn triggers under a supervisor once
+`bin/romp-manager` has changed since the manager started. The manager answers
+`/ensure` for a refused profile with 409 (see
+[The manager's control port](#the-managers-control-port)). The lock
+keeps kernels apart in the cases the manager does not decide: a kernel's
+successor and the kernel draining before it, and the kernels started outside
+the manager, which it cannot see (a kernel you start by hand, the far-host
+fallback, an orphaned kernel, the test labs). The remedy depends on how the
+second kernel was started: a `kernels.json` profile needs a `stateDir` no other
+kernel uses, and a kernel you start by hand on a root another kernel serves is
+refused until you give it its own state root with `ROMP_STATE_DIR`.
+
+These are the guarantees of a manager from this release, and a manager keeps
+the spawn logic it started with. A manager not under a supervisor (started in
+the foreground, or by `romp-manager ensure`) that was started before an update
+keeps its old spawn logic until it restarts, and can still start a second
+kernel on the primary kernel's root: a `kernels.json` profile with no
+`stateDir`, or an `/ensure` for a port no profile names. That kernel can take
+the lock first and lock the primary kernel out, whose refusal then names a
+holder that a manager from this release would not have started. After updating,
+restart such a manager. A manager under a supervisor restarts itself with the
+update (the self-restart above).
 
 The dashboard page stays on screen across a restart. Its panes reconnect as they
 do after a dropped socket (the watched tab rebuilt whole, the other tabs as
@@ -7367,7 +7470,8 @@ heading in the file still lands on it, and a link to an element's own `id` or `<
 on it under the prefix. A link in the file is handled by its target, not by the element that
 carries it, a link drawn inside an inline SVG included: a web address opens a tab, a file
 target opens the file in the viewer, and a section link scrolls to it. An image map (`<map>`,
-`usemap`) is dropped. An HTML comment is dropped and the text around it is kept. An HTML
+`usemap`) is dropped. A `<marquee>` is removed, and its text and pictures stay where it stood,
+not moving. An HTML comment is dropped and the text around it is kept. An HTML
 `<title>` is dropped with its text, since a browser shows one nowhere outside the page's head;
 the `<title>` of an inline `svg`, the drawing's tooltip, stays. The same rules apply to the
 HTML in a chat message, where a link to an element's own `id` or `<a name>` lands on it under
@@ -7476,7 +7580,75 @@ addresses and paths found in the text wear a dotted underline that
 turns solid under the pointer; a Markdown link that names a file keeps the
 ordinary link look. Selecting text across a link, and commenting on a line that
 holds one, work as before, and a drag that starts or ends on a link selects
-rather than opens.
+rather than opens. The viewer keeps a trail of the files you reach through the links
+inside a file and of the pictures you open from its figures. Two arrow buttons appear at
+the left of its title bar once there is a file to step back or forward to (after you follow
+a link or open a picture; there are none before that): **Back** returns you to the file you
+came from, and **Forward** to the file you came back from, a text file at the place and in the
+view you left it, a picture as the picture even if you left an SVG in its Source view, and a PDF
+at its first page (while you are not editing the file and no text box
+holds the keyboard, Cmd+[ and Cmd+] on a Mac do the same, and so do Alt+Left and Alt+Right
+on a Files or chat page open in a browser tab of its own; in the dashboard those two keys
+move the keyboard between the panes); a file opened from the chat, from a listing or from
+the Files pane's **Recent** list starts the trail over, and closing the viewer ends it, as
+does, in the chat, following a link to a page on the dashboard's own web address that ends
+in .md or .markdown: the page opens in the viewer in the file's place as a web document
+rather than a file of the session, and the trail ends there (in the Files pane such a link
+opens a tab, as any web address does, and the trail stands). A
+picture in a rendered file that comes from a file or a web address has an
+**Open the picture** button at its top-right corner (the top-left in right-to-left text,
+and on a picture floated to one side, the top corner away from that side), shown while
+the pointer is over the picture or the button, while a focus you reached from the keyboard
+is on the button, under any focus for a picture from the web, and at all times on a phone
+or tablet and on a laptop with a touchscreen, that opens the picture on its own in the
+viewer, with Back returning you to the file at that place (where the button is not shown
+at all times, a Cmd-click on a local picture's button, a Ctrl-click on Windows and Linux,
+or a press dragged off it leaves the button focused but hidden until you press a key, so
+Enter then opens the picture in the viewer with nothing shown first); a plain click on the picture does the same while the Comments panel is
+closed (with the panel open, a click offers a comment as before, and so does a Cmd-click
+on the picture on a mouse or trackpad, and a drag draws a rectangle unless it starts on
+the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture
+while the panel is closed, or on the button at any time, opens the picture in a browser
+tab, a picture at one of the dashboard's own file addresses opens as a picture from a file
+does, in the session its address names, and never in a tab at the address as written, and
+a picture from the web opens its address in a new tab, as a link to that site
+does, but only while its button, or on a small picture its dashed border, is on the screen
+with nothing over it that would take a click: a click, a tap, Enter or Space while it is off
+the screen or covered
+(by the list of headings the **Outline** button opens, the menu of the text size
+buttons, or something the file itself lays over the picture, say) opens nothing and
+scrolls it into view,
+and the next one opens once it shows (a button partly on the screen counts as shown), and
+the button and the picture both show that before the click: the button's
+tooltip says it opens a new tab at the address's host, its border is dashed and its glyph
+is an arrow leaving a box, and the picture's own tooltip shows the address's origin (its
+scheme, host and port, never its path, query or fragment), on a line after the author's
+title when there is one; when the address has an @ anywhere after its scheme, so that it may
+carry a sign-in, both tooltips say the address is withheld and show none of it, even for a
+harmless name such as a@2x.png; a
+click on a picture in a fold's title line (a `<details>` block's summary) opens or closes
+the fold and opens nothing, with or without Cmd, and a picture from the web there shows
+no address in its tooltip, while its button, where it has one, still opens it; a figure
+waiting behind its host's box gets its button once it has loaded, as does
+one still on its way (a click on it before then opens nothing), and once the browser has
+answered for a picture, five kinds have none: a picture that failed to load, which opens
+nothing either; a `data:` picture, whose bytes are written into the file itself and which
+does not open; a picture smaller than 48 pixels on either side (a badge, an inline icon),
+which the button would cover, and which a plain click still opens when neither a link nor
+a fold's title line holds it, though no key opens it, since the button is the keyboard's
+only way to a picture, and a picture that shrinks below 48 pixels as the pane narrows
+loses its button and that way with it (a small picture from the web outside such a line has the
+dashed border itself, on a mouse or trackpad while the
+pointer is over it, and at all times on a phone or tablet and on a laptop with a
+touchscreen, since a finger gets no tooltip); a picture at one of the dashboard's own file
+addresses that the viewer cannot open as shown, which opens nothing either, such as a pinned
+copy, a download (an address naming `download=1`), a local address naming a session on
+another machine, or a relay address of another shape; and a picture inside a link that holds more
+than the picture (a caption beside
+it), where a click follows the link (a link with no address left, or an anchor that only
+marks a place, is not a link a click can follow, so a picture inside it keeps its button
+and its tooltip, and a plain click opens it), while a picture that is all its link holds
+keeps its button beside the link.
 
 ### The rings on a tab
 
@@ -7814,7 +7986,9 @@ to, and stays through a switch of view and a reload until the next notice replac
 you open the editor. A notice raised while you edit (a save that failed) goes when you
 leave the editor; a warning about the comments log stays when the save that raised it
 closes the editor. The file takes the keyboard when it opens, so the arrow keys, PageDown
-and Space scroll it at once; a box you were typing in keeps the keyboard. When a file
+and Space scroll it at once; a box you were typing in keeps the keyboard. After Enter or
+Space on **Back** or **Forward**, the keyboard stays on that button, so the next press steps
+again; after Cmd+[, Cmd+], Alt+Left or Alt+Right, the file takes it as usual. When a file
 changes on disk while you read it with the Comments panel closed, a line above the text says
 so the next time you return to the dashboard, and **Reload** reads it again with your place
 kept.
@@ -7890,7 +8064,9 @@ viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or
 on a phone, comment on the file as a whole instead.
 A figure that cannot be loaded, because its file is missing or is not an image, shows a line
 where the picture would be: **Image failed to load**, then the figure's path as written in the
-file, and its alt text when it has one.
+file (for a web address, only its origin: its scheme, host and port; for a source with an @
+that may be a sign-in, **address withheld because it appears to carry a sign-in** in its
+place), and its alt text when it has one.
 A picture opened as a file of its own whose bytes will not decode, because it is still being
 written or was cut short, shows a line in its place (**this image failed to decode: it may be
 mid-write or truncated**), then the file's path, and **Download**, which saves the file to your

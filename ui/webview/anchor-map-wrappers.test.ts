@@ -146,7 +146,7 @@ function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
  *  other forbidden tag is unwrapped with its content kept (a `<form>`, a `<button>`, a `<label>`), and an `<input>` that is not a
  *  checkbox goes (keepOnlyInertCheckboxes). */
 const DROP_WITH_TEXT = new Set(["STYLE", "SCRIPT"]);
-const UNWRAP = new Set(["FORM", "BUTTON", "SELECT", "OPTION", "OPTGROUP", "TEXTAREA", "FIELDSET", "LEGEND", "LABEL", "DATALIST", "OUTPUT", "METER", "PROGRESS", "DIALOG", "MAP", "AREA"]);
+const UNWRAP = new Set(["FORM", "BUTTON", "SELECT", "OPTION", "OPTGROUP", "TEXTAREA", "FIELDSET", "LEGEND", "LABEL", "DATALIST", "OUTPUT", "METER", "PROGRESS", "DIALOG", "MAP", "AREA", "MARQUEE"]);
 function standInSanitize(root: FakeElement): void {
   for (const c of root.childNodes.slice()) {
     if (c.nodeType !== 1) continue;

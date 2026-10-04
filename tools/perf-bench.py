@@ -35,8 +35,9 @@ mirror is removed afterwards unless `--keep-mirror`.
 
 The copy is only READ, whichever way it was given. Every write the kernel aims at the state
 directory lands in a shadow directory under the tool's private temp dir instead (the state shadow,
-below): the repo-root marker the kernel writes when it is imported, the session order the push
-appends new sids to, the order audit log. The end-of-run census fingerprints the copy before the
+below): the repo-root marker an older kernel writes when it is imported (a kernel with the instance
+lock writes it after its bind, so an import writes none), the session order the push appends new sids
+to, the order audit log. The end-of-run census fingerprints the copy before the
 kernel is imported and after the last row, on the error path too, and prints what changed; a run
 that reports anything but 0 changed, 0 new, 0 removed found a writer the shadow does not take. Two
 such writers are known. A state file the kernel cannot parse is quarantined by an os.replace to a
@@ -166,7 +167,7 @@ error, never a silent skip):
     glibc consult the name service — AF_UNIX connects to nscd and systemd-userdb, local, not network.
   * The state shadow: every kernel _atomic_write (the ONE write door for the small JSON state files
     among them), every Path.write_text the kernel import performs against the state directory (the
-    repo-root marker), the order audit log's append and the event model's checkpoint documents (its
+    repo-root marker of a kernel older than the instance lock), the order audit log's append and the event model's checkpoint documents (its
     directory provider is pointed at the shadow) are redirected to <private dir>/shadow/<same
     relative path>, and the kernel's ONE strict reader of the small JSON state files
     (_read_state_json) reads a shadowed file from the shadow, so a read-modify-write such as the
@@ -760,8 +761,9 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
 # ── loading ─────────────────────────────────────────────────────────────────────────────────────
 def load_kernel(repo, shadow=None):
     """Import the checkout's kernel in-process. With a `shadow`, every Path.write_text the import
-    performs against the state copy lands in the shadow instead (the kernel writes its repo-root
-    marker at import, before any guard can be installed on the module); the diversion is removed
+    performs against the state copy lands in the shadow instead (a kernel older than the instance
+    lock writes its repo-root marker at import, before any guard can be installed on the module; a
+    current one writes it in main() after its bind, so its import writes none); the diversion is removed
     once the import returns, and the guards install_guards puts on the named write doors take over."""
     kpath = os.path.join(repo, "kernel", "kernel.py")
     if not os.path.isfile(kpath):

@@ -298,7 +298,10 @@ ROWS = [
 # landed) added two writer calls in kernel/sdk_backend.py, SdkSession._release_hold_at_exit's row for a thread exit the CLI
 # survives under its host and SdkSession._run's row for a failed exit release (calls reaching the writer 384 to 386: typed
 # 126 to 128; neither env-tainted, so content rows stay 13), and the slice's upstream side added 53 kernel/kernel.py
-# functions, named on the functions entry: doors 476 to 478, functions 3409 to 3462, and no other entry moved). Until round 8 these were FLOORS, and a floor
+# functions, named on the functions entry: doors 476 to 478, functions 3409 to 3462, and no other entry moved; re-derived
+# at fold 4 slice 2's merge of slice 1's merged head 2ce23298b, whose side brought fork PR 947's kernel instance lock and
+# its 16 kernel/kernel.py functions, named on the functions entry: functions 3462 to 3478, and no other entry moved). Until
+# round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
 # 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
 # head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
@@ -332,7 +335,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3462,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3478,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -393,7 +396,25 @@ COUNTS = {
     #                                1958's _chat_delivery and _note_chat_handed; PR 1954's _chat_prior_n and
     #                                _PerfStats.build_chat_baseline_raced and build_chat_baseline_repaired; PR 1912's
     #                                _key_in_transcript; PR 1910's _scoped_pin_after and _unpin_to_synchronized; none removed;
-    #                                sdk_backend.py (764) and credentials.py did not move, and no other entry moved
+    #                                sdk_backend.py (764) and credentials.py did not move, and no other entry moved; then on the
+    #                                kernel instance lock's branch as 3328, over fork main e015c014e's 3316: the lock adds
+    #                                _kernel_lock_path, _kernel_lock_write, _kernel_lock_read, _kernel_lock_pid_alive,
+    #                                _kernel_lock_when, _kernel_lock_wait with its nested _expired, _kernel_lock_refusal,
+    #                                _kernel_lock_holder_why, _kernel_lock_acquire, _kernel_lock_refuse and
+    #                                _kernel_lock_announce_drain to kernel/kernel.py, the census's own derivation; no lambda and no
+    #                                other entry moved; then at fork PR 947's round-1 fix as 3331: every failure of the lock step a
+    #                                named refusal adds _kernel_lock_parse, _kernel_lock_fault and _kernel_lock_label to
+    #                                kernel/kernel.py, the census's own derivation; no lambda and no other entry moved; then at
+    #                                fork PR 947's round-1 closing fix as 3332: making the lock step's stderr lines best-effort
+    #                                adds _kernel_lock_say to kernel/kernel.py, the census's own derivation; no lambda and no other
+    #                                entry moved; then at fold 4 slice 1's merge of fork main at batch 2026-10-03a as 3425, both
+    #                                sides' functions kept (the fold's 93 and the lock's 16 over 3316; kernel/kernel.py 2617 to
+    #                                2633), the census's own derivation on the merged tree; no lambda and no other entry moved;
+    #                                then at fold 4 slice 2's merge of slice 1's merged head 2ce23298b (slice 1 with fork main
+    #                                df34f7f25, batch 2026-10-03a) as 3478, both sides' functions kept (the slice's 53 over 3409,
+    #                                and the lock's 16 named above; kernel/kernel.py 2670 to 2686), the census's own derivation on
+    #                                the merged tree; sdk_backend.py (764) and credentials.py did not move, and no other entry
+    #                                moved
 }
 CALLS_BY_KIND = {"self": 210, "typed": 128, "bound-self": 7, "param": 36, "alias": 5}   # the 386's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and

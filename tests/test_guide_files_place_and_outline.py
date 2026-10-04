@@ -4,7 +4,8 @@ the viewer, the Files pane and the todo surfaces do them.
 
 The file takes the keyboard when it opens, so the arrow keys, PageDown and Space scroll it with no click first, and a
 box the person was typing in keeps the keyboard (item 1: the body's tabIndex and takeKeyboard's gate on the active
-element); the Outline button above a rendered file lists the file's headings and a pick scrolls the heading to the
+element), except after Enter or Space on Back or Forward, which keeps it on that button (the link-navigation follow-on's
+file review, round 19, ui-1: the key step's holder at the first landing); the Outline button above a rendered file lists the file's headings and a pick scrolls the heading to the
 top, a closed fold opened on the way (item 2: the button's label, the pick through the fragment landing); a file
 reopened from the Files pane's Recent list opens at the place it was left (item 3: the row hands its stored place
 back and the pane writes the place the viewer hands it on leaving); a line or a section written after a path in a
@@ -77,6 +78,10 @@ RECENT = ("When no file is open, the pane lists the files most recently open her
           "the file opens at the place you left it.")
 KEYBOARD = ("The file takes the keyboard when it opens, so the arrow keys, PageDown and Space scroll it at once; a box "
             "you were typing in keeps the keyboard.")
+# the key step on Back and Forward (the link-navigation follow-on's file review, round 19, ui-1): the one open whose landing
+# leaves the keyboard on a button, the chords landing it in the file as every other open does
+KEY_STEP = ("After Enter or Space on **Back** or **Forward**, the keyboard stays on that button, so the next press steps "
+            "again; after Cmd+[, Cmd+], Alt+Left or Alt+Right, the file takes it as usual.")
 DISK = ("When a file changes on disk while you read it with the Comments panel closed, a line above the text says so "
         "the next time you return to the dashboard, and **Reload** reads it again with your place kept.")
 OUTLINE = ("The **Outline** button above a rendered file lists the file's headings; pick one and the view scrolls to "
@@ -105,6 +110,10 @@ class TheGuideSaysSo(unittest.TestCase):
 
     def test_the_file_takes_the_keyboard_and_a_box_being_typed_in_keeps_it(self):
         self.assertIn(KEYBOARD, self.place)
+
+    def test_a_key_step_on_back_or_forward_keeps_the_keyboard_on_the_button_and_a_chord_gives_it_to_the_file(self):
+        # read right after the rule it qualifies (the source that keeps it: TheViewerDoesIt's key-step test)
+        self.assertIn(KEYBOARD + " " + KEY_STEP, self.place)
 
     def test_a_change_on_disk_raises_a_line_above_the_text_and_reload_keeps_the_place(self):
         self.assertIn(DISK, self.place)
@@ -162,11 +171,23 @@ class TheViewerDoesIt(unittest.TestCase):
     def setUp(self):
         self.viewer = _read("ui", "webview", "file-view.ts")
 
+    def test_a_key_step_on_back_or_forward_lands_the_keyboard_on_the_button_and_a_chord_never_does(self):
+        # the guide's key-step sentence against its source: the button's click tags a key's activation (detail 0), the first
+        # landing's holder is the new bar's button of that direction, and the chord's listener never tags its step. Where the
+        # parts stand, not what they do: file-trail-browser.test.ts presses the keys in Chromium and reads the holder
+        self.assertIn("keyStepNext = e.detail === 0;", self.viewer)
+        self.assertIn("takeKeyboard(priorRing ?? undefined, keyHolder ?? body);", self.viewer)
+        chord = self.viewer[self.viewer.index("const onNavKey = (e: KeyboardEvent) => {"):]
+        chord = chord[:chord.index('document.addEventListener("keydown", onNavKey, true);')]
+        self.assertNotIn("keyStepNext", chord)
+
     def test_the_body_is_a_tab_stop_and_takes_the_keyboard_unless_a_box_holds_it(self):
         self.assertIn("\n  body.tabIndex = 0;\n", self.viewer)
         # the ring argument since the review's round 3: a closer that removes the holder first reads its ring and passes it
-        self.assertRegex(self.viewer, re.compile(r"^  const takeKeyboard = \(ring\?: boolean\): void => \{$", re.M))
-        gate = self.viewer[self.viewer.index("const takeKeyboard = (ring?: boolean): void => {"):]
+        # and since the link-navigation follow-on's file review, round 19 (ui-1), the holder: the body unless the first landing
+        # of a step from a key on Back or Forward names the new bar's button of that direction
+        self.assertRegex(self.viewer, re.compile(r"^  const takeKeyboard = \(ring\?: boolean, to: HTMLElement = body\): void => \{$", re.M))
+        gate = self.viewer[self.viewer.index("const takeKeyboard = (ring?: boolean, to: HTMLElement = body): void => {"):]
         gate = gate[:gate.index("\n  };")]
         # the gate: nothing, the document's body or a control in the viewer's own bar yields; a box being typed in keeps it
         self.assertIn("if (a && a !== document.body && !bar.contains(a)) return;", gate)
@@ -175,11 +196,12 @@ class TheViewerDoesIt(unittest.TestCase):
         # the kind of the document's last press (round 4: Enter on a file browser row, whose rows are not focusable, lost it)
         self.assertIn("const opts: FocusOptions & { focusVisible: boolean } = { preventScroll: true, "
                       "focusVisible: ring ?? (a === null || a === document.body ? ringWithNoHolder() : ringOf(a)) };", gate)
-        self.assertIn("body.focus(opts);", gate)
+        self.assertIn("to.focus(opts);", gate)
         # the open's first landing takes it once, with the ring of a holder the replace path removed when it had one (round 4);
-        # a reload's landing never (keyboardPending is spent)
+        # a reload's landing never (keyboardPending is spent); after a key step on Back or Forward the holder is the new bar's
+        # button of that direction (keyHolder; ui-1 of that round), which the guide's key-step sentence below says
         self.assertIn("const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; "
-                      "takeKeyboard(priorRing ?? undefined); };", self.viewer)
+                      "takeKeyboard(priorRing ?? undefined, keyHolder ?? body); };", self.viewer)
         for sheet in ("styles.css", "feed.css"):
             css = _read("ui", "webview", sheet)
             self.assertIn("\n.fileview-body:focus { outline: none; }\n", css, sheet)

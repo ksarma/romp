@@ -2494,7 +2494,7 @@ FAKE
     [[ "$output" == *"not running"* ]]
 }
 
-@test "romp-manager: /ensure spawns an additional kernel on demand, idempotently" {
+@test "romp-manager: /ensure refuses a port no profile names, and spawns a kernels.json profile's kernel on demand, idempotently" {
     command -v node >/dev/null 2>&1 || skip "node not available"
     command -v curl >/dev/null 2>&1 || skip "curl not available"
     local mgr; mgr="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
@@ -2505,38 +2505,62 @@ FAKE
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
 
-    local cport mport kport; free_port cport mport kport
+    local cport mport kport pport; free_port cport mport kport pport
     # the manager's write doors (/ensure, /stop) take the serve token: mint one under the hermetic state root
     local tok=ensure-test-token; unset ROMP_SERVE_TOKEN; mkdir -p "$XDG_STATE_HOME/romp"; printf '%s\n' "$tok" > "$XDG_STATE_HOME/romp/serve-token"
     # Launch the manager in the background; it auto-spawns 'main' on mport via the fake launcher.
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
-        node "$mgr" up >/dev/null 2>&1 &
+        node "$mgr" up >/dev/null 2>"$TEST_DIR/manager.log" &
     MGR_PID=$!   # teardown reaps this
 
-    # Wait for the control endpoint to come up (≤ ~3s)
+    # Wait for the control endpoint to come up (about 3 s at most)
     local i
     for i in $(seq 1 30); do
         curl -fsS "http://127.0.0.1:$cport/status" >/dev/null 2>&1 && break
         sleep 0.1
     done
 
-    # Ensure a second kernel on kport → freshly spawned
-    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport"
+    # A port no kernels.json profile names: its kernel would run on the primary's state root, so the
+    # manager answers 409 (not -f: the body is the point) naming the kernel, the primary's port and the
+    # remedy for each road (a profile with a stateDir no other kernel uses; a kernel started by hand needs
+    # its own ROMP_STATE_DIR), and spawns nothing.
+    run curl -sS -o "$TEST_DIR/ensure-body" -w '%{http_code}' -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport"
     [ "$status" -eq 0 ]
-    [[ "$output" == *'"spawned":true'* ]]
-    [[ "$output" == *"\"port\":$kport"* ]]
-    [[ "$output" == *"\"id\":\"k$kport\""* ]]
-
-    # Ensuring the same port again is idempotent — no second spawn
-    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"spawned":false'* ]]
-
-    # /status now lists both the default 'main' kernel and the on-demand one
+    [ "$output" = 409 ]
+    run cat "$TEST_DIR/ensure-body"
+    [[ "$output" == *'"ok":false'* ]]
+    [[ "$output" == *"kernel 'k$kport' (port $kport) is not started"* ]]
+    [[ "$output" == *"the primary kernel on port $mport"* ]]
+    [[ "$output" == *"with a stateDir no other kernel uses"* ]]
+    [[ "$output" == *"A kernel started by hand, which the manager does not see, needs its own ROMP_STATE_DIR."* ]]
     run curl -fsS "http://127.0.0.1:$cport/status"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"id":"main"'* ]]
-    [[ "$output" == *"\"id\":\"k$kport\""* ]]
+    [[ "$output" != *"\"id\":\"k$kport\""* ]]
+    [ "$(grep -c "kernel 'k$kport' (port $kport) is not started" "$TEST_DIR/manager.log")" -eq 1 ]
+    run grep -c " → :$kport " "$TEST_DIR/manager.log"
+    [ "$output" = 0 ]
+
+    # A kernels.json profile with its own stateDir, added while the manager runs (every spawn and every
+    # /ensure reads the file fresh): /ensure spawns it on demand...
+    printf '{"kernels": [{"id": "aux", "port": %s, "stateDir": "%s"}]}\n' "$pport" "$TEST_DIR/aux-state" \
+        > "$XDG_STATE_HOME/romp/kernels.json"
+    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$pport"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"spawned":true'* ]]
+    [[ "$output" == *"\"port\":$pport"* ]]
+    [[ "$output" == *'"id":"aux"'* ]]
+
+    # ...and ensuring the same port again is idempotent: no second spawn
+    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$pport"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"spawned":false'* ]]
+
+    # /status now lists both the default 'main' kernel and the profile's
+    run curl -fsS "http://127.0.0.1:$cport/status"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"id":"main"'* ]]
+    [[ "$output" == *'"id":"aux"'* ]]
 
     # Graceful shutdown (teardown also reaps via MGR_PID as a backstop)
     curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/stop" >/dev/null 2>&1 || true
@@ -2552,19 +2576,25 @@ FAKE
 
     local cport mport kport; free_port cport mport kport
     local tok=restart-all-test-token; unset ROMP_SERVE_TOKEN; mkdir -p "$XDG_STATE_HOME/romp"; printf '%s\n' "$tok" > "$XDG_STATE_HOME/romp/serve-token"
+    # a 2nd kernel in the registry: a kernels.json profile with its own stateDir, which the boot pass spawns beside main
+    printf '{"kernels": [{"id": "aux", "port": %s, "stateDir": "%s"}]}\n' "$kport" "$TEST_DIR/aux-state" \
+        > "$XDG_STATE_HOME/romp/kernels.json"
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
-    for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:$cport/status" >/dev/null 2>&1 && break; sleep 0.1; done
-    curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport" >/dev/null   # a 2nd kernel in the registry
+    for i in $(seq 1 30); do
+        curl -fsS "http://127.0.0.1:$cport/status" 2>/dev/null | grep -q '"id":"aux"' && break
+        sleep 0.1
+    done
+    run curl -fsS "http://127.0.0.1:$cport/status"
+    [[ "$output" == *'"id":"main"'* ]]
+    [[ "$output" == *'"id":"aux"'* ]]
 
     run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/restart-all"
     [ "$status" -eq 0 ]
-    # the response lists EVERY kernel it kicked — the default 'main' AND the on-demand one (not just main)
-    [[ "$output" == *'"restarted"'* ]]
-    [[ "$output" == *'main'* ]]
-    [[ "$output" == *"k$kport"* ]]
+    # the response lists EVERY kernel it kicked: the default 'main' AND the profile's (not just main)
+    [[ "$output" == *'"restarted":["main","aux"]'* ]]
 
     curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/stop" >/dev/null 2>&1 || true
 }
