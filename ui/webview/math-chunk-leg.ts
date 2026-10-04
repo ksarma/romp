@@ -219,6 +219,9 @@ export const said = (s: Scene): string[] => s.consoleErrors.filter((e) => e.star
 /** The backstop's title, whatever the rest of the title says. */
 const BACKSTOP_TITLE = new RegExp("^Not rendered: the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds[.;]");
 
+/** The chunk's URL, path and query, as chunk-url.ts derives it from the page's bundle tag (/dist/render.js?v=7): every attempt asks for it. */
+const CHUNK_URL = "/dist/math-chunk.js?v=7";
+
 // ── the scenes: each opens its own page; the Chromium leg runs them through the shared launcher, the WebKit leg in WebKit ──
 
 /** A formula of `n` characters of TeX that lays out as `x^2 + y`: the rest is a TeX comment (KaTeX reads `%` to the end of the
@@ -423,28 +426,32 @@ export const SCENES: SceneDef[] = [
     },
   },
   {
-    name: "a retry while the first attempt is still out (stalled past its backstop) adds a fresh tag at once, the formula shown as its source; when the held answer lands every formula is laid out by one arrival, and the other tag's success is a no-op",
+    name: "a retry while the first attempt is still out (stalled past its backstop) adds a fresh tag with the same URL at once, the formula shown as its source; when the held answer lands every formula is laid out by one arrival, and the other tag's success is a no-op",
     timeout: 60000,
     run: async (browser, t) => {
       const first = gate();
       await withPage(browser, { chunkGate: first, clock: true }, async (s) => {
-        const tags = (): Promise<number> => s.page.evaluate(() => document.querySelectorAll('script[src*="math-chunk.js"]').length);
+        // every script tag the page holds beyond its own bundle, by path and query: math.ts's chunk tags, whatever URL they carry
+        const tagUrls = (): Promise<string[]> => s.page.evaluate(() => Array.from(document.querySelectorAll("script[src]"))
+          .map((e) => { const u = new URL((e as HTMLScriptElement).src); return u.pathname + u.search; }).filter((u) => u !== "/dist/render.js?v=7"));
         await show(s.page, "a $\\frac{1}{2}$ half");
         await drain(s.page);
         await s.page.clock.fastForward(MATH_CHUNK_BACKSTOP_MS + 1000);
         await settled(s.page);
         let b = await box(s.page);
-        assert.deepEqual([b.src.length, s.chunkRequests(), await tags()], [1, 1, 1], "the backstop showed it as source; the first attempt's one tag and its request are still out");
+        assert.deepEqual([b.src.length, s.chunkRequests(), await tagUrls()], [1, 1, [CHUNK_URL]], "the backstop showed it as source; the first attempt's one tag and its request are still out");
         // the next formula uses the retry the backstop's failure armed, in the same task as the read below: a second tag, the formula
-        // its source at once. The tags are what math.ts adds, and they are asserted. Whether the second tag is a second request is the
-        // engine's: Chromium serves it from the fetch already in flight, WebKit and Firefox ask again (math.ts attempt), so the
-        // count is reported below and not asserted, and a browser that changes how it reuses a fetch in flight cannot turn this red
+        // its source at once. The tags are what math.ts adds, and they are asserted, each with the chunk's one URL (a retry asks for
+        // the same URL, as the PDF loader does). Whether the second tag is a second request is the engine's: Chromium serves it from
+        // the fetch already in flight, WebKit and Firefox ask again (math.ts attempt), so the count is reported below and not
+        // asserted, and a browser that changes how it reuses a fetch in flight cannot turn this red
         const r = await s.page.evaluate((src: string) => {
           const m = document.createElement("div"); m.className = "msg"; m.innerHTML = (window as any).__md(src); document.getElementById("out")!.appendChild(m);
-          return { tags: document.querySelectorAll('script[src*="math-chunk.js"]').length, src: document.querySelectorAll("#out code.md-math-src").length,
+          return { tags: Array.from(document.querySelectorAll("script[src]")).map((e) => { const u = new URL((e as HTMLScriptElement).src); return u.pathname + u.search; })
+            .filter((u) => u !== "/dist/render.js?v=7"), src: document.querySelectorAll("#out code.md-math-src").length,
             pending: document.querySelectorAll("#out .md-math-inline, #out .md-math-display").length };
         }, "then $z^2$");
-        assert.deepEqual(r, { tags: 2, src: 2, pending: 0 }, "a fresh tag though the first attempt is out, and nothing waits on it: " + JSON.stringify(r));
+        assert.deepEqual(r, { tags: [CHUNK_URL, CHUNK_URL], src: 2, pending: 0 }, "a fresh tag with the first tag's URL though the first attempt is out, and nothing waits on it: " + JSON.stringify(r));
         await drain(s.page);
         await drain(s.page);
         const held = s.chunkRequests();
@@ -457,7 +464,7 @@ export const SCENES: SceneDef[] = [
         await drain(s.page);
         assert.equal(await s.page.evaluate(() => (window as any).__settles), 2, "two arrivals in all, the backstop's failure and one success: the second tag's success ran none");
         assert.deepEqual([b.katex, b.src.length], [2, 0]);
-        assert.equal(await tags(), 2, "two tags in all, the first attempt's and the one retry's: the success adds none");
+        assert.deepEqual(await tagUrls(), [CHUNK_URL, CHUNK_URL], "two tags in all, the first attempt's and the one retry's, both with the chunk's URL: the success adds none");
         assert.equal(said(s).length, 1, "and the success said nothing");
         t.diagnostic(browser.browserType().name() + ": chunk requests for the two tags, reported and not asserted: " + held + " while the first answer was held, " + s.chunkRequests() + " after it landed");
       });
