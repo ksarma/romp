@@ -425,18 +425,20 @@ export const SCENES: SceneDef[] = [
   {
     name: "a retry while the first attempt is still out (stalled past its backstop) adds a fresh tag at once, the formula shown as its source; when the held answer lands every formula is laid out by one arrival, and the other tag's success is a no-op",
     timeout: 60000,
-    run: async (browser) => {
+    run: async (browser, t) => {
       const first = gate();
       await withPage(browser, { chunkGate: first, clock: true }, async (s) => {
+        const tags = (): Promise<number> => s.page.evaluate(() => document.querySelectorAll('script[src*="math-chunk.js"]').length);
         await show(s.page, "a $\\frac{1}{2}$ half");
         await drain(s.page);
         await s.page.clock.fastForward(MATH_CHUNK_BACKSTOP_MS + 1000);
         await settled(s.page);
         let b = await box(s.page);
-        assert.deepEqual([b.src.length, s.chunkRequests()], [1, 1], "the backstop showed it as source; the first request is still out");
+        assert.deepEqual([b.src.length, s.chunkRequests(), await tags()], [1, 1, 1], "the backstop showed it as source; the first attempt's one tag and its request are still out");
         // the next formula uses the retry the backstop's failure armed, in the same task as the read below: a second tag, the formula
-        // its source at once. Chromium serves the second tag from the fetch already in flight, so there the retry waits on the held
-        // answer; WebKit and Firefox send a second request, which the route holds too (math.ts attempt; read below per engine)
+        // its source at once. The tags are what math.ts adds, and they are asserted. Whether the second tag is a second request is the
+        // engine's: Chromium serves it from the fetch already in flight, WebKit and Firefox ask again (math.ts attempt), so the
+        // count is reported below and not asserted, and a browser that changes how it reuses a fetch in flight cannot turn this red
         const r = await s.page.evaluate((src: string) => {
           const m = document.createElement("div"); m.className = "msg"; m.innerHTML = (window as any).__md(src); document.getElementById("out")!.appendChild(m);
           return { tags: document.querySelectorAll('script[src*="math-chunk.js"]').length, src: document.querySelectorAll("#out code.md-math-src").length,
@@ -445,9 +447,7 @@ export const SCENES: SceneDef[] = [
         assert.deepEqual(r, { tags: 2, src: 2, pending: 0 }, "a fresh tag though the first attempt is out, and nothing waits on it: " + JSON.stringify(r));
         await drain(s.page);
         await drain(s.page);
-        const engine: string = browser.browserType().name();
-        assert.equal(s.chunkRequests(), engine === "chromium" ? 1 : 2,
-          engine + ": the second tag's request as math.ts attempt's comment states it, Chromium serving the tag from the fetch in flight, WebKit and Firefox asking again");
+        const held = s.chunkRequests();
         first.open();
         const laid = await allLaidOut(s.page);
         b = await box(s.page);
@@ -457,7 +457,9 @@ export const SCENES: SceneDef[] = [
         await drain(s.page);
         assert.equal(await s.page.evaluate(() => (window as any).__settles), 2, "two arrivals in all, the backstop's failure and one success: the second tag's success ran none");
         assert.deepEqual([b.katex, b.src.length], [2, 0]);
+        assert.equal(await tags(), 2, "two tags in all, the first attempt's and the one retry's: the success adds none");
         assert.equal(said(s).length, 1, "and the success said nothing");
+        t.diagnostic(browser.browserType().name() + ": chunk requests for the two tags, reported and not asserted: " + held + " while the first answer was held, " + s.chunkRequests() + " after it landed");
       });
     },
   },

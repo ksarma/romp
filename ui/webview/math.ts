@@ -436,12 +436,12 @@ function requestEngine(): void {
 /** One attempt: a script tag beside the page's bundle (chunk-url.ts), the faces in parallel. A retry while an earlier attempt is
  *  still out (stalled past its backstop) adds a fresh tag all the same, as the PDF loader does, and whichever attempt succeeds first
  *  runs the arrival. Whether that tag is a fresh request depends on the engine, as measured under Playwright's routing (the leg's
- *  stalled-first scene reads it per engine, math-chunk-leg.ts): Chromium serves a script URL already in flight from that one fetch,
- *  so there the retry waits on the stalled answer, while WebKit and Firefox send a new request. After an error or a 404 the first
- *  fetch is over, and the retry is a new request in every engine. Every end settles asynchronously, never inside the fill that
- *  asked, so a fill is never re-entered by its own attempt. The attempt fails once, at its first failure end (an error, a load that
- *  registered nothing, its backstop), and a later failure end of it is silent; an answer of it that SUCCEEDS after that (the chunk,
- *  or the faces, landing after the backstop) is a success all the same. */
+ *  stalled-first scene asserts the two tags and reports the request count per engine, math-chunk-leg.ts): Chromium serves a script
+ *  URL already in flight from that one fetch, so there the retry waits on the stalled answer, while WebKit and Firefox send a new
+ *  request. After an error or a 404 the first fetch is over, and the retry is a new request in every engine. Every end settles
+ *  asynchronously, never inside the fill that asked, so a fill is never re-entered by its own attempt. The attempt fails once, at its
+ *  first failure end (an error, a load that registered nothing, its backstop), and a later failure end of it is silent; an answer of
+ *  it that SUCCEEDS after that (the chunk, or the faces, landing after the backstop) is a success all the same. */
 function attempt(): void {
   const tag = chunkScript("math-chunk.js");
   if (!tag) {
