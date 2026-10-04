@@ -526,7 +526,7 @@ export const SCENES: SceneDef[] = [
     },
   },
   {
-    name: "a chunk that stalls past the backstop (MATH_CHUNK_BACKSTOP_MS) leaves each waiting formula as its source, the backstop's reason in its title, said once on the console; the held answer, a 404 at last, comes from an attempt that has already failed and is silent",
+    name: "a chunk that stalls past the backstop (MATH_CHUNK_BACKSTOP_MS) leaves each waiting formula as its source, the backstop's reason in its title, said once on the console; the held answer, a 404 at last, comes from an attempt that has already failed and is silent: no second line at any console level, no second arrival, and a formula met after it still gives the backstop's reason",
     timeout: 60000,
     run: async (browser) => {
       const g = gate();   // held past the backstop, then answered with a 404: the attempt's second failure end
@@ -543,20 +543,42 @@ export const SCENES: SceneDef[] = [
         for (const x of b.src) assert.match(x.title, BACKSTOP_TITLE);
         assert.equal(said(s).length, 1, "said once: " + JSON.stringify(s.consoleErrors));
         assert.match(said(s)[0], /^math: the math renderer did not load within 60 seconds; /);
-        // the held answer now lands as a 404, the error end of an attempt its backstop already failed (math.ts attempt: a later failure
-        // end is silent). The scene's own error listener on the tag was added after math.ts set the tag's onerror, so it runs after
-        // that handler in the same dispatch: once it has counted the error, math.ts has handled it
+        // the held answer now lands as a 404, the error end of an attempt its backstop already failed (math.ts attempt: the attempt
+        // fails once, and a later failure end of it is silent). The scene's own error listener on the tag was added after math.ts set
+        // the tag's onerror, so it runs after that handler in the same dispatch: once it has counted the error, math.ts has handled it.
+        // From here the page records its own console at every level (said() reads errors alone)
         await s.page.evaluate(() => {
-          const w = window as any; w.__lateErrors = 0;
+          const w = window as any; w.__lateErrors = 0; w.__console = [];
+          for (const k of ["error", "warn", "log", "info", "debug"]) {
+            const o = (console as any)[k];
+            (console as any)[k] = (...a: unknown[]) => { w.__console.push(k + ": " + a.map(String).join(" ")); o.apply(console, a); };
+          }
           document.querySelector('script[src*="math-chunk.js"]')!.addEventListener("error", () => { w.__lateErrors++; });
         });
         g.open();
         await s.page.waitForFunction(() => (window as any).__lateErrors === 1, null, { timeout: 10000 });
         await drain(s.page);
         b = await box(s.page);
+        const late = await s.page.evaluate(() => ({ settles: (window as any).__settles, console: (window as any).__console }));
+        assert.deepEqual(late, { settles: 1, console: [] }, "the late 404 runs no second arrival and logs nothing at any level: " + JSON.stringify(late));
         assert.equal(said(s).length, 1, "the late 404 says nothing: the backstop's line stays the attempt's one line: " + JSON.stringify(said(s)));
         assert.equal(s.chunkRequests(), 1, "one request: no formula has met the retry the backstop armed");
         assert.ok(b.src.length === 2 && b.src.every((x) => BACKSTOP_TITLE.test(x.title)), "each fallback keeps the backstop's title: " + JSON.stringify(b.src));
+        // nor is the late 404 counted as a failure of its own: a formula met now is its source at once with the backstop's reason, the
+        // attempt's one failure. The title is read in the task of the fill that made it; the formula used the retry the backstop armed,
+        // whose own answer comes after this read
+        const title: string = await s.page.evaluate((src: string) => {
+          const m = document.createElement("div"); m.className = "msg"; m.innerHTML = (window as any).__md(src); document.getElementById("out")!.appendChild(m);
+          const c = m.querySelector("code.md-math-src");
+          return c ? ((c.closest("pre") || c) as HTMLElement).getAttribute("title") || "" : "(no source fallback)";
+        }, "then $z$");
+        assert.match(title, BACKSTOP_TITLE, "a formula met after the late 404 gives the backstop's reason, the attempt's one failure: " + title);
+        // that retry is a request of its own (the first fetch ended with its 404), and its failure, a 404 too, says one line, the retry's
+        await s.page.waitForFunction(() => (window as any).__console.length >= 1, null, { timeout: 10000 });
+        await drain(s.page);
+        const retried = { requests: s.chunkRequests(), console: await s.page.evaluate(() => (window as any).__console) };
+        assert.deepEqual(retried, { requests: 2, console: ["error: math: the math renderer failed to load; formulas are shown as their TeX source; a formula after the connection comes back asks for it again"] },
+          "the retry's own failure, its one line: " + JSON.stringify(retried));
       });
     },
   },

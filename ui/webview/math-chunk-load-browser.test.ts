@@ -7,7 +7,8 @@
 // waits too; the per-message budget charged per message across the wait; a failed load (a 404, a script that registers
 // nothing, a page with no bundle tag, the 60 s backstop over a stalled chunk or stalled faces) leaves each formula as its
 // source with the reason in its title, said once per failed attempt on the console (a held answer that comes back a 404 after the
-// backstop failed its attempt says nothing more); the next formula after the page life's
+// backstop failed its attempt says nothing more at any level, runs no second arrival, and leaves the backstop's reason for a formula
+// met after it); the next formula after the page life's
 // first failure asks again, nothing waiting on it, and a later one only after an online or reconnect event, so a persistent
 // 404 costs two requests plus one per event; a success, the retry's or a chunk or faces landing after the backstop, lays out
 // every formula, the failure's fallbacks included; the glossary's term links and the mention chips skip a waiting formula, so a
