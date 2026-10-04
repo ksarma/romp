@@ -191,11 +191,6 @@ export const drain = async (page: any): Promise<void> => {
   await page.evaluate(() => fetch("/sentinel", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
 };
 
-/** Two animation frames and no request: the wait for a scene that holds the page's own load event. WebKit defers a fetch made while
- *  the document is still loading until that load ends, so drain's round trip waited for the very load the scene holds and the scene
- *  ran into its timeout (the WebKit twin, 2026-10-04); a script tag the fill added is in the DOM at once, which the scene reads. */
-export const twoFrames = (page: any): Promise<void> => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
-
 /** What the box holds: formulas still waiting (their text and call stamp), KaTeX roots, source fallbacks (their titles). */
 export type Box = { pending: { text: string; call: string | null; display: boolean; color: string; block: string; margin: string; align: string }[]; katex: number; src: { text: string; title: string }[]; dim: string };
 export const box = (page: any): Promise<Box> => page.evaluate(() => {
@@ -558,14 +553,14 @@ export const SCENES: SceneDef[] = [
       const lg = gate();
       await withPage(browser, { loadGate: lg }, async (s) => {
         await show(s.page, "early $\\frac{a}{b}$ here");
-        await twoFrames(s.page);   // not drain: its fetch would wait for the load this scene holds (WebKit)
-        await twoFrames(s.page);
+        // read at once, with no wait: the fill appends a chunk tag synchronously, so one would be in the DOM by now; and while the page's
+        // load is held WebKit runs no animation frame and defers a fetch, so a frame or a round trip (drain) would wait for that very load
         const st = await s.page.evaluate(() => ({ ready: document.readyState, scripts: document.querySelectorAll('script[src*="math-chunk"]').length }));
         let b = await box(s.page);
         assert.notEqual(st.ready, "complete", "the page's load is still held: " + JSON.stringify(st));
         assert.deepEqual([st.scripts, s.chunkRequests(), b.pending.length], [0, 0, 1], "no chunk script and no request before the load, the formula waiting: " + JSON.stringify([st, s.chunkRequests(), b]));
         lg.open();
-        await s.page.waitForFunction(() => document.readyState === "complete", null, { timeout: 10000 });
+        await s.page.waitForFunction(() => document.readyState === "complete", null, { timeout: 10000, polling: 100 });   // a timed poll: no frame runs until the load (WebKit)
         await settled(s.page);
         b = await box(s.page);
         assert.deepEqual([b.katex, b.src.length, s.chunkRequests()], [1, 0, 1], "at the load the chunk is fetched and the formula laid out");
