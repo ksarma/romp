@@ -47,26 +47,27 @@
 # instead, and its line reads "with no status"), and then prints in roster order every leg's output it still holds,
 # the ended legs' partial output among it, each after the line naming its exit. A leg whose output the main loop was
 # printing when the signal landed is printed again in full, its line naming its exit included, since the count of legs
-# printed moves only once a leg's output is whole (moving it first would lose the rest of that leg's output instead, as
-# the trap can run between the leg's spec output and its stderr; no case sends a signal while a leg is printed). A
-# further INT, TERM or HUP while the trap does all this is ignored, so it cannot cut that short. A SIGKILL runs no trap:
-# the output still held then is lost, the run's directory stays in TMPDIR, and the legs still running, the processes
-# under them and their timers run on until they end (each posts to the event pipe through the descriptor it inherited
-# and holds open itself, so none waits for a reader that is gone). The per-file bound: ROMP_BROWSER_LEGS_FILE_MS
-# (default 240000) ms after a leg's node --test starts, the script stops and kills every process under that node --test,
-# found by parent links over the whole process table (the file's own node process, and a browser Playwright launched,
-# which runs in a session of its own and so outside the file's process group, among them), with the process group each
-# of them leads, which reaches a process left in such a group after its parent exited, outside the parent links. What
-# neither reaches follows one rule: a process whose parent exited before the walk is reached only through the group of a
-# process the walk finds, so it is reached by neither when no process the walk finds leads its group. Examples, not the
-# whole set: a process that leads its own group (started by setsid -f, or by a detached spawn whose launcher exited);
-# one in a group whose leader has exited (as Chromium starts its crash handler by a double fork: that handler ends when
-# its browser does, recorded with Playwright's new-headless Chromium on a development box, not executed here); and one
-# in the file's own process group, this script's, since no kill signals that group (the file's process shares this
-# script's own process group, which holds the script itself). The rostered legs launch Chromium directly, and no process
-# of the step's command over the real roster was left after it ended (measured on a development box). The tree test's
-# case "the per-file bound ends a leg that outlives it" runs a keeper of each of those three kinds, its launcher exited
-# before the walk, and reads each still alive after the cut.
+# printed moves only after a leg's output has been printed whole (moving it first would lose the rest of that leg's
+# output instead, as the trap can run between the leg's spec output and its stderr; no case sends a signal while a leg
+# is printed). A further INT, TERM or HUP while the trap does all this is ignored, so it cannot cut that short. A
+# SIGKILL runs no trap: the output still held then is lost, the run's directory stays in TMPDIR, and the legs still
+# running, the processes under them and their timers run on until they end (each posts to the event pipe through the
+# descriptor it inherited and holds open itself, so none waits for a reader that is gone). The per-file bound:
+# ROMP_BROWSER_LEGS_FILE_MS (default 240000) ms after a leg's node --test starts, the script stops and kills every
+# process under that node --test, found by parent links over the whole process table (the file's own node process, and a
+# browser Playwright launched, which runs in a session of its own and so outside the file's process group, among them),
+# with the process group each of them leads, which reaches a process left in such a group after its parent exited,
+# outside the parent links. What neither reaches follows one rule: a process whose parent exited before the walk, and
+# which was adopted by a process outside that node --test's tree (init, or a subreaper above the leg's node --test), is
+# reached only through the group of a process the walk finds, so it is reached by neither when no process the walk finds
+# leads its group. Examples, not the whole set: a process that leads its own group (started by setsid -f, or by a
+# detached spawn whose launcher exited); one in a group whose leader has exited (as Chromium starts its crash handler by
+# a double fork: that handler ends when its browser does, recorded with Playwright's new-headless Chromium on a
+# development box, not executed here); and one in the file's own process group, this script's, since no kill signals
+# that group (the file's process shares this script's own process group, which holds the script itself). The rostered
+# legs launch Chromium directly, and no process of the step's command over the real roster was left after it ended
+# (measured on a development box). The tree test's case "the per-file bound ends a leg that outlives it" runs a keeper
+# of each of those three kinds, its launcher exited before the walk, and reads each still alive after the cut.
 # The walk stops each process it finds and reads the table again until a read finds no new one, a guard against a
 # process that forks during the walk, which no case executes. node --test then records the file as failed as a whole
 # (its process ended on a signal), beside the results the file recorded before the kill, and the cut's red after the run
@@ -219,12 +220,13 @@ if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
 # being cancelled nameless. That holds for a leg that starts within the step's first timeout-minutes less the bound, the
 # grace and the time the kills and the closing pass take: 50 s at the defaults, less that time. The grace's timer starts
 # when the bound's walk returns, the bounds of legs cut at the same moment are walked one after another, and each
-# grace's end walks its leg's tree again before the post-run pass, which took under a second per leg cut at the same
-# moment on a development box whose ps takes about 70 ms (0.6 to 0.8 s past the bound plus the grace for one leg, 1.0
-# to 1.3 s for three, 4.4 to 5.0 s for ten). The bound counts from each leg's own start, and a leg queued later than
-# that can be cut by the step first. tools/ci-browser-legs.test.mjs holds those edges, and the figures here and in the
-# header, to the defaults, and its bound pin states the spellings it reads. A leg whose timeout is spelled outside them
-# and whose file outlasts the bound is cut here and named by the cut's red, not by its test.
+# grace's end walks its leg's tree again before the post-run pass. The kills and that pass together took under a
+# second per leg cut at the same moment on a development box whose ps takes about 70 ms (0.6 to 0.8 s past the bound
+# plus the grace for one leg, 1.0 to 1.3 s for three, 4.4 to 5.0 s for ten). The bound counts from each leg's own start,
+# and a leg queued later than that can be cut by the step first. tools/ci-browser-legs.test.mjs holds those edges at
+# the defaults and holds the 50 s here and the two defaults the header states to the values below, and its bound pin
+# states the spellings it reads. A leg whose timeout is spelled outside them and whose file outlasts the bound is cut
+# here and named by the cut's red, not by its test.
 BOUND_MS=${ROMP_BROWSER_LEGS_FILE_MS:-240000}
 GRACE_MS=${ROMP_BROWSER_LEGS_GRACE_MS:-10000}
 # GNU nproc honours OMP_NUM_THREADS and OMP_THREAD_LIMIT, which node's count of the CPUs does not, so nproc runs without

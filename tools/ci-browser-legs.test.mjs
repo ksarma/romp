@@ -1813,9 +1813,10 @@ function stateNow(pid) {
  *  long before the bound's walk: x1, a keeper in a session of its own (detached) from a launcher in the file's own group,
  *  so it leads its own group; x2, a keeper in the group of a launcher that led a session of its own and exited, a group
  *  whose leader has exited; and x3, a keeper in the file's own group, its launcher there too. The script's header states
- *  the rule these witness: a process whose parent exited before the walk is reached only through the group of a process
- *  the walk finds, and none of these groups is one. Returns the mark, the roles, each [the suffix of its pid file, what
- *  it is], and the escapees, of the same shape (none without `escapes`). */
+ *  the rule these witness: a process whose parent exited before the walk, and which was adopted by a process outside
+ *  the tree, is reached only through the group of a process the walk finds, and none of these groups is one. Returns
+ *  the mark, the roles, each [the suffix of its pid file, what it is], and the escapees, of the same shape (none
+ *  without `escapes`). */
 function hangingLeg(ext, bundle, escapes = false) {
   fs.writeFileSync(path.join(ext, 'out-tests', 'keeper.cjs'), 'const fs = require("node:fs"); const { spawn } = require("node:child_process");\nconst [mark, depth, how] = process.argv.slice(2);\nif (how === "mid") { spawn(process.execPath, [__filename, mark, "1"], { stdio: "ignore" }).unref(); process.exit(0); }\nif (how === "escape-s" || how === "escape-g") { spawn(process.execPath, [__filename, mark, "1"], { detached: how === "escape-s", stdio: "ignore" }).unref(); process.exit(0); }\nfs.writeFileSync(mark + "." + depth, String(process.pid));\nif (Number(depth) > 1) spawn(process.execPath, [__filename, mark, String(Number(depth) - 1)].concat(how === "orphan" ? ["mid"] : []), { stdio: "ignore" });\nsetInterval(() => {}, 1000);\n');
   const mark = path.join(ext, bundle + '.pid');
