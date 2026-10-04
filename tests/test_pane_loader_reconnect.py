@@ -787,12 +787,12 @@ Object.defineProperties(CONTENT, { clientLeft: { get: () => 0 }, clientTop: { ge
   clientHeight: { get: () => { const r = CONTENT.getBoundingClientRect(); return r.bottom - r.top; } } });
 const inside = (anc, n) => { for (let e = n; e; e = e.parent) if (e === anc) return true; return false; };
 CONTENT.contains = (n) => inside(CONTENT, n);
-// add(parent, box [left, top, width, height], { position, cursor, sel, overflow, overflowX, overflowY, contain, transform, display }):
-// an element under `parent` (null: the body, outside the list); `overflow` sets both axes
+// add(parent, box [left, top, width, height], { position, cursor, sel, overflow, overflowX, overflowY, contain, transform, filter,
+// willChange, display }): an element under `parent` (null: the body, outside the list); `overflow` sets both axes
 const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, box: box.slice(), sel: o.sel || '',
   cs: { position: o.position || 'static', cursor: o.cursor || 'auto', visibility: 'visible', display: o.display || 'block',
         overflowX: o.overflowX || o.overflow || 'visible', overflowY: o.overflowY || o.overflow || 'visible', contain: o.contain || 'none',
-        transform: o.transform || 'none', filter: 'none', perspective: 'none', willChange: 'auto' },
+        transform: o.transform || 'none', filter: o.filter || 'none', perspective: 'none', willChange: o.willChange || 'auto' },
   get parentElement() { return this.parent || null; },
   get firstElementChild() { return ALL.find((x) => x.parent === this) || null; },
   get nextElementSibling() { const sib = this.parent ? ALL.filter((x) => x.parent === this.parent) : ALL.filter((x) => x === CONTENT || !x.parent); return sib[sib.indexOf(this) + 1] || null; },
@@ -1062,6 +1062,41 @@ out({ atPaint: at() });""")
                 self.assertEqual(o["atPaint"], {"top": top, "right": "8px", "painted": True},
                                  what + (": counted, the badge goes 8 px below it (54 + 20 + 8)" if top == "82px" else ": not counted, the first place"))
 
+    def test_the_containing_block_chain_runs_through_the_controls_ancestors_and_what_makes_a_containing_block(self):
+        # the rehearsed check of round 2 (2026-10-04): the case above sets the position on the control itself, and nothing pinned
+        # the walk's next step, from each containing block to its own containing block, so a static control inside a fixed or
+        # absolute wrapper was judged by its own position alone and counted as clipped by the strip its wrapper escapes, which
+        # would leave the badge over a control a person can see. Nor was it pinned that display:contents clips nothing, or that
+        # contain:layout, will-change:transform and a filter each make a containing block, as a transform does. Each scenario
+        # puts one control over the first place (52 to 77 px) inside a box whose overflow is hidden and which ends at 44 px
+        cases = [
+            ("a static control in a fixed wrapper inside the strip escapes it with its wrapper",
+             "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden' }); const w = add(s, [200, 50, 190, 40], { position: 'fixed' }); add(w, [300, 54, 60, 20], { sel: 'button' });",
+             "82px"),
+            ("a static control in an absolute wrapper whose containing block is outside the strip escapes it with its wrapper",
+             "const r = add(null, [0, 0, 390, 300], { position: 'relative' }); const s = add(r, [0, 0, 390, 44], { overflow: 'hidden' }); "
+             "const w = add(s, [200, 50, 190, 40], { position: 'absolute' }); add(w, [300, 54, 60, 20], { sel: 'button' });",
+             "82px"),
+            ("a static control in a fixed wrapper inside a transformed strip is clipped by it (the strip is the wrapper's containing block)",
+             "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden', transform: 'translateZ(0)' }); const w = add(s, [200, 50, 190, 40], { position: 'fixed' }); "
+             "add(w, [300, 54, 60, 20], { sel: 'button' });",
+             "52px"),
+            ("display:contents clips nothing", "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden', display: 'contents' }); add(s, [300, 54, 60, 20], { sel: 'button' });", "82px"),
+            ("contain:layout makes the strip a fixed control's containing block, so the strip clips it",
+             "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden', contain: 'layout' }); add(s, [300, 54, 60, 20], { position: 'fixed', sel: 'button' });", "52px"),
+            ("will-change:transform makes the strip a fixed control's containing block, so the strip clips it",
+             "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden', willChange: 'transform' }); add(s, [300, 54, 60, 20], { position: 'fixed', sel: 'button' });", "52px"),
+            ("a filter makes the strip a fixed control's containing block, so the strip clips it",
+             "const s = add(null, [0, 0, 390, 44], { overflow: 'hidden', filter: 'blur(1px)' }); add(s, [300, 54, 60, 20], { position: 'fixed', sel: 'button' });", "52px"),
+        ]
+        for what, page, top in cases:
+            with self.subTest(what):
+                o = self._strip_fit(page + r"""
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""")
+                self.assertEqual(o["atPaint"], {"top": top, "right": "8px", "painted": True},
+                                 what + (": counted, the badge goes 8 px below it (54 + 20 + 8)" if top == "82px" else ": not counted, the first place"))
+
     def test_a_scroll_re_reads_the_clip_of_the_controls_the_last_scan_found(self):
         # a panel outside the list whose overflow hides all but the top 10 px of a control that reaches over the first place; a scroll
         # (the panel growing as its own content scrolls, say) shows the control whole, and the scroll's re-read, which scans no style,
@@ -1111,6 +1146,7 @@ out({ atPaint, beforeFrame, afterFrame, scan: scan() });""")
                          "seven changes and scrolls in one frame ask for one frame and read nothing in their own tasks")
         self.assertEqual(o["afterFrame"], {"place": {"top": "91px", "right": "8px", "painted": True}, "reads": o["scan"], "asks": 1},
                          "the frame places the badge once, with one scan (an element was added), below the notice (54 + 29 + 8)")
+
 
     def test_the_watch_observes_the_list_its_sticky_elements_and_the_page_outside_it_never_the_lists_other_content(self):
         o = self._watch_fit(r"""
