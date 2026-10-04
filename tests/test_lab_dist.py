@@ -2273,7 +2273,12 @@ _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_g
                  # checkout; the copy is removed after its run. It builds no dist and names none as a source: a shell job's
                  # checkout holds no dist, and a built one on a developer's box is left out of the copy (the ratchet named the
                  # module in CI's Python cells, 2026-09-20)
-                 "test_bats_bare_negation.py"}
+                 "test_bats_bare_negation.py",
+                 # test_batch_tool.py (fork PR 959) copies git clones it built itself, never dist: a stale clone once per case
+                 # of the fetch-threads pin, so each case starts from the same staleness, and the gc pin's fixture clone for its
+                 # premise run, so the gc git decides to start there leaves the clone under test untouched (the ratchet named the
+                 # module in 959's sweep once 959 merged main, 2026-10-04)
+                 "test_batch_tool.py"}
 _KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
                 "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves
 # the only files that may import upstream's dist_copy or call copy_dist without the lab_dist. prefix (the header above,
