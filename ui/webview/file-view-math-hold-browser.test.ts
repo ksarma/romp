@@ -10,7 +10,9 @@
 // the chunk is the shipped build of math-chunk.ts (math-chunk-leg.ts chunkBundle), held until the leg lets it go.
 // A Rendered pick held over rows (held open, Raw, then Rendered; or a saved Raw preference, then Rendered with the chunk not yet
 // fetched) puts the romp loader up over the rows, hidden and inert under it, in both viewers, and the arrival paints once with the
-// place kept (file-view.ts holdOverBody; the review's round 1). The URL viewer opened at a #fragment on a math note holds the same
+// place kept (file-view.ts holdOverBody; the review's round 1), and while held, with the body's scroll anchoring off, the body's
+// scrollTop and the top hidden row's rect stay what they were before the Rendered click (the review's round 2, tests-3: a loader
+// that took height passed, Chromium's anchoring absorbing it). The URL viewer opened at a #fragment on a math note holds the same
 // way and lands the heading at the arrival's paint (its settle handler's repaint, otherwise run by no CI leg).
 // An open's target waits with the held paint: a math note opened at a heading or at an offset before the chunk lands raises no
 // notice while the loader stands and lands on its target at the arrival's paint (file-view.ts landTarget stands down while a
@@ -301,12 +303,24 @@ for (const viewer of ["file", "url"] as const) {
         const before = await topBlock(page);
         assert.ok(before && before.view === "raw" && before.text.startsWith("Paragraph 20"), "the rows, Paragraph 20 at the top: " + JSON.stringify(before));
         const rootsBefore = (await overNow(page)).roots;
+        // the body's scroll anchoring off before the click, as the served legs turn off #content's (the review's round 2, tests-3): the
+        // phone's WebKit has none, so a loader that took height would push the rows down there, where Chromium's anchoring absorbs it
+        await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).style.overflowAnchor = "none"; });
+        const rowAt = (): Promise<{ scrollTop: number; rowTop: number | null }> => page.evaluate(() => {
+          const b = document.querySelector(".fileview-body") as HTMLElement;
+          const r = Array.from(b.querySelectorAll(".fv-cl")).find((x) => (x.textContent || "").startsWith("Paragraph 20")) as HTMLElement | undefined;
+          return { scrollTop: b.scrollTop, rowTop: r ? Math.round(r.getBoundingClientRect().top * 10) / 10 : null };
+        });
+        const atClick = await rowAt();
         await button(page, "Rendered");
         await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
         await frames(page, 4);
         const held = await overNow(page);
         assert.deepEqual([held.loader, held.rowsShown, held.inert, held.md, held.roots], [true, false, true, false, rootsBefore],
           "held: the loader up, the rows under it hidden and inert, nothing painted: " + JSON.stringify(held));
+        const whileHeld = await rowAt();
+        assert.ok(atClick.rowTop !== null, "the top row, Paragraph 20, measured before the click");
+        assert.deepEqual(whileHeld, atClick, "the loader changes no layout: while held the body's scrollTop and the top hidden row's rect are what they were before the click: " + JSON.stringify([atClick, whileHeld]));
         assert.ok(held.pressed.includes("Rendered") && !held.pressed.includes("Raw"), "under the pressed Rendered button: " + JSON.stringify(held));
         g.open();
         await page.waitForFunction(() => document.querySelectorAll(".fileview-body .katex").length === 1, null, { timeout: 15000 });
