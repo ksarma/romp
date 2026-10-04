@@ -358,7 +358,7 @@ export const SCENES: SceneDef[] = [
     },
   },
   {
-    name: "a chunk that 404s for good costs two requests at any render rate, then one per online or reconnect event, and events before a formula arm one retry between them",
+    name: "a chunk that 404s for good costs two requests at any render rate, then one per online or reconnect event, each of the two arming on its own, and events before a formula arm one retry between them",
     timeout: 60000,
     run: async (browser) => {
       await withPage(browser, { chunk: "404" }, async (s) => {
@@ -378,15 +378,19 @@ export const SCENES: SceneDef[] = [
         assert.equal(s.chunkRequests(), 2, "an event asks for nothing itself: the next fill that meets a formula does");
         await renders(6, 4);
         assert.equal(s.chunkRequests(), 3, "three events before the formula armed one retry, not three");
-        await s.page.evaluate(() => { window.dispatchEvent(new Event("romp:wsup")); });
+        // each event on its own, so neither stands in for the other: the window's online alone, then the shim's reconnect alone
+        await s.page.evaluate(() => { window.dispatchEvent(new Event("online")); });
         await renders(10, 3);
-        assert.equal(s.chunkRequests(), 4, "the shim's reconnect arms one");
-        await renders(13, 5);
-        assert.equal(s.chunkRequests(), 4, "and no more without another event");
+        assert.equal(s.chunkRequests(), 4, "the window's online alone arms one");
+        await s.page.evaluate(() => { window.dispatchEvent(new Event("romp:wsup")); });
+        await renders(13, 3);
+        assert.equal(s.chunkRequests(), 5, "the shim's reconnect alone arms one");
+        await renders(16, 5);
+        assert.equal(s.chunkRequests(), 5, "and no more without another event");
         const b = await box(s.page);
-        assert.deepEqual([b.katex, b.pending.length, b.src.length], [0, 0, 37], "every formula is its source, none waits");
+        assert.deepEqual([b.katex, b.pending.length, b.src.length], [0, 0, 43], "every formula is its source, none waits");
         assert.ok(b.src.every((x) => x.title === "Not rendered: the math renderer failed to load."), "each titled with the failure");
-        assert.equal(said(s).length, 4, "one line per failed attempt: " + JSON.stringify(said(s)));
+        assert.equal(said(s).length, 5, "one line per failed attempt: " + JSON.stringify(said(s)));
       });
     },
   },
