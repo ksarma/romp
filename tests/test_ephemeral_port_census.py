@@ -134,7 +134,8 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
     decl  a port-named name declared and assigned (const port = N, local port=N, export ROMP_POSTAL_PORT=N);
     env   an upper-case port-named name, then : or = and the number, quoted or not (ROMP_POSTAL_PORT'] = 'N');
     flag  a --*port option (above: --port N, --port=N, --no-port-check=N), or one quoted in a list with the number as
-          the next element ('--port', 'N');
+          the next element ('--port', 'N'), or one closed by a quote and then spaces or tabs before the number (a shell
+          argv's "--port" N, '--port' "N");
     authority  host:N after an address (above) with no placeholder in its run (http://127.0.0.1:N, //TESTHOST:N), the
                number right after the colon, or after a quote, a + and an optional quote ('http://127.0.0.1:' + N);
                the rule does not check that the quote closes a string, so a quote that opens one reads the same way,
@@ -300,7 +301,7 @@ TEXT_RULES = (
     ("key", re.compile(r"(?:^|[{,(\[;])[ \t]*[\"'`]?(?P<name>[\w$.-]+)[\"'`]?[ \t]*[:=][ \t]*" + _NUM, re.M)),
     ("decl", re.compile(r"\b(?:const|let|var|local|export|readonly|declare(?:[ \t]+-\w+)?)[ \t]+(?P<name>[\w$]+)[ \t]*=[ \t]*" + _NUM)),
     ("env", re.compile(r"\b(?P<name>[A-Z][A-Z0-9_]*)[\"'`]?\]?[ \t]*[:=][ \t]*" + _NUM)),
-    ("flag", re.compile(r"--(?P<name>[\w-]+)(?:=|[ \t]+|[\"'`][ \t]*,[ \t]*)" + _NUM)),   # or quoted, the number the next element
+    ("flag", re.compile(r"--(?P<name>[\w-]+)(?:=|[ \t]+|[\"'`][ \t]*,[ \t]*|[\"'`][ \t]+)" + _NUM)),   # or quoted: the next element, or after spaces
     ("authority", re.compile(r"(?:" + _HOST + r"|//[\w.-]+)[ \t]*:[ \t]*(?:[\"'`][ \t]*\+[ \t]*[\"'`]?)?(?P<n>" + _D5
                              + r")(?![\w.])")),   # the number right after the colon, or concatenated onto it
     ("address", re.compile(r"\([ \t]*[\"'](?:127\.0\.0\.1|localhost|0\.0\.0\.0|::1?|)[\"'][ \t]*,[ \t]*(?P<n>" + _D5 + r")[ \t]*[,)]")),
@@ -1317,6 +1318,27 @@ class Plants(unittest.TestCase):
             with self.subTest(label):
                 self.assertGreen("test_x.py", green)
                 self.assertRed("test_plant.py", red, why)
+
+    def test_an_option_closed_by_a_quote_then_spaces_before_its_number(self):
+        """THE RULE's flag rule, for an option closed by a quote and then spaces or tabs before its number: a shell argv
+        that quotes the option, and a JavaScript string that holds such a command. Each green twin is a near miss in a
+        file the census opens (its number stands alone in the range), so the green is the rule's: a quoted option with no
+        port word, one with one dash, a quote that does not close the option, and a quoted option that ends its line, so
+        in shell the number belongs to the next command."""
+        n = _n()
+        for label, name, src in (
+                ("a quoted option, then a space", "q1.bats", 'run romp serve "--port" %d\n' % n),
+                ("a quoted option and a quoted number, then a tab", "q2.bats", "run romp serve '--bus-port'\t\"%d\"\n" % n),
+                ("a JavaScript string holding the command", "q3.test.mjs", "execSync('romp serve \"--port\" %d');\n" % n)):
+            with self.subTest(label):
+                self.assertRed(name, src, "rule flag")
+        for label, name, src in (
+                ("a quoted option with no port word", "q4.bats", 'run romp serve "--report" %d\n' % n),
+                ("a quoted option with one dash", "q5.bats", 'run romp serve "-p" %d\n' % n),
+                ("a quote that does not close the option", "q6.bats", 'echo "--port is" %d\n' % n),
+                ("a quoted option that ends its line", "q7.bats", 'run romp serve "--port"\necho %d\n' % n)):
+            with self.subTest(label):
+                self.assertGreen(name, src)
 
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
