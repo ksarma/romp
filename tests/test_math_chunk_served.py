@@ -397,7 +397,8 @@ try {
       pending: document.querySelectorAll("#content .md-math-inline, #content .md-math-display").length,
       src: turn ? turn.querySelectorAll("code.md-math-src").length : -1, pres: pres.length,
       copy: pres.filter((x) => !!x.querySelector(":scope > .code-copy")).length,
-      katex: turn ? turn.querySelectorAll(".katex").length : -1, allSrc: document.querySelectorAll("#content code.md-math-src").length,
+      katex: turn ? turn.querySelectorAll(".katex").length : -1, displays: turn ? turn.querySelectorAll(".katex-display").length : -1,
+      allSrc: document.querySelectorAll("#content code.md-math-src").length,
       bubble, scrollTop: c.scrollTop };
   }, { marker: cfg.marker, bubbleMarker: cfg.bubbleMarker });
   const page = await ctx.newPage();
@@ -1033,6 +1034,7 @@ class ServedMathChunk(unittest.TestCase):
         self.assertLessEqual(abs(d["markerTop"] - b["markerTop"]), 1, w + "the new reply at the tail did not move the reader: %r %r" % (b, d))
         self.assertEqual((a["pending"], a["src"], a["allSrc"], a["requests"]), (0, 0, 0, 2), w + "the served retry laid out every formula, the failure's included: %r" % a)
         self.assertGreaterEqual(a["katex"], 3 * n, w + "%r" % a)
+        self.assertEqual(a["displays"], n, w + "each display formula the failure showed as a source block is laid out in display mode: %r" % a)
         self.assertEqual(a["bubble"], {"src": 0, "fences": 1, "copy": 0, "katex": 1}, w + "the bubble's formula is laid out by the success too: %r" % a["bubble"])
         self.assertGreater(abs(a["turnHeight"] - b["turnHeight"]), 5,
                            w + "the swap from the sources to KaTeX's layout changed the reader's own turn above them: %r %r" % (b, a))

@@ -191,8 +191,9 @@ export const drain = async (page: any): Promise<void> => {
   await page.evaluate(() => fetch("/sentinel", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
 };
 
-/** What the box holds: formulas still waiting (their text and call stamp), KaTeX roots, source fallbacks (their titles). */
-export type Box = { pending: { text: string; call: string | null; display: boolean; color: string; block: string; margin: string; align: string }[]; katex: number; src: { text: string; title: string }[]; dim: string };
+/** What the box holds: formulas still waiting (their text and call stamp), KaTeX roots and the display ones among them (KaTeX's
+ *  .katex-display box: a success after a failure must put a display formula back in display mode), source fallbacks (their titles). */
+export type Box = { pending: { text: string; call: string | null; display: boolean; color: string; block: string; margin: string; align: string }[]; katex: number; displays: number; src: { text: string; title: string }[]; dim: string };
 export const box = (page: any): Promise<Box> => page.evaluate(() => {
   const out = document.getElementById("out")!;
   const pending = Array.from(out.querySelectorAll(".md-math-inline, .md-math-display")).map((n) => {
@@ -200,7 +201,7 @@ export const box = (page: any): Promise<Box> => page.evaluate(() => {
     return { text: e.textContent || "", call: e.getAttribute("data-math-call"), display: e.classList.contains("md-math-display"), color: cs.color, block: cs.display, margin: cs.marginTop + " " + cs.marginBottom, align: cs.textAlign };
   });
   const src = Array.from(out.querySelectorAll("code.md-math-src")).map((c) => ({ text: c.textContent || "", title: ((c.closest("pre") || c) as HTMLElement).getAttribute("title") || "" }));
-  return { pending, katex: out.querySelectorAll(".katex").length, src, dim: getComputedStyle(document.getElementById("dim")!).color };
+  return { pending, katex: out.querySelectorAll(".katex").length, displays: out.querySelectorAll(".katex-display").length, src, dim: getComputedStyle(document.getElementById("dim")!).color };
 });
 
 /** Wait until the box holds no formula still waiting. */
@@ -352,6 +353,7 @@ export const SCENES: SceneDef[] = [
         b = await box(s.page);
         assert.ok(laid, "the served retry lays out every formula: " + JSON.stringify(b));
         assert.deepEqual([b.katex, b.src.length, b.pending.length], [5, 0, 0], "five formulas, none left as source, the failure's two included");
+        assert.equal(b.displays, 2, "each display formula laid out in display mode, $$e^{i\\pi}$$ and $$w^2$$: " + JSON.stringify(b));
         assert.equal(await s.page.evaluate(() => document.querySelectorAll("#out [data-math-call], #out [data-math-failed]").length), 0, "no group stamp or failure mark is left");
         await show(s.page, "now $y_1$ at once");
         b = await box(s.page);
@@ -382,6 +384,7 @@ export const SCENES: SceneDef[] = [
         assert.ok(laid, "the served retry lays out every formula of both messages: " + JSON.stringify(b.src.map((x) => x.title)));
         assert.deepEqual([b.katex, b.src.length, b.pending.length, s.chunkRequests()], [7, 0, 0, 2],
           "seven formulas laid out, none left as source: each message is charged its own 56,997 characters, not the two together's 113,994");
+        assert.equal(b.displays, 6, "the six restored display formulas laid out in display mode, the trailing $z$ inline: " + JSON.stringify(b.displays));
         assert.equal(groups.length, 6, "the failure marked all six");
         assert.ok(groups.every((g) => !!g), "each fallback the failure made carries its call's group: " + JSON.stringify(groups));
         assert.equal(new Set(groups).size, 2, "the two messages' groups, one per message: " + JSON.stringify(groups));
@@ -604,6 +607,7 @@ export const SCENES: SceneDef[] = [
         b = await box(s.page);
         assert.ok(laid, "the faces landing after the backstop is a success: " + JSON.stringify(b));
         assert.deepEqual([b.katex, b.src.length, b.pending.length, s.chunkRequests()], [2, 0, 0, 1], "every formula laid out, the fallbacks included, with the one request");
+        assert.equal(b.displays, 1, "the display formula laid out in display mode: " + JSON.stringify(b));
         assert.equal(said(s).length, 1, "and nothing more said");
       });
     },
@@ -625,6 +629,7 @@ export const SCENES: SceneDef[] = [
         b = await box(s.page);
         assert.ok(laid, "the late chunk lays out the backstop's fallbacks: " + JSON.stringify(b));
         assert.deepEqual([b.katex, b.src.length, s.chunkRequests()], [2, 0, 1], "both laid out, one request");
+        assert.equal(b.displays, 1, "the display formula laid out in display mode: " + JSON.stringify(b));
         assert.equal(said(s).length, 1, "the late success says nothing more");
       });
     },
