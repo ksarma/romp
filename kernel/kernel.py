@@ -70077,12 +70077,15 @@ def _pane_spin(cid, ignore_id=""):
             # it grows), a scroll and the end of a CSS transition re-read the
             # boxes the last scan found and the boxes that clip them (the end of a transition: the scroll marks move to their new
             # places by a 180 ms transition, so the frame after the change that starts the move reads them mid-move, and only the
-            # transition's end says where they stop; WebKit left the badge over a mark after a scroll; round 2, open call 7). So a control that appears or moves under the badge moves it on, the viewer opened or the
-            # notice shown, and the timer and plain typing scan nothing. Two cases measured in the lab still scan at each event,
-            # both changes outside the container that the watch sees because it observes the page outside it: each keystroke of a
-            # slash command (the slash menu, a fixed element outside the list, redraws its items) and, on the desktop, each scroll
-            # step (the chat writes the hidden attribute of the reply chips, a fixed element outside the list that holds elements,
-            # at each; the rehearsed check of round 2). A sticky element that appears deep in the content, not as the
+            # transition's end says where they stop; WebKit left the badge over a mark after a scroll; round 2, open call 7). An
+            # attribute written to the value it had asks for nothing (each record carries the old value, and one that equals the
+            # value now is skipped; ruling 1 at 79dce614c, 2026-10-04): on the desktop the chat writes the hidden attribute of the
+            # reply chips, a fixed element outside the list that holds elements, at each scroll step, to the value it had, and the
+            # lab measured a scan at each step before this. So a control that appears or moves under the badge moves it on, the viewer opened or the
+            # notice shown, and the timer, plain typing and a scroll scan nothing. One case measured in the lab still scans at each
+            # event, a change outside the container that the watch sees because it observes the page outside it: each keystroke of
+            # a slash command (the slash menu, a fixed element outside the list, redraws its items, real controls; the rehearsed
+            # check of round 2, kept by the same ruling). A sticky element that appears deep in the content, not as the
             # container's own child, is found at the next scan, not at once. No timer. The search runs only while the badge is
             # painted (rwatch starts at the paint and stops at the first frame a change or scroll asks for after the badge is
             # down), so a healthy page scans nothing. Upstream's CSS rule stays
@@ -70160,15 +70163,18 @@ def _pane_spin(cid, ignore_id=""):
             "function rnudge(){rwant(false);}"
             # what the watch observes, set again after each scan: the container (its children and attributes), each sticky or
             # fixed element in it with all it holds, and outside it each ancestor up to the body (its children and attributes) with
-            # every other child of that ancestor and all it holds, the badge apart
-            "function rwire(){if(!rmo)return;rmo.disconnect();var F=['class','style','hidden'],O={childList:true,subtree:true,attributes:true,attributeFilter:F},N={childList:true,attributes:true,attributeFilter:F};"
+            # every other child of that ancestor and all it holds, the badge apart; each attribute record carries the value it had
+            # (attributeOldValue), so rrec can skip a write that left the value as it was
+            "function rwire(){if(!rmo)return;rmo.disconnect();var F=['class','style','hidden'],O={childList:true,subtree:true,attributes:true,attributeOldValue:true,attributeFilter:F},N={childList:true,attributes:true,attributeOldValue:true,attributeFilter:F};"
             "rmo.observe(c,N);for(var i=0;i<rpins.length;i++)rmo.observe(rpins[i],O);"
             "for(var p=c;p&&p!==document.body&&p.parentElement;p=p.parentElement){var u=p.parentElement;rmo.observe(u,N);for(var k=u.firstElementChild;k;k=k.nextElementSibling)if(k!==p&&k!==rb)rmo.observe(k,O);}}"
             # a change scans again when it can add a control: an element added to an element the last scan did not hold, or an
             # attribute changed on an element the last scan did not hold or that holds elements; any other change re-reads the
             # boxes (an element added inside a control the scan holds lies in a box the badge already avoids: the status line's
-            # mode icon, which the chat writes again every second)
-            "function rrec(rs){var any=false,f=false;for(var i=0;i<rs.length;i++){var m=rs[i],g=m.target;if(g===rb||rb.contains(g))continue;any=true;var h=!!rhs&&rhs.has(g);"
+            # mode icon, which the chat writes again every second). An attribute record whose value did not change (its old value
+            # is the value the element has now) is skipped: it asks for nothing (the chat writes the reply chips' hidden attribute
+            # at each desktop scroll step, to the value it had; ruling 1 at 79dce614c, 2026-10-04)
+            "function rrec(rs){var any=false,f=false;for(var i=0;i<rs.length;i++){var m=rs[i],g=m.target;if(g===rb||rb.contains(g))continue;if(m.type==='attributes'&&m.oldValue===g.getAttribute(m.attributeName))continue;any=true;var h=!!rhs&&rhs.has(g);"
             "if(m.type==='childList'){if(!h)for(var j=0;j<m.addedNodes.length;j++)if(m.addedNodes[j].nodeType===1)f=true;}else if(!h||g.firstElementChild)f=true;}if(any)rwant(f);}"
             "function rwatch(on){try{if(on){if(!rmo&&typeof MutationObserver==='function'&&document.body){rmo=new MutationObserver(rrec);rwire();}"
             "if(!rsc&&document.addEventListener){document.addEventListener('scroll',rnudge,true);document.addEventListener('transitionend',rnudge,true);rsc=true;}}"

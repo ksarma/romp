@@ -787,6 +787,9 @@ Object.defineProperties(CONTENT, { clientLeft: { get: () => 0 }, clientTop: { ge
   clientHeight: { get: () => { const r = CONTENT.getBoundingClientRect(); return r.bottom - r.top; } } });
 const inside = (anc, n) => { for (let e = n; e; e = e.parent) if (e === anc) return true; return false; };
 CONTENT.contains = (n) => inside(CONTENT, n);
+// each element's attributes, by name (the class, style and hidden values the watch's records name); null when it has none
+const attrOf = (t, n) => (t.attrs && Object.prototype.hasOwnProperty.call(t.attrs, n) ? t.attrs[n] : null);
+CONTENT.attrs = {}; CONTENT.getAttribute = (n) => attrOf(CONTENT, n); document.body.attrs = {}; document.body.getAttribute = (n) => attrOf(document.body, n);
 // add(parent, box [left, top, width, height], { position, cursor, sel, overflow, overflowX, overflowY, contain, transform, filter,
 // willChange, display }): an element under `parent` (null: the body, outside the list); `overflow` sets both axes
 const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, box: box.slice(), sel: o.sel || '',
@@ -798,7 +801,8 @@ const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, 
   get nextElementSibling() { const sib = this.parent ? ALL.filter((x) => x.parent === this.parent) : ALL.filter((x) => x === CONTENT || !x.parent); return sib[sib.indexOf(this) + 1] || null; },
   get clientLeft() { return 0; }, get clientTop() { return 0; }, get clientWidth() { return this.box[2]; }, get clientHeight() { return this.box[3]; },
   getBoundingClientRect() { const [l, t, w, h] = this.box; return { left: l, top: t, right: l + w, bottom: t + h, width: w, height: h }; },
-  contains(n) { return inside(this, n); }, matches(list) { return !!this.sel && list.split(',').indexOf(this.sel) >= 0; } };
+  contains(n) { return inside(this, n); }, matches(list) { return !!this.sel && list.split(',').indexOf(this.sel) >= 0; },
+  attrs: {}, getAttribute(n) { return attrOf(this, n); } };
   const at = parent ? ALL.lastIndexOf(ALL.filter((x) => inside(parent, x)).pop()) + 1 : ALL.length; ALL.splice(at, 0, e); return e; };
 const rightOf = () => (BADGE.style.right ? BADGE.style.right : '8px');
 const at = () => ({ top: topOf(), right: rightOf(), painted: painted() });
@@ -809,12 +813,25 @@ const mo = () => watchers().length;
 // or attributes with the attribute in attributeFilter when there is one (the body is every element's ancestor here)
 const sees = (r, rec) => (r.t === rec.target || (r.o.subtree && (r.t === document.body || inside(r.t, rec.target)))) &&
   (rec.type === 'childList' ? !!r.o.childList : !!r.o.attributes && (!r.o.attributeFilter || r.o.attributeFilter.indexOf(rec.attributeName) >= 0));
-const deliver = (rec) => task(() => MOS.filter((m) => m.regs.some((r) => sees(r, rec))).forEach((m) => m.cb([rec])));
+// deliverAll hands each observer, in one callback, the records it sees, in order. An attribute record carries the value the attribute
+// had (oldValue) only for an observer whose options ask for it (attributeOldValue); any other gets null there, as the engine gives it
+const deliverAll = (recs) => task(() => MOS.forEach((m) => { const mine = recs.filter((rec) => m.regs.some((r) => sees(r, rec)))
+  .map((rec) => (m.regs.some((r) => sees(r, rec) && r.o.attributeOldValue) ? rec : Object.assign({}, rec, { oldValue: null }))); if (mine.length) m.cb(mine); }));
+const deliver = (rec) => deliverAll([rec]);
 const ELEM = { nodeType: 1 }, TEXT = { nodeType: 3 };
 const change = (target) => deliver({ type: 'childList', target, addedNodes: [ELEM], removedNodes: [] });          // an element added inside `target`
 const added = (el) => deliver({ type: 'childList', target: el.parent || document.body, addedNodes: [el], removedNodes: [] });   // `el` added to its parent
 const text = (target) => deliver({ type: 'childList', target, addedNodes: [TEXT], removedNodes: [TEXT] });        // `target`'s text written (textContent)
-const attr = (target, name) => deliver({ type: 'attributes', target, attributeName: name || 'style', addedNodes: [], removedNodes: [] });
+// an attribute written to a new value (`value`, by default one it never had; null removes it): the record carries the value it had
+let WRITES = 0;
+const attrRec = (target, name, value) => { name = name || 'style'; const old = attrOf(target, name), v = value === undefined ? (old || '') + ' w' + (++WRITES) : value;
+  if (v === null) delete target.attrs[name]; else target.attrs[name] = v;
+  return { type: 'attributes', target, attributeName: name, oldValue: old, addedNodes: [], removedNodes: [] }; };
+// an attribute written to the value it already has (a setAttribute of that value, a classList.add of a class it holds): the engine
+// still queues a record, and its old value is the value the attribute has now
+const sameRec = (target, name) => ({ type: 'attributes', target, attributeName: name || 'style', oldValue: attrOf(target, name || 'style'), addedNodes: [], removedNodes: [] });
+const attr = (target, name, value) => deliver(attrRec(target, name, value));
+const same = (target, name) => deliver(sameRec(target, name));
 // the frame clock: the watch asks for a placement at the next animation frame; frame() runs the frames asked for so far
 const FRAMES = [];
 global.requestAnimationFrame = (fn) => { FRAMES.push(fn); return FRAMES.length; };
@@ -1200,16 +1217,16 @@ out({ grew, next, resized, quiet, scan: scan() });""")
         o = self._watch_fit(r"""
 fire('romp:wsdown'); after(RHOLD_T);
 const nm = (t) => (t === document.body ? 'body' : t === CONTENT ? 'list' : t.id || '?');
-const regs = watchers()[0].regs.map((r) => [nm(r.t), !!r.o.childList, !!r.o.subtree, !!r.o.attributes, (r.o.attributeFilter || []).join(',')]).sort();
+const regs = watchers()[0].regs.map((r) => [nm(r.t), !!r.o.childList, !!r.o.subtree, !!r.o.attributes, !!r.o.attributeOldValue, (r.o.attributeFilter || []).join(',')]).sort();
 const reads = STYLE_READS, asks = ASKS;
 change(row); attr(inRow, 'class'); text(inRow); frame();
 out({ regs, deep: { reads: STYLE_READS - reads, asks: ASKS - asks } });""")
         F = "class,style,hidden"
-        self.assertEqual(o["regs"], sorted([["body", True, False, True, F], ["list", True, False, True, F], ["head", True, True, True, F],
-                                            ["header", True, True, True, F], ["footer", True, True, True, F]]),
+        self.assertEqual(o["regs"], sorted([["body", True, False, True, True, F], ["list", True, False, True, True, F], ["head", True, True, True, True, F],
+                                            ["header", True, True, True, True, F], ["footer", True, True, True, True, F]]),
                          "the list (its children and attributes), its sticky element with all it holds, the body's own children and attributes, and every "
-                         "other child of the body with all it holds; nothing observes the list's other content, and neither the body nor the list is "
-                         "observed with all it holds")
+                         "other child of the body with all it holds, each attribute record with the value it had; nothing observes the list's other "
+                         "content, and neither the body nor the list is observed with all it holds")
         self.assertEqual(o["deep"], {"reads": 0, "asks": 0}, "a change inside a message in the list wakes nothing")
 
     def test_the_status_lines_tick_and_the_composers_growth_re_read_the_boxes_and_scan_nothing(self):
@@ -1235,6 +1252,30 @@ reads = STYLE_READS; change(footer); frame(); const unheld = STYLE_READS - reads
 out({ icon, unheld, scan: scan() });""")
         self.assertEqual(o["icon"], 1, "an element added inside the send button, a control the scan holds: a re-read, no scan")
         self.assertEqual(o["unheld"], o["scan"], "an element added inside the footer, which the scan does not hold: a scan")
+
+    # Ruling 1 at 79dce614c (2026-10-04): on the desktop the chat writes the reply chips' hidden attribute at each scroll step, to the
+    # value it had, and the chips (fixed, outside the list, holding elements, no control) are an element the watch must scan for when
+    # an attribute changes, so the lab measured a scan of every element at each scroll step. Each attribute record now carries the
+    # value it had (attributeOldValue), and a record whose old value is the value the element has now is skipped: it asks for no frame
+    # and reads nothing. A record whose value did change scans as before, alone or beside an unchanged one in the same delivery.
+    def test_an_attribute_written_to_the_value_it_had_asks_for_nothing_and_a_changed_one_scans(self):
+        o = self._watch_fit(r"""
+const chips = add(null, [200, 600, 190, 40], { position: 'fixed' }); chips.id = 'chips'; chips.attrs.hidden = '';   // the reply chips, hidden
+add(chips, [210, 610, 80, 20]);
+fire('romp:wsdown'); after(RHOLD_T);
+const step = (fn) => { const reads = STYLE_READS, asks = ASKS; fn(); frame(); return { reads: STYLE_READS - reads, asks: ASKS - asks }; };
+const unchanged = step(() => same(chips, 'hidden'));
+const unchangedHeld = step(() => { field.attrs.style = 'height: 40px'; same(field, 'style'); });
+const changedFirst = step(() => deliverAll([attrRec(chips, 'class', 'reply-chips'), sameRec(chips, 'hidden')]));
+const changedLast = step(() => deliverAll([sameRec(chips, 'hidden'), attrRec(chips, 'class', 'reply-chips on')]));
+const shown = step(() => attr(chips, 'hidden', null));
+out({ unchanged, unchangedHeld, changedFirst, changedLast, shown, scan: scan() });""")
+        self.assertEqual(o["unchanged"], {"reads": 0, "asks": 0},
+                         "the chips' hidden attribute written to the value it had: skipped, no frame asked and no style read (79dce614c: a scan of every element)")
+        self.assertEqual(o["unchangedHeld"], {"reads": 0, "asks": 0}, "the composer's style written to the value it had: skipped too, not even a re-read")
+        for k in ("changedFirst", "changedLast"):
+            self.assertEqual(o[k], {"reads": o["scan"], "asks": 1}, k + ": a changed class beside an unchanged hidden write in one delivery: one frame, which scans")
+        self.assertEqual(o["shown"], {"reads": o["scan"], "asks": 1}, "the hidden attribute removed, a value that changed: one frame, which scans")
 
     def test_a_change_that_can_add_a_control_scans_again(self):
         o = self._watch_fit(r"""
