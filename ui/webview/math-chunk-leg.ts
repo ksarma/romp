@@ -191,6 +191,11 @@ export const drain = async (page: any): Promise<void> => {
   await page.evaluate(() => fetch("/sentinel", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
 };
 
+/** Two animation frames and no request: the wait for a scene that holds the page's own load event. WebKit defers a fetch made while
+ *  the document is still loading until that load ends, so drain's round trip waited for the very load the scene holds and the scene
+ *  ran into its timeout (the WebKit twin, 2026-10-04); a script tag the fill added is in the DOM at once, which the scene reads. */
+export const twoFrames = (page: any): Promise<void> => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+
 /** What the box holds: formulas still waiting (their text and call stamp), KaTeX roots, source fallbacks (their titles). */
 export type Box = { pending: { text: string; call: string | null; display: boolean; color: string; block: string; margin: string; align: string }[]; katex: number; src: { text: string; title: string }[]; dim: string };
 export const box = (page: any): Promise<Box> => page.evaluate(() => {
@@ -553,8 +558,8 @@ export const SCENES: SceneDef[] = [
       const lg = gate();
       await withPage(browser, { loadGate: lg }, async (s) => {
         await show(s.page, "early $\\frac{a}{b}$ here");
-        await drain(s.page);
-        await drain(s.page);
+        await twoFrames(s.page);   // not drain: its fetch would wait for the load this scene holds (WebKit)
+        await twoFrames(s.page);
         const st = await s.page.evaluate(() => ({ ready: document.readyState, scripts: document.querySelectorAll('script[src*="math-chunk"]').length }));
         let b = await box(s.page);
         assert.notEqual(st.ready, "complete", "the page's load is still held: " + JSON.stringify(st));
