@@ -70638,8 +70638,9 @@ b.addEventListener('click',function(ev){ev.stopPropagation();
 if(kindOn(k)){FILT[k]=1;}else{delete FILT[k];}saveFilt();
 // An unmute with the Log open lists the kind's entries in front of the reader, so they are seen, with the mark an opening
 // gives (markSeen below). Only that kind's: every other entry the open Log shows was marked when it was shown. Before
-// 2026-10-04 they were listed unread, and the triangle turned red under the open Log and stayed red after it closed, for
-// lines just listed. An unmute with the Log closed leaves them unread.
+// 2026-10-04 they were listed unread, so the triangle kept its unread digit and its class has (the gear its count) under the
+// open Log and after it closed, for lines just listed; on main only the digit showed, since the triangle never turned red
+// there. An unmute with the Log closed leaves them unread.
 if(kindOn(k)&&!back.hidden){for(var i=0;i<NOTES.length;i++)if(NOTES[i].kind===k)markSeen(NOTES[i]);save();}
 b.classList.toggle('off',!kindOn(k));renderList();paint();});
 filtBar.appendChild(b);});
@@ -70700,8 +70701,9 @@ else{NOTES.push({kind:String(kind||'error'),text:String(text),t:Math.floor(Date.
 if(NOTES.length>MAX)NOTES=NOTES.slice(-MAX);}
 // An entry that lands while the Log is open is seen as it lands, with the mark an opening gives (markSeen below): the reader
 // is looking at the list it joins, so the entry neither turns the triangle red under the open Log nor leaves it red once the
-// Log closes. Before 2026-10-03 it landed unread, and the phone's triangle stayed red with an unread digit after the Log
-// closed, for a line the reader had seen. A muted kind's entry stays unread here as at an opening. The last entry is the one
+// Log closes. Before 2026-10-03 it landed unread, so the triangle kept its unread digit and its class has (the gear its
+// count) after the Log closed, for a line the reader had seen; on main only the digit showed, since the triangle never
+// turned red there. A muted kind's entry stays unread here as at an opening. The last entry is the one
 // just written, pushed or coalesced. A line written for the next page life (nextLife) is not marked: the reload takes the page
 // before anyone reads the open list, so the line arrives unread in the next page life (the round-1 review, 2026-10-04).
 // Seen means listed (the same review's ruling): an entry counts as seen when the open Log lists it, scrolled into view or

@@ -15,11 +15,12 @@ socket is down. The Log is not a tab on the phone: the triangle opens it as a ce
 it shows seen, and an entry that arrives while the Log is open is seen as it lands, with the same mark (the Log's
 markSeen). So with the Log open the triangle is red while a visible pane's socket is down and grey again once it is back,
 and an entry logged with the Log open leaves it grey there and after the Log closes; the reopened Log lists that entry.
-Before 2026-10-03 such an entry landed unread: it turned the triangle red under the open Log and kept it red, with an
-unread digit, after the Log closed, a false red for a line the reader had seen, which the colour fix would have made
-visible. A muted kind's entries stay unread while it is muted, at an opening and at an arrival alike, and are seen when an
-unmute with the Log open lists them (2026-10-04): an entry is seen when an open Log shows it. Before, that unmute turned
-the triangle red under the open Log and left it red after the close, for lines just listed. The walk
+Before 2026-10-03 such an entry landed unread: it gave the triangle its class has and an unread digit under the open Log
+and left both after the Log closed, for a line the reader had seen. On main, where the triangle never turned red, only the
+digit showed it; with the colour fix alone it would have been a false red. A muted kind's entries stay unread while it is
+muted, at an opening and at an arrival alike, and are seen when an unmute with the Log open lists them (2026-10-04): an
+entry is seen when an open Log shows it. Before, that unmute left the triangle with its class has and an unread digit
+under the open Log and after the close, for lines just listed. The walk
 (tests/log_triangle_browser.mjs) reads the triangle's computed colour at each of the states above, on the tab the shell
 opened on and after a tap on another tab, then under the light theme, and reads every other bar button's colour at every
 step, so the fix is held to leaving the active tab's accent, the other tabs' grey and the other actions' grey as they

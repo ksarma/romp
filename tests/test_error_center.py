@@ -583,11 +583,12 @@ console.log(JSON.stringify(out));
 
 class ArrivalWhileOpen(unittest.TestCase):
     """An entry that arrives while the Log is open is seen as it lands (2026-10-03), with the mark an opening gives (markSeen):
-    the reader is looking at the list it joins. Before, it landed unread, so closing the Log left the phone's triangle red
-    with an unread digit, and the gear's Open log count with a 1, for a line already read. A muted kind's arrival stays
+    the reader is looking at the list it joins. Before, it landed unread, so closing the Log left the phone's triangle with
+    an unread digit and its class has (grey on main, where the triangle never turned red; red with the colour fix), and the
+    gear's Open log count with a 1, for a line already read. A muted kind's arrival stays
     unread while the kind is muted, as an opening leaves it; unmuting the kind with the Log open lists its entries in front of
     the reader, which marks them seen with the same mark (2026-10-04): an entry is seen when an open Log shows it. Before,
-    such an unmute turned the triangle red under the open Log and left it red after the close. An unmute with the Log closed
+    such an unmute left the triangle with an unread digit and its class has under the open Log and after the close. An unmute with the Log closed
     leaves the entries unread. The live cue is as it was: a visible pane's socket down keeps the triangle red with the Log
     open. One script serves both layouts, so the desktop's cue (the gear's count) is read beside the phone's triangle at
     every step."""
