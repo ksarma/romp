@@ -98,13 +98,14 @@
 # by a poll after the first), and reads them and that node --test gone, that leg's output after the same line, and the
 # run's TMPDIR empty; its case "a SIGKILL to the script" reads the leg's subshell and its timer gone once the leg and
 # its bound have ended; its case "the per-file bound through the stub" runs the grace's end after a cut (the leg second
-# in its roster, one leg at a time, a leg queued behind it) and with nothing cut, a node --test that has exited and is
-# not yet reaped when the grace runs out, a node --test that outlives the bound with nothing under it or with only a
-# zombie under it, the knobs' refusals and those of the ps reads, the status of legs that exit differently, and a roster
-# longer than the legs run at once; its case "the per-file bound counts from each leg's own start" runs, with the real
-# node, two legs one at a time, each shorter than the bound and the two together longer, and reads neither cut. The
-# timers and the event pipe use what bash 3.2 has (no wait -n), as tests/shell-portability.bats holds for every shell
-# script the repo ships. The legs' records are joined in roster order into the one record the pass below reads.
+# in its roster, one leg at a time, a leg queued behind it), beside a leg still running, which it leaves running, and
+# with nothing cut, a node --test that has exited and is not yet reaped when the grace runs out, a node --test that
+# outlives the bound with nothing under it or with only a zombie under it, the knobs' refusals and those of the ps
+# reads, the status of legs that exit differently, and a roster longer than the legs run at once; its case "the per-file
+# bound counts from each leg's own start" runs, with the real node, two legs one at a time, each shorter than the bound
+# and the two together longer, and reads neither cut. The timers and the event pipe use what bash 3.2 has (no wait -n),
+# as tests/shell-portability.bats holds for every shell script the repo ships. The legs' records are joined in roster
+# order into the one record the pass below reads.
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (the reporter's header states
 # what each line records) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result
 # attributed to it is a pass that carries no skip or todo, is a test and not a suite, and is not marked as node's
