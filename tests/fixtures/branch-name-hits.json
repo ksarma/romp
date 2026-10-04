@@ -1,0 +1,350 @@
+{
+ ".github/workflows/ci.yml": [
+  "cancel-in-progress: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/batch/') }}",
+  "group: ci-${{ github.event_name }}-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.sha || github.ref }}"
+ ],
+ ".github/workflows/ledger.yml": [
+  "group: ledger-${{ github.ref }}"
+ ],
+ "kernel/kernel.py": [
+  "\"%s:refs/heads/%s\" % (lfull, _P2P_REF)],   # the advertised sha, not a HEAD that may move",
+  "\"git push --force %s:<remote-romp-dir> HEAD:refs/heads/%s \"",
+  "\"then, on %s: git reset --hard %s && git update-ref -d refs/heads/%s\"",
+  "# 2026-09-05. Nor `branch --show-current`: git below 2.22 lacks it, and the failed query silently",
+  "# `symbolic-ref -q HEAD` reads the branch HEAD names, NOT `rev-parse --abbrev-ref HEAD`: the latter",
+  "'GOT=\"$(git -C \"$R\" rev-parse --verify --quiet refs/heads/%s 2>/dev/null)\"; '",
+  "'git -C \"$R\" reset --hard \"$WANT\" >/dev/null 2>&1 || { git -C \"$R\" update-ref -d refs/heads/%s \"$WANT\" 2>/dev/null || K=\":REFKEPT\"; echo \"RESETFAIL$K\"; exit 0; }; '",
+  "'git -C \"$R\" update-ref -d refs/heads/%s \"$WANT\" 2>/dev/null || K=\":REFKEPT\"; '",
+  "'git -C \"$R\" update-ref -d refs/heads/%s \"$WANT\" 2>/dev/null || K=\":REFKEPT\"; echo \"DIRTYNOW$K\"; exit 0; fi; '",
+  "'git -C \"$R\" update-ref -d refs/heads/%s \"$WANT\" 2>/dev/null || K=\":REFKEPT\"; echo \"DIVERGED$K\"; exit 0; fi; '",
+  "'git -C \"$R\" update-ref -d refs/heads/%s \"$WANT\" 2>/dev/null || K=\":REFKEPT\"; echo \"STATERR$K\"; exit 0; fi; '",
+  "(_git_head_file knows the shape; the direct per-build query this replaced answered there, so a",
+  "+ \"  if ! git symbolic-ref -q HEAD >/dev/null 2>&1 \"",
+  "_git_head_file resolves HEAD: the pointers never move for a live tree. '' when there is none \u2014 not",
+  "_git_head_file). '' when detached or unavailable; a HEAD file that cannot be found is git's own \"not",
+  "at .git/HEAD; a WORKTREE's .git is a one-line FILE ('gitdir: <private-dir>') and its HEAD lives in",
+  "branch = head[len(\"refs/heads/\"):] if head.startswith(\"refs/heads/\") else None",
+  "def _git_head_file(cwd):",
+  "full = \"refs/heads/\" + ref",
+  "getmtime calls through the os.stat wrapper, and the tree memos' (_tree_of, _git_head_file) the same way.\"\"\"",
+  "gi = _git_head_file(tree)                    # <gitdir>/HEAD: the index sits beside it",
+  "goes EACCES, then readable but dangling, reports both \u2014 and a clean read ends it (_git_head_file drops",
+  "head = _git_out([\"symbolic-ref\", \"-q\", \"HEAD\"], top) or \"\"",
+  "hp = os.path.join(gd, \"HEAD\") if gd else \"\"",
+  "memoized, like _git_head_file's ''; a memoized path that stops resolving is evicted by its reader",
+  "mt = _pointer_mtime(_git_head_file, _head_path_cache, top)",
+  "out = subprocess.run([\"git\", \"symbolic-ref\", \"-q\", \"--short\", \"HEAD\"],",
+  "path made every build fork the query its memo should have answered (`rev-parse --abbrev-ref` and",
+  "r = subprocess.run([\"git\", \"-C\", str(ROOT), \"symbolic-ref\", \"--quiet\", \"--short\", \"HEAD\"],",
+  "r = subprocess.run([\"git\", \"-C\", top, \"rev-parse\", \"--abbrev-ref\", \"HEAD\"],",
+  "return (os.path.isfile(os.path.join(d, \"HEAD\")) and os.path.isdir(os.path.join(d, \"objects\"))",
+  "src_ref, dst_ref = \"refs/heads/\" + ref, \"refs/remotes/origin/\" + ref",
+  "the operator (_git_head_file). The line is read as BYTES and decoded by the filesystem's own rule"
+ ],
+ "postal/postal_service.py": [
+  "r = subprocess.run([\"git\", \"-C\", d, \"rev-parse\", \"--abbrev-ref\", \"HEAD\"],"
+ ],
+ "scripts/batch.py": [
+  "\"run `git -C %s checkout --detach %s`, `git -C %s bisect reset` and `git -C %s symbolic-ref HEAD %s`.\"",
+  "\"there, or end its bisect or rebase), then run `git -C %s symbolic-ref HEAD %s`.\"",
+  "# between its steps, leaves HEAD detached at the commit it was at rather than on the branch over another commit's",
+  "# move refused after the steps, which leaves HEAD detached at the midpoint with the bisect in progress either way,",
+  "# post-checkout hook (git read-tree, git symbolic-ref and a git bisect reset that checks nothing out run none), and",
+  "# rule, whatever the setting, the names it resolves itself: git bisect start, run from HEAD detached at the tip, HEAD",
+  "# symbolic-ref's: a branch is checked out in one worktree at a time, so git checkout will not put a worktree on a",
+  "# transaction (update-ref, checkout -B, worktree add), where git symbolic-ref and checkout's move of HEAD onto a branch",
+  "SHORT_NAME_RULES = (\"%s\", \"refs/%s\", \"refs/tags/%s\", \"refs/heads/%s\")",
+  "branch with git symbolic-ref, since git checkout stays on a branch only when given its short name), so while the",
+  "for block in git(\"worktree\", \"list\", \"--porcelain\", cwd=wt).split(\"\\n\\n\"):",
+  "git(\"symbolic-ref\", \"-m\", \"checkout: moving from %s to %s\" % (old, branch_of(name)), \"HEAD\", batch_ref(name),",
+  "in progress (_started_from). The worktrees and their HEADs are read from git worktree list --porcelain; a detached",
+  "names.append(\"refs/heads/\" + word)",
+  "on = git_proc(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=wt, check=False).stdout.strip() == bref",
+  "reflog line git checkout writes for the same move from `old`, the commit HEAD was at. git symbolic-ref skips the",
+  "remote_branches = set(git(\"ls-remote\", \"--heads\", REMOTE, cwd=root).replace(\"refs/heads/\", \"\").split()[1::2])",
+  "remote_head = remote_ref_sha(root, \"refs/heads/\" + br)",
+  "return \"refs/heads/\" + branch_of(name)",
+  "return (text[len(\"refs/heads/\"):] if text.startswith(\"refs/heads/\") else text) == branch_of(name)",
+  "return remote_ref_sha(root, \"refs/heads/\" + MAIN)"
+ ],
+ "scripts/pr-orphans.sh": [
+  "elif git rev-parse --verify --quiet \"refs/heads/$MAIN\" >/dev/null; then"
+ ],
+ "scripts/release.sh": [
+  "# HEAD is named as such: `symbolic-ref` prints nothing for it (and exits 1, hence `|| true`",
+  "# under set -e), where `rev-parse --abbrev-ref` would have blamed a branch called HEAD.",
+  "on_branch=\"$(git symbolic-ref -q --short HEAD || true)\""
+ ],
+ "scripts/sweep.py": [
+  "# for-each-ref's refname:short and rev-parse --abbrev-ref shorten a name, and the runner makes neither call. It does not",
+  "# is read with a plain symbolic-ref, its short name taken by removing refs/heads/: with that setting on (git's",
+  "# refs/remotes/HEAD/HEAD, to warn of an ambiguous name, and symbolic-ref --short tried <git dir>/main, refs/main and",
+  "branch = (ref[len(\"refs/heads/\"):] if ref.startswith(\"refs/heads/\") else ref) or None",
+  "branch = (ref[len(\"refs/heads/\"):] if ref.startswith(\"refs/heads/\") else ref) or None",
+  "commondir file: git 2.43 reads the git dir's commondir file when a call reads a ref (rev-parse HEAD, symbolic-ref,",
+  "files = [os.path.join(gd, \"HEAD\"), os.path.join(gd, \"commondir\")]",
+  "files.append(os.path.join(common, \"HEAD\"))",
+  "head = os.path.join(repo.git_dir, \"HEAD\")",
+  "if not ref.startswith(\"refs/heads/\"):",
+  "ref = git(batcher, \"symbolic-ref\", \"-q\", \"HEAD\", check=False).stdout.strip()",
+  "ref = git(repo, \"symbolic-ref\", \"-q\", \"HEAD\", check=False).stdout.strip()",
+  "rev-parse HEAD item, ruled into PR 959 with ruling A): cmd_run's (rev-parse HEAD, symbolic-ref) and cmd_check's",
+  "where = \"a ref outside refs/heads/\""
+ ],
+ "tests/bootstrap-sh.bats": [
+  "[ \"$(git -C \"$HOME/romp\" rev-parse --abbrev-ref HEAD)\" = \"main\" ]",
+  "[ \"$(git -C \"$HOME/romp\" rev-parse --abbrev-ref HEAD)\" = \"main\" ]"
+ ],
+ "tests/conftest.py": [
+  "\"GITHUB_HEAD_REF\", \"GITHUB_BASE_REF\", \"GITHUB_EVENT_NAME\", \"GITHUB_WORKFLOW\", \"GITHUB_WORKFLOW_REF\",",
+  "\"GITHUB_SERVER_URL\", \"GITHUB_API_URL\", \"GITHUB_GRAPHQL_URL\", \"GITHUB_SHA\", \"GITHUB_REF\", \"GITHUB_REF_NAME\","
+ ],
+ "tests/fixtures/fake_gh.py": [
+  "base_tip = git(state, \"rev-parse\", \"refs/heads/\" + base).stdout.strip()",
+  "git(state, \"update-ref\", \"-d\", \"refs/heads/\" + branch, check=False)",
+  "git(state, \"update-ref\", \"refs/heads/\" + base, commit, base_tip)",
+  "if git(state, \"rev-parse\", \"--verify\", \"--quiet\", \"refs/heads/\" + head, check=False).returncode != 0:",
+  "if git(state, \"rev-parse\", \"--verify\", \"--quiet\", \"refs/heads/\" + ref, check=False).returncode != 0:",
+  "if method == \"DELETE\" and \"/git/refs/heads/\" in path:",
+  "proc = git(state, \"rev-parse\", \"--verify\", \"--quiet\", \"refs/heads/\" + pr[\"headRefName\"], check=False)",
+  "ref = path.split(\"/git/refs/heads/\", 1)[1]"
+ ],
+ "tests/fork-remotes.bats": [
+  "git -C \"$FORK\" symbolic-ref HEAD refs/heads/main",
+  "git -C \"$UP\" symbolic-ref HEAD refs/heads/main"
+ ],
+ "tests/gitleaks-config.bats": [
+  "git -C \"$R\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says",
+  "git -C \"$R\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says",
+  "git -C \"$WORK\" symbolic-ref HEAD refs/heads/main"
+ ],
+ "tests/pr-orphans.bats": [
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main"
+ ],
+ "tests/pre-push-hook.bats": [
+  "fired contains \"for-each-ref --format=%(refname) --contains $sha refs/remotes/\" [ \"$status\" -ne 0 ] [[ \"$output\" == *\"romp pre-push: the COMMITS of refs/heads/again (${sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing) while no remote-tracking ref contains the pushed commit and the ref is new on the remote, so the listing answered short\"* ]]",
+  "fired replace-refs \"for-each-ref --format=%(refname) refs/replace/\" [ \"$status\" -eq 0 ] [ \"$(git -C \"$TEST_DIR/remote.git\" rev-parse refs/heads/main)\" = \"$C\" ]",
+  "fired replace-refs \"for-each-ref --format=%(refname) refs/replace/\" [ \"$status\" -ne 0 ] [[ \"$output\" == *\"romp pre-push: the tip of refs/heads/main (${L:0:10}) would publish a personal identifier in:\"* ]]",
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main",
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main",
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says"
+ ],
+ "tests/pre-push-identity.bats": [
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says"
+ ],
+ "tests/pre-push-message.bats": [
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says"
+ ],
+ "tests/release-sh.bats": [
+  "# `git rev-parse --abbrev-ref HEAD` prints the word HEAD when detached, which would have made the",
+  "[ \"$(git -C \"$REPO\" rev-parse --abbrev-ref HEAD)\" = \"main\" ]",
+  "[ \"$(git -C \"$REPO\" rev-parse --abbrev-ref HEAD)\" = \"release-0.2.0\" ]",
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main",
+  "run git -C \"$TEST_DIR/origin.git\" branch --list release-0.2.0"
+ ],
+ "tests/test_batch_tool.py": [
+  "\"rebase), then run `git -C %s symbolic-ref HEAD refs/heads/batch/b1`.\\n\" % (wt, base[:10], wt), err)",
+  "# a plain symbolic-ref, which prints HEAD's target and reads no other name (rev-parse --abbrev-ref would",
+  "# assert_reset_at_the_tip without its rev-parse --abbrev-ref, which shortens the branch's name by",
+  "# stopped (the forced restore of the branch's tree and the git symbolic-ref that points HEAD at the branch, which",
+  "# trying the names the planted symlinks are at, and would read one without end: a plain symbolic-ref",
+  "(\"symbolic-ref -m\", True)):",
+  ".git/HEAD is gone. find_repo reads the clone's .git with the ceiling at its parent, so verify is refused naming",
+  "BATCH_SHADOWS = tuple(rule % \"batch/b1\" for rule in REV_PARSE_RULES[:REV_PARSE_RULES.index(\"refs/heads/%s\")])",
+  "REV_PARSE_RULES = (\"%s\", \"refs/%s\", \"refs/tags/%s\", \"refs/heads/%s\", \"refs/remotes/%s\", \"refs/remotes/%s/HEAD\")",
+  "START_AS_A_BRANCH = REV_PARSE_RULES[REV_PARSE_RULES.index(\"refs/heads/%s\")] % ORIGIN_MAIN_REF",
+  "and the bisect still in progress, which is what it leaves: HEAD detached at #101's merge, nothing staged",
+  "at the batch branch with git symbolic-ref, which skips the rule git checkout applies first, that a branch is in",
+  "base; detached there, by its id, at the checkout of the midpoint, since the bisect starts from HEAD detached at",
+  "batch branch with git symbolic-ref -m (attach_to_branch), each with the reflog line git checkout writes for the",
+  "bisect in progress. The bisect runs with --no-checkout from HEAD detached at the tip, so git bisect start records",
+  "branch's tree, forced since the fixture's worktree has no changes, or the git symbolic-ref that then points HEAD",
+  "for call, second in ((\"read-tree --reset -u refs/heads/batch/b1\", False), (\"symbolic-ref -m\", False),",
+  "for rule in (\"%s\", \"refs/tags/%s\", \"refs/heads/%s\", \"refs/remotes/%s/HEAD\"):",
+  "git bisect reset; the second git symbolic-ref). The stop ends that git, and the step runs again with the stop",
+  "listed = fx.dev_git(\"worktree\", \"list\", \"--porcelain\")",
+  "listing = self.fx.dev_git(\"worktree\", \"list\", \"--porcelain\")",
+  "listing, history = [\"for-each-ref\", \"--format=%(refname)\"], [\"rev-list\", \"-1\", \"refs/heads/batch/b1\"]",
+  "os.remove(os.path.join(fx.dev, \".git\", \"HEAD\"))",
+  "return self._git(\"rev-parse\", \"--verify\", \"--quiet\", \"refs/heads/\" + ref, cwd=self.bare, check=False)",
+  "self._git(\"symbolic-ref\", \"HEAD\", \"refs/heads/main\", cwd=self.author)",
+  "self._git(\"symbolic-ref\", \"HEAD\", \"refs/heads/main\", cwd=self.bare)",
+  "self.assertEqual(fx._git(\"rev-parse\", \"--abbrev-ref\", \"HEAD\", cwd=wt), \"batch/b1\", \"the worktree is back on the branch\")",
+  "self.assertEqual(fx._git(\"rev-parse\", \"--abbrev-ref\", \"HEAD\", cwd=wt), \"batch/b1\", \"the worktree is on the branch\")",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=other, check=False), \"\",",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=other, check=False), \"\",",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=wt, check=False), \"\",",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=wt, check=False), \"\", \"HEAD is detached\")",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=wt, check=False), \"\", \"the batch worktree is detached\")",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"HEAD\", cwd=other), \"refs/heads/batch/b1\")",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"HEAD\", cwd=wt), \"refs/heads/batch/b1\",",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"HEAD\", cwd=wt), \"refs/heads/batch/b1\",",
+  "self.assertEqual(fx.dev_git(\"for-each-ref\", \"--format=%(refname)\", \"refs/heads/\"), \"refs/heads/main\", \"and writes no ref\")",
+  "self.assertEqual(fx.dev_git(\"rev-parse\", \"--abbrev-ref\", \"HEAD\"), \"main\", \"the tool's own checkout is untouched\")",
+  "self.assertEqual(fx.dev_git(\"worktree\", \"list\", \"--porcelain\").count(\"worktree \"), 1, \"the temporary checkout is gone\")",
+  "self.assertNotIn(os.path.realpath(rec[\"cwd\"]), fx.dev_git(\"worktree\", \"list\", \"--porcelain\"),",
+  "symbolic-ref's message changed (its -m kept, so no case keyed on the call's words reds instead) and with"
+ ],
+ "tests/test_chat_build_sig_inputs.py": [
+  "--abbrev-ref HEAD` for the branch, `remote get-url origin` for the repository) and the tail's `ls-files`; the warm",
+  "self.assertEqual(signature_pass(), {(\"rev-parse\", \"--show-toplevel\"), (\"rev-parse\", \"--abbrev-ref\", \"HEAD\"),"
+ ],
+ "tests/test_ci_sdk_pin.py": [
+  "(\"an if: key's line\", \"      - name: Gated\\n        if: contains(github.ref, 'pytest')\\n        run : make test\\n\", (1,)),"
+ ],
+ "tests/test_ci_workflow_concurrency.py": [
+  "\"\"\"GitHub's value semantics for the subset the stanza uses: string literals, github.event_name, github.ref and",
+  "evaluate(\"contains(github.ref, 'main')\", ctx)",
+  "evaluate(\"github.head_ref\", ctx)",
+  "return {\"github.event_name\": event, \"github.ref\": ref, \"github.sha\": sha}",
+  "self.assertEqual(evaluate(\"github.event_name == 'PUSH' && github.sha || github.ref\", ctx), SHA_A)",
+  "self.assertEqual(evaluate(\"github.event_name == 'pull_request' && github.sha || github.ref\", ctx), MAIN)",
+  "self.assertIs(evaluate(\"startsWith(github.ref, 'refs/heads/')\", ctx), True)"
+ ],
+ "tests/test_converge_main_branch.py": [
+  "# the maintainer's shape: an earlier converge left HEAD detached at an older sha; main sits",
+  "r = fixture_git(self.checkout, \"symbolic-ref\", \"-q\", \"--short\", \"HEAD\", check=False)   # exits 1 when detached"
+ ],
+ "tests/test_env_value_redaction.py": [
+  "\"GITHUB_HEAD_REF\": \"feature/a-long-branch-name\", \"GITHUB_BASE_REF\": \"main-of-a-long-name\",",
+  "\"GITHUB_REF\": \"refs/pull/1005/merge\", \"GITHUB_REF_NAME\": \"1005/merge-of-a-long-name\",",
+  "\"def test_ref():\\n    assert os.environ['GITHUB_REF'] == 'x'\\n\\n\"",
+  "env={\"GITHUB_SERVER_URL\": \"https://github.com\", \"GITHUB_REF\": \"refs/pull/1005/merge\", \"GITHUB_TOKEN\": tok})",
+  "self.assertFalse(self.cf.note_env_value(\"GITHUB_REF\", \"refs/pull/1005/merge\"), \"the write hook applies the same rule\")"
+ ],
+ "tests/test_federated_linkdrop_mint.py": [
+  "porcelain = _git(\"-C\", self.root, \"worktree\", \"list\", \"--porcelain\")"
+ ],
+ "tests/test_file_github.py": [
+  "# `branch --show-current` arrived in git 2.22; below it the query fails, and a failed branch",
+  "# `rev-parse --abbrev-ref HEAD` disambiguates a branch/tag name clash as heads/main, and GitHub",
+  "# review). The branch comes from `symbolic-ref -q HEAD` now, which every git has and which a",
+  "'for a in \"$@\"; do [ \"$a\" = \"--show-current\" ] && '"
+ ],
+ "tests/test_git_fixture.py": [
+  "self.assertEqual(git(td, \"symbolic-ref\", \"--short\", \"HEAD\").stdout.strip(), \"main\", \"init args reach git init\")"
+ ],
+ "tests/test_git_pointer_file_bytes.py": [
+  "\"\"\"_git_head_file / _git_branch \u2014 the derivation build_session runs for every session on every push.\"\"\"",
+  "`_git_head_file` opened that file in text mode inside a try whose only handler was `except OSError:`,",
+  "forks = [c for c in run.call_args_list if \"--abbrev-ref\" in c.args[0]]",
+  "hp = km._git_head_file(str(wt))",
+  "r = git(wt, \"rev-parse\", \"--abbrev-ref\", \"HEAD\", check=False, timeout=10)",
+  "self.assertEqual(km._git_head_file(str(cwd)), \"\")",
+  "self.assertEqual(km._git_head_file(str(cwd)), \"\", \"undecodable \u2192 no HEAD file, like unreadable\")",
+  "with mock.patch.object(km, \"_git_head_file\", boom):"
+ ],
+ "tests/test_github_repo.py": [
+  "_bump_mtime(os.path.join(bare, \"HEAD\"))",
+  "_git(\"symbolic-ref\", \"HEAD\", \"refs/heads/other\", cwd=bare)",
+  "for key in (\"--show-toplevel\", \"--abbrev-ref\", \"get-url\"):",
+  "it, showed no branch where the direct `--abbrev-ref HEAD` query used to (it answers in a bare repo,",
+  "same path. Memoized forever, the dead path made every build fork `rev-parse --abbrev-ref` and",
+  "self.assertEqual(os.path.realpath(km._head_path_cache[top]), os.path.realpath(os.path.join(wt, \".git\", \"HEAD\")))",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1, \"get-url\": 1})",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1, \"get-url\": 1})",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1, \"get-url\": 1},",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1, \"get-url\": 1},",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1, \"get-url\": 1},",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1, \"get-url\": 1},",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1, \"get-url\": 1},",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1, \"get-url\": 1}, \"asked once, then stats\")",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1})",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1},",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 1}, \"asked once each, then memoized\")",
+  "self.assertEqual(self.forks, {\"--show-toplevel\": 1, \"--abbrev-ref\": 2})"
+ ],
+ "tests/test_kernel.py": [
+  "# the user 2026-06-23: a \"Show git branch\" checkbox controlled whether the chat bottom-bar shows the session's",
+  "self.assertNotIn(\"Show git branch\", _gear_src())"
+ ],
+ "tests/test_kernel_delta_send.py": [
+  "\"\"\"The case the stubbed test could not see (2026-09-19 review, extra5-2): with the REAL _tree_of and _git_head_file",
+  "\"\"\"_repo_index_key's OWN body's share of memos.chatSig.stats, with the tree helpers (_tree_of, _git_head_file)",
+  "key, n = key_and_stats(os.path.join(gitdir, \"HEAD\"))",
+  "key, n = key_and_stats(os.path.join(td.name, \"elsewhere\", \".git\", \"HEAD\"))",
+  "mock.patch.object(km, \"_git_head_file\", lambda tree: head):"
+ ],
+ "tests/test_kernel_fork_burn.py": [
+  "- `_git_branch` keyed its cache on `getmtime(cwd/.git/HEAD)`, which RAISES for a worktree (its .git",
+  "hp = km._git_head_file(str(wt))",
+  "self.assertEqual(km._git_head_file(str(td)), \"\", \"no repo \u2192 no HEAD file\")",
+  "self.assertTrue(hp.endswith(\"/HEAD\") and os.path.isfile(hp),",
+  "self.assertTrue(km._git_head_file(str(repo)).endswith(\"/.git/HEAD\"))",
+  "worktree per session. `_git_head_file` now resolves the real HEAD path once per cwd."
+ ],
+ "tests/test_kernel_remote_update.py": [
+  "'if [ \"$3\" = status ] && [ -e %s ]; then rm -f %s; %s -C %s update-ref refs/heads/%s %s; %sfi\\n'",
+  "g(\"update-ref\", \"refs/heads/\" + km._P2P_REF, landed)",
+  "r = git(self.repo, \"rev-parse\", \"--verify\", \"--quiet\", \"refs/heads/\" + km._P2P_REF, check=False)",
+  "self._git(\"update-ref\", \"refs/heads/%s\" % km._P2P_REF, \"HEAD\")",
+  "self.assertIn(fresh + \":refs/heads/\" + km._P2P_REF, push, \"the head the user has is what travels\")",
+  "self.assertIn(fresh + \":refs/heads/\" + km._P2P_REF, pushes[0], \"the head the user has is what travelled\")",
+  "self.assertIn(self.LFULL + \":refs/heads/\" + km._P2P_REF, push,",
+  "self.assertLess(i('rev-parse --verify --quiet refs/heads/' + km._P2P_REF), i(\"merge-base --is-ancestor\"))"
+ ],
+ "tests/test_sdk_kernel.py": [
+  "# _git_branch caches per cwd keyed on .git/HEAD's mtime. Both calls here land in the same test, so",
+  "# `rev-parse --abbrev-ref HEAD` reports the literal string \"HEAD\" on a DETACHED head, which is",
+  "expected = subprocess.run([\"git\", \"-C\", repo, \"rev-parse\", \"--abbrev-ref\", \"HEAD\"],"
+ ],
+ "tests/test_sweep_runner.py": [
+  "\"\"\"Round 1 of PR 959, ruling A's symbolic-ref and sparse-file shapes, through a run: the batcher's loose",
+  "\"\"\"Ruling A's symbolic-ref shape (the round's correctness-1, as its refuters corrected it): the loose",
+  "\"\"\"The 02:43Z ruling, item 1(b), at the batcher's tree: it sits inside an enclosing repository and its .git/HEAD is",
+  "\"\"\"The closing check's item 2: the pytest leg makes its clone's .git/HEAD, .git/config or .git/info/exclude a FIFO.",
+  "\"\"\"cmd_run reads the batcher's HEAD with core.warnAmbiguousRefs off and its branch with a plain symbolic-ref, and",
+  "\"HEAD %s\" % (tree, limit, os.path.join(tree, \".git\", \"HEAD\"), where, what), err)",
+  "\"git_state\": {\".git/HEAD\": \"cannot be read: a FIFO, not a regular file\",",
+  "# symbolic-ref --short tries for the branch HEAD names, main, to tell whether its short name is ambiguous, each under",
+  "% (limit, os.path.join(gitdir, \"HEAD\"), branch, what), err)",
+  "% (tree, PIN_MEMORY >> 20, os.path.join(tree, \".git\", \"HEAD\"), packed), err)",
+  "% (tree, limit, os.path.join(tree, \".git\", \"HEAD\"), branch, what), err)",
+  "(\".git/HEAD\", None), (\".git/config\", None), (\".git/info/exclude\", None)):",
+  "REV_PARSE_RULES = (\"%s\", \"refs/%s\", \"refs/tags/%s\", \"refs/heads/%s\", \"refs/remotes/%s\", \"refs/remotes/%s/HEAD\")",
+  "SHA_SIBLINGS = (\"%s\", \"refs/tags/%s\", \"refs/heads/%s\", \"refs/remotes/%s/HEAD\")",
+  "[\"untracked 1 (conftest.py)\", \"git 1 (.git/HEAD)\"]),",
+  "branch with a plain symbolic-ref, where the same read met GIT_MEMORY, already in place, and check was refused",
+  "for top in (oid, \"refs/\" + oid, \"refs/tags/\" + oid, \"refs/heads/\" + oid, \"refs/remotes/\" + oid):",
+  "git opens it on the way to it), the clone's config made to include a FIFO (include.path), and .git/HEAD made a",
+  "if self.git(\"rev-parse\", \"--abbrev-ref\", \"HEAD\") != \"work\":",
+  "os.mkfifo(os.path.join(g, \"HEAD\"))",
+  "os.mkfifo(os.path.join(g, \"HEAD\"))",
+  "os.mkfifo(os.path.join(root, \"planted-git\", \"HEAD\"))",
+  "os.mkfifo(os.path.join(up, \"HEAD\"))",
+  "os.remove(os.path.join(g, \"HEAD\"))",
+  "os.remove(os.path.join(tree, \".git\", \"HEAD\"))",
+  "planted=(\"rev-parse HEAD\", \"symbolic-ref\"))",
+  "planted=(\"rev-parse HEAD\", \"symbolic-ref\"))",
+  "ref = subprocess.run([\"git\", \"-C\", tree, \"symbolic-ref\", \"HEAD\"], env=self.env, check=True, text=True,",
+  "round 1's build, where check read the branch with symbolic-ref --short, which tried refs/tags/main to tell whether",
+  "self.assertEqual(json.loads(p.stdout), {\".git/HEAD\": \"cannot be read: a FIFO, not a regular file\",",
+  "self.assertEqual(sorted(w.git(\"for-each-ref\", \"--format=%(refname)\", \"refs/tags\", \"refs/heads\").split()),",
+  "self.assertEqual(w.git(\"symbolic-ref\", \"HEAD\"), \"refs/heads/main\", \"premise: HEAD names main\")",
+  "self.assertEqual(w.git(\"symbolic-ref\", \"HEAD\"), \"refs/heads/main\", \"premise: HEAD names main\")",
+  "self.assertEqual(w.git(\"symbolic-ref\", \"HEAD\"), \"refs/heads/main\", \"premise: HEAD names main\")",
+  "self.assertEqual(w.git(\"symbolic-ref\", \"HEAD\"), \"refs/heads/main\", \"premise: HEAD names main\")",
+  "self.assertEqual(w.git(\"worktree\", \"list\", \"--porcelain\").count(\"worktree \"), 1)",
+  "self.assertTrue(os.path.isfile(os.path.join(path, \".git\", \"logs\", \"HEAD\")), \"premise: HEAD's reflog is written\")",
+  "self.fail(\"git_state was still reading after 60 s: it opened the FIFO at .git/HEAD\")",
+  "self.git(\"symbolic-ref\", \"HEAD\", \"refs/heads/main\", cwd=self.bare)",
+  "self.git(\"symbolic-ref\", \"HEAD\", \"refs/heads/main\", cwd=self.tree)",
+  "symbolic-ref --short each name that could make main ambiguous, and the read of the symlink met the memory limit:",
+  "symbolic-ref), so a symlink to /dev/zero at a name beside HEAD (refs/HEAD) or beside its branch (refs/tags/main),",
+  "uncommitted_count's git status (with core.warnAmbiguousRefs off, rev-parse HEAD and symbolic-ref do not: round",
+  "w.git(\"symbolic-ref\", \"refs/remotes/origin/HEAD\", symref_target)"
+ ],
+ "tools/perf-bench.py": [
+  "with open(os.path.join(gitdir, \"HEAD\")) as f:"
+ ],
+ "tools/romp-track-bash-guard-corpus.json": [
+  "{\"kind\": \"ordinary\", \"cwd\": \"proj\", \"verdict\": \"allow\", \"command\": \"git branch -a\"},",
+  "{\"kind\": \"ordinary\", \"cwd\": \"proj\", \"verdict\": \"allow\", \"command\": \"git worktree list\"},"
+ ],
+ "ui/webview/statusline-branch.test.ts": [
+  "assert.doesNotMatch(GEAR, /id=rs-branch|Show git branch|gb = document/, \"the checkbox row is gone: the Status line section's Git branch row is the control\");"
+ ],
+ "ui/webview/tab-groups.test.ts": [
+  "// the gear's row: a checkbox like Show git branch's, saved through the same save() and filled at open"
+ ]
+}

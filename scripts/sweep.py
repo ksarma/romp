@@ -392,10 +392,12 @@ legs start from a fresh clone verified against the sha's tree: no file in the cl
 info/exclude, config, a ref or refs/replace, packed-refs, objects/info/alternates) and no ignored file (bytecode,
 node_modules, dist). Nor does a branch or tag a leg writes into the batcher's repository, which it can find through
 its clone's alternates: each clone holds no branch and no tag of that repository (make_checkout), and names no remote,
-so a `git fetch` in a later job copies none. CI's checkout differs here: actions/checkout fetches the one commit as the
-remote-tracking ref of the run's branch (so CI's checkouts lack MAIN_REF except in a run on main) and creates the run's
-branch, as a local branch, at it, while the runner's clone is detached at the sha, so a test that reads the current
-branch's name gets the run's branch in CI and none in the sweep. Nor does a move
+so a `git fetch` in a later job copies none. CI's checkout differs here: in every job a leg stands in for,
+actions/checkout fetches the one commit as the remote-tracking ref of the run's branch (so those checkouts lack MAIN_REF
+except in a run on main; ci.yml's secret-scan job, which no leg stands in for, fetches all of history), and in every job
+it creates the run's branch, as a local branch, at the commit it checks out, while the runner's clone is detached at the
+sha, so a test that reads the current branch's name gets the run's branch in CI and none in the sweep
+(tests/test_branch_name_readers.py lists the tests that read it). Nor does a move
 of origin/main, in the batcher's repository or in the leg's own clone: each clone's refs/remotes/origin/main is written
 at the commit the runner read from the batcher's origin/main before the first leg (main_snapshot), and no ref is read
 again for a later clone. A move in the batcher's repository does reach the next run, whose snapshot reads the ref as
@@ -1566,9 +1568,15 @@ _LIMITED = 'ulimit -v %%d || { echo "%s" >&2; exit 125; }; exec "$0" "$@"' % LIM
 # as a plain git failure with what git printed (uncommitted_count reads it as no count), never as GitMemory: a real
 # failure at the limit whose memory line follows a warning or another line; a C library that words ENOMEM otherwise than
 # glibc's "Cannot allocate memory" (musl's "Out of memory"), or translates it into a language other than English; a map
-# failure in a template not listed ("packfile <path> cannot be mapped", whose path a leg can choose, among them); and a
-# thread git could not start at the limit ("Resource temporarily unavailable"), which GIT_NEUTRAL_CONFIG's index
-# settings keep git status from starting.
+# failure in a template not listed ("packfile <path> cannot be mapped", whose path a leg can choose, among them); a
+# thread git could not start at the limit ("Resource temporarily unavailable", which a limit on processes gives too),
+# which GIT_NEUTRAL_CONFIG's index settings keep git status from starting, and which batch.py's fetch meets at a limit
+# far below GIT_MEMORY (at 50 MiB, in a clone of main six weeks behind its remote: exit 128, "error: cannot create async
+# thread: Resource temporarily unavailable", git 2.43.0, 2026-10-04); and a failure at the limit in a git that another
+# git started and reports with an exit of its own: git fetch exits 1 when its check that it received every object, a
+# rev-list, fails at the limit after index-pack has passed it, printing git's memory line or a packfile map line first
+# and "did not send all necessary objects" after it (batch.py's fetch meets it, measured with git 2.43.0 on 2026-10-04,
+# MALLOC_ARENA_MAX unset).
 MAP_OUT_OF_MEMORY = ", check sys.vm.max_map_count and/or RLIMIT_DATA: Cannot allocate memory"
 OUT_OF_MEMORY = (
     re.compile(r"fatal: Out of memory, (?:malloc|calloc|realloc|strdup|getdelim) failed"

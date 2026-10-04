@@ -1552,6 +1552,116 @@ class Assemble(_Base):
         fx.ok("verify", "b1")
 
 
+    def test_a_merge_the_pre_merge_commit_hook_refuses_fails_the_command_and_is_not_committed(self):
+        """When the clone's pre-merge-commit hook refuses a merge, git leaves MERGE_HEAD with nothing unmerged, as a merge
+        that rerere resolved whole leaves it, and assemble read it as one: it committed the merge with git commit, which
+        runs pre-commit, not pre-merge-commit, so the hook's refusal was passed over, and the batch log said rerere had
+        replayed a recorded resolution. A merge that stops with nothing unmerged and nothing rerere replayed is now
+        aborted, and the command fails quoting what git printed, where the hook's text is; no call passes --no-verify.
+        Here, each case in a fixture of its own, a pre-merge-commit hook prints a refusal and exits 1: assemble
+        --no-fetch of a member that merges cleanly, and assemble --merge-main after origin's main moved, each exit 1
+        with the hook's line in what they print, no merge made (the chain empty; no merge of main recorded and the head
+        unchanged) and no merge left in progress. Red before (at the head of round 2 and at its build head): each
+        exited 0, the merge committed "with rerere replayed a recorded resolution"."""
+        refusal = "pre-merge-commit: this merge is refused by the clone's own check"
+        for n, case in enumerate(("a member's merge", "the merge of origin's main")):
+            with self.subTest(case=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+                fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+                fx.ok("plan", "--name", "b1")
+                if case == "a member's merge":
+                    args = ("assemble", "b1", "--no-fetch")
+                else:
+                    fx.ok("assemble", "b1")
+                    fx.commit_main({"README.md": "# notes-api\n\nmain moved\n"}, "main moved")
+                    head = fx.state("b1")["assembly"]["head"]
+                    args = ("assemble", "b1", "--merge-main")
+                hook = os.path.join(fx.dev, ".git", "hooks", "pre-merge-commit")
+                os.makedirs(os.path.dirname(hook), exist_ok=True)
+                with open(hook, "w") as f:
+                    f.write("#!/bin/sh\necho \"%s\" >&2\nexit 1\n" % refusal)
+                os.chmod(hook, 0o755)
+                p = fx.run(*args)
+                self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+                self.assertIn(refusal, p.stdout + p.stderr)
+                self.assertIn("stopped with nothing in conflict (a hook refused it?)", p.stderr)
+                wt = fx.wt("b1")
+                self.assertEqual(fx._git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt, check=False), "",
+                                 "no merge left in progress")
+                st = fx.state("b1")
+                if case == "a member's merge":
+                    self.assertEqual(fx.chain("b1"), [])
+                    self.assertFalse((st.get("assembly") or {}).get("merged"), st.get("assembly"))
+                else:
+                    self.assertFalse(st["assembly"].get("main_merges"), st["assembly"].get("main_merges"))
+                    self.assertEqual(st["assembly"]["head"], head)
+                    self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), head)
+
+    def test_a_merge_a_hook_refuses_after_a_merge_option_resolved_its_conflict_is_not_read_as_a_rerere_replay(self):
+        """A merge option that git merge reads and merge-tree does not, here -Xours in the user's
+        branch.batch/b1.mergeOptions, resolves a conflict inside git merge: nothing is left unmerged, the file is staged
+        whole, and merge-tree still names it conflicted. Which paths rerere replayed was read from those two, merge-tree's
+        conflict list and the index's stage-0 entries, so when the clone's pre-merge-commit hook refused such a merge the
+        file counted as replayed, and assemble committed the merge with git commit, which runs pre-commit and not
+        pre-merge-commit, and logged that rerere had replayed a recorded resolution. A replayed path is now one the
+        index's resolve-undo record lists, the record of the paths this merge left unmerged and rerere then staged
+        (replayed_paths), so the refusal is aborted and stops the command, as it is for a merge with no conflict
+        (test_a_merge_the_pre_merge_commit_hook_refuses_fails_the_command_and_is_not_committed). Each case in a fixture
+        of its own: #101 and #102 change the same line of notes.txt and the hook refuses #102's merge alone (assemble
+        --no-fetch); and origin's main changes the line #101 changed and the hook refuses the merge of main (assemble
+        --merge-main). Each exits 1 with the hook's line in what it prints, no merge left in progress, and nothing of the
+        refused merge recorded or on the branch. Red before this change: each exited 0, the refused merge committed with
+        "rerere replayed a recorded resolution"."""
+        refusal = "pre-merge-commit: this merge is refused by the clone's own check"
+        for n, case in enumerate(("a member's merge", "the merge of origin's main")):
+            with self.subTest(case=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+                fx.pr(101, "a", title="notes: the a version", labels=["fix"], body=TRAILER)
+                if case == "a member's merge":
+                    fx.branch("b", {"notes.txt": "one\ntwo-b\nthree\n"})
+                    fx.pr(102, "b", title="notes: the b version", labels=["fix"], body=TRAILER)
+                fx.ok("plan", "--name", "b1")
+                if case == "a member's merge":
+                    refused = fx.dev_git("rev-parse", "origin/b")
+                    args = ("assemble", "b1", "--no-fetch")
+                else:
+                    fx.ok("assemble", "b1")
+                    fx.commit_main({"notes.txt": "one\ntwo-m\nthree\n"}, "main changes the line #101 changed")
+                    head = fx.state("b1")["assembly"]["head"]
+                    refused = ""
+                    args = ("assemble", "b1", "--merge-main")
+                fx.dev_git("config", "branch.batch/b1.mergeOptions", "-Xours")
+                hook = os.path.join(fx.dev, ".git", "hooks", "pre-merge-commit")
+                os.makedirs(os.path.dirname(hook), exist_ok=True)
+                with open(hook, "w") as f:
+                    f.write('#!/bin/sh\ncase "$GIT_REFLOG_ACTION" in *%s*) echo "%s" >&2; exit 1;; esac\nexit 0\n'
+                            % (refused, refusal))
+                os.chmod(hook, 0o755)
+                p = fx.run(*args)
+                self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+                self.assertIn(refusal, p.stdout + p.stderr)
+                self.assertIn("stopped with nothing in conflict (a hook refused it?)", p.stderr)
+                self.assertNotIn("rerere replayed", p.stdout + p.stderr)
+                wt = fx.wt("b1")
+                self.assertEqual(fx._git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt, check=False), "",
+                                 "no merge left in progress")
+                st = fx.state("b1")
+                if case == "a member's merge":
+                    self.assertEqual(fx.chain("b1"), ["Merge #101: notes: the a version"])
+                    self.assertEqual([e["n"] for e in st["assembly"]["merged"]], [101])
+                else:
+                    self.assertFalse(st["assembly"].get("main_merges"), st["assembly"].get("main_merges"))
+                    self.assertEqual(st["assembly"]["head"], head)
+                    self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), head)
+
 class Verify(_Base):
     def assembled(self):
         self.two_members()
@@ -1791,6 +1901,10 @@ def planted_bound(module, full, call, start, *args, **kwargs):
             with open(log, "a") as f:
                 f.write("%s\t%s\t%d\t%s\n" % (bound, ended, peak, call))
 full = mod.GIT_BOUND
+if spec_.get("git_memory"):
+    mod.git_limits().GIT_MEMORY = spec_["git_memory"]
+if spec_.get("hook_memory"):
+    mod.HOOK_MEMORY = spec_["hook_memory"]
 run_git, run_tool = mod.run_git, mod.run_tool
 mod.run_git = lambda args, *a, **k: planted_bound(mod, full, " ".join(args), run_git, args, *a, **k)
 mod.run_tool = lambda cmd, *a, **k: planted_bound(mod, full, " ".join(cmd), run_tool, cmd, *a, **k)
@@ -1821,11 +1935,13 @@ sys.exit(mod.main(argv))
 assert BATCH_TERMINAL_DRIVER != BATCH_BOUND_DRIVER
 
 
-def bound_spec(bound, *on, log=None, memory=None):
+def bound_spec(bound, *on, log=None, memory=None, git_memory=None, hook_memory=None):
     """BATCH_BOUND_DRIVER's argv[1]: `bound` seconds for the calls whose leading words `on` gives, and with `memory` that
-    many bytes of address space for them; every other call keeps the script's GIT_BOUND and memory limit. With `log`,
-    the driver appends a line per call to that path."""
-    return json.dumps({"bound": bound, "on": list(on), "log": log, "memory": memory})
+    many bytes of address space for them; every other call keeps the script's GIT_BOUND and memory limit, which
+    `git_memory` and `hook_memory` set in place of GIT_MEMORY (in the module batch.py reads it from) and HOOK_MEMORY.
+    With `log`, the driver appends a line per call to that path."""
+    return json.dumps({"bound": bound, "on": list(on), "log": log, "memory": memory, "git_memory": git_memory,
+                       "hook_memory": hook_memory})
 
 
 def _descendants(pid):
@@ -1965,10 +2081,31 @@ PLANT_CAP = 2 << 30
 # batch.py's own GIT_MEMORY, so a pin's git reads a planted /dev/zero to no more than this, and above what any call the
 # fixture makes needs, so a reaped child's resident size above it is the planted call's.
 PLANT_MEMORY = 128 << 20
+# A sparse file the batch memory pins plant (made with truncate, no byte of it written): larger than PLANT_MEMORY and
+# than REF_FILE_MAX, and under the 1 GiB file size limit a capped run sets (ulimit -f), as tests/test_sweep_runner.py's
+# SPARSE_SIZE.
+PLANT_SPARSE = 512 << 20
+# The end of the list of places a GitMemory's remedy names (_limit_met), as the pins quote it.
+REMEDY_PLACES = ("objects/info/alternates or the shallow file, or a state file of a merge or a bisect in the git dir, "
+                 "MERGE_MSG, MERGE_AUTOSTASH or BISECT_START)")
+# The HOOK_MEMORY the listing pin sets (BATCH_BOUND_DRIVER's "hook_memory"): above PLANT_MEMORY, so the two limits are
+# told apart, and below PLANT_SPARSE, so a push that reads the planted file whole fails at it, far from 16 GiB.
+PLANT_HOOK_MEMORY = 384 << 20
 # origin/main's full ref, and its short name under refs/tags, a name git's rev-parse rules try before refs/remotes: the
 # two places the batch memory pins plant a symlink to /dev/zero.
 ORIGIN_MAIN_REF = "refs/remotes/origin/main"
 TAG_OF_ORIGIN_MAIN = "refs/tags/origin/main"
+# git's rev-parse rules, ref_rev_parse_rules in git's refs.c (git 2.43), as tests/test_sweep_runner.py's REV_PARSE_RULES: the
+# names a short name is tried as, in order. BATCH_SHADOWS are those tried before refs/heads/<name>, made of the fixture's
+# batch branch, batch/b1: the names a read of that branch by its short name opens first, the first of them beside the batch
+# state (<common dir>/batch/b1, next to <common dir>/batch/b1.json); the batch pins of the 22:25Z ruling of
+# 2026-10-03 on PR 959, item 1, plant a symlink to /dev/zero at each.
+REV_PARSE_RULES = ("%s", "refs/%s", "refs/tags/%s", "refs/heads/%s", "refs/remotes/%s", "refs/remotes/%s/HEAD")
+BATCH_SHADOWS = tuple(rule % "batch/b1" for rule in REV_PARSE_RULES[:REV_PARSE_RULES.index("refs/heads/%s")])
+# The file git checkout -B batch/<name> <start point> opens for its start point, ORIGIN_MAIN_REF, as a local branch
+# (refs/heads/<start point>) before it resets the branch (git 2.43.0, traced on 2026-10-04): beside BATCH_SHADOWS, a
+# file the short-name witness plants at, in its case of a reused batch worktree.
+START_AS_A_BRANCH = REV_PARSE_RULES[REV_PARSE_RULES.index("refs/heads/%s")] % ORIGIN_MAIN_REF
 # PLANT_GIT's twin for a read without end: just before the first call whose argv holds PLANT_ON it replaces PLANT_ZERO
 # with a symlink to /dev/zero, so that call, and no earlier one, reads it.
 PLANT_ZERO_GIT = r"""#!/bin/sh
@@ -1976,6 +2113,32 @@ case " $* " in
   *"$PLANT_ON"*) [ -L "$PLANT_ZERO" ] || ln -sfn /dev/zero "$PLANT_ZERO" ;;
 esac
 exec "$PLANT_REAL_GIT" "$@"
+"""
+
+
+# The hook-memory pin's figures (round 2 of PR 959, ruling C, item 1): the bytes of address space RESERVING_HOOK
+# reserves, more than the GIT_MEMORY the pin sets and less than its HOOK_MEMORY less the most an interpreter the suite
+# runs reserves as it starts (free-threaded 3.14 reserved about 1060 MiB, 3.12 about 18 MiB, on 2026-10-04,
+# MALLOC_ARENA_MAX unset; the same with it at 2), so the hook runs under the one and not under the other whatever
+# interpreter runs it; neither limit is a real 16 GiB.
+HOOK_RESERVE = 640 << 20
+HOOK_PIN_GIT_MEMORY = 512 << 20
+HOOK_PIN_HOOK_MEMORY = 2 << 30
+# A hook that reserves HOOK_RESERVE bytes of address space with one anonymous map it never touches, as gitleaks reserves
+# its own as it starts, appends its name, the soft RLIMIT_AS it ran under and what came of the map to the file named
+# here, and fails, saying so on stderr, when it could not reserve them. %-formatted with python, size and log.
+RESERVING_HOOK = r"""#!%(python)s
+import mmap, os, resource, sys
+soft = resource.getrlimit(resource.RLIMIT_AS)[0]
+try:
+    mmap.mmap(-1, %(size)d, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
+    said = "reserved"
+except OSError as e:
+    said = "could not reserve: %%s" %% e.strerror
+    print("%%s: %%s" %% (os.path.basename(sys.argv[0]), said), file=sys.stderr)
+with open(%(log)r, "a") as f:
+    f.write("%%s %%d %%s\n" %% (os.path.basename(sys.argv[0]), soft, said))
+sys.exit(0 if said == "reserved" else 1)
 """
 
 
@@ -1988,7 +2151,8 @@ class BatchGitBound(_Base):
 
     BOUND = 3
 
-    def bounded(self, *args, env=None, driver=BATCH_BOUND_DRIVER, bound=None, planted=(), cap=None, memory=None):
+    def bounded(self, *args, env=None, driver=BATCH_BOUND_DRIVER, bound=None, planted=(), cap=None, memory=None,
+                git_memory=None, hook_memory=None):
         """(rc, stdout, stderr) of batch.py `args`, run through `driver` with the calls `planted` names (their leading
         words) at `bound` seconds (default BOUND), so the case keys on the call that meets its plant, not on how long a
         normal call takes under load. Every call that ran at that bound must have ended at it (GitBound), or the case
@@ -1997,14 +2161,16 @@ class BatchGitBound(_Base):
         merge of fork main, item 1; the verify pass at the closing check wf_fb19febe-36b's build, its code finding
         1). With `cap`, batch.py runs under CAP_SHIM with its address space capped at that many bytes, soft and hard, so
         every git it starts has the cap too. With `memory`, the planted calls run under that memory limit as well
-        (BATCH_BOUND_DRIVER). The calls the driver logged are left in self.calls, each [bound, how it ended, the
-        largest resident size of a reaped child then, the call]."""
+        (BATCH_BOUND_DRIVER), and with `git_memory` and `hook_memory` every other call under those in place of
+        GIT_MEMORY and HOOK_MEMORY (bound_spec). The calls the driver logged are left in self.calls, each [bound, how it
+        ended, the largest resident size of a reaped child then, the call]."""
         fx = self.fx
         short = bound or self.BOUND
         fd, log = tempfile.mkstemp(prefix="bound-calls-", suffix=".log", dir=fx.tmp)
         os.close(fd)
         capped = [] if cap is None else [sys.executable, "-c", CAP_SHIM, str(cap)]
-        proc = subprocess.Popen(capped + [sys.executable, "-c", driver, bound_spec(short, *planted, log=log, memory=memory),
+        spec = bound_spec(short, *planted, log=log, memory=memory, git_memory=git_memory, hook_memory=hook_memory)
+        proc = subprocess.Popen(capped + [sys.executable, "-c", driver, spec,
                                  os.path.join(fx.dev, "scripts", "batch.py"), *args], cwd=fx.tmp, env=env or fx.env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, start_new_session=True)
 
@@ -2443,6 +2609,767 @@ exec "$TRACE_REAL_GIT" "$@"
         os.remove(planted)
         self.assert_reset_at_the_tip(tip)
 
+    def plant_batch_shadows(self, fx=None):
+        """A symlink to /dev/zero at each of BATCH_SHADOWS in `fx`'s clone (default the test's fixture), removed on the way
+        out; returns their paths."""
+        fx = fx or self.fx
+        paths = []
+        for name in BATCH_SHADOWS:
+            path = os.path.join(fx.dev, ".git", *name.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.symlink("/dev/zero", path)
+            self.addCleanup(lambda p=path: os.path.lexists(p) and os.remove(p))
+            paths.append(path)
+        return paths
+
+    def test_bisects_cleanups_read_no_name_the_batch_branchs_short_name_would_open(self):
+        """The 22:25Z ruling of 2026-10-03 on PR 959, item 1, at bisect: its cleanups (after the run at the base, and
+        after the steps) name the batch branch by its full ref alone (restore_branch_tree, attach_to_branch) and end the
+        bisect with a plain git bisect reset, which checks nothing out (the bisect runs with --no-checkout from HEAD
+        detached at the tip, so git bisect start records the tip's id, not the short name), so a symlink to /dev/zero at
+        each name git's rev-parse rules try before refs/heads/batch/b1 (BATCH_SHADOWS), which a leg can leave in the
+        clone through its checkout's alternates, is never read. bisect, run under PLANT_CAP, exits and prints as it does
+        with nothing planted and leaves the worktree on batch/b1 at the tip with no bisect in progress, both when the
+        worktree has no changes to tracked files (each cleanup's restore forced) and when it has one, which the cleanups
+        keep (unforced); each case in a fixture of its own. Red at the head before the ruling, where the cleanup's git
+        checkout of batch/b1 read the first of them and bisect stopped with GitMemory naming that checkout; and red with
+        HEAD left on the branch as the bisect starts (the mutant mNoDetach), where git bisect start --no-checkout looks
+        up the short name it records and fails at the memory limit, and the plain git bisect reset, with no BISECT_HEAD
+        written, checks that name out and fails the same way."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        self.maxDiff = None
+        for n, case in enumerate(("forced", "unforced")):
+            with self.subTest(cleanup=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                tip, _merge_101 = self.bisect_chain()
+                wt = fx.wt("b1")
+                notes = os.path.join(wt, "notes.txt")
+                with open(notes) as f:
+                    text = f.read()
+                if case == "unforced":
+                    text += "a change the cleanups keep\n"
+                    with open(notes, "w") as f:
+                        f.write(text)
+                args = ("bisect", "b1", "--", "sh", "-c", self.BISECT_CMD % "exit 1")
+
+                def left():
+                    # assert_reset_at_the_tip without its rev-parse --abbrev-ref, which shortens the branch's name by
+                    # trying the names the planted symlinks are at, and would read one without end: a plain symbolic-ref
+                    # prints HEAD's target and reads no other name
+                    self.assertFalse(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1",
+                                                                 "BISECT_START")), "bisect is reset")
+                    self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), tip, "HEAD is at the tip")
+                    self.assertEqual(fx._git("symbolic-ref", "HEAD", cwd=wt), "refs/heads/batch/b1",
+                                     "the worktree is on the branch")
+                    with open(notes) as f:
+                        self.assertEqual(f.read(), text, "the worktree's notes.txt, as it was before bisect")
+                want = self.bounded(*args, cap=PLANT_CAP)
+                self.assertEqual((want[0], want[2]), (0, ""), "premise: bisect with nothing planted:\n%s%s" % want[1:])
+                self.assertIn("first bad: #101 ", want[1])
+                left()
+                planted = self.plant_batch_shadows()
+                self.assertEqual(self.bounded(*args, cap=PLANT_CAP), want, "bisect with a symlink to /dev/zero at each "
+                                 "of %s" % ", ".join(BATCH_SHADOWS))
+                left()
+                self.assertTrue(all(os.path.islink(p) for p in planted), "premise: the symlinks are still there")
+
+    def test_bisects_cleanup_after_the_steps_reads_no_name_a_plant_left_during_the_steps_would_open(self):
+        """The 22:25Z ruling of 2026-10-03 on PR 959, item 1, and the verify pass at this pass's build, its F1: bisect's
+        cleanup after its steps reads neither the batch branch's short name nor the tip's id. The command, at the one
+        commit bisect tests (#101's merge), plants a symlink to /dev/zero in the clone, as a leg can through its
+        checkout's alternates: at refs/tags/<tip>, a name git's rules make of the tip's id, or at each of BATCH_SHADOWS,
+        the names they try for batch/b1 before refs/heads/batch/b1; each case in a fixture of its own. bisect, run under
+        PLANT_CAP, names #101, exits 0 with nothing on stderr, and leaves the worktree on batch/b1 at the tip with no
+        bisect in progress. The bisect runs with --no-checkout from HEAD detached at the tip, so git bisect start records
+        the tip's id rather than the short name, and the cleanup restores the branch's tree, ends the bisect with a
+        plain git bisect reset, which checks nothing out while BISECT_HEAD exists, and points HEAD at the branch. Red for
+        the tip's id at the head before this change, where the cleanup's git bisect reset <tip> looked the id up and
+        stopped at the memory limit; red for the short name at the head before the ruling, where the cleanup's git
+        checkout --force batch/b1 read the first of them."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        self.maxDiff = None
+        for n, case in enumerate(("the tip's id", "the branch's short name")):
+            with self.subTest(plant=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                tip, merge_101 = self.bisect_chain()
+                wt = fx.wt("b1")
+                names = ["refs/tags/" + tip] if case == "the tip's id" else list(BATCH_SHADOWS)
+                paths = [os.path.join(fx.dev, ".git", *name.split("/")) for name in names]
+                for path in paths:
+                    self.addCleanup(lambda p=path: os.path.lexists(p) and os.remove(p))
+                plant = "".join("mkdir -p '%s' && ln -s /dev/zero '%s' && " % (os.path.dirname(p), p) for p in paths)
+                rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", self.BISECT_CMD % (plant + "exit 1"),
+                                            cap=PLANT_CAP)
+                self.assertTrue(all(os.path.islink(p) for p in paths), "premise: the command planted each symlink")
+                self.assertEqual((rc, err), (0, ""), out + err)
+                self.assertEqual(out, "first bad: #101 kernel: bump the version (merge %s); pull it and say why in the "
+                                      "body\n" % merge_101[:10])
+                self.assertFalse(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1",
+                                                             "BISECT_START")), "bisect is reset")
+                self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), tip, "HEAD is at the tip")
+                # a plain symbolic-ref, which prints HEAD's target and reads no other name (rev-parse --abbrev-ref would
+                # try the names the symlinks are at)
+                self.assertEqual(fx._git("symbolic-ref", "HEAD", cwd=wt), "refs/heads/batch/b1",
+                                 "the worktree is on the branch")
+
+    def test_a_refused_restore_after_the_steps_fails_bisect_with_its_answer_and_leaves_head_detached(self):
+        """The verify pass at this pass's build, its F6 and F5's first part: when the cleanup after the steps cannot put
+        the branch's tree back, bisect fails (exit 1) rather than reporting success over a worktree left off the
+        branch, and still gives its answer. The worktree has a change to notes.txt before bisect, so the cleanup is
+        unforced, and the command appends to postal/postal_service.py at the one commit bisect tests (#101's merge),
+        a file that commit and the tip hold differently: the cleanup's two-way merge refuses in git read-tree's words.
+        bisect prints its first-bad line for #101, then fails naming the refusal, the commit HEAD is left detached at
+        and the bisect still in progress, which is what it leaves: HEAD detached at #101's merge, nothing staged
+        (the move of HEAD to the branch never ran over that commit's tree), and BISECT_START still there. Red at the
+        head before this change (exit 0, nothing on stderr: git bisect reset <tip> was refused and the refusal
+        ignored); red when the restore's refusal is ignored and HEAD is pointed at the branch anyway (the mutant
+        mRestoreUnchecked: bisect exits 0, HEAD on batch/b1 over #101's tree)."""
+        self.maxDiff = None
+        fx = self.fx
+        tip, merge_101 = self.bisect_chain()
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "a") as f:
+            f.write("a change the cleanup keeps\n")
+        rc, out, err = self.bisect_with("echo '# mid' >> postal/postal_service.py; exit 1")
+        self.assertEqual((rc, out), (1, "first bad: #101 kernel: bump the version (merge %s); pull it and say why in the "
+                                        "body\n" % merge_101[:10]), out + err)
+        self.assertIn("batch: bisect named the first bad commit, %s (printed above), but its cleanup did not finish: "
+                      % merge_101[:10], err)
+        self.assertIn("error: Entry 'postal/postal_service.py' not uptodate. Cannot merge.", err)
+        self.assertIn("The batch worktree %s is left detached at %s, with the bisect in progress." % (wt, merge_101[:10]),
+                      err)
+        self.assertTrue(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1", "BISECT_START")),
+                        "the bisect is still in progress, as the message says")
+        self.assertEqual(fx._git("symbolic-ref", "-q", "HEAD", cwd=wt, check=False), "", "HEAD is detached")
+        self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), merge_101, "HEAD is at #101's merge")
+        self.assertEqual(fx._git("diff", "--cached", "--name-only", cwd=wt), "", "nothing staged")
+        self.assertEqual(fx._git("diff", "--name-only", cwd=wt).splitlines(), ["notes.txt", "postal/postal_service.py"],
+                         "both changes kept in the files")
+
+    def other_worktree_on_the_branch(self):
+        """A second worktree of the fixture's clone, on batch/b1, after the batch worktree is detached at the tip (git
+        keeps a branch in one worktree at a time): its path."""
+        fx = self.fx
+        fx._git("checkout", "--quiet", "--detach", cwd=fx.wt("b1"))
+        other = os.path.join(fx.tmp, "other-b1")
+        fx.dev_git("worktree", "add", "--quiet", other, "batch/b1")
+        return other
+
+    def on_the_batch_branch(self):
+        """How many worktrees of the fixture's clone git lists on refs/heads/batch/b1."""
+        listing = self.fx.dev_git("worktree", "list", "--porcelain")
+        return listing.splitlines().count("branch refs/heads/batch/b1")
+
+    def test_bisect_refuses_a_batch_branch_another_worktree_holds_and_moves_nothing(self):
+        """The verify pass at the build of the 22:25Z ruling of 2026-10-03 on PR 959, its F4: bisect's cleanups point HEAD
+        at the batch branch with git symbolic-ref, which skips the rule git checkout applies first, that a branch is in
+        one worktree at a time, so bisect applies it (held_elsewhere). With the batch worktree detached at the tip and
+        batch/b1 held by another worktree, which is on it, or is detached mid-bisect started from it, or is detached
+        mid-rebase of it (an interactive rebase whose todo is a single break, its rebase-merge/head-name reading
+        refs/heads/batch/b1), or is the clone's main worktree detached mid-bisect started from it (each case in a
+        fixture of its own), bisect refuses (exit 1) before it runs the command, naming that worktree, and moves
+        nothing: the batch worktree stays detached at the tip and the other as it was. Red without the check (the head
+        before it: exit 0, the batch worktree put on batch/b1 beside the other); red with the check only at the move
+        of HEAD (the mutant mNoStartCheck: the refusal comes after the command ran, at the first cleanup, with the batch
+        worktree left detached at the base). Red in the rebasing case without the rules for a rebase in _started_from,
+        or with names() reading head-name without removing its leading refs/heads/ (exit 0, bisect names #101); red in
+        the main worktree's case with the main worktree's git dir looked up as a linked one's (held_elsewhere's `if i:`
+        always true: exit 0)."""
+        for n, case in enumerate(("on the branch", "bisecting from the branch", "rebasing the branch",
+                                  "main worktree bisecting from the branch")):
+            with self.subTest(other=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                tip, _merge_101 = self.bisect_chain()
+                wt = fx.wt("b1")
+                if case == "main worktree bisecting from the branch":
+                    fx._git("checkout", "--quiet", "--detach", cwd=wt)
+                    fx.dev_git("checkout", "--quiet", "batch/b1")
+                    other = fx.dev
+                else:
+                    other = self.other_worktree_on_the_branch()
+                if case in ("bisecting from the branch", "main worktree bisecting from the branch"):
+                    fx._git("bisect", "start", "--first-parent", tip, fx.dev_git("merge-base", ORIGIN_MAIN_REF, tip),
+                            cwd=other)
+                    self.assertEqual(fx._git("symbolic-ref", "-q", "HEAD", cwd=other, check=False), "",
+                                     "premise: the other worktree is detached mid-bisect")
+                if case == "main worktree bisecting from the branch":
+                    with open(os.path.join(fx.dev, ".git", "BISECT_START")) as f:
+                        self.assertEqual(f.read(), "batch/b1\n", "premise: the main worktree bisects from batch/b1")
+                if case == "rebasing the branch":
+                    p = subprocess.run(["git", "rebase", "-i", "HEAD"], cwd=other, text=True, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE,
+                                       env=dict(fx.env, GIT_SEQUENCE_EDITOR="sh -c 'echo break > \"$1\"' -"))
+                    self.assertEqual(p.returncode, 0, p)
+                    self.assertEqual(fx._git("symbolic-ref", "-q", "HEAD", cwd=other, check=False), "",
+                                     "premise: the other worktree is detached mid-rebase")
+                    with open(os.path.join(fx.dev, ".git", "worktrees", "other-b1", "rebase-merge", "head-name")) as f:
+                        self.assertEqual(f.read(), "refs/heads/batch/b1\n", "premise: it rebases refs/heads/batch/b1")
+                rc, out, err = self.bisect_with("exit 1")
+                self.assertEqual((rc, out), (1, ""), out + err)
+                head = "batch: batch/b1 is checked out in another worktree at "
+                self.assertTrue(err.startswith(head), err)
+                named = err[len(head):].split(";", 1)[0]
+                self.assertTrue(os.path.samefile(named, other), "the refusal names the other worktree: %s" % err)
+                self.assertTrue(err.endswith("; git allows a branch in one worktree at a time. Take it off that worktree "
+                                             "(git checkout --detach there, or end its bisect or rebase), then run bisect "
+                                             "again.\n"), err)
+                self.assertEqual(fx._git("symbolic-ref", "-q", "HEAD", cwd=wt, check=False), "",
+                                 "the batch worktree is still detached")
+                self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), tip, "the batch worktree is still at the tip")
+                if case == "on the branch":
+                    self.assertEqual(self.on_the_batch_branch(), 1, "only the other worktree is on batch/b1")
+                else:
+                    self.assertEqual(self.on_the_batch_branch(), 0, "no worktree is on batch/b1")
+                    still = {"bisecting from the branch": ("worktrees", "other-b1", "BISECT_START"),
+                             "rebasing the branch": ("worktrees", "other-b1", "rebase-merge", "head-name"),
+                             "main worktree bisecting from the branch": ("BISECT_START",)}[case]
+                    self.assertTrue(os.path.exists(os.path.join(fx.dev, ".git", *still)),
+                                    "the other worktree still bisects or rebases")
+
+    def test_a_worktree_that_takes_the_batch_branch_while_bisects_command_runs_stops_the_move_of_head(self):
+        """The verify pass at the build of the 22:25Z ruling of 2026-10-03 on PR 959, its F4, at the move of HEAD: the
+        command, in its run at the base, puts another worktree on batch/b1 (git allows it, the batch worktree being
+        detached then). The first cleanup restores the branch's tree and then, before it points HEAD at the branch,
+        finds the branch held (held_elsewhere): bisect fails (exit 1) naming that worktree, and the batch worktree is
+        left detached at the base with the branch's tree, as the message says, while only the other is on batch/b1.
+        Red without the check at the move (the mutant mNoAttachCheck: exit 0, both worktrees on batch/b1)."""
+        fx = self.fx
+        tip, _merge_101 = self.bisect_chain()
+        wt = fx.wt("b1")
+        base = fx.dev_git("merge-base", ORIGIN_MAIN_REF, tip)
+        other = os.path.join(fx.tmp, "other-b1")
+        rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c",
+                                    "if grep -q 'return 2' postal/postal_service.py; then exit 1; fi; "
+                                    "if grep -q 'VERSION = 1' kernel/kernel.py; then "
+                                    "git -C '%s' worktree add --quiet '%s' batch/b1; fi; exit 0" % (fx.dev, other))
+        self.assertEqual((rc, out), (1, ""), out + err)
+        head = "batch: batch/b1 is checked out in another worktree at "
+        self.assertTrue(err.startswith(head), err)
+        self.assertTrue(os.path.samefile(err[len(head):].split(";", 1)[0], other), err)
+        self.assertIn("; git allows a branch in one worktree at a time, so %s is left detached at %s, with the branch's "
+                      "tree. Take the branch off that worktree (git checkout --detach there, or end its bisect or "
+                      "rebase), then run `git -C %s symbolic-ref HEAD refs/heads/batch/b1`.\n" % (wt, base[:10], wt), err)
+        self.assertEqual(fx._git("symbolic-ref", "-q", "HEAD", cwd=wt, check=False), "", "the batch worktree is detached")
+        self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), base, "at the base")
+        self.assertEqual(fx._git("diff", "--cached", "--name-only", tip, cwd=wt), "", "with the branch's tree")
+        self.assertEqual(self.on_the_batch_branch(), 1, "only the other worktree is on batch/b1")
+        self.assertEqual(fx._git("symbolic-ref", "HEAD", cwd=other), "refs/heads/batch/b1")
+
+    def test_bisects_unforced_restore_refreshes_the_index_before_its_two_way_merge(self):
+        """restore_branch_tree's unforced restore refreshes the index (git update-index -q --refresh) before its two-way
+        merge, as git checkout does, so a file whose content is the same but whose stat data changed is not read as a
+        change. The worktree has a change to notes.txt before bisect, so the cleanups are unforced, and the command, at
+        the base (VERSION = 1), sets kernel/kernel.py's mtime to a fixed past time (a plain touch in the second of the
+        checkout could go unseen, git comparing the mtime to the second), on a file the base and the tip hold
+        differently: bisect names #102, the worktree is on batch/b1 at the tip with no bisect in progress, and notes.txt
+        keeps its change. Red without the refresh (the mutant mNoRefresh): the first cleanup's git read-tree -m -u
+        refuses with "Entry 'kernel/kernel.py' not uptodate. Cannot merge." and bisect exits 1."""
+        fx = self.fx
+        tip, _merge_101 = self.bisect_chain()
+        notes = os.path.join(fx.wt("b1"), "notes.txt")
+        with open(notes, "a") as f:
+            f.write("a change the cleanups keep\n")
+        with open(notes) as f:
+            text = f.read()
+        rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c",
+                                    "if grep -q 'return 2' postal/postal_service.py; then exit 1; fi; "
+                                    "if grep -q 'VERSION = 1' kernel/kernel.py; then touch -d 2001-01-01 kernel/kernel.py; "
+                                    "fi; exit 0")
+        self.assertEqual((rc, err), (0, ""), out + err)
+        self.assertIn("first bad: #102 ", out)
+        self.assert_reset_at_the_tip(tip)
+        with open(notes) as f:
+            self.assertEqual(f.read(), text, "the worktree's notes.txt keeps its change")
+
+    def test_assembles_branch_reset_reads_the_branchs_short_name_and_stops_at_the_memory_limit(self):
+        """The witness of the reads of the batch branch by its short name left after the 22:25Z ruling of 2026-10-03 on
+        PR 959, item 1 (scripts/batch.py's module docstring and docs/batching.md name this test), and of what their
+        GitMemory names (round 2 of PR 959, ruling D, fresh-2): assemble makes the branch at MAIN_REF with git worktree
+        add -B batch/<name> when the batch worktree is not there, and resets it with git checkout -B batch/<name>
+        MAIN_REF when it reuses the worktree, and each looks the branch's short name up by git's rules once it has set
+        the branch, opening each of BATCH_SHADOWS, under the common dir, before refs/heads/batch/<name>; git checkout -B
+        first looks its start point up as a local branch, START_AS_A_BRANCH (git 2.43.0, traced on 2026-10-04). So a
+        symlink to /dev/zero at any one of those files, planted alone, each case in a fixture of its own, makes that call
+        meet the memory limit (PLANT_MEMORY on it, BATCH_BOUND_DRIVER, MALLOC_ARENA_MAX unset), the call holding no more
+        than the limit, and assemble stops (exit 1) with a GitMemory naming the call and that file, as a symlink, and no
+        other file. Red at the round's head, whose GitMemory named the files of the call's two full refs, regular files,
+        and not the one planted; red at the build head before fresh-2 for each plant at <common dir>/batch/b1, which is
+        outside refs/, so ruling C's walk of refs/ did not name it and the GitMemory named no file. Red too once either
+        call names the branch otherwise: then this witness, and the texts that cite it, are to change."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        cases = ([("a fresh worktree", name) for name in BATCH_SHADOWS]
+                 + [("the worktree reused", name) for name in BATCH_SHADOWS + (START_AS_A_BRANCH,)])
+        for n, (case, name) in enumerate(cases):
+            with self.subTest(case=case, planted=name):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                if case == "a fresh worktree":
+                    fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+                    fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+                    fx.ok("plan", "--name", "b1")
+                    self.assertFalse(os.path.isdir(fx.wt("b1")), "premise: no batch worktree yet")
+                    call, where = "worktree add --quiet -B batch/b1 %s %s" % (fx.wt("b1"), ORIGIN_MAIN_REF), fx.dev
+                else:
+                    self.assembled()
+                    self.assertTrue(os.path.isdir(fx.wt("b1")), "premise: the batch worktree is there to reuse")
+                    call, where = "checkout --quiet -B batch/b1 %s" % ORIGIN_MAIN_REF, fx.wt("b1")
+                planted = os.path.join(fx.dev, ".git", *name.split("/"))
+                os.makedirs(os.path.dirname(planted), exist_ok=True)
+                os.symlink("/dev/zero", planted)
+                self.addCleanup(lambda p=planted: os.path.lexists(p) and os.remove(p))
+                env = dict(fx.env)
+                env.pop("MALLOC_ARENA_MAX", None)
+                rc, out, err = self.bounded("assemble", "b1", "--no-fetch", env=env, cap=PLANT_CAP, bound=60,
+                                            planted=[call], memory=PLANT_MEMORY)
+                self.assertEqual(rc, 1, out + err)
+                self.assertIn("batch: git %s in %s reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and "
+                              "failed (fatal: Out of memory, " % (call, where, PLANT_MEMORY >> 20), err)
+                ended = [c for c in self.calls if c[3] == call]
+                self.assertEqual([c[1] for c in ended], ["memory"], "the call ended at the memory limit")
+                self.assertLessEqual(int(ended[0][2]), PLANT_MEMORY, "the call held more than its limit: %s" % ended)
+                self.assertIn(REMEDY_PLACES + "; of the files of the repository git reads "
+                              "whole, these are not regular files or hold more than a file of their kind does, now (an "
+                              "lstat each after the call, so one can have changed since): %s (a symlink, not a regular "
+                              "file), and run the command again" % planted, err, "the planted file is named, and no other")
+
+    def test_a_git_memory_from_the_listing_of_the_remote_batch_branches_names_their_directory_as_one(self):
+        """Round 2 of PR 959, ruling D, extra4-3: pick_name (plan with no --name) and other_remote_batches (assemble) list
+        the remote batch branches with git for-each-ref over the prefix refs/remotes/origin/batch/, which is not a ref
+        but the directory whose loose refs the call reads, so a GitMemory from that call names it as a directory, "the
+        loose refs under <dir>/", beside the planted file _odd_files names. Here a sparse file of PLANT_SPARSE bytes is
+        planted at refs/remotes/origin/batch/planted once b1 is planned, and plan --no-fetch and assemble b1 --no-fetch
+        each run with that call under PLANT_MEMORY (BATCH_BOUND_DRIVER), MALLOC_ARENA_MAX unset: each stops (exit 1) at
+        the call, at the limit, naming the directory so and the planted file. Red at the round's head, whose text read
+        "the call reads <dir>", the directory without its trailing separator, as if it were a ref's file (and named no
+        planted file); red at the build head before this change, which named the planted file and not the directory."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("batch.py sets the memory limit on Linux alone")
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+        fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        listed = os.path.join(fx.dev, ".git", "refs", "remotes", "origin", "batch") + os.sep
+        planted = os.path.join(listed, "planted")
+        os.makedirs(listed, exist_ok=True)
+        with open(planted, "w") as f:
+            f.truncate(PLANT_SPARSE)
+        self.addCleanup(lambda: os.path.lexists(planted) and os.remove(planted))
+        env = dict(fx.env)
+        env.pop("MALLOC_ARENA_MAX", None)
+        call = "for-each-ref --format=%(refname:short) refs/remotes/origin/batch/"
+        for reader, args in (("pick_name", ("plan", "--no-fetch")), ("other_remote_batches", ("assemble", "b1", "--no-fetch"))):
+            with self.subTest(reader=reader):
+                rc, out, err = self.bounded(*args, env=env, cap=PLANT_CAP, bound=60, planted=[call], memory=PLANT_MEMORY)
+                self.assertEqual(rc, 1, out + err)
+                self.assertIn("batch: git %s in %s reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and "
+                              "failed (fatal: Out of memory, " % (call, fx.dev, PLANT_MEMORY >> 20), err)
+                self.assertIn(REMEDY_PLACES + "; the call reads the loose refs under %s; of "
+                              "the files of the repository git reads whole, these are not regular files or hold more than "
+                              "a file of their kind does, now (an lstat each after the call, so one can have changed "
+                              "since): %s (%d bytes, more than the 4096 a loose ref file holds), and run the command again"
+                              % (listed, planted, PLANT_SPARSE), err)
+                ended = [c for c in self.calls if c[3] == call]
+                self.assertEqual([c[1] for c in ended], ["memory"], "the listing ended at the memory limit")
+                self.assertFalse(os.path.isdir(fx.wt("b1")), "assemble stopped before the batch worktree was made")
+
+    def test_the_listing_of_the_remote_batch_branches_opens_the_names_of_each_ones_short_name(self):
+        """The witness of the third kind of read that reaches a name git's rev-parse rules make (scripts/batch.py's
+        module docstring and docs/batching.md name this test): pick_name and other_remote_batches list the remote batch
+        branches with git for-each-ref --format=%(refname:short), which shortens each refs/remotes/origin/batch/<x> to
+        origin/batch/<x> and, to tell whether that short name is ambiguous, opens each name the rules try for it before
+        refs/remotes/ (REV_PARSE_RULES up to refs/heads/), under the common dir, with core.warnAmbiguousRefs off as
+        every call of batch.py runs (git 2.43.0, 2026-10-04). Here origin/batch/other is a remote batch branch, and a
+        symlink to /dev/zero at one of those names at a time, planted after every git call of the case's own, makes
+        plan --no-fetch's listing meet the memory limit (PLANT_MEMORY on it, BATCH_BOUND_DRIVER, MALLOC_ARENA_MAX unset):
+        plan stops (exit 1) with a GitMemory naming the call and the directory it lists; it names the planted file for
+        the three names under refs/ (_odd_files' walk), and no file for <common dir>/origin/batch/other, which is
+        outside refs/, as the texts say. Red once the listing reads the branches by their full names (then it opens none
+        of these, and this witness and the texts that cite it are to change), or once the GitMemory names the file
+        outside refs/ (the last case, then to be turned around)."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        fx = self.fx
+        remote = "refs/remotes/origin/batch/other"
+        fx.dev_git("update-ref", remote, fx.dev_git("rev-parse", ORIGIN_MAIN_REF))
+        listed = os.path.join(fx.dev, ".git", "refs", "remotes", "origin", "batch") + os.sep
+        call = "for-each-ref --format=%(refname:short) refs/remotes/origin/batch/"
+        env = dict(fx.env)
+        env.pop("MALLOC_ARENA_MAX", None)
+        names = tuple(rule % "origin/batch/other" for rule in REV_PARSE_RULES[:REV_PARSE_RULES.index("refs/remotes/%s")])
+        self.assertEqual(len(names), 4, "premise: the four names the rules try before refs/remotes/")
+        for name in names:
+            with self.subTest(planted=name):
+                planted = os.path.join(fx.dev, ".git", *name.split("/"))
+                os.makedirs(os.path.dirname(planted), exist_ok=True)
+                os.symlink("/dev/zero", planted)
+                try:
+                    rc, out, err = self.bounded("plan", "--no-fetch", env=env, cap=PLANT_CAP, bound=60, planted=[call],
+                                                memory=PLANT_MEMORY)
+                finally:
+                    os.remove(planted)
+                self.assertEqual(rc, 1, out + err)
+                self.assertIn("batch: git %s in %s reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and "
+                              "failed (fatal: Out of memory, " % (call, fx.dev, PLANT_MEMORY >> 20), err)
+                ended = [c for c in self.calls if c[3] == call]
+                self.assertEqual([c[1] for c in ended], ["memory"], "the listing ended at the memory limit")
+                odd = ("; of the files of the repository git reads whole, these are not regular files or hold more than "
+                       "a file of their kind does, now (an lstat each after the call, so one can have changed since): %s "
+                       "(a symlink, not a regular file)" % planted) if name.startswith("refs/") else ""
+                self.assertIn(REMEDY_PLACES + "; the call reads the loose refs under %s%s, and "
+                              "run the command again" % (listed, odd), err)
+
+    def test_assembles_merges_under_merge_log_read_no_name_the_merged_commits_id_would_open(self):
+        """Round 2 of PR 959, ruling D, fresh-3: with merge.log set (here in the clone's config), git merge appends a
+        shortlog of the merged commits to the message even under -m, and to describe the commit it merges it looks the
+        full id up as a ref name under every rule, whatever core.warnAmbiguousRefs says, so a symlink to /dev/zero at
+        refs/tags/<id>, which a leg can leave through its checkout's alternates, was read until the call's limit.
+        assemble's merge of a member and merge_main's merge pass --no-log. Here, each case in a fixture of its own, with
+        merge.log=true, a symlink to /dev/zero at refs/tags/<id> of the commit the merge takes in (#101's head; origin's
+        main once it moved), planted after every git call of the case's own, and every merge under HOOK_MEMORY lowered to
+        PLANT_HOOK_MEMORY (BATCH_BOUND_DRIVER, MALLOC_ARENA_MAX unset, so no call has a real 16 GiB): assemble, and
+        assemble --merge-main, exit 0 with the merge on the chain, its message the subject alone (the shortlog merge.log
+        would add is dropped; batch.py reads only the subject), and the symlink still there. Red without the flag: the
+        merge read the symlink and met its limit, and assemble stopped (exit 1) with GitMemory naming it, at the build
+        head before this change and under the flag removed from either merge alone (PLANT_HOOK_MEMORY, in that merge's
+        case only), and at the round's head, where a merge ran under GIT_MEMORY (1024 MiB)."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        for n, case in enumerate(("a member's merge", "the merge of origin's main")):
+            with self.subTest(case=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+                fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+                fx.ok("plan", "--name", "b1")
+                if case == "a member's merge":
+                    taken, args = fx.state("b1")["members"]["101"]["head"], ("assemble", "b1", "--no-fetch")
+                    subject, chain = "Merge #101: notes: a fourth line", ["Merge #101: notes: a fourth line"]
+                else:
+                    fx.ok("assemble", "b1")
+                    fx.commit_main({"README.md": "# notes-api\n\nmain moved\n"}, "main moved")
+                    fx.dev_git("fetch", "-q", "origin")
+                    taken, args = fx.dev_git("rev-parse", ORIGIN_MAIN_REF), ("assemble", "b1", "--merge-main", "--no-fetch")
+                    subject = "Merge origin/main into batch/b1"
+                    chain = ["Merge #101: notes: a fourth line", subject]
+                fx.dev_git("config", "merge.log", "true")
+                planted = os.path.join(fx.dev, ".git", "refs", "tags", taken)
+                os.makedirs(os.path.dirname(planted), exist_ok=True)
+                os.symlink("/dev/zero", planted)
+                self.addCleanup(lambda p=planted: os.path.lexists(p) and os.remove(p))
+                env = dict(fx.env)
+                env.pop("MALLOC_ARENA_MAX", None)
+                rc, out, err = self.bounded(*args, env=env, cap=PLANT_CAP, bound=60, hook_memory=PLANT_HOOK_MEMORY)
+                self.assertEqual(rc, 0, out + err)
+                self.assertEqual(fx.chain("b1"), chain)
+                self.assertEqual(fx.dev_git("log", "-1", "--format=%B", "refs/heads/batch/b1"), subject,
+                                 "the merge's message is the subject alone")
+                self.assertTrue(os.path.islink(planted), "the symlink is still there")
+
+    def test_a_sparse_loose_ref_planted_before_a_no_fetch_push_path_is_refused_by_the_listing_at_git_memory(self):
+        """Round 2 of PR 959, ruling C, items 2 and 4: a push reads every loose ref of the clone whole as it lists the
+        local refs, under HOOK_MEMORY, and on a path with no fetch before it (--no-fetch) no call under GIT_MEMORY had
+        read them first, so a sparse file a leg planted at a loose ref held the push near HOOK_MEMORY before it failed.
+        Each call that runs the clone's hooks now comes after a listing of the refs under GIT_MEMORY (_refs_listed).
+        Here a sparse file of PLANT_SPARSE bytes is planted at refs/tags/planted once the batch is assembled and pushed,
+        and pull --no-fetch rebuilds the batch (a merge, then the push) with GIT_MEMORY lowered to PLANT_MEMORY and
+        HOOK_MEMORY to PLANT_HOOK_MEMORY (BATCH_BOUND_DRIVER), MALLOC_ARENA_MAX unset: pull stops (exit 1) at the
+        listing before the first such call, the merge, at GIT_MEMORY, naming the planted file; the merge made no commit
+        and nothing was pushed. This is the named witness of the residual the listing leaves (_refs_listed and
+        GIT_SETTINGS' comment): a file planted after the listing, or one the call reads and the listing does not, fails
+        at HOOK_MEMORY. Red without the listing: the merge, which reads no loose ref it does not name, ran, and the
+        push met PLANT_HOOK_MEMORY reading the planted file ("git push --quiet --force-with-lease -u origin
+        refs/heads/batch/b1 ... reached the 384 MiB memory limit (HOOK_MEMORY)", naming it); and at the round's head,
+        where the push had PUSH_MEMORY, 16 GiB, the push read the whole file and pull exited 0."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("batch.py sets the memory limit on Linux alone")
+        fx = self.fx
+        self.two_members()
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        fx.push_batch("b1")
+        pushed = fx.bare_rev("batch/b1")
+        planted = os.path.join(fx.dev, ".git", "refs", "tags", "planted")
+        os.makedirs(os.path.dirname(planted), exist_ok=True)
+        with open(planted, "w") as f:
+            f.truncate(PLANT_SPARSE)
+        self.addCleanup(lambda: os.path.lexists(planted) and os.remove(planted))
+        env = dict(fx.env)
+        env.pop("MALLOC_ARENA_MAX", None)
+        rc, out, err = self.bounded("pull", "b1", "102", "--no-fetch", "--reason", "the maintainer asked", env=env,
+                                    bound=60, git_memory=PLANT_MEMORY, hook_memory=PLANT_HOOK_MEMORY)
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("batch: batch.py lists the refs under GIT_MEMORY before git merge --no-ff --no-edit --no-log -m "
+                      "Merge #101: kernel: bump the version %s, which runs the clone's hooks under HOOK_MEMORY: git "
+                      "for-each-ref "
+                      "--format= in %s reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and failed (fatal: "
+                      "Out of memory, " % (fx.bare_rev("a"), fx.wt("b1"), PLANT_MEMORY >> 20), err)
+        self.assertIn("(an lstat each after the call, so one can have changed since): %s (%d bytes, more than the 4096 a "
+                      "loose ref file holds), and run the command again" % (planted, PLANT_SPARSE), err)
+        self.assertEqual(fx.chain("b1"), [], "the merge made no commit")
+        self.assertEqual(fx.bare_rev("batch/b1"), pushed, "nothing was pushed")
+
+    def test_a_hook_that_reserves_more_than_git_memory_runs_under_hook_memory_at_a_push_a_commit_and_a_merge(self):
+        """Round 2 of PR 959, ruling C, item 1: every call that runs the clone's hooks, a push, a commit and a merge, gets
+        HOOK_MEMORY, not a push alone: a pre-commit hook a user sets for every clone can start gitleaks, which reserves
+        more than 4 GiB as it starts, and under GIT_MEMORY assemble --continue's git commit failed through it. Here the
+        hook reserves HOOK_RESERVE bytes of address space itself (RESERVING_HOOK, one anonymous map, never touched; no
+        gitleaks), more than the GIT_MEMORY the case sets and less than its HOOK_MEMORY (HOOK_PIN_GIT_MEMORY and
+        HOOK_PIN_HOOK_MEMORY, through BATCH_BOUND_DRIVER, so no call has a real 16 GiB), and records the limit it ran
+        under: pre-push at pull's push of the rebuilt branch, pre-commit at assemble --continue's commit of a hand
+        resolution, and pre-merge-commit at assemble's merge of a member, each case in a fixture of its own. Each
+        command exits 0 with the batch's merges in place (and the pull's push on the remote), and the hook ran once,
+        under HOOK_PIN_HOOK_MEMORY, and reserved its bytes. Red at the round's head, where only a push had the larger
+        limit: the commit ran under GIT_MEMORY, where the hook could not reserve and git refused the commit (assemble
+        exit 1); the merge too, its hook recording GIT_MEMORY and the failed reservation (git left the merge
+        uncommitted, and assemble, which then read a merge a hook refused as one rerere had replayed, committed it with
+        git commit; a defect since fixed, so a refused merge now fails the command:
+        test_a_merge_the_pre_merge_commit_hook_refuses_fails_the_command_and_is_not_committed); and the push, under
+        PUSH_MEMORY, recorded 16 GiB, not the case's HOOK_MEMORY (red there by its limit's figure alone; a predicate
+        that leaves the push out turns it red as the commit is)."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("batch.py sets the memory limit on Linux alone")
+        for n, hook in enumerate(("pre-push", "pre-commit", "pre-merge-commit")):
+            with self.subTest(hook=hook):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                if hook == "pre-push":
+                    self.two_members()
+                    fx.ok("plan", "--name", "b1")
+                    fx.ok("assemble", "b1")
+                    fx.push_batch("b1")
+                    args = ("pull", "b1", "102", "--reason", "the maintainer asked")
+                    chain = ["Merge #101: kernel: bump the version"]
+                elif hook == "pre-commit":
+                    fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+                    fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n"})
+                    fx.pr(101, "a", labels=["fix"], body=TRAILER)
+                    fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+                    fx.ok("plan", "--name", "b1")
+                    p = fx.run("assemble", "b1", "--resolve", "108")
+                    self.assertEqual(p.returncode, 3, "premise: the merge of #108 stops for a hand resolution\n%s%s"
+                                     % (p.stdout, p.stderr))
+                    with open(os.path.join(fx.wt("b1"), "notes.txt"), "w") as f:
+                        f.write("one\ntwo-a-g\nthree\n")
+                    fx._git("add", "notes.txt", cwd=fx.wt("b1"))
+                    args = ("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
+                    chain = ["Merge #101: PR 101 on a", "Merge #108: notes: the g version"]
+                else:
+                    fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+                    fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+                    fx.ok("plan", "--name", "b1")
+                    args = ("assemble", "b1")
+                    chain = ["Merge #101: notes: a fourth line"]
+                log = os.path.join(fx.tmp, "hook.log")
+                path = os.path.join(fx.dev, ".git", "hooks", hook)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write(RESERVING_HOOK % {"python": sys.executable, "size": HOOK_RESERVE, "log": log})
+                os.chmod(path, 0o755)
+                env = dict(fx.env)
+                env.pop("MALLOC_ARENA_MAX", None)
+                rc, out, err = self.bounded(*args, env=env, bound=60, git_memory=HOOK_PIN_GIT_MEMORY,
+                                            hook_memory=HOOK_PIN_HOOK_MEMORY)
+                self.assertEqual(rc, 0, out + err)
+                self.assertEqual(fx.chain("b1"), chain, out + err)
+                if hook == "pre-push":
+                    self.assertEqual(fx.bare_rev("batch/b1"), fx.state("b1")["assembly"]["head"], "the push landed")
+                with open(log) as f:
+                    self.assertEqual(f.read(), "%s %d reserved\n" % (hook, HOOK_PIN_HOOK_MEMORY))
+
+    def test_a_merge_abort_runs_under_git_memory_with_no_listing_before_it(self):
+        """git merge --abort runs none of the hooks a merge runs (git 2.43.0 ran post-index-change and
+        reference-transaction alone, as a checkout does), so it is not a call that runs the clone's hooks (_runs_hooks):
+        it runs under GIT_MEMORY with no listing of the refs before it, and its own whole-file reads with it, such as
+        its read of MERGE_AUTOSTASH. Here #108 stops for a hand resolution, MERGE_AUTOSTASH in the batch worktree's git
+        dir is made a symlink to /dev/zero, and assemble --abort runs with GIT_MEMORY lowered to PLANT_MEMORY and
+        HOOK_MEMORY to PLANT_HOOK_MEMORY (BATCH_BOUND_DRIVER, MALLOC_ARENA_MAX unset, under PLANT_CAP, so no call has a
+        real 16 GiB): it stops (exit 1) with GitMemory naming git merge --abort and GIT_MEMORY, and the call the driver
+        logged before the merge --abort is not the listing (git for-each-ref --format=); the remedy's list of places
+        names MERGE_AUTOSTASH. Red with git merge --abort among the calls that run hooks (the build head of round 2's
+        rulings, whose _runs_hooks read the first word alone): the merge --abort came after a listing and met
+        PLANT_HOOK_MEMORY ("reached the 384 MiB memory limit (HOOK_MEMORY)"); and, at the remedy's list of places,
+        with a remedy that named no state file of a merge (no "MERGE_AUTOSTASH")."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+        fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        p = fx.run("assemble", "b1", "--resolve", "108")
+        self.assertEqual(p.returncode, 3, "premise: the merge of #108 stops for a hand resolution\n%s%s"
+                         % (p.stdout, p.stderr))
+        wt = fx.wt("b1")
+        planted = os.path.join(wt, fx._git("rev-parse", "--git-path", "MERGE_AUTOSTASH", cwd=wt))
+        self.assertTrue(os.path.isdir(os.path.dirname(planted)), "premise: the batch worktree's git dir")
+        os.symlink("/dev/zero", planted)
+        self.addCleanup(lambda: os.path.lexists(planted) and os.remove(planted))
+        env = dict(fx.env)
+        env.pop("MALLOC_ARENA_MAX", None)
+        rc, out, err = self.bounded("assemble", "b1", "--abort", env=env, cap=PLANT_CAP, bound=60,
+                                    git_memory=PLANT_MEMORY, hook_memory=PLANT_HOOK_MEMORY)
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("git merge --abort in %s reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and "
+                      "failed (fatal: Out of memory, " % (wt, PLANT_MEMORY >> 20), err)
+        self.assertIn(REMEDY_PLACES, err)
+        calls = [c[3] for c in self.calls]
+        self.assertIn("merge --abort", calls, self.calls)
+        at = calls.index("merge --abort")
+        self.assertNotEqual(calls[at - 1] if at else None, "for-each-ref --format=",
+                            "a listing came right before the merge --abort: %s" % self.calls)
+
+    def test_a_merge_msg_read_without_end_at_continues_commit_is_named_in_the_remedy(self):
+        """A merge or a commit reads MERGE_MSG whole (git writes it and reads it back), a file the listing of the refs
+        before a call that runs the clone's hooks does not read, so a symlink to /dev/zero there holds the call to
+        HOOK_MEMORY; the remedy's list of places names it. Here #108 stops for a hand resolution, the resolution is
+        staged, MERGE_MSG in the batch worktree's git dir is made a symlink to /dev/zero, and assemble --continue runs
+        with GIT_MEMORY lowered to PLANT_MEMORY and HOOK_MEMORY to PLANT_HOOK_MEMORY (BATCH_BOUND_DRIVER,
+        MALLOC_ARENA_MAX unset, under PLANT_CAP, so no call has a real 16 GiB): it stops (exit 1) with GitMemory naming
+        the commit and HOOK_MEMORY, and the remedy names MERGE_MSG. Red before the remedy named it: the same GitMemory,
+        its list of places ending at the shallow file, with no "MERGE_MSG"."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+        fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        p = fx.run("assemble", "b1", "--resolve", "108")
+        self.assertEqual(p.returncode, 3, "premise: the merge of #108 stops for a hand resolution\n%s%s"
+                         % (p.stdout, p.stderr))
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        planted = os.path.join(wt, fx._git("rev-parse", "--git-path", "MERGE_MSG", cwd=wt))
+        self.assertTrue(os.path.isfile(planted), "premise: the stopped merge left MERGE_MSG")
+        os.remove(planted)
+        os.symlink("/dev/zero", planted)
+        self.addCleanup(lambda: os.path.lexists(planted) and os.remove(planted))
+        env = dict(fx.env)
+        env.pop("MALLOC_ARENA_MAX", None)
+        rc, out, err = self.bounded("assemble", "b1", "--continue", "--reviewed", "subagent: fine", env=env,
+                                    cap=PLANT_CAP, bound=60, git_memory=PLANT_MEMORY, hook_memory=PLANT_HOOK_MEMORY)
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("git commit --quiet --no-edit in %s reached the %d MiB memory limit (HOOK_MEMORY) batch.py sets on "
+                      "it and failed (fatal: Out of memory, " % (wt, PLANT_HOOK_MEMORY >> 20), err)
+        self.assertIn(REMEDY_PLACES, err)
+
+    def landed(self, fx):
+        """The two members (two_members) planned, assembled, pushed, swept, verified and summarized as batch b1 in `fx`,
+        its CI run green, and batch PR #900 merged with a merge commit: finish has its whole cleanup to do."""
+        saved, self.fx = self.fx, fx
+        try:
+            self.two_members()
+        finally:
+            self.fx = saved
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        fx.push_batch("b1")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
+        fx.ok("summarize", "b1")
+        fx.ci("b1")
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+
+    def test_finishs_check_for_the_local_batch_branch_reads_no_name_its_short_name_would_open(self):
+        """The 22:25Z ruling of 2026-10-03 on PR 959, item 1, at finish: its check that the local batch branch is still
+        there, before it deletes it, names the branch by its full ref (batch_ref), so a symlink to /dev/zero at each name
+        git's rev-parse rules try before refs/heads/batch/b1 (BATCH_SHADOWS), which a leg can leave in the clone through
+        its checkout's alternates, is never read: finish, run under PLANT_CAP, exits and prints as it does in a twin
+        fixture with nothing planted (each fixture's directory and every commit id written alike), the local branch is
+        deleted, and each symlink is still there. Red at the head before the ruling, where the check named batch/b1, read
+        the first of them, and finish stopped with GitMemory naming that check."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        self.maxDiff = None
+        twin = Fixture()
+        self.addCleanup(twin.close)
+
+        def finished(fx):
+            saved, self.fx = self.fx, fx
+            try:
+                rc, out, err = self.bounded("finish", "b1", cap=PLANT_CAP)
+            finally:
+                self.fx = saved
+            alike = lambda text: re.sub(r"\b[0-9a-f]{7,40}\b", "<sha>", text.replace(fx.tmp, "<fixture>"))
+            return rc, alike(out), alike(err)
+
+        def deleted(fx):
+            # the full ref, absent once deleted: its rules' names are made of refs/heads/batch/b1, none of them planted
+            self.assertEqual(fx.dev_git("rev-parse", "--verify", "--quiet", "refs/heads/batch/b1", check=False), "",
+                             "finish deleted the local batch branch")
+        self.landed(twin)
+        want = finished(twin)
+        self.assertEqual((want[0], want[2]), (0, ""), "premise: finish with nothing planted:\n%s%s" % want[1:])
+        self.assertIn("batch #900 landed, ", want[1])
+        deleted(twin)
+        self.landed(self.fx)
+        planted = self.plant_batch_shadows()
+        self.assertEqual(finished(self.fx), want, "finish with a symlink to /dev/zero at each of %s"
+                         % ", ".join(BATCH_SHADOWS))
+        deleted(self.fx)
+        self.assertTrue(all(os.path.islink(p) for p in planted), "premise: the symlinks are still there")
+
+    def test_finishs_check_reads_only_the_full_ref_once_the_local_batch_branch_is_gone(self):
+        """The 22:25Z ruling of 2026-10-03 on PR 959, item 1, at finish, where the local batch branch is already gone, as a
+        finish that died past its git branch -D leaves it: finish's check names the branch by its full ref with git
+        show-ref --verify, which reads that one ref, loose or packed, and no other name. So a symlink to /dev/zero at
+        each name git's rev-parse rules make of the absent full ref (refs/<ref>, refs/tags/<ref>, refs/heads/<ref> and
+        refs/remotes/<ref>), which a leg can leave in the clone through its checkout's alternates, is never read:
+        finish, run again under PLANT_CAP, exits 0 with its report and nothing on stderr, and each symlink is still
+        there. Red with the check as git rev-parse --verify --quiet of the full ref, which walks those names when the
+        ref is absent and stopped finish with GitMemory naming the check."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        fx = self.fx
+        self.landed(fx)
+        if os.path.isdir(fx.wt("b1")):
+            fx.dev_git("worktree", "remove", "--force", fx.wt("b1"))
+        fx.dev_git("branch", "-D", "batch/b1")
+        self.assertEqual(fx.dev_git("rev-parse", "--verify", "--quiet", "refs/heads/batch/b1", check=False), "",
+                         "premise: the local batch branch is gone")
+        planted = []
+        for rule in REV_PARSE_RULES[1:5]:
+            path = os.path.join(fx.dev, ".git", *(rule % "refs/heads/batch/b1").split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.symlink("/dev/zero", path)
+            self.addCleanup(lambda p=path: os.path.lexists(p) and os.remove(p))
+            planted.append(path)
+        rc, out, err = self.bounded("finish", "b1", cap=PLANT_CAP)
+        self.assertEqual((rc, err), (0, ""), out + err)
+        self.assertIn("batch #900 landed, ", out)
+        self.assertTrue(all(os.path.islink(p) for p in planted), "premise: the symlinks are still there")
+
     def test_bisect_takes_an_exit_of_125_as_a_skip_and_names_the_commit_it_skipped(self):
         """The closing check wf_3b100f5e-b38, its item 6, bisect's exit rules: 125 is git bisect run's skip. The command
         exits 125 at the one commit between the base and the tip, so no first bad commit can be named: bisect fails with
@@ -2459,6 +3386,24 @@ exec "$TRACE_REAL_GIT" "$@"
         self.assertTrue(err.startswith(line), err)
         self.assertIn(merge_101 + "\n", err[len(line):], "the skipped commit, in the output passed on")
         self.assert_reset_at_the_tip(tip)
+
+    def test_bisects_moves_of_head_write_the_reflog_lines_git_checkout_writes(self):
+        """bisect detaches HEAD at the tip with git update-ref --no-deref -m, and its cleanup points HEAD back at the
+        batch branch with git symbolic-ref -m (attach_to_branch), each with the reflog line git checkout writes for the
+        same move: "checkout: moving from batch/b1 to <tip>" as HEAD leaves the branch, and "checkout: moving from <the
+        commit HEAD was at> to batch/b1" as the cleanup puts it back. Here the command passes at #101's merge, so bisect
+        names #102, and the batch worktree's HEAD reflog, newest first, starts with the move back to batch/b1 from
+        #101's merge, the last commit the steps checked out, and holds the move from batch/b1 to the tip. Red with
+        symbolic-ref's message changed (its -m kept, so no case keyed on the call's words reds instead) and with
+        update-ref's -m dropped."""
+        fx = self.fx
+        rc, out, err, tip, merge_101 = self.bisected("exit 0")
+        self.assertEqual(rc, 0, out + err)
+        self.assertTrue(out.startswith("first bad: #102 "), out + err)
+        self.assert_reset_at_the_tip(tip)
+        log = fx._git("reflog", "-n", "20", "--format=%gs", cwd=fx.wt("b1")).splitlines()
+        self.assertEqual(log[0], "checkout: moving from %s to batch/b1" % merge_101, log)
+        self.assertIn("checkout: moving from batch/b1 to %s" % tip, log)
 
     # A git first on PATH for test_bisect_reads_both_of_gits_wordings: it runs the real git (PLANT_REAL_GIT), and the
     # output of a `git bisect` call (bisect among its arguments, after the -c run_git puts first), its stdout and stderr
@@ -2549,7 +3494,8 @@ exec "$PLANT_REAL_GIT" "$@"
     # STOP_SIG names (TERM, or INT as Ctrl-C sends it) to the process that started it, batch.py, and waits to be ended
     # with its group, as a stop that lands as a cleanup git starts. A later call with the same argv runs the real git.
     # With STOP_PASS set, the first such call takes that file instead and runs the real git, so the second is the one
-    # stopped (the forced checkout of the branch, which bisect's two cleanups both run).
+    # stopped (the forced restore of the branch's tree and the git symbolic-ref that points HEAD at the branch, which
+    # bisect's two cleanups both run).
     STOP_AT_GIT = r"""#!/bin/sh
 case " $* " in
   *"$STOP_ON"*) if [ -n "$STOP_PASS" ] && mv "$STOP_PASS" "$STOP_PASS.taken" 2>/dev/null; then
@@ -2585,20 +3531,22 @@ exec "$PLANT_REAL_GIT" "$@"
     def test_a_stop_as_bisects_cleanup_git_starts_still_leaves_the_worktree_on_the_branch_and_reset(self):
         """The verify pass at the closing check wf_fb19febe-36b's build, its code finding 4, in bisect: SIGTERM, or SIGINT
         as Ctrl-C sends it, reaches batch.py just as a cleanup git starts (STOP_AT_GIT; batch.py started with SIGINT's
-        handler Python's own, BATCH_TERMINAL_DRIVER), the checkout of the batch branch after the run at the base, or,
-        after the steps, the checkout of the batch branch (the fixture's worktree has no changes, so both checkouts are
-        forced; the second is the second call with that argv) or the bisect reset that follows it. The stop ends that
-        git, and the step runs again with the stop signals ignored (_cleanup_steps), and so do the steps after it, so
-        batch.py exits 128 plus the signal's number naming it, with the worktree on batch/b1 at the tip and no bisect in
-        progress, and the next bisect names #101. Before this change the stop ended the cleanup there: the worktree was
+        handler Python's own, BATCH_TERMINAL_DRIVER): a step of the cleanup after the run at the base (its restore of the
+        branch's tree, forced since the fixture's worktree has no changes, or the git symbolic-ref that then points HEAD
+        at the branch), or of the cleanup after the steps (the same restore, the second call with that argv; the plain
+        git bisect reset; the second git symbolic-ref). The stop ends that git, and the step runs again with the stop
+        signals ignored (_cleanup_steps), and so do the steps after it, so batch.py exits 128 plus the signal's number
+        naming it, with the worktree on batch/b1 at the tip and no bisect in progress, and the next bisect names #101.
+        Before this change the stop ended the cleanup there: the worktree was
         left detached at the base (the next bisect refused it) or mid-bisect. SIGINT is a stop like SIGTERM (the 05:30Z
         ruling of 2026-10-02 on PR 926, its item 3): with it left as Python's KeyboardInterrupt (the mutant
         mIntDefault), which _cleanup_steps does not catch, a Ctrl-C there ended the cleanup the same way and batch.py
         died of the signal."""
         n = 0
         for sig in (signal.SIGTERM, signal.SIGINT):
-            for call, second in (("checkout --quiet --force batch/b1", False), ("checkout --quiet --force batch/b1", True),
-                                 ("bisect reset", False)):
+            for call, second in (("read-tree --reset -u refs/heads/batch/b1", False), ("symbolic-ref -m", False),
+                                 ("read-tree --reset -u refs/heads/batch/b1", True), ("bisect reset", False),
+                                 ("symbolic-ref -m", True)):
                 with self.subTest(signal=sig, call=call, second=second):
                     if n:
                         self.fx = Fixture()
@@ -2648,17 +3596,18 @@ exit 0
     def test_a_stop_during_bisects_setup_steps_leaves_the_worktree_on_the_branch_and_reset(self):
         """The 13:24Z ruling of 2026-10-02 on PR 926, its item 1: SIGTERM, or SIGINT as Ctrl-C sends it (batch.py started
         with SIGINT's handler Python's own, BATCH_TERMINAL_DRIVER), reaches batch.py while one of bisect's two setup
-        steps is still running with HEAD already moved: its post-checkout hook (SETUP_HOOK) waits on a FIFO the test
-        controls, in the detach checkout to the base, or in the checkout of the midpoint, #101's merge, that git bisect
-        start makes. The stop ends that git with its group, the hook included, and the cleanup the step needs runs (the
-        checkout of the batch branch; the bisect reset), so batch.py exits 128 plus the signal's number naming it, with
-        the worktree on batch/b1 at the tip and no bisect in progress, and the next bisect names #101. Before this change
-        both steps came before the try whose finally cleans up: the stop left the worktree detached at the base, or
-        mid-bisect at the midpoint (the next bisect refused it, naming HEAD), while batch.py said its cleanup ran (the
-        focused re-check wf_e3f48b16-6ec)."""
+        checkouts is still running with HEAD already moved: its post-checkout hook (SETUP_HOOK) waits on a FIFO the test
+        controls, in the detach checkout to the base, or in the checkout of the midpoint, #101's merge, which bisect
+        makes after git bisect start (the bisect runs with --no-checkout). The stop ends that git with its group, the
+        hook included, and the cleanup the step needs runs (the restore of the branch's tree and the move of HEAD to the
+        branch; after the steps, the bisect reset between them), so batch.py exits 128 plus the signal's number naming
+        it, with the worktree on batch/b1 at the tip and no bisect in progress, and the next bisect names #101. Before
+        this change both steps came before the try whose finally cleans up: the stop left the worktree detached at the
+        base, or mid-bisect at the midpoint (the next bisect refused it, naming HEAD), while batch.py said its cleanup
+        ran (the focused re-check wf_e3f48b16-6ec)."""
         n = 0
         for sig in (signal.SIGTERM, signal.SIGINT):
-            for step in ("the checkout of the base", "git bisect start"):
+            for step in ("the checkout of the base", "the checkout of the midpoint"):
                 with self.subTest(signal=sig, step=step):
                     if n:
                         self.fx = Fixture()
@@ -2714,19 +3663,21 @@ exit 0
     def test_a_stop_after_a_setup_checkout_wrote_the_tree_and_before_head_moved_leaves_the_branchs_tree(self):
         """The verify pass at the build of the 13:24Z ruling of 2026-10-02 on PR 926, its code finding 1: SIGTERM, or
         SIGINT as Ctrl-C sends it (BATCH_TERMINAL_DRIVER), reaches batch.py while one of bisect's two setup checkouts
-        (the detach checkout to the base; the checkout of the midpoint, #101's merge, that git bisect start makes) has
-        written that commit's files and index and has not moved HEAD: git's reference-transaction hook (WINDOW_HOOK)
-        waits there on a FIFO the test controls, as git waits on a FIFO planted at the worktree's logs/HEAD, which it
-        writes between the two. HEAD is then still batch/b1 at the tip, with the other commit's tree staged (the
-        premise, read while the hook waits). The stop ends that git with its group, and the cleanup's checkout of the
-        branch, forced since the worktree had no changes to tracked files, puts the branch's tree back: batch.py exits
-        128 plus the signal's number naming it, with the worktree on batch/b1 at the tip, no changes to tracked files and
-        no bisect in progress, and the next bisect names #101. With the unforced checkout the cleanup had
-        (mBisectCleanupUnforced), the base's or the midpoint's tree stayed staged and the next bisect refused, saying
-        the command passes at the tip."""
+        (the detach checkout to the base; the checkout of the midpoint, #101's merge, which bisect makes after git
+        bisect start) has written that commit's files and index and has not moved HEAD: git's reference-transaction
+        hook (WINDOW_HOOK) waits there on a FIFO the test controls, as git waits on a FIFO planted at the worktree's
+        logs/HEAD, which it writes between the two. HEAD is then still at the tip (on batch/b1 at the checkout of the
+        base; detached there, by its id, at the checkout of the midpoint, since the bisect starts from HEAD detached at
+        the tip), with the other commit's tree staged (the premise, read while the hook waits). The stop ends that git
+        with its group, and the cleanup's restore of the branch's tree, forced since the worktree had no changes to
+        tracked files, puts it back: batch.py exits 128 plus the signal's number naming it, with the worktree on batch/b1
+        at the tip, no changes to tracked files and no bisect in progress, and the next bisect names #101. With that
+        restore unforced (mBisectCleanupUnforced: the
+        unforced checkout of the branch the cleanup had, or now its unforced two-way merge), the base's or the
+        midpoint's tree stayed staged and the next bisect refused, saying the command passes at the tip."""
         n = 0
         for sig in (signal.SIGTERM, signal.SIGINT):
-            for step in ("the checkout of the base", "git bisect start"):
+            for step in ("the checkout of the base", "the checkout of the midpoint"):
                 with self.subTest(signal=sig, step=step):
                     if n:
                         self.fx = Fixture()
@@ -2892,7 +3843,8 @@ exec "$PLANT_REAL_GIT" "$@"
         --no-fetch its provenance check's rev-list, plan's fetch, and, planted just before it (PLANT_ZERO_GIT), assemble's
         worktree add of the batch branch at origin/main. Each meets the memory limit batch.py sets on every git call,
         here PLANT_MEMORY on the planted call (BATCH_BOUND_DRIVER), and the command stops (exit 1) with GitMemory,
-        naming the call, the limit, git's line and the ref's file; the call held no more than the limit. Before V1
+        naming the call, the limit, git's line and the ref's file as a symlink (_odd_files, since round 2's ruling C);
+        the call held no more than the limit. Before V1
         batch.py's git had no memory limit: each read the symlink until PLANT_CAP, died with "fatal: Out of memory,
         realloc failed", and was reported as a plain git failure."""
         if not sys.platform.startswith("linux"):
@@ -2936,7 +3888,8 @@ exec "$PLANT_REAL_GIT" "$@"
                 self.assertIn("reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and failed (fatal: Out of "
                               "memory, " % (PLANT_MEMORY >> 20), err)
                 self.assertIn("batch: git %s" % call, err)
-                self.assertRegex(err, r"; the call reads (?:\S+, )*%s(?:, \S+)*, and run the command again" % re.escape(ref))
+                self.assertIn("(an lstat each after the call, so one can have changed since): %s (a symlink, not a regular "
+                              "file), and run the command again" % ref, err)
                 ended = [c for c in self.calls if c[3].startswith(call)]
                 self.assertEqual([c[1] for c in ended], ["memory"], "the planted call ended at the memory limit")
                 self.assertLessEqual(int(ended[0][2]), PLANT_MEMORY, "the planted call held more than its limit: %s"
@@ -4124,12 +5077,18 @@ def _kill_groups(pgids):
                 pass
 
 
-# A git first on PATH for BatchGitLimits: it leaves the file $SHIM_RAN when set, prints $SHIM_OUT bytes on its stdout,
-# or else the address-space limit /proc gives it, and what the file $SHIM_SAYS holds on its stderr, then exits as
-# $SHIM_ENDS says.
+# A git first on PATH for BatchGitLimits: past run_git's -c pairs, it leaves the file $SHIM_RAN when set, appends its
+# subcommand and the soft address-space limit /proc gives it to the file $SHIM_LOG when set, prints $SHIM_OUT bytes on
+# its stdout, or else that limit's line, and, when $SHIM_ON is unset or is its subcommand, what the file $SHIM_SAYS
+# holds on its stderr, then exits as $SHIM_ENDS says (any other subcommand exits 0).
 LIMITS_GIT = r"""#!/bin/sh
+while [ "$1" = "-c" ]; do shift 2; done
 if [ -n "$SHIM_RAN" ]; then : > "$SHIM_RAN"; fi
+if [ -n "$SHIM_LOG" ]; then
+  printf '%s %s\n' "$1" "$(sed -n 's/^Max address space *\([0-9a-z]*\).*/\1/p' /proc/$$/limits)" >> "$SHIM_LOG"
+fi
 if [ -n "$SHIM_OUT" ]; then head -c "$SHIM_OUT" /dev/zero; else grep '^Max address space' /proc/$$/limits; fi
+if [ -n "$SHIM_ON" ] && [ "$1" != "$SHIM_ON" ]; then exit 0; fi
 if [ -n "$SHIM_SAYS" ]; then cat "$SHIM_SAYS" >&2; fi
 exit ${SHIM_ENDS:-0}
 """
@@ -4137,8 +5096,8 @@ exit ${SHIM_ENDS:-0}
 
 class BatchGitLimits(unittest.TestCase):
     """Round 1 of PR 959, V1, at run_git and run_tool: every git batch.py starts, and every process run_tool starts, runs
-    under a memory limit set by the shell that execs it, GIT_MEMORY (1 GiB) or for a push PUSH_MEMORY (16 GiB), or the
-    test process's own lower limit; a shell that cannot set it starts nothing; a failure at it is GitMemory, read as
+    under a memory limit set by the shell that execs it, GIT_MEMORY (1 GiB) or for a call that runs the clone's hooks (a
+    push, a commit or a merge) HOOK_MEMORY (16 GiB), or the test process's own lower limit; a shell that cannot set it starts nothing; a failure at it is GitMemory, read as
     scripts/sweep.py reads one (git's own line, first); and output past GIT_OUTPUT_MAX ends the call with GitOutput. A git
     first on PATH (LIMITS_GIT) stands in for git and for a tool. Linux only, where the limit is set."""
 
@@ -4170,17 +5129,66 @@ class BatchGitLimits(unittest.TestCase):
         return line.split()[3:5]
 
     def test_each_git_and_each_tool_process_starts_under_its_memory_limit(self):
-        """A git call gets 1 GiB of address space, soft and hard, a push 16 GiB (its pre-push hook starts gitleaks, which
-        reserves more than 4 GiB as it starts), and a run_tool process 1 GiB, each read from /proc by the process
-        itself. Before V1 each started with no limit ("unlimited")."""
+        """A git call gets 1 GiB of address space, soft and hard, a push, a commit and a merge 16 GiB (each runs the
+        clone's hooks, and a pre-push or pre-commit hook can start gitleaks, which reserves more than 4 GiB as it starts:
+        round 2 of PR 959, ruling C, where before only a push had it), a git merge --abort 1 GiB (it runs none of a
+        merge's hooks), and a run_tool process 1 GiB, each read from /proc by the process itself; git_memory gives git
+        merge --abort what it gives git status, and a merge that is not an abort the hook-sized limit. Before V1 each
+        started with no limit ("unlimited"); with git merge --abort among the calls that run hooks, it started under
+        16 GiB."""
         with self.env():
             plain = batch.run_git(["status"], self.tmp, repo=self.repo)
             push = batch.run_git(["push", "--quiet", "-u", "origin", "refs/heads/batch/b1"], self.tmp, repo=self.repo)
+            commit = batch.run_git(["commit", "--quiet", "--no-edit"], self.tmp, repo=self.repo)
+            merge = batch.run_git(["merge", "--no-ff", "--no-edit", "-m", "Merge #1: x", "1" * 40], self.tmp, repo=self.repo)
+            abort = batch.run_git(["merge", "--abort"], self.tmp, repo=self.repo)
             tool = batch.run_tool([self.git, "check"], self.tmp, repo=self.repo)
-        for what, p, figure in (("git status", plain, 1 << 30), ("git push", push, 16 << 30), ("a tool", tool, 1 << 30)):
+        for what, p, figure in (("git status", plain, 1 << 30), ("git push", push, 16 << 30), ("git commit", commit, 16 << 30),
+                                ("git merge", merge, 16 << 30), ("git merge --abort", abort, 1 << 30),
+                                ("a tool", tool, 1 << 30)):
             with self.subTest(what=what):
                 self.assertEqual(p.returncode, 0, p)
                 self.assertEqual(self.limit_of(p.stdout), [str(self.expected(figure))] * 2, p.stdout)
+        self.assertEqual(batch.git_memory(["merge", "--abort"]), batch.git_memory(["status"]))
+        self.assertEqual(batch.git_memory(["merge", "--no-ff"]), self.expected(16 << 30))
+
+    def test_each_call_that_runs_hooks_comes_after_a_listing_of_the_refs_under_git_memory(self):
+        """Round 2 of PR 959, ruling C, item 2: before each call that runs the clone's hooks (a push, a commit, a merge),
+        run_git lists the refs with git for-each-ref --format= under GIT_MEMORY (_refs_listed), and a call that runs
+        none, git status and git merge --abort among them, comes after nothing; the git first on PATH logs each call's
+        subcommand and limit. A listing that fails at the limit is GitMemory naming it and the call it came before,
+        which never runs. Red without the listing: each hook-running call was logged alone, and with the failure
+        planted on the listing the push ran and nothing was raised. Red with git merge --abort among the calls that run
+        hooks: it came after a listing, under 16 GiB."""
+        log = os.path.join(self.tmp, "calls")
+        plain, hooked = self.expected(1 << 30), self.expected(16 << 30)
+        calls = ((["status"], []), (["push", "--quiet", "-u", "origin", "refs/heads/batch/b1"], [("for-each-ref", plain)]),
+                 (["commit", "--quiet", "--no-edit"], [("for-each-ref", plain)]),
+                 (["merge", "--no-ff", "--no-edit", "-m", "Merge #1: x", "1" * 40], [("for-each-ref", plain)]),
+                 (["merge", "--abort"], []))
+        for args, before in calls:
+            with self.subTest(args=" ".join(args)), self.env(SHIM_LOG=log):
+                if os.path.exists(log):
+                    os.remove(log)
+                batch.run_git(args, self.tmp, repo=self.repo)
+                with open(log) as f:
+                    got = [tuple(line.split()) for line in f]
+                own = hooked if before else plain
+                self.assertEqual(got, [(c, str(n)) for c, n in before] + [(args[0], str(own))])
+        os.remove(log)
+        with open(self.said, "w") as f:
+            f.write("fatal: Out of memory, realloc failed\n")
+        args = ["push", "--quiet", "-u", "origin", "refs/heads/batch/b1"]
+        with self.env(SHIM_LOG=log, SHIM_SAYS=self.said, SHIM_ENDS="128", SHIM_ON="for-each-ref"), \
+                self.assertRaises(batch.GitMemory) as cm:
+            batch.run_git(args, self.tmp, repo=self.repo)
+        size = "%d MiB" % (plain >> 20) if plain % (1 << 20) == 0 else "%d KiB" % (plain >> 10)
+        self.assertTrue(str(cm.exception).startswith(
+            "batch.py lists the refs under GIT_MEMORY before git %s, which runs the clone's hooks under HOOK_MEMORY: git "
+            "for-each-ref --format= in %s reached the %s memory limit (GIT_MEMORY) batch.py sets on it and failed "
+            "(fatal: Out of memory, realloc failed)" % (" ".join(args), self.tmp, size)), str(cm.exception))
+        with open(log) as f:
+            self.assertEqual([line.split()[0] for line in f], ["for-each-ref"], "the push never ran")
 
     def test_a_shell_that_cannot_set_the_limit_starts_nothing_and_is_a_fail_naming_it(self):
         """A shell whose ulimit -v fails (handed a value it cannot read) execs no git and no tool: run_git and run_tool
@@ -4201,24 +5209,29 @@ class BatchGitLimits(unittest.TestCase):
                               str(cm.exception))
                 self.assertFalse(os.path.exists(ran), "nothing ran")
 
-    def test_a_failure_at_the_limit_is_git_memory_naming_the_refs_and_a_quoted_path_is_not(self):
-        """A git that dies (128) with git's own out-of-memory line first is GitMemory, naming the call, the limit (GIT_MEMORY,
-        or PUSH_MEMORY for a push), git's line and the loose files of origin/main and the batch branch the call names
-        (or of origin/main for a fetch from origin); one whose first line quotes a path a leg chose, with that line after
-        a newline in it, is a plain failure, as scripts/sweep.py reads it (round 1 of PR 959, V2); and a run_tool process
-        that dies so is GitMemory too. Before V1 every one was a plain failure."""
+    def test_a_failure_at_the_limit_is_git_memory_naming_no_regular_ref_file_and_a_quoted_path_is_not(self):
+        """A git that dies (128) with git's own out-of-memory line first is GitMemory, naming the call, the limit
+        (GIT_MEMORY, or HOOK_MEMORY for a call that runs the clone's hooks) and git's line, and no file of the
+        repository that is a regular file of a ref's size: here the loose files of ORIGIN_MAIN_REF and of the batch branch,
+        at a rev-list that names both, a fetch from origin and a push of the branch, which until round 2 of PR 959
+        (ruling C, item 3) the text named as the files the call read, whatever it had read (_odd_files names the files
+        that are not regular or are oversized, pinned by the test after this one); one whose first line quotes a path a
+        leg chose, with that line after a newline in it, is a plain failure, as scripts/sweep.py reads it (round 1 of
+        PR 959, V2); and a run_tool process that dies so is GitMemory too. Before V1 every one was a plain failure."""
         common = os.path.join(self.tmp, ".git")
+        for ref in ("refs/heads/batch/b1", ORIGIN_MAIN_REF):
+            path = os.path.join(common, *ref.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write("1" * 40 + "\n")
         oom = "fatal: Out of memory, realloc failed\n"
         with open(self.said, "w") as f:
             f.write(oom)
-        cases = ((["rev-list", "refs/heads/batch/b1", "^refs/remotes/origin/main", "^%s" % ("1" * 40)], "GIT_MEMORY", 1 << 30,
-                  [os.path.join(common, "refs", "heads", "batch", "b1"), os.path.join(common, *ORIGIN_MAIN_REF.split("/"))]),
-                 (["fetch", "--quiet", "--prune", "origin"], "GIT_MEMORY", 1 << 30,
-                  [os.path.join(common, *ORIGIN_MAIN_REF.split("/"))]),
-                 (["push", "--quiet", "-u", "origin", "refs/heads/batch/b1"], "PUSH_MEMORY", 16 << 30,
-                  [os.path.join(common, "refs", "heads", "batch", "b1")]))
-        for args, name, figure, refs in cases:
-            with self.subTest(args=" ".join(args)), self.env(SHIM_SAYS=self.said, SHIM_ENDS="128"):
+        cases = ((["rev-list", "refs/heads/batch/b1", "^refs/remotes/origin/main", "^%s" % ("1" * 40)], "GIT_MEMORY", 1 << 30),
+                 (["fetch", "--quiet", "--prune", "origin"], "GIT_MEMORY", 1 << 30),
+                 (["push", "--quiet", "-u", "origin", "refs/heads/batch/b1"], "HOOK_MEMORY", 16 << 30))
+        for args, name, figure in cases:
+            with self.subTest(args=" ".join(args)), self.env(SHIM_SAYS=self.said, SHIM_ENDS="128", SHIM_ON=args[0]):
                 with self.assertRaises(batch.GitMemory) as cm:
                     batch.run_git(args, self.tmp, repo=self.repo)
                 self.assertIsInstance(cm.exception, batch.GitBound)
@@ -4226,7 +5239,8 @@ class BatchGitLimits(unittest.TestCase):
                 size = "%d MiB" % (limit >> 20) if limit % (1 << 20) == 0 else "%d KiB" % (limit >> 10)
                 self.assertIn("git %s in %s reached the %s memory limit (%s) batch.py sets on it and failed (%s)"
                               % (" ".join(args), self.tmp, size, name, oom.strip()), str(cm.exception))
-                self.assertIn("; the call reads %s, and run the command again" % ", ".join(refs), str(cm.exception))
+                self.assertTrue(str(cm.exception).endswith(REMEDY_PLACES + ", and run the command again"),
+                                str(cm.exception))
         with open(self.said, "w") as f:
             f.write("fatal: pathspec 'L/x\nfatal: Out of memory, realloc failed\ny' is beyond a symbolic link\n")
         with self.env(SHIM_SAYS=self.said, SHIM_ENDS="128"):
@@ -4238,22 +5252,235 @@ class BatchGitLimits(unittest.TestCase):
             batch.run_tool([self.git, "check"], self.tmp, repo=self.repo)
         self.assertIn("%s check in %s reached the " % (self.git, self.tmp), str(cm.exception))
 
+    def test_a_git_memory_names_the_files_git_reads_whole_that_are_not_regular_or_oversized(self):
+        """Round 2 of PR 959, ruling C, item 3: a GitMemory from any call names the files of the repository git reads
+        whole that are, at an lstat after the call, not regular files or larger than a file of their kind holds
+        (_odd_files): a loose ref, walked under the common dir's refs/ and under a linked worktree's own, over
+        REF_FILE_MAX bytes or not a regular file, and packed-refs, objects/info/alternates or the shallow file not a
+        regular file or at least the call's limit. Each case plants such files (a sparse file of PLANT_SPARSE bytes, or
+        a symlink to /dev/zero) in a repository of its own, whose batch branch and ORIGIN_MAIN_REF are regular loose
+        refs, and makes a real git call that reads the first of them without end, under GIT_MEMORY lowered to
+        PLANT_MEMORY in the module batch.py reads it from and with MALLOC_ARENA_MAX unset: the call raises GitMemory
+        naming the planted files, each with why, and no other. Red at the round's head, whose text named the files of
+        the refs a call names (ORIGIN_MAIN_REF's for a fetch, the batch branch's for a push) and no file a call read
+        without naming it: each case named nothing, the fetch ORIGIN_MAIN_REF's file."""
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_AUTHOR_NAME="t",
+                   GIT_AUTHOR_EMAIL="t@example.invalid", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        env.pop("MALLOC_ARENA_MAX", None)
+
+        def git(*args, cwd):
+            p = subprocess.run(["git", *args], cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(p.returncode, 0, p)
+            return p.stdout.strip()
+
+        def sparse(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.truncate(PLANT_SPARSE)
+
+        def zero(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.symlink("/dev/zero", path)
+        sparse_why = "%d bytes, more than the 4096 a loose ref file holds" % PLANT_SPARSE
+        link_why = "a symlink, not a regular file"
+        whole_why = "%d bytes, at least the %d MiB limit the call ran under, and git reads it whole" % (
+            PLANT_SPARSE, PLANT_MEMORY >> 20)
+        listing, history = ["for-each-ref", "--format=%(refname)"], ["rev-list", "-1", "refs/heads/batch/b1"]
+        # (case, [(file, plant, why)], the call): the first file is the one the call reads without end; a second is one
+        # it does not read, named all the same (git 2.43 dies on a shallow file of zeros, "bad shallow line", and
+        # for-each-ref passes over a loose ref that leads to a device, so neither is read without end)
+        cases = (("a sparse loose ref", [("refs/tags/planted", sparse, sparse_why)], listing),
+                 ("a loose ref that is a symlink to /dev/zero, read by its name",
+                  [("refs/tags/planted", zero, link_why)], ["rev-parse", "--verify", "--quiet", "refs/tags/planted"]),
+                 ("a sparse packed-refs", [("packed-refs", sparse, whole_why)], listing),
+                 ("objects/info/alternates as a symlink to /dev/zero",
+                  [("objects/info/alternates", zero, link_why)], history),
+                 ("the shallow file as a symlink to /dev/zero, beside a sparse loose ref",
+                  [("refs/tags/planted", sparse, sparse_why), ("shallow", zero, link_why)], listing),
+                 ("a sparse loose ref of a linked worktree's own", [("refs/bisect/planted", sparse, sparse_why)], listing),
+                 ("a sparse loose ref, met by a fetch", [("refs/tags/planted", sparse, sparse_why)],
+                  ["fetch", "--quiet", "--prune", "origin"]))
+        limits = batch.git_limits()
+        for n, (case, plants, args) in enumerate(cases):
+            with self.subTest(case=case):
+                d = os.path.join(self.tmp, "repo-%d" % n)
+                git("init", "-q", d, cwd=self.tmp)
+                git("commit", "-q", "--allow-empty", "-m", "seed", cwd=d)
+                git("update-ref", "refs/heads/batch/b1", "HEAD", cwd=d)
+                git("update-ref", ORIGIN_MAIN_REF, "HEAD", cwd=d)
+                common = os.path.join(d, ".git")
+                repo, where, gd = batch.GitRepo(d, common, common, self.tmp), d, common
+                if "worktree" in case:
+                    where = os.path.join(self.tmp, "worktree-%d" % n)
+                    git("worktree", "add", "-q", "--detach", where, cwd=d)
+                    gd = os.path.join(common, "worktrees", os.path.basename(where))
+                    repo = batch.GitRepo(where, gd, common, self.tmp)
+                if args[0] == "fetch":
+                    git("clone", "-q", "--bare", d, os.path.join(self.tmp, "origin-%d.git" % n), cwd=self.tmp)
+                    git("remote", "add", "origin", os.path.join(self.tmp, "origin-%d.git" % n), cwd=d)
+                named = []
+                for rel, plant, why in plants:
+                    planted = os.path.join(gd if rel.startswith("refs/bisect/") else common, *rel.split("/"))
+                    plant(planted)
+                    named.append("%s (%s)" % (planted, why))
+                with unittest.mock.patch.dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"), \
+                        unittest.mock.patch.object(limits, "GIT_MEMORY", PLANT_MEMORY), \
+                        self.assertRaises(batch.GitMemory) as cm:
+                    os.environ.pop("MALLOC_ARENA_MAX", None)
+                    batch.run_git(args, where, repo=repo)
+                self.assertIn("git %s in %s reached the %d MiB memory limit (GIT_MEMORY)" % (" ".join(args), where,
+                                                                                         PLANT_MEMORY >> 20),
+                              str(cm.exception))
+                self.assertTrue(str(cm.exception).endswith(
+                    "; of the files of the repository git reads whole, these are not regular files or hold more than a "
+                    "file of their kind does, now (an lstat each after the call, so one can have changed since): %s, "
+                    "and run the command again" % ", ".join(named)), str(cm.exception))
+
+    def test_a_git_memory_names_at_most_odd_files_shown_files_and_counts_the_rest(self):
+        """A GitMemory names at most ODD_FILES_SHOWN of the files _odd_files gives, in its order, and then how many more
+        there are ("and <n> more"), so a clone with many planted files gives an error of bounded length. Here
+        _odd_files gives ODD_FILES_SHOWN + 5 files and the git first on PATH dies with git's out-of-memory line: the
+        text names the first ODD_FILES_SHOWN, then "and 5 more", and none past the cutoff. Red without the cutoff
+        (_limit_met naming every file): all of them named, and no count."""
+        shown = batch.ODD_FILES_SHOWN
+        odd = ["%s/odd-%02d (a symlink, not a regular file)" % (self.tmp, i) for i in range(shown + 5)]
+        with open(self.said, "w") as f:
+            f.write("fatal: Out of memory, realloc failed\n")
+        with self.env(SHIM_SAYS=self.said, SHIM_ENDS="128", SHIM_ON="status"), \
+                unittest.mock.patch.object(batch, "_odd_files", return_value=list(odd)), \
+                self.assertRaises(batch.GitMemory) as cm:
+            batch.run_git(["status"], self.tmp, repo=self.repo)
+        text = str(cm.exception)
+        self.assertTrue(text.endswith("(an lstat each after the call, so one can have changed since): %s, and 5 more, "
+                                      "and run the command again" % ", ".join(odd[:shown])), text)
+        for past in odd[shown:]:
+            self.assertNotIn(past, text)
+
     def test_every_git_call_reads_the_settings_that_keep_its_need_flat_over_the_repositorys_own(self):
         """GIT_SETTINGS on every run_git call, over the repository's own config: the pack window caps, the index read on
-        one thread, and no gc or maintenance started on its own (GIT_SETTINGS' comment has why each keeps a call's need
-        under the limit). The real git reads each key back through run_git, the repository's config setting it
-        otherwise."""
+        one thread, index-pack and pack-objects on one thread, and no gc or maintenance started on its own (GIT_SETTINGS'
+        comment has why each keeps a call's need under the limit). The real git reads each key back through run_git, the
+        repository's config setting it otherwise."""
         repo_dir = os.path.join(self.tmp, "repo")
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         subprocess.run(["git", "init", "-q", repo_dir], env=env, check=True)
         want = {"core.packedGitWindowSize": "32m", "core.packedGitLimit": "128m", "core.preloadIndex": "false",
-                "index.threads": "false", "gc.auto": "0", "maintenance.auto": "false"}
+                "index.threads": "false", "pack.threads": "1", "gc.auto": "0", "maintenance.auto": "false"}
         for key in want:
             subprocess.run(["git", "-C", repo_dir, "config", key, "7"], env=env, check=True)
         repo = batch.GitRepo(repo_dir, os.path.join(repo_dir, ".git"), os.path.join(repo_dir, ".git"), self.tmp)
         with unittest.mock.patch.dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"):
             got = {key: batch.run_git(["config", "--get", key], repo_dir, repo=repo).stdout.strip() for key in want}
         self.assertEqual(got, want)
+
+    def test_a_git_a_tool_process_starts_reads_the_settings_after_the_pairs_batch_py_inherited(self):
+        """Round 2 of PR 959, ruling B: run_tool's environment carries GIT_SETTINGS as git's environment config, pairs
+        numbered after the GIT_CONFIG_COUNT pairs batch.py inherited, which stay (_tool_env), so a git that a run_tool
+        process starts reads each setting over the repository's own config and still reads the inherited pairs, a
+        setting winning where an inherited pair sets the same key. A shell script stands in for the tool and asks git
+        for each key, the repository's config setting each to 7 and two inherited pairs setting test.inherited=yes and
+        gc.auto=50: each setting reads back as GIT_SETTINGS has it, written here as literals, and test.inherited reads
+        yes, with the inherited count written as 2 and, in subtests, as " 2" and "+2", which git reads as 2 as well. An
+        inherited count git refuses as a number ("two", "2 ") is a Fail naming it, and the tool never starts. Red
+        without the environment (run_tool at the round's head): every setting read back 7, and the refused count
+        started the tool; red under a count pattern without its leading blanks and sign: " 2" and "+2" refused."""
+        repo_dir = os.path.join(self.tmp, "repo")
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        subprocess.run(["git", "init", "-q", repo_dir], env=env, check=True)
+        want = {"core.packedGitWindowSize": "32m", "core.packedGitLimit": "128m", "core.preloadIndex": "false",
+                "index.threads": "false", "pack.threads": "1", "gc.auto": "0", "maintenance.auto": "false"}
+        for key in want:
+            subprocess.run(["git", "-C", repo_dir, "config", key, "7"], env=env, check=True)
+        repo = batch.GitRepo(repo_dir, os.path.join(repo_dir, ".git"), os.path.join(repo_dir, ".git"), self.tmp)
+        reader = os.path.join(self.tmp, "read-back.sh")
+        with open(reader, "w") as f:
+            f.write('#!/bin/sh\nfor k in "$@"; do printf \'%s=%s\\n\' "$k" "$(git config --get "$k")"; done\n')
+        os.chmod(reader, 0o755)
+        for count in ("2", " 2", "+2"):
+            with self.subTest(count=count):
+                inherited = dict(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_COUNT=count,
+                                 GIT_CONFIG_KEY_0="test.inherited", GIT_CONFIG_VALUE_0="yes",
+                                 GIT_CONFIG_KEY_1="gc.auto", GIT_CONFIG_VALUE_1="50")
+                with unittest.mock.patch.dict(os.environ, inherited):
+                    p = batch.run_tool([reader, *want, "test.inherited"], repo_dir, repo=repo)
+                self.assertEqual(p.returncode, 0, p)
+                self.assertEqual(dict(line.split("=", 1) for line in p.stdout.splitlines()),
+                                 {**want, "test.inherited": "yes"})
+        ran = os.path.join(self.tmp, "ran")
+        for count in ("two", "2 "):
+            with self.subTest(refused=count):
+                with unittest.mock.patch.dict(os.environ, GIT_CONFIG_COUNT=count), self.assertRaises(batch.Fail) as cm:
+                    batch.run_tool(["/bin/sh", "-c", ': > "$0"', ran], repo_dir, repo=repo)
+                self.assertNotIsInstance(cm.exception, batch.GitBound)
+                self.assertIn("GIT_CONFIG_COUNT in batch.py's environment is %r, which git refuses as a count" % count,
+                              str(cm.exception))
+                self.assertFalse(os.path.exists(ran), "nothing ran")
+
+    def test_a_fetch_that_runs_index_pack_does_so_on_one_thread_within_a_limit_its_threads_would_exceed(self):
+        """Round 2 of PR 959, ruling A: GIT_SETTINGS' pack.threads=1 holds index-pack, which a fetch of 100 objects or
+        more runs (git's fetch.unpackLimit), to one thread. git's own count is one thread per two CPUs, at most 20, which
+        it reaches at 40 CPUs, and each thread maps a stack and a malloc arena, so without the setting a fetch's need grew
+        with the machine (GIT_SETTINGS' comment has the figures for a stale clone of this project). Here batch.py's own
+        fetch brings 120 commits of a rewritten file, 360 objects, most of them deltas, from an origin on disk, under
+        the memory limit lowered to PLANT_MEMORY in the module batch.py reads it from, with MALLOC_ARENA_MAX unset (a
+        shell can inherit it, and a cap on the arenas hides the cost of the threads): once with the clone's config as
+        git leaves it, so index-pack would start git's own count on this machine, and once with the clone's own
+        pack.threads at 20, git's count from 40 CPUs, which GIT_SETTINGS overrides. Each fetch writes the origin's tip
+        at ORIGIN_MAIN_REF, through one pack, so index-pack ran. Red without the setting: index-pack failed at the lowered
+        limit (its first line "fatal: unable to create thread: Resource temporarily unavailable", the fetch exiting 128,
+        a Fail) in the second case on any machine, and in the first on a machine of 40 or more CPUs; on a 60-CPU machine
+        this fetch needed 364 MiB with the clone's 20 and 368 MiB with git's own count, and 24 MiB with the setting
+        (the smallest limit it passed at, to 4 MiB; git 2.43.0, 2026-10-04)."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("batch.py sets the memory limit on Linux alone")
+        work = os.path.join(self.tmp, "fetch")
+        os.makedirs(work)
+        env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        env.pop("MALLOC_ARENA_MAX", None)
+
+        def git(*args, cwd=work, data=None):
+            p = subprocess.run(["git", *args], cwd=cwd, env=env, input=data, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
+            self.assertEqual(p.returncode, 0, p)
+            return p.stdout.decode().strip()
+        author, bare, stale = (os.path.join(work, d) for d in ("author", "origin.git", "stale"))
+        git("init", "-q", author)
+        lines = ["line %04d %s" % (i, "abcdefghij" * 6) for i in range(1000)]
+        stream = []
+        for c in range(121):
+            for k in range(5):
+                lines[(c * 37 + k * 211) % len(lines)] = "edit %03d %d %s" % (c, k, "klmnop" * 10)
+            body, message = ("\n".join(lines) + "\n").encode(), b"c%d" % c
+            stream += [b"commit refs/heads/main\n", b"committer t <t@example.invalid> %d +0000\n" % (1700000000 + c),
+                       b"data %d\n%s\n" % (len(message), message), b"M 100644 inline data.txt\n",
+                       b"data %d\n%s\n" % (len(body), body)]
+        git("fast-import", "--quiet", cwd=author, data=b"".join(stream))
+        first = git("rev-list", "--max-parents=0", "refs/heads/main", cwd=author)
+        git("clone", "-q", "--bare", author, bare)
+        git("config", "pack.threads", "1", cwd=bare)      # the origin's own pack-objects, on the same limit here
+        git("repack", "-q", "-a", "-d", "-f", cwd=bare)
+        tip = git("rev-parse", "refs/heads/main", cwd=bare)
+        self.assertGreaterEqual(len(git("rev-list", "--objects", "%s..%s" % (first, tip), cwd=bare).splitlines()), 100,
+                                "premise: the fetch brings 100 objects or more, so git runs index-pack")
+        git("init", "-q", stale)
+        git("update-ref", "refs/heads/first", first, cwd=bare)
+        git("fetch", "-q", bare, "refs/heads/first:" + ORIGIN_MAIN_REF, cwd=stale)
+        git("update-ref", "-d", "refs/heads/first", cwd=bare)
+        git("remote", "add", "origin", bare, cwd=stale)
+        limits = batch.git_limits()
+        for case, threads in (("git's own count on this machine", None), ("the clone's own pack.threads=20", "20")):
+            with self.subTest(case=case):
+                clone = os.path.join(work, "clone-%s" % (threads or "own"))
+                shutil.copytree(stale, clone, symlinks=True)
+                if threads:
+                    git("config", "pack.threads", threads, cwd=clone)
+                with unittest.mock.patch.dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"), \
+                        unittest.mock.patch.object(limits, "GIT_MEMORY", PLANT_MEMORY):
+                    os.environ.pop("MALLOC_ARENA_MAX", None)
+                    batch.fetch(clone, False)
+                self.assertEqual(git("rev-parse", ORIGIN_MAIN_REF, cwd=clone), tip, "the fetch brought the origin's tip")
+                packs = [f for f in os.listdir(os.path.join(clone, ".git", "objects", "pack")) if f.endswith(".pack")]
+                self.assertEqual(len(packs), 1, "premise: index-pack wrote the fetch's pack (unpack-objects writes none)")
 
     def test_output_past_the_limit_ends_the_call_with_git_output(self):
         """A git, or a run_tool process, that prints more than GIT_OUTPUT_MAX bytes on its stdout (lowered here to 4096 in
@@ -4273,6 +5500,57 @@ class BatchGitLimits(unittest.TestCase):
                     self.assertIsInstance(cm.exception, batch.GitBound)
                     self.assertIn("printed more than 4 KiB on its stdout, the most batch.py reads of one call "
                                   "(GIT_OUTPUT_MAX), and was killed", str(cm.exception))
+
+
+class ToolGitStartsNoGc(_Base):
+    """Round 2 of PR 959, ruling B, the scene of the round's regression-1, through batch.py's run_tool."""
+
+    def test_pr_orphans_fetch_in_a_clone_past_the_pack_limit_starts_no_gc_and_writes_no_gc_log(self):
+        """finish runs scripts/pr-orphans.sh through run_tool, and the script's git fetch runs git's automatic
+        maintenance after it, which in a clone of more packs than gc.autoPackLimit (50) starts git gc --auto under
+        run_tool's memory limit, with a need nobody measured; one that fails there in the background writes the gc.log
+        that stops the clone's automatic gc until someone removes it, while the script still reports clean. run_tool's
+        environment carries GIT_SETTINGS' gc.auto=0 and maintenance.auto=false (_tool_env), so the fetch starts none.
+        The clone here holds more than 50 packs, a pre-auto-gc hook that records each gc git decides to start (git runs
+        it then, before the gc), and gc.autoDetach=false, so a gc would run inside the call and not outlive the test (a
+        git gc --auto in a copy of the clone, outside run_tool, runs the hook and repacks: the scene's premise).
+        pr-orphans.sh then runs through run_tool, with MALLOC_ARENA_MAX unset, and reads the fake gh's merged PRs (none):
+        it reports clean, the hook never ran and the packs are as they were. The hook's marker carries both halves of
+        ruling B, that the fetch starts no gc and writes no gc.log: git writes gc.log only from a gc --auto it has
+        decided to start and has detached, it decides after running pre-auto-gc, and this pin sets gc.autoDetach=false,
+        so no gc here could write one (an assertion that none was written could not fail). Red without the environment
+        (run_tool at the round's head): the hook ran, git having decided to start a gc under run_tool's limit."""
+        fx = self.fx
+        git_dir = os.path.join(fx.dev, ".git")
+        marker = os.path.join(fx.tmp, "gc-started")
+        hook = os.path.join(git_dir, "hooks", "pre-auto-gc")
+        os.makedirs(os.path.dirname(hook), exist_ok=True)
+        with open(hook, "w") as f:
+            f.write('#!/bin/sh\necho "$PWD" >> "%s"\n' % marker)
+        os.chmod(hook, 0o755)
+        fx.dev_git("config", "gc.autoDetach", "false")
+        # 51 packs of one blob each: git fast-import ends a pack at each checkpoint, and with fastimport.unpackLimit=0
+        # keeps it as a pack, not as loose objects
+        fx._git("-c", "fastimport.unpackLimit=0", "fast-import", "--quiet", cwd=fx.dev,
+                input="".join("blob\ndata %d\n%s\ncheckpoint\n\n" % (len(b), b) for b in ("blob %d\n" % i for i in range(51))))
+
+        def packs(d):
+            return sorted(f for f in os.listdir(os.path.join(d, "objects", "pack")) if f.endswith(".pack"))
+        before = packs(git_dir)
+        self.assertGreater(len(before), 50, "premise: more packs than gc.autoPackLimit")
+        copy = os.path.join(fx.tmp, "premise-copy")
+        shutil.copytree(fx.dev, copy, symlinks=True)
+        fx._git("gc", "--auto", "--quiet", cwd=copy)
+        self.assertTrue(os.path.exists(marker), "premise: git decides to start a gc in this clone and runs the hook")
+        self.assertLess(len(packs(os.path.join(copy, ".git"))), len(before), "premise: the gc runs inside the call")
+        os.remove(marker)
+        with unittest.mock.patch.dict(os.environ, fx.env):
+            os.environ.pop("MALLOC_ARENA_MAX", None)
+            p = batch.run_tool([os.path.join(fx.dev, "scripts", "pr-orphans.sh")], fx.dev)
+        self.assertEqual(p.returncode, 0, p)
+        self.assertIn("pr-orphans: clean (0 merged PR(s) checked", p.stdout)
+        self.assertFalse(os.path.exists(marker), "pr-orphans.sh's fetch started a gc under run_tool's limit")
+        self.assertEqual(packs(git_dir), before, "the packs are as they were")
 
 
 # Runs the rest of its argv (an interpreter's arguments) with SIGCHLD ignored, which exec keeps (the same driver as

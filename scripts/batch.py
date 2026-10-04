@@ -101,8 +101,9 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     not recognize fails the call instead of sending git up to an
     enclosing repository (the 02:43Z ruling, item 1(b)), runs with core.warnAmbiguousRefs off (QUIET_NAMES), so a full
     object id a call resolves as an object reads no ref, and a name opens the names git's rules try up to the first that
-    finds a ref and none of the later ones git would open to warn that it is ambiguous (bisect's checkouts and git
-    bisect start look a commit id up as a ref name under every rule whatever the setting: QUIET_NAMES' comment), and
+    finds a ref and none of the later ones git would open to warn that it is ambiguous (bisect's checkouts, git bisect
+    start and its good, bad and skip steps look a commit id up as a ref name under every rule whatever the setting, and
+    assemble's merges, which would under merge.log, pass --no-log: QUIET_NAMES' comment), and
     bounds its wait at GIT_BOUND, 600 s (item 1(a)): a git still
     running then (waiting on a FIFO at the
     clone's shallow file, config or HEAD, which a sweep's leg
@@ -110,7 +111,8 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     GitBound, a Fail (exit 1) naming the call, except in finish's read of the landed head's CI run, which, the merge
     having happened, reports any Fail there, GitBound included, as unread after the merge and carries on. The bound is far above the slowest call
     measured (a member's merge, under a second; the comment at GIT_BOUND gives the figures), and larger than
-    scripts/sweep.py's because a push runs the pre-push hook and a fetch can bring new commits, neither measured.
+    scripts/sweep.py's because a push runs the pre-push hook, whose scan is not measured, and a fetch can bring new
+    commits (one of 70 days of history took up to 59 s: GIT_SETTINGS' comment).
     verify's read of the excuse rule runs its git through scripts/sweep.py, at that script's bound and limits. The two
     processes the tool starts that run git in the clone, scripts/pr-orphans.sh (finish) and the ledger script (verify's
     check,
@@ -120,30 +122,60 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     closing check wf_3b100f5e-b38, its item 5); finish reports a pr-orphans.sh killed at the bound as unread, the merge
     having happened, and carries on. Every such git, and every run_tool process, also has a memory limit and an output
     limit, scripts/sweep.py's, read from that module (git_limits; round 1 of PR 959, V1): GIT_MEMORY, 1 GiB, of address
-    space (PUSH_MEMORY, 16 GiB, for a push, whose pre-push hook starts gitleaks), so a git of this tool's own that reads
+    space (HOOK_MEMORY, 16 GiB, for a push, a commit or a merge, which run the clone's hooks, and a pre-push or pre-commit
+    hook can start gitleaks; each comes after a listing of the refs under GIT_MEMORY, _refs_listed; but git merge
+    --abort, which runs none of a merge's hooks, runs under GIT_MEMORY with no listing before it: _runs_hooks), so a git
+    of this tool's own that reads
     without end (a symlink to /dev/zero at origin/main's loose file, which a sweep's leg can leave through its
     checkout's alternates) fails at the limit and the command stops with GitMemory, naming the call, the limit and the
-    ref files of origin/main or a batch branch the call reads; and GIT_OUTPUT_MAX, 64 MiB a stream, past which the
+    files of the repository git reads whole that are not regular files or are oversized when it is raised (the loose
+    refs, packed-refs, objects/info/alternates, the shallow file and the files of the refs the call names; round 2 of
+    PR 959, ruling C, item 3: _odd_files), and, for a call that lists the refs under a prefix (pick_name's and
+    other_remote_batches' for-each-ref of refs/remotes/origin/batch/), that directory, named as one: the loose refs
+    under <dir>/ (ruling D, extra4-3: _ref_files); and GIT_OUTPUT_MAX, 64 MiB a stream, past which the
     process is killed with its group and the command stops with GitOutput, naming the call and the stream. Both are
     GitBound Fails, which finish reports after the merge as it reports one at the bound. A git that pr-orphans.sh or the
-    ledger script starts has the same memory limit, but the script reads that git's failure as it reads any other:
+    ledger script starts has the same memory limit, and GIT_SETTINGS through its environment (round 2 of PR 959,
+    ruling B; run_tool's docstring says which gits the scripts run), so it needs what this tool's own calls need and
+    starts no gc or maintenance under the limit; but the script reads that git's failure as it reads any other:
     pr-orphans.sh as a merged PR whose content is not on main (or, with no merge commit recorded, unknown), the ledger
     import as a row no commit introduced (dated today), so a failure at the limit there is not named. origin/main and
-    the batch branches are named by their full refs (MAIN_REF, batch_ref) wherever a call needs only their commit, so
-    while the ref exists git opens no other name its rev-parse rules try for it (refs/tags/origin/main,
-    <git dir>/batch/<name> and the rest); an absent full ref sends git on through those rules (plan's and verify's reads
-    of a deleted base branch, verify's check for the batch branch), and finish's check that the batch branch is still
-    there and bisect's cleanup checkout of it name it by its short name, each under GIT_MEMORY, whose GitMemory then
-    names at most the full ref's loose file, not the file git read. Not bounded: bisect's test command, which it runs at
-    the tip, at the base and at each step; and gh, with anything it starts: _run holds all of what gh prints, with no
-    time, memory or output limit, which this PR leaves out of scope (the 16:04Z ruling on PR 959) since what gh prints
-    is GitHub's answer rather than a file a leg can grow, and gh's own git, which reads the clone's config and remotes,
-    has none of these limits either. SIGTERM, SIGHUP
+    the batch branches are named by their full refs (MAIN_REF, batch_ref) wherever a call needs only their commit, and
+    finish's check that the local batch branch is still there and bisect's cleanups name it so too (the 22:25Z ruling
+    of 2026-10-03 on PR 959, item 1; the cleanups put the branch's tree back with git read-tree and point HEAD at the
+    branch with git symbolic-ref, since git checkout stays on a branch only when given its short name), so while the
+    ref exists git opens no other name its rev-parse rules try for it (refs/tags/origin/main, <common dir>/batch/<name>
+    and the rest); an absent full ref sends git on through the names those rules make of the full name (plan's and
+    verify's reads of a deleted base branch, verify's check for the batch branch), but for finish's check, git show-ref
+    --verify, which reads only that ref. Two calls still name the batch branch by its short name, both assemble's
+    (prepare_worktree): git worktree add -B batch/<name>, which makes the branch and its worktree, and git checkout -B
+    batch/<name> MAIN_REF, which resets the branch in a worktree it reuses; git looks the name up by its rules once it
+    has set the branch, so each opens <common dir>/batch/<name>, refs/batch/<name> and refs/tags/batch/<name> before
+    refs/heads/batch/<name> (SHORT_NAME_RULES), each under the common dir, from the batch worktree too, and git checkout
+    -B first looks its start point up as a local branch, refs/heads/refs/remotes/origin/main. Both run under GIT_MEMORY
+    (their witness: tests/test_batch_tool.py,
+    test_assembles_branch_reset_reads_the_branchs_short_name_and_stops_at_the_memory_limit), and the GitMemory of either
+    names each of those files that is not a regular file or is oversized (_ref_files; round 2 of PR 959, ruling D,
+    fresh-2: before it no GitMemory named <common dir>/batch/<name>, which is outside refs/). And the listing of the
+    remote batch branches (pick_name, other_remote_batches: for-each-ref with %(refname:short)) shortens each
+    refs/remotes/origin/batch/<x> it lists to origin/batch/<x> and, to tell whether that short name is ambiguous, opens
+    the names git's rules try for it before refs/remotes/ (<common dir>/origin/batch/<x>, refs/origin/batch/<x>,
+    refs/tags/origin/batch/<x> and refs/heads/origin/batch/<x>), with core.warnAmbiguousRefs off as every call here
+    runs (git 2.43.0, 2026-10-04): a symlink to /dev/zero at any of them stops that call at GIT_MEMORY, and its
+    GitMemory names those under refs/ (_odd_files' walk) and not <common dir>/origin/batch/<x> (its witness:
+    tests/test_batch_tool.py, test_the_listing_of_the_remote_batch_branches_opens_the_names_of_each_ones_short_name).
+    Not bounded: bisect's
+    test command, which it
+    runs at the tip, at the base and at each step; and gh, with anything it starts: _run holds all of what gh prints,
+    with no time, memory or output limit, which this PR leaves out of scope (the 16:04Z ruling on PR 959) since what gh
+    prints is GitHub's answer rather than a file a leg can grow, and gh's own git, which reads the clone's config and
+    remotes, has none of these limits either. SIGTERM, SIGHUP
     and SIGINT (Ctrl-C) stop the tool (but a SIGHUP or SIGINT the tool was started with ignored, as by nohup or as a
     shell's background job, stays ignored): any process it is waiting on is ended with its process group (a git, a
     run_tool process, gh or bisect's command, each started in a session of its own, so what it started goes too), each
     step of the cleanup runs to its end (_cleanup_steps), the cleanup runs for a stop during any step it undoes
-    (bisect's checkout of the base and its git bisect start included), and it exits 128 plus the signal's number
+    (bisect's checkout of the base, its detach of HEAD at the tip, its git bisect start and its checkout of each commit
+    it tests included), and it exits 128 plus the signal's number
     (Stopped);
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
@@ -298,7 +330,9 @@ def _held_wait(p, input_text=None):
 # worktree 0.74 s, a detached worktree add (the ledger check's) 0.58 s, ls-remote of origin 0.39 to 0.49 s, a fetch with
 # nothing new 0.22 s, merge-tree of a batch chain's merges at most 0.12 s, every other read 0.02 s or less. It is larger
 # than scripts/sweep.py's GIT_BOUND, whose calls are all local, because this tool's include a push through the clone's
-# pre-push hook, which scans the pushed commits, and a fetch that brings new commits, neither measured here.
+# pre-push hook, which scans the pushed commits, and a fetch that brings new commits: on 2026-10-04 a fetch of 70 days
+# of history took 56 to 59 s with GIT_SETTINGS, and a push of that history, with no hook, 13 to 14 s (GIT_SETTINGS'
+# comment); the hook's scan is not measured here.
 # tests/test_git_call_census.py holds every place this file starts a process to a named allowlist, run_git first.
 GIT_BOUND = 600
 # The 02:43Z ruling, item 1(b): the variables that tell git where a repository is (git's own list of the repository's
@@ -317,8 +351,8 @@ class GitBound(Fail):
 
 class GitMemory(GitBound):
     """A git call, or a process run_tool started, that failed when an allocation reached the memory limit set on it
-    (git_memory): a refusal naming the call, the limit, git's line and the ref files of origin/main or a batch branch the
-    call reads."""
+    (git_memory): a refusal naming the call, the limit, git's line and the files of the repository git reads whole that
+    are not regular files or are oversized when it is raised (_odd_files)."""
 
 
 class GitOutput(GitBound):
@@ -337,12 +371,23 @@ class GitOutput(GitBound):
 # does with the setting off, by the first rule that finds one. The setting also decides how strictly for-each-ref's
 # refname:short shortens a name, which this tool reads for the remote batch branches: it gave the same names with the
 # setting on and off, with a branch, a tag or a packed refs/remotes/<name>/HEAD of the same short name present
-# (measured the same day). The setting does not reach every call that names a commit by its id: git checkout <sha>,
-# which bisect makes of the base, git bisect start, and each bisect step's checkout of the next commit look the id up as
-# a ref name first under every rule (<git dir>/<sha>, refs/<sha>, refs/tags/<sha>, refs/heads/<sha>, refs/remotes/<sha>
-# and refs/remotes/<sha>/HEAD), whatever the setting, and read a symlink to /dev/zero at any of them (round 1 of PR 959,
-# V5, git 2.43.0, 2026-10-03). bisect runs them after your command has run in the batch worktree, whose refs are the
-# clone's, and each runs under GIT_MEMORY, so such a read stops bisect there, naming the call (GIT_SETTINGS' comment).
+# (measured the same day); with it off, that shortening still opens each name the rules try for the short name before
+# refs/remotes/ (the module docstring names the files and their witness). The setting does not reach every call that
+# names a commit by its id: git checkout <sha>, which bisect makes of the base and of each commit it tests, git bisect
+# start, and each git bisect good, bad or skip, which looks up the ids of the commits the bisect has marked, look the
+# id up as a ref name first under every rule (<git dir>/<sha>, refs/<sha>, refs/tags/<sha>, refs/heads/<sha>,
+# refs/remotes/<sha> and refs/remotes/<sha>/HEAD), whatever the setting, and read a symlink to /dev/zero at any of them
+# (round 1 of PR 959, V5, git 2.43.0, 2026-10-03; the steps traced on 2026-10-04). git bisect also looks up by every
+# rule, whatever the setting, the names it resolves itself: git bisect start, run from HEAD detached at the tip, HEAD
+# (refs/HEAD, refs/tags/HEAD, refs/heads/HEAD, refs/remotes/HEAD and refs/remotes/HEAD/HEAD), and each step, given no
+# commit, BISECT_HEAD (refs/BISECT_HEAD, refs/tags/BISECT_HEAD and the rest), and a symlink to /dev/zero at any of them
+# stops that call at GIT_MEMORY too (traced on 2026-10-04). bisect runs them after your command has run in the batch
+# worktree, whose refs are the clone's, and each runs under GIT_MEMORY, so such a read stops bisect there, naming the
+# call (GIT_SETTINGS' comment). bisect's cleanups make none of them, but for the git bisect reset after a stop that
+# ended git bisect start after it wrote BISECT_START and before BISECT_HEAD, which checks the tip out by its id
+# (cmd_bisect's comment). git merge <sha> makes them too when merge.log is set (in the clone's config or the user's, or
+# --log in a branch's mergeOptions), to describe the commit in the shortlog it appends, so assemble's merge of a member
+# and merge_main's merge pass --no-log and make none (merge_member's comment; round 2 of PR 959, ruling D, fresh-3).
 QUIET_NAMES = ("-c", "core.warnAmbiguousRefs=false")
 
 # Round 1 of PR 959, V1 (the 13:21Z ruling: ruling A's class is every unbounded read of something a leg can reach): every
@@ -359,25 +404,100 @@ QUIET_NAMES = ("-c", "core.warnAmbiguousRefs=false")
 # 2.43.0 on a scratch clone of this project (its objects through alternates: 8 packs, the largest 289 MiB), by bisecting
 # to 4 MiB the smallest limit at which each
 # call class succeeds: with GIT_SETTINGS, a whole-tree worktree add needed 255 MiB, a member's merge 91 MiB, merge-tree
-# and diff-tree 87 MiB, a fetch that brought new commits 59 MiB, merge-base and rev-list 55 MiB, ls-remote 19 MiB,
-# rev-parse and for-each-ref 11 MiB; without them the same calls needed 419, 363, 315, 319, 311, 19 and 11 MiB, since a
-# call that reads an object maps a little more than the largest pack it touches. GIT_SETTINGS are those of
+# and diff-tree 87 MiB, merge-base and rev-list 55 MiB, ls-remote 19 MiB, rev-parse and for-each-ref 11 MiB; without
+# them the same calls needed 419, 363, 315, 311, 19 and 11 MiB, since a call that reads an object maps a little more
+# than the largest pack it touches (a fetch's figures follow). GIT_SETTINGS are those of
 # scripts/sweep.py's GIT_NEUTRAL_CONFIG that keep the need flat (its comment has the mechanism): the pack window caps,
 # and core.preloadIndex and index.threads off, since each thread git starts for the index reserves a stack and a malloc
-# arena, so a checkout's need would vary with the threads it starts; and gc.auto=0 and maintenance.auto=false, so no gc
-# or maintenance git starts on its own after a fetch, a merge or a commit runs under the limit with a need nobody measured
-# (a repack starts a thread per core) and, failing there, writes the gc.log that stops the clone's automatic gc until it
-# is removed; your own git calls in the clone still run them. A push gets PUSH_MEMORY instead of GIT_MEMORY: it runs
-# the clone's pre-push hook, and this project's hook starts gitleaks, which reserves its address space as it starts: a
-# push through it needed 5323 MiB, with or without GIT_SETTINGS, and gitleaks 8.30.1 alone failed to start under a 4 GiB
-# limit and started under 6 GiB (measured the same day). PUSH_MEMORY is three times that need; a gitleaks that reserves
-# more fails to start, and the hook then refuses the push, saying gitleaks could not run. run_tool's processes get
-# GIT_MEMORY without GIT_SETTINGS (they are not git): the ledger script's check needed 35 MiB on Python 3.12 and 103 MiB
-# on free-threaded 3.14, its import's git log -S 343 MiB (a little over the largest pack), and scripts/pr-orphans.sh 11
-# MiB with no merged PR to read (the same day).
+# arena, so a checkout's need would vary with the threads it starts; pack.threads=1 (round 2 of PR 959, ruling A), the
+# same for index-pack, which a fetch of 100 objects or more runs (git's fetch.unpackLimit), and for the pack-objects a
+# push runs: git's own count for index-pack is one thread per two CPUs, at most 20 (from 40 CPUs), each with a stack, an
+# arena and its own share of the delta base cache, so a fetch's need grew with the machine. A real batch's clone holds
+# origin's branches and other refs (the upstream project's, say), and its git fetch --prune origin fetches every branch
+# on origin, so its need was measured on scratch clones of this project made stale holding origin's branches and the
+# clone's other refs as each stood at a cutoff, through this file's fetch, served by a git daemon on the same machine
+# (2026-10-04, git 2.43.0, a 60-CPU machine, MALLOC_ARENA_MAX unset, since a shell that inherits it caps the arenas and
+# hides that cost; each process's peak address space, its VmPeak,
+# which RLIMIT_AS bounds, read from /proc every 2 ms), with the setting: three weeks stale (cutoff 2026-09-13, 85
+# branches, 73,197 objects sent), index-pack mapped 460 to 478 MiB in the fetches that passed and the connectivity
+# check's rev-list after it 251 MiB, and the whole fetch failed at 400 MiB and, twice, at 448 MiB, and passed twice at
+# 480 MiB, twice at 496 MiB and at 512 MiB; six weeks stale (cutoff 2026-08-23, 97,210 objects sent), index-pack mapped
+# only 196 MiB, and the rev-list, at 254 MiB, was the larger need. With the limit between the two needs (200, 205, 215,
+# 230 and 240 MiB on that clone), the rev-list failed and git fetch exited 1, its first line git's malloc line, its
+# inflateInit line or its packfile map line and "did not send all necessary objects" after it, which batch.py reads as a
+# plain failure naming the call and quoting those lines, not as GitMemory, since git fetch did not die with the line
+# (scripts/sweep.py's OUT_OF_MEMORY comment). So the need depends on the clone and what the fetch brings, not on its
+# staleness or its count of objects alone, and a real fetch needs about half of GIT_MEMORY: about two times headroom,
+# not the four to five times the figures below for clones holding main alone suggest. What sets the need is the refs
+# the clone holds together with the window of history it fetches, not the refspec's breadth alone: on a clone made
+# stale to the same three-week cutoff (1,626 refs: origin's 86 branches as they stood then and the upstream refs older
+# than it), a fetch whose refspec named main alone, with 45,119 objects to fetch against 55,563 for every branch,
+# failed at 400 and 416 MiB and passed at 448 and 480 MiB, as the fetch of every branch failed at 400 MiB and passed
+# at 448 and 480 MiB, while a clone holding main alone at that cutoff passed at 320 and 400 MiB fetching every branch
+# (73,885 objects) and failed at 256 MiB (2026-10-04, git 2.43.0, MALLOC_ARENA_MAX unset). The refspec can still add
+# to it: on a two-week clone holding every branch, the largest git process of a fetch of main alone peaked at 206 MiB
+# and of every branch at 304 MiB (the same day). On clones holding main alone, made stale by two weeks (22,516
+# objects to fetch) and by 70 days (90,415) and measured the same way, three fetches each: without the setting
+# index-pack ran 21 threads and mapped 1542 MiB (two weeks) and 1594 to 1656 MiB (70 days), with it 203 MiB and 125 to
+# 128 MiB, and the connectivity check's rev-list after it 198 to 199 MiB and 246 to 248 MiB either way; and the smallest
+# limit at which the whole fetch passed, bisected to 4 MiB and checked by three fetches at it and three 8 MiB below, was
+# 1424 MiB (two weeks; one of three passed at 1416) and 1500 MiB (70 days; two of three passed at 1492) without the
+# setting, so such a fetch failed at GIT_MEMORY then, and 204 and 252 MiB with it (none of three passed 8 MiB below).
+# The setting costs time: index-pack took 16 s in place of 11 (two weeks) and 52 to 55 s in place of 12 (70 days), the
+# whole fetch 19 s in place of 14 and 56 to 59 s in place of 16, all far inside GIT_BOUND. A push of the same history
+# (push_batch's call, to remotes as stale, main alone, with no hook, the same day) ran pack-objects on 61 threads,
+# mapping 4569 to 4753 MiB, without the setting, and on one, mapping 274 MiB (two weeks) and 365 MiB (70
+# days), with it, which took 1.6 s in place of 1.3 and 6.2 to 6.7 s in place of 5.0 to 5.4, the whole push 13.6 to 14.2
+# s in place of 13.4 to 15.4 and 13.1 to 14.0 s in place of 11.8 to 12.6. Last, gc.auto=0 and maintenance.auto=false, so
+# no gc or maintenance git starts on its own after a fetch, a merge or a commit runs under the limit with a need nobody
+# measured (a repack starts a thread per core) and, failing there, writes the gc.log that stops the clone's automatic gc
+# until it is removed; your own git calls in the clone still run them. A call that runs the clone's hooks gets
+# HOOK_MEMORY instead of GIT_MEMORY (HOOK_CALLS: git push, which runs pre-push; git commit, which runs pre-commit,
+# prepare-commit-msg, commit-msg and post-commit; and git merge, which runs pre-merge-commit, prepare-commit-msg,
+# commit-msg and post-merge; git merge --abort runs none of those, only post-index-change and reference-transaction, git
+# 2.43.0, so it runs under GIT_MEMORY with no listing before it), since a hook can start gitleaks, which reserves its
+# address space as it starts: this project's pre-push hook does, and a push through it needed 5323 MiB, with or without
+# GIT_SETTINGS, and gitleaks 8.30.1 alone failed to start under a 4 GiB limit and started under 6 GiB (measured on
+# 2026-10-03). A pre-commit hook a user sets for every clone (core.hooksPath in the global config) can start it too, and
+# until round 2 of PR 959 (ruling C) only a push had the larger limit, so such a hook made assemble --continue's git
+# commit fail under GIT_MEMORY, its failure read as a secret found in the staged resolution. HOOK_MEMORY is three times
+# gitleaks' need; a gitleaks that reserves more fails to start, and the hook then refuses the call, saying gitleaks
+# could not run. No call passes --no-verify, which would skip the user's own scans of what a commit holds. HOOK_MEMORY
+# covers the whole call, not the hook alone: a push's own reads run under it, its listing of every loose ref and of
+# packed-refs among them, so before each such call batch.py lists the refs under GIT_MEMORY (_refs_listed, ruling C's
+# item 2), and a sparse or oversized file planted at a loose ref, or a sparse packed-refs, fails there, at GIT_MEMORY,
+# with or without a fetch before it. The residual, stated: a file planted after that listing, or one the call reads and
+# the listing does not (objects/info/alternates or the shallow file at a push, MERGE_MSG at a merge or a commit, which
+# git writes and reads back whole), fails at HOOK_MEMORY, not GIT_MEMORY; its witness is the pin that the listing
+# refuses a planted loose ref at GIT_MEMORY on a --no-fetch path (tests/test_batch_tool.py,
+# test_a_sparse_loose_ref_planted_before_a_no_fetch_push_path_is_refused_by_the_listing_at_git_memory). Not taken: a
+# limit of GIT_MEMORY raised to HOOK_MEMORY for the hook alone by a core.hooksPath wrapper, which would stand in front
+# of the clone's own hooks, the user's to change, and would skip their scans without a sound if it missed one. Every
+# hook a call under GIT_MEMORY runs has that limit too, among them post-checkout, which git worktree add and git
+# checkout run; post-index-change, which git checkout, git read-tree -u, git update-index --refresh, git status (when it
+# writes the index) and git worktree add run; and reference-transaction, which git runs for a ref update through a
+# transaction (update-ref, checkout -B, worktree add), where git symbolic-ref and checkout's move of HEAD onto a branch
+# run none (git 2.43.0, traced on 2026-10-04). git-lfs 3.4.1, which a clone that uses it runs from post-checkout,
+# started under a 768 MiB limit and failed under 640 MiB, out of memory, and under 512 MiB, unable to reserve its Go
+# runtime's page summary, the same with MALLOC_ARENA_MAX unset and with it at 2 (measured on 2026-10-04). run_tool's
+# processes get GIT_MEMORY, and the gits they start GIT_SETTINGS through the environment (round 2 of PR 959, ruling B;
+# _tool_env, and run_tool's docstring for which gits the scripts run): the ledger script's check needed 35 MiB on Python
+# 3.12 and 103 MiB on free-threaded 3.14 (2026-10-03). With them, pr-orphans.sh's fetch needs what this file's fetch
+# needs: the same git fetch --quiet --prune origin, run through run_tool on the three-week clone above, failed at 400
+# MiB and passed at GIT_MEMORY (2026-10-04, git 2.43.0, MALLOC_ARENA_MAX unset); and the import's git log -S over
+# UPSTREAM.md's history, in a clone of main's whole history (its largest pack 208 MiB), passed at 188 MiB. Without them,
+# on the clones holding main alone, pr-orphans.sh needed 1620 and 1544 MiB, more than GIT_MEMORY, so its fetch failed at
+# the limit, which the script reports as a failed fetch before it checks what the clone has (index-pack mapped 1656 to
+# 1684 MiB on 21 threads, and in one 70-day run the fetch's automatic maintenance started under the limit), and the git
+# log -S needed 264 MiB (343 MiB on 2026-10-03 in a clone whose largest pack was 289 MiB, when the figure for
+# pr-orphans.sh, 11 MiB, counted no fetch).
 GIT_SETTINGS = ("-c", "core.packedGitWindowSize=32m", "-c", "core.packedGitLimit=128m", "-c", "core.preloadIndex=false",
-                "-c", "index.threads=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false")
-PUSH_MEMORY = 16 << 30
+                "-c", "index.threads=false", "-c", "pack.threads=1", "-c", "gc.auto=0", "-c", "maintenance.auto=false")
+# The git subcommands that run the clone's hooks, and the address-space limit each gets in GIT_MEMORY's place
+# (GIT_SETTINGS' comment): _runs_hooks reads the first word of a call against HOOK_CALLS, git merge --abort excepted,
+# which runs none of a merge's hooks.
+HOOK_CALLS = ("push", "commit", "merge")
+HOOK_MEMORY = 16 << 30
 
 
 # The signals that stop the tool (the closing check wf_3b100f5e-b38, its item 4): each raises Stopped, a BaseException
@@ -524,6 +644,29 @@ def _git_env(repo, extra=None):
     return env
 
 
+def _tool_env(repo):
+    """The environment run_tool starts its process in: _git_env's, with GIT_SETTINGS added as git's environment config
+    (round 2 of PR 959, ruling B), each setting a GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n> pair numbered after the
+    GIT_CONFIG_COUNT pairs batch.py inherited, which stay as they were, and GIT_CONFIG_COUNT raised to cover both, so
+    every git the process starts reads the inherited pairs and then these, a later pair winning for the same key (git
+    2.31 and later read these variables, as scripts/sweep.py's GIT_NEUTRAL_CONFIG does). git reads an empty
+    GIT_CONFIG_COUNT as none, and refuses one that is not a number ("bogus count"), as every git batch.py starts would:
+    that is a Fail naming it, and nothing is started."""
+    env = _git_env(repo)
+    inherited = env.get("GIT_CONFIG_COUNT", "")
+    m = re.fullmatch(r"\s*\+?([0-9]+)", inherited)
+    if inherited and m is None:
+        raise Fail("GIT_CONFIG_COUNT in batch.py's environment is %r, which git refuses as a count, so batch.py cannot add "
+                   "its git settings after the pairs it counts; unset it or set it to the number of "
+                   "GIT_CONFIG_KEY_<n> pairs, and run the command again" % inherited)
+    n = int(m.group(1)) if m else 0
+    pairs = [GIT_SETTINGS[i + 1].split("=", 1) for i in range(0, len(GIT_SETTINGS), 2)]
+    for i, (key, value) in enumerate(pairs, n):
+        env["GIT_CONFIG_KEY_%d" % i], env["GIT_CONFIG_VALUE_%d" % i] = key, value
+    env["GIT_CONFIG_COUNT"] = str(n + len(pairs))
+    return env
+
+
 def run_git(args, cwd, repo=None, env=None, text=True):
     """`git <args>` in `cwd`, in the repository `repo` names (default: repo_for(cwd)), as a CompletedProcess: the one way
     this tool starts git. stdin is closed, `env` is added to the environment, and the process starts in a session of its
@@ -531,11 +674,19 @@ def run_git(args, cwd, repo=None, env=None, text=True):
     raised naming the call. Any other exception while it runs (Stopped, which SIGTERM, SIGHUP and SIGINT raise, among
     them) kills it the same way first. Every call runs with core.warnAmbiguousRefs off (QUIET_NAMES) and GIT_SETTINGS,
     under the memory limit git_memory gives it, set by the shell that execs it, and its output is read through
-    _bounded_wait's limit: one that fails at the memory limit raises GitMemory, one that prints too much GitOutput, and
-    one whose shell could not set the limit, which starts no git, a Fail naming LIMIT_FAILED (_limit_met)."""
+    _bounded_wait's limit: one that died at the memory limit with one of git's own out-of-memory lines first raises
+    GitMemory, one that prints too much GitOutput, and one whose shell could not set the limit, which starts no git, a
+    Fail naming LIMIT_FAILED (_limit_met). Other failures at the memory limit are returned as any failure is (git()
+    raises one as a Fail naming the call and quoting git), and batch.py's fetch meets two: a connectivity check's
+    rev-list that fails at the limit, after which git fetch exits 1 (GIT_SETTINGS' comment), and a thread git cannot
+    start there (exit 128, "error: cannot create async thread: Resource temporarily unavailable", the words a limit on
+    processes gives too). scripts/sweep.py's OUT_OF_MEMORY comment lists the others that are known. A call that runs
+    the clone's hooks, under HOOK_MEMORY, comes after a listing of the refs under GIT_MEMORY (_refs_listed)."""
     repo = repo or repo_for(cwd)
     argv = ["git", *args]
     limit = git_memory(args)
+    if limit is not None and _runs_hooks(args):
+        _refs_listed(args, cwd, repo)
     launch = ["git", *QUIET_NAMES, *GIT_SETTINGS, *args]
     if limit is not None:
         launch = ["/bin/sh", "-c", git_limits()._LIMITED % (limit >> 10), *launch]
@@ -552,22 +703,51 @@ def run_git(args, cwd, repo=None, env=None, text=True):
     return subprocess.CompletedProcess(argv, p.returncode, out, err)
 
 
+def _refs_listed(args, cwd, repo):
+    """Every ref of `repo` listed under GIT_MEMORY, with git for-each-ref --format= in `cwd`, before `git <args>`, a
+    call that runs the clone's hooks under HOOK_MEMORY (round 2 of PR 959, ruling C, item 2). for-each-ref reads every
+    loose ref whole, and packed-refs, as a push reads them to list the local refs, so a sparse or oversized file a leg
+    planted at a loose ref, or a sparse packed-refs, meets GIT_MEMORY here, with or without a fetch before it
+    (--no-fetch), and the GitMemory names it (_odd_files), where the call itself would read it until HOOK_MEMORY.
+    --format= prints an empty line a ref, the least output for the same reads. A bound met here is raised as it was met,
+    the call it came before named; the call does not run. Its residual, stated: a file planted after this listing, or
+    one the call reads and the listing does not (objects/info/alternates or the shallow file at a push, MERGE_MSG at a
+    merge or a commit, which git writes and reads back whole, say, or a loose ref by another road), fails at HOOK_MEMORY
+    rather than GIT_MEMORY, as do the call's own reads and its hooks' (GIT_SETTINGS' comment; the pin that this listing
+    refuses a planted loose ref at GIT_MEMORY on a --no-fetch path is tests/test_batch_tool.py,
+    test_a_sparse_loose_ref_planted_before_a_no_fetch_push_path_is_refused_by_the_listing_at_git_memory)."""
+    try:
+        run_git(["for-each-ref", "--format="], cwd, repo=repo)
+    except GitBound as e:
+        raise type(e)("batch.py lists the refs under GIT_MEMORY before git %s, which runs the clone's hooks under "
+                      "HOOK_MEMORY: %s" % (" ".join(args), e)) from None
+
+
 def run_tool(cmd, cwd, repo=None):
     """`cmd` in `cwd`, a process that is not git but runs git in the clone (scripts/pr-orphans.sh, the ledger script),
     as a CompletedProcess, started as run_git starts git (the closing check wf_3b100f5e-b38, its item 5): the repository
     `repo` names (default: repo_for(cwd)) explicit in its environment, GIT_DIR, GIT_COMMON_DIR and GIT_WORK_TREE set and
-    GIT_CEILING_DIRECTORIES above it, so every git it starts reads that repository and none walks up from its cwd;
-    stdin closed; in a session of its own; and GIT_BOUND seconds to end, after which it is killed with its process
-    group, the git it is waiting on included, and GitBound is raised naming it. Any other exception while it runs
-    (Stopped among them) kills it the same way first. It has run_git's memory and output limits (GIT_MEMORY, every
-    process it starts inheriting the address limit, and GIT_OUTPUT_MAX), with GitMemory, GitOutput and the LIMIT_FAILED
-    Fail as run_git raises them."""
+    GIT_CEILING_DIRECTORIES above it, so every git it starts reads that repository and none walks up from its cwd; stdin
+    closed; in a session of its own; and GIT_BOUND seconds to end, after which it is killed with its process group, the
+    git it is waiting on included, and GitBound is raised naming it. Any other exception while it runs (Stopped among
+    them) kills it the same way first. It has run_git's memory and output limits (GIT_MEMORY, every process it starts
+    inheriting the address limit, and GIT_OUTPUT_MAX), with GitMemory, GitOutput and the LIMIT_FAILED Fail as run_git
+    raises them. The gits it starts get GIT_SETTINGS too, through the environment (_tool_env; round 2 of PR 959, ruling
+    B), so they run under GIT_MEMORY with the need run_git's calls have, not one that grows with the largest pack or the
+    machine's CPUs, and start no gc or maintenance under that limit: scripts/pr-orphans.sh, unless ROMP_ORPHANS_NO_FETCH
+    is set, runs git remote get-url origin and, when the clone has an origin, git fetch --quiet --prune origin, whose
+    automatic maintenance was the one that could start a gc there, and then git rev-parse --verify of the main branch,
+    the remote-tracking one first, and git merge-base --is-ancestor for each merged PR it reads; the ledger script's
+    import runs git log -S over UPSTREAM.md's history to date a row, and its check runs no git. A git the script runs
+    with its own -c, or under a GIT_CONFIG_PARAMETERS batch.py inherited, reads that value over these (git reads
+    GIT_CONFIG_PARAMETERS after the counted pairs). GIT_SETTINGS' comment gives each one's measured need."""
     repo = repo or repo_for(cwd)
     limit = git_memory()
     launch = cmd if limit is None else ["/bin/sh", "-c", git_limits()._LIMITED % (limit >> 10), *cmd]
+    env = _tool_env(repo)
     _hold_stops()
     try:
-        p = subprocess.Popen(launch, cwd=cwd, env=_git_env(repo), text=True, start_new_session=True,
+        p = subprocess.Popen(launch, cwd=cwd, env=env, text=True, start_new_session=True,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except BaseException:
         _release_stops()
@@ -591,15 +771,24 @@ def git_limits():
     return _LIMITS
 
 
+def _runs_hooks(args):
+    """Whether `git <args>` runs the clone's hooks: its first word is one of HOOK_CALLS (push, commit, merge), and it is
+    not git merge --abort, which runs none of the hooks a merge runs (git 2.43.0 ran post-index-change and
+    reference-transaction alone, as a checkout does), so it runs under GIT_MEMORY with no listing of the refs before it,
+    and so do its own whole-file reads, MERGE_AUTOSTASH among them."""
+    return bool(args) and args[0] in HOOK_CALLS and tuple(args[:2]) != ("merge", "--abort")
+
+
 def git_memory(args=None):
     """The address-space limit in bytes run_git sets on `git <args>`, or run_tool on its process (`args` None), or None
     where none is set: scripts/sweep.py's git_memory_limit (GIT_MEMORY, or the tool's own soft or hard RLIMIT_AS where
-    either is lower, since a child inherits it and the shell never raises it; None off Linux), but for a push PUSH_MEMORY
-    in GIT_MEMORY's place (GIT_SETTINGS' comment)."""
+    either is lower, since a child inherits it and the shell never raises it; None off Linux), but for a call that runs
+    the clone's hooks (_runs_hooks: a push, a commit or a merge, but not git merge --abort) HOOK_MEMORY in GIT_MEMORY's
+    place (GIT_SETTINGS' comment)."""
     limit, _why = git_limits().git_memory_limit()
-    if limit is None or not args or args[0] != "push":
+    if limit is None or not _runs_hooks(args):
         return limit
-    return min([PUSH_MEMORY] + [n for n in resource.getrlimit(resource.RLIMIT_AS) if n != resource.RLIM_INFINITY])
+    return min([HOOK_MEMORY] + [n for n in resource.getrlimit(resource.RLIMIT_AS) if n != resource.RLIM_INFINITY])
 
 
 def _bounded_wait(p, what, cwd, text):
@@ -625,11 +814,17 @@ def _bounded_wait(p, what, cwd, text):
 
 
 def _limit_met(returncode, said, what, cwd, limit, args, repo):
-    """Raise for a process run_git or run_tool started under the memory `limit` (None: none set) whose shell could not set
-    it (exit 125 after LIMIT_FAILED: a Fail, the process never started) or that failed at it (scripts/sweep.py's
-    _out_of_memory_line over what it printed on stderr, `said`, with the index of `repo` for a git call: GitMemory naming
-    the call, the limit and git's line, and the ref files of origin/main or a batch branch the git call reads, _ref_files);
-    any other exit is the caller's to read."""
+    """Raise for a process run_git or run_tool started under the memory `limit` (None: none set) whose shell could not
+    set it (exit 125 after LIMIT_FAILED: a Fail, the process never started) or that failed at it (scripts/sweep.py's
+    _out_of_memory_line over what it printed on stderr, `said`, with the index of `repo` for a git call: GitMemory
+    naming the call, the limit and git's line, the directory of each prefix the call lists the refs under, as a
+    directory, "the loose refs under <dir>/" (_ref_files), and the files of `repo` git reads whole that are not regular
+    files or are oversized when it is raised, _odd_files); any other exit is the caller's to read. The remedy's list of
+    places names the state files of a merge and a bisect that git reads whole as well: MERGE_MSG, which a merge writes
+    and reads back and a commit reads (git merge and git commit, under HOOK_MEMORY), MERGE_AUTOSTASH, which git merge
+    --abort reads, and BISECT_START, which git bisect reset reads (git 2.43.0, a symlink to /dev/zero at each stopping
+    that call); MERGE_HEAD is not among them, since continue_after_resolution reads it under GIT_MEMORY, with git
+    rev-parse, before its commit."""
     if limit is None or returncode == 0:
         return
     limits = git_limits()
@@ -641,26 +836,141 @@ def _limit_met(returncode, said, what, cwd, limit, args, repo):
     line = limits._out_of_memory_line(returncode, said, index)
     if line is None:
         return
-    name = "PUSH_MEMORY" if args and args[0] == "push" else "GIT_MEMORY"
-    refs = _ref_files(args or [], repo)
+    name = "HOOK_MEMORY" if _runs_hooks(args) else "GIT_MEMORY"
+    listed = ([p for p in _ref_files(args or [], repo) if p.endswith(os.sep)]
+              if repo is not None and repo.common_dir is not None else [])
+    odd = _odd_files(args or [], repo, limit)
+    if len(odd) > ODD_FILES_SHOWN:
+        odd = odd[:ODD_FILES_SHOWN] + ["and %d more" % (len(odd) - ODD_FILES_SHOWN)]
     raise GitMemory("%s in %s reached the %s memory limit (%s) batch.py sets on it and failed (%s); remove what it read "
                     "without end there (a symlink to /dev/zero, an oversized file or a symbolic ref leading to one, where "
                     "git reads a ref, packed-refs, the index, a config file, objects/info/alternates or the shallow "
-                    "file)%s, and run the command again"
+                    "file, or a state file of a merge or a bisect in the git dir, MERGE_MSG, MERGE_AUTOSTASH or "
+                    "BISECT_START)%s%s, and run the command again"
                     % (what, cwd, limits.memory_text(limit), name, line,
-                       "; the call reads %s" % ", ".join(refs) if refs else ""))
+                       "; the call reads the loose refs under %s" % ", ".join(listed) if listed else "",
+                       "; of the files of the repository git reads whole, these are not regular files or hold more than "
+                       "a file of their kind does, now (an lstat each after the call, so one can have changed since): %s"
+                       % ", ".join(odd) if odd else ""))
+
+
+# The most files a GitMemory names (_odd_files); past it the text says how many more there are.
+ODD_FILES_SHOWN = 20
+
+
+def _odd_files(args, repo, limit):
+    """The files a GitMemory names (round 2 of PR 959, ruling C, item 3): those of `repo` that git reads whole for a ref
+    or an object and that, at an lstat each after the call (no symlink followed, as scripts/sweep.py's main_bound_text
+    names those of MAIN_REF's files that are not regular), are not regular files, or hold more than a file of their kind
+    does: every loose ref, walked under <common dir>/refs (and, in a linked worktree, under <git dir>/refs, which holds
+    that worktree's own refs), and each file of a ref `git <args>` names (_ref_files, less the directories of the
+    prefixes a call lists, which the walk covers and _limit_met names as directories), that is over scripts/sweep.py's
+    REF_FILE_MAX bytes, the most a loose ref file holds; and <common dir>/packed-refs, objects/info/alternates and
+    shallow when at least `limit` bytes, the limit the call ran under, since git reads or maps each whole and a real one
+    can hold far more than a loose ref (a clone of this project held one of 168,265 bytes on 2026-10-04). Each is named
+    with why: its type, by cannot_read's words, or its size. Not named: a file of the call's own that git reads by
+    another road (the index, a config file, or a state file of a merge or a bisect in the git dir: MERGE_MSG at a merge
+    or a commit, MERGE_AUTOSTASH at git merge --abort, BISECT_START at git bisect reset), and a smaller oversized file
+    that still took the call past the limit; the remedy's list of places covers them (_limit_met). Before ruling C a
+    GitMemory named the batch branch's loose file for a push and MAIN_REF's for a fetch, whatever the call had read."""
+    if repo is None or repo.common_dir is None:
+        return []
+    limits = git_limits()
+    odd, seen = [], set()
+
+    def note(path, st, whole):
+        """Name `path`, lstat'ed as `st`, when it is not a regular file, or is larger than a loose ref file holds
+        (`whole` False) or at least the call's limit (`whole` True)."""
+        seen.add(path)
+        if not stat.S_ISREG(st.st_mode):
+            odd.append("%s (%s)" % (path, limits._not_regular(st.st_mode)))
+        elif not whole and st.st_size > limits.REF_FILE_MAX:
+            odd.append("%s (%d bytes, more than the %d a loose ref file holds)" % (path, st.st_size, limits.REF_FILE_MAX))
+        elif whole and st.st_size >= limit:
+            odd.append("%s (%d bytes, at least the %s limit the call ran under, and git reads it whole)"
+                       % (path, st.st_size, limits.memory_text(limit)))
+
+    roots = [os.path.join(repo.common_dir, "refs")]
+    if repo.git_dir is not None and not same_dir(repo.git_dir, repo.common_dir):
+        roots.append(os.path.join(repo.git_dir, "refs"))
+    for root in roots:
+        stack = [root]
+        while stack:
+            d = stack.pop()
+            try:
+                st = os.lstat(d)
+                if not stat.S_ISDIR(st.st_mode):
+                    note(d, st, False)
+                    continue
+                entries = sorted(os.scandir(d), key=lambda e: e.name)
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                odd.append("%s (it could not be read: %s)" % (d, e.strerror or e))
+                continue
+            dirs = []
+            for e in entries:
+                try:
+                    st = e.stat(follow_symlinks=False)
+                except OSError as x:
+                    odd.append("%s (its lstat failed: %s)" % (e.path, x.strerror or x))
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    dirs.append(e.path)
+                else:
+                    note(e.path, st, False)
+            stack.extend(reversed(dirs))
+    for path, whole in ([(p, False) for p in _ref_files(args, repo)]
+                        + [(os.path.join(repo.common_dir, *f.split("/")), True)
+                           for f in ("packed-refs", "objects/info/alternates", "shallow")]):
+        if path in seen or path.endswith(os.sep):
+            continue
+        try:
+            st = os.lstat(path)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError as e:
+            odd.append("%s (its lstat failed: %s)" % (path, e.strerror or e))
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            note(path, st, whole)
+    return odd
+
+
+# The names git's rev-parse rules try for a short name, in order, up to refs/heads/<name> (ref_rev_parse_rules in git's
+# refs.c, git 2.43.0): git worktree add -B <name> and git checkout -B <name> look the name up by them once they have set
+# the branch, and open <common dir>/<name>, refs/<name> and refs/tags/<name> before they find refs/heads/<name>, from a
+# linked worktree too (traced on 2026-10-04): the files _ref_files names for those calls.
+SHORT_NAME_RULES = ("%s", "refs/%s", "refs/tags/%s", "refs/heads/%s")
 
 
 def _ref_files(args, repo):
     """The loose files, under `repo`'s common dir, of origin/main and of the batch branches that `git <args>` names (a
     full ref, a short batch/<name>, or either in a range, a ^ exclusion or a <rev>:<path>), and of origin/main for a
-    fetch from origin, which reads every refs/remotes/origin/ ref it updates: the ref files a GitMemory names."""
+    fetch from origin, which reads every refs/remotes/origin/ ref it updates: the files of the refs a call names, which
+    a GitMemory names when they are not regular files or are oversized (_odd_files). A word that ends in "/" is not a
+    ref but a prefix, under which for-each-ref lists the refs (pick_name's and other_remote_batches'
+    refs/remotes/origin/batch/): it gives the directory, with its trailing separator, which _odd_files passes over (its
+    walk of refs/ reads each loose ref in it) and the GitMemory names as a directory, "the loose refs under <dir>/"
+    (_limit_met; round 2 of PR 959, ruling D, extra4-3: before it, the directory was named as if it were a ref's file).
+    For git worktree add -B and git checkout -B (prepare_worktree), which look the branch's short name up by git's rules
+    once they have set the branch, the files of every name those rules try for it up to refs/heads/<name>
+    (SHORT_NAME_RULES), and for git checkout -B also the file of its start point as a local branch,
+    refs/heads/<start point>, which checkout looks for first: the files git opens for those calls, each under the
+    common dir, as a linked worktree's git opens them too (round 2 of PR 959, ruling D, fresh-2: before it, the
+    GitMemory of such a call named the files of the batch branch's and origin/main's full refs, and, from ruling C on,
+    the odd files its walk of refs/ found, but never <common dir>/batch/<name>, which is outside refs/)."""
     names = []
     for word in (w for a in args for w in re.split(r"\.\.\.?|[\^:]", a) if w):
         if word == MAIN_REF or word.startswith(("refs/heads/batch/", "refs/remotes/%s/batch/" % REMOTE)):
-            names.append(word.rstrip("/"))
+            names.append(word)
         elif word.startswith("batch/"):
             names.append("refs/heads/" + word)
+    if args and args[0] in ("worktree", "checkout") and "-B" in args[:-1]:
+        at = args.index("-B")
+        names += [rule % args[at + 1] for rule in SHORT_NAME_RULES]
+        if args[0] == "checkout" and at + 2 < len(args):
+            names.append(SHORT_NAME_RULES[-1] % args[at + 2])
     if args and args[0] == "fetch" and REMOTE in args:
         names.append(MAIN_REF)
     seen = []
@@ -860,16 +1170,22 @@ def read_state(path):
     a FIFO there, opened by name, held verify and assemble without end (the verify pass at PR 926's build head, its code
     finding 1). A regular file is read only when fstat gives it at most STATE_MAX bytes, of which no more are read, and a
     larger one (a sparse file included) is a Fail naming its size and the limit, as the runner's own reads are bounded
-    (scripts/sweep.py's read_regular; round 1 of PR 959, ruling A's class)."""
+    (scripts/sweep.py's read_regular; round 1 of PR 959, ruling A's class). read_small_file reads the same way."""
+    return read_small_file(path, STATE_MAX, "the batch state", "move it aside and plan again")
+
+
+def read_small_file(path, limit, what, remedy):
+    """The bytes of the file at `path`, read as read_state's docstring says, with `limit` the most bytes read; a refusal
+    is a Fail saying "<what> <path> cannot be read (...); <remedy>"."""
     kinds = {stat.S_IFIFO: "a FIFO", stat.S_IFLNK: "a symlink", stat.S_IFDIR: "a directory", stat.S_IFCHR: "a character device",
              stat.S_IFBLK: "a block device", stat.S_IFSOCK: "a socket"}
 
     def refuse(mode):
-        raise Fail("the batch state %s cannot be read (%s, not a regular file); move it aside and plan again"
-                   % (path, kinds.get(stat.S_IFMT(mode), "a file of another type")))
+        raise Fail("%s %s cannot be read (%s, not a regular file); %s"
+                   % (what, path, kinds.get(stat.S_IFMT(mode), "a file of another type"), remedy))
 
     def too_large(words):
-        raise Fail("the batch state %s cannot be read (%s); move it aside and plan again" % (path, words))
+        raise Fail("%s %s cannot be read (%s); %s" % (what, path, words, remedy))
     try:
         st = os.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
@@ -888,16 +1204,16 @@ def read_state(path):
         fst = os.fstat(fd)
         if not stat.S_ISREG(fst.st_mode):
             refuse(fst.st_mode)
-        if fst.st_size > STATE_MAX:
-            too_large("%d bytes, more than the %d batch.py reads" % (fst.st_size, STATE_MAX))
+        if fst.st_size > limit:
+            too_large("%d bytes, more than the %d batch.py reads" % (fst.st_size, limit))
         f = os.fdopen(fd, "rb")
     except BaseException:
         os.close(fd)
         raise
     with f:
-        data = f.read(STATE_MAX + 1)
-    if len(data) > STATE_MAX:
-        too_large("more than the %d bytes batch.py reads" % STATE_MAX)
+        data = f.read(limit + 1)
+    if len(data) > limit:
+        too_large("more than the %d bytes batch.py reads" % limit)
     return data
 
 
@@ -928,10 +1244,19 @@ def branch_of(name):
 
 def batch_ref(name):
     """The batch branch of `name` by its full ref, as the git calls that need only its commit name it (MAIN_REF's
-    comment): <git dir>/batch/<name>, a name git tries before refs/heads/batch/<name>, is in the directory that holds
-    the batch state. While the ref exists git opens no other name for it; an absent one sends git on through its rules,
-    and finish's existence check and bisect's cleanup checkout name the branch by branch_of, the short name, which
-    reads <git dir>/batch/<name> (each under GIT_MEMORY)."""
+    comment), and as finish's check that the local branch is still there and bisect's cleanups name it (the 22:25Z
+    ruling of 2026-10-03 on PR 959, item 1): <common dir>/batch/<name>, a name git tries before refs/heads/batch/<name>,
+    is in the directory that holds the batch state. While the ref exists git opens no other name for it; an absent one
+    sends a call that resolves it as a name on through the names its rules make of the full name, so finish's check
+    reads it with git show-ref --verify, which reads only the ref it is given. assemble's git worktree add -B and git
+    checkout -B (prepare_worktree) name the branch by branch_of, the short name, which git looks up by its rules once it
+    has set the branch, opening <common dir>/batch/<name>, refs/batch/<name> and refs/tags/batch/<name> before
+    refs/heads/batch/<name>, each under the common dir (SHORT_NAME_RULES), and git checkout -B looks its start point,
+    MAIN_REF, up as a local branch first, refs/heads/refs/remotes/origin/main; both run under GIT_MEMORY, and the
+    GitMemory of either names each of those files that is not a regular file or is oversized (_ref_files; the module
+    docstring names their witness);
+    branch_of's other uses name the branch in messages, to gh, to git branch -D, which names refs/heads/<its argument>
+    itself, and as the remote's branch in a push (git 2.43.0, traced on 2026-10-03)."""
     return "refs/heads/" + branch_of(name)
 
 
@@ -1329,6 +1654,10 @@ def prepare_worktree(root, name):
     is already this batch's worktree. That directory is the tool's, so resetting it is fine; the
     shared checkout is never touched."""
     wt = worktree_dir(root, name)
+    # Both calls below name the branch by its short name, which git looks up by its rules once it has set the branch,
+    # opening <common dir>/batch/<name>, refs/batch/<name> and refs/tags/batch/<name> before refs/heads/batch/<name>,
+    # and git checkout -B looks MAIN_REF up as a local branch first, refs/heads/<MAIN_REF> (batch_ref's docstring; a
+    # GitMemory of either names those files, _ref_files; the module docstring names the witness).
     br = branch_of(name)
     if os.path.isdir(wt) and git_ok("rev-parse", "--is-inside-work-tree", cwd=wt):
         if merge_in_progress(wt):
@@ -1423,14 +1752,37 @@ def staged_paths(wt, paths):
     return out
 
 
+def undone_paths(wt, paths):
+    """Among `paths`, those the index's resolve-undo record lists: each path the merge in progress left unmerged in
+    the index and that was then resolved there (git merge clears the record as it starts, so it holds that merge's
+    paths alone; git 2.43.0). Given to git literally, as staged_paths gives them."""
+    if not paths:
+        return []
+    wanted, out = set(paths), set()
+    listed = git_proc("--literal-pathspecs", "ls-files", "--resolve-undo", "-z", "--", *paths, cwd=wt).stdout
+    for entry in listed.split("\0"):
+        path = entry.partition("\t")[2]
+        if path in wanted:
+            out.add(path)
+    return sorted(out)
+
+
 def replayed_paths(wt, conflicted, still):
-    """The conflicted paths rerere replayed and staged: conflicted, not unmerged, and in the index at
-    stage 0. The last condition is not implied by the first two: for a distinct-types conflict (a file
-    on one side, a symlink on the other) merge-tree names the aside copy after the SHA it was given
-    (`notes.txt~<sha>`) while `git merge` names it `notes.txt~HEAD`, so the merge-tree path is
-    conflicted and not unmerged and exists nowhere; without the index check a first assembly said
-    rerere had replayed it."""
-    return sorted(staged_paths(wt, sorted(set(conflicted) - set(still))))
+    """The conflicted paths rerere replayed and staged: conflicted, not unmerged, in the index at stage 0, and in the
+    index's resolve-undo record (undone_paths), which lists the paths the merge left unmerged and that were resolved
+    after it; during git merge only rerere resolves one, staging the recorded resolution (rerere.autoUpdate). The
+    stage-0 condition is not implied by the first two: for a distinct-types conflict (a file on one side, a symlink on
+    the other) merge-tree names the aside copy after the SHA it was given (`notes.txt~<sha>`) while `git merge` names
+    it `notes.txt~HEAD`, so the merge-tree path is conflicted and not unmerged and exists nowhere; without the index
+    check a first assembly said rerere had replayed it. Nor is the record's: a merge option that git merge reads and
+    merge-tree does not (-Xours or -Xtheirs in the user's branch.<name>.mergeOptions, say) resolves a conflict inside
+    git merge, so the file is staged whole, nothing is unmerged, and merge-tree still names it conflicted, and before
+    this check a merge the clone's pre-merge-commit hook refused after such a resolution was read as rerere's replay
+    and committed with git commit, which does not run that hook (round 2's spot-check of PR 959, L3; refused_merge).
+    rerere's own files do not say which paths it replayed: it drops each one it replays from MERGE_RR, git rerere
+    status and git rerere remaining print nothing after a whole replay, as after such a refusal, and the empty MERGE_RR
+    git commit leaves after a replay is still there at the next merge (git 2.43.0, 2026-10-04)."""
+    return undone_paths(wt, staged_paths(wt, sorted(set(conflicted) - set(still))))
 
 
 def resolution_diff(cwd, merge, paths):
@@ -1675,6 +2027,25 @@ def base_branch_verdict(root, state, m):
     return "unknown", None
 
 
+def refused_merge(wt, still, replayed, what, proc):
+    """Abort the merge of `what` that `proc` left in progress in `wt`, and raise a Fail quoting what git printed, when
+    it stopped with nothing unmerged (`still`) and nothing rerere replayed (`replayed`, read from the index's
+    resolve-undo record, so a conflict a merge option such as -Xours resolved inside git merge is not a replay:
+    replayed_paths, round 2's spot-check of PR 959, L3): a hook refused it (a refusal by
+    pre-merge-commit, prepare-commit-msg or commit-msg each left MERGE_HEAD with nothing in conflict, git 2.43.0), and
+    git's output is the one place the hook's own words are. Before, such a stop was read as a merge rerere had resolved
+    whole and committed with git commit, which runs pre-commit, not pre-merge-commit, so a refusal by pre-merge-commit
+    was passed over and the log said rerere had replayed a recorded resolution (git commit runs the other two again). On
+    a git without merge-tree --write-tree (before 2.38), nothing reads as replayed (merge_tree_of gives no conflicted
+    paths), so a replay there cannot be told from a refusal and fails too, loudly, rather than committing a merge a hook
+    may have refused. No call passes --no-verify (GIT_SETTINGS' comment)."""
+    if still or replayed:
+        return
+    git("merge", "--abort", cwd=wt)
+    raise Fail("git merge of %s stopped with nothing in conflict (a hook refused it?):\n%s%s"
+               % (what, proc.stdout, proc.stderr))
+
+
 def merge_member(root, wt, state, m, resolve_set):
     """One member merge. Returns 'merged', 'contained' (its head was already in the batch, so no
     merge commit of its own), 'held', or 'stopped' (waiting for --continue)."""
@@ -1703,7 +2074,16 @@ def merge_member(root, wt, state, m, resolve_set):
             % (n, by, short(m["head"]), "; add Depends-on or reorder" if by != remote_main() else ""))
         return "contained"
     msg = "Merge #%d: %s" % (n, m["title"])
-    proc = run_git(["merge", "--no-ff", "--no-edit", "-m", msg, m["head"]], wt, env={"GIT_MERGE_AUTOEDIT": "no"})
+    # --no-log (round 2 of PR 959, ruling D, fresh-3): with merge.log set, in the clone's config or the user's, or --log
+    # in the branch's mergeOptions, git merge appends a shortlog of the merged commits to the message even under -m,
+    # and to describe the commit it merges it looks the full id up as a ref name under every rule (<common dir>/<sha>,
+    # refs/<sha>, refs/tags/<sha>, refs/heads/<sha>, refs/remotes/<sha> and refs/remotes/<sha>/HEAD), whatever
+    # core.warnAmbiguousRefs says, so a symlink to /dev/zero at refs/tags/<member head> stopped the merge (git 2.43.0,
+    # traced on 2026-10-04). --no-log, which outranks the config and mergeOptions, drops that shortlog, so the commit's
+    # message is the subject alone; batch.py reads only a merge's subject (subject_of), so nothing it relies on
+    # changes. merge_main passes it for the same reason.
+    proc = run_git(["merge", "--no-ff", "--no-edit", "--no-log", "-m", msg, m["head"]], wt,
+                   env={"GIT_MERGE_AUTOEDIT": "no"})
     if proc.returncode == 0:
         sha = git("rev-parse", "HEAD", cwd=wt)
         if sha == before or parents_of(sha, wt) != [before, m["head"]]:
@@ -1722,6 +2102,7 @@ def merge_member(root, wt, state, m, resolve_set):
     _, _, would = merge_tree_of(before, m["head"], wt)
     conflicted = sorted(set(still) | set(would or []))
     replayed = replayed_paths(wt, conflicted, still)
+    refused_merge(wt, still, replayed, "#%d" % n, proc)
     resolved = None
     if not still and merge_in_progress(wt):
         # rerere replayed a recorded resolution and staged the result (rerere.autoUpdate). The review
@@ -1845,7 +2226,9 @@ def merge_main(root, wt, state):
         print("%s (%s) is already in %s" % (remote_main(), short(main_sha), branch_of(state["name"])))
         return True
     msg = "Merge %s into %s" % (remote_main(), branch_of(state["name"]))
-    proc = run_git(["merge", "--no-ff", "--no-edit", "-m", msg, main_sha], wt, env={"GIT_MERGE_AUTOEDIT": "no"})
+    # --no-log, so git looks main's id up as no ref name and appends no shortlog (merge_member's comment)
+    proc = run_git(["merge", "--no-ff", "--no-edit", "--no-log", "-m", msg, main_sha], wt,
+                   env={"GIT_MERGE_AUTOEDIT": "no"})
     resolved = None
     if proc.returncode == 0:
         sha = git("rev-parse", "HEAD", cwd=wt)
@@ -1856,6 +2239,7 @@ def merge_main(root, wt, state):
         _, _, would = merge_tree_of(git("rev-parse", "HEAD", cwd=wt), main_sha, wt)
         conflicted = sorted(set(still) | set(would or []))
         replayed = replayed_paths(wt, conflicted, still)
+        refused_merge(wt, still, replayed, remote_main(), proc)
         if still:
             state["assembly"]["cursor"] = {"n": None, "main": main_sha, "files": conflicted, "replayed": replayed}
             log(state, "the merge of %s stopped for resolution in %s%s; resolve per hunk in %s, `git add` the files, then "
@@ -3479,7 +3863,14 @@ def cmd_finish(args):
     wt = worktree_dir(root, args.name)
     if not args.keep_worktree and os.path.isdir(wt):
         git("worktree", "remove", "--force", wt, cwd=root)
-    if git_ok("rev-parse", "--verify", "--quiet", branch_of(args.name), cwd=root) and not args.keep_worktree:
+    # The batch branch by its full ref, read with git show-ref --verify, which reads only refs/heads/batch/<name>,
+    # loose or packed, whether it exists or not (the 22:25Z ruling of 2026-10-03 on PR 959, item 1). Its short name
+    # sends rev-parse through git's rules, which read <common dir>/batch/<name> (beside the batch state),
+    # refs/batch/<name> and refs/tags/batch/<name> before refs/heads/batch/<name>; and rev-parse --verify of the full
+    # ref, once the branch is gone (a finish run again after one that died past its git branch -D), walks
+    # refs/refs/heads/batch/<name>, refs/tags/refs/heads/batch/<name> and the rest. git branch -D names
+    # refs/heads/<its argument> itself, and reads no other name (git 2.43.0, traced on 2026-10-03).
+    if git_ok("show-ref", "--verify", "--quiet", batch_ref(args.name), cwd=root) and not args.keep_worktree:
         git("branch", "-D", branch_of(args.name), cwd=root)
     try:
         orphans = run_tool([os.path.join(root, "scripts", "pr-orphans.sh")], root)
@@ -3587,6 +3978,122 @@ def first_parent_report(name, b, fp):
             "on the merge to %s). %s" % (b, merge, parent, seen, MAIN, MAIN, MAIN, MAIN, remedy))
 
 
+def restore_branch_tree(wt, name, force):
+    """Put batch/<name>'s tree in the batch worktree's index and files, as git checkout of the branch does, naming the
+    branch by its full ref (batch_ref) and leaving HEAD where it is: with `force`, `git read-tree --reset -u`, which
+    discards every change to tracked files, as git checkout --force does; without it, the index refreshed (git checkout
+    refreshes it too, so a file only touched is not read as changed) and then `git read-tree -m -u HEAD <branch>`, the
+    two-way merge git checkout makes, which keeps each change that is not to a file the two trees hold differently and
+    refuses, with git's error raised here, when one is. cmd_bisect's comment on its cleanups gives the measurements."""
+    bref = batch_ref(name)
+    if force:
+        git("read-tree", "--reset", "-u", bref, cwd=wt)
+        return
+    git("update-index", "-q", "--refresh", cwd=wt, check=False)
+    git("read-tree", "-m", "-u", "HEAD", bref, cwd=wt)
+
+
+def attach_to_branch(wt, name, old):
+    """Point the batch worktree's HEAD at batch/<name>, by its full ref, without touching its index or files, with the
+    reflog line git checkout writes for the same move from `old`, the commit HEAD was at. git symbolic-ref skips the
+    check git checkout makes first, that no other worktree holds the branch, so it is made here (held_elsewhere): a
+    worktree that took the branch while bisect's command ran is a Fail naming it, and HEAD stays detached at `old`."""
+    held = held_elsewhere(wt, name)
+    if held:
+        raise Fail("%s is checked out in another worktree at %s; git allows a branch in one worktree at a time, so %s is "
+                   "left detached at %s, with the branch's tree. Take the branch off that worktree (git checkout --detach "
+                   "there, or end its bisect or rebase), then run `git -C %s symbolic-ref HEAD %s`."
+                   % (branch_of(name), held, wt, short(old), wt, batch_ref(name)))
+    git("symbolic-ref", "-m", "checkout: moving from %s to %s" % (old, branch_of(name)), "HEAD", batch_ref(name),
+        cwd=wt)
+
+
+# The most bytes held_elsewhere reads of a file in a worktree's git dir (BISECT_START, a rebase's head-name, a linked
+# worktree's gitdir): each holds a branch's name, an object id or a path, and a path on Linux is at most 4096 bytes.
+GIT_DIR_FILE_MAX = 1 << 16
+
+
+def held_elsewhere(wt, name):
+    """The path of a worktree other than `wt` that holds batch/<name> by the rule git checkout applies before it puts a
+    worktree on a branch (one branch, one worktree; is_shared_symref in git 2.43.0's worktree.c), or None: its HEAD
+    names refs/heads/batch/<name>, or it is detached with a bisect started from batch/<name> or a rebase of batch/<name>
+    in progress (_started_from). The worktrees and their HEADs are read from git worktree list --porcelain; a detached
+    one's git dir is the common dir for the main worktree, the first listed, and for a linked one the directory under
+    <common dir>/worktrees whose gitdir file names its path (_linked_git_dirs)."""
+    bref = batch_ref(name)
+    entries = []
+    for block in git("worktree", "list", "--porcelain", cwd=wt).split("\n\n"):
+        entry = dict(line.partition(" ")[::2] for line in block.splitlines())
+        if "worktree" in entry:
+            entries.append(entry)
+    common = repo_for(wt).common_dir
+    linked = None
+    for i, entry in enumerate(entries):
+        path = entry["worktree"]
+        if "bare" in entry or same_dir(path, wt):
+            continue
+        if entry.get("branch") == bref:
+            return path
+        if "detached" not in entry:
+            continue
+        if i:
+            linked = _linked_git_dirs(common) if linked is None else linked
+            gd = linked.get(path)
+        else:
+            gd = common
+        if gd is not None and _started_from(gd, name):
+            return path
+    return None
+
+
+def _git_dir_file(path):
+    """The text of a file in a worktree's git dir, or None when nothing is there, read with read_small_file at
+    GIT_DIR_FILE_MAX bytes (a FIFO, a symlink or a larger file is a Fail naming it)."""
+    data = read_small_file(path, GIT_DIR_FILE_MAX, "the git file", "move it aside and run the command again")
+    return None if data is None else data.decode("utf-8", "replace")
+
+
+def _linked_git_dirs(common):
+    """{a linked worktree's path: its git dir} for each directory under <common>/worktrees, the path read from its gitdir
+    file as git reads it (trailing whitespace and then a final /.git removed; a relative path taken from that
+    directory)."""
+    found = {}
+    base = os.path.join(common, "worktrees")
+    try:
+        ids = sorted(os.listdir(base))
+    except (FileNotFoundError, NotADirectoryError):
+        return found
+    for wid in ids:
+        gd = os.path.join(base, wid)
+        text = _git_dir_file(os.path.join(gd, "gitdir"))
+        if text is None:
+            continue
+        path = text.rstrip()
+        path = path[:-len("/.git")] if path.endswith("/.git") else path
+        found[path if os.path.isabs(path) else os.path.realpath(os.path.join(gd, path))] = gd
+    return found
+
+
+def _started_from(gd, name):
+    """Whether the worktree whose git dir is `gd` has a bisect started from batch/<name> or a rebase of batch/<name> in
+    progress, by git's rule (wt_status_check_bisect and wt_status_check_rebase, git 2.43.0): BISECT_LOG there and
+    BISECT_START naming the branch; or rebase-apply there, and not an am (no rebase-apply/applying), with
+    rebase-apply/head-name naming it; or, with no rebase-apply, rebase-merge there with rebase-merge/head-name naming
+    it. A file names the branch when its text, its final newlines removed and then a leading refs/heads/, is
+    batch/<name>."""
+    def names(rel):
+        text = _git_dir_file(os.path.join(gd, rel))
+        if text is None:
+            return False
+        text = text.rstrip("\n")
+        return (text[len("refs/heads/"):] if text.startswith("refs/heads/") else text) == branch_of(name)
+    if os.path.exists(os.path.join(gd, "BISECT_LOG")) and names("BISECT_START"):
+        return True
+    if os.path.exists(os.path.join(gd, "rebase-apply")):
+        return not os.path.exists(os.path.join(gd, "rebase-apply", "applying")) and names("rebase-apply/head-name")
+    return os.path.exists(os.path.join(gd, "rebase-merge")) and names("rebase-merge/head-name")
+
+
 def cmd_bisect(args):
     """First-parent bisect of the batch chain. The command is run at the tip and at the base FIRST:
     `git bisect` takes "tip bad, base good" on faith, so a command that never fails would name the
@@ -3603,31 +4110,70 @@ def cmd_bisect(args):
     base = git("merge-base", MAIN_REF, tip, cwd=wt)
     if git("rev-parse", "HEAD", cwd=wt) != tip:
         raise Fail("%s is not checked out at %s (HEAD is %s)" % (wt, br, short(git("rev-parse", "HEAD", cwd=wt))))
+    held = held_elsewhere(wt, args.name)
+    if held:
+        raise Fail("%s is checked out in another worktree at %s; git allows a branch in one worktree at a time. Take it off "
+                   "that worktree (git checkout --detach there, or end its bisect or rebase), then run bisect again."
+                   % (br, held))
     if run_command(args.cmd, wt) == 0:
         raise Fail("the command passes at the batch tip %s; nothing to bisect (does it run the failing test?)" % short(tip))
     # Each setup step is inside the try whose finally undoes it (the 13:24Z ruling of 2026-10-02 on PR 926, its item 1),
     # so a stop that ends the step's git after it has moved HEAD (a post-checkout hook still running, say) still runs
     # the cleanup: outside it, such a stop left the worktree detached at the base, or mid-bisect at the midpoint, while
-    # main said the cleanup ran. A bisect reset with no bisect in progress changes nothing (git says it is not
-    # bisecting, and the cleanup's check=False takes any exit). A checkout of the branch the worktree is already on keeps
-    # what its index and files hold, and a checkout's git writes the other commit's files and index before it moves
-    # HEAD: a stop between the two (git waiting on a FIFO planted at the worktree's logs/HEAD, which it writes in
-    # between) left the worktree on the branch with the base's or the midpoint's tree staged, and the next bisect
-    # refused, saying the command passes at the tip (the verify pass at the build of the 13:24Z ruling, its code finding
-    # 1). So when the worktree has no changes to tracked files before these steps, the cleanup's checkout of the branch
-    # is forced, putting the branch's tree back in the index and the files, and the bisect's cleanup runs that forced
-    # checkout before its reset, whose own checkout of the branch keeps them too. A worktree that had changes to
-    # tracked files keeps the unforced checkout and the reset alone, so the cleanup discards none of them. The batch
-    # worktree is this tool's own, and these cleanups run whenever bisect ends, stopped or not: with the worktree clean
-    # here, the forced checkout discards every change the test command made to tracked files at the base and at each
-    # commit the bisect tested (kept, the 21:31Z ruling of 2026-10-02 on PR 926, its item (a); docs/batching.md says
-    # so). A change the command made in its run at the tip is already in the worktree here, so nothing is forced.
-    force = ["--force"] if git("status", "--porcelain", "--untracked-files=no", cwd=wt) == "" else []
+    # main said the cleanup ran. A checkout's git writes the other commit's files and index before it moves HEAD: a stop
+    # between the two (git waiting on a FIFO planted at the worktree's logs/HEAD, which it writes in between) left the
+    # worktree on the branch with the base's or the midpoint's tree staged, and the next bisect refused, saying the
+    # command passes at the tip (the verify pass at the build of the 13:24Z ruling, its code finding 1). So when the
+    # worktree has no changes to tracked files before these steps, each cleanup puts the branch's tree back in the index
+    # and the files, forced, and the one after the steps does so before it ends the bisect. A worktree that had changes
+    # to tracked files gets the unforced two-way merge, so the cleanup discards none of them. The batch worktree is this
+    # tool's own, and these cleanups run whenever bisect ends, stopped or not: with the worktree clean here, the forced
+    # restore discards every change the test command made to tracked files at the base and at each commit the bisect
+    # tested (kept, the 21:31Z ruling of 2026-10-02 on PR 926, its item (a); docs/batching.md says so). A change the
+    # command made in its run at the tip is already in the worktree here, so nothing is forced.
+    # The cleanups name the branch by its full ref alone (the 22:25Z ruling of 2026-10-03 on PR 959, item 1). git
+    # checkout leaves a worktree on a branch only when given the branch's short name, which it looks up by git's
+    # rev-parse rules, and git bisect reset of a bisect started on the branch checks out the short name git bisect start
+    # recorded, the same way: both read <common dir>/batch/<name> (beside the batch state), refs/batch/<name> and
+    # refs/tags/batch/<name> before refs/heads/batch/<name>, and a leg can leave a symlink to /dev/zero at any of those
+    # through its checkout's alternates. So each cleanup puts the branch's tree in the index and the files
+    # (restore_branch_tree), the one after the steps then ends the bisect with a plain git bisect reset, which checks
+    # nothing out while BISECT_HEAD exists (the bisect runs with --no-checkout, below), and HEAD is pointed at the
+    # branch last (attach_to_branch), after the tree is there, so a cleanup whose restore fails, or that is killed
+    # between its steps, leaves HEAD detached at the commit it was at rather than on the branch over another commit's
+    # tree. Neither cleanup reads a name git's rules make of the branch's short name or of a commit's id (traced with
+    # git 2.43.0 on 2026-10-04), except where git bisect start ended before it wrote BISECT_HEAD (the comment at the
+    # cleanup after the steps). Before the verify pass at that ruling's build (its F1), the cleanup after the steps
+    # ended the bisect with git bisect reset <tip>, which looks the tip's id up by those rules, so a symlink to
+    # /dev/zero the command left at refs/tags/<tip> during the steps stopped it. Measured on 2026-10-04 with git 2.43.0
+    # against the cleanups before the ruling (git checkout [--force] batch/<name>, and after the steps a plain git
+    # bisect reset of a bisect started on the branch), in 19 cases (14 after the run at the base, 5 after the steps: a
+    # clean worktree; changes to tracked files that the move keeps, discards or refuses; a staged change; a deleted
+    # file; a file only touched; an untracked file in the way; the checkout of the base refused): the same HEAD, branch,
+    # index, files, ORIG_HEAD and bisect state each time, and a move refused in the same cases among them, but for the
+    # move refused after the steps, which leaves HEAD detached at the midpoint with the bisect in progress either way,
+    # now with BISECT_HEAD among the bisect's files, and which now fails bisect, where git bisect reset's refusal was
+    # ignored and bisect exited 0. The last reflog line names the commit HEAD was at when the cleanup began, as git
+    # checkout's does when HEAD is detached then and the cleanup moves it. It differs from git checkout's in three of
+    # those cases, where git checkout's named the branch: after the run at the base when HEAD never left the branch (git
+    # checkout --detach <base> refused, or stopped before it moved HEAD), and after the steps with the restore forced
+    # (two cases), where git bisect reset checked the branch out again after git checkout --force had. In the case
+    # refused after the steps, the last reflog line is the one batch.py's checkout of the midpoint wrote, which names
+    # the tip as the commit HEAD moved from, where bisect's own checkout named the branch. The cleanups' moves run no
+    # post-checkout hook (git read-tree, git symbolic-ref and a git bisect reset that checks nothing out run none), and
+    # a move an unforced restore refuses is refused in git read-tree's words. One refusal git checkout makes is not git
+    # symbolic-ref's: a branch is checked out in one worktree at a time, so git checkout will not put a worktree on a
+    # branch another worktree holds. held_elsewhere applies that rule, in git checkout's terms, when bisect starts (a
+    # refusal there moves nothing) and again before each move of HEAD to the branch (attach_to_branch), so a worktree
+    # that took the branch while the command ran leaves the batch worktree detached, naming it (the verify pass at that
+    # ruling's build, its F4).
+    force = git("status", "--porcelain", "--untracked-files=no", cwd=wt) == ""
     try:
         git("checkout", "--quiet", "--detach", base, cwd=wt)
         at_base = run_command(args.cmd, wt)
     finally:
-        _cleanup_steps(lambda: git("checkout", "--quiet", *force, br, cwd=wt))
+        _cleanup_steps(lambda: restore_branch_tree(wt, args.name, force),
+                       lambda: attach_to_branch(wt, args.name, git("rev-parse", "HEAD", cwd=wt)))
     if at_base != 0:
         raise Fail("the command fails at the base %s (%s) too; no member made it fail. Check the command and the environment before blaming a member"
                    % (short(base), remote_main()))
@@ -3637,15 +4183,28 @@ def cmd_bisect(args):
     # take longer.
     # Each git step is bounded; the command is not, as the runs at the tip and the base above are not. Each step tests
     # another commit of the chain, so there are at most as many as it has commits, plus one.
+    # The bisect runs with --no-checkout (the 22:25Z ruling of 2026-10-03 on PR 959, item 1, and the verify pass at that
+    # ruling's build, its F1): git bisect start and each good, bad or skip step move BISECT_HEAD, not HEAD, and batch.py
+    # checks out each commit to test itself, with git checkout --detach of BISECT_HEAD's id, which reads the names git's
+    # rules make of that id, as bisect's own checkout of it did. HEAD is first detached at the tip, by its id, with git
+    # update-ref --no-deref, which looks no name up: git bisect start --no-checkout looks up, by git's rules, the start
+    # it records in BISECT_START, which is the branch's short name when it starts on the branch
+    # (<common dir>/batch/<name> first) and the tip's id when it starts detached, an id git bisect start looks up anyway
+    # as one of the commits it is given; started detached it also looks HEAD up by those rules (refs/HEAD,
+    # refs/tags/HEAD and the rest), where started on the branch it looked up the names of refs/heads/batch/<name>
+    # (refs/tags/refs/heads/batch/<name> and the rest) (git 2.43.0, measured on 2026-10-04).
     steps = int(git("rev-list", "--first-parent", "--count", "%s..%s" % (base, tip), cwd=wt)) + 1
+    bad = None
     try:
-        proc = git_proc("bisect", "start", "--first-parent", tip, base, cwd=wt)
+        git("update-ref", "--no-deref", "-m", "checkout: moving from %s to %s" % (br, tip), "HEAD", tip, cwd=wt)
+        proc = git_proc("bisect", "start", "--no-checkout", "--first-parent", tip, base, cwd=wt)
         out = proc.stdout + proc.stderr
         m = _FIRST_BAD.search(out)
         while not m:
             steps -= 1
             if steps < 0:
                 raise Fail("bisect took more steps than the chain has commits, at %s" % short(git("rev-parse", "HEAD", cwd=wt)))
+            git("checkout", "--quiet", "--detach", git("rev-parse", "--verify", "BISECT_HEAD", cwd=wt), cwd=wt)
             rc = run_command(args.cmd, wt)
             if rc not in range(0, 128):
                 raise Fail("bisect stopped at %s: the command exited %d, and git bisect run stops on an exit of 128 or more, or "
@@ -3657,14 +4216,51 @@ def cmd_bisect(args):
                 raise Fail("bisect did not name a first bad commit:\n%s" % out[-2000:])
         bad = m.group(1)
     finally:
-        back = [lambda: git("checkout", "--quiet", "--force", br, cwd=wt)] if force else []
-        _cleanup_steps(*back, lambda: git("bisect", "reset", cwd=wt, check=False))
+        # The branch's tree back (forced when the worktree had no changes to tracked files before the steps), the bisect
+        # ended, and HEAD pointed at the branch, in that order. A plain git bisect reset checks nothing out while
+        # BISECT_HEAD exists, and only ends the bisect; without it (git bisect start ended before it wrote BISECT_HEAD)
+        # it checks out what BISECT_START records, the tip by its id, so it runs before HEAD is pointed at the branch.
+        # When a step fails after the first bad commit was found, that commit is printed and carried in the Fail raised,
+        # so the answer is not lost and the run does not report success over a worktree left off the branch (the verify
+        # pass at the 22:25Z ruling's build, its F6 and F1's fifth point).
+        try:
+            _cleanup_steps(lambda: restore_branch_tree(wt, args.name, force), lambda: git("bisect", "reset", cwd=wt),
+                           lambda: attach_to_branch(wt, args.name, git("rev-parse", "HEAD", cwd=wt)))
+        except Fail as e:
+            if bad is None:
+                raise
+            print(first_bad_line(state, bad, wt))
+            raise Fail(bisect_cleanup_failed(wt, args.name, bad, e)) from None
+    print(first_bad_line(state, bad, wt))
+
+
+def first_bad_line(state, bad, wt):
+    """The line bisect prints for the first bad commit `bad`: the member whose merge it is, or the commit's subject."""
     members = members_by_n(state)
     hit = next((e for e in state["assembly"].get("merged", []) if e["merge"] == bad), None)
     if hit:
-        print("first bad: #%d %s (merge %s); pull it and say why in the body" % (hit["n"], members[hit["n"]]["title"], short(bad)))
-    else:
-        print("first bad: %s (%s), not a member merge" % (short(bad), subject_of(bad, wt)))
+        return "first bad: #%d %s (merge %s); pull it and say why in the body" % (hit["n"], members[hit["n"]]["title"], short(bad))
+    return "first bad: %s (%s), not a member merge" % (short(bad), subject_of(bad, wt))
+
+
+def bisect_cleanup_failed(wt, name, bad, e):
+    """The message of the Fail bisect raises when its cleanup after the steps stopped at `e`, a Fail, after the first
+    bad commit `bad` was found (its line is printed first): that commit, the error, the state the batch worktree is
+    left in, read as it is now (HEAD's commit, on the branch or detached, and whether a bisect is in progress), and how
+    to put it back on the branch, named by its full ref."""
+    bref = batch_ref(name)
+    try:
+        head = short(git("rev-parse", "HEAD", cwd=wt))
+        on = git_proc("symbolic-ref", "-q", "HEAD", cwd=wt, check=False).stdout.strip() == bref
+        bisecting = os.path.lexists(os.path.join(repo_for(wt).git_dir, "BISECT_START"))
+        left = "%s at %s, with %s" % ("on " + branch_of(name) if on else "detached", head,
+                                      "the bisect in progress" if bisecting else "no bisect in progress")
+    except Fail as unread:
+        left = "in a state batch.py could not read (%s)" % unread
+    return ("bisect named the first bad commit, %s (printed above), but its cleanup did not finish: %s\nThe batch "
+            "worktree %s is left %s. To put it back on %s at the tip, commit or discard any change git names above, then "
+            "run `git -C %s checkout --detach %s`, `git -C %s bisect reset` and `git -C %s symbolic-ref HEAD %s`."
+            % (short(bad), str(e).rstrip(), wt, left, branch_of(name), wt, bref, wt, wt, bref))
 
 
 # ── entry point ──────────────────────────────────────────────────────────────

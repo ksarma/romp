@@ -14,8 +14,10 @@ The census is a text scan. It reads every tracked file (`git ls-files` at the re
 its first 8000 bytes, git's own test), whatever directory it is in, since a test runs code from tests/, scripts/,
 .githooks/, bin/, kernel/, tools/, ui/ and more; of a Markdown file only the lines inside fenced code blocks, at any
 indent, in a list item or a blockquote too, since a test runs a fenced block (tests/test_env_credential_names.py runs
-one of docs/reference.md's) and never the prose around one; and not this file, which runs `git ls-files` and nothing
-else, or HITS, its fixture, which runs nothing, and whose texts hold every spelling it looks for. A line is a hit when it carries a spelling git resolves to
+one of docs/reference.md's) and never the prose around one; and none of the census files (CENSUS_FILES: this file and
+HITS, tests/test_branch_name_readers.py and its fixture, and tests/ref_reader_census.py, the machinery the two censuses
+share), which run `git ls-files` and nothing else, or run nothing, and whose texts hold every spelling the censuses look
+for. A line is a hit when it carries a spelling git resolves to
 refs/remotes/origin/main, or one a reader composes that ref from (SPELLINGS): the ref itself (origin/main,
 refs/remotes/origin, remotes/origin, origin/HEAD); the upstream and push shorthands (@{u}, @{upstream}, @{push}, in any
 case); a remote-tracking prefix with the remote composed (refs/remotes/ or remotes/ followed by anything but origin);
@@ -65,27 +67,23 @@ No test reads the checkout's own origin/main at this head: READERS is empty, and
 tests/gitleaks-config.bats reads HEAD alone. Fork PR 954 makes that case read it (history_scan_range, called on the
 checkout); a merge that brings it reds this pin on that file until its hits are judged and its reader is listed.
 """
-import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import unittest
-from collections import Counter
 from pathlib import Path
+
+from tests import ref_reader_census
+from tests.ref_reader_census import (HEX_RUN, NOT_A_READ, SYNTHETIC, Census, pinned_text, scanned_lines, tracked_files,
+                                     unpinned)
 
 ROOT = Path(__file__).resolve().parent.parent
 HERE = "tests/test_origin_main_readers.py"
 # {path: [each judged hit line, stripped, as pinned_text gives it, sorted]}: the lines of each CLASSIFIED file judged so
 # far, written with json.dump(..., ensure_ascii=True, sort_keys=True, indent=1), so the tree stays ASCII. It holds every
-# spelling, so the census reads it no more than it reads this file.
+# spelling, so the census reads it no more than it reads this file (CENSUS_FILES).
 HITS = "tests/fixtures/origin-main-hits.json"
-# A run of seven or more lowercase hex digits standing alone, which pinned_text writes as HEX_RUN, so the judged lines
-# carry no commit id that a hit line quotes (tools/viewer-resize-summarize.mjs names two trees by theirs); a change to
-# such a run alone is not a change the census judges.
-_HEX_RUN = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{7,}(?![0-9A-Za-z])")
-HEX_RUN = "<hex>"
 
 # A branch listing of every remote-tracking ref or every ref: git branch, or git show-branch, with -r or -a among its
 # short options, or --remotes or --all spelled out or cut to a prefix git accepts (git 2.43.0, 2026-10-03, by running
@@ -119,12 +117,6 @@ SPELLINGS = (
 # Every line a spelling can match holds one of these, so the lines that hold none are not matched against SPELLINGS.
 _CANDIDATE = re.compile(r"origin|remotes|@\{|/main|--all|--glob|for-each-ref|show-ref|name-rev|decorate|branch"
                         r"|%|reflog|:/|ls-remote|fetch|push", re.IGNORECASE)
-# A fence opens at the first run of three or more backticks or tildes anywhere on a line, as the test that runs a fenced
-# block finds one (an unanchored search), so a fence in a list item or a blockquote, at any indent, is read; it closes on
-# a line holding only a run of the same character, at least as long, after any indent or quote marks.
-_FENCE_OPEN = re.compile(r"`{3,}|~{3,}")
-_FENCE_CLOSE = re.compile(r"[ \t>]*(`{3,}|~{3,})[ \t]*")
-
 # The most consecutive lines split_hits joins to read a spelling written across them: an argument list over three lines
 # (["git",\n "branch",\n "-r"]) is the longest such shape the census looks for.
 WINDOW = 3
@@ -138,8 +130,6 @@ SPLIT_SPELLINGS = (("a read of every ref or every remote-tracking ref", re.compi
 _SPLIT_CANDIDATE = re.compile(r"branch|:/|fetch|push|ls-remote|remotes|origin")
 
 READS = "reads the checkout's origin/main"
-SYNTHETIC = "a repository the test builds"
-NOT_A_READ = "not a read"
 
 # The lines that read the checkout's own origin/main: (path, text the line holds, why). Each one's file is in
 # CLASSIFIED too, with READS among its kinds. None at this head (the module docstring).
@@ -169,7 +159,8 @@ CLASSIFIED = {
                                              "branch and, two lines on, the -refused rows (split_hits)"),
     "scripts/batch.py": ((SYNTHETIC, NOT_A_READ),
                          "REMOTE, in MAIN_REF and remote_ref (full refs) and in remote_main (messages), and listed "
-                         "under refs/remotes/origin/batch/, is read in the batch tool's clone (ROMP_BATCH_REPO, else the "
+                         "under refs/remotes/origin/batch/, is read in the batch tool's clone, as is every ref listed "
+                         "before a call that runs that clone's hooks (_refs_listed) (ROMP_BATCH_REPO, else the "
                          "directory above its scripts/); the tests run it in a clone they build "
                          "(tests/test_batch_tool.py: Fixture.__init__ copies it into its dev clone, or ROMP_BATCH_REPO "
                          "names a built repository), and its runs of this checkout's copy print help or meet a planted "
@@ -205,7 +196,9 @@ CLASSIFIED = {
     "tests/pre-push-message.bats": ((SYNTHETIC,), "the repository setup builds ($REPO)"),
     "tests/release-sh.bats": ((SYNTHETIC, NOT_A_READ), "the stub's push in the repository setup builds; comments"),
     "tests/test_batch_tool.py": ((SYNTHETIC, NOT_A_READ),
-                                 "the Fixture's bare origin and its clones (Fixture.__init__); expected texts"),
+                                 "the Fixture's bare origin and its clones (Fixture.__init__), git's rev-parse rules "
+                                 "among them naming where the batch pins plant in a Fixture's clone (REV_PARSE_RULES); "
+                                 "expected texts"),
     "tests/test_ci_secret_scan.py": ((NOT_A_READ,), "reads ci.yml's text; runs no git"),
     "tests/test_codex_backend.py": ((NOT_A_READ,), "comments naming origin/main as the code before a fix"),
     "tests/test_converge_declined.py": ((SYNTHETIC,), "_release_remote stubbed, ROOT the clone setUp builds"),
@@ -254,183 +247,37 @@ CLASSIFIED = {
 }
 
 
-def tracked_files(root=ROOT):
-    """The tracked paths of the repository at `root`, from `git ls-files -z` there with no GIT_* variable of the caller's
-    (one naming another repository would list that one). A failure to list is the test's own error, in git's words,
-    never an empty census."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    r = subprocess.run(["git", "ls-files", "-z"], cwd=str(root), env=env, capture_output=True, timeout=120)
-    if r.returncode != 0:
-        raise AssertionError("git ls-files failed in %s (exit %d): %s"
-                             % (root, r.returncode, r.stderr.decode("utf-8", "replace").strip()))
-    rels = sorted(x.decode("utf-8", "surrogateescape") for x in r.stdout.split(b"\0") if x)
-    if not rels:
-        raise AssertionError("git ls-files listed nothing in %s" % root)
-    return rels
+CENSUS = Census(SPELLINGS, _CANDIDATE, SPLIT_SPELLINGS, _SPLIT_CANDIDATE, WINDOW, HITS, READS,
+                "the origin/main of the checkout the test runs in", "origin/main")
 
 
 def spelled(line):
     """The SPELLINGS `line` carries, by what each is."""
-    if not _CANDIDATE.search(line):
-        return []
-    return [what for what, rx in SPELLINGS if rx.search(line)]
-
-
-def scanned_lines(rel, text):
-    """(line number, line) for every line of `text` the census reads: all of them, but for a Markdown file only those
-    inside a fenced code block (a fence opens at the first run of three or more backticks or tildes on a line, at any
-    indent, in a list item or a blockquote, and closes on a line of the same character, at least as many, and nothing
-    else but indent and quote marks)."""
-    lines = text.splitlines()
-    if not rel.endswith(".md"):
-        return list(enumerate(lines, 1))
-    out, fence = [], None
-    for n, line in enumerate(lines, 1):
-        if fence is None:
-            m = _FENCE_OPEN.search(line)
-            if m:
-                fence = m.group(0)
-            continue
-        m = _FENCE_CLOSE.fullmatch(line)
-        if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
-            fence = None
-            continue
-        out.append((n, line))
-    return out
+    return CENSUS.spelled(line)
 
 
 def census(root=ROOT, rels=None):
     """{path: [(line number, the line stripped)]}: every hit, by file, over the tracked text files at `root` (all but
-    this file and HITS)."""
-    hits = {}
-    for rel in tracked_files(root) if rels is None else rels:
-        if rel in (HERE, HITS):
-            continue
-        path = os.path.join(str(root), rel)
-        if os.path.islink(path) or not os.path.isfile(path):
-            continue
-        data = Path(path).read_bytes()
-        if b"\0" in data[:8000]:
-            continue
-        text = data.decode("utf-8", errors="replace")
-        if not _CANDIDATE.search(text):
-            continue
-        scanned = scanned_lines(rel, text)
-        each = [set(spelled(line)) for _n, line in scanned]
-        for (n, line), kinds in zip(scanned, each):
-            if kinds:
-                hits.setdefault(rel, []).append((n, line.strip()))
-        for n, joined in split_hits(scanned, each):
-            hits.setdefault(rel, []).append((n, joined))
-    return hits
+    CENSUS_FILES)."""
+    return CENSUS.census(root, rels)
 
 
 def split_hits(scanned, each=None):
-    """(the first line's number, the lines joined by a space, each stripped) for every run of two up to WINDOW
-    consecutive lines of `scanned` (scanned_lines' pairs) whose joined text carries a spelling that none of its lines,
-    and no shorter run inside it, carries alone: a spelling split across lines (an argument list such as ["git",
-    "branch",\n "-r"], a backslash continuation), which a scan of each line alone does not see. Only the spellings a
-    line break can split are read across lines, and only in a run that holds a word of one (SPLIT_SPELLINGS). `each`
-    holds each line's own spellings when the caller has them (census)."""
-    hold = [bool(_SPLIT_CANDIDATE.search(line)) for _n, line in scanned]
-    seen = {} if each is None else {(i, 1): kinds for i, kinds in enumerate(each)}
-
-    def kinds(i, k):
-        if (i, k) not in seen:
-            if k == 1:
-                seen[(i, k)] = set(spelled(scanned[i][1]))
-            else:
-                text = " ".join(line.strip() for _n, line in scanned[i:i + k])
-                seen[(i, k)] = {what for what, rx in SPLIT_SPELLINGS if rx.search(text)}
-        return seen[(i, k)]
-    out = []
-    for i in range(len(scanned)):
-        for k in range(2, WINDOW + 1):
-            if i + k > len(scanned) or scanned[i + k - 1][0] - scanned[i][0] != k - 1:
-                break
-            if not any(hold[i:i + k]):
-                continue
-            inner = set()
-            for size in range(1, k):
-                for j in range(i, i + k - size + 1):
-                    inner |= kinds(j, size)
-            if kinds(i, k) - inner:
-                out.append((scanned[i][0], " ".join(line.strip() for _n, line in scanned[i:i + k])))
-    return out
-
-
-def pinned_text(line):
-    """A stripped hit line as HITS holds it: each standalone run of seven or more hex digits written as HEX_RUN."""
-    return _HEX_RUN.sub(HEX_RUN, line)
-
-
-def unpinned(lines, pinned):
-    """(the lines beyond the pinned texts, the pinned texts beyond the lines): `lines` the stripped hit lines a file has
-    now and `pinned` the texts judged for it, each matched as often as it appears, so a second copy of a judged line is
-    named as one beyond them."""
-    left = Counter(pinned)
-    added = []
-    for line in lines:
-        if left[line] > 0:
-            left[line] -= 1
-        else:
-            added.append(line)
-    return added, sorted(left.elements())
+    """The runs of two up to WINDOW consecutive lines of `scanned` whose joined text carries a spelling of
+    SPLIT_SPELLINGS that none of its lines, and no shorter run inside it, carries alone (Census.split_hits)."""
+    return CENSUS.split_hits(scanned, each)
 
 
 def judged(root=ROOT):
     """HITS as {path: [text]}, read from the tree at `root`; a missing or unreadable file is the test's own error."""
-    with open(os.path.join(str(root), HITS), encoding="ascii") as f:
-        return json.load(f)
+    return ref_reader_census.judged(root, HITS)
 
 
 def census_problems(hits, judged, classified=None, readers=None):
-    """Every finding of the census over `hits` (census's {path: [(line number, line)]}) against `judged` (HITS, as
-    judged() reads it), `classified` and `readers` (default CLASSIFIED and READERS), each a text naming the file and
-    what to do: a hit in a file CLASSIFIED does not name; each file's hit lines against its judged lines, line by line,
-    each matched as often as it appears (unpinned), never by their count; a CLASSIFIED file with no hit left; a file in
-    one of CLASSIFIED and HITS and not the other; a READERS line no hit carries; and a file whose kinds and READERS
-    disagree."""
-    classified = CLASSIFIED if classified is None else classified
-    readers = READERS if readers is None else readers
-    problems = []
-    for path, lines in sorted(hits.items()):
-        entry = classified.get(path)
-        if entry is None:
-            problems.append("%s: %d line(s) no entry of CLASSIFIED covers; judge each (does it, or code it runs, read "
-                            "the origin/main of the checkout the test runs in?), then add the file to CLASSIFIED, and "
-                            "each line that does read it to READERS:\n%s" % (path, len(lines), _listing(lines)))
-        else:
-            added, gone = unpinned([pinned_text(line) for _n, line in lines], judged.get(path, ()))
-            if added or gone:
-                new = [(n, line) for n, line in lines if pinned_text(line) in added]
-                problems.append("%s: hit lines not judged in %s (added or changed):\n%s\nand judged lines no longer "
-                                "there (gone or changed):\n%s\njudge each (does it, or code it runs, read the "
-                                "origin/main of the checkout the test runs in?), then set the file's lines in %s, and "
-                                "each line that reads it in READERS"
-                                % (path, HITS, _listing(new) or "    none",
-                                   "\n".join("    %s" % line[:200] for line in gone) or "    none", HITS))
-    for path in sorted(set(classified) - set(hits)):
-        problems.append("%s: in CLASSIFIED, and no line there carries a spelling of origin/main now; remove the "
-                        "entry" % path)
-    for path in sorted(set(classified) ^ set(judged)):
-        problems.append("%s: in %s and not in %s; each classified file has its judged lines, and no other file "
-                        "does" % ((path, "CLASSIFIED", HITS) if path in classified else (path, HITS, "CLASSIFIED")))
-    for path, text, _why in readers:
-        if not any(text in line for _n, line in hits.get(path, ())):
-            problems.append("%s: READERS lists a read of the checkout's origin/main on the line holding %r, and no "
-                            "line there holds it now: that reader no longer reads, or moved; judge it and update "
-                            "READERS" % (path, text))
-    for path, (kinds, _why) in sorted(classified.items()):
-        listed = any(p == path for p, _t, _w in readers)
-        if (READS in kinds) != listed:
-            problems.append("%s: CLASSIFIED %s READS, and READERS %s it; make the two agree" % (
-                path, "names" if READS in kinds else "does not name", "lists" if listed else "does not list"))
-    return problems
-
-
-def _listing(lines):
-    return "\n".join("    %d: %s" % (n, line[:200]) for n, line in lines)
+    """Every finding of the census over `hits` against `judged` (HITS, as judged() reads it), `classified` and `readers`
+    (default CLASSIFIED and READERS): Census.census_problems."""
+    return CENSUS.census_problems(hits, judged, CLASSIFIED if classified is None else classified,
+                                  READERS if readers is None else readers)
 
 
 class Spellings(unittest.TestCase):

@@ -2110,6 +2110,17 @@ PIN_CAP_BUDGET = 4 << 30
 PIN_BOUND = 5
 MEMORY_SKIP = ("a file git would read without end is planted only where RLIMIT_AS binds, the runner's memory limit and "
                "the case's cap alike: Linux")
+
+
+def unset_arena_max(case):
+    """MALLOC_ARENA_MAX removed from this process's environment until `case` ends (its cleanup restores it), so a git
+    that run_git, recheck_checkout or tracked_ignored starts in the test's own process runs with it unset whatever
+    shell started the suite: the pins of round 2 of PR 959 state their figures with it unset, and each sets or unsets
+    it itself (the round's ruling)."""
+    patcher = unittest.mock.patch.dict(os.environ)
+    patcher.start()
+    case.addCleanup(patcher.stop)
+    os.environ.pop("MALLOC_ARENA_MAX", None)
 # A sparse file larger than PIN_MEMORY and than REF_FILE_MAX, made with truncate (no byte of it is written), and under the
 # 1 GiB file size limit a capped run sets (ulimit -f).
 SPARSE_SIZE = 512 << 20
@@ -3135,9 +3146,20 @@ class Checkout(_Base):
     def test_a_ref_beside_head_or_its_branch_that_git_reads_without_end_is_not_read_by_check(self):
         """check's reads of HEAD, of the commit and of the branch run as run's do (core.warnAmbiguousRefs off, a plain
         symbolic-ref), so a symlink to /dev/zero at a name beside HEAD (refs/HEAD) or beside its branch (refs/tags/main),
-        planted after a run recorded a pass and after every git call of the case's own, is never read: check reports the
-        pass for HEAD's branch. At the head before the fix its rev-parse --verify HEAD^{commit} tried refs/HEAD, and
-        symbolic-ref --short tried refs/tags/main, and check was refused at the memory limit (exit 2)."""
+        planted after every git call of the case's own, is never read. For refs/HEAD the run recorded a pass at HEAD, and
+        check reports it. For refs/tags/main a commit on main after the run leaves HEAD with no result, so check's verdict
+        depends on the branch it read: it reports the result for main stale (exit 1), naming the run's commit, which it
+        can say only with the branch read (round 2 of PR 959, tests-3: the subtest reported the pass at HEAD before, which
+        check gave with the branch lost as well, so it passed where the read failed). Red at the PR's commit before
+        round 1's build, where check read the branch with symbolic-ref --short, which tried refs/tags/main to tell whether
+        main was ambiguous, and with no memory limit then the read met the case's address cap, check lost the branch and
+        reported the result missing (exit 1) in place of stale; red at the build commit just before check read the
+        branch with a plain symbolic-ref, where the same read met GIT_MEMORY, already in place, and check was refused
+        (exit 2, "reached the 1024 MiB memory limit (GIT_MEMORY)"); and red under a mutant that reads the branch with
+        --short and drops a GitBound there for no branch (missing, exit 1). For refs/HEAD, red at both commits: check's
+        rev-parse --verify HEAD^{commit}, run with core.warnAmbiguousRefs on, tried refs/HEAD and was stopped, at the
+        case's address cap at the first (exit 2, "fatal: Out of memory") and at GIT_MEMORY at the second (exit 2).
+        MALLOC_ARENA_MAX is unset in the run."""
         if not ZERO_CAPPED:
             self.skipTest(MEMORY_SKIP)
         for sibling in ("refs/HEAD", "refs/tags/main"):
@@ -3146,16 +3168,27 @@ class Checkout(_Base):
                 self.addCleanup(w.close)
                 tree = os.path.realpath(w.tree)
                 w.run(check=0)
+                swept = w.head()
+                if sibling == "refs/tags/main":
+                    w.git("commit", "-q", "--allow-empty", "-m", "a commit on main after the run")
+                    self.assertNotEqual(w.head(), swept, "premise: HEAD moved past the run's commit")
                 planted = os.path.join(tree, ".git", *sibling.split("/"))
                 os.makedirs(os.path.dirname(planted), exist_ok=True)
                 os.symlink("/dev/zero", planted)
+                env = dict(w.env)
+                env.pop("MALLOC_ARENA_MAX", None)
                 try:
-                    rc, out, err = self.run_bounded(w, argv=["check", "--tree", w.tree], cap=MEMORY_PIN_CAP)
+                    rc, out, err = self.run_bounded(w, env=env, argv=["check", "--tree", w.tree], cap=MEMORY_PIN_CAP)
                 finally:
                     os.remove(planted)
-                self.assertEqual(rc, 0, out + err)
-                self.assertTrue(out.startswith("ok   "), out + err)
                 self.assertNotIn("could not be read", err)
+                if sibling == "refs/HEAD":
+                    self.assertEqual(rc, 0, out + err)
+                    self.assertTrue(out.startswith("ok   "), out + err)
+                else:
+                    self.assertEqual(rc, 1, out + err)
+                    self.assertTrue(out.startswith("FAIL sweep stale: the newest result for main is at %s " % swept[:10]),
+                                    out + err)
 
     # The names git's rev-parse rules give a full object id beside the object itself, which git with
     # core.warnAmbiguousRefs on (its default) opens to warn that the id is also a ref's name, each under the batcher's
@@ -6176,6 +6209,32 @@ class MemoryBound(unittest.TestCase):
         with open(index, "rb") as f:
             self.assertFalse(b"EOIE" in f.read(), "the runner's git status wrote the index as one read on threads")
 
+    def test_the_runners_git_reads_the_pack_window_caps_and_no_index_preload_whatever_the_repository_says(self):
+        """Round 2 of PR 959, tests-4: GIT_NEUTRAL_CONFIG's pack window caps and core.preloadIndex off outrank the
+        batcher's repository config, as index.threads does (the test before this one), so the runner's git maps packs in
+        windows of at most 32 MiB, 128 MiB in all, and reads the index on one thread, whatever that config says. The
+        repository's config sets each key otherwise, and sweep.run_git's git config --get reads back the runner's value,
+        written here as a literal (so a change to a value turns this red too). Red under a mutant that drops the three
+        settings from GIT_NEUTRAL_CONFIG: the repository's values come back. MALLOC_ARENA_MAX is unset in the run
+        (unset_arena_max)."""
+        unset_arena_max(self)
+        self.env.pop("MALLOC_ARENA_MAX", None)
+        w = os.path.join(self.tmp, "repo")
+        os.makedirs(w)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", w, *args], env=self.env, check=True, stdout=subprocess.PIPE,
+                                  text=True).stdout.strip()
+        git("init", "-q", ".")
+        repo = sweep.find_repo(w)
+        for key, theirs, ours in (("core.packedGitWindowSize", "7", "32m"), ("core.packedGitLimit", "7", "128m"),
+                                  ("core.preloadIndex", "true", "false")):
+            with self.subTest(key=key):
+                git("config", key, theirs)
+                self.assertEqual(git("config", "--get", key), theirs, "premise: the repository's own git reads its value")
+                self.assertEqual(sweep.run_git(repo, "config", "--get", key).stdout.strip(), ours,
+                                 "the runner's git read the repository's %s" % key)
+
     def test_a_shell_that_cannot_set_the_limit_starts_no_git_and_is_refused_by_name(self):
         """A shell whose ulimit -v fails (here, handed a value it cannot read) runs no git: run_git refuses, naming the call
         and LIMIT_FAILED, rather than start the git without the limit. A git first on PATH would leave a file if run."""
@@ -6424,9 +6483,10 @@ class MemoryBound(unittest.TestCase):
 # argv[3] seconds, the stop signals' handlers installed (install_stop_signals, as main installs them for every command)
 # and, when OUTPUT_DRIVER_INPUT names a file, that file's bytes as git's input. It prints JSON: the exit status, and the
 # lengths of what run_git returned of stdout and stderr ("rc", "out", "err"), or the exception's class and text
-# ("raised", "text"), with "bound" true for a GitBound and "ended_git" for a Stopped whose git run_git ended.
+# ("raised", "text"), with "bound" true for a GitBound, "ended_git" for a Stopped whose git run_git ended, and "took",
+# the seconds from run_git's call to its raise.
 OUTPUT_DRIVER = r"""
-import importlib.util, json, os, sys
+import importlib.util, json, os, sys, time
 spec = importlib.util.spec_from_file_location("sweep_output", sys.argv[1])
 sweep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sweep)
@@ -6439,12 +6499,13 @@ if given:
     with open(given, "rb") as f:
         data = f.read()
 out = {}
+t0 = time.monotonic()
 try:
     p = sweep.run_git(sweep.GitRepo(where, None, None, os.path.dirname(where)), *args, input=data, text=False)
     out.update(rc=p.returncode, out=len(p.stdout), err=len(p.stderr))
 except BaseException as e:
     out.update(raised=type(e).__name__, bound=isinstance(e, sweep.GitBound), text=str(e),
-               ended_git=getattr(e, "ended_git", None))
+               ended_git=getattr(e, "ended_git", None), took=time.monotonic() - t0)
 print(json.dumps(out))
 """
 
@@ -6459,9 +6520,12 @@ class OutputBound(unittest.TestCase):
     git's stdout and stderr through one selector loop, with no thread, at most GIT_OUTPUT_MAX bytes of each, writing
     its input through the same loop, with GIT_BOUND's deadline kept there; a git that prints past the limit is ended with
     its process group, as at the bound, and refused by name (GitOutput, a GitBound), giving the call, the stream and the
-    limit. Before it, run_git read the whole of each stream with communicate. The cases run git, or a git first on PATH,
-    in a child of their own session under CAP_SHIM at MEMORY_PIN_CAP, so a run_git that held all of an output without
-    end stops at the cap."""
+    limit. Before it, run_git read the whole of each stream with communicate. The cases that run git, or a git first on
+    PATH, through start run it in a child of their own session under CAP_SHIM at MEMORY_PIN_CAP, so a run_git that held
+    all of an output without end stops at the cap. The two cases of a git that dies before it has read its input call
+    run_git and recheck_checkout in the test's own process, uncapped, and the gits they run print a line each; the
+    pipe-buffer case's last check, of tracked_ignored, runs in the test's own process too, its git printing the 20,000
+    paths it is asked about."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="sweepout-")
@@ -6570,6 +6634,112 @@ class OutputBound(unittest.TestCase):
         self.assertGreater(got["out"], 1 << 16, "premise: the output is larger than a pipe's buffer")
         entries = sweep.tree_entries(w, git("rev-parse", "HEAD").strip())
         self.assertEqual(sweep.tracked_ignored(w, entries, paths), (set(paths), None))
+
+    def pipe_buffer(self):
+        """The bytes a fresh pipe holds before a write to it waits (F_GETPIPE_SZ, Linux), or 64 KiB, Linux's default,
+        where fcntl cannot say."""
+        r, w = os.pipe()
+        try:
+            return fcntl.fcntl(w, getattr(fcntl, "F_GETPIPE_SZ", 1032))
+        except OSError:
+            return 1 << 16
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_a_git_that_dies_before_it_has_read_its_input_is_returned_as_its_failure(self):
+        """Round 2 of PR 959, tests-1: a git that exits before it has read all of its input closes its stdin, and
+        run_git's next write there fails with EPIPE, which Python raises as BrokenPipeError; _git_streams stops writing
+        and reads the git's output to its end, so run_git returns the git's exit and what it printed, as for any other
+        failure. The premise: a git that dies on its first path has read that path, so an input run_git writes in one
+        write (_GIT_WRITE, PIPE_BUF) is in the pipe before git reads and no write fails. A larger input is written a
+        chunk at a time, and a chunk written after git has died fails. That is certain only once the input is more than
+        the pipe holds (pipe_buffer, 64 KiB on Linux) plus what git read before it died, so the input here is over 1 MiB
+        of paths. (A git that dies before it reads anything, as in the next pin, can meet EPIPE with any input once it
+        has exited before the first write.) A real git check-ignore, asked first about L/x, where L is a symlink in the
+        work tree, dies on that first path: run_git returns exit 128 with git's line on stderr and raises nothing. Red
+        under a mutant that drops _git_streams' BrokenPipeError branch: BrokenPipeError out of run_git.
+        MALLOC_ARENA_MAX is unset in the run (unset_arena_max)."""
+        unset_arena_max(self)
+        self.env.pop("MALLOC_ARENA_MAX", None)
+        w = os.path.join(self.tmp, "repo")
+        os.makedirs(w)
+        for args in (["init", "-q", "."], ["commit", "-q", "--allow-empty", "-m", "c"]):
+            subprocess.run(["git", "-C", w, *args], env=self.env, check=True, stdout=subprocess.DEVNULL)
+        os.makedirs(os.path.join(w, "real"))
+        os.symlink("real", os.path.join(w, "L"))
+        given = b"L/x\0" + b"".join(b"build/a-path-long-enough-to-fill-a-pipe-buffer-quickly/%06d.o\0" % i
+                                    for i in range(20000))
+        self.assertGreater(len(given), 16 * self.pipe_buffer(), "premise: the input is far more than a pipe holds")
+        plain = subprocess.run(["git", "-C", w, "check-ignore", "-v", "-z", "--no-index", "--stdin"], env=self.env,
+                               input=b"L/x\0", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual((plain.returncode, plain.stderr), (128, b"fatal: pathspec 'L/x' is beyond a symbolic link\n"),
+                         "premise: check-ignore dies on the first path")
+        repo = sweep.GitRepo(w, os.path.join(w, ".git"), os.path.join(w, ".git"), os.path.dirname(w))
+        p = sweep.run_git(repo, "check-ignore", "-v", "-z", "--no-index", "--stdin", input=given, text=False)
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (128, b"", b"fatal: pathspec 'L/x' is beyond a symbolic link\n"))
+
+    def test_the_re_read_after_a_leg_names_a_check_ignore_that_died_before_it_read_its_input(self):
+        """Round 2 of PR 959, tests-1, through recheck_checkout, the re-read after a leg: a value git cannot parse in the
+        clone's .git/config (a regular file, so the re-read's own check of it passes) makes git check-ignore die (128)
+        as it reads its config, before it reads any path, and the leg left more than a pipe holds (pipe_buffer) of
+        paths for it to be asked about, so run_git's write meets EPIPE. The verdict names the failure, "(git check-ignore
+        failed: <git's line>)", first among the untracked paths, followed by every path the leg left, and nothing is
+        raised. Red under a mutant that drops _git_streams' BrokenPipeError branch: BrokenPipeError out of
+        recheck_checkout. MALLOC_ARENA_MAX is unset in the run (unset_arena_max)."""
+        unset_arena_max(self)
+        self.env.pop("MALLOC_ARENA_MAX", None)
+        w = os.path.join(self.tmp, "clone")
+        os.makedirs(w)
+
+        def git(*args):
+            return subprocess.run(["git", "-C", w, *args], env=self.env, check=True, stdout=subprocess.PIPE,
+                                  text=True).stdout.strip()
+        git("init", "-q", ".")
+        with open(os.path.join(w, ".gitignore"), "w") as f:
+            f.write("*.o\n")
+        git("add", ".gitignore")
+        git("commit", "-qm", "c")
+        sha = git("rev-parse", "HEAD")
+        entries = sweep.tree_entries(w, sha)
+        left = [b"left/a-file-a-leg-left-with-a-long-enough-name-%05d.txt" % i for i in range(3000)]
+        os.makedirs(os.path.join(w, "left"))
+        for rel in left:
+            with open(os.path.join(os.fsencode(w), rel), "w") as f:
+                f.write("x")
+        self.assertGreater(sum(len(rel) + 1 for rel in left), self.pipe_buffer(),
+                           "premise: the paths are more than a pipe holds")
+        git("config", "core.bigFileThreshold", "x")
+        before = sweep.git_state(w)
+        verdict = dict(sweep.recheck_checkout(w, sha, entries, before))
+        failed = (b"(git check-ignore failed: fatal: bad numeric config value 'x' for 'core.bigfilethreshold' in file "
+                  b"%s: invalid unit)" % os.fsencode(os.path.join(w, ".git", "config")))
+        self.assertEqual(verdict.get("untracked"), sorted([failed] + left))
+
+    def test_a_git_that_closes_its_output_and_runs_on_is_refused_at_the_bound_and_ended(self):
+        """Round 2 of PR 959, tests-2: _git_streams' wait for the git's exit, after both its streams have ended, keeps
+        GIT_BOUND's deadline, so a git that closes its stdout and its stderr and runs on is ended with its process group
+        at the bound and refused by name (GitBound). A git first on PATH writes its pid to a file, closes both streams
+        and sleeps far longer than the case's watchdog (WATCHDOG), under a GIT_BOUND of BOUND seconds: run_git raises
+        GitBound naming the call and the bound less than a second after the bound (its own time, "took", which was
+        2.011 s in each of ten runs on 2026-10-04), and the git is gone. Red under a mutant whose wait has no timeout:
+        run_git waits on the sleep, and the watchdog ends the case ("run_git was still running after 30 s"); and under
+        one whose wait runs 1 s past the deadline: run_git raises after about 3.01 s, past BOUND + 1 (run_git sets its
+        deadline after "took" starts, so such a wait never ends before BOUND + 1). MALLOC_ARENA_MAX is unset in the
+        run."""
+        BOUND, WATCHDOG = 2, 30
+        pid = os.path.join(self.tmp, "git.pid")
+        env = self.shim('echo $$ > "%s"\nexec 1>&- 2>&-\nexec sleep %d\n' % (pid, 4 * WATCHDOG))
+        env.pop("MALLOC_ARENA_MAX", None)
+        t0 = time.monotonic()
+        got = self.finish(self.start(BOUND, "status", env=env), watchdog=WATCHDOG)
+        took = time.monotonic() - t0
+        self.assertEqual((got.get("raised"), got.get("bound")), ("GitBound", True), got)
+        self.assertEqual(got["text"], "git status in %s did not end within %d s and was killed" % (self.tmp, BOUND))
+        self.assertLess(took, WATCHDOG, "refused at the bound, not at the watchdog")
+        self.assertLess(got["took"], BOUND + 1, "refused at the bound (%d s), not later" % BOUND)
+        with open(pid) as f:
+            self.assertFalse(_alive(int(f.read())), "the git that ran on is gone")
 
     def test_a_stop_while_run_git_reads_ends_the_git_and_leaves_no_process(self):
         """A stop signal that arrives while run_git reads (a git first on PATH that prints a line, writes its pid and its
@@ -8929,6 +9099,50 @@ class NpmBuiltin(_Base):
         w.run(check=0)
         rec = w.result()["runner"]["npm_builtin"]
         self.assertEqual((rec["root"], rec["present"], rec["sha256"]), (pkg, False, None))
+
+    def test_a_symlinked_builtin_npmrc_or_package_json_is_followed_as_npm_follows_it(self):
+        """Round 2 of PR 959, tests-5: npm_builtin reads each file at its real path, so a builtin npmrc, or npm's
+        package.json, that is a symlink to a regular file is read through it, as npm reads it. Each in a subtest of its
+        own, at a head of its own: the npmrc a symlink to a file outside the package that sets prefix, and the
+        package.json a symlink to a copy of itself outside the package. The run passes, and records the builtin file as
+        present with the sha256 of what the link leads to, its keys ['prefix'], and npm's root and the file's path as the
+        link's own (not its target's). Red under a mutant that reads the npmrc at its own path: the run is refused, "npm's
+        builtin config file ... cannot be read (a symlink, not a regular file)"; and under one that reads package.json at
+        its own path: refused, "is not a link into npm's own package". MALLOC_ARENA_MAX is unset in the run."""
+        w = self.w
+        pkg = self.install_npm()
+        npmrc, package = os.path.join(pkg, "npmrc"), os.path.join(pkg, "package.json")
+        for case in ("npmrc", "package.json"):
+            with self.subTest(symlinked=case):
+                w.change({"notes.txt": "a head for a symlinked %s\n" % case})      # each case at a head of its own
+                text = "; outside the package\nprefix = /opt/%s\n" % case
+                target = os.path.join(w.tmp, "%s-target" % case)
+                if case == "npmrc":
+                    with open(target, "w") as f:
+                        f.write(text)
+                    os.symlink(target, npmrc)
+                    restore = lambda: os.remove(npmrc)
+                else:
+                    with open(npmrc, "w") as f:
+                        f.write(text)
+                    shutil.copy(package, target)
+                    os.rename(package, package + ".real")
+                    os.symlink(target, package)
+
+                    def restore():
+                        os.remove(package)
+                        os.rename(package + ".real", package)
+                        os.remove(npmrc)
+                env = dict(w.env)
+                env.pop("MALLOC_ARENA_MAX", None)
+                try:
+                    p = w.run(env=env)
+                    self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                    rec = w.result()["runner"]["npm_builtin"]
+                finally:
+                    restore()
+                self.assertEqual(rec, {"npm": os.path.join(w.bin, "npm"), "root": pkg, "path": npmrc, "present": True,
+                                       "sha256": hashlib.sha256(text.encode()).hexdigest(), "keys": ["prefix"]})
 
     def test_an_npm_whose_package_the_runner_cannot_find_refuses_the_run(self):
         """Round 2, the owner's build question 3: an npm that is not a link into its package (a shim, such as volta's;

@@ -343,10 +343,18 @@ subject; `verify` refuses the branch otherwise.
    replace ref) and no ignored file (bytecode, `node_modules`). Nor does a branch or tag a leg
    writes into your repository: each job's clone holds no branch and no tag of yours, and names
    no remote, so a `git fetch` in a later job copies nothing. CI's checkout differs here: it
-   holds one local branch, the run's own, which `actions/checkout` creates at the one commit it
-   fetches as that branch's remote-tracking ref, while the sweep's clone is detached at the sha,
-   so a test that reads the current branch's name gets the run's branch in CI and none in the
-   sweep. Each clone
+   holds one local branch, the run's own, which `actions/checkout` creates at the commit it checks
+   out (in every job a leg stands in for, the one commit it fetches, as that branch's
+   remote-tracking ref; `ci.yml`'s secret-scan job, which no leg stands in for, fetches all of
+   history), while the sweep's clone is detached at the sha, so a test that reads the current
+   branch's name gets the run's branch in CI and none in the sweep.
+   `tests/test_branch_name_readers.py` lists the tests that read it, and fails on each new or
+   changed line, or run of up to three lines, that carries a spelling of such a read the census
+   looks for, until that line is judged; among what it cannot see are a command that uses the
+   current branch without naming it (a bare `git push`, say), `gh`'s own read of it, a name
+   assembled at run time, another CI system's variables, a spelling split over more than three
+   lines, a judged line moved to another place in its file, code that is not tracked, and a
+   reader its execution check did not run (its docstring lists what it cannot see). Each clone
    holds one ref, `refs/remotes/origin/main`, at the commit your
    `origin/main` named as the sweep started, so a test that reads main finds it as it would in
    your clone; the sweep reads your `origin/main` once, before the first leg, and writes that
@@ -486,14 +494,27 @@ subject; `verify` refuses the branch otherwise.
    those calls, where before `scripts/sweep.py check` met the memory limit there and
    `scripts/batch.py verify`'s own `git` read it without end. Some calls look an object id up as a
    ref name under every rule, whatever the setting: `git checkout <sha>` (with `--detach` or
-   `-B`), `git bisect start`, and each bisect step's checkout of the next commit try
+   `-B`), `git bisect start`, `git bisect`'s good, bad and skip steps, which look up the ids
+   of the commits the bisect has marked, and `git merge <sha>` when `merge.log` is set (in a
+   repository's config or yours, or `--log` in a branch's `mergeOptions`), to describe the
+   commit in the shortlog it appends, try
    `<git dir>/<sha>`, `refs/<sha>`, `refs/tags/<sha>`, `refs/heads/<sha>`, `refs/remotes/<sha>`
-   and `refs/remotes/<sha>/HEAD`, and read a symlink to `/dev/zero` at any of them. Two callers
-   make them. The sweep's checkout of each job's clone runs in the fresh clone only, which holds
+   and `refs/remotes/<sha>/HEAD`, and read a symlink to `/dev/zero` at any of them.
+   `git bisect start`, run from `HEAD` detached, looks `HEAD` up the same way, and each step looks
+   `BISECT_HEAD` up the same way (`refs/tags/HEAD`, `refs/tags/BISECT_HEAD` and the rest).
+   `scripts/batch.py assemble` passes `--no-log` to its merges, of a member and of `origin/main`,
+   so they make none (the shortlog `merge.log` would add to the merge commit's message is
+   dropped; the tool reads only a merge's subject). Two callers still make them. The sweep's
+   checkout of each job's clone runs in the fresh clone only, which holds
    no ref the sweep did not write, under the sweep's memory limit. `scripts/batch.py bisect`'s
-   checkout of the base, its `git bisect start` and its good, bad and skip steps run after your
+   checkout of the base and of each commit it tests, its `git bisect start` and its good, bad
+   and skip steps run after your
    command has run in the batch worktree, whose refs are your clone's, under `scripts/batch.py`'s
-   memory limit (1 GiB), so such a read stops `bisect` there with an error naming the call.
+   memory limit (1 GiB), so such a read stops `bisect` there with an error naming the call. Its
+   cleanups make none of them, but for the `git bisect reset` after a stop that ended
+   `git bisect start` after it wrote `BISECT_START` and before `BISECT_HEAD`, which checks the
+   tip out by its id; a symlink to `/dev/zero` there then fails that cleanup (a symlink already
+   there when `git bisect start` runs stops it before it writes `BISECT_START`).
    The directory `--tree` names must itself hold `.git`: one that does not exist, or whose `.git` is
    gone, is refused, naming it, and never read as a repository that encloses it, and an empty
    `--tree` (an unset shell variable gives one) is refused rather than read as the current
@@ -535,21 +556,77 @@ subject; `verify` refuses the branch otherwise.
    `--tree` must, and be the work tree `git` reads there, a `core.worktree` naming another
    refused), at 600 s, since it also pushes through the pre-push hook and fetches, and stops with
    an error naming the call. Its `git` calls also have the sweep's memory limit, 1 GiB of address
-   space (16 GiB for a `git push`, whose pre-push hook starts `gitleaks`, which reserves more than
-   4 GiB as it starts), and its limit on what one call prints, 64 MiB a stream, read from
+   space (16 GiB for a `git push`, a `git commit` or a `git merge`, which run your clone's hooks:
+   this project's pre-push hook starts `gitleaks`, which reserves more than 4 GiB as it starts, and
+   a pre-commit hook you set for every clone can start it too; `git merge --abort` runs none of
+   the merge hooks, only `post-index-change` and `reference-transaction` (measured with git
+   2.43.0), so it runs under 1 GiB with no listing first; the tool never passes
+   `--no-verify`, and a merge that your `pre-merge-commit`, `prepare-commit-msg` or `commit-msg`
+   hook refuses is aborted and stops the command, quoting what `git` printed, the hook's words
+   included; that limit covers the whole call, so a push's own reads of your refs run under
+   it too, and before each such call the tool lists your refs under the 1 GiB limit with
+   `git for-each-ref`, which reads every loose ref and `packed-refs` as a push does, so a sparse
+   or oversized file at a loose ref stops it there, at 1 GiB, with or without a fetch first; a
+   file placed after that listing, or one the call reads and the listing does not, such as
+   `objects/info/alternates` or `shallow` at a push, or `MERGE_MSG` at a merge or a commit, still
+   meets 16 GiB), and its limit on what
+   one call prints, 64 MiB a stream, read from
    `scripts/sweep.py`; a call that meets either stops the command with an error naming the call
-   and the limit, and the memory limit's names the `origin/main` or batch branch ref file the call
-   reads. It names `origin/main` and the batch branches by their full refs wherever it needs only
-   their commit, so while such a ref exists `git` opens no other name its rules try for it
-   (`refs/tags/origin/main`, or `<git dir>/batch/<name>` beside the batch state). Two kinds of
-   read still reach such names. A full ref that is absent sends `git` on through the names its
+   and the limit, and the memory limit's names the files of your repository that `git` reads whole
+   and that are, when the error is made, not regular files or larger than a file of their kind
+   holds: a loose ref under `refs/` (or a linked worktree's own `refs/`) over 4096 bytes, and
+   `packed-refs`, `objects/info/alternates` or `shallow` at least the size of the limit, each with
+   its type or size; for the call that lists the remote batch branches (`git for-each-ref` of
+   `refs/remotes/origin/batch/`), the error also names that directory, as the one whose loose refs
+   the call reads; and the memory limit's error lists the places `git` reads a file whole, a
+   merge's and a bisect's state files in the git dir among them (`MERGE_MSG`, `MERGE_AUTOSTASH`,
+   `BISECT_START`). Some failures at the memory limit are reported as plain failures instead, the
+   error naming the call and quoting what `git` printed, not the limit, and `git fetch` meets two
+   of them. When its check that it received every object fails at the limit after `index-pack`
+   has passed it, `git fetch` exits 1, printing an out-of-memory line or a `packfile ... cannot be
+   mapped` line first and `did not send all necessary objects` after it. When `git` cannot start
+   a thread at the limit, it prints `Resource temporarily unavailable` (a `git fetch` at a limit
+   far below 1 GiB exited 128 with `error: cannot create async thread: Resource temporarily
+   unavailable`), the words `git` also prints when a limit on processes stops it. The comment
+   above `OUT_OF_MEMORY` in `scripts/sweep.py` lists the others that are known. The tool names
+   `origin/main` and the batch branches by their full refs wherever it needs only
+   their commit, and so do `finish`'s check that the local batch branch is still there and
+   `bisect`'s cleanups, which put the branch's tree back with `git read-tree` and point `HEAD` at
+   the branch with `git symbolic-ref` (`git checkout` stays on a branch only when given its short
+   name), and end the bisect with a plain `git bisect reset`, which checks nothing out, since
+   `bisect` runs `git bisect` with `--no-checkout` from `HEAD` detached at the tip and checks out
+   each commit it tests itself (`git symbolic-ref` does not apply `git checkout`'s rule that a
+   branch is checked out in one worktree at a time, so `bisect` applies it: it refuses to start
+   when another worktree holds the batch branch, on it or bisecting or rebasing from it, and its
+   cleanups check again before they point `HEAD` at the branch, leaving the worktree detached and
+   naming the other one when it does), so while such a ref exists `git` opens no other name its rules try for it
+   (`refs/tags/origin/main`, or `<common dir>/batch/<name>` beside the batch state, the common
+   dir being your clone's `.git`). Three kinds
+   of read still reach such names. A full ref that is absent sends `git` on through the names its
    rules make of the full name (`refs/tags/refs/heads/batch/<name>` and the rest): `plan`'s and
    `verify`'s reads of a base branch `origin` has deleted, and `verify`'s check that the batch
-   branch exists before an assembly, are such reads. And `finish`'s check that the batch branch is
-   still there, and `bisect`'s checkout of the branch in its cleanup, name it by its short name,
-   which reads `<git dir>/batch/<name>`. Each runs under the memory limit, and one that meets it
-   stops the command, naming the call; any ref file the error names is then the full ref's,
-   which is not the file `git` read. It runs its `git` calls without automatic gc or maintenance, which would run under the same
+   branch exists before an assembly, are such reads (`finish`'s check reads the local branch
+   with `git show-ref --verify`, which reads only that ref, so it is not one, even once the
+   branch is gone). `assemble` names the batch branch by its short name when it makes it
+   (`git worktree add -B batch/<name>`) and when it resets it in a worktree it reuses
+   (`git checkout -B batch/<name> refs/remotes/origin/main`): `git` looks that name up by its
+   rules once it has set the branch, and opens `<common dir>/batch/<name>`,
+   `<common dir>/refs/batch/<name>` and `<common dir>/refs/tags/batch/<name>` before it finds
+   `refs/heads/batch/<name>`, from the batch worktree too, and `git checkout -B` first looks its
+   start point up as a local branch, `<common dir>/refs/heads/refs/remotes/origin/main` (the witness:
+   `test_assembles_branch_reset_reads_the_branchs_short_name_and_stops_at_the_memory_limit` in
+   `tests/test_batch_tool.py`). And the listing of the remote batch branches (`plan` without
+   `--name`, and `assemble`'s check for another batch on `origin`) shortens each
+   `refs/remotes/origin/batch/<x>` it finds to `origin/batch/<x>` and, to tell whether that name
+   is ambiguous, opens `<common dir>/origin/batch/<x>`, `refs/origin/batch/<x>`,
+   `refs/tags/origin/batch/<x>` and `refs/heads/origin/batch/<x>` (the witness:
+   `test_the_listing_of_the_remote_batch_branches_opens_the_names_of_each_ones_short_name`, in the
+   same file). Each of these calls runs under
+   the memory limit, and one that meets it stops the command, naming the call; for the two
+   `-B` calls the error names each of the files they open that is not a regular file or is
+   oversized, `<common dir>/batch/<name>` included, and for the listing those under `refs/`, but
+   not `<common dir>/origin/batch/<x>`, which is outside `refs/`. It runs its `git` calls without automatic gc
+   or maintenance, which would run under the same
    limit with a need nobody measured; your own `git` calls in the clone still start them. Its
    `verify` and `plan` run `git` in your clone's own work tree, so the `index` they can meet is that
    work tree's, not a batch worktree's: a FIFO there stops `plan` at its `git fetch`, and `verify`
@@ -561,7 +638,19 @@ subject; `verify` refuses the branch otherwise.
    batch worktree, or the ledger check's temporary worktree, for the ledger script) and the same
    bound and limits, which stop the command only when the script itself fails at them (`finish`
    reports a `pr-orphans.sh` stopped at either limit, or at the bound, as unread and carries on,
-   the merge having happened). A `git` that one of the scripts starts and that fails at the memory
+   the merge having happened). Each `git` the scripts start also gets the tool's `git` settings,
+   through its environment (`GIT_CONFIG_COUNT` and its pairs, after any pairs you set there): the
+   pack window caps, one thread for the index, for `index-pack` and for `pack-objects`, and no
+   automatic gc or maintenance. `pr-orphans.sh` runs `git remote get-url origin` and, when the
+   clone has an origin, `git fetch --prune origin` (neither when `ROMP_ORPHANS_NO_FETCH` is set),
+   then `git rev-parse --verify` of the main branch and `git merge-base --is-ancestor` for each
+   merged pull request it reads, and the ledger script's import runs `git log -S` over the history
+   of `UPSTREAM.md` to date a row (its check runs no `git`), so each needs what the tool's own
+   calls need, and the fetch starts no gc under the
+   limit, where one that failed in the background would write the `gc.log` that stops your
+   clone's automatic gc while `pr-orphans.sh` still reports clean. A `-c` the script passes, or a
+   `GIT_CONFIG_PARAMETERS` the tool runs under (a `git -c` that started it), overrides them. A
+   `git` that one of the scripts starts and that fails at the memory
    limit is read by that script as any other failure: `pr-orphans.sh` reads it as a merged pull
    request whose content is not on main (or, with no merge commit recorded, as one it cannot
    place), and the ledger script's import as a row no commit introduced, dated today. `gh`'s output, which the tool holds whole, and the `git` that `gh` starts, have
@@ -571,22 +660,24 @@ subject; `verify` refuses the branch otherwise.
    `gh`, or the command `bisect` runs, each started in a session of its own, so what it started goes
    too; neither `gh` nor that command has a controlling terminal, so a prompt through `/dev/tty`
    fails, while the descriptors they inherit work as before), its cleanup runs, and it exits 128 plus
-   the signal's number. Each step of that cleanup (the checkout of the batch branch and the
-   `git bisect reset` in `bisect`, the removal of the ledger check's temporary worktree in `verify`)
+   the signal's number. Each step of that cleanup (in `bisect`, the restore of the batch branch's
+   tree, the `git bisect reset` and the move of `HEAD` back to the branch; in `verify`, the removal
+   of the ledger check's temporary worktree)
    runs to its end: a
    SIGTERM, SIGHUP or Ctrl-C that lands inside one runs it again from its start, with later ones
    ignored. The cleanup also runs for a stop during a step it undoes: one while `bisect` checks
-   out the base, or while its `git bisect start` runs, leaves the worktree on the batch branch with
-   no bisect in progress. When the worktree had no changes to tracked files before those steps, the
-   cleanup's checkout of the branch is forced (and in `bisect`'s cleanup after its steps it runs
-   before the `git bisect reset`), so the branch's tree is back even when the stop ended a checkout
-   after it had written the other commit's files and index and before it moved HEAD; a worktree
-   that had changes to tracked files gets the unforced checkout, which keeps them. The batch
+   out the base or a commit it tests, or while its `git bisect start` runs, leaves the worktree on
+   the batch branch with no bisect in progress. When the worktree had no changes to tracked files before those steps, the
+   cleanup's restore of the branch's tree is forced (and in `bisect`'s cleanup after its steps it
+   runs before the `git bisect reset`), so the branch's tree is back even when the stop ended a
+   checkout after it had written the other commit's files and index and before it moved HEAD; a
+   worktree that had changes to tracked files gets the unforced restore, the two-way merge
+   `git checkout` makes, which keeps them. The batch
    worktree is `scripts/batch.py`'s own, and that cleanup runs whenever `bisect` ends, stopped or
-   not: when the worktree had no changes to tracked files before those steps, the forced checkout
+   not: when the worktree had no changes to tracked files before those steps, the forced restore
    discards every change the test command made to tracked files there, at the base and at each
    commit the bisect tested. A change the command made in its first run, at the tip, is a change
-   the worktree had before those steps, so the checkout is not forced, and that change and the
+   the worktree had before those steps, so the restore is not forced, and that change and the
    changes the command made after it are kept.
    A stop that arrives
    while it starts any of those processes, or the `git` of the sweep's excuse rule that `verify`,
@@ -711,10 +802,13 @@ subject; `verify` refuses the branch otherwise.
    so after a rebuild the new head shows no `PR tier` check until a label changes; nothing gates on
    it, and nothing should (the maintainer section says which checks to require). If CI is red:
    `scripts/batch.py bisect <name> -- <failing test>` names the member (it runs the test in the
-   batch worktree and, when it ends, checks the branch out there again; when the worktree had no
-   changes to tracked files after the test's first run, at the tip, that checkout discards the
+   batch worktree and, when it ends, puts the worktree back on the branch there; when the worktree
+   had no changes to tracked files after the test's first run, at the tip, doing so discards the
    changes the test's later runs made to tracked files; the paragraph on stopping
-   `scripts/batch.py`, above, gives the rule);
+   `scripts/batch.py`, above, gives the rule; when it had changes and that move is refused, a
+   change to a file the commit it last tested and the tip hold differently, it prints the first
+   bad member, fails, and leaves the worktree detached at that commit with the bisect in progress,
+   naming the commands that put it back);
    `scripts/batch.py pull <name> N` rebuilds without it and says so on the PR.
 6. When a member's owner pushes a fix after the cut (they tell you by postal), run
    `scripts/batch.py assemble <name> --repin N` (re-reads that head and rebuilds the branch;
