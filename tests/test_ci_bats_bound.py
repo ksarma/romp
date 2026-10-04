@@ -39,7 +39,8 @@ class BatsStepBound(unittest.TestCase):
         self.assertLessEqual(secs, 600, "above ten minutes a hang still eats most of the Shell job's margin under its cap (55 "
                              "minutes on Linux and 60 on macOS; a flat 35 when this bound was set, and on main until fork PR "
                              "940 landed on 2026-10-04 with 50 and 60, the figures its branch had held since 2026-10-02, after "
-                             "45 and 55 from 2026-09-30)")
+                             "45 and 55 from 2026-09-30; fork PR 926, merging main after 940 landed, set the Linux figure to 55 "
+                             "by the rule)")
 
     def test_the_step_still_runs_every_bats_file(self):
         self.assertIn("tests/*.bats", self.cmd)
