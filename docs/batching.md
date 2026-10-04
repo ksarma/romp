@@ -182,7 +182,11 @@ subject; `verify` refuses the branch otherwise.
 2. `scripts/batch.py assemble <name>`. A conflicting member is held back and its owner told; the
    comment names what it conflicts with: origin/main when the member conflicts with main on its
    own, otherwise the earlier members whose diffs touch the same files (or the batch, when none
-   does). To resolve a small conflict instead, `assemble <name> --resolve N`, resolve per hunk in
+   does). Its merges, of a member and of origin/main, conflict where `git merge-tree` does, the
+   merge `verify` checks each one against: they run `-s ort`, merge file contents with the
+   histogram diff, and read none of the batch branch's `branch.<name>.mergeOptions`,
+   `pull.twohead` or `diff.algorithm`, so an `-X` option, a strategy or a diff algorithm you set
+   resolves no conflict there. To resolve a small conflict instead, `assemble <name> --resolve N`, resolve per hunk in
    the batch worktree, `git add` the files, then
    `assemble <name> --continue --reviewed '<who, verdict>'`. A resolution may change only the files
    that conflicted (plus entry files under `upstream/` when UPSTREAM.md was one of them):
@@ -568,8 +572,8 @@ subject; `verify` refuses the branch otherwise.
    `git for-each-ref`, which reads every loose ref and `packed-refs` as a push does, so a sparse
    or oversized file at a loose ref stops it there, at 1 GiB, with or without a fetch first; a
    file placed after that listing, or one the call reads and the listing does not, such as
-   `objects/info/alternates` or `shallow` at a push, or `MERGE_MSG` at a merge or a commit, still
-   meets 16 GiB), and its limit on what
+   `objects/info/alternates` or `shallow` at a push, or a state file in the git dir such as
+   `MERGE_MSG` or `COMMIT_EDITMSG` at a merge or a commit, still meets 16 GiB), and its limit on what
    one call prints, 64 MiB a stream, read from
    `scripts/sweep.py`; a call that meets either stops the command with an error naming the call
    and the limit, and the memory limit's names the files of your repository that `git` reads whole
@@ -578,9 +582,11 @@ subject; `verify` refuses the branch otherwise.
    `packed-refs`, `objects/info/alternates` or `shallow` at least the size of the limit, each with
    its type or size; for the call that lists the remote batch branches (`git for-each-ref` of
    `refs/remotes/origin/batch/`), the error also names that directory, as the one whose loose refs
-   the call reads; and the memory limit's error lists the places `git` reads a file whole, a
-   merge's and a bisect's state files in the git dir among them (`MERGE_MSG`, `MERGE_AUTOSTASH`,
-   `BISECT_START`). Some failures at the memory limit are reported as plain failures instead, the
+   the call reads; the state files in the git dir that a commit, a merge or a bisect reads whole
+   (`COMMIT_EDITMSG`, `MERGE_MSG`, `MERGE_MODE`, `SQUASH_MSG`, `MERGE_AUTOSTASH` and `BISECT_START`)
+   are named the same way, when one is not a regular file or holds at least the limit; and the
+   memory limit's error lists the places `git` reads a file whole, those state files among them.
+   Some failures at the memory limit are reported as plain failures instead, the
    error naming the call and quoting what `git` printed, not the limit, and `git fetch` meets two
    of them. When its check that it received every object fails at the limit after `index-pack`
    has passed it, `git fetch` exits 1, printing an out-of-memory line or a `packfile ... cannot be
@@ -660,9 +666,13 @@ subject; `verify` refuses the branch otherwise.
    `gh`, or the command `bisect` runs, each started in a session of its own, so what it started goes
    too; neither `gh` nor that command has a controlling terminal, so a prompt through `/dev/tty`
    fails, while the descriptors they inherit work as before), its cleanup runs, and it exits 128 plus
-   the signal's number. Each step of that cleanup (in `bisect`, the restore of the batch branch's
-   tree, the `git bisect reset` and the move of `HEAD` back to the branch; in `verify`, the removal
-   of the ledger check's temporary worktree)
+   the signal's number. When a cleanup of `bisect`'s does not finish (its unforced restore refused by
+   `git read-tree`, say), `bisect` says first what stopped it (that the command fails at the base too,
+   the commit and the command's exit, the step that failed, or the signal), then the cleanup's
+   error, the state the batch worktree is left in and the commands that put it back on the branch,
+   and a stop still exits 128 plus the signal's number. Each step of that cleanup (in `bisect`, the
+   restore of the batch branch's tree, the `git bisect reset` and the move of `HEAD` back to the
+   branch; in `verify`, the removal of the ledger check's temporary worktree)
    runs to its end: a
    SIGTERM, SIGHUP or Ctrl-C that lands inside one runs it again from its start, with later ones
    ignored. The cleanup also runs for a stop during a step it undoes: one while `bisect` checks

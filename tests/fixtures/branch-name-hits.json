@@ -45,10 +45,10 @@
   "r = subprocess.run([\"git\", \"-C\", d, \"rev-parse\", \"--abbrev-ref\", \"HEAD\"],"
  ],
  "scripts/batch.py": [
-  "\"run `git -C %s checkout --detach %s`, `git -C %s bisect reset` and `git -C %s symbolic-ref HEAD %s`.\"",
+  "\"names above, then run %s and `git -C %s symbolic-ref HEAD %s`.\"",
   "\"there, or end its bisect or rebase), then run `git -C %s symbolic-ref HEAD %s`.\"",
   "# between its steps, leaves HEAD detached at the commit it was at rather than on the branch over another commit's",
-  "# move refused after the steps, which leaves HEAD detached at the midpoint with the bisect in progress either way,",
+  "# leaves HEAD detached at the midpoint with the bisect in progress either way,",
   "# post-checkout hook (git read-tree, git symbolic-ref and a git bisect reset that checks nothing out run none), and",
   "# rule, whatever the setting, the names it resolves itself: git bisect start, run from HEAD detached at the tip, HEAD",
   "# symbolic-ref's: a branch is checked out in one worktree at a time, so git checkout will not put a worktree on a",
@@ -179,6 +179,8 @@
   "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=other, check=False), \"\",",
   "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=other, check=False), \"\",",
   "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=wt, check=False), \"\",",
+  "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=wt, check=False), \"\", \"HEAD is detached\")",
+  "\"run %s and `git -C %s symbolic-ref HEAD refs/heads/batch/b1`.\" % (\", \".join(steps), wt))",
   "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=wt, check=False), \"\", \"HEAD is detached\")",
   "self.assertEqual(fx._git(\"symbolic-ref\", \"-q\", \"HEAD\", cwd=wt, check=False), \"\", \"the batch worktree is detached\")",
   "self.assertEqual(fx._git(\"symbolic-ref\", \"HEAD\", cwd=other), \"refs/heads/batch/b1\")",

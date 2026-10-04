@@ -406,14 +406,18 @@ QUIET_NAMES = ("-c", "core.warnAmbiguousRefs=false")
 # call class succeeds: with GIT_SETTINGS, a whole-tree worktree add needed 255 MiB, a member's merge 91 MiB, merge-tree
 # and diff-tree 87 MiB, merge-base and rev-list 55 MiB, ls-remote 19 MiB, rev-parse and for-each-ref 11 MiB; without
 # them the same calls needed 419, 363, 315, 311, 19 and 11 MiB, since a call that reads an object maps a little more
-# than the largest pack it touches (a fetch's figures follow). GIT_SETTINGS are those of
-# scripts/sweep.py's GIT_NEUTRAL_CONFIG that keep the need flat (its comment has the mechanism): the pack window caps,
-# and core.preloadIndex and index.threads off, since each thread git starts for the index reserves a stack and a malloc
-# arena, so a checkout's need would vary with the threads it starts; pack.threads=1 (round 2 of PR 959, ruling A), the
-# same for index-pack, which a fetch of 100 objects or more runs (git's fetch.unpackLimit), and for the pack-objects a
-# push runs: git's own count for index-pack is one thread per two CPUs, at most 20 (from 40 CPUs), each with a stack, an
-# arena and its own share of the delta base cache, so a fetch's need grew with the machine. A real batch's clone holds
-# origin's branches and other refs (the upstream project's, say), and its git fetch --prune origin fetches every branch
+# than the largest pack it touches (a fetch's figures follow). GIT_SETTINGS are the keys of scripts/sweep.py's
+# GIT_NEUTRAL_CONFIG that keep the need flat (its comment has the mechanism), the pack window caps, and
+# core.preloadIndex and index.threads off, since each thread git starts for the index reserves a stack and a malloc
+# arena, so a checkout's need would vary with the threads it starts; and three keys of batch.py's own, which
+# GIT_NEUTRAL_CONFIG does not hold: pack.threads=1, gc.auto=0 and maintenance.auto=false. The sweep needs none of the
+# three: none of its git calls fetches, pushes or runs gc (its private clones are made with git init and an alternates
+# file), so none runs index-pack or pack-objects (round 3 of PR 959, regression-1). pack.threads=1 (round 2 of PR 959,
+# ruling A) holds to one thread index-pack, which a fetch of 100 objects or more runs (git's fetch.unpackLimit), and the
+# pack-objects a push runs: git's own count for index-pack is one thread per two CPUs, at most 20 (from 40 CPUs), each
+# with a stack, an arena and its own share of the delta base cache, so a fetch's need grew with the machine. A real
+# batch's clone holds origin's branches and other refs (the upstream project's, say), and its git fetch --prune origin
+# fetches every branch
 # on origin, so its need was measured on scratch clones of this project made stale holding origin's branches and the
 # clone's other refs as each stood at a cutoff, through this file's fetch, served by a git daemon on the same machine
 # (2026-10-04, git 2.43.0, a 60-CPU machine, MALLOC_ARENA_MAX unset, since a shell that inherits it caps the arenas and
@@ -430,9 +434,10 @@ QUIET_NAMES = ("-c", "core.warnAmbiguousRefs=false")
 # staleness or its count of objects alone, and a real fetch needs about half of GIT_MEMORY: about two times headroom,
 # not the four to five times the figures below for clones holding main alone suggest. What sets the need is the refs
 # the clone holds together with the window of history it fetches, not the refspec's breadth alone: on a clone made
-# stale to the same three-week cutoff (1,626 refs: origin's 86 branches as they stood then and the upstream refs older
-# than it), a fetch whose refspec named main alone, with 45,119 objects to fetch against 55,563 for every branch,
-# failed at 400 and 416 MiB and passed at 448 and 480 MiB, as the fetch of every branch failed at 400 MiB and passed
+# stale to the same three-week cutoff (1,626 refs: origin's 85 branches and a batch branch pushed after the first clone
+# was built, each as it stood then, and the upstream refs older than it), a fetch whose refspec named main alone,
+# with 45,119 objects to fetch against 55,563 for every branch, failed at 400 and 416 MiB and passed at 448 and 480 MiB,
+# as the fetch of every branch failed at 400 MiB and passed
 # at 448 and 480 MiB, while a clone holding main alone at that cutoff passed at 320 and 400 MiB fetching every branch
 # (73,885 objects) and failed at 256 MiB (2026-10-04, git 2.43.0, MALLOC_ARENA_MAX unset). The refspec can still add
 # to it: on a two-week clone holding every branch, the largest git process of a fetch of main alone peaked at 206 MiB
@@ -448,9 +453,10 @@ QUIET_NAMES = ("-c", "core.warnAmbiguousRefs=false")
 # (push_batch's call, to remotes as stale, main alone, with no hook, the same day) ran pack-objects on 61 threads,
 # mapping 4569 to 4753 MiB, without the setting, and on one, mapping 274 MiB (two weeks) and 365 MiB (70
 # days), with it, which took 1.6 s in place of 1.3 and 6.2 to 6.7 s in place of 5.0 to 5.4, the whole push 13.6 to 14.2
-# s in place of 13.4 to 15.4 and 13.1 to 14.0 s in place of 11.8 to 12.6. Last, gc.auto=0 and maintenance.auto=false, so
-# no gc or maintenance git starts on its own after a fetch, a merge or a commit runs under the limit with a need nobody
-# measured (a repack starts a thread per core) and, failing there, writes the gc.log that stops the clone's automatic gc
+# s in place of 13.4 to 15.4 and 13.1 to 14.0 s in place of 11.8 to 12.6. Last of batch.py's own keys, gc.auto=0 and
+# maintenance.auto=false, so no gc or maintenance git starts on its own after a fetch, a merge or a commit runs under
+# the limit with a need nobody measured (a repack starts a thread per core) and, failing there, writes the gc.log that
+# stops the clone's automatic gc
 # until it is removed; your own git calls in the clone still run them. A call that runs the clone's hooks gets
 # HOOK_MEMORY instead of GIT_MEMORY (HOOK_CALLS: git push, which runs pre-push; git commit, which runs pre-commit,
 # prepare-commit-msg, commit-msg and post-commit; and git merge, which runs pre-merge-commit, prepare-commit-msg,
@@ -467,8 +473,8 @@ QUIET_NAMES = ("-c", "core.warnAmbiguousRefs=false")
 # packed-refs among them, so before each such call batch.py lists the refs under GIT_MEMORY (_refs_listed, ruling C's
 # item 2), and a sparse or oversized file planted at a loose ref, or a sparse packed-refs, fails there, at GIT_MEMORY,
 # with or without a fetch before it. The residual, stated: a file planted after that listing, or one the call reads and
-# the listing does not (objects/info/alternates or the shallow file at a push, MERGE_MSG at a merge or a commit, which
-# git writes and reads back whole), fails at HOOK_MEMORY, not GIT_MEMORY; its witness is the pin that the listing
+# the listing does not (objects/info/alternates or the shallow file at a push, a state file in the git dir at a merge or
+# a commit, GIT_DIR_STATE_FILES), fails at HOOK_MEMORY, not GIT_MEMORY; its witness is the pin that the listing
 # refuses a planted loose ref at GIT_MEMORY on a --no-fetch path (tests/test_batch_tool.py,
 # test_a_sparse_loose_ref_planted_before_a_no_fetch_push_path_is_refused_by_the_listing_at_git_memory). Not taken: a
 # limit of GIT_MEMORY raised to HOOK_MEMORY for the hook alone by a core.hooksPath wrapper, which would stand in front
@@ -498,6 +504,36 @@ GIT_SETTINGS = ("-c", "core.packedGitWindowSize=32m", "-c", "core.packedGitLimit
 # which runs none of a merge's hooks.
 HOOK_CALLS = ("push", "commit", "merge")
 HOOK_MEMORY = 16 << 30
+
+
+# Round 3 of PR 959, correctness-1: the strategy batch.py's two merges name (MERGE_STRATEGY) and the -c pairs they run
+# with after GIT_SETTINGS (merge_settings), so that git merge reads the merge options merge-tree reads. batch.py reads
+# merge-tree --write-tree for the paths a merge conflicts on (merge_member and merge_main, through merge_tree_of), and
+# verify reads it for the clean merge each merge is checked against; merge-tree runs ort with no -X option, its content
+# merges with the histogram diff, and reads no branch's mergeOptions, no pull.twohead and no diff.algorithm. git merge
+# reads all three: branch.<the branch HEAD is on>.mergeOptions, as options given before the command line's (an -s on the
+# command line adds to the strategies mergeOptions names; it does not replace them), pull.twohead as its strategy when
+# none is given, and, from git 2.47 on (its release notes), diff.algorithm for its content merges. With any of them git
+# merge can resolve by itself a conflict merge-tree reports: with '-s recursive -Xours' in the batch branch's
+# mergeOptions, or pull.twohead=recursive and no mergeOptions at all, git 2.43.0's merge-recursive merged a file
+# merge-tree conflicted on and wrote a resolve-undo entry for it, which replayed_paths read as rerere's replay, so a
+# merge the clone's pre-merge-commit hook refused was committed with git commit, which does not run that hook; and with
+# diff.algorithm=myers, git 2.55.0's merge merged cleanly a file merge-tree conflicted on (measured on 2026-10-04). So
+# the two merges empty the batch branch's mergeOptions, name -s ort, the one strategy once mergeOptions is empty, and
+# set diff.algorithm to histogram, ort's own: a conflict merge-tree reports is then one git merge leaves, unless rerere
+# replays it. The pairs go into run_git's launch after GIT_SETTINGS (its `settings`), not into the call's args, so
+# _runs_hooks still reads merge as the call's first word and the merge keeps HOOK_MEMORY and the listing before it; git
+# reads the command line's pairs after every other config, the environment's included. The residual, stated: git reads
+# the mergeOptions of the branch HEAD is on, and both merges run in the batch worktree, which prepare_worktree puts on
+# the batch branch; a batch worktree left on another branch, or detached (git then reads branch.HEAD.mergeOptions),
+# merges with that name's options. -s ort needs git 2.33 (batch.py's reads of merge-tree --write-tree need 2.38).
+MERGE_STRATEGY = ("-s", "ort")
+
+
+def merge_settings(name):
+    """The -c pairs batch/<name>'s two merges run with after GIT_SETTINGS (MERGE_STRATEGY's comment): the branch's
+    mergeOptions emptied and diff.algorithm set to histogram."""
+    return ("-c", "branch.%s.mergeOptions=" % branch_of(name), "-c", "diff.algorithm=histogram")
 
 
 # The signals that stop the tool (the closing check wf_3b100f5e-b38, its item 4): each raises Stopped, a BaseException
@@ -536,6 +572,9 @@ class Stopped(BaseException):
     def __init__(self, signum):
         super().__init__(signum)
         self.signum = signum
+        # Set when the cleanup the stop ran did not finish (round 3 of PR 959, correctness-2: bisect's cleanups): what
+        # failed and the state it left, which main prints in place of its line saying the cleanup ran.
+        self.cleanup_failed = None
 
 
 def _on_stop(signum, _frame):
@@ -667,7 +706,7 @@ def _tool_env(repo):
     return env
 
 
-def run_git(args, cwd, repo=None, env=None, text=True):
+def run_git(args, cwd, repo=None, env=None, text=True, settings=()):
     """`git <args>` in `cwd`, in the repository `repo` names (default: repo_for(cwd)), as a CompletedProcess: the one way
     this tool starts git. stdin is closed, `env` is added to the environment, and the process starts in a session of its
     own and has GIT_BOUND seconds to end; one that has not is killed with its process group and reaped, and GitBound is
@@ -681,13 +720,15 @@ def run_git(args, cwd, repo=None, env=None, text=True):
     rev-list that fails at the limit, after which git fetch exits 1 (GIT_SETTINGS' comment), and a thread git cannot
     start there (exit 128, "error: cannot create async thread: Resource temporarily unavailable", the words a limit on
     processes gives too). scripts/sweep.py's OUT_OF_MEMORY comment lists the others that are known. A call that runs
-    the clone's hooks, under HOOK_MEMORY, comes after a listing of the refs under GIT_MEMORY (_refs_listed)."""
+    the clone's hooks, under HOOK_MEMORY, comes after a listing of the refs under GIT_MEMORY (_refs_listed). `settings`
+    are -c pairs of the caller's own, which follow GIT_SETTINGS in the launch and come before `args`, so _runs_hooks and
+    git_memory still read the subcommand as the first word of `args` (MERGE_STRATEGY's comment)."""
     repo = repo or repo_for(cwd)
     argv = ["git", *args]
     limit = git_memory(args)
     if limit is not None and _runs_hooks(args):
         _refs_listed(args, cwd, repo)
-    launch = ["git", *QUIET_NAMES, *GIT_SETTINGS, *args]
+    launch = ["git", *QUIET_NAMES, *GIT_SETTINGS, *settings, *args]
     if limit is not None:
         launch = ["/bin/sh", "-c", git_limits()._LIMITED % (limit >> 10), *launch]
     _hold_stops()
@@ -711,8 +752,9 @@ def _refs_listed(args, cwd, repo):
     (--no-fetch), and the GitMemory names it (_odd_files), where the call itself would read it until HOOK_MEMORY.
     --format= prints an empty line a ref, the least output for the same reads. A bound met here is raised as it was met,
     the call it came before named; the call does not run. Its residual, stated: a file planted after this listing, or
-    one the call reads and the listing does not (objects/info/alternates or the shallow file at a push, MERGE_MSG at a
-    merge or a commit, which git writes and reads back whole, say, or a loose ref by another road), fails at HOOK_MEMORY
+    one the call reads and the listing does not (objects/info/alternates or the shallow file at a push, a state file in
+    the git dir at a merge or a commit, of GIT_DIR_STATE_FILES, say, or a loose ref by another road), fails at
+    HOOK_MEMORY
     rather than GIT_MEMORY, as do the call's own reads and its hooks' (GIT_SETTINGS' comment; the pin that this listing
     refuses a planted loose ref at GIT_MEMORY on a --no-fetch path is tests/test_batch_tool.py,
     test_a_sparse_loose_ref_planted_before_a_no_fetch_push_path_is_refused_by_the_listing_at_git_memory)."""
@@ -813,6 +855,19 @@ def _bounded_wait(p, what, cwd, text):
         raise
 
 
+# The state files in a worktree's git dir that a commit, a merge or a bisect reads whole (round 3 of PR 959, extra4-1;
+# git 2.43.0, a symlink to /dev/zero at each stopping that call): COMMIT_EDITMSG, which git commit writes and reads
+# back; MERGE_MSG, which git merge writes and reads back and git commit reads; MERGE_MODE and SQUASH_MSG, which git
+# commit of a merge reads; MERGE_AUTOSTASH, which git merge --abort reads; and BISECT_START, which git bisect reset
+# reads. A GitMemory names each of them, in the call's git dir, that is not a regular file or holds at least the call's
+# limit (_odd_files), and its remedy lists them all (_limit_met). COMMIT_EDITMSG outlives prepare_worktree's git
+# checkout -B, so one planted before an assembly is read by its commit of a rerere replay; MERGE_MODE and SQUASH_MSG are
+# removed by that checkout (git 2.43.0 and 2.55.0) and are read only when planted after a stop, by assemble --continue's
+# commit. MERGE_HEAD is
+# not among them, since continue_after_resolution reads it under GIT_MEMORY, with git rev-parse, before its commit.
+GIT_DIR_STATE_FILES = ("COMMIT_EDITMSG", "MERGE_MSG", "MERGE_MODE", "SQUASH_MSG", "MERGE_AUTOSTASH", "BISECT_START")
+
+
 def _limit_met(returncode, said, what, cwd, limit, args, repo):
     """Raise for a process run_git or run_tool started under the memory `limit` (None: none set) whose shell could not
     set it (exit 125 after LIMIT_FAILED: a Fail, the process never started) or that failed at it (scripts/sweep.py's
@@ -820,11 +875,8 @@ def _limit_met(returncode, said, what, cwd, limit, args, repo):
     naming the call, the limit and git's line, the directory of each prefix the call lists the refs under, as a
     directory, "the loose refs under <dir>/" (_ref_files), and the files of `repo` git reads whole that are not regular
     files or are oversized when it is raised, _odd_files); any other exit is the caller's to read. The remedy's list of
-    places names the state files of a merge and a bisect that git reads whole as well: MERGE_MSG, which a merge writes
-    and reads back and a commit reads (git merge and git commit, under HOOK_MEMORY), MERGE_AUTOSTASH, which git merge
-    --abort reads, and BISECT_START, which git bisect reset reads (git 2.43.0, a symlink to /dev/zero at each stopping
-    that call); MERGE_HEAD is not among them, since continue_after_resolution reads it under GIT_MEMORY, with git
-    rev-parse, before its commit."""
+    places names the state files in the git dir that a commit, a merge or a bisect reads whole as well, each of
+    GIT_DIR_STATE_FILES (its comment says which call reads which), the set _odd_files checks."""
     if limit is None or returncode == 0:
         return
     limits = git_limits()
@@ -845,9 +897,10 @@ def _limit_met(returncode, said, what, cwd, limit, args, repo):
     raise GitMemory("%s in %s reached the %s memory limit (%s) batch.py sets on it and failed (%s); remove what it read "
                     "without end there (a symlink to /dev/zero, an oversized file or a symbolic ref leading to one, where "
                     "git reads a ref, packed-refs, the index, a config file, objects/info/alternates or the shallow "
-                    "file, or a state file of a merge or a bisect in the git dir, MERGE_MSG, MERGE_AUTOSTASH or "
-                    "BISECT_START)%s%s, and run the command again"
-                    % (what, cwd, limits.memory_text(limit), name, line,
+                    "file, or a state file in the git dir that a commit, a merge or a bisect reads whole, %s or "
+                    "%s)%s%s, and run the command again"
+                    % (what, cwd, limits.memory_text(limit), name, line, ", ".join(GIT_DIR_STATE_FILES[:-1]),
+                       GIT_DIR_STATE_FILES[-1],
                        "; the call reads the loose refs under %s" % ", ".join(listed) if listed else "",
                        "; of the files of the repository git reads whole, these are not regular files or hold more than "
                        "a file of their kind does, now (an lstat each after the call, so one can have changed since): %s"
@@ -867,12 +920,14 @@ def _odd_files(args, repo, limit):
     prefixes a call lists, which the walk covers and _limit_met names as directories), that is over scripts/sweep.py's
     REF_FILE_MAX bytes, the most a loose ref file holds; and <common dir>/packed-refs, objects/info/alternates and
     shallow when at least `limit` bytes, the limit the call ran under, since git reads or maps each whole and a real one
-    can hold far more than a loose ref (a clone of this project held one of 168,265 bytes on 2026-10-04). Each is named
-    with why: its type, by cannot_read's words, or its size. Not named: a file of the call's own that git reads by
-    another road (the index, a config file, or a state file of a merge or a bisect in the git dir: MERGE_MSG at a merge
-    or a commit, MERGE_AUTOSTASH at git merge --abort, BISECT_START at git bisect reset), and a smaller oversized file
-    that still took the call past the limit; the remedy's list of places covers them (_limit_met). Before ruling C a
-    GitMemory named the batch branch's loose file for a push and MAIN_REF's for a fetch, whatever the call had read."""
+    can hold far more than a loose ref (a clone of this project held one of 168,265 bytes on 2026-10-04); and, the same
+    way, each of GIT_DIR_STATE_FILES in the call's git dir, the state files a commit, a merge or a bisect reads whole
+    (COMMIT_EDITMSG, MERGE_MSG, MERGE_MODE, SQUASH_MSG, MERGE_AUTOSTASH and BISECT_START: round 3 of PR 959, extra4-1,
+    before which a GitMemory from git commit named none of them). Each is named with why: its type, by cannot_read's
+    words, or its size. Not named: a file of the call's own that git reads by another road (the index, a config file),
+    and a smaller oversized file that still took the call past the limit; the remedy's list of places covers them
+    (_limit_met). Before ruling C a GitMemory named the batch branch's loose file for a push and MAIN_REF's for a fetch,
+    whatever the call had read."""
     if repo is None or repo.common_dir is None:
         return []
     limits = git_limits()
@@ -922,7 +977,9 @@ def _odd_files(args, repo, limit):
             stack.extend(reversed(dirs))
     for path, whole in ([(p, False) for p in _ref_files(args, repo)]
                         + [(os.path.join(repo.common_dir, *f.split("/")), True)
-                           for f in ("packed-refs", "objects/info/alternates", "shallow")]):
+                           for f in ("packed-refs", "objects/info/alternates", "shallow")]
+                        + [(os.path.join(repo.git_dir, f), True)
+                           for f in (GIT_DIR_STATE_FILES if repo.git_dir is not None else ())]):
         if path in seen or path.endswith(os.sep):
             continue
         try:
@@ -1754,8 +1811,11 @@ def staged_paths(wt, paths):
 
 def undone_paths(wt, paths):
     """Among `paths`, those the index's resolve-undo record lists: each path the merge in progress left unmerged in
-    the index and that was then resolved there (git merge clears the record as it starts, so it holds that merge's
-    paths alone; git 2.43.0). Given to git literally, as staged_paths gives them."""
+    the index and that was then resolved there. git commit keeps the record (the paths of a hand resolution that
+    assemble --continue committed are still listed after it), and git merge clears it as it starts, so during a merge
+    it holds that merge's paths alone (git 2.43.0 and 2.55.0, 2026-10-04; pinned with such a stale record present
+    before the merge, tests/test_batch_tool.py, test_merges_read_the_options_merge_tree_reads_and_a_refused_merge_is_not_read_as_a_replay).
+    Given to git literally, as staged_paths gives them."""
     if not paths:
         return []
     wanted, out = set(paths), set()
@@ -1770,16 +1830,21 @@ def undone_paths(wt, paths):
 def replayed_paths(wt, conflicted, still):
     """The conflicted paths rerere replayed and staged: conflicted, not unmerged, in the index at stage 0, and in the
     index's resolve-undo record (undone_paths), which lists the paths the merge left unmerged and that were resolved
-    after it; during git merge only rerere resolves one, staging the recorded resolution (rerere.autoUpdate). The
-    stage-0 condition is not implied by the first two: for a distinct-types conflict (a file on one side, a symlink on
-    the other) merge-tree names the aside copy after the SHA it was given (`notes.txt~<sha>`) while `git merge` names
-    it `notes.txt~HEAD`, so the merge-tree path is conflicted and not unmerged and exists nowhere; without the index
-    check a first assembly said rerere had replayed it. Nor is the record's: a merge option that git merge reads and
-    merge-tree does not (-Xours or -Xtheirs in the user's branch.<name>.mergeOptions, say) resolves a conflict inside
-    git merge, so the file is staged whole, nothing is unmerged, and merge-tree still names it conflicted, and before
-    this check a merge the clone's pre-merge-commit hook refused after such a resolution was read as rerere's replay
-    and committed with git commit, which does not run that hook (round 2's spot-check of PR 959, L3; refused_merge).
-    rerere's own files do not say which paths it replayed: it drops each one it replays from MERGE_RR, git rerere
+    after it. batch.py's merges read the merge options merge-tree reads (MERGE_STRATEGY's comment), so a path
+    merge-tree names conflicted is one git merge leaves unmerged, unless rerere resolves it, staging the recorded
+    resolution (rerere.autoUpdate). The stage-0 condition is not implied by the first two: for a distinct-types
+    conflict (a file on one side, a symlink on the other) merge-tree names the aside copy after the SHA it was given
+    (`notes.txt~<sha>`) while `git merge` names it `notes.txt~HEAD`, so the merge-tree path is conflicted and not
+    unmerged and exists nowhere; without the index check a first assembly said rerere had replayed it. The record is a
+    second check, for a road by which git merge resolves a conflict merge-tree reports without rerere, which the options
+    were the known roads to: before round 3 of PR 959 (correctness-1) git merge read the user's, and an option it reads
+    and merge-tree does not (-Xours in branch.<name>.mergeOptions, say) resolved the conflict inside git merge, the file
+    staged whole, nothing unmerged and merge-tree still naming it conflicted. ort writes no resolve-undo entry for such
+    a resolution, so the record told it from a replay, and a merge the clone's pre-merge-commit hook refused after it
+    was refused (round 2's spot-check of PR 959, L3; refused_merge), where before the record a merge so refused was read
+    as rerere's replay and committed with git commit, which does not run that hook; merge-recursive wrote an entry for
+    each file it merged (git 2.43.0, '-s recursive -Xours' or pull.twohead=recursive), so the record alone did not tell
+    them apart, and the options merge-tree reads now do. rerere's own files do not say which paths it replayed: it drops each one it replays from MERGE_RR, git rerere
     status and git rerere remaining print nothing after a whole replay, as after such a refusal, and the empty MERGE_RR
     git commit leaves after a replay is still there at the next merge (git 2.43.0, 2026-10-04)."""
     return undone_paths(wt, staged_paths(wt, sorted(set(conflicted) - set(still))))
@@ -2029,9 +2094,9 @@ def base_branch_verdict(root, state, m):
 
 def refused_merge(wt, still, replayed, what, proc):
     """Abort the merge of `what` that `proc` left in progress in `wt`, and raise a Fail quoting what git printed, when
-    it stopped with nothing unmerged (`still`) and nothing rerere replayed (`replayed`, read from the index's
-    resolve-undo record, so a conflict a merge option such as -Xours resolved inside git merge is not a replay:
-    replayed_paths, round 2's spot-check of PR 959, L3): a hook refused it (a refusal by
+    it stopped with nothing unmerged (`still`) and nothing rerere replayed (`replayed`, the conflicted paths staged
+    whole that the index's resolve-undo record lists: replayed_paths, round 2's spot-check of PR 959, L3, and round 3's
+    correctness-1): a hook refused it (a refusal by
     pre-merge-commit, prepare-commit-msg or commit-msg each left MERGE_HEAD with nothing in conflict, git 2.43.0), and
     git's output is the one place the hook's own words are. Before, such a stop was read as a merge rerere had resolved
     whole and committed with git commit, which runs pre-commit, not pre-merge-commit, so a refusal by pre-merge-commit
@@ -2082,8 +2147,8 @@ def merge_member(root, wt, state, m, resolve_set):
     # traced on 2026-10-04). --no-log, which outranks the config and mergeOptions, drops that shortlog, so the commit's
     # message is the subject alone; batch.py reads only a merge's subject (subject_of), so nothing it relies on
     # changes. merge_main passes it for the same reason.
-    proc = run_git(["merge", "--no-ff", "--no-edit", "--no-log", "-m", msg, m["head"]], wt,
-                   env={"GIT_MERGE_AUTOEDIT": "no"})
+    proc = run_git(["merge", *MERGE_STRATEGY, "--no-ff", "--no-edit", "--no-log", "-m", msg, m["head"]], wt,
+                   env={"GIT_MERGE_AUTOEDIT": "no"}, settings=merge_settings(state["name"]))
     if proc.returncode == 0:
         sha = git("rev-parse", "HEAD", cwd=wt)
         if sha == before or parents_of(sha, wt) != [before, m["head"]]:
@@ -2227,8 +2292,8 @@ def merge_main(root, wt, state):
         return True
     msg = "Merge %s into %s" % (remote_main(), branch_of(state["name"]))
     # --no-log, so git looks main's id up as no ref name and appends no shortlog (merge_member's comment)
-    proc = run_git(["merge", "--no-ff", "--no-edit", "--no-log", "-m", msg, main_sha], wt,
-                   env={"GIT_MERGE_AUTOEDIT": "no"})
+    proc = run_git(["merge", *MERGE_STRATEGY, "--no-ff", "--no-edit", "--no-log", "-m", msg, main_sha], wt,
+                   env={"GIT_MERGE_AUTOEDIT": "no"}, settings=merge_settings(state["name"]))
     resolved = None
     if proc.returncode == 0:
         sha = git("rev-parse", "HEAD", cwd=wt)
@@ -4144,14 +4209,17 @@ def cmd_bisect(args):
     # tree. Neither cleanup reads a name git's rules make of the branch's short name or of a commit's id (traced with
     # git 2.43.0 on 2026-10-04), except where git bisect start ended before it wrote BISECT_HEAD (the comment at the
     # cleanup after the steps). Before the verify pass at that ruling's build (its F1), the cleanup after the steps
-    # ended the bisect with git bisect reset <tip>, which looks the tip's id up by those rules, so a symlink to
-    # /dev/zero the command left at refs/tags/<tip> during the steps stopped it. Measured on 2026-10-04 with git 2.43.0
-    # against the cleanups before the ruling (git checkout [--force] batch/<name>, and after the steps a plain git
-    # bisect reset of a bisect started on the branch), in 19 cases (14 after the run at the base, 5 after the steps: a
-    # clean worktree; changes to tracked files that the move keeps, discards or refuses; a staged change; a deleted
-    # file; a file only touched; an untracked file in the way; the checkout of the base refused): the same HEAD, branch,
-    # index, files, ORIG_HEAD and bisect state each time, and a move refused in the same cases among them, but for the
-    # move refused after the steps, which leaves HEAD detached at the midpoint with the bisect in progress either way,
+    # ended the bisect with git bisect reset <tip>, which under git 2.43.0 looks the tip's id up by those rules, so a
+    # symlink to /dev/zero the command left at refs/tags/<tip> during the steps stopped it: git 2.43.0's git bisect
+    # looks a full id up that way whatever core.warnAmbiguousRefs says (QUIET_NAMES turns it off), where git 2.55.0's
+    # reads the setting and then looks a full id up as no ref name (the verify pass at round 3's build, its v-2, run
+    # under both gits on 2026-10-04). Measured on 2026-10-04 with git 2.43.0 against the cleanups before the ruling
+    # (git checkout [--force] batch/<name>, and after the steps a plain git bisect reset of a bisect started on the
+    # branch), in 19 cases (14 after the run at the base, 5 after the steps: a clean worktree; changes to tracked files
+    # that the move keeps, discards or refuses; a staged change; a deleted file; a file only touched; an untracked file
+    # in the way; the checkout of the base refused): the same HEAD, branch, index, files, ORIG_HEAD and bisect state
+    # each time, and a move refused in the same cases among them, but for the move refused after the steps, which
+    # leaves HEAD detached at the midpoint with the bisect in progress either way,
     # now with BISECT_HEAD among the bisect's files, and which now fails bisect, where git bisect reset's refusal was
     # ignored and bisect exited 0. The last reflog line names the commit HEAD was at when the cleanup began, as git
     # checkout's does when HEAD is detached then and the cleanup moves it. It differs from git checkout's in three of
@@ -4167,16 +4235,31 @@ def cmd_bisect(args):
     # refusal there moves nothing) and again before each move of HEAD to the branch (attach_to_branch), so a worktree
     # that took the branch while the command ran leaves the batch worktree detached, naming it (the verify pass at that
     # ruling's build, its F4).
+    # When the run at the base or the steps stopped (a Fail, a stop signal) and the cleanup after them then fails too,
+    # the reason they stopped comes first and the cleanup's failure after it (round 3 of PR 959, correctness-2:
+    # bisect_unfinished). Before, the cleanup's Fail replaced the reason: a command that crashed at a commit, or a
+    # Ctrl-C, under a restore git read-tree refused, printed read-tree's error alone, and a stop exited 1. A command
+    # that fails at the base is such a stop: its Fail is raised inside the try, straight after the command runs, so the
+    # cleanup after the run at the base reads it as the reason (the verify pass at round 3's build, its v-1). Raised
+    # after the finally, as it was before, it was replaced by the cleanup's Fail the same way.
     force = git("status", "--porcelain", "--untracked-files=no", cwd=wt) == ""
+    body = None
     try:
         git("checkout", "--quiet", "--detach", base, cwd=wt)
-        at_base = run_command(args.cmd, wt)
+        if run_command(args.cmd, wt) != 0:
+            raise Fail("the command fails at the base %s (%s) too; no member made it fail. Check the command and the "
+                       "environment before blaming a member" % (short(base), remote_main()))
+    except BaseException as e:
+        body = e
+        raise
     finally:
-        _cleanup_steps(lambda: restore_branch_tree(wt, args.name, force),
-                       lambda: attach_to_branch(wt, args.name, git("rev-parse", "HEAD", cwd=wt)))
-    if at_base != 0:
-        raise Fail("the command fails at the base %s (%s) too; no member made it fail. Check the command and the environment before blaming a member"
-                   % (short(base), remote_main()))
+        try:
+            _cleanup_steps(lambda: restore_branch_tree(wt, args.name, force),
+                           lambda: attach_to_branch(wt, args.name, git("rev-parse", "HEAD", cwd=wt)))
+        except Fail as e:
+            if body is None:
+                raise
+            bisect_unfinished(body, wt, args.name, e, bisected=False)
     # The steps `git bisect run` would take are driven here, with its rules for the command's exit (0 good, 125 skip, any
     # other from 1 to 127 bad, anything else stops the bisect): bisect run runs the command inside git, so the bound on
     # every git call (GIT_BOUND, the 02:43Z ruling, item 1(a)) would bound the command too, and a test command can rightly
@@ -4194,7 +4277,7 @@ def cmd_bisect(args):
     # refs/tags/HEAD and the rest), where started on the branch it looked up the names of refs/heads/batch/<name>
     # (refs/tags/refs/heads/batch/<name> and the rest) (git 2.43.0, measured on 2026-10-04).
     steps = int(git("rev-list", "--first-parent", "--count", "%s..%s" % (base, tip), cwd=wt)) + 1
-    bad = None
+    bad = body = None
     try:
         git("update-ref", "--no-deref", "-m", "checkout: moving from %s to %s" % (br, tip), "HEAD", tip, cwd=wt)
         proc = git_proc("bisect", "start", "--no-checkout", "--first-parent", tip, base, cwd=wt)
@@ -4215,6 +4298,9 @@ def cmd_bisect(args):
             if not m and proc.returncode != 0:
                 raise Fail("bisect did not name a first bad commit:\n%s" % out[-2000:])
         bad = m.group(1)
+    except BaseException as e:
+        body = e
+        raise
     finally:
         # The branch's tree back (forced when the worktree had no changes to tracked files before the steps), the bisect
         # ended, and HEAD pointed at the branch, in that order. A plain git bisect reset checks nothing out while
@@ -4222,15 +4308,19 @@ def cmd_bisect(args):
         # it checks out what BISECT_START records, the tip by its id, so it runs before HEAD is pointed at the branch.
         # When a step fails after the first bad commit was found, that commit is printed and carried in the Fail raised,
         # so the answer is not lost and the run does not report success over a worktree left off the branch (the verify
-        # pass at the 22:25Z ruling's build, its F6 and F1's fifth point).
+        # pass at the 22:25Z ruling's build, its F6 and F1's fifth point); when the steps stopped before it was found,
+        # the reason they stopped is carried first (bisect_unfinished).
         try:
             _cleanup_steps(lambda: restore_branch_tree(wt, args.name, force), lambda: git("bisect", "reset", cwd=wt),
                            lambda: attach_to_branch(wt, args.name, git("rev-parse", "HEAD", cwd=wt)))
         except Fail as e:
             if bad is None:
-                raise
+                if body is None:
+                    raise
+                bisect_unfinished(body, wt, args.name, e, bisected=True)
             print(first_bad_line(state, bad, wt))
-            raise Fail(bisect_cleanup_failed(wt, args.name, bad, e)) from None
+            raise Fail("bisect named the first bad commit, %s (printed above), but its cleanup did not finish: %s"
+                       % (short(bad), bisect_cleanup_failed(wt, args.name, e))) from None
     print(first_bad_line(state, bad, wt))
 
 
@@ -4243,11 +4333,13 @@ def first_bad_line(state, bad, wt):
     return "first bad: %s (%s), not a member merge" % (short(bad), subject_of(bad, wt))
 
 
-def bisect_cleanup_failed(wt, name, bad, e):
-    """The message of the Fail bisect raises when its cleanup after the steps stopped at `e`, a Fail, after the first
-    bad commit `bad` was found (its line is printed first): that commit, the error, the state the batch worktree is
-    left in, read as it is now (HEAD's commit, on the branch or detached, and whether a bisect is in progress), and how
-    to put it back on the branch, named by its full ref."""
+def bisect_cleanup_failed(wt, name, e, bisected=True):
+    """What bisect says after "its cleanup did not finish:" when a cleanup stopped at `e`, a Fail: the error, the state
+    the batch worktree is left in, read as it is now (HEAD's commit, on the branch or detached, and whether a bisect is
+    in progress), and how to put it back on the branch, named by its full ref; `bisected` False for the cleanup after
+    the run at the base, where no bisect was started, so the remedy runs no git bisect reset. What comes before it
+    says what came first: the first bad commit, found (cmd_bisect), or why bisect stopped before it found one
+    (bisect_unfinished)."""
     bref = batch_ref(name)
     try:
         head = short(git("rev-parse", "HEAD", cwd=wt))
@@ -4257,10 +4349,29 @@ def bisect_cleanup_failed(wt, name, bad, e):
                                       "the bisect in progress" if bisecting else "no bisect in progress")
     except Fail as unread:
         left = "in a state batch.py could not read (%s)" % unread
-    return ("bisect named the first bad commit, %s (printed above), but its cleanup did not finish: %s\nThe batch "
-            "worktree %s is left %s. To put it back on %s at the tip, commit or discard any change git names above, then "
-            "run `git -C %s checkout --detach %s`, `git -C %s bisect reset` and `git -C %s symbolic-ref HEAD %s`."
-            % (short(bad), str(e).rstrip(), wt, left, branch_of(name), wt, bref, wt, wt, bref))
+    steps = ["`git -C %s checkout --detach %s`" % (wt, bref)] + (["`git -C %s bisect reset`" % wt] if bisected else [])
+    return ("%s\nThe batch worktree %s is left %s. To put it back on %s at the tip, commit or discard any change git "
+            "names above, then run %s and `git -C %s symbolic-ref HEAD %s`."
+            % (str(e).rstrip(), wt, left, branch_of(name), ", ".join(steps), wt, bref))
+
+
+def bisect_unfinished(body, wt, name, e, bisected):
+    """Raise for bisect when the run at the base (`bisected` False) or the steps stopped on `body`, before a first bad
+    commit was found, and the cleanup after them then stopped at `e`, a Fail (round 3 of PR 959, correctness-2): the
+    reason first, then the cleanup's error, the state it left and the remedy (bisect_cleanup_failed). A Fail (a command
+    that failed at the base; one that exited 128 or more at a step, or was ended by a signal there; a git step that
+    failed) is raised again with that text after its own, its exit kept. A stop (Stopped) is raised again carrying the
+    text (Stopped.cleanup_failed), so main exits 128 plus the signal's number and says the cleanup did not finish,
+    where it says the cleanup ran when it did. Anything else is raised as it is, the text printed before it."""
+    unfinished = bisect_cleanup_failed(wt, name, e, bisected)
+    if isinstance(body, Stopped):
+        body.cleanup_failed = unfinished
+        raise body
+    if isinstance(body, Fail):
+        raise Fail("%s\nThen bisect's cleanup did not finish: %s" % (str(body).rstrip(), unfinished),
+                   code=body.code) from None
+    print("batch: bisect's cleanup did not finish: %s" % unfinished, file=sys.stderr)
+    raise body
 
 
 # ── entry point ──────────────────────────────────────────────────────────────
@@ -4424,8 +4535,12 @@ def main(argv=None):
     except Stopped as e:
         # "any": a stop can land between two processes, with none running (the verify pass at the closing check
         # wf_fb19febe-36b's build, the class of its code finding 3, which scripts/sweep.py's check line had too)
-        print("batch: stopped by signal %d; any process it was waiting on was killed and its cleanup ran" % e.signum,
-              file=sys.stderr)
+        if e.cleanup_failed is not None:
+            print("batch: stopped by signal %d; any process it was waiting on was killed, but its cleanup did not "
+                  "finish: %s" % (e.signum, e.cleanup_failed), file=sys.stderr)
+        else:
+            print("batch: stopped by signal %d; any process it was waiting on was killed and its cleanup ran"
+                  % e.signum, file=sys.stderr)
         return 128 + e.signum
     finally:
         for s, handler in replaced.items():

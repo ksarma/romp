@@ -25,6 +25,7 @@ head (PlanReadsTheMemberSweep).
 
 Synthetic data only: a demo `notes-api` with invented PR numbers, branch names and titles.
 """
+import ast
 import importlib.util
 import json
 import os
@@ -284,12 +285,13 @@ class Fixture:
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     # -- the tool ----------------------------------------------------------
-    def run(self, *args, script="batch.py", cwd=None, gh_fail=None):
+    def run(self, *args, script="batch.py", cwd=None, gh_fail=None, env=None):
         """`gh_fail` is a FAKE_GH_FAIL spec for this one call: `|`-separated argv prefixes the fake
-        gh answers with an HTTP 502."""
+        gh answers with an HTTP 502. `env`, when given, is the call's whole environment in place of the fixture's."""
         cmd = [sys.executable, os.path.join(self.dev, "scripts", script)] if script.endswith(".py") \
             else [os.path.join(self.dev, "scripts", script)]
-        env = dict(self.env, FAKE_GH_FAIL=gh_fail) if gh_fail else self.env
+        env = env or self.env
+        env = dict(env, FAKE_GH_FAIL=gh_fail) if gh_fail else env
         return subprocess.run([*cmd, *args], cwd=cwd or self.tmp, env=env, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -725,6 +727,24 @@ class PlanReadsTheMemberSweep(_Base):
         fx.swept("a", new)
         fx.ok("assemble", "b1", "--repin", "101")
         self.assertEqual(fx.state("b1")["members"]["101"]["head"], new)
+
+
+# A git first on PATH for the stale-record cases of the merges pin (round 3 of PR 959, tests-1): it adds -Xours after the
+# subcommand of a git merge whose words hold ROAD_ON (an id), so that git merge resolves by itself a conflict merge-tree
+# reports, as an option of the user's did before batch.py's merges read the options merge-tree reads (MERGE_STRATEGY's
+# comment in scripts/batch.py); it runs every other call, and every word it is given, through ROAD_REAL_GIT unchanged.
+ROAD_GIT = r"""#!/bin/sh
+case " $* " in
+  *" merge "*"$ROAD_ON"*) ;;
+  *) exec "$ROAD_REAL_GIT" "$@" ;;
+esac
+started= added=
+for a in "$@"; do
+  if [ -z "$started" ]; then started=1; set --; fi
+  if [ -z "$added" ] && [ "$a" = merge ]; then set -- "$@" merge -Xours; added=1; else set -- "$@" "$a"; fi
+done
+exec "$ROAD_REAL_GIT" "$@"
+"""
 
 
 class Assemble(_Base):
@@ -1601,66 +1621,183 @@ class Assemble(_Base):
                     self.assertEqual(st["assembly"]["head"], head)
                     self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), head)
 
-    def test_a_merge_a_hook_refuses_after_a_merge_option_resolved_its_conflict_is_not_read_as_a_rerere_replay(self):
-        """A merge option that git merge reads and merge-tree does not, here -Xours in the user's
-        branch.batch/b1.mergeOptions, resolves a conflict inside git merge: nothing is left unmerged, the file is staged
-        whole, and merge-tree still names it conflicted. Which paths rerere replayed was read from those two, merge-tree's
-        conflict list and the index's stage-0 entries, so when the clone's pre-merge-commit hook refused such a merge the
-        file counted as replayed, and assemble committed the merge with git commit, which runs pre-commit and not
-        pre-merge-commit, and logged that rerere had replayed a recorded resolution. A replayed path is now one the
-        index's resolve-undo record lists, the record of the paths this merge left unmerged and rerere then staged
-        (replayed_paths), so the refusal is aborted and stops the command, as it is for a merge with no conflict
-        (test_a_merge_the_pre_merge_commit_hook_refuses_fails_the_command_and_is_not_committed). Each case in a fixture
-        of its own: #101 and #102 change the same line of notes.txt and the hook refuses #102's merge alone (assemble
-        --no-fetch); and origin's main changes the line #101 changed and the hook refuses the merge of main (assemble
-        --merge-main). Each exits 1 with the hook's line in what it prints, no merge left in progress, and nothing of the
-        refused merge recorded or on the branch. Red before this change: each exited 0, the refused merge committed with
-        "rerere replayed a recorded resolution"."""
+    # A three-way merge of one file that merge-tree's ort, whose content merges use the histogram diff, conflicts on, and
+    # that a myers diff merges cleanly (found by search with git merge-file --diff-algorithm, git 2.55.0, 2026-10-04): the
+    # merge base's text, the batch side's (#101's) and the other side's (#102's, or main's). git 2.43.0's merge-recursive,
+    # which pull.twohead=recursive makes git merge run, merges with myers, and git 2.55.0's merge reads diff.algorithm.
+    MYERS_CLEAN = "notes/format.c"
+    MYERS_BASE = ("return x;\nif (a)\nx++;\n}\nfoo();\nif (a)\nfoo();\n{\n{\n}\nfoo();\n}\n}\n\n\nif (a)\nreturn x;\n"
+                  "foo();\nreturn x;\nbar();\n")
+    MYERS_OURS = ("return x;\nif (a)\nx++;\n}\nfoo();\nif (a)\nfoo();\n{\n{\nif (a)\nif (a)\n{\n{\n}\nfoo();\n}\n}\n"
+                  "\n\nif (a)\nreturn x;\nfoo();\nreturn x;\nbar();\n")
+    MYERS_THEIRS = ("return x;\nif (a)\nx++;\n}\nfoo();\nif (a)\nx++;\n{\nbar();\n\nfoo();\n{\n{\n}\nfoo();\n}\n}\n\n"
+                    "if (a)\nreturn x;\nfoo();\nreturn x;\nbar();\n")
+
+    def refusing_hook(self, fx, refused, refusal):
+        """A pre-merge-commit hook in `fx`'s clone that appends GIT_REFLOG_ACTION to a log, and, for a merge whose
+        GIT_REFLOG_ACTION holds `refused`, writes the index's resolve-undo record as git merge left it to a file, prints
+        `refusal` and exits 1: (the log's path, the record's path)."""
+        log, record = os.path.join(fx.tmp, "hook.log"), os.path.join(fx.tmp, "hook-record.txt")
+        hook = os.path.join(fx.dev, ".git", "hooks", "pre-merge-commit")
+        os.makedirs(os.path.dirname(hook), exist_ok=True)
+        with open(hook, "w") as f:
+            f.write('#!/bin/sh\necho "$GIT_REFLOG_ACTION" >> "%s"\ncase "$GIT_REFLOG_ACTION" in *%s*)\n'
+                    '  git ls-files --resolve-undo > "%s"; echo "%s" >&2; exit 1;;\nesac\nexit 0\n'
+                    % (log, refused, record, refusal))
+        os.chmod(hook, 0o755)
+        return log, record
+
+    def test_merges_read_the_options_merge_tree_reads_and_a_refused_merge_is_not_read_as_a_replay(self):
+        """Round 3 of PR 959, correctness-1 and tests-1. batch.py's two merges, a member's and the merge of origin's
+        main, read the merge options merge-tree reads (MERGE_STRATEGY's comment): the batch branch's mergeOptions
+        emptied, -s ort, diff.algorithm=histogram. So an option the user set that git merge reads and merge-tree does
+        not resolves no conflict merge-tree reports: the conflict is a real one, the member is held back and the merge of
+        main stops for a hand resolution, and the clone's pre-merge-commit hook, which refuses that merge, never runs
+        (its log never names it). Four options, each in both shapes, a fixture each: -Xours in
+        branch.batch/b1.mergeOptions and '-s recursive -Xours' there, #101 and #102 (or main) changing line two of
+        notes.txt; pull.twohead=recursive and diff.algorithm=myers, #101 and #102 (or main) changing MYERS_CLEAN, which
+        merge-tree conflicts on (asserted) and a myers diff merges cleanly. The member shape (assemble --no-fetch) exits
+        0 with #102 held back on that file and the chain #101's merge alone; the merge of main (assemble --merge-main,
+        after #101 is assembled) exits 3, stopped for resolution in the file with nothing replayed, the merge in
+        progress and the head where it was. Red at the head before this change: -Xours exited 1 in both shapes, the
+        hook's refusal, under git 2.43.0 and 2.55.0; '-s recursive -Xours' under git 2.43.0 exited 0 with the refused
+        merge committed "with rerere replayed a recorded resolution" (merge-recursive wrote a resolve-undo entry for the
+        file), and under 2.55.0, where recursive is ort, exited 1; pull.twohead=recursive under git 2.43.0 exited 0, the
+        refused merge committed as a replay, the same way (under 2.55.0 it was already the real conflict); and
+        diff.algorithm=myers under git 2.55.0 exited 1, git merge having merged the file cleanly (git 2.43.0's merge reads
+        no diff.algorithm, so it was already the real conflict).
+        Then the premise the resolve-undo check rests on (undone_paths), with a stale record present before the refused
+        merge (tests-1): git commit keeps the record, so after #102's hand resolution is committed it still lists
+        notes.txt, and git merge clears it as it starts. A git first on PATH (ROAD_GIT) stands in for a road by which
+        git merge resolves a conflict merge-tree reports with no rerere, which the options were the known roads to and
+        which none is known to be now: it adds -Xours to the one merge it names. In the member shape #101, #102 and #103
+        change line two of notes.txt, #102 stops (--resolve 102) and is resolved by hand, the record lists notes.txt
+        (asserted after git add), and assemble --continue commits it and merges #103, which the road resolves and the
+        hook refuses; in the shape of the merge of main, --continue ends the assembly, the record lists notes.txt
+        (asserted), main changes the line, and the road resolves the merge of main, which the hook refuses. Each exits 1
+        with the hook's line and "stopped with nothing in conflict (a hook refused it?)", nothing of the refused merge
+        recorded or on the branch, no merge left in progress, and the record the hook read empty: git merge cleared it.
+        Red under a mutant that keeps the record across git merge (batch.py lists it before each of its two merges and
+        undone_paths adds those paths back): exit 0, the refused merge committed "with rerere replayed a recorded
+        resolution"."""
         refusal = "pre-merge-commit: this merge is refused by the clone's own check"
-        for n, case in enumerate(("a member's merge", "the merge of origin's main")):
-            with self.subTest(case=case):
-                if n:
-                    self.fx = Fixture()
-                    self.addCleanup(self.fx.close)
+        options = (("-Xours", ("branch.batch/b1.mergeOptions", "-Xours"), "notes.txt"),
+                   ("-s recursive -Xours", ("branch.batch/b1.mergeOptions", "-s recursive -Xours"), "notes.txt"),
+                   ("pull.twohead=recursive", ("pull.twohead", "recursive"), self.MYERS_CLEAN),
+                   ("diff.algorithm=myers", ("diff.algorithm", "myers"), self.MYERS_CLEAN))
+        first = True
+        for label, (key, value), path in options:
+            for shape in ("a member's merge", "the merge of origin's main"):
+                with self.subTest(option=label, shape=shape):
+                    if not first:
+                        self.fx = Fixture()
+                        self.addCleanup(self.fx.close)
+                    first = False
+                    fx = self.fx
+                    if path == "notes.txt":
+                        base, ours, theirs = None, "one\ntwo-a\nthree\n", "one\ntwo-b\nthree\n"
+                    else:
+                        base, ours, theirs = self.MYERS_BASE, self.MYERS_OURS, self.MYERS_THEIRS
+                        fx.commit_main({path: base}, "main adds the file the merges disagree on")
+                    fx.branch("a", {path: ours})
+                    fx.pr(101, "a", title="notes: the a version", labels=["fix"], body=TRAILER)
+                    if shape == "a member's merge":
+                        fx.branch("b", {path: theirs})
+                        fx.pr(102, "b", title="notes: the b version", labels=["fix"], body=TRAILER)
+                        fx.ok("plan", "--name", "b1")
+                        refused = fx.dev_git("rev-parse", "origin/b")
+                        sides = (fx.dev_git("rev-parse", "origin/a"), refused)
+                        args = ("assemble", "b1", "--no-fetch")
+                    else:
+                        fx.ok("plan", "--name", "b1")
+                        fx.ok("assemble", "b1")
+                        refused = fx.commit_main({path: theirs}, "main changes what #101 changed")
+                        fx.dev_git("fetch", "-q", "origin")
+                        head = fx.state("b1")["assembly"]["head"]
+                        sides = (head, refused)
+                        args = ("assemble", "b1", "--merge-main")
+                    self.assertIn(path, fx.dev_git("merge-tree", "--write-tree", "--name-only", "--no-messages", *sides,
+                                                   check=False).splitlines()[1:],
+                                  "premise: merge-tree names the file conflicted")
+                    fx.dev_git("config", key, value)
+                    log, _record = self.refusing_hook(fx, refused, refusal)
+                    p = fx.run(*args)
+                    said = p.stdout + p.stderr
+                    self.assertNotIn("rerere replayed", said)
+                    self.assertNotIn("stopped with nothing in conflict", said)
+                    self.assertNotIn(refusal, said)
+                    with open(log) if os.path.exists(log) else open(os.devnull) as f:
+                        self.assertNotIn(refused, f.read(), "the hook never ran for the merge it refuses")
+                    st = fx.state("b1")
+                    wt = fx.wt("b1")
+                    if shape == "a member's merge":
+                        self.assertEqual(p.returncode, 0, said)
+                        self.assertEqual(fx.chain("b1"), ["Merge #101: notes: the a version"])
+                        self.assertEqual([e["n"] for e in st["assembly"]["merged"]], [101])
+                        self.assertEqual([(h["n"], h.get("files")) for h in st["assembly"]["held"]], [(102, [path])])
+                        self.assertEqual(fx._git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt, check=False), "",
+                                         "no merge left in progress")
+                    else:
+                        self.assertEqual(p.returncode, 3, said)
+                        self.assertIn("stopped for resolution in %s" % path, p.stdout)
+                        self.assertEqual(st["assembly"]["cursor"], {"n": None, "main": refused, "files": [path],
+                                                                    "replayed": []})
+                        self.assertEqual(fx._git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt, check=False),
+                                         refused, "the merge of main is stopped for resolution")
+                        self.assertFalse(st["assembly"].get("main_merges"), st["assembly"].get("main_merges"))
+                        self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), head)
+        for shape in ("a member's merge", "the merge of origin's main"):
+            with self.subTest(case="a stale resolve-undo record before the refused merge", shape=shape):
+                self.fx = Fixture()
+                self.addCleanup(self.fx.close)
                 fx = self.fx
                 fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
                 fx.pr(101, "a", title="notes: the a version", labels=["fix"], body=TRAILER)
-                if case == "a member's merge":
-                    fx.branch("b", {"notes.txt": "one\ntwo-b\nthree\n"})
-                    fx.pr(102, "b", title="notes: the b version", labels=["fix"], body=TRAILER)
+                fx.branch("b", {"notes.txt": "one\ntwo-b\nthree\n"})
+                fx.pr(102, "b", title="notes: the b version", labels=["fix"], body=TRAILER)
+                if shape == "a member's merge":
+                    fx.branch("c", {"notes.txt": "one\ntwo-c\nthree\n"})
+                    fx.pr(103, "c", title="notes: the c version", labels=["fix"], body=TRAILER)
                 fx.ok("plan", "--name", "b1")
-                if case == "a member's merge":
-                    refused = fx.dev_git("rev-parse", "origin/b")
-                    args = ("assemble", "b1", "--no-fetch")
-                else:
-                    fx.ok("assemble", "b1")
-                    fx.commit_main({"notes.txt": "one\ntwo-m\nthree\n"}, "main changes the line #101 changed")
-                    head = fx.state("b1")["assembly"]["head"]
-                    refused = ""
-                    args = ("assemble", "b1", "--merge-main")
-                fx.dev_git("config", "branch.batch/b1.mergeOptions", "-Xours")
-                hook = os.path.join(fx.dev, ".git", "hooks", "pre-merge-commit")
-                os.makedirs(os.path.dirname(hook), exist_ok=True)
-                with open(hook, "w") as f:
-                    f.write('#!/bin/sh\ncase "$GIT_REFLOG_ACTION" in *%s*) echo "%s" >&2; exit 1;; esac\nexit 0\n'
-                            % (refused, refusal))
-                os.chmod(hook, 0o755)
-                p = fx.run(*args)
-                self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
-                self.assertIn(refusal, p.stdout + p.stderr)
-                self.assertIn("stopped with nothing in conflict (a hook refused it?)", p.stderr)
-                self.assertNotIn("rerere replayed", p.stdout + p.stderr)
+                p = fx.run("assemble", "b1", "--resolve", "102")
+                self.assertEqual(p.returncode, 3, "premise: #102 stops for a hand resolution\n%s%s" % (p.stdout, p.stderr))
                 wt = fx.wt("b1")
+                with open(os.path.join(wt, "notes.txt"), "w") as f:
+                    f.write("one\ntwo-a-b\nthree\n")
+                fx._git("add", "notes.txt", cwd=wt)
+                stale = "premise: the resolve-undo record lists notes.txt before the refused merge"
+                if shape == "a member's merge":
+                    self.assertIn("\tnotes.txt", fx._git("ls-files", "--resolve-undo", cwd=wt), stale)
+                    refused = fx.dev_git("rev-parse", "origin/c")
+                    args = ("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
+                else:
+                    fx.ok("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
+                    self.assertIn("\tnotes.txt", fx._git("ls-files", "--resolve-undo", cwd=wt), stale)
+                    refused = fx.commit_main({"notes.txt": "one\ntwo-m\nthree\n"}, "main changes line two")
+                    args = ("assemble", "b1", "--merge-main")
+                chain = ["Merge #101: notes: the a version", "Merge #102: notes: the b version"]
+                _log, record = self.refusing_hook(fx, refused, refusal)
+                road = os.path.join(fx.tmp, "road-bin")
+                os.makedirs(road)
+                with open(os.path.join(road, "git"), "w") as f:
+                    f.write(ROAD_GIT)
+                os.chmod(os.path.join(road, "git"), 0o755)
+                env = dict(fx.env, PATH=road + os.pathsep + fx.env["PATH"], ROAD_ON=refused,
+                           ROAD_REAL_GIT=shutil.which("git", path=fx.env["PATH"]))
+                p = fx.run(*args, env=env)
+                said = p.stdout + p.stderr
+                self.assertEqual(p.returncode, 1, said)
+                self.assertIn(refusal, said)
+                self.assertIn("stopped with nothing in conflict (a hook refused it?)", p.stderr)
+                self.assertNotIn("rerere replayed", said)
+                with open(record) as f:
+                    self.assertEqual(f.read(), "", "git merge cleared the stale record as it started")
                 self.assertEqual(fx._git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=wt, check=False), "",
                                  "no merge left in progress")
+                self.assertEqual(fx.chain("b1"), chain)
                 st = fx.state("b1")
-                if case == "a member's merge":
-                    self.assertEqual(fx.chain("b1"), ["Merge #101: notes: the a version"])
-                    self.assertEqual([e["n"] for e in st["assembly"]["merged"]], [101])
-                else:
-                    self.assertFalse(st["assembly"].get("main_merges"), st["assembly"].get("main_merges"))
-                    self.assertEqual(st["assembly"]["head"], head)
-                    self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), head)
+                self.assertEqual([e["n"] for e in st["assembly"]["merged"]], [101, 102])
+                self.assertFalse(st["assembly"].get("main_merges"), st["assembly"].get("main_merges"))
 
 class Verify(_Base):
     def assembled(self):
@@ -2085,9 +2222,10 @@ PLANT_MEMORY = 128 << 20
 # than REF_FILE_MAX, and under the 1 GiB file size limit a capped run sets (ulimit -f), as tests/test_sweep_runner.py's
 # SPARSE_SIZE.
 PLANT_SPARSE = 512 << 20
-# The end of the list of places a GitMemory's remedy names (_limit_met), as the pins quote it.
-REMEDY_PLACES = ("objects/info/alternates or the shallow file, or a state file of a merge or a bisect in the git dir, "
-                 "MERGE_MSG, MERGE_AUTOSTASH or BISECT_START)")
+# The end of the list of places a GitMemory's remedy names (_limit_met), as the pins quote it: the state files of
+# GIT_DIR_STATE_FILES since round 3 of PR 959 (extra4-1).
+REMEDY_PLACES = ("objects/info/alternates or the shallow file, or a state file in the git dir that a commit, a merge or a "
+                 "bisect reads whole, COMMIT_EDITMSG, MERGE_MSG, MERGE_MODE, SQUASH_MSG, MERGE_AUTOSTASH or BISECT_START)")
 # The HOOK_MEMORY the listing pin sets (BATCH_BOUND_DRIVER's "hook_memory"): above PLANT_MEMORY, so the two limits are
 # told apart, and below PLANT_SPARSE, so a push that reads the planted file whole fails at it, far from 16 GiB.
 PLANT_HOOK_MEMORY = 384 << 20
@@ -2687,10 +2825,18 @@ exec "$TRACE_REAL_GIT" "$@"
         PLANT_CAP, names #101, exits 0 with nothing on stderr, and leaves the worktree on batch/b1 at the tip with no
         bisect in progress. The bisect runs with --no-checkout from HEAD detached at the tip, so git bisect start records
         the tip's id rather than the short name, and the cleanup restores the branch's tree, ends the bisect with a
-        plain git bisect reset, which checks nothing out while BISECT_HEAD exists, and points HEAD at the branch. Red for
-        the tip's id at the head before this change, where the cleanup's git bisect reset <tip> looked the id up and
-        stopped at the memory limit; red for the short name at the head before the ruling, where the cleanup's git
-        checkout --force batch/b1 read the first of them."""
+        plain git bisect reset, which checks nothing out while BISECT_HEAD exists, and points HEAD at the branch; the
+        driver's log shows that git bisect reset with no argument, so it names no commit for git to look up. Red for
+        the tip's id under git 2.43.0 at the head before this change, where the cleanup's git bisect reset <tip> looked
+        the id up by git's rev-parse rules and stopped at the memory limit: git 2.43.0's git bisect looks a full id up
+        that way whatever core.warnAmbiguousRefs says, and batch.py turns that setting off on every call (QUIET_NAMES).
+        git 2.55.0's git bisect reads the setting and then looks a full id up as no ref name (without the setting it
+        reads the symlink there too). So with the cleanup's git bisect reset given the tip's id (the mutant mResetTip),
+        under git 2.55.0 the exit, the output and the worktree's state are as they are without it, and the assertion
+        on the driver's log is what is red: under the mutant both subtests are red under both gits, on that assertion,
+        but for the tip's id under git 2.43.0, which is red first on its exit, at the memory limit (the verify pass at
+        round 3's build, its v-2; measured 2026-10-04). Red for the short name at the head before the ruling, where the
+        cleanup's git checkout --force batch/b1 read the first of them, which git 2.55.0 reads as well."""
         if not sys.platform.startswith("linux"):
             self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
                           "enforced: Linux")
@@ -2721,6 +2867,10 @@ exec "$TRACE_REAL_GIT" "$@"
                 # try the names the symlinks are at)
                 self.assertEqual(fx._git("symbolic-ref", "HEAD", cwd=wt), "refs/heads/batch/b1",
                                  "the worktree is on the branch")
+                # the driver's log: git 2.55.0 honours QUIET_NAMES for a full id, so on CI's git the plant at
+                # refs/tags/<tip> alone cannot see a cleanup that names the tip
+                self.assertEqual([c[3] for c in self.calls if c[3].split()[:2] == ["bisect", "reset"]], ["bisect reset"],
+                                 "the cleanup ends the bisect with one git bisect reset that names no commit")
 
     def test_a_refused_restore_after_the_steps_fails_bisect_with_its_answer_and_leaves_head_detached(self):
         """The verify pass at this pass's build, its F6 and F5's first part: when the cleanup after the steps cannot put
@@ -2755,6 +2905,83 @@ exec "$TRACE_REAL_GIT" "$@"
         self.assertEqual(fx._git("diff", "--cached", "--name-only", cwd=wt), "", "nothing staged")
         self.assertEqual(fx._git("diff", "--name-only", cwd=wt).splitlines(), ["notes.txt", "postal/postal_service.py"],
                          "both changes kept in the files")
+
+    def test_a_bisect_stopped_before_its_answer_names_why_first_when_the_cleanup_then_fails(self):
+        """Round 3 of PR 959, correctness-2: when bisect stops before it names a first bad commit (a step's command exits
+        128 or more, or a stop signal arrives) and the cleanup's restore of the branch's tree then fails, bisect says
+        first why it stopped, then the cleanup's error, the state the batch worktree is left in and the commands that put
+        it back (bisect_unfinished, bisect_cleanup_failed); a stop exits 128 plus the signal's number and says the
+        cleanup did not finish, where it says the cleanup ran when it did. The worktree has a change to notes.txt before
+        bisect, so each cleanup is unforced, and the command appends to postal/postal_service.py, a file the base,
+        #101's merge and the tip hold differently, so the restore's two-way merge refuses in git read-tree's words. Each
+        case in a fixture of its own: at the one commit bisect tests (#101's merge) the command exits 139 (exit 1:
+        "bisect stopped at <commit>: the command exited 139", then "Then bisect's cleanup did not finish: <read-tree's
+        error>", HEAD left detached there with the bisect in progress, and the remedy's git bisect reset), or sends
+        SIGTERM to batch.py (exit 143: the signal, then the same error and state); and in the run at the base the command
+        sends SIGTERM to batch.py (exit 143, HEAD left detached at the base with no bisect in progress, and a remedy with
+        no git bisect reset, since none was started), or exits 1, or exits 139 (exit 1 for both: "the command fails at
+        the base <base> (<remote main>) too", then the same error, state and remedy). Red at the round's head: each
+        printed read-tree's error alone, "batch: git read-tree -m -u HEAD refs/heads/batch/b1 failed (128): ...", with
+        no reason before it, and exited 1; at the step that is a regression of round 2, whose cleanup after the steps
+        ignored the refused move and printed the reason (exit 1 for the 139, 143 for the stop), and at the base the same
+        masking predates round 2. The two cases of a command that fails at the base are the verify pass at round 3's
+        build, its v-1: red at that build's head, where the reason was raised only after the cleanup had finished, so
+        the cleanup's Fail replaced it and bisect printed read-tree's error alone (git 2.43.0 and git 2.55.0,
+        2026-10-04)."""
+        self.maxDiff = None
+        at_the_base = ("if grep -q 'return 2' postal/postal_service.py; then exit 1; fi; "
+                       "echo '# base' >> postal/postal_service.py; %s")
+        cases = (("a step's command exits 139", "echo '# mid' >> postal/postal_service.py; exit 139"),
+                 ("a stop at a step", "echo '# mid' >> postal/postal_service.py; kill -TERM $PPID; sleep 30"),
+                 ("a stop in the run at the base", at_the_base % "kill -TERM $PPID; sleep 30"),
+                 ("the command exits 1 at the base", at_the_base % "exit 1"),
+                 ("the command exits 139 at the base", at_the_base % "exit 139"))
+        refused = ("git read-tree -m -u HEAD refs/heads/batch/b1 failed (128):\n"
+                   "error: Entry 'postal/postal_service.py' not uptodate. Cannot merge.\n")
+        for n, (case, middle) in enumerate(cases):
+            with self.subTest(case=case):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                tip, merge_101 = self.bisect_chain()
+                wt = fx.wt("b1")
+                base = fx._git("merge-base", ORIGIN_MAIN_REF, tip, cwd=wt)
+                with open(os.path.join(wt, "notes.txt"), "a") as f:
+                    f.write("a change the cleanup keeps\n")
+                bisecting = not case.endswith("at the base")
+                if bisecting:
+                    rc, out, err = self.bisect_with(middle)
+                else:
+                    rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c", middle)
+                at = merge_101 if bisecting else base
+                self.assertEqual(out, "", "no first bad commit is named")
+                self.assertNotIn("its cleanup ran", err)
+                if case == "a step's command exits 139":
+                    self.assertEqual(rc, 1, err)
+                    first = ("batch: bisect stopped at %s: the command exited 139, and git bisect run stops on an exit "
+                             "of 128 or more, or a signal\nThen bisect's cleanup did not finish: " % merge_101[:10])
+                elif case.startswith("the command exits"):
+                    self.assertEqual(rc, 1, err)
+                    first = ("batch: the command fails at the base %s (%s) too; no member made it fail. Check the "
+                             "command and the environment before blaming a member\nThen bisect's cleanup did not "
+                             "finish: " % (base[:10], batch.remote_main()))
+                else:
+                    self.assertEqual(rc, 128 + signal.SIGTERM, err)
+                    first = ("batch: stopped by signal %d; any process it was waiting on was killed, but its cleanup "
+                             "did not finish: " % signal.SIGTERM)
+                state = "The batch worktree %s is left detached at %s, with %s." % (
+                    wt, at[:10], "the bisect in progress" if bisecting else "no bisect in progress")
+                steps = ["`git -C %s checkout --detach refs/heads/batch/b1`" % wt]
+                if bisecting:
+                    steps.append("`git -C %s bisect reset`" % wt)
+                remedy = ("To put it back on batch/b1 at the tip, commit or discard any change git names above, then "
+                          "run %s and `git -C %s symbolic-ref HEAD refs/heads/batch/b1`." % (", ".join(steps), wt))
+                self.assertEqual(err, first + refused + state + " " + remedy + "\n")
+                self.assertEqual(fx._git("symbolic-ref", "-q", "HEAD", cwd=wt, check=False), "", "HEAD is detached")
+                self.assertEqual(fx._git("rev-parse", "HEAD", cwd=wt), at)
+                self.assertEqual(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1",
+                                                             "BISECT_START")), bisecting, "the bisect state, as said")
 
     def other_worktree_on_the_branch(self):
         """A second worktree of the fixture's clone, on batch/b1, after the batch worktree is detached at the tip (git
@@ -3119,8 +3346,8 @@ exec "$TRACE_REAL_GIT" "$@"
         rc, out, err = self.bounded("pull", "b1", "102", "--no-fetch", "--reason", "the maintainer asked", env=env,
                                     bound=60, git_memory=PLANT_MEMORY, hook_memory=PLANT_HOOK_MEMORY)
         self.assertEqual(rc, 1, out + err)
-        self.assertIn("batch: batch.py lists the refs under GIT_MEMORY before git merge --no-ff --no-edit --no-log -m "
-                      "Merge #101: kernel: bump the version %s, which runs the clone's hooks under HOOK_MEMORY: git "
+        self.assertIn("batch: batch.py lists the refs under GIT_MEMORY before git merge -s ort --no-ff --no-edit --no-log "
+                      "-m Merge #101: kernel: bump the version %s, which runs the clone's hooks under HOOK_MEMORY: git "
                       "for-each-ref "
                       "--format= in %s reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and failed (fatal: "
                       "Out of memory, " % (fx.bare_rev("a"), fx.wt("b1"), PLANT_MEMORY >> 20), err)
@@ -3281,6 +3508,103 @@ exec "$TRACE_REAL_GIT" "$@"
         self.assertIn("git commit --quiet --no-edit in %s reached the %d MiB memory limit (HOOK_MEMORY) batch.py sets on "
                       "it and failed (fatal: Out of memory, " % (wt, PLANT_HOOK_MEMORY >> 20), err)
         self.assertIn(REMEDY_PLACES, err)
+
+    def stopped_at_108(self):
+        """#101 and #108 changing line two of notes.txt, planned as b1, and #108 stopped for a hand resolution (assemble
+        --resolve 108), its resolution written and staged: the batch worktree."""
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+        fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        p = fx.run("assemble", "b1", "--resolve", "108")
+        self.assertEqual(p.returncode, 3, "premise: the merge of #108 stops for a hand resolution\n%s%s"
+                         % (p.stdout, p.stderr))
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        return wt
+
+    def plant_zero_at_git_path(self, wt, name):
+        """A symlink to /dev/zero at `name` in the batch worktree's git dir, in place of the file there, if one is: its
+        path, as git rev-parse --git-path gives it."""
+        planted = os.path.join(wt, self.fx._git("rev-parse", "--git-path", name, cwd=wt))
+        self.assertTrue(os.path.isdir(os.path.dirname(planted)), "premise: the batch worktree's git dir")
+        if os.path.lexists(planted):
+            os.remove(planted)
+        os.symlink("/dev/zero", planted)
+        self.addCleanup(lambda: os.path.lexists(planted) and os.remove(planted))
+        return planted
+
+    def assert_commit_names(self, rc, out, err, wt, planted):
+        """`assemble`'s (rc, stdout, stderr) is a stop (exit 1) at git commit's GitMemory under HOOK_MEMORY lowered to
+        PLANT_HOOK_MEMORY, naming `planted` as a symlink among the files git reads whole, with the remedy's list of
+        places."""
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("git commit --quiet --no-edit in %s reached the %d MiB memory limit (HOOK_MEMORY) batch.py sets on "
+                      "it and failed (fatal: Out of memory, " % (wt, PLANT_HOOK_MEMORY >> 20), err)
+        self.assertIn("; of the files of the repository git reads whole, these are not regular files or hold more than a "
+                      "file of their kind does, now (an lstat each after the call, so one can have changed since): ", err)
+        self.assertIn("%s (a symlink, not a regular file)" % planted, err)
+        self.assertIn(REMEDY_PLACES, err)
+
+    def test_a_commit_editmsg_planted_before_a_rebuild_is_named_by_the_replay_commits_git_memory(self):
+        """Round 3 of PR 959, extra4-1: git commit reads COMMIT_EDITMSG whole (it writes it and reads it back), and the
+        file outlives prepare_worktree's git checkout -B, so one planted in the batch worktree's git dir before a rebuild
+        is read by the rebuild's commit of a rerere replay; its GitMemory names the file (_odd_files lstats each of
+        GIT_DIR_STATE_FILES in the call's git dir) and the remedy lists it. Here #108 stops, its hand resolution is
+        committed with --continue (rerere records it), COMMIT_EDITMSG is made a symlink to /dev/zero, and assemble b1
+        rebuilds the batch with GIT_MEMORY lowered to PLANT_MEMORY and HOOK_MEMORY to PLANT_HOOK_MEMORY
+        (BATCH_BOUND_DRIVER, MALLOC_ARENA_MAX unset, under PLANT_CAP): rerere replays #108's resolution and the commit
+        stops (exit 1) with GitMemory naming git commit, HOOK_MEMORY and the planted file as a symlink, and the remedy
+        names COMMIT_EDITMSG; the symlink is still there. Red at the round's head: the same GitMemory, naming no file and
+        no COMMIT_EDITMSG in its remedy."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        fx = self.fx
+        wt = self.stopped_at_108()
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
+        planted = self.plant_zero_at_git_path(wt, "COMMIT_EDITMSG")
+        env = dict(fx.env)
+        env.pop("MALLOC_ARENA_MAX", None)
+        rc, out, err = self.bounded("assemble", "b1", env=env, cap=PLANT_CAP, bound=60, git_memory=PLANT_MEMORY,
+                                    hook_memory=PLANT_HOOK_MEMORY)
+        self.assertIn("merged #101", out, "premise: the rebuild got as far as #108's merge")
+        self.assert_commit_names(rc, out, err, wt, planted)
+        self.assertTrue(os.path.islink(planted), "the plant outlived the rebuild's git checkout -B")
+
+    def test_a_merge_mode_or_squash_msg_planted_after_a_stop_is_named_by_continues_git_memory(self):
+        """Round 3 of PR 959, extra4-1: git commit of a merge reads MERGE_MODE and SQUASH_MSG whole, so one planted in
+        the batch worktree's git dir after a stop is read by assemble --continue's commit; its GitMemory names the file
+        and the remedy lists it (each is removed by git checkout, so only a plant after a stop is read). Here, each case
+        in a fixture of its own, #108 stops, its resolution is staged, the file is made a symlink to /dev/zero
+        (MERGE_MODE, which the stopped merge wrote, replaced; SQUASH_MSG, absent, made), and --continue runs with
+        GIT_MEMORY lowered to PLANT_MEMORY and HOOK_MEMORY to PLANT_HOOK_MEMORY (BATCH_BOUND_DRIVER, MALLOC_ARENA_MAX
+        unset, under PLANT_CAP): it stops (exit 1) with GitMemory naming git commit, HOOK_MEMORY and the planted file as
+        a symlink, and the remedy names the file. Red at the round's head: the same GitMemory, naming no file and neither
+        file in its remedy."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
+                          "enforced: Linux")
+        for n, name in enumerate(("MERGE_MODE", "SQUASH_MSG")):
+            with self.subTest(file=name):
+                if n:
+                    self.fx = Fixture()
+                    self.addCleanup(self.fx.close)
+                fx = self.fx
+                wt = self.stopped_at_108()
+                there = os.path.lexists(os.path.join(wt, fx._git("rev-parse", "--git-path", name, cwd=wt)))
+                self.assertEqual(there, name == "MERGE_MODE", "premise: the stopped merge wrote MERGE_MODE alone")
+                planted = self.plant_zero_at_git_path(wt, name)
+                env = dict(fx.env)
+                env.pop("MALLOC_ARENA_MAX", None)
+                rc, out, err = self.bounded("assemble", "b1", "--continue", "--reviewed", "subagent: fine", env=env,
+                                            cap=PLANT_CAP, bound=60, git_memory=PLANT_MEMORY,
+                                            hook_memory=PLANT_HOOK_MEMORY)
+                self.assert_commit_names(rc, out, err, wt, planted)
 
     def landed(self, fx):
         """The two members (two_members) planned, assembled, pushed, swept, verified and summarized as batch b1 in `fx`,
@@ -5373,6 +5697,34 @@ class BatchGitLimits(unittest.TestCase):
             got = {key: batch.run_git(["config", "--get", key], repo_dir, repo=repo).stdout.strip() for key in want}
         self.assertEqual(got, want)
 
+    def test_git_settings_comment_names_batch_pys_own_keys_apart_from_the_sweeps(self):
+        """Round 3 of PR 959, regression-1: GIT_SETTINGS' comment says which of its keys are scripts/sweep.py's
+        GIT_NEUTRAL_CONFIG's and which are batch.py's own, keys the sweep does not set. Its sentence naming batch.py's
+        own ("keys of batch.py's own, which GIT_NEUTRAL_CONFIG does not hold: <key=value>, ... and <key=value>.") lists
+        exactly the GIT_SETTINGS pairs whose key GIT_NEUTRAL_CONFIG does not hold, with their values, and every other
+        GIT_SETTINGS pair is one of GIT_NEUTRAL_CONFIG's, value and all. Red at the round's head, whose comment put
+        pack.threads=1 in its list of GIT_NEUTRAL_CONFIG's keys and named no keys as batch.py's own (the sentence
+        absent); red too when a key is added to GIT_SETTINGS that the sweep does not hold and the sentence does not
+        name."""
+        lines = (SCRIPTS / "batch.py").read_text().splitlines()
+        at = next(i for i, line in enumerate(lines) if line.startswith("GIT_SETTINGS = ("))
+        block = []
+        for line in reversed(lines[:at]):
+            if not line.startswith("#"):
+                break
+            block.insert(0, line[1:].strip())
+        comment = " ".join(block)
+        m = re.search(r"keys of batch\.py's own, which GIT_NEUTRAL_CONFIG does not hold: (.*?)\.\s", comment)
+        self.assertIsNotNone(m, "GIT_SETTINGS' comment names no keys as batch.py's own")
+        named = re.split(r",\s*|\s+and\s+", m.group(1))
+        pairs = [batch.GIT_SETTINGS[i + 1] for i in range(0, len(batch.GIT_SETTINGS), 2)]
+        neutral = dict(sweep.GIT_NEUTRAL_CONFIG)
+        own = [p for p in pairs if p.split("=", 1)[0] not in neutral]
+        self.assertEqual(named, own)
+        self.assertEqual([p for p in pairs if p not in own],
+                         ["%s=%s" % (k, neutral[k]) for k in (p.split("=", 1)[0] for p in pairs if p not in own)],
+                         "every other GIT_SETTINGS pair is GIT_NEUTRAL_CONFIG's, with its value")
+
     def test_a_git_a_tool_process_starts_reads_the_settings_after_the_pairs_batch_py_inherited(self):
         """Round 2 of PR 959, ruling B: run_tool's environment carries GIT_SETTINGS as git's environment config, pairs
         numbered after the GIT_CONFIG_COUNT pairs batch.py inherited, which stay (_tool_env), so a git that a run_tool
@@ -5518,8 +5870,14 @@ class ToolGitStartsNoGc(_Base):
         it reports clean, the hook never ran and the packs are as they were. The hook's marker carries both halves of
         ruling B, that the fetch starts no gc and writes no gc.log: git writes gc.log only from a gc --auto it has
         decided to start and has detached, it decides after running pre-auto-gc, and this pin sets gc.autoDetach=false,
-        so no gc here could write one (an assertion that none was written could not fail). Red without the environment
-        (run_tool at the round's head): the hook ran, git having decided to start a gc under run_tool's limit."""
+        so no gc here could write one (an assertion that none was written could not fail). The marker is git 2.43's road:
+        its fetch's automatic maintenance is git gc --auto, which runs pre-auto-gc first. git 2.55's automatic
+        maintenance is a geometric repack by default (git maintenance run --auto, its geometric strategy), which runs no
+        pre-auto-gc hook and writes no gc.log, so there the marker stays absent with or without the environment and the
+        pack count is the assertion that sees a repack (round 3 of PR 959, the census of the round-2 pins' git premises,
+        2026-10-04). Red without the environment (run_tool at the round's head): under git 2.43.0 the hook ran, git
+        having decided to start a gc under run_tool's limit; under git 2.55.0 the fetch's maintenance merged the 51 packs
+        into two."""
         fx = self.fx
         git_dir = os.path.join(fx.dev, ".git")
         marker = os.path.join(fx.tmp, "gc-started")
@@ -7865,6 +8223,27 @@ class Helpers(unittest.TestCase):
         self.assertIn(example + " " + sentence, flat, "the definition follows the trailer's example")
         self.assertEqual(flat.count("`rounds` counts"), 1, "and is written once")
         self.assertIn('"rounds":', flat[:flat.index(sentence)], "the example it follows carries the key")
+
+    def test_every_comment_batch_py_cites_by_a_name_is_one_of_its_names(self):
+        """A cross-reference in scripts/batch.py's comments and docstrings of the form "<NAME>'s comment" or "<NAME>'
+        comment" (the word comment after the possessive, with only spaces, line breaks and comment marks between them)
+        names a function, class or assignment at the module's top level, so a reader can find the comment it means;
+        the names read are those with an underscore, as batch.py's own are. Red at the build of round 3 of PR 959,
+        where run_git's docstring cited MERGE_SETTINGS' comment, a name batch.py does not have; the comment it meant
+        is MERGE_STRATEGY's (the verify pass at that build, its v-3)."""
+        src = (SCRIPTS / "batch.py").read_text(encoding="utf-8")
+        top = set()
+        for node in ast.parse(src).body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                top.add(node.name)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                    top.update(n.id for n in ast.walk(target) if isinstance(n, ast.Name))
+        cited = [m.group(1) for m in re.finditer(r"\b([A-Za-z0-9]*_[A-Za-z0-9_]*)(?:'s|')(?:\s|#)+comment\b", src)]
+        self.assertIn("GIT_SETTINGS", cited, "premise: the census reads the citations batch.py has")
+        self.assertIn("MERGE_STRATEGY", cited, "premise: the census reads the citations batch.py has")
+        self.assertEqual(sorted({name for name in cited if name not in top}), [],
+                         "a comment cited by a name batch.py does not define at its top level")
 
     def test_ordering_is_dependencies_first_then_by_number(self):
         cands = {5: {"depends_on": [9]}, 9: {"depends_on": []}, 7: {"depends_on": []}, 8: {"depends_on": [5]}}

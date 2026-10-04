@@ -63,21 +63,26 @@ scripts/batch.py, scripts/pr-orphans.sh, scripts/release.sh, the kernel's releas
 scripts/sweep.py were run in a checkout make_checkout made, with a git first on PATH logging each call made through it,
 and none read that checkout's origin/main, nor any ref of it but HEAD (2026-10-03).
 
-At this head three tests read the checkout's own origin/main (READERS), all brought by the merge of fork main through
-fork PR 926's merge of it. The history case of tests/gitleaks-config.bats (fork PR 954) calls history_scan_range on
-the checkout: in CI's depth-1 checkout its shallow test comes first and it scans the one commit, whatever refs are
-there; in a sweep checkout that holds origin/main it scans the commits HEAD adds over it; in one that holds none it
-scans all of HEAD's history, which can take longer than the 180 s the bats leg allows a test. The verdict on a clean
-branch is a pass in each; the commits read, and the time, differ, and the sweep's checkouts hold origin/main for this
-case. tools/markdown-viewer-plan-linknav.test.mjs and ui/webview/linknav-records-attribution.test.ts (fork PR 862)
-read the merge-base of HEAD with it for a gate that holds their delta checks off unless origin/main is known, the
-merge-base is not origin/main itself, and the diff since the merge-base adds the module. In CI the gate holds them
-with "no origin/main"; in a sweep checkout it holds them too, naming another part, on every head whose diff since the
-merge-base does not add the module, which since the module landed on main is every head that has it from main. Run on
-2026-10-04 in a checkout make_checkout made of this merge, with origin/main at fork main's tip, the history case
-scanned the commits HEAD adds over origin/main, and both gates held with "the merge-base is origin/main"; in one with
-no origin/main the history case's range was all of HEAD's history, which passed in one run and went past the 180 s in
-another, and both gates held with "no origin/main".
+At this head three test files read the checkout's own origin/main (READERS), all brought by the merge of fork main
+through fork PR 926's merge of it: the history case of tests/gitleaks-config.bats, the three tests of
+tools/markdown-viewer-plan-linknav.test.mjs that go through gated, and the road test of
+ui/webview/linknav-records-attribution.test.ts. The history case (fork PR 954) calls history_scan_range on the
+checkout: in CI's depth-1 checkout its shallow test comes first and it scans the one commit, whatever refs are there;
+in a sweep checkout that holds origin/main it scans the commits HEAD adds over it; in one that holds none it scans all
+of HEAD's history, which can take longer than the 180 s the bats leg allows a test. gitleaks finds nothing on a clean
+branch in any of the three, but the bats verdict differs: a pass with origin/main and in CI's shallow checkout, and in
+a checkout with none a pass or a timeout past the 180 s (two of three runs on 2026-10-04 timed out). The sweep's
+checkouts hold origin/main for this case whenever the batcher's repository does (make_checkout writes none when
+main_snapshot reads none). The two linknav files (fork PR 862) read the merge-base of HEAD with it for a gate that
+holds their delta checks off unless origin/main is known, the merge-base is not origin/main itself, and the diff since
+the merge-base adds the module. In CI's batch-branch runs the gate holds them with "no origin/main", and in a run on
+main (the weekly schedule, a dispatch on main) with "the merge-base is origin/main"; in a sweep checkout it holds them
+too, naming another part, on every head whose diff since the merge-base does not add the module, which since the
+module landed on main is every head that has it from main. Run on 2026-10-04 in a checkout make_checkout made of this
+merge, with origin/main at fork main's tip, the history case scanned the commits HEAD adds over origin/main, and both
+gates held with "the merge-base is origin/main"; in one with no origin/main the history case's range was all of HEAD's
+history, which passed in one run of three and went past the 180 s in the other two, and both gates held with "no
+origin/main".
 """
 import os
 import re
@@ -156,12 +161,13 @@ READERS = (
     ("tools/markdown-viewer-plan-linknav.test.mjs",
      "base = git('merge-base', 'origin/main', 'HEAD'); main = git('rev-parse', 'origin/main');",
      "deltaOf, which gated calls on REPO, the checkout, for the gate over L6's checks keyed on the delta: with no "
-     "origin/main it holds them (CI), and in a sweep checkout it holds them unless the diff since the merge-base adds "
-     "the module"),
+     "origin/main it holds them (CI's batch-branch checkouts), and in a sweep checkout it holds them unless the diff "
+     "since the merge-base adds the module"),
     ("ui/webview/linknav-records-attribution.test.ts",
      'base = git("merge-base", "origin/main", "HEAD"); main = git("rev-parse", "origin/main");',
      "roadTwo, which the road test calls on REPO, the checkout, for the gate over road 2: with no origin/main it holds "
-     "it (CI), and in a sweep checkout it holds it unless the diff since the merge-base adds the module"),
+     "it (CI's batch-branch checkouts), and in a sweep checkout it holds it unless the diff since the merge-base adds "
+     "the module"),
 )
 
 # path: (the kinds its hits are, why): every file with a hit; HITS holds the lines judged.

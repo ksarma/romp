@@ -6680,13 +6680,22 @@ class OutputBound(unittest.TestCase):
         self.assertEqual((p.returncode, p.stdout, p.stderr), (128, b"", b"fatal: pathspec 'L/x' is beyond a symbolic link\n"))
 
     def test_the_re_read_after_a_leg_names_a_check_ignore_that_died_before_it_read_its_input(self):
-        """Round 2 of PR 959, tests-1, through recheck_checkout, the re-read after a leg: a value git cannot parse in the
-        clone's .git/config (a regular file, so the re-read's own check of it passes) makes git check-ignore die (128)
-        as it reads its config, before it reads any path, and the leg left more than a pipe holds (pipe_buffer) of
-        paths for it to be asked about, so run_git's write meets EPIPE. The verdict names the failure, "(git check-ignore
-        failed: <git's line>)", first among the untracked paths, followed by every path the leg left, and nothing is
-        raised. Red under a mutant that drops _git_streams' BrokenPipeError branch: BrokenPipeError out of
-        recheck_checkout. MALLOC_ARENA_MAX is unset in the run (unset_arena_max)."""
+        """Round 2 of PR 959, tests-1, through recheck_checkout, the re-read after a leg: a malformed line at the end of
+        the clone's .git/config makes git check-ignore die (128) as it reads its config, before it reads any path, and
+        the leg left more than a pipe holds (pipe_buffer) of paths for it to be asked about, so run_git's write meets
+        EPIPE. The verdict names the failure, "(git check-ignore failed: <git's line>)", first among the untracked paths,
+        followed by every path the leg left, and nothing is raised. Red under a mutant that drops _git_streams'
+        BrokenPipeError branch: BrokenPipeError out of recheck_checkout. MALLOC_ARENA_MAX is unset in the run
+        (unset_arena_max).
+        The premise, asserted below with git check-ignore given no input at all: the line is a section header with no
+        closing bracket, which git refuses as it parses the file ("fatal: bad config line <n> in file <path>"), and
+        every supported git parses .git/config whole as it starts, before it reads a path (checked with git 2.43.0 and
+        2.55.0 on 2026-10-04). The line touches no read of the re-read's own, and no git runs before check-ignore there:
+        .git/config is still a regular file, so git_state_unreadable passes it and git_state reads its bytes, and
+        recheck_checkout's reads before check-ignore are the runner's (the state files, the walk, the hashing).
+        Round 3 of PR 959, the CI fix: the trigger before was a value git cannot parse, core.bigFileThreshold=x, which
+        git 2.43 refused as it read its config and git 2.55, which reads that key only where it needs it, did not, so
+        check-ignore read its input and answered, and the case failed in CI (Python 3.12, git 2.55.0)."""
         unset_arena_max(self)
         self.env.pop("MALLOC_ARENA_MAX", None)
         w = os.path.join(self.tmp, "clone")
@@ -6709,11 +6718,20 @@ class OutputBound(unittest.TestCase):
                 f.write("x")
         self.assertGreater(sum(len(rel) + 1 for rel in left), self.pipe_buffer(),
                            "premise: the paths are more than a pipe holds")
-        git("config", "core.bigFileThreshold", "x")
+        config = os.path.join(w, ".git", "config")
+        with open(config, "a") as f:
+            f.write("[core\n")
+        with open(config, "rb") as f:
+            said = b"fatal: bad config line %d in file %s\n" % (f.read().count(b"\n"), os.fsencode(config))
+        plain = subprocess.run(["git", "check-ignore", "-v", "-z", "--no-index", "--stdin"], cwd=w, input=b"",
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               env=dict(self.env, GIT_DIR=os.path.join(w, ".git"), GIT_WORK_TREE=w))
+        self.assertEqual((plain.returncode, plain.stderr), (128, said),
+                         "premise: check-ignore dies on the config line with no input to read")
+        self.assertEqual(sweep.git_state_unreadable(w), [], "premise: the re-read's own check of .git/config passes it")
         before = sweep.git_state(w)
         verdict = dict(sweep.recheck_checkout(w, sha, entries, before))
-        failed = (b"(git check-ignore failed: fatal: bad numeric config value 'x' for 'core.bigfilethreshold' in file "
-                  b"%s: invalid unit)" % os.fsencode(os.path.join(w, ".git", "config")))
+        failed = b"(git check-ignore failed: %s)" % said.rstrip(b"\n")
         self.assertEqual(verdict.get("untracked"), sorted([failed] + left))
 
     def test_a_git_that_closes_its_output_and_runs_on_is_refused_at_the_bound_and_ended(self):
