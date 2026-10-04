@@ -13,14 +13,13 @@ Standard library only. The script exits 1, naming the reason, on: a site with no
 not parse (PARSE); an import the census does not know, a family module's specifier that no counted binding and no arm reads,
 or a require or import on a walked line that the import gate cannot read, each unless JS_ALLOW names it, and an entry there
 that names nothing or covers a different number of places (IMPORT); a road with no table entry or a table entry with no road
-(TABLE); a served route whose content type, receiver, container, callee or text the served pass cannot read, a reference to
-`_send` other than a call the scan reads (a read of it that is not a call's function, a store or delete of an attribute so named,
-or a string equal to `_send`), a
-script-running type written outside `_send`, a function that answers outside `_send`
-more often than it writes a Content-Type header, a `_send` definition that writes none and is not a named frame writer, a call of
-a `_send` its file binds more than once outside function bodies, or other than by one def statement, of a decorated `_send` or,
-bare, in a module that
-holds a star import, each unless SERVED_ALLOW names it, a script-running route whose page body it does not read, and an allowlist
+(TABLE); a served route whose content type, receiver, container, callee or text the served pass cannot read, a script-running type
+written outside `_send`, a function that answers outside `_send` more often than it writes a Content-Type header and a `_send`
+definition that writes none and is not a named frame writer, each unless SERVED_ALLOW names it, a reference to `_send` other than
+a call the scan reads (a read of it that is not a call's function, a store or delete of an attribute so named, or a string equal
+to `_send`) and a call of a `_send` its file binds more than once outside function bodies, or other than by one def statement, of
+a decorated `_send` or, bare, in a module that holds a star import, which no entry excuses (none is keyed on `_send` itself), a
+script-running route whose page body it does not read, and an allowlist
 entry that names nothing or covers a different number of places (SERVED); and any figure that differs from the committed counts in
 scripts/network-inventory-expected.json (COUNTS): the totals, the counts by kind, by class, by road and by row key. So a scan
 that finds fewer sites than the committed count, a file the walk stopped opening, or a second site inside a function that
@@ -336,14 +335,17 @@ or LF: each string or bytes constant in its value and in the value of each modul
 (a method call's receiver, as `T` in `T.lower()`, among the names followed), any other name there refusing it, save a bare name a
 call calls (`f` in `f(...)`); and so is each argument a `_send` call hands its definition but the page body and the content type
 (read above), positional, starred or keyword, a `**` among them: each string or bytes constant in it, a dict literal's keys and
-values among them, and each name in it that no function scope around the call binds: a module constant (a name one top-level plain
-assignment binds and nothing rebinds), read through the module constants its value names, one holding a CR or LF refusing the call
-by name before it is typed; and any other name the module binds or a function rebinds (bound more than once or by an annotated
-assignment, or rebound under a `global` declaration or by a module-level statement), save a top-level import's name that nothing
-rebinds and a bare name a call calls, refusing the call by name as a name the census does not follow by binding, in the argument
-or in a module constant's value there; any other name there (a builtin's) not read; a CR or LF the value computes at run time, a
-call's return or a number formatted as a character, is not read,
-nor is a header value held anywhere else, a local, a parameter, an attribute, a call's return or an item, its witnesses a CR LF
+values among them, and each name in it that no function scope around the call binds (a name a function there declares `global` is
+the module's, not a binding of that scope): a module constant (a name one top-level plain assignment binds and nothing rebinds),
+read through the module constants its value names, one holding a CR or LF refusing the call by name before it is typed; a
+top-level import's name that nothing rebinds, a builtin's (a name the builtins module holds, the names the import system binds in
+every module not among them) and a bare name a call calls, not read; and any other name, which the census cannot resolve to a
+value it read, refusing the call by name as a name the census does not follow by binding, in the argument or in a module
+constant's value there: a name the module binds more than once or by an annotated assignment, one a function rebinds under a
+`global` declaration or a module-level statement writes, and one no module-level statement binds, among them the names the import
+system and the compiler bind (`__doc__` for a docstring, `__annotations__` for an annotation); a CR or LF the value computes at
+run time, a call's return or a number formatted as a character, is not read, nor is a header value held anywhere else, a local or
+a parameter of a function around the call, an attribute, a call's return or an item, its witnesses a CR LF
 from chr and one from a `%c` of an int, and a header value held in a local dict and a CR LF a call of chr computes at the call),
 and a response that a Content-Type in its
 headers argument, passed
@@ -950,8 +952,10 @@ value of a
 `**` dict literal among them) or as a value of the dict literal a `.format_map` is handed is refused by name, whether or not a
 conversion takes it, since a conversion can turn it into characters (a `%c`, a `%x`, a `{:c}`, a `%.1s` over the empty bytes), and
 one held deeper there (a name or a local bound to one, an if-expression's branch, a list's element, or a call's argument, one of
-the seven builtins' among them) is read as a value slot and not refused. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, a
-store or delete of an attribute so named, or a string equal to `_send`), a content type the pass cannot read, a content type the
+the seven builtins' among them) is read as a value slot and not refused. The run fails by name (SERVED) on any other reference to
+`_send` (a read of it that is not a call's function, a store or delete of an attribute so named, or a string equal to `_send`),
+which no allowlist entry excuses, since none is keyed on `_send` itself, and on a content type the pass cannot read, a content
+type the
 census reads other than as a string constant or a name bound once to one, a script-running type written outside `_send`, a
 function that
 answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time (a module name
@@ -3576,17 +3580,20 @@ def _unbound_text_call(e):
     return (isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr in ("join", "format", "format_map", "replace")
             and isinstance(e.func.value, ast.Name) and e.func.value.id in ("str", "bytes", "bytearray"))
 # The served pass's allowlist, keyed on the code and never a line number: ("file:function", the expression as ast.unparse spells
-# it) -> (the number of places the entry covers, the reason). A route candidate whose content type the census cannot resolve, a
-# call of a `_send` its file binds more than once outside function bodies, or other than by one def statement, or rebinds under a
-# `global` declaration in a function or a class body, a call of a decorated `_send`, and a bare call of a `_send` a scope around
-# the call binds or in a module that holds a star import (each keyed on the call's function, `self._send` or `_send`), a reference to
-# `_send` other than a call the scan reads (a read of it that is not a call's function, a store or delete of an attribute so named,
-# or a string equal to `_send`), a script-running type written outside `_send`, a response
-# answered outside `_send` with no Content-Type header, a container the module writes at run time, a receiver or container the
-# pass does not read, a callee the pass does not follow, a bare module name the pass does not read, a name the page function's
-# scope binds in a form the pass refuses, and a file a page reads that the walk does not scan are each a SERVED line unless named
-# here (a route whose body the census does not read is not
-# excused here: it is passed as the call's second positional argument or refused); an entry that names nothing in the run, or
+# it) -> (the number of places the entry covers, the reason). A route candidate whose content type the census cannot resolve (an
+# entry keyed on the call's content-type expression, or on a `_send` definition and the value its own write writes), a
+# script-running type written outside `_send`, a response answered outside `_send` with no Content-Type header, a container the
+# module writes at run time, a receiver or container the pass does not read, a callee the pass does not follow, a bare module name
+# the pass does not read, a name the page function's scope binds in a form the pass refuses, and a file a page reads that the walk
+# does not scan are each a SERVED line unless named here. An entry on a `_send` call's content type excuses the call whole, its
+# page unread in any form; no entry is keyed on the unread-body refusal itself, so any other script-running route passes its body
+# as the call's second positional argument or is refused. No entry is keyed on `_send` itself, a call's function or a reference to
+# it (`self._send`, `_send` or the string `_send`; the census module's pin, NoAllowlistEntryIsKeyedOnSendItself): the refusals made
+# before any typing (a call of a `_send` its file binds more than once outside function bodies, or other than by one def statement,
+# or rebinds under a `global` declaration in a function or a class body, a call of a decorated `_send`, a bare call of a `_send` a
+# scope around the call binds or in a module that holds a star import, a call in a lambda's body, and a call whose definition binds
+# its type's parameter again) and a reference to `_send` other than a call the scan reads are excused by none, so no entry leaves a
+# header holding a CR or LF unread. An entry that names nothing in the run, or
 # covers a different number of places (distinct source positions), is a SERVED ALLOW line, so a new place under an entry's key
 # is read or named, never excused by it.
 SERVED_ALLOW = {
@@ -4667,30 +4674,42 @@ def _unfollowed(tree, consts, rebinds):
     of the closing check, item 4 of the reviewer's 02:3xZ ruling of 2026-10-04): every name the module binds at module level
     (_module_bound) and every name a function rebinds under a `global` declaration or a module-level statement writes (`rebinds`),
     unless it is a module constant (_module_consts) that nothing rebinds, or a name whose every module-level binding is a top-level
-    import statement and that nothing rebinds. So a name bound twice (an assignment and a module-level `+=` among them), one bound by
-    an annotated assignment and one rebound at run time under `global` are among them."""
+    import statement and that nothing rebinds; and every name the module reads that no module-level statement binds and that is no
+    builtin (a name the builtins module holds, the names the import system binds in every module not among them, as the served pass
+    reads them), which the census cannot resolve to a value it read (N1 of the second closing check, item B of the reviewer's ruling
+    on it, rule 2: such a header argument refused by name, never skipped): the import system's `__doc__`, the `__annotations__` a
+    module annotation binds, and a name nothing binds. So a name bound twice (an assignment and a module-level `+=` among them), one
+    bound by an annotated assignment, one rebound at run time under `global` and a module docstring's `__doc__` are among them."""
     bound = _module_bound(tree)
     imported = collections.Counter(a.asname or (a.name.split(".")[0] if isinstance(n, ast.Import) else a.name)
                                    for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names)
+    real = set(dir(builtins)) - _IMPORT_NAMES   # the builtins, as the served pass reads them (no name the import system binds)
+    # a name the module reads that no module-level statement binds and that is no builtin: one the import system or the compiler binds
+    # (`__doc__` for a docstring, `__annotations__` for an annotation), or none, which the census cannot resolve to a value it read
+    loose = frozenset(n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id not in bound and n.id not in real)
     return frozenset(k for k in set(bound) | set(rebinds) if (k not in consts or k in rebinds)
-                     and not (k not in rebinds and bound.get(k) == imported.get(k)))
+                     and not (k not in rebinds and bound.get(k) == imported.get(k))) | loose
 
 
-def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed):
+def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed, declared=frozenset()):
     """(the argument, why) for the first header value a `_send` call hands the definition it reaches that holds a CR or LF, or None
     (item 2 of the reviewer's 13:2xZ ruling of 2026-10-03; routes_of refuses the call by name before any typing). Read: every
     argument of the call, positional, starred or keyword, `**` among them, but the page body (the argument for the definition's
     second positional parameter, as routes_of reads a content type's: positional where no starred argument stands at or before its
     place, else by its keyword) and each content type a Content-Type write of the definition reads from the call (judge reads that
     one for a CR or LF, before it is typed). In each, a string or bytes constant holding a CR or LF, anywhere in it (a dict
-    literal's keys and values among them), and each name no function scope around the call binds: a module constant (_module_consts)
+    literal's keys and values among them), and each name no function scope around the call binds, a name a function there declares
+    `global` (`declared`, which routes_of reads from Result.global_decls) read as the module's and never as a binding of that scope
+    (N2 of the second closing check, item B of the reviewer's ruling on it): a module constant (_module_consts)
     that nothing rebinds, its bound value read as _header_const reads one with `strict` false, `unfollowed` handed on (each string or
     bytes constant in that value and in the value of each module constant it names); and any other name in `unfollowed` (_unfollowed:
-    a name the module binds other than as such a constant, or that a function rebinds, save a top-level import's name nothing
-    rebinds), save a call's callee by its name alone, whose return the census does not read, refused by name as a name the census does
+    a name the module binds other than as such a constant, or that a function rebinds, save a top-level import's name nothing rebinds,
+    and a name no module-level statement binds that is no builtin, `__doc__` and `__annotations__` among them), save a call's callee
+    by its name alone, whose return the census does not read, refused by name as a name the census does
     not follow by binding, as the definition path refuses it with `strict` true (NEW-2 of the closing check, item 4 of the reviewer's
-    02:3xZ ruling of 2026-10-04). A header value held anywhere else, a local, a parameter, an attribute, a call's
-    return or an item, or computed at run time, is not read: the stated limit, its witnesses the (ch) plants chv and chp."""
+    02:3xZ ruling of 2026-10-04). A header value held anywhere else, a local or a parameter of a function around the call, an
+    attribute, a call's return or an item, or computed at run time, is not read: the stated limit, its witnesses the (ch) plants chv
+    and chp."""
     kw = {k.arg: k.value for k in call.keywords if k.arg}
 
     def arg(name):
@@ -4708,7 +4727,7 @@ def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed)
             if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)):
                 if any(c in n.value for c in ((b"\r", b"\n") if isinstance(n.value, bytes) else ("\r", "\n"))):
                     return x, "a constant holding a CR or LF"
-            elif isinstance(n, ast.Name) and not any(n.id in p or n.id in s or n.id in o for p, s, o in scopes):
+            elif isinstance(n, ast.Name) and (n.id in declared or not any(n.id in p or n.id in s or n.id in o for p, s, o in scopes)):
                 if n.id in unfollowed and id(n) not in callee:
                     return x, "the module name %s, no module constant the census follows by binding" % n.id
                 if n.id in consts:
@@ -5577,9 +5596,12 @@ def routes_of(rel, tree, sc, res):
     refused by name first, _LAMBDA, since a parameter of the lambda may shadow the type's name), and a script-running
     one is a SERVED line (the served pass follows a page's text through `_send` alone); a function outside `_send` that answers
     (send_response) more often than it writes a Content-Type header is a SERVED line, the browser typing that body by sniffing
-    it. SERVED_ALLOW excuses a place by its function and expression (a `_send` call's place by the call's function, `self._send` or
-    `_send`), save an unread body and a content type holding a CR or LF where the census resolves it (the allow hit recorded all the
-    same). Returns the routes, (call, the
+    it. SERVED_ALLOW excuses a place by its function and expression: a `_send` call's place is the function and the call's
+    content-type expression, and a definition's own write's the definition and the value it writes; an entry so keyed excuses the
+    whole call, an unread body included, save a content type holding a CR or LF where the census resolves it (the allow hit recorded
+    all the same). No entry is keyed on `_send` itself, a call's function or a reference to it (`self._send`, `_send`), so none
+    excuses a refusal made by name before any typing above, or a reference to `_send` (the census module's pin over the loaded
+    SERVED_ALLOW, item B of the reviewer's ruling on the second closing check). Returns the routes, (call, the
     enclosing function, the class statement the call stands in (the served pass keys the route class on it, never on its name
     alone: _Served._top_class), the script-running type, the body expression), sorted by line."""
     ns = res.ns.get(rel) or _NS_NONE   # a file that writes its module namespace through a computed name, or may rewrite it at run
@@ -5739,7 +5761,10 @@ def routes_of(rel, tree, sc, res):
         # a header value the call hands the definition, read for a CR or LF (item 2 of the reviewer's 13:2xZ ruling of 2026-10-03: every
         # argument but the page body and the content type, _header_crlf): one found refuses the call by name before any typing
         if unfollowed is None: unfollowed = _unfollowed(tree, consts, res.rebinds.get(rel, {}))   # once per file
-        crlf = _header_crlf(call, pos, a.kwonlyargs, writes, scopes(defs), consts, res.rebinds.get(rel, {}), unfollowed)
+        # the names a function around the call declares `global` (N2 of the second closing check): the module's names there, never a
+        # binding of that function's scope, so a header value naming one is read as a module name
+        declared = {k for ds, names in res.global_decls.get(rel, ()) if any(ds[-1] is x for x in defs) for k in names}
+        crlf = _header_crlf(call, pos, a.kwonlyargs, writes, scopes(defs), consts, res.rebinds.get(rel, {}), unfollowed, declared)
         if crlf is not None:   # no allowlist entry excuses it
             res.problems.append("SERVED %s:%d calls _send on %s handing it %s (%s, in %s), which ends the header the definition writes it "
                                 "into: what follows is another header or the body, which the census does not read"
@@ -5779,7 +5804,7 @@ def routes_of(rel, tree, sc, res):
     for node, defs, where in sc.send_refs:   # a reference to `_send` that is no call the scan reads: its calls would be no routes
         if not allowed(where, node, node):
             res.problems.append("SERVED %s:%d refers to _send other than by a call the scan reads (%s in %s): the routes are the calls "
-                                "spelled _send(...) or <x>._send(...); call it so, or name the place in SERVED_ALLOW with its reason"
+                                "spelled _send(...) or <x>._send(...); call it so (no allowlist entry is keyed on _send itself)"
                                 % (rel, node.lineno, ast.unparse(node)[:60], where))
     counts = {}   # per function outside _send: [its Content-Type writes, its answers the allowlist does not name, the function's where]
     for call, defs, where in sc.ctype_writes:

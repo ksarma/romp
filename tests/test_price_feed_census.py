@@ -1527,16 +1527,19 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "followed), any other name there refusing it, save a bare name a call calls (`f` in `f(...)`); and so is each "
                 "argument a `_send` call hands its definition but the page body and the content type (read above), positional, "
                 "starred or keyword, a `**` among them: each string or bytes constant in it, a dict literal's keys and values "
-                "among them, and each name in it that no function scope around the call binds: a module constant (a name one "
-                "top-level plain assignment binds and nothing rebinds), read through the module constants its value names, one "
-                "holding a CR or LF refusing the call by name before it is typed; and any other name the module binds or a "
-                "function rebinds (bound more than once or by an annotated assignment, or rebound under a `global` declaration or "
-                "by a module-level statement), save a top-level import's name that nothing rebinds and a bare name a call calls, "
-                "refusing the call by name as a name the census does not follow by binding, in the argument or in a module "
-                "constant's value there; any other name there (a builtin's) not read; a CR or LF the value computes at run time, a "
-                "call's return or a "
-                "number formatted as a character, is not read, nor is a header value held anywhere else, a local, a parameter, an "
-                "attribute, a call's return or an item, its witnesses a CR LF from chr and one from a `%c` of an int, and a header "
+                "among them, and each name in it that no function scope around the call binds (a name a function there declares "
+                "`global` is the module's, not a binding of that scope): a module constant (a name one top-level plain assignment "
+                "binds and nothing rebinds), read through the module constants its value names, one holding a CR or LF refusing "
+                "the call by name before it is typed; a top-level import's name that nothing rebinds, a builtin's (a name the "
+                "builtins module holds, the names the import system binds in every module not among them) and a bare name a call "
+                "calls, not read; and any other name, which the census cannot resolve to a value it read, refusing the call by "
+                "name as a name the census does not follow by binding, in the argument or in a module constant's value there: a "
+                "name the module binds more than once or by an annotated assignment, one a function rebinds under a `global` "
+                "declaration or a module-level statement writes, and one no module-level statement binds, among them the names the "
+                "import system and the compiler bind (`__doc__` for a docstring, `__annotations__` for an annotation); a CR or LF "
+                "the value computes at run time, a call's return or a number formatted as a character, is not read, nor is a "
+                "header value held anywhere else, a local or a parameter of a function around the call, an attribute, a call's "
+                "return or an item, its witnesses a CR LF from chr and one from a `%c` of an int, and a header "
                 "value held in a local dict and a CR LF a call of chr computes at the call), and a response that a Content-Type in "
                 "its headers "
                 "argument, passed or defaulted, makes a page is outside the served pass, the call being typed by its content-type argument; nor is "
@@ -1805,8 +1808,12 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "refused by name, since it reads the container whole and does not compute what the index selects; honest forms fail closed "
                 "with it (`_PAGE[1:]`, a template's leading newline cut; `PAGES[key]` over a dict constant, the key no constant; `_P[-1]`); so is such a subscript over a base whose own text it does not read that derives through a call handed arguments it reads, whose arguments it reads whole and does not slice either, whether the subscript is the page expression or stands anywhere on the path of a receiver, a container or an attribute's base (`str(X)[::-1]`, `dict(a=X)[k]`, `str(X)[::-1].removeprefix(p)`, `str(X)[k].split(s)[0]`); and any other container that is a base whose own text it does not read, or a call of one or of a method on one, passes whatever its index, save where the method allowlist refuses a call on its path (above). The index of such a subscript, over a container whose text the pass does not read, is not read at all, whatever it holds (a name the import system binds, `__file__`, an attribute read on self, on a parameter or on a class, a call): the item it selects is text such a base holds (above). "
                 "A None, bool or int constant, the empty bytes constant and a `*` or `<<` over int constants are value slots the pass reads as no text; one that stands directly as the right operand of a `%` (bare, a tuple element or a dict literal's value, an int modulo such as `n % 60` among them), as a `.format` argument (an element of a starred list or tuple literal and a value of a `**` dict literal among them) or as a value of the dict literal a `.format_map` is handed is refused by name, whether or not a conversion takes it, since a conversion can turn it into characters (a `%c`, a `%x`, a `{:c}`, a `%.1s` over the empty bytes), and one held deeper there (a name or a local "
-                "bound to one, an if-expression's branch, a list's element, or a call's argument, one of the seven builtins' among them) is read as a value slot and not refused. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, a "
-                "store or delete of an attribute so named, or a string equal to `_send`), a content type the pass cannot read, a content type the census reads other than as a string constant or a name bound once to one, a script-running type written outside `_send`, a function that"
+                "bound to one, an if-expression's branch, a list's element, or a call's argument, one of the seven builtins' among "
+                "them) is read as a value slot and not refused. The run fails by name (SERVED) on any other reference to `_send` "
+                "(a read of it that is not a call's function, a store or delete of an attribute so named, or a string equal to "
+                "`_send`), which no allowlist entry excuses, since none is keyed on `_send` itself, and on a content type the pass "
+                "cannot read, a content type the census reads other than as a string constant or a name bound once to one, a "
+                "script-running type written outside `_send`, a function that"
                 " answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time (a module "
                 "name bound to a call whose object the file changes, read other than as a call's argument, among them), a local container with an occurrence of its name that is none of the proven forms, an attribute read on self, on any other parameter or on an except name, each judged by "
                 "the root its base reaches by binding (so one read on a local bound to self, or on a method's first parameter however spelled "
@@ -3627,7 +3634,7 @@ _TYPE_UNREAD = "SERVED kernel/kernel.py:%%d serves a response whose content type
 _BODY_UNREAD = ("SERVED kernel/kernel.py:%%d serves text/html through %s, whose page body the census does not read (%s, in %s): the census "
                 "reads a body as the call's second positional argument, the parameter the definition writes; pass it so")
 _SEND_REF = ("SERVED kernel/kernel.py:%%d refers to _send other than by a call the scan reads (%s in Handler.do_GET): the routes are the "
-             "calls spelled _send(...) or <x>._send(...); call it so, or name the place in SERVED_ALLOW with its reason")
+             "calls spelled _send(...) or <x>._send(...); call it so (no allowlist entry is keyed on _send itself)")
 _TEXT_UNREAD = "SERVED kernel/kernel.py:%%d builds a served page from %s (%s), text the census did not read"
 _UNDRAWN = "a .%s() method whose return is not drawn from its receiver's text, on a receiver the census reads"   # since the eleventh round's review
 _UNDRAWN_BASE = ("a .%s() method called on a base whose own text the census does not read, so the census does not compute the text it "
@@ -9376,6 +9383,27 @@ RD_X2 = (tuple((t, 'return self._send(200, "<p>%s</p>", "text/html", cache=_PROB
                  for t, v in (("x2p", '"no-cache" + urllib.parse.quote("x")'), ("x2a", '"no-cache" + _probe_os.sep'), ("x2c", "_probe_x2c()"))))
 _RD_X2NAME = "the module name _PROBE_%s, no module constant the census follows by binding"
 _RD_X2CONST = "the module constant _PROBE_%s, whose bound value reads _PROBE_%s_T, no module constant the census follows by binding"
+# (x3), item B of the reviewer's ruling on the second closing check (N1 and N2), rule 2: a header argument the census cannot resolve to a
+# value it read is refused by name, never skipped. A name the module reads that no module-level statement binds and that is no builtin:
+# the module docstring's `__doc__` handed as a header (x3d), as a headers dict's value (x3h) and through a module constant bound to it
+# (x3e), and `__annotations__`, whose item is an annotation's text (x3o); and a module name a route declares `global` and binds there:
+# a module constant (x3r), a name no module-level statement binds (x3s) and a module constant as a headers dict's value (x3k). Python
+# writes each as a header line that ends early (x3o on 3.10 to 3.13, whose modules bind `__annotations__`), the fetch after it the start
+# of the body; each was read at the head that check read, its header text unread, and is refused here at the call. Read at both heads,
+# each page's fetch a site: a builtin's name in a header value (x3b, `str.lower`) and a route's own local of a name a sibling method
+# declares `global` (x3l, the stated limit on a local)
+RD_X3_HEAD = ('"""no-cache\\r\\n\\r\\n%s"""\n_PROBE_X3E = __doc__\n_PROBE_X3O: "no-cache\\r\\n\\r\\n%s" = 1\n_PROBE_X3R = "no-cache"\n'
+              '_PROBE_X3K = "no-cache"\n_PROBE_X3L = "no-cache"' % (FGH_PAGE % "x3dx", FGH_PAGE % "x3ox"))
+RD_X3_SEND = B_KERNEL_SEND + '    def _probe_x3l_set(self):\n        global _PROBE_X3L\n        _PROBE_X3L = "no-store"\n'
+RD_X3 = (tuple((t, 'return self._send(200, "<p>%s</p>", "text/html", %s)' % (t, v))
+               for t, v in (("x3d", "cache=__doc__"), ("x3h", 'headers={"X-Probe": __doc__}'), ("x3e", "cache=_PROBE_X3E"),
+                            ("x3o", 'cache=__annotations__["_PROBE_X3O"]')))
+         + tuple((t, 'global _PROBE_%s\n            _PROBE_%s = "no-cache\\r\\n\\r\\n%s"\n            return self._send(200, "<p>%s</p>", "text/html", %s)'
+                  % (t.upper(), t.upper(), FGH_PAGE % (t + "x"), t, v % t.upper()))
+                 for t, v in (("x3r", "cache=_PROBE_%s"), ("x3s", "cache=_PROBE_%s"), ("x3k", 'headers={"X-Probe": _PROBE_%s}')))
+         + (("x3b", 'return self._send(200, "%s", "text/html", cache=str.lower("NO-CACHE"))' % (FGH_PAGE % "x3b")),
+            ("x3l", '_PROBE_X3L = "no-cache"\n            return self._send(200, "%s", "text/html", cache=_PROBE_X3L)' % (FGH_PAGE % "x3l"))))
+_RD_X3NAME = "the module name %s, no module constant the census follows by binding"
 RD_FILES = (("rdzb", _a_module("rdzb", B_KERNEL_SEND, branches=RD_ZB)),
             ("rdzd", _a_module("rdzd", B_KERNEL_SEND, head=RD_ZD_HEAD, branches=RD_ZD)),
             ("rdcr", _a_module("rdcr", B_KERNEL_SEND, head=RD_CT_HEAD, branches=RD_CT)),
@@ -9386,7 +9414,8 @@ RD_FILES = (("rdzb", _a_module("rdzb", B_KERNEL_SEND, branches=RD_ZB)),
             ("rdcj", _a_module("rdcj", B_KERNEL_SEND, branches=RD_CJ)),
             ("rdty", _a_module("rdty", B_KERNEL_SEND, branches=RD_TY)),
             ("rdsn", _a_module("rdsn", A_SEND % "", branches=RD_SN)),
-            ("rdx2", _a_module("rdx2", B_KERNEL_SEND, head=RD_X2_HEAD, branches=RD_X2)))
+            ("rdx2", _a_module("rdx2", B_KERNEL_SEND, head=RD_X2_HEAD, branches=RD_X2)),
+            ("rdx3", _a_module("rdx3", RD_X3_SEND, head=RD_X3_HEAD, branches=RD_X3)))
 _RD_LEAF = "a digest of hmac's new whose digestmod is no constructor or algorithm name of hashlib's, whose return may be any text"
 _RD_CTYPE = "serves a response whose content type holds a CR or LF ("
 _RD_ARG = "a constant holding a CR or LF"
@@ -9431,11 +9460,16 @@ RD_REFUSED = (("rdzb", "zbu", 1, "a bytes constant holding a byte past ASCII", 1
     ("rdty", "ywc", 2, _RD_TYPED, 1), ("rdty", "yws", 2, _RD_TYPED, 1)) + tuple(
     ("rdsn", t, 1, _RD_TYPED, 1) for t in ("yse", "ysa", "ysu", "ysp", "ysm")) + tuple(
     ("rdx2", t, 1, _RD_X2NAME % t.upper(), 1) for t in ("x2u", "x2n", "x2t", "x2g", "x2w", "x2m", "x2k")) + tuple(
-    ("rdx2", t, 1, _RD_X2CONST % (t.upper(), t.upper()), 1) for t in ("x2i", "x2v"))
+    ("rdx2", t, 1, _RD_X2CONST % (t.upper(), t.upper()), 1) for t in ("x2i", "x2v")) + (
+    ("rdx3", "x3d", 1, _RD_X3NAME % "__doc__", 1), ("rdx3", "x3h", 1, _RD_X3NAME % "__doc__", 1),
+    ("rdx3", "x3e", 1, "the module constant _PROBE_X3E, whose bound value reads __doc__, no module constant the census follows by binding", 1),
+    ("rdx3", "x3o", 1, _RD_X3NAME % "__annotations__", 1)) + tuple(
+    ("rdx3", t, 3, _RD_X3NAME % ("_PROBE_" + t.upper()), 1) for t in ("x3r", "x3s", "x3k"))
 RD_WHOLE = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe", "zxe") + tuple(
     a + f for a in ("qs", "qb") for f, _kw in RD_CF_FORMS) + ("qxe", "qxq", "qsp")   # the plants whose every page text is refused
 # the plants read at the fix (and at the reviewed head), each page's fetch a site and no SERVED line at it
-RD_READ = ("zmu", "zxu", "zcn", "zcp", "zcq", "chg", "cho", "chv", "chp", "nsc", "sbn", "psfa", "psse", "qsr", "qsa", "yrs", "yrx", "x2p", "x2a", "x2c")
+RD_READ = ("zmu", "zxu", "zcn", "zcp", "zcq", "chg", "cho", "chv", "chp", "nsc", "sbn", "psfa", "psse", "qsr", "qsa", "yrs", "yrx", "x2p", "x2a", "x2c",
+           "x3b", "x3l")
 # a substitution refused by its replacement whose subject is still read, its fetch a site beside the refusal
 RD_SB_SUBJECT = ("sz1",)
 # the witnesses of item 1's stated limit, silent at both heads: a charset declaration split across texts the census reads apart (at
@@ -9468,7 +9502,7 @@ RD_UNREAD = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe
              "chyx", "chbx", "chqx", "chnx", "chmx", "chtx", "chgx", "chvx", "chpx", "hdmx") + tuple(
     a + f for a in ("qs", "qb", "qf", "qj") for f, _kw in RD_CF_FORMS) + ("qxe", "qxq", "qsp") + (
     "ycp", "ych", "ycj", "ycn", "ycs", "ymx", "yvt", "yna", "ywc", "yws", "yse", "ysa", "ysu", "ysp", "ysm", "yrp") + tuple(
-    t + "x" for t in ("x2u", "x2n", "x2t", "x2g", "x2w", "x2m", "x2k", "x2i", "x2v"))
+    t + "x" for t in ("x2u", "x2n", "x2t", "x2g", "x2w", "x2m", "x2k", "x2i", "x2v", "x3d", "x3o", "x3r", "x3s", "x3k"))
 AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES + AT_FILES + RD_FILES
 
 
@@ -9859,7 +9893,7 @@ _REACH_OTHER = "a _send reached through an object other than self, which the cen
 _REACH_OUTSIDE = "a _send reached through an attribute outside any class body, which the census does not follow"
 _GLOBAL_SEND = "a _send the function %s binds under a global declaration (%s), rebinding the module's name at run time"
 _SEND_STORE = ("SERVED %s:%%d refers to _send other than by a call the scan reads (%s in <module>): the routes are the calls spelled "
-               "_send(...) or <x>._send(...); call it so, or name the place in SERVED_ALLOW with its reason")
+               "_send(...) or <x>._send(...); call it so (no allowlist entry is keyed on _send itself)")
 _SUPER = "a call of super(), whose methods are a base class's, which the census does not follow"
 _GLOBAL_ONLY = "a module name no module-level statement binds, bound at run time under a global declaration"
 _STAR = "a module name a star import may rebind"
@@ -15767,7 +15801,10 @@ class TheLandingRoundsClassesFailClosed(_Scope):
     with no comma, any other refused by name, at a place no SERVED_ALLOW entry names, at a `_send` call and at a write outside it
     (the (ty) and (sn) plants); item 3, hmac's
     new refused with an attribute of a plainly imported module other than hashlib as its digestmod (hdb); and item 4, a header value a
-    call hands its definition through a module name the census does not follow by binding refused by name (the (x2) plants). Each
+    call hands its definition through a module name the census does not follow by binding refused by name (the (x2) plants). And the
+    second closing check (item B of the reviewer's ruling on it, rule 2): a header argument the census cannot resolve to a value it
+    read refused by name, never skipped, the module docstring's `__doc__`, `__annotations__` and a module name a route declares
+    `global` and binds there among them (the (x3) plants), a builtin's name and a route's own local still read. Each
     refusal is held at its line with its text and the count of its lines, each module's lines being its refused plants' and no other;
     each read plant's fetch is a site and each refused text none. The reds of a mutant per conjunct of each mechanism are in the build
     record."""
@@ -15947,6 +15984,38 @@ class TheAllowlistedContentTypeIsReadForACrOrLf(unittest.TestCase):
         key = ("%s:Handler._file_slice" % KERNEL_PATH, "ctype")
         self.assertEqual(res.allow_hits.get(key), {(_a_line(kernel, FGH_PAGE % "rals"), 15)},
                          "the allow hit is recorded at the refused place all the same, so no count gate moves")
+
+
+class NoAllowlistEntryIsKeyedOnSendItself(unittest.TestCase):
+    """Item B of the reviewer's ruling on the second closing check, rule 1: no SERVED_ALLOW entry is keyed on `_send` itself, by a
+    `_send` call's function or by a reference to `_send` (`self._send`, `_send`, `<x>._send`, or the string `'_send'`). Those keys are
+    what routes_of consults on the refusals it makes before any typing (a `_send` rebound under a `global` declaration, bound more than
+    once or other than by one def statement, a bare call's binding or a star import, a lambda around the call, a decorated definition,
+    a definition that binds its type's parameter again) and on a reference to `_send` other than a call, and an entry so keyed would
+    excuse the call whole, its header arguments unread; with none, no allowlist entry excuses a header holding a CR or LF, as routes_of
+    says. A place SERVED_ALLOW names at a `_send` call is (the function, the call's content-type expression). The live case reads the
+    loaded SERVED_ALLOW: no key's expression is a reference to `_send` (_names_send: the expression parsed, a name or an attribute
+    named `_send`, or the string `_send`); the plant case holds _names_send to each spelling. A mutant adding an entry keyed
+    `self._send` to the script's SERVED_ALLOW reds the live case, and one dropping an arm of _names_send reds its spelling."""
+
+    @staticmethod
+    def _names_send(expr):
+        e = ast.parse(expr, mode="eval").body
+        return (isinstance(e, ast.Name) and e.id == "_send" or isinstance(e, ast.Attribute) and e.attr == "_send"
+                or isinstance(e, ast.Constant) and e.value == "_send")
+
+    def test_no_entry_is_keyed_on_send_in_any_spelling(self):
+        keyed = [k for k in script_module(ROOT).SERVED_ALLOW if self._names_send(k[1])]
+        self.assertEqual(keyed, [], "a SERVED_ALLOW entry keyed on `_send` itself would excuse a call refused before any typing, its "
+                         "header arguments unread")
+
+    def test_each_spelling_of_a_reference_to_send_is_read_as_one(self):
+        for expr in ("_send", "self._send", "h._send", "'_send'"):
+            with self.subTest(plant=expr):
+                self.assertTrue(self._names_send(expr), "%s is a reference to `_send`" % expr)
+        for expr in ("ctype", "mime", "self._send_x", "'_sendx'"):
+            with self.subTest(control=expr):
+                self.assertFalse(self._names_send(expr), "%s is no reference to `_send`" % expr)
 
 
 class TheNoScriptTypesAreTheLiveTreesOwn(unittest.TestCase):

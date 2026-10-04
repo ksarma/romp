@@ -549,18 +549,23 @@ other name there refusing it, save a bare name a call calls (`f` in `f(...)`);
 and so is each argument a `_send` call hands its definition but the page body
 and the content type (read above), positional, starred or keyword, a `**` among
 them: each string or bytes constant in it, a dict literal's keys and values
-among them, and each name in it that no function scope around the call binds: a
-module constant (a name one top-level plain assignment binds and nothing
-rebinds), read through the module constants its value names, one holding a CR or
-LF refusing the call by name before it is typed; and any other name the module
-binds or a function rebinds (bound more than once or by an annotated assignment,
-or rebound under a `global` declaration or by a module-level statement), save a
-top-level import's name that nothing rebinds and a bare name a call calls,
-refusing the call by name as a name the census does not follow by binding, in
-the argument or in a module constant's value there; any other name there (a
-builtin's) not read; a CR or LF the value computes at run time, a
-call's return or a number formatted as a character, is not read, nor is a header
-value held anywhere else, a local, a parameter, an attribute, a call's return or
+among them, and each name in it that no function scope around the call binds (a
+name a function there declares `global` is the module's, not a binding of that
+scope): a module constant (a name one top-level plain assignment binds and
+nothing rebinds), read through the module constants its value names, one holding
+a CR or LF refusing the call by name before it is typed; a top-level import's
+name that nothing rebinds, a builtin's (a name the builtins module holds, the
+names the import system binds in every module not among them) and a bare name a
+call calls, not read; and any other name, which the census cannot resolve to a
+value it read, refusing the call by name as a name the census does not follow by
+binding, in the argument or in a module constant's value there: a name the
+module binds more than once or by an annotated assignment, one a function
+rebinds under a `global` declaration or a module-level statement writes, and one
+no module-level statement binds, among them the names the import system and the
+compiler bind (`__doc__` for a docstring, `__annotations__` for an annotation);
+a CR or LF the value computes at run time, a call's return or a number formatted
+as a character, is not read, nor is a header value held anywhere else, a local
+or a parameter of a function around the call, an attribute, a call's return or
 an item, its witnesses a CR LF from chr and one from a `%c` of an int, and a
 header value held in a local dict and a CR LF a call of chr computes at the
 call), and a response that a Content-Type in its headers argument, passed
@@ -1510,10 +1515,11 @@ conversion takes it, since a conversion can turn it into characters (a `%c`, a
 `%x`, a `{:c}`, a `%.1s` over the empty bytes), and one held deeper there (a
 name or a local bound to one, an if-expression's branch, a list's element, or a
 call's argument, one of the seven builtins' among them) is read as a value slot
-and not refused. The run fails by name (SERVED) on
-any other reference to `_send` (a read of it that is not a call's function, a
-store or delete of an attribute so named, or a string equal to `_send`), a
-content type the pass cannot read, a content type the census reads other than as
+and not refused. The run fails by name (SERVED) on any other reference to
+`_send` (a read of it that is not a call's function, a store or delete of an
+attribute so named, or a string equal to `_send`), which no allowlist entry
+excuses, since none is keyed on `_send` itself, and on a content type the pass
+cannot read, a content type the census reads other than as
 a string constant or a name bound once to one, a script-running type written
 outside `_send`, a function that answers outside `_send` more often
 than it writes a Content-Type header, a container the module writes at run time
