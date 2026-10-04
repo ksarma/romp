@@ -21,9 +21,10 @@ here under node against the code as served:
                          late close call nothing. Each dial and each open calls window.__rompNotLeaving (the Log's leaving
                          latch, below). Through tests/test_kernel_mobile.py's probe harness.
   LogWaitsForTheFailure  _LANDING_ERRS_JS: a drop alone writes nothing (the live red cue shows it); a failure word, or the
-                         link's failure for every waiting pane, writes one entry per drop; an up drops the waiting entry; a
-                         pane not shown keeps waiting and is written once shown; a parked pane is dropped; a split column
-                         waits under its own key. Through tests/test_error_center.py's DOM stub.
+                         link's failure for every waiting pane, writes one entry per drop, and one pane's word that pane's
+                         entry alone; an up drops the waiting entry; a pane not shown keeps waiting and is written once
+                         shown; a parked pane is dropped; a split column waits under its own key. Through
+                         tests/test_error_center.py's DOM stub.
   ACutFailsNothingWhileASocketStands
                          _LANDING_ERRS_JS: a cut word, or the link's failure with true, writes nothing while the shell's link,
                          another pane's socket or a column's stands; a refusal writes whatever stands; with nothing open (a
@@ -238,6 +239,26 @@ postFrom({ col: '3' }, { romp: 'wsState', app: 'chat', state: 'down' });
 postFrom({ col: '3' }, { romp: 'wsState', app: 'chat', state: 'up' });
 linkFailed();
 out.colBack = snap();                                      // a column that reopened has nothing waiting
+// review round 1 of item 4b (2026-10-04), keyed by pane: one pane's failure word writes that pane's waiting entry alone. Both
+// panes are put up first (the chat is still down from the link step, and a down over a down records nothing), and the steps
+// read the new writes, since the store coalesces an entry by its text.
+post({ romp: 'wsState', app: 'chat', state: 'up' });
+post({ romp: 'wsState', app: 'feed', state: 'up' });
+post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsState', app: 'feed', state: 'down' });
+const k0 = CONN.length;
+post({ romp: 'wsFail', app: 'chat', cut: false });
+out.oneWord = CONN.slice(k0);                              // the chat's word, the Feed's drop waiting too
+post({ romp: 'wsState', app: 'feed', state: 'up' });
+linkFailed();
+out.oneWordThenLink = CONN.slice(k0);                      // the Feed reopened before any failure of its own
+postFrom({ col: '2' }, { romp: 'wsState', app: 'chat', state: 'up' });
+post({ romp: 'wsState', app: 'timeline', state: 'up' });
+postFrom({ col: '2' }, { romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsState', app: 'timeline', state: 'down' });
+const k1 = CONN.length;
+postFrom({ col: '2' }, { romp: 'wsFail', app: 'chat', cut: false });
+out.oneColumnsWord = CONN.slice(k1);                       // a column's word, the Sessions pane's drop waiting too
 console.log(JSON.stringify(out));
 """
 
@@ -290,6 +311,14 @@ class LogWaitsForTheFailure(unittest.TestCase):
     def test_a_failure_word_with_nothing_waiting_writes_nothing(self):
         self.assertEqual(self.out["noDrop"]["conn"], 5, "a pane that never dropped")
         self.assertEqual(self.out["lateWord"]["conn"], 5, "a failure word after the socket reopened")
+
+    def test_one_panes_failure_word_writes_that_panes_entry_alone(self):
+        # review round 1 of item 4b (2026-10-04, tests-1): with two panes down, the chat's word writes the chat's entry and leaves
+        # the Feed's waiting, which its own reopening then drops; a column's word likewise leaves the Sessions pane's waiting
+        self.assertEqual(self.out["oneWord"], [self.CHAT], "the chat's failure word writes the chat's entry, not the Feed's")
+        self.assertEqual(self.out["oneWordThenLink"], [self.CHAT], "the Feed reopened before a failure of its own: never written")
+        self.assertEqual(self.out["oneColumnsWord"], ["Kernel connection lost: chat split 2 (reconnecting)"],
+                         "a column's failure word writes the column's entry, not the Sessions pane's")
 
     def test_a_split_column_waits_under_its_own_key(self):
         self.assertEqual(self.out["colDrop"]["conn"], 5, "the column's drop alone writes nothing")
