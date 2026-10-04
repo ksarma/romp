@@ -472,7 +472,10 @@ window.__rompColOf = (src) => (src && src.col) || '';
 function postFrom(src, data) { (WL['message'] || []).forEach((f) => f({ data: data, source: src })); }
 function fire(k) { (WL[k] || []).forEach((f) => f({})); }
 const snap = () => CONN.slice();
+// the shell's door, read through a guard so a Log without it (d8a1df87e, before the latch) still runs every step and is read by
+// the steps' own assertions; out.door says whether the door was there
 out.door = typeof window.__rompNotLeaving === 'function';
+function notLeaving() { if (out.door) window.__rompNotLeaving(); }
 // the unload: beforeunload, then the closes Firefox delivers to the page before its pagehide
 post({ romp: 'wsState', app: 'chat', state: 'down' });
 post({ romp: 'wsState', app: 'feed', state: 'down' });
@@ -484,7 +487,7 @@ post({ romp: 'wsFail', app: 'feed', cut: false });
 postFrom({ col: '2' }, { romp: 'wsFail', app: 'chat', cut: false });
 out.wordWhileLeaving = snap();                             // a pane's and a column's, the same
 // clear 1: the shell's next dial (window.__rompNotLeaving, which the shell calls at each dial and at its open)
-window.__rompNotLeaving();
+notLeaving();
 post({ romp: 'wsFail', app: 'feed', cut: false });
 out.afterTheShellsDial = snap();                           // the page stayed: the Feed's refused dial is a failure
 // clear 2: a pane's socket open (its up word)
