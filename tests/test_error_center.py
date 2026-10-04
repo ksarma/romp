@@ -685,6 +685,20 @@ console.log(JSON.stringify(out));
 """
 
 
+def _node_last_json(script):
+    """Run a script under node and return its last stdout line as JSON (a module-level function, so the served-text census
+    follows the script into the file it is written to)."""
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(script)
+        path = f.name
+    try:
+        r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+    finally:
+        os.unlink(path)
+    assert r.returncode == 0, "the center's JS threw: " + r.stderr[:800]
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
 class NextPageLifeLine(unittest.TestCase):
     """A line written for the next page life arrives there unread (the round-1 review, 2026-10-04). The reload core asks every
     pane's shim, right before location.reload(), what its queue still holds (__rompShimPersist), and an embedded pane writes
@@ -693,18 +707,6 @@ class NextPageLifeLine(unittest.TestCase):
     anyone could read the list, so the next page counted one unread entry too few: the phone's triangle and the gear's count
     missed the line. The shim's write says it is made for the next page life (the write path's nextLife), and the Log skips
     the arrival mark for it. Two node runs share one store: the page that reloads and the page after it."""
-
-    @staticmethod
-    def _run(script):
-        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
-            f.write(script)
-            path = f.name
-        try:
-            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
-        finally:
-            os.unlink(path)
-        assert r.returncode == 0, "the center's JS threw: " + r.stderr[:800]
-        return json.loads(r.stdout.strip().splitlines()[-1])
 
     @classmethod
     def setUpClass(cls):
@@ -717,10 +719,10 @@ class NextPageLifeLine(unittest.TestCase):
         persist = ("function SHIM_PERSIST(window, queue, queuedDiag) { var LABEL = %s; var SENDS_DROPPED_KEY = 'romp:sendsDropped';\n"
                    "%s\nreturn window.__rompShimPersist; }\n" % (json.dumps(label), hook))
         state = NEXT_LIFE_STATE % json.dumps(line)
-        first = cls._run(HARNESS + km._LANDING_ERRS_JS + state + persist + NEXT_LIFE_FIRST)
+        first = _node_last_json(HARNESS + km._LANDING_ERRS_JS + state + persist + NEXT_LIFE_FIRST)
         cls.out = dict(first["out"])
         seed = "Object.assign(STORE, %s);\n" % json.dumps(first["store"])
-        cls.out.update(cls._run(HARNESS + seed + km._LANDING_ERRS_JS + state + NEXT_LIFE_SECOND))
+        cls.out.update(_node_last_json(HARNESS + seed + km._LANDING_ERRS_JS + state + NEXT_LIFE_SECOND))
 
     def _is(self, step, red, num, gear, unseen_stored, log_open, line_seen):
         self.assertEqual(self.out[step], dict(self.out[step], red=red, num=num, gear=gear, unseenStored=unseen_stored,
