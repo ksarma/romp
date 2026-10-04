@@ -6350,12 +6350,16 @@ class ParseCacheCollectsWhereTheGilIsOff(unittest.TestCase):
 class ParseCacheHeld(unittest.TestCase):
     """tests/parse_cache.py's held(key) (PR 878, 2026-10-04): True while `key`'s derivation is in the memo, which builds_of, a
     count of build attempts, does not say. The census module's release() reads it to decide whether the tree's derivation can be
-    rendered without a build (tests/test_price_feed_census.py, TheModuleReleasesWhatItHoldsAfterItsLastCase). Two cases, over keys
-    of this class's own, each forgotten by a cleanup registered before its first build, so these run in any worker and need no
-    tree: a key's life (nothing held before any build; nothing after a build that raised, though builds_of reads 1; held after a
-    build that returned; nothing again after clear() of that key, the count unmoved), and a build the after-check refused (it
-    wrote on a parser singleton, the attribute's removal registered BEFORE the build), counted and not held. THE PLANT: held()
-    reading the count (`key in _BUILDS`) reds the reads after the raising build, the clear and the refused build."""
+    rendered without a build (tests/test_price_feed_census.py, TheModuleReleasesWhatItHoldsAfterItsLastCase). Three cases, over
+    keys of this class's own, each forgotten by a cleanup registered before its first build, so these run in any worker and need
+    no tree: a key's life (nothing held before any build; nothing after a build that raised, though builds_of reads 1; held after
+    a build that returned; nothing again after clear() of that key, the count unmoved), a build the after-check refused (it
+    wrote on a parser singleton, the attribute's removal registered BEFORE the build), counted and not held, and held()'s lock
+    sentence across two threads: while one thread's build of the key is under way inside derived(), held(key) on another thread
+    waits for it and then reads its outcome, True (both threads end on every exit path through join_started, registered as a
+    cleanup before either starts, and the build's wait is bounded at 5 s). THE PLANTS: held() reading the count (`key in
+    _BUILDS`) reds the reads after the raising build, the clear and the refused build; held() without its lock reds the third
+    case (the reader returns at once, reading False)."""
     KEY = ("tests/test_thread_stop_census.py", "a planted key of ParseCacheHeld")
 
     def test_a_key_is_held_from_a_build_that_returned_until_its_clear_and_not_after_a_build_that_raised(self):
@@ -6388,6 +6392,48 @@ class ParseCacheHeld(unittest.TestCase):
         self.assertIn("after the build", str(cm.exception))
         ParseCacheKeyAndLock._unplant(load, "_held")
         self.assertEqual((PC.held(key), PC.builds_of(key)), (False, 1), "the after-check refused the build: counted, nothing held")
+
+    @staticmethod
+    def _inside_held(thread):
+        """Whether `thread` is running held() now: a frame of held()'s code on its stack (sys._current_frames)."""
+        f = sys._current_frames().get(thread.ident)
+        while f is not None:
+            if f.f_code is PC.held.__code__:
+                return True
+            f = f.f_back
+        return False
+
+    def test_a_read_while_another_thread_builds_the_key_waits_for_the_build_and_reads_its_outcome(self):
+        key = self.KEY + ("a read beside a build under way",)
+        self.addCleanup(PC.clear, key)
+        inside, let_go, got = threading.Event(), threading.Event(), []
+
+        def build():
+            inside.set()
+            let_go.wait(5)
+            return object()
+
+        def derive():
+            PC.derived(key, build)
+
+        def read():
+            got.append(PC.held(key))
+        builder = threading.Thread(target=derive, name="parse-cache-held-builder")
+        reader = threading.Thread(target=read, name="parse-cache-held-reader")
+        self.addCleanup(join_started, let_go, [builder, reader], 5)   # BEFORE either start
+        builder.start()
+        self.assertTrue(inside.wait(5), "the build is under way on the builder thread")
+        reader.start()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and reader.is_alive() and not self._inside_held(reader):
+            time.sleep(0.01)
+        reader.join(0.1)
+        self.assertEqual((reader.is_alive(), got), (True, []),
+                         "held() returned while a build of the key was under way on another thread: it did not wait on the lock")
+        let_go.set()
+        builder.join(5)
+        reader.join(5)
+        self.assertEqual(got, [True], "once the build returned, the waiting read reads its outcome: held")
 
 
 class IterativeHandCopier(unittest.TestCase):
