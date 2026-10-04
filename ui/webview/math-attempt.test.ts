@@ -8,6 +8,10 @@
 //     iOS item 6, round 2, tests-1): the first attempt stalls past its backstop (one console line, the retry armed), the next formula
 //     uses the retry (a second tag), the first tag then loads (a late success, the arrival), and the second tag's error comes after
 //     it. No browser in CI reaches that order (Chromium serves the retry's tag from the stalled fetch), so this case is the guard's pin.
+//   - a page that is leaving is no failed load (the review's round 2, extra5-1): the reload core's persist step, the shell's own
+//     hook before location.reload (here the page's __rompShimPersist, called as the core calls it), latches the page, and a script
+//     tag's error then fails nothing: no console line, the formula still waiting; the attempt's backstop stays its end. pageshow
+//     clears the latch, and desktop's beforeunload, heard while an attempt is out, latches it too.
 // Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -80,7 +84,7 @@ function fake(doc: unknown, tag: string): Fake {
 }
 
 type Harness = {
-  M: any; doc: any; win: { listeners: Map<string, Array<(e: unknown) => void>>; dispatch(type: string): void };
+  M: any; doc: any; win: { listeners: Map<string, Array<(e: unknown) => void>>; dispatch(type: string): void; __rompShimPersist: () => void }; shimCalls(): number;
   head: Fake; body: Fake; lines: string[]; timers: Map<number, () => void>;
   tags(): Fake[]; turn(tex: string, display?: boolean): Fake; engineIn(): void; flush(): Promise<void>;
 };
@@ -96,8 +100,10 @@ function page(): Harness {
   Object.assign(doc, { head, body, documentElement: root, createElement: (tag: string) => fake(doc, tag),
     querySelectorAll: (sel: string) => root.querySelectorAll(sel), querySelector: (sel: string) => root.querySelector(sel) });
   const listeners = new Map<string, Array<(e: unknown) => void>>();
+  let shimCalls = 0;
   const win = {
     listeners,
+    __rompShimPersist: () => { shimCalls++; },                     // the pane shim's own hook, which the reload core's persist step calls
     addEventListener: (type: string, fn: (e: unknown) => void) => { listeners.set(type, (listeners.get(type) || []).concat(fn)); },
     removeEventListener: (type: string, fn: (e: unknown) => void) => { listeners.set(type, (listeners.get(type) || []).filter((f) => f !== fn)); },
     dispatch: (type: string) => { for (const f of listeners.get(type) || []) f({ type }); },
@@ -116,7 +122,7 @@ function page(): Harness {
   const M = sandbox.M;
   assert.ok(M && typeof M.renderMathPlaceholders === "function", "math.ts's exports reached the context");
   return {
-    M, doc, win, head, body, lines, timers,
+    M, doc, win, head, body, lines, timers, shimCalls: () => shimCalls,
     tags: () => head.kids.filter((k) => k.tagName === "SCRIPT" && k !== bundle),
     turn: (tex: string, display = false) => {
       const t = fake(doc, "div");
@@ -163,4 +169,48 @@ test("executed: an attempt that fails after another attempt has succeeded says n
   await h.flush();
   assert.deepEqual(h.lines.slice(1), [], "the retry's failure, after a success, says nothing: no second console line");
   assert.equal(t1.querySelectorAll(".katex").length + t2.querySelectorAll(".katex").length, 2, "and it unlays nothing");
+});
+
+test("executed: the reload core's persist step latches a leaving page: a script tag's error then fails nothing, no line and the formula still waiting, and the attempt's backstop stays its end", async () => {
+  const h = page();
+  const t1 = h.turn("x^2");
+  assert.equal(h.tags().length, 1, "the first formula asked for the chunk");
+  h.win.__rompShimPersist();                                             // the reload core's persist step, synchronously before location.reload
+  assert.equal(h.shimCalls(), 1, "the shim's own hook still ran: the latch chains onto it");
+  h.tags()[0].onerror!();                                                // WebKit cancels the request as the navigation starts and fires the error
+  await h.flush();
+  assert.deepEqual(h.lines, [], "the leaving page says no failure");
+  assert.equal(t1.querySelectorAll("." + h.M.MATH_INLINE_CLASS).length, 1, "the formula still waits");
+  assert.equal(t1.querySelectorAll("[" + h.M.MATH_FAILED_ATTR + "]").length, 0, "nothing marked as the failure's");
+  backstopRunsOut(h);                                                    // the page did not unload after all: the backstop ends the attempt
+  assert.equal(h.lines.length, 1, "the backstop's one line");
+  assert.match(h.lines[0], /^math: the math renderer did not load within 60 seconds;/);
+  assert.equal(t1.querySelectorAll("[" + h.M.MATH_FAILED_ATTR + "]").length, 1, "the formula is its marked source");
+});
+
+test("executed: pageshow clears the latch, so a script tag's error after it fails the attempt at once, one line", async () => {
+  const h = page();
+  const t1 = h.turn("x^2");
+  h.win.__rompShimPersist();
+  h.win.dispatch("pageshow");                                            // the page shown again, from the back-forward cache
+  h.tags()[0].onerror!();
+  await h.flush();
+  assert.equal(h.lines.length, 1, "the error is a failed load again: one line");
+  assert.match(h.lines[0], /^math: the math renderer failed to load;/);
+  assert.equal(t1.querySelectorAll("[" + h.M.MATH_FAILED_ATTR + "]").length, 1, "the formula is its marked source at once");
+  assert.equal(h.timers.size, 0, "the failure cleared the backstop");
+});
+
+test("executed: desktop's beforeunload, heard while an attempt is out, latches the page too: the tag's error fails nothing and the backstop stays its end", async () => {
+  const h = page();
+  const t1 = h.turn("x^2");
+  assert.equal((h.win.listeners.get("beforeunload") || []).length, 1, "the attempt listens to beforeunload while it is out");
+  h.win.dispatch("beforeunload");
+  h.tags()[0].onerror!();
+  await h.flush();
+  assert.deepEqual(h.lines, [], "no line");
+  assert.equal(t1.querySelectorAll("." + h.M.MATH_INLINE_CLASS).length, 1, "the formula still waits");
+  backstopRunsOut(h);
+  assert.equal(h.lines.length, 1);
+  assert.equal((h.win.listeners.get("beforeunload") || []).length, 0, "the attempt's end stopped listening");
 });

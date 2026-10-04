@@ -388,6 +388,8 @@ let failures = 0;                                         // attempts that have 
 let retryArmed = false;                                   // one retry, armed by an event, used by the next fill that meets a formula
 let retryable = true;                                     // false once the page proved to have no bundle tag to derive the URL from
 let settling = 0;                                         // inside engineSettled: its fills (the document's, a viewer's repaint) use no retry
+let leaving = false;                                      // the page is going: a reload romp started (latchOnLeave), or a desktop unload
+let leaveHooked = false;                                  // latchOnLeave's hooks are on (once per page life)
 const settleHandlers: Array<() => (() => void) | void> = [];
 
 /** Arm one retry of a failed load, the flag set and not counted (a second event before the next formula changes nothing). The
@@ -401,6 +403,26 @@ function armRetry(): void {
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("romp:wsup", armRetry);
   window.addEventListener("online", armRetry);
+}
+
+/** A page that is leaving cancels a chunk request in flight, and WebKit fires the tag's error as the navigation starts: that is no
+ *  failed load (the review of iOS item 6, round 2, extra5-1: the dying page logged a false failure line and turned every waiting
+ *  formula into its source for the whole provisional load). The latch is set by the shell's own pre-reload hook: the reload core's
+ *  persist step (kernel.py _RELOAD_CORE_JS persist) calls each window's __rompShimPersist, which the pane shim defines on every
+ *  kernel page that loads this module (the chat, the feed, the Files pane, Waiting), synchronously before location.reload, on every
+ *  reload romp starts; this chains onto it. iOS Safari fires no beforeunload, so that event is only a further belt, for desktop
+ *  WebKit, and it is listened to only while an attempt is out (attempt). While the latch is set a tag's error fails nothing and the
+ *  attempt's backstop stays its end, in case the page does not unload after all (a reload the browser refused); pageshow, the page
+ *  shown again from the back-forward cache, clears it. Hooked when the first attempt sends its request, after the page's load event,
+ *  so the shim's hook exists by then; a page without the shim (the VS Code webview) has no reload core to latch on. What stays: a
+ *  reload the shell does not start, the browser's own reload control, on iOS still logs one false line on the dying page. */
+function latchOnLeave(): void {
+  if (leaveHooked || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+  leaveHooked = true;
+  const w = window as unknown as { __rompShimPersist?: (...a: unknown[]) => unknown };
+  const shim = w.__rompShimPersist;
+  if (typeof shim === "function") w.__rompShimPersist = function (this: unknown, ...a: unknown[]) { leaving = true; return shim.apply(this, a); };
+  window.addEventListener("pageshow", () => { leaving = false; });
 }
 
 /** Whether `root` holds a formula still waiting for the engine: after a fill, a placeholder that is left is one. */
@@ -453,7 +475,8 @@ function requestEngine(): void {
  *  request. After an error or a 404 the first fetch is over, and the retry is a new request in every engine. Every end settles
  *  asynchronously, never inside the fill that asked, so a fill is never re-entered by its own attempt. The attempt fails once, at its
  *  first failure end (an error, a load that registered nothing, its backstop), and a later failure end of it is silent; an answer of
- *  it that SUCCEEDS after that (the chunk, or the faces, landing after the backstop) is a success all the same. */
+ *  it that SUCCEEDS after that (the chunk, or the faces, landing after the backstop) is a success all the same. A tag's error while
+ *  the page is leaving is no failure end (latchOnLeave). */
 function attempt(): void {
   const tag = chunkScript("math-chunk.js");
   if (!tag) {
@@ -463,19 +486,23 @@ function attempt(): void {
   }
   let failed = false, done = false;
   let backstop: ReturnType<typeof setTimeout> | undefined;
+  const unloads = (): void => { leaving = true; };          // desktop WebKit's unload, heard while this attempt is out (latchOnLeave)
+  const ended = (): void => { clearTimeout(backstop); window.removeEventListener("beforeunload", unloads); };
   const fail = (why: string): void => {
     if (failed || done) return;
     failed = true;
-    clearTimeout(backstop);
+    ended();
     attemptFailed(why);
   };
   const succeed = (): void => {
     if (done) return;
     done = true;
-    clearTimeout(backstop);
+    ended();
     if (engineLoad !== "ready") engineSettled(null);      // the first success runs the arrival; a second is a no-op
   };
   const request = (): void => {
+    latchOnLeave();
+    window.addEventListener("beforeunload", unloads);
     const faces = katexFaces();
     backstop = setTimeout(() => fail("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
     const sc = document.createElement("script");
@@ -483,7 +510,8 @@ function attempt(): void {
     if (tag.nonce) sc.nonce = tag.nonce;
     // a load that registers nothing (a script cut short, an engine too old to run it) is a failure, like an error
     sc.onload = () => { if (!engine()) fail("the math renderer loaded but registered nothing"); else void faces.then(succeed); };
-    sc.onerror = () => fail("the math renderer failed to load");
+    // an error while the page is leaving is the navigation's cancel, not a failed load: the backstop stays the end (latchOnLeave)
+    sc.onerror = () => { if (!leaving) fail("the math renderer failed to load"); };
     (document.head || document.documentElement).appendChild(sc);
   };
   // The chunk and the two faces wait for the document's own load, an exact event: a script tag added before it joins that load,
