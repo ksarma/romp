@@ -6581,6 +6581,10 @@ class CiJobs(unittest.TestCase):
     # there (the matrices' os: evaluates to ubuntu-latest for a push; CiMatrixRunners in
     # tests/test_ci_workflow_concurrency.py), and a python-version runs once per version the job's matrix lists.
     RENDERED = {"matrix.os": ["ubuntu-latest"]}
+    # The python job's shard clause (2026-10-04): every cell of a batch push is an ubuntu-latest one, so it renders as
+    # ", shard <k>" once for each value the job's matrix lists on its shard axis (tests/test_ci_shards.py holds the axis
+    # and the names per cell).
+    SHARD_CLAUSE = "matrix.os == 'ubuntu-latest' && format(', shard {0}', matrix.shard) || ''"
 
     def batch_push_checks(self, text):
         """{job id: [the name GitHub renders for each of its job runs on a batch push]}, derived from ci.yml's job ids, so
@@ -6594,17 +6598,26 @@ class CiJobs(unittest.TestCase):
             block = re.search(r"^  %s:[ \t]*(?:#.*)?\n(.*?)(?=^  [A-Za-z_][\w-]*:[ \t]*(?:#.*)?$|^[A-Za-z_]|\Z)" % re.escape(job),
                               text, re.M | re.S).group(1)
             exprs = set(re.findall(r"\$\{\{\s*(.*?)\s*\}\}", name))
-            self.assertFalse(exprs - set(self.RENDERED) - {"matrix.python-version"},
+            self.assertFalse(exprs - set(self.RENDERED) - {"matrix.python-version", self.SHARD_CLAUSE},
                              "the %s job's name %r holds an expression this does not render: render it here" % (job, name))
             self.assertFalse(name == job and re.search(r"^    strategy:", block, re.M),
                              "the %s job has a matrix and no name: render GitHub's (<values>) here" % job)
             names = [name]
             if "matrix.python-version" in exprs:
-                versions = [v.strip().strip("'\"") for group in re.findall(r"python-version:[ \t]*\[([^\]]*)\]", block)
+                # an exclude: entry names a cell the matrix drops (the python job's macOS exclusions, 2026-10-04), so its
+                # versions are not read; the list and the include: entries are
+                kept = re.sub(r"^(\s*)exclude:[ \t]*\n(?:\1\s+.*\n|\s*\n)*", "", block, flags=re.M)
+                versions = [v.strip().strip("'\"") for group in re.findall(r"python-version:[ \t]*\[([^\]]*)\]", kept)
                             for v in group.split(",")]
-                versions += re.findall(r"python-version:[ \t]*['\"]([^'\"]+)['\"]", block)
+                versions += re.findall(r"python-version:[ \t]*['\"]([^'\"]+)['\"]", kept)
                 self.assertTrue(versions, "the %s job's matrix lists no python-version" % job)
                 names = [re.sub(r"\$\{\{\s*matrix\.python-version\s*\}\}", v, name) for v in versions]
+            if self.SHARD_CLAUSE in exprs:
+                shards = [v.strip().strip("'\"") for group in re.findall(r"shard:[ \t]*\[([^\]]*)\]", block)
+                          for v in group.split(",")]
+                self.assertTrue(shards, "the %s job's matrix lists no shard" % job)
+                clause = r"\$\{\{\s*%s\s*\}\}" % re.escape(self.SHARD_CLAUSE)
+                names = [re.sub(clause, lambda _m, k=k: ", shard %s" % k, n) for n in names for k in shards]
             for expr, (value,) in self.RENDERED.items():
                 names = [re.sub(r"\$\{\{\s*%s\s*\}\}" % re.escape(expr), value, n) for n in names]
             out[job] = names
@@ -6629,20 +6642,25 @@ class CiJobs(unittest.TestCase):
     def test_the_maintainer_steps_name_every_check_a_batch_push_reports(self):
         """docs/batching.md's maintainer section lists the checks to require; it names every one a batch push reports, as
         batch_push_checks derives them from ci.yml: each job's rendered name in backticks, and for the python job its
-        name with <version> for the version and the Linux cells' versions listed after it. At the round-2 fix head it
-        named four of the six jobs, not the vendored-tooling and served-pages jobs PR 928 added."""
+        name with <version> for the version and <shard> for the shard, the Linux cells' versions and the shards listed
+        after it (the shards since 2026-10-04). At the round-2 fix head it named four of the six jobs, not the
+        vendored-tooling and served-pages jobs PR 928 added."""
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         doc = (ROOT / "docs" / "batching.md").read_text(encoding="utf-8")
         start = doc.index("## If you are the maintainer")
         section = doc[start:doc.index("\n## ", start + 1)]
         para = re.sub(r"\s+", " ", section)
-        m = re.search(r"`Python <version> \(ubuntu-latest\)` for each Linux cell \(([^)]*)\)", para)
-        self.assertIsNotNone(m, "the python job's checks are named as `Python <version> (ubuntu-latest)` with the cells' versions")
-        listed = sorted(v.strip() for v in re.split(r",|\band\b", m.group(1)) if v.strip())
+        m = re.search(r"`Python <version> \(ubuntu-latest, shard <shard>\)` for each Linux cell \(([^)]*)\) and each shard "
+                      r"\(([^)]*)\)", para)
+        self.assertIsNotNone(m, "the python job's checks are named as `Python <version> (ubuntu-latest, shard <shard>)` with "
+                                "the cells' versions and the shards")
+        versions = [v.strip() for v in re.split(r",|\band\b", m.group(1)) if v.strip()]
+        shards = [k.strip() for k in re.split(r",|\band\b", m.group(2)) if k.strip()]
+        listed = sorted("%s (ubuntu-latest, shard %s)" % (v, k) for v in versions for k in shards)
         for job, names in self.batch_push_checks(text).items():
             with self.subTest(job=job):
                 if job == "python":
-                    self.assertEqual(listed, sorted(n[len("Python "):-len(" (ubuntu-latest)")] for n in names))
+                    self.assertEqual(listed, sorted(n[len("Python "):] for n in names))
                 else:
                     for name in names:
                         self.assertTrue("`%s`" % name in para, "docs/batching.md's maintainer section does not name %s" % name)

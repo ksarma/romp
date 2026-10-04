@@ -17264,6 +17264,10 @@ class HermeticKernelPostal(unittest.TestCase):
             real = f.read()
         expression = "matrix.os == 'ubuntu-latest' && '1' || '0'"
         self.assertEqual(real.count(expression), 1, "the step's expression, which the plants below change")
+        # the python job's matrix has had no include: since CI's shards (2026-10-04: an exclude: keeps macOS to its cells),
+        # so the windows-latest cell of the plant below goes in an include: put after the job's matrix os: line
+        at = real.index("\n", real.index("\n        os: ", real.index("\n  python:\n")) + 1) + 1
+        windows = real[:at] + "        include:\n          - os: windows-latest\n            python-version: '3.12'\n" + real[at:]
         plants = (("an expression on another matrix key", real.replace(expression, "matrix.python-version == '3.12' && '2' || '0'"),
                    "matrix.python-version == '3.12' && '2' || '0'"),
                   ("the Run pytest step renamed", real.replace("      - name: Run pytest\n", "      - name: Run the tests\n"),
@@ -17275,8 +17279,7 @@ class HermeticKernelPostal(unittest.TestCase):
                   ("a worker count of a superscript two, a digit but not a decimal one",
                    real.replace(expression, "matrix.os == 'ubuntu-latest' && '\u00b2' || '0'"), "sets ['\u00b2'] there"),
                   ("two runners with no worker whose options differ",
-                   real.replace("        include:\n", "        include:\n          - os: windows-latest\n            python-version: '3.12'\n", 1)
-                   .replace("--timeout-method=thread\n", "--timeout-method=thread ${{ matrix.os == 'windows-latest' && '-x' || '' }}\n", 1),
+                   windows.replace("--timeout-method=thread\n", "--timeout-method=thread ${{ matrix.os == 'windows-latest' && '-x' || '' }}\n", 1),
                    "give 2 forms of it"),
                   ("a step with no -n", real.replace("-n ${{ %s }} " % expression, ""), "with xdist workers, and the runners"),
                   ("a step that gives every runner -n 2", real.replace(expression, "matrix.os == 'ubuntu-latest' && '2' || '2'"),

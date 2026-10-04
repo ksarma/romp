@@ -7,12 +7,32 @@ last test that finished. BATS_TEST_TIMEOUT is bats-core's own bound (since 1.8, 
 Homebrew's 1.14.0 alike): a background sleep, then pkill or ps on the test's children, and the test's TAP
 line ends "# timeout after Ns", so a hung test fails in minutes and is named. No coreutils timeout, which the
 macOS image lacks. Source pins, as tests/test_ci_workflow_concurrency.py: no YAML library in the test deps."""
+import ast
 import os
 import re
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 WF = os.path.join(os.path.dirname(HERE), ".github", "workflows", "ci.yml")
+CONFTEST = os.path.join(HERE, "conftest.py")
+
+
+def shard_count_as_written(path=CONFTEST):
+    """SHARD_COUNT as tests/conftest.py writes it, a whole-number literal at module level, read from the file's text and
+    not imported: tests/test_bats_bare_negation.py imports this module, and the Shell job runs that module under a
+    python with no pytest, which the conftest imports first. Raises LookupError unless there is one such assignment."""
+    with open(path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), path)
+    found = [n.value.value for n in tree.body if isinstance(n, ast.Assign) and len(n.targets) == 1
+             and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "SHARD_COUNT"
+             and isinstance(n.value, ast.Constant) and type(n.value.value) is int]
+    if len(found) != 1:
+        raise LookupError("tests/conftest.py has %d module-level SHARD_COUNT = <whole number> lines, not one: re-anchor "
+                          "this pin" % len(found))
+    return found[0]
+
+
+SHARD_COUNT = shard_count_as_written()
 
 
 def run_bats_step(path=WF):
@@ -47,23 +67,28 @@ class BatsStepBound(unittest.TestCase):
         self.assertIn("--print-output-on-failure", self.cmd)
 
 
-# The Linux cap's three inputs, each a literal, for T230b's rule (the pytest phase plus the per-test timeout plus the time
-# before the step, rounded up to a multiple of 5 minutes; rule_minutes), held against ci.yml by PythonJobCeiling below.
-# The one-worker phase is an ESTIMATE, to be measured on the new repo's first CI run: a local run of the Run pytest step's
-# command on 2026-10-04, under a CPUQuota of 200 percent and an 8 GiB memory cap with no swap, at a 1-minute load of 62
-# at the start and 36 to 44 at the end, had its one worker killed by the memory cap (once on 3.12, twice on 3.14t), so its
-# phases (4283 s and 4411 s) are not a clean figure. The estimate is the slowest finished two-worker Linux cell, the 3.10
-# cell of run 37208049133 (job 111453304880), 2312 s in its pytest step, scaled by the serial ratio measured on four CPUs
-# (1437 s against 739 s): ESTIMATE_INPUTS, rounded to the second.
-ONE_WORKER_PHASE_S = 4496
-ONE_WORKER_PHASE_ESTIMATED = True
-ESTIMATE_INPUTS = (2312, 1437, 739)
-# what ci.yml's cap comment says while the phase is an estimate, its comment lines joined
-ESTIMATE_MARK = "estimated; to be measured on the new repo's first CI run"
+# Each shard's cap (2026-10-04): ci.yml's Linux Python cells run as SHARD_COUNT (tests/conftest.py) one-worker jobs, one for
+# each shard of the test files, since one worker running the whole suite does not fit the private runner's 8 GB (a local
+# run of the Run pytest step's command on 2026-10-04, under a CPUQuota of 200 percent and an 8 GiB memory cap with no
+# swap, had its one worker killed by the memory cap once on 3.12 and twice on 3.14t). Each shard's cap is T230b's rule
+# (the pytest phase plus the per-test timeout plus the time before the step, rounded up to a multiple of 5 minutes;
+# rule_minutes) for that shard's one-worker phase, held against ci.yml by PythonJobCeiling below.
+# PLACEHOLDER: no shard's phase is measured yet. None marks it, and test_each_shards_cap_is_the_rules_figure_for_its_phase
+# is red while any shard's phase is None. Measuring a shard means setting its entry to the measured seconds, and ci.yml's
+# figure for that shard and its comment to match.
+SHARD_PHASE_S = {1: None, 2: None}
+# what ci.yml's cap for each shard holds while that shard's phase is a placeholder: the cap the whole suite's estimated
+# one-worker phase gave (WHOLE_SUITE_ESTIMATE_INPUTS: the slowest finished two-worker Linux cell, the 3.10 cell of run
+# 37208049133, job 111453304880, 2312 s in its pytest step, scaled by the serial ratio measured on four CPUs, 1437 s against
+# 739 s, to 4496 s; 4496 + 600 + 25 = 5121 s, so 90), which a shard, a part of that suite, is held under until measured
+WHOLE_SUITE_ESTIMATE_INPUTS = (2312, 1437, 739)
+WHOLE_SUITE_PHASE_S = 4496
+PLACEHOLDER_CAP = 90
+PLACEHOLDER_MARK = "PLACEHOLDER: no shard's phase is measured yet"
 # the Run pytest step's --timeout, read back from its run line by test_the_per_test_timeout_input_is_the_steps
 PER_TEST_TIMEOUT_S = 600
-# the steps before Run pytest in that same job (the 3.10 cell of run 37208049133), on the public runner, the jobs API's
-# figure; the private runner's is read from its first run
+# the steps before Run pytest in the 3.10 cell of run 37208049133, on the public runner, the jobs API's figure; the
+# private runner's is read from its first run
 SETUP_S = 25
 
 
@@ -72,6 +97,29 @@ def rule_minutes(phase_s, per_test_s, setup_s):
     in seconds, rounded up to a multiple of 5 minutes (300 s)."""
     total = phase_s + per_test_s + setup_s
     return 5 * ((total + 299) // 300)
+
+
+# the python job's cap expression: macOS's figure, then one `matrix.shard == '<k>' && <minutes> ||` clause for each shard
+# but the last, then the last shard's figure
+CAP_LINE = re.compile(r"^    timeout-minutes: \$\{\{ matrix\.os == 'macos-latest' && (\d+) \|\| "
+                      r"((?:matrix\.shard == '\d+' && \d+ \|\| )*)(\d+) \}\}$", re.M)
+
+
+def shard_caps(head, count):
+    """(macOS's cap, {shard: cap}) from the python job's head, the shards read from the expression's clauses in order and
+    the last figure given to shard `count`. Raises LookupError when the line is not that expression or its clauses do
+    not name shards 1 to count - 1 in order."""
+    m = CAP_LINE.search(head)
+    if m is None:
+        raise LookupError("the python job's timeout-minutes is not the per-shard expression (macos-latest && N || "
+                          "matrix.shard == '1' && M || ... || L): re-anchor this pin")
+    clauses = [(int(k), int(v)) for k, v in re.findall(r"matrix\.shard == '(\d+)' && (\d+) \|\| ", m.group(2))]
+    if [k for k, _v in clauses] != list(range(1, count)):
+        raise LookupError("the cap expression's shard clauses name shards %r, not 1 to %d in order, before the last "
+                          "shard's figure" % ([k for k, _v in clauses], count - 1))
+    caps = dict(clauses)
+    caps[count] = int(m.group(3))
+    return int(m.group(1)), caps
 
 
 class PythonJobCeiling(unittest.TestCase):
@@ -87,25 +135,24 @@ class PythonJobCeiling(unittest.TestCase):
     Linux, by the same rule: 25 to 35 on 2026-09-24 (the 3.10 Linux cell took 19 min 34 s on run 35952964334); on fork PR
     926's branch, with two workers on the public runner, 40 on 2026-09-30 (run 36664031774's slowest pytest step 1572 s)
     and 50 on 2026-10-02 (the slowest finished two-worker cell, the 3.14t cell of run 37158350467, 2276 s in its pytest
-    step and 32 s before it: 2908 s, about 48 min 28 s). Since 2026-10-04 the Linux cells run one worker each on the
-    private runner (2 CPUs and 8 GB; tests/test_ci_pytest_workers.py), and the cap is the rule's figure for that shape,
-    computed here from three literals: ONE_WORKER_PHASE_S, the one-worker phase; PER_TEST_TIMEOUT_S, 600, read back
-    from the Run pytest step's --timeout; and SETUP_S, the 25 s before the step. The pin is equality with rule_minutes of
-    the three, so a cap above the rule's figure is red as well as one below it: past the figure a hung cell holds its
-    run's verdict for nothing, and short of it a stall that begins late in the run is cancelled before the per-test
-    timeout names it. The phase is an estimate (ONE_WORKER_PHASE_ESTIMATED; a local run on a 2-CPU, 8 GiB budget had its
-    worker killed by the memory cap, so it gave no clean figure): the estimate is held to its own inputs, and ci.yml's
-    comment must say it is estimated and to be measured on the new repo's first CI run, so a guessed figure cannot ship
-    as a measured one. Measuring it means setting ONE_WORKER_PHASE_S to the measured seconds and
-    ONE_WORKER_PHASE_ESTIMATED to False, with ci.yml's figure and comment to match."""
+    step and 32 s before it: 2908 s, about 48 min 28 s). From 2026-10-04 the Linux cells ran one worker each on the
+    private runner (2 CPUs and 8 GB; tests/test_ci_pytest_workers.py) under a cap of 90, the rule's figure for the whole
+    suite's estimated one-worker phase, until a local run found that one worker does not fit 8 GB; since then each Linux
+    interpreter runs as SHARD_COUNT (tests/conftest.py) one-worker jobs, one per shard, and each shard has its own cap in
+    the expression, the rule's figure for that shard's phase: SHARD_PHASE_S[k], PER_TEST_TIMEOUT_S (600, read back from
+    the Run pytest step's --timeout) and SETUP_S. The pin is equality with rule_minutes of the three, so a cap above the
+    rule's figure is red as well as one below it: past the figure a hung cell holds its run's verdict for nothing, and
+    short of it a stall that begins late in the run is cancelled before the per-test timeout names it. While a shard's
+    phase is a placeholder (None), its cap must be PLACEHOLDER_CAP, ci.yml's comment must carry PLACEHOLDER_MARK, and
+    the rule case is red, so a placeholder cannot ship as a measured figure."""
     def setUp(self):
+        self.count = SHARD_COUNT
         src = open(WF).read()
         m = re.search(r"^  python:\n((?:    .*\n|\n)+?)    strategy:\n", src, re.M)
         self.assertTrue(m, "the python job's head moved: re-anchor this pin")
         self.head = m.group(1)
-        m = re.search(r"^    timeout-minutes: \$\{\{ matrix\.os == 'macos-latest' && (\d+) \|\| (\d+) \}\}$", self.head, re.M)
-        self.assertTrue(m, "the python job's timeout-minutes is not the per-cell expression (macos-latest && N || M)")
-        self.macos, self.linux = int(m.group(1)), int(m.group(2))
+        self.macos, self.caps = shard_caps(self.head, self.count)
+        self.joined = " ".join(l.strip()[1:].strip() for l in self.head.splitlines() if l.strip().startswith("#"))
         self.src = src
 
     def test_macos_cells_get_sixty_minutes_and_do_not_revert_below_their_floor(self):
@@ -115,26 +162,46 @@ class PythonJobCeiling(unittest.TestCase):
                                 "600 s per-test timeout plus setup is 53 to 54, so a cap below 54 cuts a green run")
         self.assertLessEqual(self.macos, 60, "past an hour a hung macOS cell eats the dispatch")
 
-    def test_the_linux_cap_is_the_rules_figure_for_one_worker(self):
-        want = rule_minutes(ONE_WORKER_PHASE_S, PER_TEST_TIMEOUT_S, SETUP_S)
-        self.assertEqual(self.linux, want, "the Linux cap must be T230b's rule for one worker on the private runner: %d s of "
-                         "pytest phase plus the %d s per-test timeout plus %d s before the step, rounded up to a multiple of 5 "
-                         "minutes, is %d; ci.yml has %d" % (ONE_WORKER_PHASE_S, PER_TEST_TIMEOUT_S, SETUP_S, want, self.linux))
-        for figure in (ONE_WORKER_PHASE_S, SETUP_S):
-            self.assertIn("%d s" % figure, self.head, "the cap's comment states the input %d s" % figure)
+    def test_every_shard_has_a_cap_and_a_phase_entry(self):
+        self.assertEqual(sorted(self.caps), list(range(1, self.count + 1)), "a cap for each shard, 1 to SHARD_COUNT")
+        self.assertEqual(sorted(SHARD_PHASE_S), list(range(1, self.count + 1)), "a phase entry for each shard, 1 to SHARD_COUNT")
 
-    def test_an_estimated_phase_is_derived_from_its_inputs_and_named_an_estimate(self):
-        joined = " ".join(l.strip()[1:].strip() for l in self.head.splitlines() if l.strip().startswith("#"))
-        if not ONE_WORKER_PHASE_ESTIMATED:
-            self.assertNotIn(ESTIMATE_MARK, joined, "a measured phase: the cap's comment no longer calls it an estimate")
-            return
-        cell_s, serial_s, two_worker_s = ESTIMATE_INPUTS
-        self.assertEqual(ONE_WORKER_PHASE_S, round(cell_s * serial_s / two_worker_s), "the estimate is the slowest finished "
-                         "two-worker cell's phase scaled by the serial ratio, rounded to the second")
-        for figure in ESTIMATE_INPUTS:
-            self.assertIn("%d s" % figure, joined, "the cap's comment states the estimate's input %d s" % figure)
-        self.assertIn(ESTIMATE_MARK, joined, "while the phase is an estimate the cap's comment says so, and that the new "
-                      "repo's first CI run measures it")
+    def test_a_placeholder_cap_is_named_one(self):
+        for k, phase in sorted(SHARD_PHASE_S.items()):
+            if phase is None:
+                with self.subTest(shard=k):
+                    self.assertEqual(self.caps[k], PLACEHOLDER_CAP, "shard %d's phase is a placeholder, so its cap is the "
+                                     "placeholder figure %d" % (k, PLACEHOLDER_CAP))
+                    self.assertIn(PLACEHOLDER_MARK, self.joined, "while a shard's phase is a placeholder the cap's comment "
+                                  "says so")
+        if all(phase is not None for phase in SHARD_PHASE_S.values()):
+            self.assertNotIn(PLACEHOLDER_MARK, self.joined, "every shard's phase is measured: the cap's comment no longer "
+                             "calls them placeholders")
+
+    def test_each_shards_cap_is_the_rules_figure_for_its_phase(self):
+        for k in range(1, self.count + 1):
+            with self.subTest(shard=k):
+                phase = SHARD_PHASE_S.get(k)
+                self.assertIsNotNone(phase, "PLACEHOLDER: shard %d's one-worker pytest phase on the private runner's shape (2 "
+                                     "CPUs, 8 GB) is not measured. ci.yml's cap for it is %d, the placeholder figure, not a "
+                                     "measurement. Measure the phase, set SHARD_PHASE_S[%d] to its seconds, and set the cap "
+                                     "and ci.yml's comment to rule_minutes(SHARD_PHASE_S[%d], %d, %d)"
+                                     % (k, self.caps[k], k, k, PER_TEST_TIMEOUT_S, SETUP_S))
+                want = rule_minutes(phase, PER_TEST_TIMEOUT_S, SETUP_S)
+                self.assertEqual(self.caps[k], want, "shard %d's cap must be T230b's rule for its one-worker phase: %d s plus "
+                                 "the %d s per-test timeout plus %d s before the step, rounded up to a multiple of 5 minutes, "
+                                 "is %d; ci.yml has %d" % (k, phase, PER_TEST_TIMEOUT_S, SETUP_S, want, self.caps[k]))
+                self.assertIn("%d s" % phase, self.head, "the cap's comment states shard %d's phase, %d s" % (k, phase))
+
+    def test_the_placeholder_figure_is_the_whole_suites_estimate_and_its_comment_states_it(self):
+        cell_s, serial_s, two_worker_s = WHOLE_SUITE_ESTIMATE_INPUTS
+        self.assertEqual(WHOLE_SUITE_PHASE_S, round(cell_s * serial_s / two_worker_s), "the whole suite's estimate is the "
+                         "slowest finished two-worker cell's phase scaled by the serial ratio, rounded to the second")
+        self.assertEqual(PLACEHOLDER_CAP, rule_minutes(WHOLE_SUITE_PHASE_S, PER_TEST_TIMEOUT_S, SETUP_S))
+        for figure in WHOLE_SUITE_ESTIMATE_INPUTS + (WHOLE_SUITE_PHASE_S, SETUP_S):
+            self.assertIn("%d s" % figure, self.joined, "the cap's comment states the estimate's input %d s" % figure)
+        self.assertIn("8 GB does not hold one worker of this suite", self.joined, "the cap's comment keeps the record that "
+                      "one worker running the whole suite does not fit the private runner")
 
     def test_the_per_test_timeout_input_is_the_steps(self):
         m = re.search(r"^  python:\n(?:    .*\n|\n)+?        run: python -m pytest .*--timeout=(\d+)", self.src, re.M)
@@ -146,8 +213,27 @@ class PythonJobCeiling(unittest.TestCase):
         self.assertEqual(rule_minutes(1572, 600, 30), 40, "run 36664031774's figure: 2202 s, about 36 min 42 s, so 40")
         self.assertEqual(rule_minutes(4426, 600, 32), 85, "the estimate the cap carried while the build awaited a measurement: "
                          "5058 s, about 84 min 18 s, so 85")
+        self.assertEqual(rule_minutes(4496, 600, 25), 90, "the whole suite's one-worker estimate: 5121 s, about 85 min 21 s, "
+                         "so 90, the placeholder each shard's cap holds until it is measured")
         self.assertEqual(rule_minutes(3000 - 632, 600, 32), 50, "exactly 50 minutes stays 50")
         self.assertEqual(rule_minutes(3001 - 632, 600, 32), 55, "a second past 50 minutes is 55")
+
+
+class ShardCapsReader(unittest.TestCase):
+    """shard_caps over synthetic cap lines: each shard's literal read, and a line that drops or reorders a shard refused."""
+
+    def test_each_shards_figure_is_read(self):
+        head = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 45 || 50 }}\n"
+        self.assertEqual(shard_caps(head, 2), (60, {1: 45, 2: 50}))
+        head3 = ("    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 40 || "
+                 "matrix.shard == '2' && 35 || 30 }}\n")
+        self.assertEqual(shard_caps(head3, 3), (60, {1: 40, 2: 35, 3: 30}))
+
+    def test_a_line_without_the_shard_clauses_is_refused(self):
+        with self.assertRaises(LookupError):
+            shard_caps("    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 90 }}\n", 2)
+        with self.assertRaises(LookupError):
+            shard_caps("    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '2' && 45 || 50 }}\n", 2)
 
 
 class ExtensionJobCeiling(unittest.TestCase):

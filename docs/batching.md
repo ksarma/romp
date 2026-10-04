@@ -85,10 +85,13 @@ reached main (`finish` runs it, and it also runs on every push to main).
 Once, already done on this fork: delete branches on merge, squash and rebase merges off, so
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
 on, admin bypass) is optional and comes after the first batch has shown the check names. The checks
-to require are the job checks a batch push reports: `Python <version> (ubuntu-latest)` for each
-Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t), `Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
+to require are the job checks a batch push reports: `Python <version> (ubuntu-latest, shard <shard>)`
+for each Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t) and each shard (1 and 2),
+`Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
 `Vendored tooling (node --test, ubuntu-latest)`, `vscode-extension (typecheck + test + build)` and
-`Served pages (pytest, ubuntu-latest)`. A batch push also reports `Secret scan on push
+`Served pages (pytest, ubuntu-latest)`. Each Linux interpreter runs as one job per shard of the test
+files, since one worker running the whole suite does not fit the private runner (`tests/conftest.py`,
+its CI's shards section, states which files each shard runs). A batch push also reports `Secret scan on push
 (gitleaks)`, from `.github/workflows/secret-scan.yml`, for the push, the same scan as `Secret scan (gitleaks)`
 under a name of its own, since a required check is matched by job name whatever the workflow;
 requiring `Secret scan (gitleaks)` already covers the scan. Do not require `Exactly one tier

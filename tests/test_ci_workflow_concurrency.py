@@ -553,13 +553,16 @@ class CiMatrixRunners(unittest.TestCase):
         re-anchor, not a silent skip."""
         fifth = self.src.rstrip("\n") + "\n\n  late:\n    runs-on: macos-latest\n    steps:\n      - run: true\n"
         self.assertEqual(self.runners("push", BATCH_X, src=fifth)["late"], ["macos-latest"])
-        m = re.search(r"^(\s+)include:\s*\n", self.src, re.M)
-        self.assertIsNotNone(m, "the python job's matrix has an include:; re-anchor this pin")
+        # the include: is planted after the python job's matrix os: line, since the matrix itself has none (its shard
+        # layout, 2026-10-04, is an exclude:); a key's place in a mapping does not change what it means
+        m = re.search(r"^  python:\n(?:    .*\n|\n)*?(        )os: \$\{\{.*\n", self.src, re.M)
+        self.assertIsNotNone(m, "the python job's matrix has no os: expression line; re-anchor this pin")
         pad = m.group(1) + "  "
-        flow = self.src[:m.end()] + "%s- {os: macos-latest, python-version: '3.11'}\n" % pad + self.src[m.end():]
+        head = self.src[:m.end()] + m.group(1) + "include:\n"
+        flow = head + "%s- {os: macos-latest, python-version: '3.11'}\n" % pad + self.src[m.end():]
         got = self.runners("push", BATCH_X, src=flow)
         self.assertIn("macos-latest", got["python"], got)
-        odd = self.src[:m.end()] + "%s-   os  :  macos-latest\n" % pad + self.src[m.end():]
+        odd = head + "%s-   os  :  macos-latest\n" % pad + self.src[m.end():]
         with self.assertRaises(LookupError):
             self.runners("push", BATCH_X, src=odd)
 

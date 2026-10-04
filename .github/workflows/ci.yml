@@ -18,16 +18,20 @@ name: CI
 # (approved 2026-10-04) whose runner, the private runner here, has 2 CPUs and 8 GB, where the public
 # runner has 4 CPUs and 16 GB. Run 36716348831, a dispatch of 2026-09-30, ran on the public runner;
 # by that rule its Linux jobs come to 214 minutes, all of this workflow a batch push runs (211 in the
-# dispatch before it, run 36664031774). On the private runner the Linux Python cells run one worker
-# each (two workers peak at 10.9 GB; the Run pytest step gives the measurement), so each cell's
-# pytest phase takes about as long as a serial run: by the serial ratio measured on four CPUs (1437 s
-# against 739 s) the cells of run 36716348831 would take about 40 to 53 minutes each, and those of
-# run 37158350467 about 61 to 74. Estimated so, a batch run's Linux jobs would bill about 325 minutes
-# there by run 36716348831 and about 444 by run 37158350467, whose Linux jobs bill 279 on the public
-# runner (each cell's pytest step scaled by that ratio, every other job at its public time). That is
-# an estimate: a local run on a 2-CPU, 8 GB budget gave no clean one-worker figure (the python
-# job's cap comment says why: one worker outgrew 8 GB), and the first batch push on the private
-# runner gives the measured and billed figures. The same push also runs secret-scan.yml's copy
+# dispatch before it, run 36664031774). On the private runner each Linux Python interpreter runs as
+# SHARD_COUNT jobs (tests/conftest.py), two today, each running one worker over one shard of the test
+# files: two workers peak at 10.9 GB (the Run pytest step gives the measurement), and one worker
+# running the whole suite outgrew 8 GB in a local run (the python job's cap comment gives that
+# measurement; this file ran the cells on one worker each, on the premise that one worker fits,
+# until it). An interpreter's shards together run about as long as a serial run of the suite, plus
+# each job's own setup. The estimate made for one worker per cell, before that measurement: by the
+# serial ratio measured on four CPUs (1437 s against 739 s) the cells of run 36716348831 would take
+# about 40 to 53 minutes each, and those of run 37158350467 about 61 to 74, so a batch run's Linux
+# jobs would bill about 325 minutes by run 36716348831 and about 444 by run 37158350467, whose Linux
+# jobs bill 279 on the public runner (each cell's pytest step scaled by that ratio, every other job
+# at its public time). PLACEHOLDER: the estimate for the shards, with each job's setup time, is
+# recomputed from the shards' measured phases; the first batch push on the private runner gives the
+# measured and billed figures. The same push also runs secret-scan.yml's copy
 # of the secrets job once, for the push (that file has had no pull_request trigger since 2026-10-04),
 # about 3 minutes a run (2 to 5 measured, and more as the history grows; that file's header gives the
 # runs). A manual run adds the macOS cells: 132
@@ -109,7 +113,7 @@ concurrency:
 
 jobs:
   python:
-    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
+    name: Python ${{ matrix.python-version }} (${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && format(', shard {0}', matrix.shard) || '' }})
     runs-on: ${{ matrix.os }}
     # Every job is time-boxed. Without this a test that BLOCKS (waiting on a socket,
     # a prompt that never comes) burns the 6h default before
@@ -130,29 +134,32 @@ jobs:
     # dispatch); on the dispatch of 2026-09-30 (run 36664031774) the macOS 3.10 and 3.13 cells were
     # both cancelled at this cap, 3555 s and 3598 s into their pytest steps, so the macOS suite now
     # runs longer than the ceiling allows.
-    # Linux: the cells run ONE worker each, sized for the private runner (2 CPUs and 8 GB; the Run
-    # pytest step says why), and the cap is T230b's rule for that shape: the one-worker pytest phase,
-    # plus the 600 s per-test timeout, plus the time before the step, rounded up to a multiple of 5
-    # minutes. The phase is estimated; to be measured on the new repo's first CI run. A local
-    # measurement on 2026-10-04 did not give it: the Run pytest step's command at this branch, on a
-    # fresh checkout, under a systemd CPUQuota of 200 percent and an 8 GiB memory cap with no swap, on
-    # a shared machine whose 1-minute load was 62 at the start and 36 to 44 at the end, outgrew the
-    # cap. The one worker reached 8 GiB and was killed by the memory cap, once in the 3.12 run and
-    # twice in the 3.14t run (xdist started a new worker each time and failed the test it was
-    # running), so the runs' phases, 4283 s and 4411 s, include those restarts, and 8 GB does not hold
-    # one worker of this suite. The estimate is the slowest finished two-worker Linux cell, the 3.10
-    # cell of run 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880),
-    # 2312 s in its pytest step, scaled by the serial ratio measured on four CPUs (1437 s against
-    # 739 s, the Run pytest step's measurement) to 4496 s. The local runs bear that ratio out for
-    # 3.14t (4411 s against the same run's 2281 s, 1.93) and not for 3.12 (4283 s against 1579 s,
-    # 2.71). 4496 + 600 + 25 = 5121 s, about 85 min 21 s, so 90. The time before the step is that
-    # job's 25 s on the public runner; the private runner's is read from its first run. Each step's
-    # time is the jobs API's. tests/test_ci_bats_bound.py holds the figure to the rule from its three
-    # inputs, and the estimate to its own. With two workers on the public runner the same rule gave
-    # 50 (the 3.14t cell of run 37158350467: 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux
-    # cap from 2026-10-02 to 2026-10-04, after the 40 fork PR 926's branch set on 2026-09-30 from run
-    # 36664031774 and the 35 main had before that PR.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 90 }}
+    # Linux: each interpreter runs as SHARD_COUNT jobs (tests/conftest.py), two today, one for each shard of the test
+    # files (the matrix's shard axis below; tests/conftest.py's CI's shards section states the rule that puts each file
+    # in one shard), and each job runs ONE worker over its shard on the private runner (2 CPUs and 8 GB; the Run pytest
+    # step says why). The shards exist because one worker running the whole suite does not fit 8 GB. A local measurement
+    # on 2026-10-04 found it: the Run pytest step's command at this branch, on a fresh checkout, under a systemd
+    # CPUQuota of 200 percent and an 8 GiB memory cap with no swap, on a shared machine whose 1-minute load was 62 at
+    # the start and 36 to 44 at the end, outgrew the cap. The one worker reached 8 GiB and was killed by the memory cap,
+    # once in the 3.12 run and twice in the 3.14t run (xdist started a new worker each time and failed the test it was
+    # running; the worker was about 7.2 GB resident at 81 percent of the suite), so the runs' phases, 4283 s and 4411 s,
+    # include those restarts, and 8 GB does not hold one worker of this suite. This file ran the cells on one worker
+    # each, on the premise that one worker fits, until that measurement.
+    # Each shard's cap is T230b's rule for its own phase: the shard's one-worker pytest phase, plus the 600 s per-test
+    # timeout, plus the time before the step, rounded up to a multiple of 5 minutes, in the expression's matrix.shard
+    # clauses, one figure for each shard. PLACEHOLDER: no shard's phase is measured yet, and each shard's figure, 90, is
+    # the cap the whole suite's estimated one-worker phase gave, held until the shards are measured because a shard runs
+    # a part of that suite; it is not a shard's figure. The estimate: the slowest finished two-worker Linux cell, the
+    # 3.10 cell of run 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880), 2312 s in its
+    # pytest step, scaled by the serial ratio measured on four CPUs (1437 s against 739 s, the Run pytest step's
+    # measurement) to 4496 s, and 4496 + 600 + 25 = 5121 s, about 85 min 21 s, so 90 (the 25 s before the step is that
+    # job's on the public runner). tests/test_ci_bats_bound.py is red until each shard's measured phase replaces the
+    # placeholder there and here. Each cap is then confirmed on the new repo's first CI run, whose jobs give the private
+    # runner's own phases and setup times. Each step's time is the jobs API's. With two workers on the public runner the
+    # same rule gave 50 (the 3.14t cell of run 37158350467: 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux cap
+    # from 2026-10-02 to 2026-10-04, after the 40 fork PR 926's branch set on 2026-09-30 from run 36664031774 and the 35
+    # main had before that PR.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 90 || 90 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -162,14 +169,27 @@ jobs:
         # schedule, which is paused (see `on:`); a batch push gets Linux alone. See the billing
         # note in the header.
         os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
-        python-version: ['3.10', '3.13']
-        include:
-          - os: ubuntu-latest
+        # 3.14t is setup-python's spelling for the free-threaded build (see the header).
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14t']
+        # The shards: tests/conftest.py assigns each test file to one of SHARD_COUNT shards (its CI's shards
+        # section), and the Run pytest step hands it the cell's shard, so it skips the other shards' files. The axis
+        # lists 1 to SHARD_COUNT (tests/test_ci_shards.py holds it to the constant, and the shards to a partition of
+        # the files).
+        shard: ['1', '2']
+        exclude:
+          # macOS runs 3.10 and 3.13 alone, as before the shards (the header says why), and unsharded (below)
+          - os: macos-latest
             python-version: '3.11'
-          - os: ubuntu-latest
+          - os: macos-latest
             python-version: '3.12'
-          - os: ubuntu-latest
-            python-version: '3.14t'   # setup-python's spelling for the free-threaded build (see the header)
+          - os: macos-latest
+            python-version: '3.14t'
+          # One macOS job for each of those, the shard-1 cell, whose shard value the Run pytest step leaves empty,
+          # so it runs every test file under the macOS cap, as before the shards. GitHub reads an exclude entry whose
+          # value the os list lacks (a batch push lists no macOS) as matching nothing; confirmed on the new repo's
+          # first CI run.
+          - os: macos-latest
+            shard: '2'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -382,6 +402,13 @@ jobs:
           # whose run block changes the runner without spelling those names, such as one that replaces or
           # shadows the python on PATH, reinstalls pytest, or deletes or edits test files.
           ROMP_SDK_REQUIRE: "1"
+          # The cell's shard (2026-10-04): the matrix's shard value on the ubuntu-latest cells, where each interpreter
+          # runs as one job per shard, and empty on every other cell, the macOS cells among them, which run every test
+          # file. tests/conftest.py reads it, removes it from the environment so no process a test starts inherits it,
+          # and skips the test files its rule assigns to the other shards; a value that names no shard is a
+          # usage error before collection. tests/test_ci_shards.py holds the value per cell and the shards to a
+          # partition of the collected test files.
+          ROMP_TESTS_SHARD: ${{ matrix.os == 'ubuntu-latest' && matrix.shard || '' }}
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
           # would otherwise turn it back on, with a RuntimeWarning in pytest's summary that the
@@ -396,7 +423,9 @@ jobs:
         # consume a patched sleep. --durations names the slowest tests on every run so a creeping
         # one is visible before it stalls.
         # One worker on the ubuntu-latest cells, none elsewhere (-n 1 and -n 0, 2026-10-04): the
-        # private runner has 2 CPUs and 8 GB, and two workers do not fit it. Measured on 2026-09-22
+        # private runner has 2 CPUs and 8 GB, and two workers do not fit it, nor does one worker over the whole
+        # suite, so each ubuntu-latest job runs one worker over one shard of the test files (the
+        # ROMP_TESTS_SHARD key above; the job's cap comment has the measurement). Measured on 2026-09-22
         # with Python 3.10 at this step's other flags on a four-CPU budget (a systemd CPUQuota of 400
         # percent; GitHub documents its Linux runner for a public repository at 4 CPUs and 16 GB),
         # the suite took 1437 s serially at a cgroup memory peak of 6.0 GB and 739 s with two
@@ -405,7 +434,7 @@ jobs:
         # 2026-10-04 (serially they had reached the 25-minute cap they had then: this fork's main,
         # run 35890814789, the 3.14t cell at 24 min 35 s); the two-worker peak is past the private
         # runner's 8 GB, and a local run on 2026-10-04 found one worker's peak past it too (the job's
-        # cap comment). One worker (-n 1) rather than an in-process run (-n 0) or no xdist: under
+        # cap comment), which is why the cells are split into shards. One worker (-n 1) rather than an in-process run (-n 0) or no xdist: under
         # the one worker a test the per-test timeout ends fails by name and the other tests run on
         # (below, as under two workers), where in an in-process run, the macOS
         # cells', the timeout's thread method ends the whole run at the hung test; and the worker
@@ -421,8 +450,8 @@ jobs:
         # xdist's in-process run, and pytest refuses -n without xdist, so every cell installs it.
         # The job cap above and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130
         # as merged, but for the Linux figure: the runs before 2026-09-30 they cite are
-        # romp-on/romp's Actions runs of its serial suite. The Linux figure is sized for one worker
-        # on the private runner (the job's comment above).
+        # romp-on/romp's Actions runs of its serial suite. The Linux figures are sized for one worker
+        # over one shard on the private runner (the job's comment above).
         # Under the Linux cells' worker a timeout ends the worker process running the hung test:
         # xdist fails that test by name ("worker 'gw0' crashed while running '<test id>'") and the
         # other tests run on. The thread dump pytest-timeout writes goes to that worker's stdout,

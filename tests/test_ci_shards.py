@@ -3,16 +3,24 @@
 over its own share of the test files, since one worker running the whole suite does not fit the private runner's 8 GB
 (tests/conftest.py's CI's shards section has the measurement, the rule and the hook).
 
-The census (ShardsPartitionTheCollectedFiles): the shards partition the collected test files, each file in one shard,
-none in two, none left out, and each shard is the rule's. It asks pytest itself, in child runs from the repository
-root with no path, as ci.yml's Run pytest step runs it: once with no shard (the collected files) and once for each
-shard, with SHARD_ENV (ROMP_TESTS_SHARD) set to it. Each child loads tests/ci_shard_probe.py, which lists each file
-pytest decides to make a test module of without importing it (a real collection of this suite took 696 s and more
-than 5 GB on 2026-10-04); every step before that one, tests/conftest.py's pytest_ignore_collect among them, runs as
-in CI. Red under a selection that drops a file from every shard, that puts a file in two shards, or that is absent
-(every shard collects every file).
+Two kinds of pin:
+1. The census (ShardsPartitionTheCollectedFiles): the shards partition the collected test files, each file in one
+   shard, none in two, none left out, and each shard is the rule's. It asks pytest itself, in child runs from the
+   repository root with the Run pytest step's selection: once with no shard (the collected files) and once for each
+   shard, with SHARD_ENV (ROMP_TESTS_SHARD) set to it, as the step sets it. Each child loads tests/ci_shard_probe.py,
+   which lists each file pytest decides to make a test module of without importing it (a real collection of this
+   suite took 696 s and more than 5 GB on 2026-10-04); every step before that one, tests/conftest.py's
+   pytest_ignore_collect among them, runs as in CI. Red under a selection that drops a file from every shard, that
+   puts a file in two shards, or that is absent (every shard collects every file).
+2. Source pins over ci.yml, read by line shape with no YAML library, as tests/test_ci_workflow_concurrency.py reads it
+   (ShardMatrix): the python job's shard axis lists 1 to SHARD_COUNT; a batch push runs each interpreter as
+   SHARD_COUNT Linux jobs, one per shard, and a dispatch adds one macOS job per macOS interpreter, unsharded; the Run
+   pytest step hands each Linux cell its shard and each macOS cell an empty value; and each cell's job name differs.
+   Each shard's cap is tests/test_ci_bats_bound.py's (PythonJobCeiling).
 """
+import itertools
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -23,6 +31,11 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from tests.conftest import SHARD_COUNT, SHARD_ENV, is_test_file, parse_shard, shard_of, shard_repo_path  # noqa: E402
 from tests.ci_shard_probe import PROBE_ITEM  # noqa: E402
+from tests.test_ci_workflow_concurrency import (  # noqa: E402
+    MAIN, SHA_A, _children, _keys_at, _strip_comment, _unquote, evaluate, job_lines, os_list, run)
+
+WF = os.path.join(ROOT, ".github", "workflows", "ci.yml")
+BATCH = "refs/heads/batch/2026-10-04a"
 
 
 # ---- the census -------------------------------------------------------------------------------------------------------
@@ -133,6 +146,12 @@ class TheRule(unittest.TestCase):
         want = int.from_bytes(hashlib.sha256(path.encode()).digest()[:8], "big") % SHARD_COUNT + 1
         self.assertEqual(shard_of(path), want)
 
+    def test_the_count_the_cap_pin_reads_is_the_conftests(self):
+        # tests/test_ci_bats_bound.py reads SHARD_COUNT from tests/conftest.py's text rather than importing it (the Shell
+        # job imports that module under a python with no pytest); the text and the imported value agree
+        from tests.test_ci_bats_bound import shard_count_as_written
+        self.assertEqual(shard_count_as_written(), SHARD_COUNT)
+
     def test_a_shard_value_names_a_shard_or_none(self):
         self.assertIsNone(parse_shard(None))
         self.assertIsNone(parse_shard(""))
@@ -153,6 +172,183 @@ class TheRule(unittest.TestCase):
         self.assertTrue(is_test_file(here, ["tests/test_ci_*.py"]))
         self.assertFalse(is_test_file(here, ["other/test_*.py"]))
         self.assertEqual(shard_repo_path(here), "tests/test_ci_shards.py")
+
+
+# ---- the workflow -----------------------------------------------------------------------------------------------------
+
+def _flow_list(text):
+    """A one-line flow sequence of plain or quoted scalars, `['3.10', '3.11']`, as its strings; else LookupError."""
+    m = re.fullmatch(r"\[(.*)\]", _strip_comment(text))
+    if m is None:
+        raise LookupError("%r is not a one-line flow sequence; re-anchor this pin" % text)
+    return [_unquote(w) for w in m.group(1).split(",") if w.strip()]
+
+
+def python_matrix(src):
+    """The python job's strategy.matrix as written: (os: expression, [python-version], [shard], [exclude entry as a
+    dict]). An include: is refused (python_cells models exclude alone), and so is any other key."""
+    jl = job_lines(src, "python")
+    strat = next((_children(jl, i, 4) for k, _r, i in _keys_at(jl, 4) if k == "strategy"), None)
+    mat = next((_children(strat, i, 6) for k, _r, i in _keys_at(strat, 6) if k == "matrix"), None) if strat else None
+    if mat is None:
+        raise LookupError("the python job has no strategy.matrix; re-anchor this pin")
+    keys = {k: (rest, i) for k, rest, i in _keys_at(mat, 8)}
+    if set(keys) != {"os", "python-version", "shard", "exclude"}:
+        raise LookupError("the python job's matrix keys are %r, not os, python-version, shard and exclude; re-anchor this "
+                          "pin" % sorted(keys))
+    excludes = []
+    for line in _children(mat, keys["exclude"][1], 8):
+        m = re.match(r"^( *)(- )?([\w-]+): (.+)$", line)
+        if m is None:
+            raise LookupError("an exclude: line this reader does not read: %r; re-anchor this pin" % line)
+        if m.group(2):
+            excludes.append({})
+        elif not excludes:
+            raise LookupError("an exclude: line before any entry: %r; re-anchor this pin" % line)
+        excludes[-1][m.group(3)] = _unquote(_strip_comment(m.group(4)))
+    return (_strip_comment(keys["os"][0]), _flow_list(keys["python-version"][0]), _flow_list(keys["shard"][0]), excludes)
+
+
+def python_cells(src, event, ref=MAIN):
+    """The python job's cells for a run of `event` on `ref`, as GitHub builds them: the product of the os list (the
+    os: expression evaluated by tests/test_ci_workflow_concurrency.py's os_list), the python-version list and the shard
+    list, less each cell an exclude entry matches (every key of the entry equal to the cell's; a key the matrix lacks is
+    an error, as GitHub makes it one). [{"os", "python-version", "shard"}]."""
+    os_expr, versions, shards, excludes = python_matrix(src)
+    for e in excludes:
+        unknown = set(e) - {"os", "python-version", "shard"}
+        if unknown:
+            raise LookupError("an exclude entry names %r, which the matrix does not define" % sorted(unknown))
+    cells = [{"os": o, "python-version": v, "shard": s}
+             for o, v, s in itertools.product(os_list(os_expr, run(event, ref, SHA_A)), versions, shards)]
+    return [c for c in cells if not any(all(c[k] == v for k, v in e.items()) for e in excludes)]
+
+
+def python_job_head(src):
+    m = re.search(r"^  python:\n((?:    .*\n|\n)+?)    strategy:\n", src, re.M)
+    if m is None:
+        raise LookupError("the python job's head moved; re-anchor this pin")
+    return m.group(1)
+
+
+def shard_env_value(src):
+    """The Run pytest step's SHARD_ENV value as written, read from the step's env: block."""
+    step = re.search(r"^      - name: Run pytest\n((?:        .*\n|\n)*)", "".join(l + "\n" for l in job_lines(src, "python")), re.M)
+    if step is None:
+        raise LookupError("the python job has no Run pytest step; re-anchor this pin")
+    vals = re.findall(r"^          %s: (.+)$" % re.escape(SHARD_ENV), step.group(1), re.M)
+    if len(vals) != 1:
+        raise LookupError("the Run pytest step's env sets %s %d times, not once; re-anchor this pin"
+                          % (SHARD_ENV, len(vals)))
+    return vals[0].strip()
+
+
+def cell_value(template, cell):
+    """A value holding ${{ }} expressions as a cell renders it: each expression evaluated with matrix.os,
+    matrix.python-version and matrix.shard, a format('<text>', <name>) inside one read first as the text with {0}
+    replaced by the name's value (the one form of format this reader models)."""
+    ctx = {"matrix." + k: v for k, v in cell.items()}
+
+    def fmt(m):
+        if m.group(2) not in ctx:
+            raise LookupError("format() of %s, which this reader does not model" % m.group(2))
+        return "'%s'" % m.group(1).replace("{0}", ctx[m.group(2)]).replace("'", "''")
+
+    def expr(m):
+        inner = re.sub(r"format\('((?:[^']|'')*)', ([\w.-]+)\)", fmt, m.group(1))
+        v = evaluate(inner, ctx)
+        return "" if v in (None, False) else str(v)
+
+    return re.sub(r"\$\{\{(.*?)\}\}", expr, template)
+
+
+class ShardMatrix(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with open(WF, encoding="utf-8") as fh:
+            cls.src = fh.read()
+        cls.n = SHARD_COUNT
+        cls.want_shards = [str(k) for k in range(1, cls.n + 1)]
+
+    def test_the_shard_axis_lists_one_to_the_shard_count(self):
+        self.assertEqual(python_matrix(self.src)[2], self.want_shards,
+                         "the python job's shard axis must list 1 to SHARD_COUNT in tests/conftest.py (%d), each as a quoted "
+                         "string, the values the Run pytest step hands the conftest" % self.n)
+
+    def test_a_batch_push_runs_each_interpreter_once_per_shard_on_linux(self):
+        cells = python_cells(self.src, "push", BATCH)
+        versions = python_matrix(self.src)[1]
+        self.assertTrue({"3.10", "3.12", "3.14t"} <= set(versions), versions)
+        self.assertEqual(sorted((c["os"], c["python-version"], c["shard"]) for c in cells),
+                         sorted(("ubuntu-latest", v, s) for v in versions for s in self.want_shards),
+                         "a batch push runs every interpreter as one Linux job per shard, and no macOS job")
+
+    def test_a_dispatch_adds_one_unsharded_macos_job_per_macos_interpreter(self):
+        mac = [c for c in python_cells(self.src, "workflow_dispatch") if c["os"] == "macos-latest"]
+        self.assertEqual(sorted(c["python-version"] for c in mac), ["3.10", "3.13"],
+                         "a dispatch runs one macOS job for each of 3.10 and 3.13, as before the shards: %r" % mac)
+        for c in mac:
+            self.assertEqual(cell_value(shard_env_value(self.src), c), "",
+                             "a macOS cell's %s must be empty, so the cell runs every test file: %r" % (SHARD_ENV, c))
+
+    def test_the_run_pytest_step_hands_each_linux_cell_its_shard(self):
+        value = shard_env_value(self.src)
+        for c in python_cells(self.src, "workflow_dispatch"):
+            if c["os"] == "ubuntu-latest":
+                with self.subTest(cell=c):
+                    self.assertEqual(cell_value(value, c), c["shard"], "the Run pytest step's %s on %r" % (SHARD_ENV, c))
+
+    def test_each_cells_job_name_is_its_own(self):
+        name = re.search(r"^    name: (.+)$", python_job_head(self.src), re.M)
+        self.assertTrue(name, "the python job has no name: line")
+        cells = python_cells(self.src, "workflow_dispatch")
+        names = [cell_value(name.group(1), c) for c in cells]
+        self.assertEqual(len(set(names)), len(names), "two cells share a job name, so their checks cannot be told apart: %r"
+                         % sorted(names))
+        for c, n in zip(cells, names):
+            with self.subTest(cell=c):
+                if c["os"] == "ubuntu-latest":
+                    self.assertIn("shard %s" % c["shard"], n)
+                else:
+                    self.assertEqual(n, "Python %s (macos-latest)" % c["python-version"], "a macOS cell keeps its name")
+
+
+class TheReadersThemselves(unittest.TestCase):
+    """python_cells and cell_value over synthetic matrices: an exclude that removes the macOS shards, an include that the
+    reader refuses, and a dropped shard that the axis pin sees."""
+    HEAD = ("jobs:\n  python:\n    name: Python ${{ matrix.python-version }} (${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' "
+            "&& format(', shard {0}', matrix.shard) || '' }})\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n"
+            "        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '[\"ubuntu-latest\",\"macos-latest\"]' || "
+            "'[\"ubuntu-latest\"]') }}\n        python-version: ['3.10', '3.12']\n")
+
+    def test_an_exclude_removes_the_macos_shards(self):
+        src = self.HEAD + "        shard: ['1', '2']\n        exclude:\n          - os: macos-latest\n            shard: '2'\n"
+        cells = python_cells(src, "workflow_dispatch")
+        self.assertEqual(sorted((c["os"], c["python-version"], c["shard"]) for c in cells),
+                         [("macos-latest", "3.10", "1"), ("macos-latest", "3.12", "1"), ("ubuntu-latest", "3.10", "1"),
+                          ("ubuntu-latest", "3.10", "2"), ("ubuntu-latest", "3.12", "1"), ("ubuntu-latest", "3.12", "2")])
+        self.assertEqual(len(python_cells(src, "push", BATCH)), 4)
+
+    def test_without_the_exclude_macos_runs_every_shard(self):
+        src = self.HEAD + "        shard: ['1', '2']\n        exclude:\n          - os: windows-latest\n"
+        self.assertEqual(len([c for c in python_cells(src, "workflow_dispatch") if c["os"] == "macos-latest"]), 4)
+
+    def test_an_include_is_refused(self):
+        src = self.HEAD + "        shard: ['1', '2']\n        exclude:\n          - os: macos-latest\n            shard: '2'\n" \
+                          "        include:\n          - os: ubuntu-latest\n            python-version: '3.11'\n"
+        with self.assertRaises(LookupError):
+            python_matrix(src)
+
+    def test_a_shard_dropped_from_the_axis_is_seen(self):
+        src = self.HEAD + "        shard: ['1']\n        exclude:\n          - os: macos-latest\n            shard: '2'\n"
+        self.assertNotEqual(python_matrix(src)[2], [str(k) for k in range(1, SHARD_COUNT + 1)])
+
+    def test_the_names_render_per_cell(self):
+        name = re.search(r"^    name: (.+)$", self.HEAD, re.M).group(1)
+        self.assertEqual(cell_value(name, {"os": "ubuntu-latest", "python-version": "3.12", "shard": "2"}),
+                         "Python 3.12 (ubuntu-latest, shard 2)")
+        self.assertEqual(cell_value(name, {"os": "macos-latest", "python-version": "3.10", "shard": "1"}),
+                         "Python 3.10 (macos-latest)")
 
 
 if __name__ == "__main__":

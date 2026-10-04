@@ -204,14 +204,22 @@ This module holds five things, and it never skips: a pin that skips reports gree
    tests/test_served_tests_require.py). As read on 2026-09-24: none of these is on ci.yml's Run pytest line (no path,
    no -k, no --ignore) or in its env (no PYTEST_ADDOPTS), and those two are held since round 5's ruling C:
    run_pytest_status (item 1) refuses a word on that line outside RUN_PYTEST_OPTIONS and a key of its merged env
-   outside RUN_PYTEST_ENV; no conftest in the tree sets collect_ignore or collect_ignore_glob or defines a collection
-   hook (tests/conftest.py, the only one, implements two reporting hooks, pytest_make_collect_report and
-   pytest_collectreport, which drop nothing); and the repo has no pytest.ini, .pytest.ini, pytest.toml, .pytest.toml,
+   outside RUN_PYTEST_ENV; no conftest in the tree sets collect_ignore or collect_ignore_glob; and the repo has no
+   pytest.ini, .pytest.ini, pytest.toml, .pytest.toml,
    pyproject.toml, setup.cfg or tox.ini. Of the rest of that read, tests/test_thread_stop_census.py's
    test_the_population_is_what_pytest_collects_under_tests holds pytest.ini, setup.cfg, tox.ini and pyproject.toml
    absent at the repository root and in tests/ itself; nothing pins the conftest read, .pytest.ini, pytest.toml or
-   .pytest.toml, or any of the seven in a directory below those two. The belt's subject is checked against the tree as
-   well (2026-09-21): NeverSkips asserts this file's own basename is in _NEVER_SKIP_FILES as written in
+   .pytest.toml, or any of the seven in a directory below those two.
+   One collection hook does change what a run collects, on purpose (2026-10-04): tests/conftest.py's
+   pytest_ignore_collect, which, when the run's environment names a shard (ROMP_TESTS_SHARD, an entry of
+   RUN_PYTEST_ENV, set by the Run pytest step on the ubuntu-latest cells), skips the test files its rule
+   assigns to the other shards, whole files and nothing within one. So this module runs in one shard of each
+   ubuntu-latest interpreter, and in every macOS cell, which names no shard; tests/test_ci_shards.py holds the
+   shards to a partition of the collected test files, each in one shard, none in two, none left out, which is what
+   keeps InstalledVersion in a run of every interpreter. The conftest's other collection hooks are the two
+   reporting hooks, pytest_make_collect_report and pytest_collectreport, which drop nothing. The belt's subject
+   is checked against the tree as well (2026-09-21): NeverSkips asserts this file's own basename is in
+   _NEVER_SKIP_FILES as written in
    tests/conftest.py (never_skip_files_as_written there: ast.literal_eval over the text, so a tuple spelled any other
    way is reported as such rather than raising), and tests/test_served_tests_require.py, outside this module, asserts
    every entry names a file under tests/, so a rename of this file reds in both and a deletion reds there; before those
@@ -2324,6 +2332,11 @@ RUN_PYTEST_ENV = {
              "failure and discards none"),
     "PYTHON_GIL": ("the free-threaded cell's GIL setting (0 there, empty on every other cell): it changes how the interpreter "
                    "runs threads, not what pytest runs or its exit status"),
+    "ROMP_TESTS_SHARD": ("the cell's shard (the matrix's shard value on the ubuntu-latest cells, empty on every other cell; "
+                         "2026-10-04): tests/conftest.py skips the test files its rule assigns to the other shards, "
+                         "so it narrows what one cell runs, whole files only, and the shard cells of an interpreter together "
+                         "run every collected file once (tests/test_ci_shards.py's census holds the partition); a value "
+                         "that names no shard is a usage error, a red cell, and a shard that collected nothing would exit 5"),
 }
 RUN_PYTEST_WRITE_NAMES = ("GITHUB_ENV", "GITHUB_PATH", "BASH_ENV")
 _STATUS_KEY_WHY = {
@@ -3565,7 +3578,8 @@ class PopulationCheckReds(unittest.TestCase):
         self.assertEqual(len(runs), 1, "the Run pytest command line moved: re-anchor this case: %r" % runs)
         run = runs[0]
         name, switch = "      - name: Run pytest\n", '          %s: "1"\n' % SWITCH
-        job = "  python:\n    name: Python ${{ matrix.python-version }} (${{ matrix.os }})\n"
+        job = ("  python:\n    name: Python ${{ matrix.python-version }} (${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && "
+               "format(', shard {0}', matrix.shard) || '' }})\n")
 
         def splice(old, new, k=0):
             # `old` replaced by `new` in the live text; the file line of `new`'s k-th line
