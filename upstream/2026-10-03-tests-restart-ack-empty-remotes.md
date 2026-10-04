@@ -3,7 +3,7 @@ title: ServeSecurity's restart ack test empties the shared kernel module's remot
 status: candidate
 where: tests/test_kernel.py (ServeSecurity.test_restart_endpoint_acks_post; ServeSecurity.test_the_ack_test_owns_its_empty_remotes_premise, new); upstream/2026-10-03-tests-restart-ack-empty-remotes.md (this entry)
 added: 2026-10-03
-pr:
+pr: 967
 tier: docs
 offered:
 closed:
