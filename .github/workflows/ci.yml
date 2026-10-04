@@ -12,14 +12,25 @@ name: CI
 # scripts/batch.py land refuses a batch whose head does not contain main, reading main again right
 # before the merge, so the merge commit's tree is the batch head's tree, the one this workflow tested
 # on the batch push; a move of main after that last read is not stopped, and batch.py finish reports
-# it loudly from the merge commit's first parent (docs/batching.md). A private repository is billed
-# for each run by the job-minute, each job rounded up to a whole minute. Run 36716348831, a dispatch
-# of 2026-09-30, ran on the public runner (4 CPUs and 16 GB; the private one has 2 CPUs and 8 GB, and
-# no run has been measured there); by that rule its Linux jobs come to 214 minutes, all of this
-# workflow a batch push runs (211 in the dispatch before it, run 36664031774). The same push also
-# runs secret-scan.yml's copy of the secrets job, about 3 minutes a run (2 to 5 measured, and more
-# as the history grows; that file's header gives the runs), once for the push and once for the pull
-# request when the batch PR is open. A manual run or the weekly schedule adds the macOS cells: 132
+# it loudly from the merge commit's first parent (docs/batching.md).
+# Cost: a public repository is not billed for these runs. A private one is billed for each run by
+# the job-minute, each job rounded up to a whole minute, and this repository moves to a private one
+# (approved 2026-10-04) whose runner, the private runner here, has 2 CPUs and 8 GB, where the public
+# runner has 4 CPUs and 16 GB. Run 36716348831, a dispatch of 2026-09-30, ran on the public runner;
+# by that rule its Linux jobs come to 214 minutes, all of this workflow a batch push runs (211 in the
+# dispatch before it, run 36664031774). On the private runner the Linux Python cells run one worker
+# each (two workers peak at 10.9 GB; the Run pytest step gives the measurement), so each cell's
+# pytest phase takes about as long as a serial run: by the serial ratio measured on four CPUs (1437 s
+# against 739 s) the cells of run 36716348831 would take about 40 to 53 minutes each, and those of
+# run 37158350467 about 61 to 74. Estimated so, a batch run's Linux jobs would bill about 325 minutes
+# there by run 36716348831 and about 444 by run 37158350467, whose Linux jobs bill 279 on the public
+# runner (each cell's pytest step scaled by that ratio, every other job at its public time). That is
+# an estimate, made before any run on 2 CPUs: the python job's cap comment carries the one-worker
+# phase once it is measured on a 2-CPU, 8 GB budget (a placeholder until then), and the first batch
+# push on the private runner gives the billed figures. The same push also runs secret-scan.yml's copy
+# of the secrets job once, for the push (that file has had no pull_request trigger since 2026-10-04),
+# about 3 minutes a run (2 to 5 measured, and more as the history grows; that file's header gives the
+# runs). A manual run adds the macOS cells: 132
 # runner minutes in run 36716348831, billed at about ten times the Linux rate, so about 1,320 Linux
 # minutes' worth, and a floor: the 3.13 cell was cancelled at its 60-minute cap, the 3.10 cell
 # ended 52 minutes into its pytest step when the per-test timeout stopped its in-process run on a
@@ -31,18 +42,6 @@ name: CI
 # the batch branches and the branches of the open and merged PRs (the runs the Shell job's cap
 # comment reads), in run 37045964763 (a dispatch of fork PR 940's branch on 2026-10-02, a branch
 # that installs gitleaks and a newer bash on macOS, since merged), its time from the jobs API.
-# Going private needs a change to this file before the first private batch push. The Linux Python
-# cells' two workers do not fit the private runner (they peak at 10.9 GB; the Run pytest step gives
-# the measurement), so the cells must run serially, and by the serial ratio measured there (1437 s
-# against 739 s) the cells of run 36716348831 would take about 40 to 53 minutes each, and those of
-# run 37158350467, the run the python job's 50-minute Linux cap is sized from, about 61 to 74, every
-# one past that cap. So run them serially with a larger cap (T230b's rule, at the python job's
-# timeout, gives about 63 minutes for run 36716348831's slowest cell and about 84 for run
-# 37158350467's, both past the 50-minute ceiling tests/test_ci_bats_bound.py holds) or split the
-# suite across more cells. Estimated so, a batch run's Linux jobs would bill about 325 minutes there
-# by run 36716348831 and about 444 by run 37158350467, whose Linux jobs bill 279 on the public
-# runner (each cell's pytest step scaled by that ratio, every other job at its public time; nothing
-# has been run on 2 CPUs).
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (a macOS bats
 # job alone has taken 48 min 1 s, above) and the runners are scarcer, so they do NOT run
@@ -130,17 +129,23 @@ jobs:
     # the rule gave 53 to 54. macOS gets 60, the pin's ceiling (past an hour a hung cell eats the
     # dispatch); on the dispatch of 2026-09-30 (run 36664031774) the macOS 3.10 and 3.13 cells were
     # both cancelled at this cap, 3555 s and 3598 s into their pytest steps, so the macOS suite now
-    # runs longer than the ceiling allows. Linux gets 50 by the same rule, applied to the finished
-    # Linux cells among the runs on main, on the batch branches and on the branches of the open and
-    # merged PRs (a cell cancelled at a cap has no measured length; the Shell job's cap reads the
-    # same runs), read at 03:32 UTC on 2026-10-04: the slowest, the 3.14t cell of run 37158350467 (a
-    # dispatch of fork PR 959's branch on 2026-10-03, job 111306365110), took 2276 s in its pytest
-    # step with two workers and 32 s in the steps before it, so the rule gives 2276 + 600 + 32 =
-    # 2908 s, about 48 min 28 s, past the 35 minutes main had and past the 40 that fork PR 926's
-    # branch set on 2026-09-30 from run 36664031774 (whose slowest Linux pytest step took 1572 s)
-    # before it set 50 on 2026-10-02, and 50 leaves about 1 min 32 s. Each step's time is the
-    # jobs API's.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 50 }}
+    # runs longer than the ceiling allows.
+    # Linux: the cells run ONE worker each, sized for the private runner (2 CPUs and 8 GB; the Run
+    # pytest step says why), and the cap is T230b's rule for that shape: the one-worker pytest phase
+    # as measured, plus the 600 s per-test timeout, plus the time before the step, rounded up to a
+    # multiple of 5 minutes. PLACEHOLDER, to be replaced by the measurement: the one-worker phase has
+    # not been measured, and the Linux figure below, 85, is an estimate: the slowest finished
+    # two-worker Linux cell, the 3.14t cell of run 37158350467 (a dispatch of fork PR 959's branch on
+    # 2026-10-03, job 111306365110), took 2276 s in its pytest step, which the serial ratio measured
+    # on four CPUs (1437 s against 739 s, the Run pytest step's measurement) scales to about 4426 s;
+    # 4426 + 600 + 32 = 5058 s, about 84 min 18 s, so 85. tests/test_ci_bats_bound.py holds the
+    # figure to the rule from its three inputs and is red until the measured phase replaces the
+    # estimate there and here. The time before the step is that job's 32 s on the public runner; the
+    # private runner's is read from its first run. Each step's time is the jobs API's. With two
+    # workers on the public runner the same rule gave 50 from that cell (2276 + 600 + 32 = 2908 s,
+    # about 48 min 28 s), the Linux cap from 2026-10-02 to 2026-10-04, after the 40 fork PR 926's
+    # branch set on 2026-09-30 from run 36664031774 and the 35 main had before that PR.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 85 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -164,9 +169,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install pytest
-        # pytest-xdist: the Run pytest step passes -n on every cell, two workers on ubuntu-latest
-        # and -n 0, an in-process run, elsewhere, and pytest refuses -n without it (the reasons
-        # are on that step).
+        # pytest-xdist: the Run pytest step passes -n on every cell, one worker (-n 1) on
+        # ubuntu-latest and -n 0, an in-process run, elsewhere, and pytest refuses -n without it
+        # (the reasons are on that step).
         run: python -m pip install --upgrade pip pytest pytest-timeout pytest-xdist
       - name: Install cryptography
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
@@ -241,7 +246,7 @@ jobs:
         # that name, among others), and every module whose text spells neither pytest nor py.test and holds no star
         # import, which the census does not parse). pytest-xdist's two plugins, which the box's default run
         # loads, load in every cell too since batch 917 (#916) installed it there, and xdist hands each worker
-        # the command's arguments, so the flag blocks anyio's plugin in the Linux cells' two workers as well
+        # the command's arguments, so the flag blocks anyio's plugin in the Linux cells' worker as well
         # (2026-09-26, in a venv holding anyio: with -n 2 and the flag no worker loaded it; without the flag
         # both did). Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
@@ -383,29 +388,34 @@ jobs:
         # timeout in test_session_move_live. Its timer waits on an Event, so it can never itself
         # consume a patched sleep. --durations names the slowest tests on every run so a creeping
         # one is visible before it stalls.
-        # Two workers on the ubuntu-latest cells, none elsewhere (-n 2 and -n 0, 2026-09-25):
-        # serially the cells had reached the 25-minute cap they had then (this fork's main, run
-        # 35890814789: the 3.14t cell at 24 min 35 s). Measured on 2026-09-22 with Python 3.10 at
-        # this step's other flags on a four-CPU budget (a systemd CPUQuota of 400 percent; GitHub
-        # documents its Linux runner for a public repository at 4 CPUs and 16 GB), the suite took
-        # 1437 s serially at a cgroup memory peak of 6.0 GB and 739 s with two workers at 10.9 GB
-        # (decimal, page cache included), about 5 GB a worker; three workers peaked at 15.8 GB,
-        # near the 16 GB GitHub documents. The macOS cells stay serial under their 60-minute cap:
-        # GitHub documents that runner for a public repository at 3 CPUs and 7 GB (arm64), below
-        # the two-worker peak, and two workers have not been measured on it.
-        # The count keys on matrix.os, as timeout-minutes does, and names the one label whose
-        # documented runner (4 CPUs, 16 GB) the four-CPU measurement was sized to, rather than
-        # excluding macOS or matching every Linux runner (runner.os), so a runner the matrix adds
-        # later runs serially until it is measured.
+        # One worker on the ubuntu-latest cells, none elsewhere (-n 1 and -n 0, 2026-10-04): the
+        # private runner has 2 CPUs and 8 GB, and two workers do not fit it. Measured on 2026-09-22
+        # with Python 3.10 at this step's other flags on a four-CPU budget (a systemd CPUQuota of 400
+        # percent; GitHub documents its Linux runner for a public repository at 4 CPUs and 16 GB),
+        # the suite took 1437 s serially at a cgroup memory peak of 6.0 GB and 739 s with two
+        # workers at 10.9 GB (decimal, page cache included), about 5 GB a worker; three workers
+        # peaked at 15.8 GB. The Linux cells ran two workers on the public runner from 2026-09-25 to
+        # 2026-10-04 (serially they had reached the 25-minute cap they had then: this fork's main,
+        # run 35890814789, the 3.14t cell at 24 min 35 s); the two-worker peak is past the private
+        # runner's 8 GB. One worker (-n 1) rather than an in-process run (-n 0) or no xdist: under
+        # the one worker a test the per-test timeout ends fails by name and the other tests run on
+        # (below, as under two workers), where in an in-process run, the macOS
+        # cells', the timeout's thread method ends the whole run at the hung test; and the worker
+        # costs one worker's memory beside the controller's, which collects no tests. The macOS
+        # cells stay serial under their 60-minute cap: GitHub documents that runner for a public
+        # repository at 3 CPUs and 7 GB (arm64), below the two-worker peak, and two workers have
+        # not been measured on it.
+        # The count keys on matrix.os, as timeout-minutes does, and names the one label the
+        # private runner's shape was sized for, rather than excluding macOS or matching every
+        # Linux runner (runner.os), so a runner the matrix adds later runs serially until it is
+        # measured.
         # GitHub substitutes the expression into this line before the shell runs it. -n 0 is
         # xdist's in-process run, and pytest refuses -n without xdist, so every cell installs it.
         # The job cap above and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130
         # as merged, but for the Linux figure: the runs before 2026-09-30 they cite are
-        # romp-on/romp's Actions runs of its serial suite. With two workers the measurement above
-        # put this fork's Linux cells at about half their serial time; the suite has grown since,
-        # and the Linux cap of 50 is sized from the slowest finished two-worker Linux cell, the
-        # 3.14t cell of this fork's run 37158350467 (the job's comment above).
-        # Under the Linux cells' workers a timeout ends the worker process running the hung test:
+        # romp-on/romp's Actions runs of its serial suite. The Linux figure is sized for one worker
+        # on the private runner (the job's comment above).
+        # Under the Linux cells' worker a timeout ends the worker process running the hung test:
         # xdist fails that test by name ("worker 'gw0' crashed while running '<test id>'") and the
         # other tests run on. The thread dump pytest-timeout writes goes to that worker's stdout,
         # which xdist's transport (execnet) points at /dev/null, so the log names the test but
@@ -415,7 +425,7 @@ jobs:
         # exiting, and so does a concurrent.futures thread of either daemon flag still running a
         # task, since concurrent.futures' exit hooks join every thread in their tables: serially the
         # cell hangs until the thread ends or the job cap cancels it, and under the Linux cells'
-        # workers the controller kills a worker still alive when the run ends, so the run would
+        # worker the controller kills a worker still alive when the run ends, so the run would
         # pass. tests/conftest.py's session-end thread guard restores that signal on the Linux
         # cells: at each process's last test it gives each non-daemon thread, and each thread in
         # those tables, up to 10 s to end (it leaves out the main thread, and any thread whose name,
@@ -431,12 +441,12 @@ jobs:
         # concurrent.futures worker, which the interpreter wakes at exit, and a thread stopped only
         # after the check (a config cleanup, pytest_sessionfinish or pytest_unconfigure).
         # -p no:anyio: the SDK step's closure carries anyio, whose pytest plugin would otherwise
-        # auto-load in this process, in the Linux cells' two workers (xdist hands each the command's
+        # auto-load in this process, in the Linux cells' worker (xdist hands it the command's
         # arguments, the flag among them) and in every pytest child the suite spawns in this interpreter
         # (the launchers under tests/ pass the same flag); the SDK step's comment states the decision
         # and its measurement, and tests/test_ci_sdk_pin.py holds the flag on every pytest invocation
         # in this file (its population check) and on the launchers under tests/ its launcher census reads.
-        run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
+        run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }} -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})

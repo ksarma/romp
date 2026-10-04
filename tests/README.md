@@ -150,9 +150,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   controller whose interpreter has no SDK, which on a box is every controller; and
   the CI steps that install no SDK, today the served-pages job's served-page
   pytest step, which loads this conftest; the Python matrix cells' interpreter (the
-  five Linux cells, and the two macOS cells on a weekly or dispatch run) imports the
+  five Linux cells, and the two macOS cells on a dispatch run) imports the
   class since the SDK install step, in the controller and, on the Linux cells'
-  two workers since batch 917, in each worker, since the package is installed in
+  workers since batch 917 (two, and one since 2026-10-04), in each worker, since the package is installed in
   that interpreter rather than added to the path at import); a module-level
   `warnings.filterwarnings` does not
   survive pytest's per-test `catch_warnings`. So `-p no:warnings` is no longer part of an
@@ -433,7 +433,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   label by fork PR #916's evaluator, as GitHub values them, so the cache plugin
   is loaded: its run with no worker has the options of the runners whose step
   sets no worker (`-n 0`, on `macos-latest`), and its run with workers those of
-  the runners whose step sets some (`-n 2`, on `ubuntu-latest`). The
+  the runners whose step sets some (`-n 1`, on `ubuntu-latest`). The
   developer's form has none of those options but `-n`, and has
   `-p no:cacheprovider -k reassert`, which blocks the cache plugin and
   deselects none of the four, and `-n 2` in its run with workers. Each child
@@ -443,7 +443,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `PYTEST_ADDOPTS` the caller exported does not reach the child
   (`_proof_child_env` drops it), so it adds no option to either form. Where
   pytest-xdist is installed the run makes four children per case, whatever run
-  of the suite it is in: the two forms, each with no worker and with two. On a
+  of the suite it is in: the two forms, each with no worker and with workers
+  (CI's form with its step's count, one since 2026-10-04, the developer's two). On a
   machine without pytest-xdist it makes two, one in each form with no worker.
   The run's limit comes in three tiers. It refuses
   an unconditional removal of the fixture (from every test), which is the class
@@ -454,7 +455,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   starts; the first module collected and the fourth, so a hook keyed on a place
   third or later is caught; function tests and a `unittest.TestCase` in each; a
   run with no xdist worker (and none of the variables pytest-xdist sets in one)
-  and, where pytest-xdist is installed, one with `-n 2`; and the pair of forms,
+  and, where pytest-xdist is installed, one with workers (CI's `-n 1`, the
+  developer's `-n 2`); and the pair of forms,
   each of those runs made in both: whether each option that one run gives and
   another does not is given (CI's `-q`, `--durations`, `--timeout`,
   `--timeout-method` and `-n`, the last given by every run but the developer's

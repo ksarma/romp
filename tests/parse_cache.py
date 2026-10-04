@@ -129,9 +129,10 @@ exception propagates as it did), so every consumer of the cache inherits it; a c
 thread-stop census's setUpClass, before its tree derivation. It NEVER removes what it finds: a repair would hide the
 writer. It is order-dependent by nature: red exactly when a writer ran earlier in the same process, a serial run (one
 process, every test module in collection order, as CI's cells were until 2026-09-25 and its macOS cells still are) or
-the same xdist worker, and green for a module run alone. Under the Linux cells' two workers since then a writer and the
-census can land on different workers, so a Linux cell reds on a writer only when a check runs after it in the same
-worker. Its cost per check
+the same xdist worker, and green for a module run alone. Under the Linux cells' two workers from then until 2026-10-04 a
+writer and the census could land on different workers, so a Linux cell red on a writer only when a check ran after it in
+the same worker; under the one worker the Linux cells run since, that worker runs every module in collection order, as a
+serial run does. Its cost per check
 is two small parses (parser_singletons reads the probe text twice and asserts the instances identical across both) and
 a vars() per singleton. The read-only pin over the cached nodes (the contract above) walks the singletons too, each once
 per tree, and says which of its lines name a shared node.

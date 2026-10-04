@@ -9841,7 +9841,7 @@ def _conftest_reasserted_names(src=None, where=None):
     each runner label by fork PR #916's evaluator, as GitHub values them; the reviewer's hold of 2026-09-25 22:24Z), and
     so the cache plugin loaded (no PYTEST_ADDOPTS the caller exported reaches the child, _proof_child_env, so none
     adds an option to either form): its run with no worker has the options of the runners whose step sets no worker
-    (-n 0, on macos-latest) and its run with workers those of the runners whose step sets some (-n 2, on ubuntu-latest;
+    (-n 0, on macos-latest) and its run with workers those of the runners whose step sets some (-n 1, on ubuntu-latest;
     _proof_ci_forms, _proof_mode_options). The developer's form has none of those options but -n, and has
     -p no:cacheprovider and -k reassert (_PROOF_DEVELOPER_OPTIONS), which blocks the cache plugin and deselects none of
     the four, and -n 2 in its run with workers. Each child of either form passes -p no:anyio after its run's options
@@ -9856,7 +9856,9 @@ def _conftest_reasserted_names(src=None, where=None):
     on a module's place that holds at either (the fourth is third or later, where the verifier's X7 keyed its road); V4,
     in each, function tests and a unittest TestCase; V5, a run with no xdist worker (CI's with -n 0, the developer's
     with no -n), none of this process's PYTEST_XDIST_* variables in its environment, and, where pytest-xdist is
-    installed, a run with -n 2; and THE PAIR OF FORMS, each run of V5 made in both: whether each option that one run
+    installed, a run with xdist workers (CI's with -n 1 since 2026-10-04, the developer's with -n 2; the texts below
+    that say "the -n 2 runs" were written when both forms used -n 2, and mean these runs with workers); and THE PAIR OF
+    FORMS, each run of V5 made in both: whether each option that one run
     gives and another does not is given, CI's -q, --durations, --timeout, --timeout-method and -n (the last given by
     every run but the developer's with no worker), and the developer's -p no:cacheprovider and -k, read as words of
     the command line and, all but -n, as pytest reads them (the cache plugin loaded or not, a -k or none, --durations
@@ -10087,7 +10089,7 @@ _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, wher
 #   handed the four added modules as files in that order; it collects them so, the first probe module first and the
 #   second fourth, after two dummy modules (V3; the ruling of 2026-09-25 04:01Z, (8)), each probe read as
 #   function tests and as a unittest TestCase (V4), and the run is made with no xdist worker and, where _proof_modes
-#   makes that run, with two (V5): every combination of V3, V4 and V5 is read, _proof_context_roads plants a road
+#   makes that run, with workers (V5): every combination of V3, V4 and V5 is read, _proof_context_roads plants a road
 #   keyed on each fact, and the copy test's
 #   roads one keyed on the verifier's three facts of the package, on every entry of the checkout in its place in the
 #   copy, on the child's command line and on a test module's place in the order; each run is made in each form of
@@ -10097,10 +10099,11 @@ _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, wher
 
 def _proof_modes():
     """The runs the execution proof makes (_PROOF_MODE_RUNS): in each form of command line, CI's (_proof_ci_forms) and
-    a developer's (_proof_developer_options), one run with no xdist worker, and one with two where pytest-xdist is
-    installed in this interpreter: four runs where it is installed, two where it is not. The proof makes the same
+    a developer's (_proof_developer_options), one run with no xdist worker, and one with workers where pytest-xdist is
+    installed in this interpreter (CI's form's count, 1 since 2026-10-04, and the developer's 2): four runs where it is
+    installed, two where it is not. The proof makes the same
     runs whatever run of the suite it is in, a run on xdist workers included, so it makes four in each of CI's cells,
-    whose python job installs pytest-xdist (the ubuntu-latest cells run the suite with -n 2 and the macos-latest cells
+    whose python job installs pytest-xdist (the ubuntu-latest cells run the suite with -n 1 and the macos-latest cells
     with -n 0), and two on a machine without it. Where it is not installed, no run of the suite in this interpreter has
     an xdist worker, so no road keyed on one can keep a fixture from a test here."""
     if importlib.util.find_spec("xdist") is not None:
@@ -10190,7 +10193,7 @@ def _proof_options(os_label, root=None):
     `os_label`, as GitHub runs them, read from the python job of _proof_ci_yml(root) by fork PR #916's evaluator,
     imported from tests/test_ci_pytest_workers.py, not copied: python_job_steps gives the step's one-line command,
     command_on values each `${{ }}` expression in it for `os_label` as GitHub values it, and the words after
-    `python -m pytest` are returned, today with -n 2 on ubuntu-latest and with -n 0 on macos-latest. REFUSED by name
+    `python -m pytest` are returned, today with -n 1 on ubuntu-latest and with -n 0 on macos-latest. REFUSED by name
     (AssertionError): an expression of a shape command_on does not read, which its LookupError names (planted: an
     expression on matrix.python-version), a python job with no single Run pytest step with a one-line command (planted:
     the step renamed), shell syntax on the valued command of a kind _proof_shell_syntax returns (a comment, an
@@ -10229,7 +10232,7 @@ def _proof_ci_forms(root=None):
     """CI'S FORMS, BY WORKERS: {"serial": (runner labels, options), "xdist": (runner labels, options)}, the runner labels
     of the python job's matrix (fork PR #916's matrix_os_labels) whose Run pytest step (_proof_options) sets no xdist
     worker, and those whose step sets some, each with the options those runners share: today macos-latest's with -n 0,
-    xdist's in-process run, and ubuntu-latest's with -n 2. The count is read by fork PR #916's worker_counts, as
+    xdist's in-process run, and ubuntu-latest's with -n 1. The count is read by fork PR #916's worker_counts, as
     pytest's parser reads it: none, or one whole number, 0 being no worker. REFUSED by name (AssertionError): a count it
     reads that is not one whole number in decimal digits (planted: -n auto, and a superscript two), two runners of one
     kind whose options differ (planted: a second expression that gives one of them -x), and no runner of a kind
@@ -10266,7 +10269,7 @@ def _proof_mode_options(mode, root=None):
     pytest-timeout are installed, as they are in each of CI's cells; on a machine that lacks one of them, this function
     leaves out of CI's form what that machine cannot pass (below). In CI's form, the options of the runners of
     _proof_ci_forms with no worker for "serial" and of those with workers for "xdist", as the step passes them, its -n
-    and count included: today the macos-latest cells' -n 0 and the ubuntu-latest cells' -n 2. In the developer's form,
+    and count included: today the macos-latest cells' -n 0 and the ubuntu-latest cells' -n 1. In the developer's form,
     _proof_developer_options, and -n 2 after them for its run with workers. Left out of CI's form, since no run of the
     suite in this interpreter can pass them: the words that begin --timeout where pytest-timeout is not installed, and
     -n with the word after it where pytest-xdist is not (pytest would refuse each; a worker count spelled otherwise
@@ -10284,6 +10287,16 @@ def _proof_mode_options(mode, root=None):
                                  "proof does not leave out (it leaves out -n and the word after it)" % " ".join(words))
         words = kept
     return words
+
+
+def _proof_collecting_processes(mode, root=None):
+    """How many processes collect in the proof's run in `mode`: the run's xdist worker count as its options set it
+    (_proof_mode_options, read by fork PR #916's worker_counts; an xdist controller collects no tests), or the one
+    process of a run with no worker. CI's form's run with workers has its Run pytest step's count, one since 2026-10-04
+    (two from fork PR #916 until then), and the developer's form's two."""
+    counts = worker_counts(" ".join(shlex.quote(w) for w in _proof_mode_options(mode, root)))
+    n = int(counts[-1]) if counts else 0
+    return n if n > 0 else 1
 
 
 def _proof_verdicts(sites, reports, conftest, rcs):
@@ -10510,7 +10523,7 @@ def _at_once(calls):
 
 def _proof_reports(at, modes):
     """{mode: {(module, class, test): the probe's report}} for each mode of `modes`, read from `at`/<form>/serial/ for
-    the mode's run with no worker and `at`/<form>/xdist/ for its run with -n 2 (_PROOF_MODE_RUNS), where each probe test
+    the mode's run with no worker and `at`/<form>/xdist/ for its run with workers (_PROOF_MODE_RUNS), where each probe test
     of that form's modules writes its report (_REASSERT_PROBE), the module keyed by the last letter of its file's name."""
     reports = {}
     for mode in modes:
@@ -10533,7 +10546,8 @@ def _reassert_proof(cases, real=False):
     conftest text, or None for tests/conftest.py itself, {helper file: text}, sites in _reassert_sites' form)) and each
     run of _proof_modes (_PROOF_MODE_RUNS: in CI's form of command line, as its Run pytest step runs on a runner with
     no worker and on one with workers, and in a developer's, with _proof_developer_options, the ruling of 2026-09-25
-    09:17Z, (11); each with no xdist worker and, where pytest-xdist is installed, with two; each run's options
+    09:17Z, (11); each with no xdist worker and, where pytest-xdist is installed, with workers (CI's form its step's
+    count, one since 2026-10-04, the developer's two); each run's options
     _proof_mode_options', and each child passing -p no:anyio after them, _PROOF_CHILD_FLAG), a child pytest over the
     four modules of _proof_module_files: two probe modules
     (_REASSERT_PROBE) over the names of the case's sites, the first collected first and the second fourth, after two
@@ -17208,9 +17222,10 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_the_proofs_ci_form_is_the_run_pytest_step_valued_per_runner_and_a_shape_it_does_not_read_is_refused(self):
         """CI'S FORM, EVALUATED (the reviewer's hold of 2026-09-25 22:24Z on round 2 of fork PR #894: fork PR #916 put
         `-n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }}` in CI's Run pytest step, and the proof, which split that
-        line into words, handed pytest '${{' as a worker count and every child in CI's form refused to start). From the
-        real .github/workflows/ci.yml, read through fork PR #916's evaluator: the ubuntu-latest form sets two workers
-        and the macos-latest form none (-n 0), each count read by its worker_counts; _proof_ci_forms files the first as
+        line into words, handed pytest '${{' as a worker count and every child in CI's form refused to start; the count
+        is 1 since 2026-10-04, the private runner's shape). From the real .github/workflows/ci.yml, read through fork PR
+        #916's evaluator: the ubuntu-latest form sets one worker and the macos-latest form none (-n 0), each count read
+        by its worker_counts; _proof_ci_forms files the first as
         CI's form with workers and the second as CI's form with none; and where pytest-xdist and pytest-timeout are
         installed the proof's runs in CI's form pass those two forms word for word (_proof_mode_options). With
         pytest-xdist out of reach, each run in CI's form leaves out -n and its count and nothing else; with
@@ -17221,8 +17236,8 @@ class HermeticKernelPostal(unittest.TestCase):
         and, with pytest-xdist out of reach, -n with its count attached, which the run with no worker cannot leave out."""
         from unittest import mock
         ubuntu, macos = _proof_options("ubuntu-latest"), _proof_options("macos-latest")
-        self.assertEqual((worker_counts(" ".join(ubuntu)), worker_counts(" ".join(macos))), (["2"], ["0"]),
-                         "from the real ci.yml, the ubuntu-latest form sets two workers and the macos-latest form none (-n 0): "
+        self.assertEqual((worker_counts(" ".join(ubuntu)), worker_counts(" ".join(macos))), (["1"], ["0"]),
+                         "from the real ci.yml, the ubuntu-latest form sets one worker and the macos-latest form none (-n 0): "
                          "%s | %s" % (" ".join(ubuntu), " ".join(macos)))
         self.assertEqual(_proof_ci_forms(), {"serial": (["macos-latest"], macos), "xdist": (["ubuntu-latest"], ubuntu)},
                          "CI's form with no worker is macos-latest's and CI's form with workers ubuntu-latest's")
@@ -17241,7 +17256,7 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertNotEqual(want["serial"], macos, "with pytest-timeout out of reach the words change")
         with open(_proof_ci_yml(), encoding="utf-8") as f:
             real = f.read()
-        expression = "matrix.os == 'ubuntu-latest' && '2' || '0'"
+        expression = "matrix.os == 'ubuntu-latest' && '1' || '0'"
         self.assertEqual(real.count(expression), 1, "the step's expression, which the plants below change")
         plants = (("an expression on another matrix key", real.replace(expression, "matrix.python-version == '3.12' && '2' || '0'"),
                    "matrix.python-version == '3.12' && '2' || '0'"),
@@ -17738,9 +17753,10 @@ class HermeticKernelPostal(unittest.TestCase):
         form_of = {json.dumps(facts[mode], sort_keys=True): _PROOF_MODE_RUNS[mode][0] for mode in modes}
         self.assertEqual(sorted(json.dumps(r["facts"], sort_keys=True) for r in recorded),
                          sorted(json.dumps(facts[mode], sort_keys=True) for mode in modes
-                                for _p in range(2 if _PROOF_MODE_RUNS[mode][1] else 1)),
+                                for _p in range(_proof_collecting_processes(mode))),
                          "each child process that collected, in each run (a run with no worker, and each worker of a run "
-                         "with two), records each condition true where its run has the fact and false where it does not "
+                         "with workers, as many as its -n sets), records each condition true where its run has the fact and "
+                         "false where it does not "
                          "(rc %d): %s\n%s" % (rc, recorded, out[-3000:]))
         kind = lambda path: "probe" if "_reassert_probe_" in path else "dummy" if "_reassert_dummy_" in path else path
         for r in recorded:

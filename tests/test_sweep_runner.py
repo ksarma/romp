@@ -11438,7 +11438,7 @@ class CiParity(unittest.TestCase):
         named += [("-rfEs",), ("--no-fold-skipped",)]
         for u in named:
             self.assertIn(u, our_units, "a named difference the runner no longer has: %r" % (u,))
-        # the -n count: CI's expression (2 or 0 by runner) against the runner's idle cores
+        # the -n count: CI's expression (1 or 0 by runner) against the runner's idle cores
         self.assertIn(("-n", "<expr>"), ci_units)
         self.assertEqual(sorted(u for u in our_units if u not in named), sorted(ci_units))
 
