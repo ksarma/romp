@@ -5458,12 +5458,18 @@ _LISTED_HOOKS = {
                                "(its nextitem the test that runs next, None after the last), and reads no result from it",
     "pytest_sessionfinish": "pytest calls it once the session's last test has run and been torn down",
     "pytest_unconfigure": "pytest calls it after pytest_sessionfinish, when no test is left to run",
+    "pytest_ignore_collect": ("pytest calls it for each path it finds under the paths it was handed, before it collects "
+                              "that path, and reads True as leave the path out: it can leave a whole file out of the run, "
+                              "with every test and fixture use in it, and never takes a fixture out of a test it collects "
+                              "(tests/conftest.py's leaves out the test files of the other CI shards, 2026-10-04)"),
 }
 #   THE HOOKS A MODULE MAY IMPLEMENT and still have its fixtures counted (the verifier's finding at round 2's thirty-first
 #   commit of fork PR #894: a conftest hook kept pytest from running a fixture the reader counted, on both roads),
-#   {spec: when pytest calls it and what it reads from it}: six of the seven hooks tests/conftest.py implements (the
-#   seventh, pytest_make_collect_report, is admitted by the shape the reader proves of its body, not by its name:
-#   _SHAPE_HOOKS). pytest_runtest_teardown joined the list at the hundredth round-2 commit of fork PR #894, when the
+#   {spec: when pytest calls it and what it reads from it}: seven of the eight hooks tests/conftest.py implements (the
+#   eighth, pytest_make_collect_report, is admitted by the shape the reader proves of its body, not by its name:
+#   _SHAPE_HOOKS). pytest_ignore_collect joined the list on 2026-10-04 with CI's shards: tests/conftest.py's leaves
+#   out the test files of the other shards when a run names one, whole files, which takes no fixture out of a test
+#   pytest collects. pytest_runtest_teardown joined the list at the hundredth round-2 commit of fork PR #894, when the
 #   third landing merge, of the fork's main at 46a9382c9, brought fork PR #922's session-end thread guard, a
 #   pytest_runtest_teardown wrapper of tests/conftest.py, and the reader refused every fixture of the conftest for it:
 #   pytest ignores what the hook returns, and what its code can do to the test it is handed as nextitem (edit that
