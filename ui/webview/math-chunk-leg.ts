@@ -23,14 +23,42 @@ const KATEX_CSS = fs.readFileSync(path.join(KATEX_DIST, "katex.min.css"), "utf8"
 const STYLES = fs.readFileSync(path.join(UI, "styles.css"), "utf8").replace('@import "katex/dist/katex.min.css";', "");
 export const ORIGIN = "http://romp.test";
 
-const PROBE = `
+/** render.ts's mention chips (markMentions and what it calls), the block composer-mention-pane.test.ts lifts the same way: from the
+ *  roster signature to setupComposer's banner, run in a closure holding the module names it reads. */
+function chipBlock(): string {
+  const render = fs.readFileSync(path.join(UI, "render.ts"), "utf8");
+  const a = render.indexOf('let mentionRosterSig = "";');
+  const b = render.indexOf("// Composer: Enter sends the message");
+  assert.ok(a > 0 && b > a, "the chip functions sit just before setupComposer (re-anchor the lift)");
+  return render.slice(a, b);
+}
+
+// The chat's markdown path, plus the two passes that walk a message's text after it, so a scene can run them over a formula still
+// waiting for the renderer: glossary-links.ts's term linker (render.ts linkTerms dresses its spans) and render.ts's mention chips.
+const PROBE = (): string => `
 import { marked } from "marked";
 import { applyMdConfig } from "./md-config";
 import { sanitizeMd } from "./md-sanitize";
 import { onMathSettled } from "./math";
+import { linkifyTerms, buildMatcher } from "./glossary-links";
+import { mentionSegments } from "./composer-mention";
+import { hostNameNodes, hostPartsNodes } from "./host-prefix";
 applyMdConfig();   // the one grammar on the singleton; importing md-config.ts registers the math fill as sanitizeMd's post-pass
 (window as any).__md = (src: string): string => sanitizeMd(marked.parse(src) as string).innerHTML;
 onMathSettled(() => { (window as any).__settles = ((window as any).__settles || 0) + 1; });   // each arrival, either way, counted for the scenes
+(window as any).__terms = (root: HTMLElement, ix: any): number =>
+  linkifyTerms(root, buildMatcher(ix)!, (_e: unknown, text: string) => { const t = document.createElement("span"); t.className = "term-link"; t.textContent = text; return t; });
+const CHIP_LABEL: any = { working: "Working", ready: "Ready", idle: "Idle", closed: "Closed", needsInput: "Blocked" };
+const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
+const isProvisionalId = (id: string) => id.startsWith("prov:");
+void mentionSegments; void hostNameNodes; void hostPartsNodes; void CHIP_LABEL; void el; void isProvisionalId;
+(window as any).__chips = (env: any) => {
+  const sessions: Map<string, any> = env.sessions, tabMeta: Map<string, any> = new Map(), views: Map<string, any> = new Map();
+  let refreshMentionCard: any = null;
+  void tabMeta; void views; void refreshMentionCard;
+${chipBlock()}
+  return { markMentions };
+};
 `;
 
 let probe: string | null = null;
@@ -38,7 +66,7 @@ let probe: string | null = null;
 export function probeBundle(): string {
   if (probe) return probe;
   const r = requireCjs("esbuild").buildSync({
-    stdin: { contents: PROBE, resolveDir: UI, loader: "ts", sourcefile: "math-chunk-leg-probe.ts" },
+    stdin: { contents: PROBE(), resolveDir: UI, loader: "ts", sourcefile: "math-chunk-leg-probe.ts" },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -532,6 +560,51 @@ export const SCENES: SceneDef[] = [
         await settled(s.page);
         b = await box(s.page);
         assert.deepEqual([b.katex, b.src.length, s.chunkRequests()], [1, 0, 1], "at the load the chunk is fetched and the formula laid out");
+      });
+    },
+  },
+  {
+    name: "a first-mode glossary term inside a formula still waiting for the renderer leaves the message's one link to the prose: the term pass skips a waiting formula as it skips a laid-out one, and the link outlasts the arrival",
+    timeout: 60000,
+    run: async (browser) => {
+      const g = gate();
+      await withPage(browser, { chunkGate: g }, async (s) => {
+        const IX = { group: "notes-api", path: "~/.claude/glossaries/notes-api.md", skip: [], terms: [{ term: "quill", slug: "quill", definition: "", plainWords: "",
+          also: [], scope: "", status: "active", registered: { date: "", by: "" }, link: "first" }] };
+        const links = (): Promise<{ text: string; inFormula: boolean }[]> => s.page.evaluate(() => Array.from(document.querySelectorAll("#out .term-link"))
+          .map((l) => ({ text: l.textContent || "", inFormula: !!l.closest(".md-math-inline, .md-math-display, .katex") })));
+        const n = await s.page.evaluate(([src, ix]: [string, unknown]) => {
+          const m = document.createElement("div"); m.className = "msg"; m.innerHTML = (window as any).__md(src); document.getElementById("out")!.appendChild(m);
+          return (window as any).__terms(m, ix);
+        }, ["The $quill + 1$ bound, and the quill in prose.", IX]);
+        assert.equal(n, 1, "the message's one first-mode link");
+        assert.deepEqual(await links(), [{ text: "quill", inFormula: false }], "made in the prose, not inside the waiting formula's TeX");
+        g.open();
+        await settled(s.page);
+        assert.equal((await box(s.page)).katex, 1);
+        assert.deepEqual(await links(), [{ text: "quill", inFormula: false }], "and still there once the formula is laid out");
+      });
+    },
+  },
+  {
+    name: "an @name inside a formula still waiting for the renderer keeps its @ through the arrival: the mention pass (render.ts markMentions) skips a waiting formula as it skips code, and chips the same name in the prose",
+    timeout: 60000,
+    run: async (browser) => {
+      const g = gate();
+      await withPage(browser, { chunkGate: g }, async (s) => {
+        const r0 = await s.page.evaluate((src: string) => {
+          const m = document.createElement("div"); m.className = "msg"; m.innerHTML = (window as any).__md(src); document.getElementById("out")!.appendChild(m);
+          const chips = (window as any).__chips({ sessions: new Map([["sid-api", { id: "sid-api", name: "api", status: { state: "ready" } }]]) });
+          chips.markMentions(m);
+          const ph = m.querySelector(".md-math-inline");
+          return { tex: ph ? ph.textContent : null, chips: m.querySelectorAll(".mention-chip").length, inFormula: m.querySelectorAll(".md-math-inline .mention-chip").length };
+        }, "ask @api about $a @api b$ today");
+        assert.deepEqual(r0, { tex: "a @api b", chips: 1, inFormula: 0 }, "the prose @api is a chip; the waiting formula's TeX keeps its @: " + JSON.stringify(r0));
+        g.open();
+        await settled(s.page);
+        const r1 = await s.page.evaluate(() => { const k = document.querySelector("#out .katex"); return { text: k ? k.textContent : null, chips: document.querySelectorAll("#out .mention-chip").length }; });
+        assert.ok(r1.text !== null && r1.text.includes("@"), "the laid-out formula still reads its @: " + JSON.stringify(r1));
+        assert.equal(r1.chips, 1);
       });
     },
   },

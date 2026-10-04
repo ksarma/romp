@@ -21718,7 +21718,9 @@ function remarkMentions(): void {
 // fill): the reader sees who was meant, and a hover says how that session is doing. The token as typed
 // rides data-token, so what was SENT is still on the element; a word that names nothing stays plain
 // text, and the chip carries no link behaviour. Text nodes only, never
-// inside code, a fenced block, a link or a chip already made, so a path or an email address is left
+// inside code, a fenced block, a link, a chip already made or a formula still waiting for the math renderer
+// (math.ts's placeholder: the renderer reads the TeX back from its text, and a chip there, which reads as the bare
+// name, cost the formula its @ for good; the review of iOS item 6, round 1), so a path or an email address is left
 // alone. The same boundary rule as the composer's trigger (composer-mention.ts mentionSegments). Exact
 // names only: postal's direct match is exact, so a hand-typed "@API" for the session "api" is not a name
 // its mail tools would take, and the chip must not say it is. The user's own bubbles: the landed one and
@@ -21727,7 +21729,7 @@ function markMentions(root: HTMLElement): void {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const texts: Text[] = [];
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    if ((n.nodeValue || "").includes("@") && !n.parentElement?.closest("code, pre, a, .mention-chip")) texts.push(n as Text);
+    if ((n.nodeValue || "").includes("@") && !n.parentElement?.closest("code, pre, a, .mention-chip, .md-math-inline, .md-math-display")) texts.push(n as Text);
   }
   if (!texts.length) return;
   root.dataset.mentions = "1";   // a bubble remarkMentions revisits when a new name joins the roster
