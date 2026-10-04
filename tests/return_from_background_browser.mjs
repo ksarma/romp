@@ -264,10 +264,12 @@ const flip = (hidden) => page.evaluate((h) => {
 // the Feed's and the Waiting pane's lists), and, inside it, every sticky or fixed element and what it holds (round 1 of the review,
 // 2026-10-03: the subagent viewer's sticky header and its pin, and the Feed's sticky column heads and their drag chips, sit inside
 // the container, and the recorder skipped them). A control is a link, button, form field, label, summary, an element with a button
-// role, an action (data-act), a tabindex or draggable=true, the strip's resize handle, or anything drawn with a pointer or grab
-// cursor or one of CSS's resize cursors, the keywords that end in -resize (the Feed's drag chip and the chat's landing notice have
-// their cursor and nothing else, and so has the composer's resize handle; ruling 3 at 79dce614c, 2026-10-04, the same rule as the
-// loader's rctl). Each control's box is the part a
+// role, an action (data-act), a tabindex or draggable=true, the strip's and the composer's resize handles, or anything drawn with a
+// pointer or grab cursor or one of CSS's resize cursors, the keywords that end in -resize (the Feed's drag chip and the chat's
+// landing notice have their cursor and nothing else, and so has the composer's resize handle; ruling 3 at 79dce614c, 2026-10-04,
+// the same rule as the loader's rctl), where the element sets that cursor: where it differs from its parent's (round 3 of the
+// review, 2026-10-04: the body's class during a handle's drag gives every element that sets no cursor the drag's, so the whole
+// page read as chrome; the handles are named, since each one's cursor equals its parent's during its own drag). Each control's box is the part a
 // person can see (round 2 of the review, 2026-10-03, correctness-1): cut by every ancestor whose overflow clips it, along its chain
 // of containing blocks (a fixed control escapes every ancestor that is not its containing block, an absolute one the ancestors
 // between it and its positioned containing block), so a tab the desktop strip scrolls out of view, or a pinned-notes row below that
@@ -302,7 +304,7 @@ const cueRec = () => {
   const box = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
   // the pane's content container, the id each pane page hands _pane_spin: the chat's transcript, else the pane's list (<pane>-list)
   const content = document.getElementById(location.pathname === "/chat" ? "content" : location.pathname.slice(1) + "-list");
-  const CONTROL = "button, a[href], [role=button], [data-act], input, textarea, select, [tabindex], #tabbar-resize, [draggable=true], summary, label";
+  const CONTROL = "button, a[href], [role=button], [data-act], input, textarea, select, [tabindex], #tabbar-resize, #composer-resize, [draggable=true], summary, label";
   const CURSOR = /^(pointer|grab|grabbing|(n|e|s|w|ne|nw|se|sw|ew|ns|nesw|nwse|col|row)-resize)$/;
   // the part of an element's box its overflow ancestors leave in view, [left, top, width, height] rounded, or null when none is
   const seen = (el, cs) => {
@@ -335,7 +337,8 @@ const cueRec = () => {
       // inside the content container only what a sticky or fixed element holds stays put; the rest scrolls under the badge
       if (within && (cs.position === "sticky" || cs.position === "fixed")) stuck.push(el);
       if (within && !stuck.some((p) => p.contains(el))) continue;
-      if (!el.matches(CONTROL) && !CURSOR.test(cs.cursor)) continue;
+      // a cursor counts where the element sets it, where it differs from its parent's (the body's own children compare with the body's)
+      if (!el.matches(CONTROL) && !(CURSOR.test(cs.cursor) && cs.cursor !== getComputedStyle(el.parentElement).cursor)) continue;
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height || cs.visibility === "hidden" || cs.display === "none") continue;
       const cls = typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split(/\s+/)[0] : "";

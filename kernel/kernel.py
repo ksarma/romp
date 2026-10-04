@@ -70057,7 +70057,8 @@ def _pane_spin(cid, ignore_id=""):
             # control (taps still pass through it). A control is anything RCTL matches or anything drawn with a pointer, grab or
             # resize cursor (the Feed's drag chip has its cursor and nothing else, and so have the composer's resize handle and the
             # tab strip's; ruling 3 at 79dce614c, 2026-10-04: on a landscape phone with the keyboard up and a long pinned note the
-            # badge sat over the composer's handle). Controls in the content itself (the top row of
+            # badge sat over the composer's handle), a cursor counting only where the element sets it, not where it inherits it
+            # (round 3: a handle's drag gives the whole page its cursor; RCTL names the two handles). Controls in the content itself (the top row of
             # messages or cards) are not avoided: they scroll out from under the badge, and taps pass through it (ruling 9 of
             # round 0).
             # When: the badge is placed at load and at each resize event of the container or the page (a scroll area's box moves
@@ -70105,19 +70106,26 @@ def _pane_spin(cid, ignore_id=""):
             # picker, tag filter and + button. So the observer is made whenever the engine has one (Firefox's, made in the hidden
             # frame, reports at the frame's first show), and the badge is placed at the load, each resize event and its own paint.
             "function rscroll(){try{return /^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){return false;}}"
-            "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true]',rmo=null,rsc=false,rob=null,rhs=null,rpins=[],rfr=0,rfull=false,rgeo=null;"
+            "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true],#composer-resize,#tabbar-resize',rmo=null,rsc=false,rob=null,rhs=null,rpins=[],rfr=0,rfull=false,rgeo=null;"
             # a control: what RCTL matches, or what is drawn with a pointer or grab cursor or with one of CSS's resize cursors (the
-            # cursor keywords that end in -resize: n, e, s, w, ne, nw, se, sw, ew, ns, nesw, nwse, col and row)
-            "function rctl(e,s){return (e.matches&&e.matches(RCTL))||/^(pointer|grab|grabbing|(n|e|s|w|ne|nw|se|sw|ew|ns|nesw|nwse|col|row)-resize)$/.test(s.cursor);}"
+            # cursor keywords that end in -resize: n, e, s, w, ne, nw, se, sw, ew, ns, nesw, nwse, col and row) where the element
+            # sets that cursor: where its cursor differs from its parent's (u, the parent's style the scan read; the body's own
+            # children compare with the body's). Cursor inherits, and during a drag of the composer's or the tab strip's resize
+            # handle the chat's class on the body (composer-resizing, tabbar-resizing) gives every element that sets no cursor of
+            # its own the drag's resize cursor, the loader's full-view sheet among them, so the painted badge left its place for
+            # the drag (round 3, correctness-1 and regression-1). An element that only inherits a cursor counts through the
+            # element that sets it, whose box holds it unless it is drawn outside that box. During its own drag a handle's cursor
+            # equals its parent's, so RCTL names both handles and each stays a control while it is dragged
+            "function rctl(e,s,u){return (e.matches&&e.matches(RCTL))||(/^(pointer|grab|grabbing|(n|e|s|w|ne|nw|se|sw|ew|ns|nesw|nwse|col|row)-resize)$/.test(s.cursor)&&s.cursor!==(u||getComputedStyle(e.parentElement)).cursor);}"
             # what the badge must not cover: each shown control outside the container, and inside it each shown control that is
             # or sits in a sticky or fixed element, as [the control, the ancestors that clip it (rclip)]. Each element's style is
-            # kept for the scan (M), so rclip reads its ancestors' from there: document order puts an ancestor before its children.
-            # It keeps the controls it found, each with its entry (rhs), and the sticky or fixed elements in the container (rpins)
-            # for the watch
-            "function robs(){var o=[],d=document.body,pin=[],M=typeof Map==='function'?new Map():null,S=typeof Map==='function'?new Map():null;rhs=S;rpins=pin;if(!d||!d.getElementsByTagName)return o;var a=d.getElementsByTagName('*');"
+            # kept for the scan (M), the body's first, so rctl reads a parent's and rclip an ancestor's from there: document order
+            # puts an ancestor before its children. It keeps the controls it found, each with its entry (rhs), and the sticky or
+            # fixed elements in the container (rpins) for the watch
+            "function robs(){var o=[],d=document.body,pin=[],M=typeof Map==='function'?new Map():null,S=typeof Map==='function'?new Map():null;rhs=S;rpins=pin;if(!d||!d.getElementsByTagName)return o;if(M)M.set(d,getComputedStyle(d));var a=d.getElementsByTagName('*');"
             "for(var i=0;i<a.length;i++){var e=a[i];if(e===rb||rb.contains(e))continue;var s=getComputedStyle(e);if(M)M.set(e,s);if(e===c)continue;"
             "if(c.contains(e)){if(s.position==='sticky'||s.position==='fixed')pin.push(e);for(var j=0;j<pin.length&&!pin[j].contains(e);j++);if(j===pin.length)continue;}"
-            "if(rctl(e,s)&&s.visibility!=='hidden'&&s.display!=='none'){var t=[e,rclip(e,s,M)];o.push(t);if(S)S.set(e,t);}}return o;}"
+            "if(rctl(e,s,M&&M.get(e.parentElement))&&s.visibility!=='hidden'&&s.display!=='none'){var t=[e,rclip(e,s,M)];o.push(t);if(S)S.set(e,t);}}return o;}"
             # the ancestors whose overflow clips e, each as [element, clips across, clips down]. Overflow clips along the chain of
             # containing blocks, not the chain of parents: a fixed element escapes every ancestor but one that is its containing
             # block (a transform, filter, perspective or containment makes one), and an absolute one escapes every ancestor

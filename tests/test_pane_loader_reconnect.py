@@ -778,7 +778,11 @@ document.documentElement = { id: 'html', clientWidth: 390, clientHeight: 844 };
 const ALL = [CONTENT];                                                // the body's elements in document order
 document.body = { getElementsByTagName: (t) => (t === '*' ? ALL : []) };
 let STYLE_READS = 0;
-global.getComputedStyle = (el) => { STYLE_READS++; return el === CONTENT ? { overflowY: COVER, overflowX: COVER === 'visible' ? 'visible' : 'auto', position: 'static', cursor: 'auto', visibility: 'visible', display: 'block' } : el.cs; };
+global.getComputedStyle = (el) => { STYLE_READS++; return el === CONTENT ? { overflowY: COVER, overflowX: COVER === 'visible' ? 'visible' : 'auto', position: 'static', cursor: document.body.cs.cursor, visibility: 'visible', display: 'block' } : el.cs; };
+// the body's computed style: its cursor is 'auto' until a case puts the class of a handle's drag on it (bodyCursor, below); the list
+// sets no cursor of its own, so its computed cursor is the body's
+document.body.cs = { position: 'static', cursor: 'auto', visibility: 'visible', display: 'block', overflowX: 'visible', overflowY: 'visible', contain: 'none',
+  transform: 'none', filter: 'none', perspective: 'none', willChange: 'auto' };
 // the list's padding box is its whole box (no border; a scrollbar is not drawn in these cases)
 // the list and the body-level elements are the body's children, in document order (the badge apart: the page's last element)
 Object.defineProperty(document.body, 'firstElementChild', { get: () => ALL.find((x) => x === CONTENT || !x.parent) || null });
@@ -793,11 +797,11 @@ const attrOf = (t, n) => (t.attrs && Object.prototype.hasOwnProperty.call(t.attr
 CONTENT.attrs = {}; CONTENT.getAttribute = (n) => attrOf(CONTENT, n); document.body.attrs = {}; document.body.getAttribute = (n) => attrOf(document.body, n);
 // add(parent, box [left, top, width, height], { position, cursor, sel, overflow, overflowX, overflowY, contain, transform, filter,
 // willChange, display }): an element under `parent` (null: the body, outside the list); `overflow` sets both axes
-const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, box: box.slice(), sel: o.sel || '',
+const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, box: box.slice(), sel: o.sel || '', own: o.cursor || null,
   cs: { position: o.position || 'static', cursor: o.cursor || 'auto', visibility: 'visible', display: o.display || 'block',
         overflowX: o.overflowX || o.overflow || 'visible', overflowY: o.overflowY || o.overflow || 'visible', contain: o.contain || 'none',
         transform: o.transform || 'none', filter: o.filter || 'none', perspective: 'none', willChange: o.willChange || 'auto' },
-  get parentElement() { return this.parent || null; },
+  get parentElement() { return this.parent || document.body; },
   get firstElementChild() { return ALL.find((x) => x.parent === this) || null; },
   get nextElementSibling() { const sib = this.parent ? ALL.filter((x) => x.parent === this.parent) : ALL.filter((x) => x === CONTENT || !x.parent); return sib[sib.indexOf(this) + 1] || null; },
   get clientLeft() { return 0; }, get clientTop() { return 0; }, get clientWidth() { return this.box[2]; }, get clientHeight() { return this.box[3]; },
@@ -806,6 +810,11 @@ const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, 
   attrs: {}, getAttribute(n) { return attrOf(this, n); },
   getElementsByTagName(t) { return t === '*' ? ALL.filter((x) => x !== this && inside(this, x)) : []; } };
   const at = parent ? ALL.lastIndexOf(ALL.filter((x) => inside(parent, x)).pop()) + 1 : ALL.length; ALL.splice(at, 0, e); return e; };
+// each element's cursor is the one its case set (`cursor`), else 'auto'. bodyCursor(k) models CSS's inheritance from the body: it
+// sets the body's cursor to k (the class of a handle's drag, body.composer-resizing or body.tabbar-resizing, sets ns-resize) and
+// gives every element the cursor CSS computes for it, its own where its case set one, else its parent's (the body's for the body's
+// own children and the list's), in document order, so a parent is computed before its children
+const bodyCursor = (k) => { document.body.cs.cursor = k; for (const e of ALL) if (e !== CONTENT) e.cs.cursor = e.own || (e.parent && e.parent !== CONTENT ? e.parent.cs.cursor : k); };
 const rightOf = () => (BADGE.style.right ? BADGE.style.right : '8px');
 const at = () => ({ top: topOf(), right: rightOf(), painted: painted() });
 // the badge's watch: an observer that asks for attributes (the sheet's own observer watches the list's children alone)
@@ -901,9 +910,11 @@ out({ atLoad, atPaint: at() });""")
 
     # round 2, tests-2: every kind of control ruling A names, each alone (cursor auto, the one selector entry) at the badge's first
     # place where the search counts it, outside the list; the list is spelled here from the body's definition, not read from the
-    # kernel's RCTL, so an entry dropped there fails here. And the fixed half of the test for what stays put inside the list: a
-    # fixed element in the list holding a control
-    CONTROLS = ["a[href]", "button", "input", "select", "textarea", "summary", "label", "[role=button]", "[data-act]", "[tabindex]", "[draggable=true]"]
+    # kernel's RCTL, so an entry dropped there fails here (round 3 added the two resize handles by id, each a control during its own
+    # drag whatever its cursor). And the fixed half of the test for what stays put inside the list: a fixed element in the list
+    # holding a control
+    CONTROLS =["a[href]", "button", "input", "select", "textarea", "summary", "label", "[role=button]", "[data-act]", "[tabindex]", "[draggable=true]",
+                "#composer-resize", "#tabbar-resize"]
 
     def test_each_kind_of_control_alone_moves_the_badge_off_it(self):
         for sel in self.CONTROLS:
@@ -966,21 +977,33 @@ out({ atLoad, atPaint: at() });""")
     # The served legs reach the recorder's rule through one resize keyword, the composer's handle's ns-resize, so a recorder that
     # dropped col-resize and row-resize passed them. Here CSS's keywords run through both rules, the regular expression rctl tests in
     # the script _pane_spin returns and the recorder's CURSOR, executed in node, and each must count the same 17: pointer, grab,
-    # grabbing and the 14 resize cursors
+    # grabbing and the 14 resize cursors. Since round 3 (2026-10-04) both rules count a cursor only where the element sets it, where
+    # it differs from its parent's, and both name the two resize handles: the drag cases below execute rctl's half, and the served
+    # legs of the two handle drags (test_return_from_background_served.py, _handle_drag_surface) execute the recorder's; the text
+    # checks here keep the two rules one rule, and say nothing on their own about behaviour
     def test_the_served_recorder_counts_a_cursor_as_a_control_exactly_when_rctl_does(self):
         node = shutil.which("node")
         if not node:
             raise unittest.SkipTest("node not installed")
         js = km._pane_spin("content", "live-ask")
         script = js[js.index("<script>") + len("<script>"):js.index("</script>")]
-        mine = re.findall(r"function rctl\(e,s\)\{return \(e\.matches&&e\.matches\(RCTL\)\)\|\|(/[^/\n]+/[a-z]*)\.test\(s\.cursor\);\}", script)
-        self.assertEqual(len(mine), 1, "rctl's cursor rule is found once in the loader script")
+        mine = re.findall(r"function rctl\(e,s,u\)\{return \(e\.matches&&e\.matches\(RCTL\)\)\|\|\((/[^/\n]+/[a-z]*)\.test\(s\.cursor\)&&s\.cursor!==\(u\|\|getComputedStyle\(e\.parentElement\)\)\.cursor\);\}", script)
+        self.assertEqual(len(mine), 1, "rctl's cursor rule is found once in the loader script, compared with the parent's cursor")
         self.assertEqual(script.count(".test(s.cursor)"), 1, "and it is the only cursor rule the loader script tests")
+        self.assertEqual(script.count("rctl(e,s,M&&M.get(e.parentElement))"), 1, "robs hands rctl the parent's style from the scan's map")
         with open(os.path.join(HERE, "return_from_background_browser.mjs"), encoding="utf-8") as f:
             rec = f.read()
         theirs = re.findall(r"^\s*const CURSOR = (/[^/\n]+/[a-z]*);$", rec, re.M)
         self.assertEqual(len(theirs), 1, "the recorder's CURSOR is found once")
         self.assertEqual(re.findall(r"[\w.]+\.test\(cs\.cursor\)", rec), ["CURSOR.test(cs.cursor)"], "the recorder's control test reads CURSOR, and no other cursor rule")
+        self.assertEqual(rec.count("if (!el.matches(CONTROL) && !(CURSOR.test(cs.cursor) && cs.cursor !== getComputedStyle(el.parentElement).cursor)) continue;"), 1,
+                         "the recorder counts a cursor where it differs from the parent's, as rctl does (executed in the served handle drag legs)")
+        rctl_list = re.findall(r"var RCTL='([^']*)'", script)
+        control = re.findall(r'^\s*const CONTROL = "([^"]*)";$', rec, re.M)
+        self.assertEqual((len(rctl_list), len(control)), (1, 1), "RCTL and the recorder's CONTROL are found once each")
+        for handle in ("#composer-resize", "#tabbar-resize"):
+            self.assertIn(handle, rctl_list[0].split(","), "RCTL names " + handle + " (executed in the drag cases below)")
+            self.assertIn(handle, [x.strip() for x in control[0].split(",")], "the recorder's CONTROL names " + handle)
         fx = tempfile.mkdtemp()
         path = os.path.join(fx, "cursors.js")
         with open(path, "w") as f:
@@ -994,6 +1017,69 @@ out({ atLoad, atPaint: at() });""")
         self.assertEqual(len(counted), 17)
         self.assertEqual(sorted(o["rctl"]), sorted(counted), "rctl counts pointer, grab, grabbing and the 14 resize cursors, and no other keyword")
         self.assertEqual(sorted(o["recorder"]), sorted(o["rctl"]), "the served recorder counts exactly the keywords rctl counts")
+
+    # Round 3 (2026-10-04, correctness-1 and regression-1): a cursor counts only where an element sets it. During a drag of the
+    # composer's resize handle the chat puts composer-resizing on the body, and during a drag of the tab strip's, tabbar-resizing;
+    # each sets cursor: ns-resize there, and cursor inherits, so every element that sets no cursor of its own computes ns-resize
+    # (bodyCursor). At 94f85bca3 rctl tested the computed cursor, so mid-drag the loader's full-view sheet (#pane-spin, fixed over the
+    # whole view, faded but shown), the viewer's sticky header and a scroll-marks column counted as controls, and the painted badge
+    # left its place for the drag. Each drag: pointerdown (the class on the body, which the watch sees and scans for), the drag's
+    # moves, pointerup. The composer's drag shrinks it: each move writes the text field's height, and the list's bottom follows the
+    # composer down. Three places to hold: left of the viewer's pin (a left step) in each drag, and the first place below a
+    # scroll-marks column the chat painted for the layout before the shrink, which the grown list now reaches past (the review's
+    # page: at 94f85bca3 only the sheet covered that gap, so the fallback took it)
+    _DRAG = r"""
+const sheet = add(null, [0, 0, 390, 844], { position: 'fixed' });      // the loader's sheet (#pane-spin): fixed over the whole view, faded, shown
+add(null, [0, 0, 390, 44], { sel: 'button' });                         // the header's session picker, across the page
+const footer = add(null, [0, 704, 390, 140]);                          // the composer
+const grip = add(footer, [0, 700, 390, 7], { cursor: 'ns-resize', sel: '#composer-resize' });   // its resize handle, over its top edge
+const field = add(footer, [10, 712, 300, 120], { sel: 'textarea' });    // its text field, grown before the wait
+const tgrip = add(null, [0, 40, 390, 6], { cursor: 'ns-resize', sel: '#tabbar-resize' });       // the strip's handle, over the header's bottom edge
+const drag = (cls, moves) => { const p = {}; bodyCursor('ns-resize'); attr(document.body, 'class', cls); frame(); p.down = at();
+  for (const dy of moves) { field.box[1] += dy; field.box[3] -= dy; grip.box[1] += dy; footer.box[1] += dy; footer.box[3] -= dy;
+    const b = footer.box[1]; CONTENT.getBoundingClientRect = () => ({ top: CTOP, left: 0, right: 390, bottom: b }); attr(field, 'style'); frame(); }
+  p.moved = at(); bodyCursor('auto'); attr(document.body, 'class', null); frame(); p.up = at(); return p; };
+"""
+
+    def test_a_resize_handles_drag_moves_the_painted_badge_nowhere(self):
+        pin = "const head = add(CONTENT, [0, 52, 390, 31], { position: 'sticky' }); add(head, [360, 58, 20, 20], { sel: '[role=button]' });"
+        marks = "add(null, [378, 44, 12, 660], { position: 'fixed' });             // the scroll marks' column over the list's right 12 px, painted for the list before the shrink"
+        cases = [("left of the viewer's pin, the composer shrunk", pin, "composer-resizing", "[30, 30]", {"top": "52px", "right": "38px", "painted": True}),
+                 ("left of the viewer's pin, the tab strip's handle held", pin, "tabbar-resizing", "[]", {"top": "52px", "right": "38px", "painted": True}),
+                 ("the first place, the composer shrunk below a marks column painted before the shrink", marks, "composer-resizing", "[30, 30]",
+                  {"top": "52px", "right": "8px", "painted": True})]
+        for what, page, cls, moves, place in cases:
+            with self.subTest(what):
+                o = self._run(page + "\n" + self._DRAG + r"""
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+const d = drag(%s, %s);
+out({ atPaint, d, bottom: CONTENT.getBoundingClientRect().bottom });""" % (json.dumps(cls), moves), pre=self._PLACE_PRE + self._FIT_PRE)
+                self.assertEqual(o["atPaint"], place, what + ": painted there")
+                self.assertEqual(o["d"], {"down": place, "moved": place, "up": place},
+                                 what + ": the class on the body (ns-resize, inherited by every element that sets no cursor) moves the badge nowhere at "
+                                 "pointerdown, through the drag and at pointerup (94f85bca3: the sheet, the header and the marks column counted, and the "
+                                 "badge took the fallback's place for the drag)")
+                if cls == "composer-resizing":
+                    self.assertEqual(o["bottom"], 764, what + ": the composer shrank 60 px and the list's bottom followed it")
+
+    # ...and the handle under the drag stays a control: during its own drag a handle's cursor (ns-resize, its own) equals its parent's
+    # (the body's class), so only RCTL's naming keeps it counted. Each handle here lies under the badge's first place, across the page
+    # (the landscape phone with the keyboard up puts the composer's there); the badge sits below it at the paint and must stay below
+    # it while the handle is dragged (with the parent rule and no naming, it went back to the first place, over the handle)
+    def test_each_resize_handle_stays_a_control_during_its_own_drag(self):
+        for cls, sel in (("composer-resizing", "#composer-resize"), ("tabbar-resizing", "#tabbar-resize")):
+            with self.subTest(sel):
+                o = self._fit(r"""
+add(null, [0, 0, 390, 44], { sel: 'button' });                         // the header, across the page
+add(null, [0, 56, 390, 7], { cursor: 'ns-resize', sel: %s });           // the handle, across the page, under the first place (52 to 77)
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+bodyCursor('ns-resize'); attr(document.body, 'class', %s); frame(); const mid = at();
+bodyCursor('auto'); attr(document.body, 'class', null); frame();
+out({ atPaint, mid, up: at() });""" % (json.dumps(sel), json.dumps(cls)))
+                below = {"top": "71px", "right": "8px", "painted": True}
+                self.assertEqual(o["atPaint"], below, sel + ": painted below the handle (56 + 7 + 8)")
+                self.assertEqual(o["mid"], below, sel + ": mid-drag the handle, whose cursor now equals its parent's, is still a control (RCTL names it)")
+                self.assertEqual(o["up"], below, sel + ": and after the drag")
 
     def test_a_control_in_a_fixed_element_in_the_list_moves_the_badge_off_it(self):
         o = self._fit(r"""
@@ -1210,8 +1296,9 @@ out({ atPaint, scrolled, reads: STYLE_READS - reads });""")
     # each keystroke. Now a change or a scroll asks for one placement at the next animation frame; the watch observes the list's own
     # children and attributes, each sticky or fixed element in it, and the page outside it, never the rest of the list's content;
     # and only a change that can add a control scans again (an element added to an element the last scan did not hold, or an
-    # attribute changed on an element the last scan did not hold or that holds elements), every other one re-reads the boxes. A scan reads every element's style once (and the
-    # placement reads the list's own once more, the scroll-area test), so a placement with no scan makes one read.
+    # attribute changed on an element the last scan did not hold or that holds elements), every other one re-reads the boxes. A scan reads every element's style once and
+    # the body's (since round 3, which compares the cursor of each of the body's own children with the body's), and the placement reads
+    # the list's own once more, the scroll-area test, so a placement with no scan makes one read.
     _PAGE = r"""
 const header = add(null, [0, 0, 390, 44], { sel: 'button' }); header.id = 'header';
 const head = add(CONTENT, [0, 300, 390, 29], { position: 'sticky' }); head.id = 'head'; add(head, [300, 304, 80, 20], { sel: 'button' });
@@ -1221,7 +1308,7 @@ const timer = add(footer, [10, 764, 60, 16]); timer.id = 'timer';               
 const field = add(footer, [10, 784, 300, 40], { sel: 'textarea' }); field.id = 'field';  // the composer's text field: a control with no element in it
 const send = add(footer, [320, 784, 60, 40], { sel: 'button' }); send.id = 'send'; add(send, [340, 794, 20, 20]);   // a button that holds an icon
 let ASKS = 0; { const raf = global.requestAnimationFrame; global.requestAnimationFrame = (fn) => { ASKS++; return raf(fn); }; }
-const scan = () => ALL.length + 1;                                                      // the style reads of a placement that scans
+const scan = () => ALL.length + 2;                                                      // the style reads of a placement that scans: each element's, the body's and the list's again
 """
 
     def _watch_fit(self, scenario):
