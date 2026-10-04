@@ -1862,8 +1862,10 @@ async function hangingPids(mark, roles, t0, ended, pids) {
 
 test('the per-file bound ends a leg that outlives it, with every process under it, executed with the real node and the real reporter: a synthetic leg that passes a test and then hangs, whose node process ignores SIGTERM (as a launched browser\'s handler kept a leg\'s process up past node\'s own cancel on node 22.23.2) and which starts a process in a session of its own with a child under it (as Playwright starts Chromium), a process in the file\'s own process group with a child under it, and a process in a session of its own whose child exits and leaves a grandchild in its group, is gone with all six of them before the bound plus the grace has passed, set short by the knobs, while three keepers whose launchers exited before the bound, witnesses of the rule the script\'s header states for what neither the parent links nor the group kill reaches (one leading its own group, one in a group whose leader exited, one in the file\'s own group), are still alive then; the run itself ends by the bound, the grace and a 2.5 s slack, reads the other leg\'s pass and the cut leg\'s pass before the hang, names the cut leg and its bound as red, and leaves none of its timers behind', async (t) => {
   const { start, root, ext, A, B } = syntheticTree(t);
-  // odd values, so the timers' sleeps are told apart from any other process's by their arguments
-  const BOUND = 1513, GRACE = 1709, SLACK = 2500;
+  // odd values, so the timers' sleeps are told apart from any other process's by their arguments. The case reads every
+  // process of the leg and every escapee up before the bound, so the bound leaves those node processes and the
+  // escapees' launchers time to start on a loaded runner, which 1513 ms did not always leave once the escapees were added
+  const BOUND = 2513, GRACE = 1709, SLACK = 2500;
   const shared = 'import { inBrowser } from "./real-viewer-leg";\n';
   fs.writeFileSync(path.join(root, 'ui', 'webview', 'b-browser.test.ts'), shared + 'test("leg b passes", async (t) => { await inBrowser(t, async () => {}); });\n');
   const { mark, roles, escapees } = hangingLeg(ext, A, true);
@@ -1890,7 +1892,7 @@ test('the per-file bound ends a leg that outlives it, with every process under i
   assert.ok(Date.now() - t0 < BOUND, 'the leg and the processes under it were up before the bound (' + BOUND + ' ms), so what is read below is the bound\'s doing: ' + (Date.now() - t0) + ' ms');
   // the control for the timers' read at the end, taken now while the cut leg's bound timer is up and asserted after the
   // processes' read, so a script with no timer of its own reads red on the processes first
-  const liveTimers = timersOf(root, /^sleep 1\.513\b/);
+  const liveTimers = timersOf(root, /^sleep 2\.513\b/);
   // the processes, read every 25 ms until every one is gone or the bound plus the grace has passed from the run's start (the
   // earliest the grace's end could act, its timer starting at the bound), so a green is the bound's own kill, not the grace's;
   // a pass of reads that ends past that moment does not count as gone in time
@@ -1909,14 +1911,14 @@ test('the per-file bound ends a leg that outlives it, with every process under i
   // (or one that stops them from escaping) is red here, and the header's rule is restated with it
   const stillUp = escaped.filter(([, pid]) => alive(pid)).map(([role]) => role);
   assert.deepEqual(stillUp, escaped.map(([role]) => role), 'the witnesses of the header\'s rule: each keeper whose launcher exited before the walk is still alive after the cut, reached by neither the parent links nor the group kill of a process the walk finds (gone: ' + JSON.stringify(escaped.filter(([, pid]) => !alive(pid)).map(([role]) => role)) + ')');
-  assert.ok(liveTimers.length >= 1, 'control: the scoped read of the run\'s timers found this run\'s live bound timer (sleep 1.513) before the bound, so its empty read at the run\'s end is not blind');
+  assert.ok(liveTimers.length >= 1, 'control: the scoped read of the run\'s timers found this run\'s live bound timer (sleep 2.513) before the bound, so its empty read at the run\'s end is not blind');
   // the run's own exit: by the bound, the grace and a slack for a loaded runner, from the run's start
   let deadline;
   await Promise.race([r.exited, new Promise((resolve) => { deadline = setTimeout(resolve, Math.max(0, t0 + BOUND + GRACE + SLACK - Date.now())); })]);
   clearTimeout(deadline);
   const at = Date.now() - t0;
   assert.ok(ended !== null && ended.ms <= BOUND + GRACE + SLACK, 'the run itself ended by the bound plus the grace and the slack (' + (BOUND + GRACE + SLACK) + ' ms), so the cut leg does not hold the step to its own timeout: ' + (ended ? ended.ms + ' ms' : 'still going at ' + at + ' ms') + '; every process of the leg was gone at ' + goneAt + ' ms');
-  assert.deepEqual(timersOf(root, /^sleep (1\.513|1\.709)\b/), [], 'no timer of the run is left behind at its exit (a sleep of the bound\'s or the grace\'s length under a process of this run)');
+  assert.deepEqual(timersOf(root, /^sleep (2\.513|1\.709)\b/), [], 'no timer of the run is left behind at its exit (a sleep of the bound\'s or the grace\'s length under a process of this run)');
   const closed = await within(r.closed, 10000);
   assert.ok(closed, 'the script\'s output closed within 10 s of its exit, so no process of the run still holds it');
   Object.assign(ended, closed);
