@@ -74,6 +74,7 @@ const RULES = [
   ".md code.md-math-src, .fileview-md code.md-math-src {",   // the math fill's source fallback, dressed as unrendered source (math.ts MATH_SOURCE_CLASS)
   // math in every bundle (Slice 4 of plans/markdown-viewer.md, decision 1): the feed sheet imports the KaTeX CSS as styles.css does, and the display box's twin
   ".katex-display {",
+  ".md-math-inline, .md-math-display {", ".md-math-display {",   // a formula waiting for the math renderer: the pending dress both sheets carry (math.ts; the review of iOS item 6, round 1, found the pair unguarded)
   // the Obsidian constructs and the figure gate (Slice 4; md-config.ts and figure-gate.ts render them, anchor-map.ts maps them)
   // (doubled `.md X, .fileview-md X`: the grammar sits on the marked singleton, so the chat's markdown bodies render the constructs too)
   ".md details.md-frontmatter, .fileview-md details.md-frontmatter {", ".md .md-frontmatter-head, .fileview-md .md-frontmatter-head {", ".md details.md-frontmatter pre, .fileview-md details.md-frontmatter pre {",
