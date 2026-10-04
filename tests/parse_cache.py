@@ -97,8 +97,8 @@ as the run's peak anonymous memory, 16.8 to 18.6 GiB without a collection before
 at this pull request's head of 2026-10-03; at its head of 2026-10-04, where the census module's builds already collect
 before their freeze and the module releases its derivations after its last case, memory.peak under a 16.5 GiB cap with
 no swap was 16.30 GiB without this collection and 15.64 GiB with it (16.22 and 15.78 GiB with no cap; four runs at
-once). Across the capped runs at that head, memory.peak ranged 15.36 to 16.10 GiB from run to run (0.40 to 1.14 GiB
-under the cap), and the peak anonymous memory, which leaves page cache out, was 15.10 to 15.66 GiB, against 15.81 to
+once). Across the capped runs with this collection, memory.peak ranged 15.36 to 16.10 GiB from run to run (0.40 to 1.14
+GiB under the cap), and the peak anonymous memory, which leaves page cache out, was 15.10 to 15.66 GiB, against 15.81 to
 16.08 GiB in the capped runs without this collection. An interpreter without that function (3.10
 to 3.12) is read as having its GIL, so nothing changes on 3.10 or 3.12, nor on a GIL build of 3.13 or later (it reports
 true); a free-threaded build run with its GIL on keeps that collector and is not collected here, since the test is the
