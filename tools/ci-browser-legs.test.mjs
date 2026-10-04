@@ -1955,14 +1955,16 @@ test('the per-file bound through the stub: a node --test that does not end after
   // a node --test that outlives the bound with no process under it, as node --test does while it ends after its file's
   // process exited: the stub writes A's pass and replaces itself with a 1.5 s sleep, so at the bound (601 ms) the walk finds
   // nothing to kill. No cut, and the leg reads green; the grace (5003 ms) never ends, its timer killed with the leg's end.
-  // The control: the same bound over a call that holds 0.75 s twice in sleeps under it, so the walk finds one and kills it,
-  // and the leg is cut and red; so the green above is the walk finding nothing, not a bound that never fired
+  // The control: the same bound over a call that holds 2 s twice in sleeps under it, so the walk finds one and kills it,
+  // and the leg is cut and red; so the green above is the walk finding nothing, not a bound that never fired. The first
+  // sleep outlasts the bound by about 1.4 s, so the walk finds it alive however slowly it reads the process table, and the
+  // second ends about 2.7 s in, before the grace's end (5.6 s), so the cut's red stands without the held one
   const knobs = { ROMP_BROWSER_LEGS_FILE_MS: '601', ROMP_BROWSER_LEGS_GRACE_MS: '5003' };
   const ending = run(A + '\n', { report: pass(A), linger: { [A]: '1.5' }, timeout: 30000, env: knobs });
   assert.equal(ending.status, 0, 'a node --test that outlives the bound with no process under it is not cut: green, exit 0; stderr:\n' + ending.err);
   assert.equal(ending.err, '', 'nothing on stderr: no cut red claims a kill that did not happen');
   assert.deepEqual(timersOf(root, /^sleep (0\.601|5\.003)\b/), [], 'no timer of the run is left behind');
-  const cutControl = run(A + '\n', { report: pass(A), hold: '0.75', timeout: 30000, env: knobs });
+  const cutControl = run(A + '\n', { report: pass(A), hold: '2', timeout: 30000, env: knobs });
   assert.equal(cutControl.status, 1, 'control: at the same bound, a call with a process under it (its sleep) is cut, red; stderr:\n' + cutControl.err);
   assert.ok(cutControl.err.includes('ci-browser-legs: ' + A + ' ran past the per-file bound (601 ms)'), 'control: the cut is named:\n' + cutControl.err);
   // a node --test whose one process under it at the bound has already ended and is not yet reaped, a zombie, as a file's
@@ -2022,6 +2024,25 @@ test('the per-file bound through the stub: a node --test that does not end after
     const order = r.out.split('\n').filter((l) => / \(node --test exited \d+\):$/.test(l)).map((l) => l.replace(/^ci-browser-legs: | \(node --test exited \d+\):$/g, ''));
     assert.deepEqual(order, [A, B, C], 'the legs\' outputs are printed in roster order, each after a line naming the leg and its exit, although with ' + jobs + ' at a time they finish in another:\n' + r.out);
   }
+});
+
+test('the per-file bound counts from each leg\'s own start, executed with the real node and the real reporter: two legs run one at a time, each passing after 1.5 s, under a bound (2701 ms, set by the knob) longer than either leg and shorter than the two together, are neither cut, so the leg queued behind the other gets its bound from its own start, not from the run\'s', (t) => {
+  const { run, root, ext, A, B } = syntheticTree(t);
+  t.after(() => { for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
+  const leg = 'const { test } = require("node:test");\ntest("passes after 1.5 s", async () => { await new Promise((resolve) => setTimeout(resolve, 1500)); });\n';
+  fs.writeFileSync(path.join(ext, A), leg);
+  fs.writeFileSync(path.join(ext, B), leg);
+  // B starts only when A has ended, 1.5 s and node's start-up after the run's, so a bound counted from the run's start
+  // (2701 ms) cuts B before its test passes; counted from B's own start, it leaves B 1.2 s beyond its test, less node's
+  // start-up
+  const t0 = Date.now();
+  const r = run(A + '\n' + B + '\n', { real: true, timeout: 30000, env: { ROMP_BROWSER_LEGS_JOBS: '1', ROMP_BROWSER_LEGS_FILE_MS: '2701' } });
+  const took = Date.now() - t0;
+  assert.ok(took > 2701, 'control: the run, one leg at a time, outlasted the bound, so a bound counted from the run\'s start would have cut the queued leg: ' + took + ' ms');
+  assert.ok(!r.err.includes('ran past the per-file bound'), 'neither leg was cut: each leg\'s bound counts from its own start, so the leg queued behind the other is not cut by a bound counted from the run\'s:\n' + r.err);
+  assert.equal(r.status, 0, 'both legs pass, green, exit 0; stderr:\n' + r.err);
+  assert.ok(r.out.includes('ci-browser-legs: 2 rostered legs, 1 at a time'), 'the run says it runs one leg at a time:\n' + r.out);
+  assert.equal((r.out.match(/passes after 1\.5 s/g) || []).length, 2, 'the spec output carries both legs\' passes:\n' + r.out);
 });
 
 test('each example the roster rule\'s homes name reads green, executed: the script with the real node and the real reporter over one synthetic rostered leg of each example in EXAMPLES exits 0 with nothing on stderr, each failure marked as it happens; a control that awaits the catch example\'s stand-in for inBrowser with no try reads red with the lost-browser remedy, so that green is the catch\'s doing', (t) => {
