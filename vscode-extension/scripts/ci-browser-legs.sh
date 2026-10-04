@@ -80,11 +80,15 @@
 # (Playwright handles SIGTERM itself; recorded on a development box through the step's own command, not executed here),
 # and a file's process that does end on the signal leaves what is under it running, before any walk reads the tree. The
 # knobs are whole numbers above 0 of at most 9 digits (digits alone, no leading zero), refused by name before any leg
-# runs, and the step sets none of them. Before any leg runs the script also reads its own process the two ways the bound
-# reads the process table (ps -A -o pid= -o ppid= for the walk, ps -o stat= -p for a process's state) and refuses by
-# name when either read fails, since with a ps that cannot read them the bound would kill nothing and name no cut (a
-# missing ps fails both; busybox's ps reads the first and refuses -p). The tree test's case "the per-file bound ends a
-# leg that outlives it" runs, with the real node and a short bound, a synthetic leg whose node process ignores SIGTERM
+# runs, and the step sets none of them. Before any leg runs the script also reads the process table the two ways the
+# bound reads it, and refuses by name when either read fails: ps -A -o pid= -o ppid=, the walk's read, must list this
+# script's own process and a process under it (the ps it started), and ps -o stat= -p, the state read, must print a
+# state for this script's own process. With a ps that cannot make the first read the bound would kill nothing and name
+# no cut, and with one that cannot make the second it would kill the leg's processes but name no cut, since it could not
+# tell a live process from an ended one (a missing ps fails both reads; busybox's ps makes the first and refuses -p).
+# The first read keys on no parent of this script's own, since bash reads its parent once, at its start, and a launcher
+# that exits after starting the script leaves that reading stale. The tree test's case "the per-file bound ends a leg
+# that outlives it" runs, with the real node and a short bound, a synthetic leg whose node process ignores SIGTERM
 # and starts a process in a session of its own and one in the file's own process group, each with a child, and a process
 # in a session of its own whose child exits at once and leaves a grandchild in its group, reparented out of the tree,
 # and reads every one of those processes gone by the bound plus the grace, and the three keepers above still alive; its
@@ -100,12 +104,13 @@
 # its bound have ended; its case "the per-file bound through the stub" runs the grace's end after a cut (the leg second
 # in its roster, one leg at a time, a leg queued behind it), beside a leg still running, which it leaves running, and
 # with nothing cut, a node --test that has exited and is not yet reaped when the grace runs out, a node --test that
-# outlives the bound with nothing under it or with only a zombie under it, the knobs' refusals and those of the ps
-# reads, the status of legs that exit differently, and a roster longer than the legs run at once; its case "the per-file
-# bound counts from each leg's own start" runs, with the real node, two legs one at a time, each shorter than the bound
-# and the two together longer, and reads neither cut. The timers and the event pipe use what bash 3.2 has (no wait -n),
-# as tests/shell-portability.bats holds for every shell script the repo ships. The legs' records are joined in roster
-# order into the one record the pass below reads.
+# outlives the bound with nothing under it or with only a zombie under it, the knobs' refusals, the refusals of the ps
+# reads and the run whose parent has exited before them (once through a launcher that exits, once through a stand-in ps
+# that shows that parent as 1), which is not refused, the status of legs that exit differently, and a roster longer than
+# the legs run at once; its case "the per-file bound counts from each leg's own start" runs, with the real node, two
+# legs one at a time, each shorter than the bound and the two together longer, and reads neither cut. The timers and the
+# event pipe use what bash 3.2 has (no wait -n), as tests/shell-portability.bats holds for every shell script the repo
+# ships. The legs' records are joined in roster order into the one record the pass below reads.
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (the reporter's header states
 # what each line records) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result
 # attributed to it is a pass that carries no skip or todo, is a test and not a suite, and is not marked as node's
@@ -234,9 +239,13 @@ whole ROMP_BROWSER_LEGS_FILE_MS "$BOUND_MS"
 whole ROMP_BROWSER_LEGS_GRACE_MS "$GRACE_MS"
 whole ROMP_BROWSER_LEGS_JOBS "$JOBS"
 # The ps reads the header states, before any leg runs: the walk's read of every process's pid and parent must list this
-# script's own process with its parent, and the state read must print a state for it.
-if ! ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$$" -v pp="$PPID" '$1 == p && $2 == pp { f = 1 } END { exit !f }'; then
-  echo "ci-browser-legs: ps -A -o pid= -o ppid= did not list this script's own process with its parent, so the per-file bound would find no process under a leg to kill and name no cut: put a ps on PATH that reads the whole process table so (procps, or BSD's); no leg ran" >&2; exit 1
+# script's own process and a process under it (the ps started here is one, as the walk finds a leg's processes by their
+# parent), and the state read must print a state for this script's own process. The first read checks no parent of this
+# script's own: bash sets $PPID once, at its start, so after a launcher that exits once it has started the script
+# (nohup ... & from a shell that then exits) $PPID names a process that is gone while ps reads the new parent, and a
+# check keyed on $PPID would refuse a ps that works.
+if ! ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$$" '$1 == p { own = 1 } $2 == p { kid = 1 } END { exit !(own && kid) }'; then
+  echo "ci-browser-legs: ps -A -o pid= -o ppid= did not list this script's own process and a process under it (the ps it started), so the per-file bound would find no process under a leg to kill and name no cut: put a ps on PATH that reads the whole process table so (procps, or BSD's); no leg ran" >&2; exit 1
 fi
 own_state=$(ps -o stat= -p "$$" 2>/dev/null) || own_state=""
 if [ -z "${own_state// /}" ]; then
