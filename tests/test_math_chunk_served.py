@@ -28,12 +28,16 @@ Against a hermetic kernel serving the checkout's own build (tests/lab_dist.py), 
   - a hidden tab (a second session, `api`, beside `web`), in both engines on the phone: the reader on the paragraph in `web`, every formula
     above it waiting, switches to `api`; the chunk lands and the swap lays the formulas out while `web` is hidden; back on `web` the
     paragraph is within 1 px of where they left it (render.ts keeps the reader's line at the switch and lands it on the next show).
+  - a comment thread over a passage from prose into a formula, in both engines: while the formula waits its mark is cut at the
+    formula; read right after the arrival (no frame between), the mark covers the whole passage and the formula's KaTeX root wears
+    its tint (render.ts unwraps every mark in a view the arrival laid out and puts each thread back over the laid-out text);
   - a failed load and its retry, in both engines on the phone: the chunk's first answer is a 404, so every formula of the reply is its
     source; with the reader on a paragraph below them, a new reply's formula uses the retry the failure armed (the second request,
     held: nothing waits, the sources stand), and when it is served every formula is laid out, the failure's fallbacks included, with
     the paragraph within 1 px (math.ts retries a failed load; render.ts keeps the line across the success as across a first arrival).
 SYNTHETIC fixtures only; skips LOUDLY without the extension deps or a Playwright browser (CI's served job installs both)."""
 import gzip
+import html
 import json
 import lab_dist
 import lab_ports
@@ -72,6 +76,10 @@ STEP_FORMULAS = [r"\frac{a}{b}", r"\sum_{i=1}^{n} x_i", r"\int_0^1 f(x)\,dx", r"
                  r"\prod_{k=1}^{m} p_k", r"\frac{\partial f}{\partial x}", r"\lim_{x\to 0} g(x)"]
 READS = 10
 LONG_FILLERS = 110   # more replies after the math reply than the chat's tail window (render.ts WINDOW_TAIL, 80 units) renders
+MARK_TID = "tid-math-1"   # the thread of the tests marked with_comment_thread
+MARK_HEAD = "the ranking term"   # the prose its passage starts with, before STEP-01's first formula
+MARK_TAIL = "weighs the api session"   # and the prose it ends with, after that formula
+MARK_TEX = r"w_1 = \frac{a_1}{b_1}"   # STEP-01's first formula (ranking_reply)
 
 
 def ranking_reply():
@@ -105,6 +113,35 @@ def with_api_session(test):
     holds `web` alone, so its first formula is the first the page meets)."""
     test.api_session = True
     return test
+
+
+def with_comment_thread(test):
+    """Mark a test whose kernel starts with one open comment thread on the math reply `r1`: a passage running from prose (MARK_HEAD)
+    through STEP-01's first formula as KaTeX lays it out into the prose after it (MARK_TAIL), as a reader's selection over the
+    laid-out reply records it (setUp writes the comments store before the kernel starts)."""
+    test.comment_thread = True
+    return test
+
+
+def katex_text(tex):
+    """The text KaTeX's layout of `tex` reads as, which a reader's selection over the laid-out formula records: katex.renderToString
+    under the fill's options with its tags stripped and its entities decoded, the text nodes the DOM builder writes (math.ts's fill
+    uses katex.render; both serialize one tree)."""
+    js = ("const k=require(process.argv[1]);process.stdout.write(k.renderToString(process.argv[2],"
+          "{output:'html',trust:false,maxSize:50,throwOnError:false}));")
+    p = subprocess.run(["node", "-e", js, os.path.join(EXT, "node_modules", "katex"), tex], capture_output=True, text=True, timeout=60)
+    if p.returncode != 0:
+        raise AssertionError("katex could not render %r: %s" % (tex, p.stderr[-500:]))
+    return html.unescape(re.sub(r"<[^>]+>", "", p.stdout))
+
+
+def mark_exact():
+    return MARK_HEAD + " " + katex_text(MARK_TEX) + " " + MARK_TAIL
+
+
+def norm_ws(t):
+    """Whitespace runs to one space, as comments.ts matches a thread's text (a zero-width space is not whitespace there either)."""
+    return re.sub(r"\s+", " ", t or "").strip()
 
 
 DRIVER = r"""
@@ -397,6 +434,64 @@ await browser.close();
 process.exit(0);
 """
 
+# A comment thread over a passage that runs from prose into a formula, while the formula waits: the mark is cut at the formula (its
+# text there is the TeX); when the chunk lands, the arrival unwraps every mark in the view and puts the thread back over the laid-out
+# text, so the whole passage is marked and the formula's KaTeX root wears the mark's tint (render.ts onMathSettled; before, a mark
+# placed while the formula waited survived the fill and applyCommentMarks never searched again for a thread that had one). The
+# arrival's own result is read by a MutationObserver, in the microtask after the task that laid the formulas out, so no frame the
+# kernel sends, which would re-run the marks pass over a rebuilt turn, can land between the arrival and the read.
+DRIVER_MARK = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const out = {};
+try {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  const errors = []; page.on("pageerror", (e) => errors.push(e.message));
+  const reqs = [];
+  let release; const held = new Promise((r) => { release = r; });
+  await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => { reqs.push(route.request().url()); await held; await route.continue(); });
+  await page.goto(cfg.chat);
+  await page.waitForFunction((t) => (document.body.innerText || "").includes(t), cfg.marker, { timeout: 30000 });
+  const sel = 'mark.cmt-hl[data-tid="' + cfg.tid + '"]';
+  await page.waitForFunction((s) => !!document.querySelector(s), sel, { timeout: 30000 });
+  await page.evaluate(() => fetch("/healthz", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+  // what the thread's marks cover, and the reply's formulas, read in the page (installed once: the page's policy allows no eval)
+  await page.evaluate(() => {
+    window.__readMarks = (s, uuid) => {
+      const turn = document.querySelector('#content .turn[data-uuid="' + uuid + '"]');
+      const marks = Array.from(document.querySelectorAll(s));
+      return { text: marks.map((m) => m.textContent || "").join(""), segs: marks.length, inTurn: !!turn && marks.every((m) => turn.contains(m)),
+        pending: turn ? turn.querySelectorAll(".md-math-inline, .md-math-display").length : -1,
+        katex: turn ? turn.querySelectorAll(".katex").length : -1, hosts: turn ? turn.querySelectorAll(".katex.cmt-hl-host").length : -1 };
+    };
+  });
+  out.waiting = await page.evaluate(([s, uuid]) => window.__readMarks(s, uuid), [sel, cfg.uuid]);
+  await page.evaluate(([s, uuid]) => {
+    window.__atArrival = null;
+    new MutationObserver(() => {
+      const turn = document.querySelector('#content .turn[data-uuid="' + uuid + '"]');
+      if (window.__atArrival === null && turn && turn.querySelector(".katex")) window.__atArrival = window.__readMarks(s, uuid);
+    }).observe(document.getElementById("content"), { childList: true, subtree: true });
+  }, [sel, cfg.uuid]);
+  release();
+  await page.waitForFunction(() => window.__atArrival !== null, null, { timeout: 30000 });
+  out.arrival = await page.evaluate(() => window.__atArrival);
+  out.requests = reqs.length;
+  out.errors = errors;
+} catch (e) {
+  out.died = String(e && e.message || e);
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
 # The reader inside the math reply of a LONG transcript, on a phone: the reply sits above the fresh page's tail window, so the reload
 # restore finds no row of it in the fresh page, lands the raw top and arms the deep-link land, which builds a window around the reply and
 # lands it at the record's offset (render.ts landActive's reload restore, scrollToAnchor's keep-offset branch). One page life to place the
@@ -608,6 +703,12 @@ class ServedMathChunk(unittest.TestCase):
             for i in range(1, 16):
                 recs.append(dict(reply("w%d" % i, "w%d" % (i - 1), self.t0 + 20 + i, "API-TAB " + FILLER % i), sessionId=SID2))
             Path(proj, SID2 + ".jsonl").write_text(jsonl(recs))
+        if getattr(getattr(self, self._testMethodName, None), "comment_thread", False):
+            os.makedirs(os.path.join(state, "comments"), exist_ok=True)
+            self.mark_exact = mark_exact()
+            Path(state, "comments", SID + ".json").write_text(json.dumps({"threads": [
+                {"tid": MARK_TID, "sid": SID, "name": "web-comment-1", "anchorUuid": "r1", "cutUuid": "r1",
+                 "exact": self.mark_exact, "status": "open", "createdT": self.t0 + 50}]}))
         self.transcript = os.path.join(proj, SID + ".jsonl")
         Path(self.transcript).write_text(jsonl([
             {"type": "user", "timestamp": iso(self.t0), "uuid": "u1", "parentUuid": None, "promptSource": "typed",
@@ -851,6 +952,41 @@ class ServedMathChunk(unittest.TestCase):
 
     def test_a_failed_load_retried_keeps_the_reader_on_a_phone_webkit(self):
         self._retry("webkit")
+
+    def _mark(self, engine):
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
+                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                reply("r1", "u2", self.t0 + 40, ranking_reply())]
+        with open(self.transcript, "a") as f:
+            f.write(jsonl(recs))
+        cfg = os.path.join(self.lab, "cfg-mark-%s.json" % engine)
+        Path(cfg).write_text(json.dumps({
+            "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+            "marker": "STEP-01", "tid": MARK_TID, "uuid": "r1"}))
+        r = self._run(engine, DRIVER_MARK, cfg, "mark-" + engine)
+        w = engine + ": comment mark: "
+        self.assertNotIn("died", r, w + "the driver stopped early: %r\nkernel:\n%s" % (r.get("died"), Path(self.klog).read_text()[-1500:]))
+        wt, ar = r["waiting"], r["arrival"]
+        self.assertGreater(wt["pending"], 0, w + "the reply's formulas wait for the chunk: %r" % wt)
+        self.assertEqual(norm_ws(wt["text"]), MARK_HEAD,
+                         w + "while the formula waits, the thread's mark is cut at it, its text there being the TeX: %r" % wt)
+        self.assertTrue(ar["inTurn"] and ar["katex"] > 0, w + "the arrival laid the reply out, the marks in its turn: %r" % ar)
+        self.assertEqual(norm_ws(ar["text"]), norm_ws(self.mark_exact),
+                         w + "after the arrival the mark covers the whole passage, the laid-out formula included: %r vs %r" % (ar, self.mark_exact))
+        self.assertGreaterEqual(ar["hosts"], 1, w + "and the formula's KaTeX root wears the mark's tint: %r" % ar)
+        self.assertEqual(r["requests"], 1, w + "one chunk: %r" % r)
+        self.assertEqual(r["errors"], [], w + "no page error")
+
+    @with_comment_thread
+    def test_a_comment_mark_over_a_waiting_formula_covers_the_whole_passage_after_the_arrival_chromium(self):
+        self._mark("chromium")
+
+    @with_comment_thread
+    def test_a_comment_mark_over_a_waiting_formula_covers_the_whole_passage_after_the_arrival_webkit(self):
+        self._mark("webkit")
 
     def _window_reload(self, engine):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")

@@ -14655,9 +14655,9 @@ function rerenderAll(): void {
 // and a later success takes it again: a view holding a formula the failure showed as its source (mathFailedIn) counts as one that
 // held a waiting formula, since the success lays those out in place too (math.ts restoreFailedFormulas; round 1 of the PR's
 // review, which ruled that a failed load is retried). Then the comment
-// marks go back on every view that held a waiting formula (a mark on math pairs with the rendered .katex root,
-// applyCommentMarks), and a queued group whose cached node held one is marked changed, so its next render rebuilds the node's
-// children with the renderer in (renderPendingGroup).
+// marks go back on every view that held a waiting formula, unwrapped and searched again over the laid-out text (a mark on math
+// pairs with the rendered .katex root, applyCommentMarks), and a queued group whose cached node held one is marked changed, so
+// its next render rebuilds the node's children with the renderer in (renderPendingGroup).
 onMathSettled(() => {
   const content = document.getElementById("content");
   const av = activeId ? views.get(activeId) : null;
@@ -14674,7 +14674,16 @@ onMathSettled(() => {
       else if (keep && !restoreReadingLine(content, av, keep, from)) restoreScrollAnchor(content, av, keep, from);
       av.scrollTop = content.scrollTop;   // the per-view saved position follows
     }
-    for (const sid of held) applyCommentMarks(sid);
+    for (const sid of held) {
+      // Every mark in the view comes off first, after the fill, and the pass puts each thread back over the text as it now
+      // reads: a mark placed while a formula waited was cut at the formula (its text then was the TeX, and the fill dropped any
+      // segment inside the placeholder), and applyCommentMarks searches again only for a thread with no mark in its turn, so
+      // without the unwrap the passage stayed cut after the arrival (the review of iOS item 6, round 1). Every arrival does it:
+      // a success, a late one, a retry's, and the failure.
+      const hv = views.get(sid)!;
+      for (const m of Array.from(hv.el.querySelectorAll("mark.cmt-hl"))) unwrapCommentMark(m as HTMLElement);
+      applyCommentMarks(sid);
+    }
   };
 });
 
