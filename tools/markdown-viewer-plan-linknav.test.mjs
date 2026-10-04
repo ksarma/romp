@@ -990,7 +990,7 @@ const legsOffRoster = (files, legs) => files.filter((f) => /^ui\/webview\/[\w-]+
  *  Tests paragraph names it with, for one of two reasons. ENGINES_OFF: a leg that launches an engine the roster's job does not
  *  install, where a test in a rostered file would not run (the file review's round 17, tests-1 with regression-1, and the
  *  coordinator's decision 2 on it: the one gate's tap cells and stacking cells in WebKit and Firefox). BOUNDS_OFF: a leg whose whole
- *  run outlasts both of the step's bounds, its five minutes and node's 240 s per file, so it runs locally alone and raising the
+ *  run outlasts both of the step's bounds, its five minutes and the script's 240 s per file, so it runs locally alone and raising the
  *  step's bound is the owner's change to the workflow file (the coordinator's ruling on the roster after the file review's round
  *  19: the open leg, nearly ten minutes through the step's own command). Each is a derived leg whose header carries its words,
  *  the plan names it with its own, and it is no roster line in either state of the pin below. The legs whose code names Firefox
@@ -1172,7 +1172,7 @@ const DISCLOSURE_CLAUSES = [
   ['the shared roster of browser legs, ' + ROSTER.join('/'), 'the road that runs them with a browser, the shared roster by its file name'],
   ['on main since PR 887 landed', 'that the roster, the step and the switch are on main'],
   ['none of this follow-on\'s legs is a roster line yet', 'that none of the legs is on the roster'],
-  ['outlasts both of the step\'s bounds', 'why: the open leg outlasts the step\'s own bound and node\'s per-file bound'],
+  ['outlasts both of the step\'s bounds', 'why: the open leg outlasts the step\'s own bound and the script\'s per-file bound'],
   ['waits on the owner\'s choice', 'that rostering the legs waits on a decision the owner makes'],
   ['reaches a leg only once it is a roster line', 'that the executed guard reaches none of the legs while they are off the roster'],
   ...NAME_CLAUSES,
