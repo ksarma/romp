@@ -905,7 +905,11 @@ try {
   })().catch((e) => { out.noticeError = String(e).slice(0, 200); });
   // the drag while the badge is painted (cfg.handleDrag, above): started at the return's flip, it waits for the cue pane's badge to
   // paint, then drags the handle in five steps (the composer's down, which shrinks it; the strip's down, which grows the strip),
-  // holds it 300 ms and releases it, all while the outage holds. Awaited after the fresh wait
+  // holds it 300 ms and releases it, all while the outage holds. Awaited after the fresh wait. The composer's drag first waits for its
+  // precondition (the round-3 closing check: one Firefox run in eight pressed the handle while the scroll marks had no box, from before
+  // the press to after the release, and the leg failed on its precondition, not on the case): the marks painted, with a box, and the
+  // transcript at its top, polled until 1500 ms before the outage ends (the drag takes about a second). A page that never meets it by
+  // then is a setup failure, reported apart from the case (handleDragSetup), and the handle is not pressed
   const dragDone = !cfg.handleDrag ? null : (async () => {
     const deadline = now() + (cfg.outageMs || 0);
     while (now() < deadline) {
@@ -914,6 +918,18 @@ try {
       await sleep(50);
     }
     await sleep(300);
+    if (cfg.handleDrag === "composer") {
+      const t0 = now(), ready = (h) => !!(h && h.marks && h.marks[2] > 0 && h.marks[3] > 0 && h.scrollTop === 0);
+      let h = await handleOf();
+      while (!ready(h) && now() < deadline - 1500) { await sleep(50); h = await handleOf(); }
+      out.handleDragWait = { ms: now() - t0, ready: ready(h), marks: h && h.marks, scrollTop: h && h.scrollTop };
+      if (!ready(h)) {   // what the page held then, for the next reader: the marks' own display and notches, and the transcript's turns
+        const f = frameOf("chat"), page = !f ? { err: "no-chat-frame" } : await f.evaluate(() => { const mk = document.querySelector(".scroll-marks");
+          return { marksDisplay: mk ? mk.style.display : "absent", notches: mk ? mk.children.length : -1, turns: document.querySelectorAll("#content .turn[data-unit]").length, hidden: document.hidden }; }).catch((e) => ({ err: String(e).slice(0, 120) }));
+        out.handleDragSetup = { why: "the scroll marks had no box, or the transcript was off its top, until 1500 ms before the outage's end", last: h, page };
+        return;
+      }
+    }
     out.t.dragStart = now();
     out.handleDragRec = await dragBy([18, 18, 18, 18, 18], 300);
     out.t.dragEnd = now();

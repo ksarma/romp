@@ -1447,6 +1447,10 @@ class ReturnFromBackground(unittest.TestCase):
         where = name + ": "
         if sub:
             self.assertEqual(r.get("subView"), {"opened": True, "pin": True}, where + "the viewer opened and its header holds the pin: %r" % (r.get("subView"),))
+        # the composer's precondition, which the driver waits for before the press (the round-3 closing check: a Firefox run that pressed
+        # the handle with the scroll marks unpainted failed on the precondition, read as the case): never met, it is a setup failure
+        self.assertFalse("handleDragSetup" in r, where + "SETUP, not the case: the precondition was never met, so the handle was not pressed: %r (the wait: %r)"
+                         % (r.get("handleDragSetup"), r.get("handleDragWait")))
         self.assertNotIn("handleDragError", r, where + "the drag ran: %r" % (r.get("handleDragError"),))
         d = r.get("handleDragRec") or {}
         cls = "composer-resizing" if kind == "composer" else "tabbar-resizing"
@@ -1487,7 +1491,8 @@ class ReturnFromBackground(unittest.TestCase):
                         where + "the dragged handle was in the recorder's chrome in a record read between the press and the release, while the class was on the "
                         "body: %r" % ([(b["t"] - d["tDown"], [c["el"] for c in b["chrome"]]) for b in held][:3],))
         self._cue(name, r, "hung", 6)
-        type(self).measurements.setdefault(name, {})["handleDrag"] = {"drag": d, "grow": r.get("handleGrow"), "before": bx, "during": [(b["t"] - t0, b["box"], b["ctop"]) for b in during][:12]}
+        type(self).measurements.setdefault(name, {})["handleDrag"] = {"drag": d, "grow": r.get("handleGrow"), "wait": r.get("handleDragWait"), "before": bx,
+                                                                      "during": [(b["t"] - t0, b["box"], b["ctop"]) for b in during][:12]}
         self._surface(name, r)
 
     def test_desktop_hung_6s_a_composer_drag_moves_the_painted_badge_nowhere_and_its_handle_stays_chrome(self):
