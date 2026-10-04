@@ -454,13 +454,16 @@ export const SCENES: SceneDef[] = [
             .filter((u) => u !== "/dist/render.js?v=7"), src: document.querySelectorAll("#out code.md-math-src").length,
             pending: document.querySelectorAll("#out .md-math-inline, #out .md-math-display").length };
         }, "then $z^2$");
-        assert.deepEqual(r, { tags: [CHUNK_URL, CHUNK_URL], src: 2, pending: 0 }, "a fresh tag with the first tag's URL though the first attempt is out, and nothing waits on it: " + JSON.stringify(r));
         await drain(s.page);
         await drain(s.page);
+        // each count reported as soon as it is read and before the assertions that follow it, so a failing run still prints it
         const held = s.chunkRequests();
+        t.diagnostic(browser.browserType().name() + ": chunk requests for the two tags, reported and not asserted: " + held + " while the first answer was held");
+        assert.deepEqual(r, { tags: [CHUNK_URL, CHUNK_URL], src: 2, pending: 0 }, "a fresh tag with the first tag's URL though the first attempt is out, and nothing waits on it: " + JSON.stringify(r));
         first.open();
         const laid = await allLaidOut(s.page);
         b = await box(s.page);
+        t.diagnostic(browser.browserType().name() + ": chunk requests for the two tags, reported and not asserted: " + s.chunkRequests() + " after the first answer landed");
         assert.ok(laid, "the answer, once it lands, lays every formula out: " + JSON.stringify(b));
         await s.page.waitForFunction(() => (window as any).__settles >= 2, null, { timeout: 10000 });
         await drain(s.page);
@@ -469,7 +472,6 @@ export const SCENES: SceneDef[] = [
         assert.deepEqual([b.katex, b.src.length], [2, 0]);
         assert.deepEqual(await tagUrls(), [CHUNK_URL, CHUNK_URL], "two tags in all, the first attempt's and the one retry's, both with the chunk's URL: the success adds none");
         assert.equal(said(s).length, 1, "and the success said nothing");
-        t.diagnostic(browser.browserType().name() + ": chunk requests for the two tags, reported and not asserted: " + held + " while the first answer was held, " + s.chunkRequests() + " after it landed");
       });
     },
   },
