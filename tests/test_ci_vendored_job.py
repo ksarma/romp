@@ -8,9 +8,11 @@ ffab236bd (run 36308512751) the step took 67 s. The growth is fork PR #780's tra
 a file's tests one after another, and the tests of one file, tools/romp-track-bash-guard.test.mjs, add up to about 1100 s
 in that run's log (the slowest single test 222 s). With the step inside the Shell job, a PR that added more than about three
 minutes of bats time (the job's margin at 1d591384e was 190 s) ran the job past its cap. Raising the Shell cap was declined,
-since it would hide the growth; the step moved to its own job instead. The Shell cap was raised later, on 2026-10-01, for the
-bats suite's own growth (Run bats alone took 1850 s on Linux in run 36716348831), and check 4 holds the new line; ci.yml's
-comment above that line carries the current figure.
+since it would hide the growth; the step moved to its own job instead. The Shell cap was raised later, for the bats suite's
+own growth (Run bats alone took 1850 s on Linux in run 36716348831): main had a flat 35 until fork PR 940 landed on
+2026-10-04 with 60 on macOS and 50 on Linux, and fork PR 926, merging main after it, set the Linux figure to 55 by the rule
+(the slowest finished job plus 10 minutes, rounded up to a multiple of 5); check 4 holds that line, and ci.yml's comment
+above it carries the current figure.
 
 THE PIN IS EXACT EQUALITY, read as text: CI's Python cells install no YAML library, as the other tests/test_ci_*.py modules
 note. This module first held the job through a closed line reader that enumerated the shapes a line could take and the
@@ -51,26 +53,29 @@ literal, and any change to it is red until the literal changes with it, on purpo
    and that module says what the values held must mean (one weekly cron at a quiet hour Pacific, the manual dispatch kept)
    and ties them to every matrix expression's events, so a change made on purpose updates ON_LINES here and must still
    pass that module.
-4. The Shell job's cap line EQUALS SHELL_CAP_LINE (60 minutes on macOS, 45 on Linux, in the python job's per-OS form, set
-   on 2026-10-01 with 55 on macOS and moved to 60 on 2026-10-02, each from the measurement in ci.yml's comment above the
-   line, the slowest finished job of its OS; a flat 35 until 2026-10-01): it is the only line at four spaces in that job
-   holding "timeout", so a second copy, bare, quoted or as an explicit key, is red too (one whose quoted key spells the
-   word through an escape is not read here; actionlint and tests/test_ci_sdk_pin.py refuse it). And the Shell job's lines
-   that name node as a word or hold --test EQUAL SHELL_NODE_LINES, the manager handshake step's name line and run line. The
-   ruling asked that the Shell job hold no node --test step, exactly; this module reads that as no node test there but the
-   manager handshake's, whose step stays for T224's reason (it runs inside a check upstream's ruleset requires, so a red
-   handshake blocks the merge there). Here too a `#` line inside a block scalar is read as text, so a node command written
-   into a run block's heredoc counts. And the Shell job's last two steps, its node setup and the manager handshake step,
-   EQUAL SHELL_TAIL, from the job's one setup-node line to its end: with working-directory: tools on the handshake step,
-   node --test matches no file, runs no test and exits 0, and a step's shell:, env: (NODE_OPTIONS), with:, if: or
-   continue-on-error: hides a red the same way, so the two steps are held whole (what a step before them does is not: see
-   "Not held here" below). The node lines are read one line at a time, so among the forms they do not read are a run value
-   in a quoted scalar continued over a line that starts with `#` (content() drops that line as a comment, where YAML reads
-   it as the scalar's text) and a double-quoted run value that spells node or --test through a backslash escape (`\\x6eode
-   -\\x2dtest`, or a word split over an escaped line break); tests/test_ci_sdk_pin.py refuses both forms in ci.yml (a
-   quoted scalar continued past its line; a backslash escape in a double-quoted scalar). Nor is anything bash assembles
-   from the run text read (a backslash-newline, quotes inside a word, a variable): the lines are read as text, and no
-   module reads the shell's result.
+4. The Shell job's cap line EQUALS SHELL_CAP_LINE (60 minutes on macOS, 55 on Linux, in the python job's per-OS form;
+   ci.yml's comment above the line sizes each, the slowest finished job of its OS plus 10 minutes rounded up to a multiple
+   of 5. Main had a flat 35 until fork PR 940 landed on 2026-10-04 with 60 on macOS and 50 on Linux, the figures its
+   branch had held since 2026-10-02, on measured runs, after 55 on macOS, on a projection, and 45 on Linux from
+   2026-09-30. Fork PR 926, merging main after 940 landed, set the Linux figure to 55 by the rule): it is the only line at
+   four spaces in that job holding
+   "timeout", so a second copy, bare, quoted or as an explicit key, is red too (one whose quoted key spells the word through
+   an escape is not read here; actionlint and tests/test_ci_sdk_pin.py refuse it). And the Shell job's lines that name
+   node as a word or hold --test EQUAL SHELL_NODE_LINES, the manager handshake step's name line and run line. The ruling
+   asked that the Shell job hold no node --test step, exactly; this module reads that as no node test there but the manager
+   handshake's, whose step stays for T224's reason (it runs inside a check upstream's ruleset requires, so a red handshake
+   blocks the merge there). Here too a `#` line inside a block scalar is read as text, so a node command written into a run
+   block's heredoc counts. And the Shell job's last two steps, its node setup and the manager handshake step, EQUAL
+   SHELL_TAIL, from the job's one setup-node line to its end: with working-directory: tools on the handshake step, node
+   --test matches no file, runs no test and exits 0, and a step's shell:, env: (NODE_OPTIONS), with:, if: or
+   continue-on-error: hides a red the same way, so the two steps are held whole (what a step before them does is not:
+   see "Not held here" below). The node lines are read one line at a time, so among the forms they do not read are a run
+   value in a quoted scalar continued over a line that starts with `#` (content() drops that line as a comment, where
+   YAML reads it as the scalar's text) and a double-quoted run value that spells node or --test through a backslash
+   escape (`\\x6eode -\\x2dtest`, or a word split over an escaped line break); tests/test_ci_sdk_pin.py refuses both
+   forms in ci.yml (a quoted scalar continued past its line; a backslash escape in a double-quoted scalar). Nor is
+   anything bash assembles from the run text read (a backslash-newline, quotes inside a word, a variable): the lines are
+   read as text, and no module reads the shell's result.
 5. The macOS cap, 90, is inside the literal (check 2), so it is pinned by equality with everything else.
 6. Each moved job's name, the text of its name line before the first expression (`Vendored tooling (node --test, ` here;
    tests/test_ci_served_job.py reads the served-pages job's name up to its runner label, `Served pages (pytest, `, since that
@@ -192,11 +197,12 @@ ON_LINES = (
 )
 # The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
 # the slowest measured or projected job plus 10 minutes, rounded up to a multiple of 5 (ci.yml's comment above the line
-# carries the measurement: Linux 34 min 20 s in run 36998140007, job 110809463925, the slowest among the finished runs on
-# main, the batch branches and the open PRs whose tests will land, its Run bats step 2047 s, so 45; macOS 47 min 39 s in
-# run 36998141959, job 110809474598, the slowest macOS job among those runs, its Run bats step 2840 s, so 60). Fork PR
-# 940 sets the same line.
-SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 45 }}"
+# carries the measurement: Linux 40 min 43 s in run 37128151383, job 111217616222, the slowest among the finished runs on
+# main, the batch branches and the branches of the open and merged PRs, read at 03:32 UTC on 2026-10-04, its Run bats
+# step 2365 s, so 55; macOS 48 min 1 s in run 37045964763, job 110967357963, the slowest macOS job among those runs, its
+# Run bats step 2856 s, so 60). Fork PR 940, since merged, set this line, at 60 on macOS and 50 on Linux; fork PR 926,
+# merging main after 940 landed, set the Linux figure to 55 by the rule.
+SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 55 }}"
 # The Shell job's lines that name node as a word or hold --test: the manager handshake step's name and run lines (T224).
 SHELL_NODE_LINES = (
     "      - name: Manager handshake tests (node --test)",
@@ -577,12 +583,14 @@ class VendoredToolingJob(unittest.TestCase):
             "printed above, check that tests/test_ci_macos_schedule.py and tests/test_ci_workflow_concurrency.py still pass, "
             "and say in the commit why the triggers changed."))
 
-    def test_4_the_shell_cap_is_60_on_macos_and_45_on_linux(self):
+    def test_4_the_shell_cap_is_60_on_macos_and_55_on_linux(self):
         self.assertNoFaults(check_shell_cap(raw()), (
             "The Shell job's cap changed (above). It is set per OS from a measurement, the slowest measured or projected "
-            "job plus 10 minutes rounded up to a multiple of 5 (ci.yml's comment above the line: Linux 34 min 20 s in run "
-            "36998140007, the slowest among the finished runs on main, the batch branches and the open PRs whose tests "
-            "will land, so 45; macOS 47 min 39 s in run 36998141959, so 60). A higher cap hides growth the vendored "
+            "job plus 10 minutes rounded up to a multiple of 5 (ci.yml's comment above the line: Linux 40 min 43 s in run "
+            "37128151383, the slowest among the finished runs on main, the batch branches and the branches of the open "
+            "and merged PRs, read at 03:32 UTC on 2026-10-04, so 55; macOS 48 min 1 s in run 37045964763, so 60; fork PR "
+            "940, since merged, set the line at 60 and 50, and fork PR 926, merging main after it, set the Linux figure "
+            "to 55 by the rule). A higher cap hides growth the vendored "
             "tooling move was meant to show, and a lower one cuts a passing cell. If the change is meant, measure the job "
             "again, update SHELL_CAP_LINE in tests/test_ci_vendored_job.py and ci.yml's comment, and say why in the commit."))
 
@@ -743,15 +751,15 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
              ["    branches: ['batch/**', main]"]),
             (check_top_keys, "a second, quoted on key", "top", "concurrency:", ["\"on\": [workflow_dispatch]", "concurrency:"]),
             (check_shell_cap, "the Shell cap back to the flat 35", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 35"]),
-            (check_shell_cap, "the Shell cap a flat 45", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 45"]),
+            (check_shell_cap, "the Shell cap a flat 55", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 55"]),
             (check_shell_cap, "the macOS Shell cap 60 to 65", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 60", "&& 65")]),
             (check_shell_cap, "the macOS Shell cap 60 to 55", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 60", "&& 55")]),
-            (check_shell_cap, "the Linux Shell cap 45 to 35", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 45", "|| 35")]),
-            (check_shell_cap, "the Linux Shell cap 45 to 50", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 45", "|| 50")]),
+            (check_shell_cap, "the Linux Shell cap 55 to 50", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 55", "|| 50")]),
+            (check_shell_cap, "the Linux Shell cap 55 to 60", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 55", "|| 60")]),
             (check_shell_cap, "the two Shell caps swapped", "shell", SHELL_CAP_LINE,
-             ["    timeout-minutes: ${{ matrix.os == 'macos-latest' && 45 || 60 }}"]),
+             ["    timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 60 }}"]),
             (check_shell_cap, "the Shell caps keyed on the other OS", "shell", SHELL_CAP_LINE,
-             ["    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 60 || 45 }}"]),
+             ["    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 60 || 55 }}"]),
             (check_shell_cap, "a second Shell cap after the steps", "shell", SHELL_NODE_LINES[1],
              [SHELL_NODE_LINES[1], "    \"timeout-minutes\": 90"]),
             (check_shell_node, "the step put back in the Shell job", "shell", SHELL_NODE_LINES[1],

@@ -63,9 +63,21 @@ scripts/batch.py, scripts/pr-orphans.sh, scripts/release.sh, the kernel's releas
 scripts/sweep.py were run in a checkout make_checkout made, with a git first on PATH logging each call made through it,
 and none read that checkout's origin/main, nor any ref of it but HEAD (2026-10-03).
 
-No test reads the checkout's own origin/main at this head: READERS is empty, and the history case of
-tests/gitleaks-config.bats reads HEAD alone. Fork PR 954 makes that case read it (history_scan_range, called on the
-checkout); a merge that brings it reds this pin on that file until its hits are judged and its reader is listed.
+At this head three tests read the checkout's own origin/main (READERS), all brought by the merge of fork main through
+fork PR 926's merge of it. The history case of tests/gitleaks-config.bats (fork PR 954) calls history_scan_range on
+the checkout: in CI's depth-1 checkout its shallow test comes first and it scans the one commit, whatever refs are
+there; in a sweep checkout that holds origin/main it scans the commits HEAD adds over it; in one that holds none it
+scans all of HEAD's history, which can take longer than the 180 s the bats leg allows a test. The verdict on a clean
+branch is a pass in each; the commits read, and the time, differ, and the sweep's checkouts hold origin/main for this
+case. tools/markdown-viewer-plan-linknav.test.mjs and ui/webview/linknav-records-attribution.test.ts (fork PR 862)
+read the merge-base of HEAD with it for a gate that holds their delta checks off unless origin/main is known, the
+merge-base is not origin/main itself, and the diff since the merge-base adds the module. In CI the gate holds them
+with "no origin/main"; in a sweep checkout it holds them too, naming another part, on every head whose diff since the
+merge-base does not add the module, which since the module landed on main is every head that has it from main. Run on
+2026-10-04 in a checkout make_checkout made of this merge, with origin/main at fork main's tip, the history case
+scanned the commits HEAD adds over origin/main, and both gates held with "the merge-base is origin/main"; in one with
+no origin/main the history case's range was all of HEAD's history, which passed in one run and went past the 180 s in
+another, and both gates held with "no origin/main".
 """
 import os
 import re
@@ -132,8 +144,25 @@ _SPLIT_CANDIDATE = re.compile(r"branch|:/|fetch|push|ls-remote|remotes|origin")
 READS = "reads the checkout's origin/main"
 
 # The lines that read the checkout's own origin/main: (path, text the line holds, why). Each one's file is in
-# CLASSIFIED too, with READS among its kinds. None at this head (the module docstring).
-READERS = ()
+# CLASSIFIED too, with READS among its kinds (the module docstring says how each behaves in the sweep and in CI).
+READERS = (
+    ("tests/gitleaks-config.bats",
+     'if git -C "$repo" rev-parse --verify --quiet refs/remotes/origin/main > /dev/null; then',
+     "history_scan_range, which the history case calls on ROMP_DIR, the checkout: past the shallow test, a clone with "
+     "origin/main gets the commits HEAD adds over it, and one without gets all of HEAD's history"),
+    ("tests/gitleaks-config.bats", "ref=refs/remotes/origin/main name=origin/main",
+     "history_scan_range's name for the ref that its merge-base HEAD \"$ref\" and rev-parse --verify \"$ref\" then read "
+     "in the same repository, the checkout under the history case"),
+    ("tools/markdown-viewer-plan-linknav.test.mjs",
+     "base = git('merge-base', 'origin/main', 'HEAD'); main = git('rev-parse', 'origin/main');",
+     "deltaOf, which gated calls on REPO, the checkout, for the gate over L6's checks keyed on the delta: with no "
+     "origin/main it holds them (CI), and in a sweep checkout it holds them unless the diff since the merge-base adds "
+     "the module"),
+    ("ui/webview/linknav-records-attribution.test.ts",
+     'base = git("merge-base", "origin/main", "HEAD"); main = git("rev-parse", "origin/main");',
+     "roadTwo, which the road test calls on REPO, the checkout, for the gate over road 2: with no origin/main it holds "
+     "it (CI), and in a sweep checkout it holds it unless the diff since the merge-base adds the module"),
+)
 
 # path: (the kinds its hits are, why): every file with a hit; HITS holds the lines judged.
 CLASSIFIED = {
@@ -185,11 +214,19 @@ CLASSIFIED = {
     "tests/bootstrap-sh.bats": ((NOT_A_READ,), "compares `git remote` of the clone made from the built origin "
                                                   "($ROMP_REPO, setup) with origin: configuration"),
     "tests/fork-remotes.bats": ((NOT_A_READ,), "configuration values of the clone its setup builds, and a comment"),
-    "tests/gitleaks-config.bats": ((SYNTHETIC,), "`--all` over the repository each case builds ($R)"),
+    "tests/gitleaks-config.bats": ((READS, SYNTHETIC, NOT_A_READ),
+                                   "history_scan_range reads origin/main of the repository it is given, and the history "
+                                   "case gives it ROMP_DIR, the checkout (READERS); the range's cases give it the "
+                                   "repositories they build ($R, $S, $U), where they write, delete and read origin/main "
+                                   "(synth_origin_main, update-ref, merge-base), and `--all` runs over the repository "
+                                   "each case builds ($R); the rest are comments, the scopes history_scan_range states, "
+                                   "case titles and expected texts"),
     "tests/pr-orphans.bats": ((NOT_A_READ,), "a case title and an expected text"),
     "tests/pre-push-hook.bats": ((SYNTHETIC, NOT_A_READ),
-                                 "every git call in the repository setup builds ($REPO) or its bare remote; comments, "
-                                 "expected texts and a test title"),
+                                 "every git call in the repository setup builds ($REPO) or its bare remote, "
+                                 "rewind_remote's update-ref of origin/<ref> there among them; comments, expected "
+                                 "texts, test titles, and the shell lines the one-shot cases plant for the hook's read "
+                                 "census, whose read -r is bash's, not git's, beside a branch their texts name"),
     "tests/pre-push-identity.bats": ((SYNTHETIC, NOT_A_READ), "the repository setup builds ($REPO), and a test title "
                                                               "naming a branch two lines above a `git tag -a` there "
                                                               "(split_hits)"),
@@ -236,12 +273,28 @@ CLASSIFIED = {
                                                              "code before a fix"),
     "tests/test_update_banner_confirm_served.py": ((NOT_A_READ,), "a comment"),
     "tools/markdown-viewer-plan-gate-adopt.test.mjs": ((NOT_A_READ,), "a recorded document's text"),
+    "tools/markdown-viewer-plan-linknav-review.test.mjs": ((NOT_A_READ,), "an expected text, the plan's L6 sentence, "
+                                                                          "which names a git command"),
+    "tools/markdown-viewer-plan-linknav.test.mjs": ((READS, SYNTHETIC, NOT_A_READ),
+                                                    "deltaOf reads origin/main and the merge-base with it in the "
+                                                    "repository it is given, and gated gives it REPO, the checkout "
+                                                    "(READERS); the gate's case gives it a temporary repository it "
+                                                    "builds and writes origin/main there (update-ref); the rest are "
+                                                    "comments, the gate's held texts, test titles and assertions on the "
+                                                    "plan's text, on the workflows' text and on gateOf's answers"),
     "tools/romp-track-bash-guard-corpus.json": ((NOT_A_READ,),
                                                 "a command string the guard judges, in its own scratch project "
                                                 "(corpusWorld), never run"),
     "tools/upstream-ledger-figure-gate-before-adoption.test.mjs": ((NOT_A_READ,), "a docstring on recorded output"),
     "tools/viewer-resize-summarize.mjs": ((NOT_A_READ,), "a report's text"),
     "ui/webview/file-comments-markclick-controls.test.ts": ((NOT_A_READ,), "a comment"),
+    "ui/webview/linknav-records-attribution.test.ts": ((READS, SYNTHETIC, NOT_A_READ),
+                                                       "roadTwo reads origin/main and the merge-base with it in the "
+                                                       "repository it is given, and the road test gives it REPO, the "
+                                                       "checkout (READERS); the gate's case gives it a temporary "
+                                                       "repository it builds and writes origin/main there (update-ref); "
+                                                       "the rest are comments, the gate's type and held texts, test "
+                                                       "titles and assertions on gateOf's answers"),
     "upstream/2026-09-20-pre-push-tag-read-fail-closed.md": ((NOT_A_READ,),
                                                              "an awk program quoted in a fenced block, run by no test"),
 }

@@ -27,8 +27,9 @@ from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
-from test_queued_rescind_browser import BIN, EXT, SID, _free_port, _lab, iso   # noqa: E402  the shared boot's pieces (never its TestCase)
+from test_queued_rescind_browser import BIN, EXT, SID, _lab, iso   # noqa: E402  the shared boot's pieces (never its TestCase)
 import lab_dist
+import lab_ports
 
 AGENT_ID, CMD_ID, WATCH_ID, SVC_ID, PLACED_ID, DONE_ID = "tu_agent_1", "tu_cmd_1", "watch-1", "tu_svc_1", "tu_placed_1", "tu_svc_done"
 KEPT_WORD = "· kept running, not waited on"
@@ -180,6 +181,7 @@ class ServedBgKinds(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served guard needs them")
         cls.lab = tempfile.mkdtemp(prefix="bg-kinds-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
@@ -205,27 +207,22 @@ class ServedBgKinds(unittest.TestCase):
                          "content": [{"type": "text", "text": "Starting on the parser map."}]}},
         ]
         Path(proj, SID + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-bgkinds"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
 
     _r = None
 

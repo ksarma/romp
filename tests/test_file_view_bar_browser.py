@@ -23,19 +23,18 @@ import json
 import os
 import re
 import shutil
-import socket
 import struct
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -49,14 +48,6 @@ SID = "aaaaaaaa-1111-2222-3333-444444444444"
 IDENT = ("t@testhost", "t")
 GUIDE = "# Notes API guide\n\nThe web session keeps the notes-api tidy.\n\n## Fold rules\n\nOne rule per line.\n"
 APP_PY = "def notes():\n    return [\"a\", \"b\"]\n"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -255,26 +246,22 @@ class ServedFileViewBar(unittest.TestCase):
                      {"label": "md-outside", "path": os.path.join(outside, "notes.md")},
                      {"label": "image", "path": os.path.join(cwd, "docs", "figure.png")},
                      {"label": "code", "path": os.path.join(cwd, "src", "app.py")}]
-        cls.port, cls.token = _free_port(), "testtok-filebar"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-filebar"
         # the kernel's git must reach the stand-in origin too: its ls-remote check answers from the local bare repo
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST",
                               GIT_SSH_COMMAND=stand_in, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     @classmethod

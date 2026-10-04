@@ -114,8 +114,10 @@
   "git -C \"$UP\" symbolic-ref HEAD refs/heads/main"
  ],
  "tests/gitleaks-config.bats": [
+  "git -C \"$1\" symbolic-ref HEAD refs/heads/main",
   "git -C \"$R\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says",
   "git -C \"$R\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says",
+  "git -C \"$R\" symbolic-ref HEAD refs/heads/trunk",
   "git -C \"$WORK\" symbolic-ref HEAD refs/heads/main"
  ],
  "tests/pr-orphans.bats": [
@@ -127,7 +129,10 @@
   "fired replace-refs \"for-each-ref --format=%(refname) refs/replace/\" [ \"$status\" -ne 0 ] [[ \"$output\" == *\"romp pre-push: the tip of refs/heads/main (${L:0:10}) would publish a personal identifier in:\"* ]]",
   "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main",
   "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main",
-  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says"
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main",
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main",
+  "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says",
+  "git -C \"$TEST_DIR/remote.git\" update-ref \"refs/heads/$1\" \"$2\""
  ],
  "tests/pre-push-identity.bats": [
   "git -C \"$REPO\" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says"

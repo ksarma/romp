@@ -1645,10 +1645,10 @@ test('the phrase the script reads a lost browser by is a literal in inBrowser\'s
  *  leg runs, and these files are a superset of it: a file named only in an import esbuild erases (a type-only import
  *  among them), or only in a comment or in a string no build reads, is listed though the bundle never loads it. At this
  *  head ui/webview/pick-held.ts is one such file, which ui/webview/comments.ts names in an import type alone. The
- *  roster's two legs today, the switch test and the gear description leg, open pages through inBrowser and never call
- *  openViewer, so for them they are a superset by that whole graph, kept so that a leg rostered later that opens the
- *  viewer is read with no change
- *  here. It resolves to the first file of the tree among the specifier, the specifier with .ts, .tsx, .mts, .js, .mjs or
+ *  switch test and the gear description leg, two of the roster's legs, open pages through inBrowser and never call
+ *  openViewer, so for them they are a superset by that whole graph, and for each rostered leg that opens the viewer they
+ *  are the superset stated above. It resolves to the first file of the tree among the specifier, the specifier with .ts,
+ *  .tsx, .mts, .js, .mjs or
  *  .cjs appended, a .js specifier with .ts in place of .js, and its /index.ts or /index.js, and a specifier that
  *  resolves to none is red, naming it. Not followed: a specifier that is not relative (node:fs, playwright), a computed
  *  one (a template literal, a concatenation), and a file a module reads at run time by a path it builds (the launcher's

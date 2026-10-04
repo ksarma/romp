@@ -232,10 +232,12 @@ CLASSIFIED = {
     "tests/fixtures/fake_gh.py": ((SYNTHETIC,), "refs/heads/<name> of the bare origin the batch Fixture builds, named "
                                                 "by a PR's head or base branch, never the current branch"),
     "tests/fork-remotes.bats": ((NOT_A_READ,), "symbolic-ref writes HEAD in the repositories its setup builds"),
-    "tests/gitleaks-config.bats": ((NOT_A_READ,), "symbolic-ref writes HEAD in the repository each case builds"),
+    "tests/gitleaks-config.bats": ((NOT_A_READ,), "symbolic-ref writes HEAD in the repository each case builds, "
+                                                  "synth_repo's among them"),
     "tests/pr-orphans.bats": ((NOT_A_READ,), "symbolic-ref writes HEAD in the repository its setup builds"),
     "tests/pre-push-hook.bats": ((NOT_A_READ,),
-                                 "symbolic-ref writes HEAD in the repository setup builds ($REPO); the hook's "
+                                 "symbolic-ref writes HEAD in the repository setup builds ($REPO); rewind_remote's "
+                                 "update-ref of refs/heads/<ref> in its bare remote; the hook's "
                                  "for-each-ref over refs/remotes/ and refs/replace/ in the calls and texts a case "
                                  "expects, beside a refs/heads/ name (split_hits)"),
     "tests/pre-push-identity.bats": ((NOT_A_READ,), "symbolic-ref writes HEAD in the repository setup builds"),

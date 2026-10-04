@@ -19,17 +19,16 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -43,14 +42,6 @@ CTX = {"web": 20, "api": 62, "tests": 95}   # the persisted context fill each se
 SIDS = {n: "%s-1111-2222-3333-444444444444" % (chr(ord("a") + i) * 8) for i, n in enumerate(NAMES)}
 PALETTE = [("#9cd2ff", "#0c1a2e"), ("#1EA1EB", "#ffffff"), ("#54B204", "#ffffff")]   # one identity colour per session
 BRANCH = "search-module"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -283,18 +274,13 @@ class ServedSettingsPreviews(unittest.TestCase):
                                  "content": [{"type": "text", "text": "It keeps the %s side of the notes-api tidy." % name}]}}]
             Path(proj, sid + ".jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 10}, "seven_day": {"pct": 10}}))
-        cls.port, cls.token = _free_port(), "testtok-previews"
+        cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-previews"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token, ROMP_HOST_NAME="TESTHOST")
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def _run(cls):
@@ -323,6 +309,7 @@ class ServedSettingsPreviews(unittest.TestCase):
         k = getattr(cls, "kernel", None)
         if k:
             k.kill(); k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _p(self, theme="dark"):

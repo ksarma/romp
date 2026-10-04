@@ -22,10 +22,10 @@ extension deps or a browser.
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -44,14 +44,6 @@ SID_WEB = "aaaaaaaa-6000-2222-3333-777777777777"
 SID_API = "aaaaaaaa-6000-2222-3333-888888888888"
 SID_TESTS = "aaaaaaaa-6000-2222-3333-999999999999"
 CARD = "aaaaaaaa-6000-2222-3333-000000000c01"
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _transcript(sid, tag, cwd, pairs):
@@ -214,6 +206,7 @@ class SharedMenusServed(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here): the served leg needs them")
         cls.lab = tempfile.mkdtemp(prefix="sharedmenus-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         state = os.path.join(cls.lab, "xdg", "romp")
@@ -234,21 +227,15 @@ class SharedMenusServed(unittest.TestCase):
                 {"sid": sid, "name": name, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid, "alive": True}))
             Path(proj, sid + ".jsonl").write_text(_transcript(sid, tag, cwd, 6))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 100}, "seven_day": {"pct": 10}}))   # park sends
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-sharedmenus"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         cls.result, cls.driver_error = None, None
         cls._drive()
 
@@ -289,6 +276,7 @@ class SharedMenusServed(unittest.TestCase):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def setUp(self):

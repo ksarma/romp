@@ -106,8 +106,27 @@ under 1.10.0 (74.37 s under 1.11.1), 113.04 s of the runs the three heads' probe
 romp-serve.bats 334 under `! false`, 26.45 s for its two runs (which side is slowest is a run's property, not the head's: another
 run of the thirteenth commit had the same candidate's `! true` side slowest, two figures of two runs and no flip); at the
 fourteenth commit, under LANG fixed to `C`, `46 files: 12 candidates, 12 read, 0 inert, 0 undecided, in 64.20 s`; against those
-RUN_TIMEOUT stands at 60 s a run. The 5 file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126 and
-129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing test to run alone, and so is one in the
+RUN_TIMEOUT stands at 60 s a run. Since fork PR 940's narrow re-check (2026-10-02) two tests decide the corpus, the suites
+CORPUS_APART names in one and every other suite in the other (corpus_parts), so the shell job runs each part as a wrapper test of
+its own, under its own BATS_TEST_TIMEOUT of 180 s; a bats-free pin holds the two parts to the population, each suite in one, and
+each test to its part. As one test the corpus took 162.3 s of the 180 s in the PR run at the head that re-check read, against
+122.3 s at the head before it; on this box, through the wrapper, bats 1.10.0 inside and the whole under nice 19 on a loaded box,
+`48 files: 14 candidates, 14 read, 0 inert, 0 undecided` in 129.10 s, 117.29 s, 123.84 s and 112.42 s. Two suites hold most of
+that time. tests/pre-push-hook.bats (at ce073c374, 23,910 lines and 820 tests), costs the module's read 11.56 s of the 19.44 s every suite takes
+(extents 9.23 s, candidates 2.33 s), and under 1.10.0 every bats run of one of its tests first pays bats-preprocess of the whole
+file, 4.77 s, so a filter naming no test took 4.81 s and its two candidates' tests, 15238 and 17855, took 16.97 s and 11.53 s run
+alone; in the corpus their runs took 65.96 s and 48.87 s. tests/romp-serve.bats's three process probes, 309, 334 and 382, took
+49.68 s, 63.14 s and 22.02 s. A candidate's runs are serial, REPEATS runs of each rewrite, so each candidate is one chain on one
+worker, and the corpus's time is the read plus its longest chains. With both suites apart, `46 files: 8 candidates, 8 read` in
+47.16 s and 44.91 s, and `2 files: 6 candidates, 6 read` in 84.77 s and 82.17 s: the longest chains still run beside each other
+in one test, and the two tests together took 131.93 s and 127.08 s against 112.42 s for the one test run between them. With the
+hook suite alone apart, the two tests took 91.98 s and 85.62 s, the two parts' longest chains one after the other, 177.60 s
+together against 117.29 s for the one test run just before. Two cuts that keep one test were measured and refused: the suites read through the pool, 110.38 s, and each
+suite's candidates queued as its read lands, 119.04 s; the hook suite's read followed by its first candidate's chain is the floor
+of both. Also refused: one bats run holding both rewrites of a candidate, which would pay one preprocess for the pair. The
+reading above rests on two files that differ in one word, each run in its own bats process; one file holding both rewritten copies
+of the test runs them in one process, the second after the first, under the same setup_file and on other lines. The 5
+file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126 and 129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing test to run alone, and so is one in the
 text after a test's close, on its close line or on the lines a construct opened there runs on to: a helper defined there, a list
 joined to the definition, a case, a group, a subshell, an if, a while or a here-document (I_close_then_* and
 I_one_liner_then_arming in the register: no candidate, and the next test, which calls the helper or reads what that text armed,
@@ -364,9 +383,9 @@ road is trusted for that not by this sentence but by two pins the job runs: the 
 and decides the candidates that read them, and the equality pin holds the built environment's keys to a literal, so a pass-through
 added to the rule reds there with no bats (the job was green while every local full-suite run was red, at the tenth commit). The
 five Python cells install pytest, pytest-timeout, pytest-xdist, cryptography and the pinned Claude Agent SDK, and no bats
-(ci.yml's Install steps), so every bats-backed test of this module skips there, seventeen at this head (derived from a RUN and never
+(ci.yml's Install steps), so every bats-backed test of this module skips there, eighteen at this head (derived from a RUN and never
 typed: Counts runs every other class of this module in a child under a PATH holding every program but bats, and every
-skip is a bats skip; the `17 skipped` of the run line below; the wrapper runs sixteen of them, every one but the child
+skip is a bats skip; the `18 skipped` of the run line below; the wrapper runs seventeen of them, every one but the child
 pytest pin, which needs pytest importable by the runner's python3, so the two counts are two quantities, what skips and
 what the wrapper runs, and the pin reads both sentences against its derivation: before the fourteenth commit this sentence
 said thirteen, the wrapper's count, three lines from a run line saying 14, seven findings of round 2 on one number), and
@@ -376,14 +395,16 @@ in it. Installing bats in those cells was measured and refused: at the head befo
 `45 passed in 199.86s` with bats against `34 passed, 11 skipped in 17.56s` without, 182 s more per cell (the register and
 the corpus most of it; at the fourteenth commit `58 passed, 4 subtests passed in 267.86s (0:04:27)` with bats 1.10.0,
 the bats-backed pins since the tenth commit among them, the child pytest 67 s and the skip count's child run 16 s in a run of
-those two pins alone, against `41 passed, 17 skipped, 1 warning in 36.01s` without, the skip count's child run the one cost added
-to a cell since that commit), on cells whose margin under their 25-minute cap was 4 to 8 minutes in fork PR #871's own CI run at
-the ninth commit (3.10 in 20m42s, 3.11 in 20m13s, 3.12 in 17m07s, 3.13 in 18m20s, 3.14t in 20m45s, read off that run's job times),
-for a bats install of 4 s; the shell job carries the validation inside the 35 minutes it had then (11m02s in that run). The
-polluted shape, pytest over the whole tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the
-eleventh commit the wrapper runs the routes pin too (seconds; bash and bats are all it needs), and not the child pytest pin, which
-needs pytest importable by the runner's python3, which the shell job does not install: it skips there saying so, and a skipping
-test in the wrapper would pin nothing (a pytest install in that job is a workflow change, not made here).
+those two pins alone, against 41 passed and 17 skipped in 36.01 s without, the skip count's child run the one cost added to a
+cell since that commit; since fork PR 940's narrow re-check, whose split of the corpus added a bats-backed test and a pin that
+needs no bats, `43 passed, 18 skipped, 1 warning in 65.77s (0:01:05)` without, under nice 19 on a loaded box), on cells whose
+margin under their 25-minute cap was 4 to 8 minutes in fork PR #871's own CI run at the ninth commit (3.10 in 20m42s, 3.11 in
+20m13s, 3.12 in 17m07s, 3.13 in 18m20s, 3.14t in 20m45s, read off that run's job times), for a bats install of 4 s; the shell
+job carries the validation inside the 35 minutes it had then (11m02s in that run). The polluted shape, pytest over the whole
+tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the eleventh commit
+the wrapper runs the routes pin too (seconds; bash and bats are all it needs), and not the child pytest pin, which needs pytest
+importable by the runner's python3, which the shell job does not install: it skips there saying so, and a skipping test in the
+wrapper would pin nothing (a pytest install in that job is a workflow change, not made here).
 
 Deleted here, not fixed: the line scanner's frame model (the brace-depth walk, its block ends and the coverage pin over them), its
 heredoc classification (introducers, delimiter words, the skip) and its status-read grammar (`_plain_call`, `_helper_read`,
@@ -1114,6 +1135,30 @@ def suite_files(root=ROOT):
     return sorted({os.path.relpath(p, root) for paths in found.values() for p in paths})
 
 
+# the suites the corpus decides in a test of their own (BatsCorpus.test_every_candidate_of_the_suites_apart_is_read_by_bats),
+# apart from every other suite of the population (BatsCorpus.test_every_candidate_of_every_suite_but_those_apart_is_read_by_bats),
+# so that each part has its own wrapper test in the shell job and its own BATS_TEST_TIMEOUT: paths relative to the root, as
+# suite_files gives them. No candidate leaves the corpus: both tests decide their part by the same road (decide_corpus), and
+# corpus_parts raises where a suite named here is not in the population. The two named are the suites whose candidates take the
+# longest to decide, each candidate a chain of serial runs on one worker: the hook suite's two, and the three process probes of
+# tests/romp-serve.bats. Both stand apart so that their chains still run beside each other in one test; with the hook suite
+# alone apart, the two parts ran their longest chains one after the other. Why, and the figures: the module docstring
+CORPUS_APART = ("tests/pre-push-hook.bats", "tests/romp-serve.bats")
+
+
+def corpus_parts(files, apart=CORPUS_APART):
+    """(the rest, the part apart) of the population `files` (suite_files'), each in the population's order: every suite `apart`
+    does not name, and the suites it names. Together they are the population and no suite is in both, so the corpus's two tests
+    (BatsCorpus) decide every candidate once between them. Raises LookupError naming each suite of `apart` that the population
+    does not hold, so a suite renamed, or dropped from the shell job's glob, reds here and never leaves the test apart deciding an
+    empty or partial part that passes as clean (the population's own rule: suite_files)."""
+    missing = [f for f in apart if f not in files]
+    if missing:
+        raise LookupError("the corpus's part apart (CORPUS_APART) names %s, which the population (suite_files: the shell job's bats glob) "
+                          "does not hold: the test apart would decide nothing of it" % ", ".join(missing))
+    return [f for f in files if f not in apart], [f for f in files if f in apart]
+
+
 def _read_suite(relpath, root=ROOT):
     """(lines, extents) of the suite at relpath under root: its text split at newlines and bash's parse of its tests
     (bash_test_extents)."""
@@ -1364,12 +1409,14 @@ CHILD_TIMEOUT = 600
 
 def _end_group(p, grace=5.0):
     """Ends the process group the process p leads (a Popen with start_new_session): TERM to the group, under which bats's EXIT
-    traps run and so does a test's teardown (measured, with a CPU free to run it: a teardown's marker file is written under TERM
-    and not under KILL; the open observation at BatsRoad's timeout test records the one run where it was not), then KILL to
-    whatever of the group is left once the LEADER has exited, or after grace seconds when it has not: the wait between the two
-    signals is Popen.wait on the leader, not on the group, so a bats leader that dies of the TERM at once (about 1 ms in the
-    observation's measurement) is followed by the KILL within milliseconds, while a test process of the group may still be in
-    its exit trap. Returns at once when the group is already gone at either signal."""
+    traps run, the leader's among them (it removes BATS_RUN_TMPDIR), then KILL to whatever of the group is left once the LEADER
+    has exited, or after grace seconds when it has not: the wait between the two signals is Popen.wait on the leader, not on the
+    group, so a bats leader that dies of the TERM at once (about 1 ms, measured in fork PR #871's round 1) is followed by the
+    KILL within milliseconds, while a test process of the group may still be in its exit trap. bats does not promise that a
+    test's teardown runs under this TERM: it writes the teardown's output to a file under BATS_RUN_TMPDIR, which the leader's
+    EXIT trap removes under the same TERM, so the order the two processes are scheduled in decides it (bats 1.10.0 and 1.11.1;
+    BatsRoad's timeout test carries the measurements and asserts the signals sent and the one group they go to, not the
+    teardown). Returns at once when the group is already gone at either signal."""
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(p.pid, sig)
@@ -1563,9 +1610,10 @@ Decision = collections.namedtuple("Decision", "relpath cand test verdict message
 # number of runs closes
 REPEATS = 2
 # how many corpus candidates are decided at a time (BatsCorpus): every run has its own copy of the tree and its own HOME and TMPDIR
-# (decide_under_bats, _bats_env), so runs share nothing but the machine. REPEATS doubled the runs per candidate, and the wrapper
-# test in CI's shell job holds the whole corpus to its BATS_TEST_TIMEOUT (180 s), which the candidates one after another would
-# approach: measured in the module docstring
+# (decide_under_bats, _bats_env), so runs share nothing but the machine. REPEATS doubled the runs per candidate, and a wrapper
+# test in CI's shell job holds its part of the corpus (corpus_parts; the whole corpus before fork PR 940's narrow re-check of
+# 2026-10-02) to its BATS_TEST_TIMEOUT (180 s), which the candidates one after another would approach: measured in the module
+# docstring
 CORPUS_WORKERS = 4
 # the bound on the CONTROL arm as a whole, in seconds: one deadline this many seconds after the arm starts (decide_corpus), which
 # every control run's bound is cut to, so the arm ends within it (plus the grace of ending a run's group, _end_group) whatever
@@ -4022,7 +4070,8 @@ class BatsGroundTruth(unittest.TestCase):
                                  self.test_an_ok_test_without_a_candidate_holds_only_declared_bangs_or_none_and_every_declaration_holds,
                                  self.test_the_record_is_what_bats_says_under_both_rewrites,
                                  self.test_decide_reads_every_test_of_the_register_whose_verdicts_differ_and_refuses_none,
-                                 BatsCorpus("test_every_candidate_of_every_suite_is_read_by_bats").test_every_candidate_of_every_suite_is_read_by_bats,
+                                 BatsCorpus("test_every_candidate_of_every_suite_but_those_apart_is_read_by_bats").test_every_candidate_of_every_suite_but_those_apart_is_read_by_bats,
+                                 BatsCorpus("test_every_candidate_of_the_suites_apart_is_read_by_bats").test_every_candidate_of_the_suites_apart_is_read_by_bats,
                                  *(case.setUp for case in deriving)):
                         with self.assertRaises(unittest.SkipTest) as cm:
                             test()
@@ -4131,7 +4180,10 @@ class BatsCorpus(unittest.TestCase):
     run an outer bound ends (the wrapper test's BATS_TEST_TIMEOUT) leaves its candidate named in this test's output; an inert or
     undecided one's report in full (the message naming which, the line as written and under each rewrite, both outcomes, the
     blamed line, what bats said) follows the table, and the test fails on it. CORPUS_WORKERS candidates are decided at a time, each
-    run in its own copy of the tree (decide_corpus). Where bats is absent this skips, naming where it runs (WHERE_BATS_RUNS: CI's
+    run in its own copy of the tree (decide_corpus). Two tests decide the corpus between them, the suites CORPUS_APART names in one
+    and every other suite in the other (corpus_parts), so each part has its own wrapper test and its own per-test bound in the
+    shell job; together they decide every candidate of every suite once, and a bats-free pin below holds each test to its part.
+    Where bats is absent each skips, naming where it runs (WHERE_BATS_RUNS: CI's
     shell job's Linux cell, through tests/bats-bare-negation-shell-job.bats), and the first skip of the process warns
     (WITHOUT_BATS_NOTICE). The environment every bats run sees is built from BATS_ENV, one mapping from key to derivation, and
     nothing else of this process, pinned here four ways: by equality on its keys, by the statement of which keys it passes through
@@ -4147,15 +4199,60 @@ class BatsCorpus(unittest.TestCase):
 
     SKIP = CORPUS_SKIP
 
-    def test_every_candidate_of_every_suite_is_read_by_bats(self):
+    def test_every_candidate_of_every_suite_but_those_apart_is_read_by_bats(self):
+        self.decide_part(0)
+
+    def test_every_candidate_of_the_suites_apart_is_read_by_bats(self):
+        self.decide_part(1)
+
+    def decide_part(self, part):
+        """The body of the corpus's two tests: the part `part` of the population (corpus_parts: 0 the rest, 1 the suites apart)
+        decided by bats, red on every candidate not read."""
         skip_unless_bash_serves(self)
         skip_unless_bats_serves(self, self.SKIP)
         # the two phases, the rows, the summary line, the reports and then the controls, are decide_corpus's; the reports here
         # carry each control where one ran, since the decisions come back with them
         with tempfile.TemporaryDirectory() as scratch:
-            decisions = decide_corpus(ROOT, suite_files(), scratch)
+            decisions = decide_corpus(ROOT, corpus_parts(suite_files())[part], scratch)
         reports = [report(d) for d in decisions if d.verdict != "read"]
         self.assertEqual(reports, [], "%d candidate(s) bats did not read; the reports are above, and here:\n\n" % len(reports) + "\n\n".join(reports))
+
+    def test_the_corpus_is_decided_by_two_tests_whose_parts_are_the_population_each_suite_in_one(self):
+        # fork PR 940's narrow re-check (2026-10-02): the corpus test took 162.3 s of its wrapper test's 180 s in CI's shell job,
+        # the hook suite's two candidates the largest share (the module docstring's figures), and the ruling allowed that suite out
+        # of the corpus test only if its candidates are verified another way. They are, by the same road in a test of their own, beside
+        # tests/romp-serve.bats (CORPUS_APART says why); this pin holds the split: the two parts are the population, no suite is
+        # in both, neither is empty, each suite CORPUS_APART names is in the part apart, each test hands decide_corpus its own
+        # part and only it, once, and each suite apart that the population lacks raises naming it. No bats and no bash run here
+        # (decide_corpus is stubbed, both gates passed), so this runs in every Python cell
+        population = suite_files()
+        rest, apart = corpus_parts(population)
+        self.assertEqual(sorted(rest + apart), population, "the corpus's two parts are not the population")
+        self.assertEqual(sorted(set(rest) & set(apart)), [], "a suite is in both parts: the corpus decides it twice")
+        self.assertTrue(rest and apart, "a part is empty: (%d, %d) suites" % (len(rest), len(apart)))
+        self.assertEqual(apart, [f for f in population if f in CORPUS_APART])
+        self.assertEqual(sorted(apart), sorted(CORPUS_APART), "a suite CORPUS_APART names is not in the part apart")
+        module = sys.modules[__name__]
+        handed = collections.defaultdict(list)
+        asking = []
+
+        def stub(root, files, scratch, *args, **kwargs):
+            handed[asking[-1]].append(list(files))
+            return []
+
+        with unittest.mock.patch.dict(_BASH_PROBE, {"shortfall": False}), unittest.mock.patch.object(module, "decide_corpus", stub), \
+                unittest.mock.patch.object(module, "skip_unless_bats_serves", lambda *args, **kwargs: None):
+            for name, part in (("test_every_candidate_of_every_suite_but_those_apart_is_read_by_bats", rest),
+                               ("test_every_candidate_of_the_suites_apart_is_read_by_bats", apart)):
+                asking.append(name)
+                getattr(BatsCorpus(name), name)()
+                self.assertEqual(handed[name], [part], "%s did not hand decide_corpus its part alone, once" % name)
+        for gone in CORPUS_APART:
+            with self.assertRaises(LookupError) as cm:
+                corpus_parts([f for f in population if f != gone])
+            self.assertIn(gone, str(cm.exception))
+            self.assertIn("CORPUS_APART", str(cm.exception))
+            self.assertEqual([f for f in CORPUS_APART if f != gone and f in str(cm.exception)], [], "the refusal names a suite the population holds")
 
     def test_the_environment_handed_to_bats_has_no_bats_variable_no_outer_libexec_on_path_and_an_isolated_home_and_tmpdir(self):
         # under an outer bats (the shell job's wrapper) the process holds BATS_TEST_TIMEOUT and the rest; none may reach the inner
@@ -4361,7 +4458,9 @@ class BatsCorpus(unittest.TestCase):
         # suite's socket path would pass sun_path). Red before the tenth commit: the child reported romp-sessions.bats's
         # serve-token test failing under both rewrites, undecided (bin/romp read the collected module's ROMP_SERVE_TOKEN over the
         # state file). The pin above plants the same writes in this process and runs three candidates in seconds; this one runs
-        # the shape the finding was found in, the corpus once, about 80 s, and is the red-before of the change
+        # the shape the finding was found in, the corpus once, about 80 s, and is the red-before of the change. Since fork PR 940's
+        # narrow re-check (2026-10-02) the corpus is two tests (corpus_parts), and this runs the one over every suite but those apart,
+        # the part that holds the finding's suites (romp-sessions.bats and install-sh.bats)
         skip_unless_bash_serves(self)
         skip_unless_bats_serves(self)
         if importlib.util.find_spec("pytest") is None:
@@ -4374,7 +4473,7 @@ class BatsCorpus(unittest.TestCase):
             env = _bats_env(d)
             env["TMPDIR"] = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()
             out, err, ended, status, secs = _run_bats([sys.executable, "-B", "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-p", "no:anyio", "-k",
-                                                        "test_every_candidate_of_every_suite_is_read_by_bats", polluter, "tests/test_bats_bare_negation.py"],
+                                                        "test_every_candidate_of_every_suite_but_those_apart_is_read_by_bats", polluter, "tests/test_bats_bare_negation.py"],
                                                        ROOT, env, CHILD_TIMEOUT)
         tail = "\n".join((out + "\n" + err).splitlines()[-120:])
         self.assertFalse(ended, "the child pytest did not finish in %d s:\n%s" % (CHILD_TIMEOUT, tail))
@@ -4388,16 +4487,18 @@ class BatsCorpus(unittest.TestCase):
         # the bash probe held at "nothing lacking", as in the register's without-bats pin: the bash gate fires first under a bash
         # that lacks something, and this is the message of the other gate
         # and the skip announces itself once per process, a UserWarning pytest lists in the run's warnings summary under -q: the
-        # second skip of the process adds none (the notice is reset here, so this test's own process state does not decide it)
+        # second skip of the process adds none (the notice is reset here, so this test's own process state does not decide it);
+        # both of the corpus's tests (corpus_parts), the second skip the other test's
         with unittest.mock.patch.dict(_BASH_PROBE, {"shortfall": False}), unittest.mock.patch("shutil.which", return_value=None), \
                 unittest.mock.patch.object(sys.modules[__name__], "_WITHOUT_BATS_NOTICED", []), warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             with self.assertRaises(unittest.SkipTest) as cm:
-                self.test_every_candidate_of_every_suite_is_read_by_bats()
-            with self.assertRaises(unittest.SkipTest):
-                self.test_every_candidate_of_every_suite_is_read_by_bats()
-        self.assertIn("shell job", str(cm.exception))
-        self.assertIn("tests/bats-bare-negation-shell-job.bats", str(cm.exception))
+                self.test_every_candidate_of_every_suite_but_those_apart_is_read_by_bats()
+            with self.assertRaises(unittest.SkipTest) as apart:
+                self.test_every_candidate_of_the_suites_apart_is_read_by_bats()
+        for said in (cm, apart):
+            self.assertIn("shell job", str(said.exception))
+            self.assertIn("tests/bats-bare-negation-shell-job.bats", str(said.exception))
         self.assertEqual([(w.category, str(w.message)) for w in caught], [(UserWarning, WITHOUT_BATS_NOTICE)])
         for said in ("bats is not on PATH", "did not run in this process", "Python cells install no bats", "tests/bats-bare-negation-shell-job.bats"):
             self.assertIn(said, WITHOUT_BATS_NOTICE)
@@ -4710,7 +4811,9 @@ class BatsRoad(unittest.TestCase):
     without bats, naming the wrapper that runs this class in CI's shell job."""
 
     # a test polling for a file that never comes: a loop whose condition is a negation runs forever under `! false`, and as written
-    # too; the teardown leaves a marker, so whether the group was ended by TERM (bats runs the teardown) or KILL (it does not) shows
+    # too. Its teardown writes a marker that no test reads, on purpose: whether bats runs a teardown when the group is sent TERM is
+    # a race inside bats that this road does not control (the note above BatsRoad's timeout test says why). The suite text is
+    # unchanged, so both tests that run it, and the measurements in that note, read the same fixture
     POLL = ('@test "poll" {\n    while ! test -e "$TMPDIR/ready"; do sleep 0.1; done\n}\n'
             'teardown() {\n    echo torn > "$TMPDIR/torn"\n}\n')
 
@@ -4784,34 +4887,62 @@ class BatsRoad(unittest.TestCase):
                 run = run_test_alone(tree, "tests/probe.bats", "exit", d)
             self.assertEqual((run.outcome, run.line, run.file), ("not ok", 6, "tests/probe.bats"), run.detail)
 
-    # OPEN OBSERVATION (fork PR #871, round 1, 2026-09-20): the test below went red ONCE on its teardown-marker assertion under the
-    # wrapper (tests/bats-bare-negation-shell-job.bats, an outer bats 1.10.0 with BATS_TEST_TIMEOUT=180, the configuration that
-    # gates landing) on the box the record was taken on, and did not reproduce in 31 further observations there (load not
-    # recorded). The round's refuter then reproduced the same red 4 of 4 times with the process pinned to one busy CPU
-    # (`taskset -c <cpu>`, 3 runs inside a systemd scope and 1 plain), 2 of 4 on two CPUs shared with three busy processes, and 0
-    # of 3 on two idle CPUs, and read the mechanism as bats's own shutdown: the bats leader dies of the TERM within about 1 ms, so
-    # _end_group's wait returns at once and the KILL follows about 3 ms after the TERM, while the teardown's marker appears 0.9 to
-    # 2.4 ms after the TERM; and with the KILL removed and one CPU the marker still never appeared, bats-exec-file reporting its
-    # run directory gone (`bats.<pid>.out: No such file or directory`: the leader's EXIT cleanup removes BATS_RUN_TMPDIR while the
-    # test process is still in its exit trap). The reviewer ruled it carried here as an observation, not closed and given no
-    # label: the marker assertion stands as written, _end_group's claim that a teardown runs under TERM holds under the condition
-    # it was measured in (a CPU to run it), and the next red has this first sighting to compare against
-    def test_a_run_past_the_bound_is_timed_out_with_its_teardown_run_and_no_process_of_it_left(self):
+    # The poll's teardown under the group TERM (round 1 of fork PR #871 carried it here as an OPEN OBSERVATION, 2026-09-20;
+    # resolved 2026-10-02 by no longer asserting it). Until then the test below also asserted the teardown's marker, as its proof
+    # that the group was sent TERM first, but bats does not promise that marker: bats-exec-test runs the teardown as
+    # `teardown >>"$BATS_OUT"`, BATS_OUT is `bats.<pid>.out` under BATS_RUN_TMPDIR, and the leader's EXIT trap runs
+    # `rm -rf "$BATS_RUN_TMPDIR"` (under BATS_TEMPDIR_CLEANUP, set by default), the same lines in 1.10.0 and 1.11.1. The group TERM
+    # reaches the leader and the test process at once; when the removal runs first the redirection fails and the teardown never
+    # starts (the `bats.<pid>.out: No such file or directory` line that run prints comes from bats-exec-file's own teardown_file
+    # redirection into the same removed directory). Round 1 saw that red once under the wrapper
+    # and 4 of 4 times pinned to one busy CPU, and read the same mechanism. On one CPU (`taskset -c 0`), the poll bounded at 2 s
+    # through run_test_alone, 20 runs a mode: 0 of 20 left the marker under _end_group as written; 0 of 20 under TERM and then a
+    # wait for the whole group to be gone before any KILL, so the KILL is not the cause; 16 of 20 with the leader started with
+    # `--no-tempdir-cleanup` and _end_group as written, the KILL after the leader exits a second race; 20 of 20 with both. The
+    # teardown is certain only when the leader keeps its run directory AND nothing kills the group first; this road does neither,
+    # so no condition on it turns the marker into an assertion about romp. The marker assertion's red rate at e015c014e: 49 of 50
+    # runs pinned to one CPU (two series), 9 of 10 with a busy process pinned to the same CPU, 8 of 150 unpinned local runs, and 1
+    # of 320 CI shell jobs. The part of the old claim that romp controls, TERM to the run's group before KILL, is now read off
+    # the signals this test's thread sends and the group each one names: with a KILL-only _end_group at e015c014e this test was
+    # the one red test of the class, so dropping the marker without a replacement would have left TERM-first pinned nowhere
+    def test_a_run_past_the_bound_is_timed_out_its_group_sent_term_then_kill_and_no_process_of_it_left(self):
         # F2 of fork PR #871's commit-3 review: run_test_alone had no bound, so a rewrite that never terminates hung the oracle,
         # locally forever and in CI to the wrapper's per-test bound, nameless. Bounded at 2 s the poll test comes back `timed out`
-        # a few seconds later, its process group ended by TERM first (bats runs the teardown: the marker) and then KILL, nothing of
-        # it left; decide makes an undecided verdict of it
+        # a few seconds later; nothing of the run is left when it returns; its process group was sent TERM and then KILL
+        # (_end_group), read off this thread's os.killpg calls with the group each names: the signals are TERM then KILL, both
+        # name one group, and that group is the run's, since the poll loops until its group is signalled and nothing of the run is
+        # left; and decide makes an undecided verdict of it. The poll's teardown is NOT asserted, since bats does not promise it
+        # under the group TERM (the note above). Named
+        # test_a_run_past_the_bound_is_timed_out_with_its_teardown_run_and_no_process_of_it_left until 2026-10-02
         skip_unless_bats_serves(self)
+        sent, real, me = [], os.killpg, threading.get_ident()
+
+        def killpg(pgid, sig):
+            # each call's group with its signal, so a TERM sent to a group other than the KILL's is red (round 1 of fork PR #946: a
+            # spy recording the signal alone passed an _end_group that sent the TERM to a fresh group and the KILL to the run's);
+            # recorded BEFORE the call: _end_group's KILL often finds the group gone and raises ProcessLookupError, and a record
+            # taken after the call would flip with the scheduling; a call from another thread (one an earlier test in the same
+            # process left running) is passed through unrecorded
+            if threading.get_ident() == me:
+                sent.append((pgid, sig))
+            return real(pgid, sig)
+
         with tempfile.TemporaryDirectory() as d:
             tree = self.hanging_suite(d)
             t0 = time.monotonic()
-            run = run_test_alone(tree, "tests/hang.bats", "poll", d, timeout=2)
+            with unittest.mock.patch("os.killpg", killpg):
+                run = run_test_alone(tree, "tests/hang.bats", "poll", d, timeout=2)
             took = time.monotonic() - t0
             self.assertEqual(run.outcome, "timed out", run.detail)
             self.assertGreaterEqual(run.secs, 2)
             self.assertLess(took, 20, "the run was not ended near its bound")
             self.assertEqual(_processes_of(d), [], "processes of the ended run remain")
-            self.assertTrue(os.path.exists(os.path.join(d, "tmp", "torn")), "the test's teardown did not run: the group was not ended by TERM first")
+            self.assertEqual([sig for _, sig in sent], [signal.SIGTERM, signal.SIGKILL], "the signals sent were not TERM and then KILL: "
+                             "_end_group sends TERM to the group, then KILL to whatever is left, the KILL attempted even when nothing is; a change "
+                             "to that contract changes this list")
+            self.assertEqual(len({pgid for pgid, _ in sent}), 1, "TERM and KILL did not go to one process group %r: _end_group sends both "
+                             "to the group the run's leader leads, and with no process of the run left (asserted above) one group for both can only "
+                             "be the run's" % sent)
         verdict, message = decide("tests/hang.bats", Candidate(0, 1, 10, False), (0, 2), [BatsRun("ok", None, None, "", 0.1), run])
         self.assertEqual(verdict, "undecided")
         self.assertIn("the run was ended after %.0f s with no verdict" % run.secs, message)
@@ -5287,7 +5418,8 @@ class Counts(unittest.TestCase):
         doc = re.sub(r"\s+", " ", module.__doc__)   # wrapped prose: any run of whitespace is one space
         skip_word = re.search(r"every bats-backed test of this module skips there, (\w+) at this head", doc)
         wrapper_word = re.search(r"the wrapper runs (\w+) of them, every one but the child pytest pin", doc)
-        run_line = re.search(r"`\d+ passed, (\d+) skipped, 1 warning in [0-9.]+s` without", doc)
+        # pytest adds the duration as (h:mm:ss) to a run past a minute, as the run line quoted since fork PR 940's corpus split is
+        run_line = re.search(r"`\d+ passed, (\d+) skipped, 1 warning in [0-9.]+s(?: \(\d+:\d\d:\d\d\))?` without", doc)
         self.assertTrue(skip_word and wrapper_word and run_line, "the module docstring's CI paragraph no longer states the skip count, the wrapper's count and the run line without bats")
         self.assertIn(skip_word.group(1), words)
         self.assertIn(wrapper_word.group(1), words)

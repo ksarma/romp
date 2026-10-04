@@ -74,7 +74,8 @@ only under the Test step, before the job installs a browser. `inBrowser`'s read 
 `inBrowser`'s own skip alone: a leg's own skip is not turned into a failure by it, and its own failed
 launch is not `inBrowser`'s failure naming the switch. Chromium is the one engine the job installs, so a
 leg's Firefox and WebKit runs happen only in a local run. A Firefox or WebKit test in a rostered file
-breaks the roster rule, since `inBrowser` launches Chromium alone. On the runner its skip is red, and a
+breaks the roster rule, since the job installs Chromium alone and `inBrowser` launches the engine a leg
+names, Chromium by default. On the runner its skip is red, and a
 failed launch the leg does not swallow is node's red, but a leg can be built that holds such a test and
 reads green there when the bundle has a passing test of its own (the witness spelling: one that registers
 the test only where that engine is installed): a leg built to pass without a browser is outside what the
@@ -103,6 +104,20 @@ is 8.25.0 because the hook's flags need 8.24.0 and this repository's
 `.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks reads correctly
 from 8.25.0 on; CI pins 8.28.0, above that floor. Under an older gitleaks the
 hook refuses a push that has something to scan and names the version it found.
+
+The `pre-push` hook scans under bash 5.1 or later. Under an older bash, such as
+the `/bin/bash` 3.2 that macOS ships, it runs itself again under a bash 5.1 or
+later at `/opt/homebrew/bin/bash` or `/usr/local/bin/bash`, where
+`brew install bash` puts one, and refuses the push when neither path has one.
+A clone with neither scan set up needs no newer bash: when the hook can tell
+that nothing is at the private-strings path, and either `ROMP_NO_GITLEAKS=1` is
+set or no gitleaks is on `PATH` with `ROMP_GITLEAKS` unset, it passes the push
+under any bash, printing that gitleaks is not installed unless
+`ROMP_NO_GITLEAKS=1` is set. When the hook cannot tell whether anything is at
+that path, for example because a directory above it cannot be searched, a
+symlink at the path leads nowhere, or `HOME` is unset with neither
+`ROMP_PRIVATE_STRINGS` nor `XDG_CONFIG_HOME` set, it refuses the push under
+every bash.
 
 On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
 each batch head, and GitHub's CI runs once per batch, on the push of the batch
@@ -251,10 +266,10 @@ Three things about the test environment are worth knowing, because all have
 produced confusing failures:
 
 - The bats suite is slow. In CI, among the finished runs on main, the batch
-  branches and the open PRs whose tests will land (read at 14:44 UTC on
-  2026-10-02), the slowest Run bats step on Linux took 34 min 7 s (run
-  36998140007) and the slowest macOS Shell job took 47 min 39 s (run
-  36998141959). Those are CI's slowest runs, not its typical ones. A run that
+  branches and the branches of the open and merged PRs (read at 03:32 UTC on
+  2026-10-04), the slowest Run bats step on Linux took 39 min 25 s (run
+  37128151383) and the slowest macOS Shell job took 48 min 1 s (run
+  37045964763). Those are CI's slowest runs, not its typical ones. A run that
   long is expected, not a hang.
 - On macOS, run the bats suite with a modern bash (`brew install bash`; bats
   picks it up via `env bash` when `/opt/homebrew/bin` precedes `/bin` on PATH).

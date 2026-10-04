@@ -27,25 +27,25 @@ name: CI
 # test step without running a test (bats could not gather the tests: macOS's bash 3.2 rejected the
 # file-scope `declare -gA` that tests/pre-push-hook.bats had then; fork PR 937 has since moved it
 # into a helper, and the file now loads under bash 3.2), where a run that gets through the suite
-# takes as long as 47 min 39 s: that is the slowest macOS bats job among the finished runs on main,
-# the batch branches and the open PRs whose tests will land (the runs the Shell job's cap comment
-# reads), in run 36998141959 (a dispatch of fork PR 940's branch on 2026-10-02, a branch that
-# installs gitleaks and a newer bash on macOS), its time from the jobs API.
+# takes as long as 48 min 1 s: that is the slowest macOS bats job among the finished runs on main,
+# the batch branches and the branches of the open and merged PRs (the runs the Shell job's cap
+# comment reads), in run 37045964763 (a dispatch of fork PR 940's branch on 2026-10-02, a branch
+# that installs gitleaks and a newer bash on macOS, since merged), its time from the jobs API.
 # Going private needs a change to this file before the first private batch push. The Linux Python
 # cells' two workers do not fit the private runner (they peak at 10.9 GB; the Run pytest step gives
 # the measurement), so the cells must run serially, and by the serial ratio measured there (1437 s
 # against 739 s) the cells of run 36716348831 would take about 40 to 53 minutes each, and those of
-# run 37005067129, the run the python job's 50-minute Linux cap is sized from, about 54 to 72, every
+# run 37158350467, the run the python job's 50-minute Linux cap is sized from, about 61 to 74, every
 # one past that cap. So run them serially with a larger cap (T230b's rule, at the python job's
-# timeout, gives about 63 minutes for run 36716348831's slowest cell and about 82 for run
-# 37005067129's, both past the 50-minute ceiling tests/test_ci_bats_bound.py holds) or split the
+# timeout, gives about 63 minutes for run 36716348831's slowest cell and about 84 for run
+# 37158350467's, both past the 50-minute ceiling tests/test_ci_bats_bound.py holds) or split the
 # suite across more cells. Estimated so, a batch run's Linux jobs would bill about 325 minutes there
-# by run 36716348831 and about 421 by run 37005067129, whose Linux jobs bill 266 on the public
+# by run 36716348831 and about 444 by run 37158350467, whose Linux jobs bill 279 on the public
 # runner (each cell's pytest step scaled by that ratio, every other job at its public time; nothing
 # has been run on 2 CPUs).
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (a macOS bats
-# job alone has taken 47 min 39 s, above) and the runners are scarcer, so they do NOT run
+# job alone has taken 48 min 1 s, above) and the runners are scarcer, so they do NOT run
 # on every push. They run once a week on a schedule (see `on:`) and
 # by hand from the Actions tab ("Run workflow") when you want a cross-platform
 # check before a release or after touching a platform-sensitive surface (launchd,
@@ -122,14 +122,15 @@ jobs:
     # dispatch); on the dispatch of 2026-09-30 (run 36664031774) the macOS 3.10 and 3.13 cells were
     # both cancelled at this cap, 3555 s and 3598 s into their pytest steps, so the macOS suite now
     # runs longer than the ceiling allows. Linux gets 50 by the same rule, applied to the finished
-    # Linux cells among the runs on main, on the batch branches and on the open PRs whose tests will
-    # land (a cell cancelled at a cap has no measured length; the Shell job's cap reads the same
-    # runs), read at 14:54 UTC on 2026-10-02: the slowest, the 3.14t cell of run 37005067129 (a
-    # dispatch of fork PR 926's branch on 2026-10-02, job 110831307530), took 2219 s in its pytest
-    # step with two workers and 29 s in the steps before it, so the rule gives 2219 + 600 + 29 =
-    # 2848 s, about 47 min 28 s, past the 40 minutes the cap had (set on 2026-09-30 from run
-    # 36664031774, whose slowest Linux pytest step took 1572 s), and 50 leaves about 2 min 32 s.
-    # Each step's time is the jobs API's.
+    # Linux cells among the runs on main, on the batch branches and on the branches of the open and
+    # merged PRs (a cell cancelled at a cap has no measured length; the Shell job's cap reads the
+    # same runs), read at 03:32 UTC on 2026-10-04: the slowest, the 3.14t cell of run 37158350467 (a
+    # dispatch of fork PR 959's branch on 2026-10-03, job 111306365110), took 2276 s in its pytest
+    # step with two workers and 32 s in the steps before it, so the rule gives 2276 + 600 + 32 =
+    # 2908 s, about 48 min 28 s, past the 35 minutes main had and past the 40 that fork PR 926's
+    # branch set on 2026-09-30 from run 36664031774 (whose slowest Linux pytest step took 1572 s)
+    # before it set 50 on 2026-10-02, and 50 leaves about 1 min 32 s. Each step's time is the
+    # jobs API's.
     timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 50 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
@@ -393,7 +394,7 @@ jobs:
         # romp-on/romp's Actions runs of its serial suite. With two workers the measurement above
         # put this fork's Linux cells at about half their serial time; the suite has grown since,
         # and the Linux cap of 50 is sized from the slowest finished two-worker Linux cell, the
-        # 3.14t cell of this fork's run 37005067129 (the job's comment above).
+        # 3.14t cell of this fork's run 37158350467 (the job's comment above).
         # Under the Linux cells' workers a timeout ends the worker process running the hung test:
         # xdist fails that test by name ("worker 'gw0' crashed while running '<test id>'") and the
         # other tests run on. The thread dump pytest-timeout writes goes to that worker's stdout,
@@ -433,20 +434,22 @@ jobs:
     # A cap for each OS, in the python job's form (its per-OS expression), each the slowest
     # measured or projected job plus 10 minutes, rounded up to a multiple of 5: the 10 minutes
     # exceed the 180 s per-test bound bats is given below plus setup, the margin the python
-    # job's rule requires over its own 600 s per-test bound. Linux, 45: the slowest Linux job
-    # among the finished runs on main, on the batch branches and on the open PRs whose tests
-    # will land (a run cancelled at a cap has no measured length), read at 14:53 UTC on
-    # 2026-10-02, took 34 min 20 s, in run 36998140007 (a pull_request run of fork PR 940's
-    # branch on 2026-10-02, job 110809463925; its Run bats step 2047 s; it concluded failure,
-    # which still gives a measured length); 34 min 20 s plus 10 minutes is 44 min 20 s, so 45.
-    # macOS, 60: the slowest macOS job among the same runs took 47 min 39 s, in run 36998141959
-    # (a dispatch of that branch on 2026-10-02, job 110809474598; its Run bats step 2840 s; it
-    # concluded failure too); 47 min 39 s plus 10 minutes is 57 min 39 s, so 60. Fork PR 940's
-    # branch installs gitleaks and a newer bash on macOS, so the credential cases run there,
-    # and that PR sets the same line. Each job's time is the jobs API's.
+    # job's rule requires over its own 600 s per-test bound. Linux, 55: the slowest Linux job
+    # among the finished runs on main, on the batch branches and on the branches of the open and
+    # merged PRs (a run cancelled at a cap has no measured length), read at 03:32 UTC on
+    # 2026-10-04, took 40 min 43 s, in run 37128151383 (batch PR #960's pull_request run on
+    # 2026-10-03, job 111217616222; its Run bats step 2365 s; it concluded success; that batch
+    # landed fork PR 940 on 2026-10-04); 40 min 43 s plus 10 minutes is 50 min 43 s, so 55.
+    # macOS, 60: the slowest macOS job among the same runs took 48 min 1 s, in run 37045964763 (a
+    # dispatch of fork PR 940's branch on 2026-10-02, job 110967357963; its Run bats step 2856 s;
+    # it concluded failure, which still gives a measured length); 48 min 1 s plus 10 minutes is
+    # 58 min 1 s, so 60. Fork PR 940, since merged, set this line, at 60 on macOS and 50 on
+    # Linux, and installs gitleaks and a newer bash on macOS (the two macOS install steps below),
+    # so the credential cases run there; fork PR 926, merging main after 940 landed, set the
+    # Linux figure to 55 by this rule. Each job's time is the jobs API's.
     # The vendored tooling tests that ran after Run bats moved to a job of their own
     # (vendored-tooling, below) on 2026-09-28 instead of this cap being raised to hold them.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 45 }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 55 }}
     strategy:
       fail-fast: false
       matrix:
@@ -459,9 +462,11 @@ jobs:
       # each). GitHub itself is already on the critical path (checkout), so this adds no new
       # dependency — and no bats test needs a tool the runner image lacks: node, python3 and curl are
       # on the GitHub images (the manager suites run the real bin/romp-manager under node; romp.bats and
-      # install-sh.bats run python3 and curl), the rest mock their subjects on PATH; gitleaks, two steps
-      # below, is the one extra install, for tests/gitleaks-config.bats. The step timeout kills any
-      # residual network hang in minutes instead of letting it eat the job's budget.
+      # install-sh.bats run python3 and curl), the rest mock their subjects on PATH; gitleaks, below, is
+      # one extra install, for tests/gitleaks-config.bats and the credential cases of
+      # tests/pre-push-hook.bats, and on macOS a bash 5.1 or later, below, is the other, for the pre-push
+      # hook. The step timeout kills any residual network hang in minutes instead of letting it eat the
+      # job's budget.
       - name: Install bats (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 5
@@ -474,15 +479,41 @@ jobs:
         if: runner.os == 'macOS'
         timeout-minutes: 15
         run: brew install bats-core
+      - name: Install bash 5.1 or later (macOS)
+        # The pre-push hook's body runs only under bash 5.1 or later: under an older bash, where a scan
+        # would run, its gate (bash_gate, at the top of .githooks/pre-push) re-runs the hook under a bash
+        # 5.1 or later at /opt/homebrew/bin/bash or /usr/local/bin/bash, and refuses the push when neither
+        # holds one (a clone with neither scan armed pushes as before under any bash). The image has only
+        # /bin/bash 3.2.57 (the actions/runner-images readme for macos-26-arm64, the image macos-latest
+        # names, at 20260907.0351, the version run 36689060323 ran on), so without this step
+        # tests/pre-push-hook.bats fails in its setup, which finds no bash 5.1 or later to name, and the
+        # other files that run the hook with a scan armed have their pushes refused by the gate. The check
+        # below compares the installed version as the gate does, major then minor, so a bottle older than 5.1
+        # fails this step rather than the tests. Homebrew links the new bash into /opt/homebrew/bin, which
+        # comes before /bin on PATH, so the step then puts a directory holding only a link to /bin/bash first
+        # on PATH for the steps after it: bats and the tests still run under bash 3.2.57, the version this
+        # cell exists to check, and the hook's gate is what finds the newer bash, at its fixed path. The
+        # gate's own cases in tests/pre-push-hook.bats run only under a bash older than 5.1 first on PATH, so
+        # this cell is the one CI cell that runs them, and they fail here, rather than skip, if a bash 5.1 or
+        # later comes first on PATH.
+        if: runner.os == 'macOS'
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          brew install bash
+          /opt/homebrew/bin/bash -c '[ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }'
+          mkdir -p "$RUNNER_TEMP/bash-3.2"
+          ln -sf /bin/bash "$RUNNER_TEMP/bash-3.2/bash"
+          PATH="$RUNNER_TEMP/bash-3.2:$PATH" bash -c '[ "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}" = 3.2 ]'
+          echo "$RUNNER_TEMP/bash-3.2" >> "$GITHUB_PATH"
       - name: Install gitleaks (Linux)
         # tests/gitleaks-config.bats skips itself when gitleaks is absent, so without this step the
         # repo's scanning rules (.gitleaks.toml: the value-anchored allowlist, the merge-commit scan)
         # would be checked nowhere; ROMP_GITLEAKS_REQUIRE=1 on the Run bats step below turns that
         # skip into a red job, so a broken install cannot ship as green skips. The same pinned,
-        # checksummed release the secrets job installs; bump the version/sha pairs together (this
-        # one, the secrets job's and its copy in secret-scan.yml).
-        # Linux only: the macOS cell runs only in a manual run or the weekly schedule (see the header), and one
-        # arbiter is enough.
+        # checksummed release the secrets job installs; bump the four version/sha pairs together (this
+        # step's, the macOS step's below, the secrets job's and its copy's in secret-scan.yml; each asset
+        # has its own checksum).
         if: runner.os == 'Linux'
         timeout-minutes: 5
         env:
@@ -495,6 +526,32 @@ jobs:
           echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+      - name: Install gitleaks (macOS)
+        # The same pinned release as the Linux step above and the secrets job, as its darwin arm64 asset
+        # (macos-latest is macos-26-arm64, and the step fails on another architecture rather than install
+        # a binary that cannot run), checked against the release's own gitleaks_8.28.0_checksums.txt with
+        # shasum, since the image has no sha256sum. It goes where the Linux step puts it, /usr/local/bin,
+        # which is on PATH after the directory the bash step above puts first, so bash 3.2.57 stays the
+        # bash first on PATH and `command -v gitleaks` finds this binary (the last line checks it). Without
+        # it the credential cases of tests/pre-push-hook.bats skip in this cell, and tests/gitleaks-config.bats
+        # fails in its setup under ROMP_GITLEAKS_REQUIRE=1 (the Run bats step below). Before this step and
+        # that switch, both files skipped here: 380 skips, "gitleaks not installed", in dispatch
+        # 36714942087, 364 in the hook's file and 16 in the config file's.
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        env:
+          GITLEAKS_VERSION: 8.28.0
+          GITLEAKS_SHA256: d942f3ad147250c9edbaab3fed9e482f98d3b59ba10ae97b8d75647e3ade492c
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = arm64 ]
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_darwin_arm64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          sudo mkdir -p /usr/local/bin
+          sudo install "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
+          [ "$(command -v gitleaks)" = /usr/local/bin/gitleaks ]
       - name: Run bats
         # A per-test bound from bats itself (BATS_TEST_TIMEOUT, since bats-core 1.8: a background sleep,
         # then pkill or ps on the test's children), so one hung test fails in minutes and is NAMED in the
@@ -504,12 +561,10 @@ jobs:
         # slowest legitimate test on macOS (the romp-serve probe tests hold 60 s by design).
         env:
           BATS_TEST_TIMEOUT: "180"
-          # ROMP_GITLEAKS_REQUIRE=1 on Linux only: the Linux cell installs the pinned gitleaks in the
-          # step above, so tests/gitleaks-config.bats skipping there would hide a broken install
-          # behind ten green skips; with the switch its setup() fails and names the reason. macOS
-          # has no install step and may keep skipping. Off-Linux the expression yields an empty
-          # value, which the file reads as the switch unset (the PYTHON_GIL idiom above).
-          ROMP_GITLEAKS_REQUIRE: ${{ runner.os == 'Linux' && '1' || '' }}
+          # ROMP_GITLEAKS_REQUIRE=1 in both cells: each installs the pinned gitleaks in a step above
+          # (macOS since 2026-09-30), so tests/gitleaks-config.bats skipping would hide a broken install
+          # behind green skips; with the switch its setup() fails and names the reason.
+          ROMP_GITLEAKS_REQUIRE: "1"
         run: bats --print-output-on-failure tests/*.bats
       # T224: the manager<->kernel handshake proof (tests/manager-*.test.js: restart coalescing, the
       # quiet-window chain, the drain-lease refusal notices) ran only by hand until now. It runs HERE,
@@ -552,8 +607,8 @@ jobs:
         # (gitleaks_<version>_checksums.txt), rather than the marketplace action: a step that exists
         # to keep secrets out of the repo should not hand a token to a third-party action, and
         # gitleaks-action needs a licence key for organisation-owned repos. To bump, change both
-        # lines together (here, in secret-scan.yml's copy of this job and in the shell job above), or
-        # the checksum check fails loudly.
+        # lines together, here, in secret-scan.yml's copy of this job and in the shell job's two install
+        # steps above (each asset has its own checksum), or the checksum check fails loudly.
         timeout-minutes: 5
         env:
           GITLEAKS_VERSION: 8.28.0

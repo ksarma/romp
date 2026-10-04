@@ -11292,6 +11292,7 @@ class CiParity(unittest.TestCase):
         "uses: actions/checkout", "uses: actions/setup-python", "uses: actions/setup-node",
         # setup that installs the tools the runner finds on the batcher's machine instead
         "Install bats (Linux)", "Install bats (macOS)", "Install gitleaks (Linux)", "Install gitleaks",
+        "Install bash 5.1 or later (macOS)", "Install gitleaks (macOS)",
         "Cache Playwright's browsers", "Install the pinned Playwright Chromium",
         # the history and tree scans: the pre-push hook scans what a push publishes; CI scans all of history
         "Scan every commit", "Scan the tree as it stands",
@@ -11668,8 +11669,8 @@ class CiParity(unittest.TestCase):
         _job, env, run = self.step("Run bats")
         self.assertEqual(shlex.split(run), self.legs["bats"]["cmd"][:2] + list(sweep.GLOBS["bats"]),
                          "the runner passes the glob's expansion, CI the glob")
-        # ROMP_GITLEAKS_REQUIRE is CI's Linux value: the Linux cell installs the pinned gitleaks
-        self.assertEqual(env.get("ROMP_GITLEAKS_REQUIRE"), "${{ runner.os == 'Linux' && '1' || '' }}")
+        # ROMP_GITLEAKS_REQUIRE is "1" in both of CI's cells since fork PR 940: each installs the pinned gitleaks
+        self.assertEqual(env.get("ROMP_GITLEAKS_REQUIRE"), "1")
         self.assertEqual({"BATS_TEST_TIMEOUT": env["BATS_TEST_TIMEOUT"], "ROMP_GITLEAKS_REQUIRE": "1"}, sweep.LEG_ENV["bats"])
         for step, leg in (("Manager handshake tests (node --test)", "manager"), (VENDORED_LABEL, "tools")):
             _job, _env, run = self.step(step)

@@ -44,6 +44,7 @@ import urllib.request
 from urllib.parse import quote
 
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
@@ -158,7 +159,7 @@ class RelayDialDeclaresHeldPair(unittest.TestCase):
         cls.lab = tempfile.mkdtemp(prefix="relay-dial-declares-")
         try:
             lab_dist.copy_dist(os.path.join(cls.lab, "dist"))
-            cls.port, cls.token = _dial._free_port(), "testtok-remote-rd"
+            cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-remote-rd"
             proc, cls.log = _dial._kernel(cls.lab, "testhost", cls.port, cls.token, [(SID, "api", 1)])
             cls.procs.append(proc)
         except unittest.SkipTest as e:
@@ -181,6 +182,7 @@ class RelayDialDeclaresHeldPair(unittest.TestCase):
                 p.kill(); p.wait()
             except Exception:
                 pass
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _wire(self):
