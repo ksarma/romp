@@ -2653,6 +2653,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     offer.title = "Save this file to your device";
     offer.addEventListener("click", () => startDownload(dlUrl, offer));
     why.appendChild(offer);
+    endHold();                                  // the pane takes the body: a hold ends here (endHold)
     body.replaceChildren(why);
     viewError = words;                          // the pane's paint: the seam's error() answers its sentence until a content paint clears it (Slice 7, item 3)
     if (isSvgImage) armWayBack();               // the pane after a re-ask: the reconnect-class events and the kernel's messages bring the picture back
@@ -2670,6 +2671,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // and error() stays null through the wait, as over any loader. A press of the Source toggle during the wait drops the answer
   // (fetchFile's `view`): the Source view stands, and the picture loads afresh when the person returns to it.
   const reaskPicture = () => {
+    endHold();                                  // the loader takes the body: a hold ends here (endHold)
     body.replaceChildren(loaderEl());
     fireReplaced();
     fetchFile(true);
@@ -2698,7 +2700,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // repaints a paint that shows one (mathFailedIn), through renderBody like a held paint's arrival, so the reader's place is read
   // off the source paint and seated in the new one and the hooks run over the laid-out formulas (round 1 of the PR's review: a
   // failed load is retried).
+  // The hold ends wherever the body is taken outside renderBody (the PR's review, round 2, correctness-1: a reload that failed
+  // during the hold painted its pane, and the arrival then painted the last text over it, the seam's error() cleared with no
+  // gesture of the reader's). endHold runs at every such paint: the fetch chain's failure pane, the editor's entry (its loader,
+  // its host, the plain fallback), and the media paints a hold cannot meet, since a hold is a markdown note's Rendered paint and
+  // they need the same open to have landed a picture or a PDF (a picture's failure pane, the svg re-ask's loader, the PDF pages'
+  // loader and fallback, and renderBody's own media branch, the one paint inside it that sets no mathHeld). What the held landing
+  // kept (landTarget's heading, offset and keyboard) stays owed (landOwed) to the next text paint, as renderBody's `ends` lands it
+  // after a Raw pick, so the editor's Cancel lands an open's offset as it did before the arrival could spend it into the editor.
   let mathHeld = false;
+  let landOwed = false;
+  const endHold = (): void => { if (mathHeld) { mathHeld = false; landOwed = true; } };
   closeHooks.push(onMathSettled(() => {
     if (mathHeld) { mathHeld = false; renderBody(); landTarget(); }
     else if (shownText !== null && mathFailedIn(body)) renderBody();
@@ -2738,7 +2750,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       srcBtn.setAttribute("aria-pressed", String(svgSource));
       viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);   // the media branch decides the Source button after the group's first sync above, so the group is re-read here: the SVG Source view is the one media control in the view group (T367's grouping)
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
-      viewError = null;                       // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3)
+      viewError = null; endHold();            // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3), and no hold stands over it (endHold)
       // a target on a picture or a PDF (a heading, a line, an offset) is judged by the landing, not here: landMedia, over a body
       // with a box, names it in the notice bar (the PR review's round 1; the review's round 3 had the heading judged here)
       if (svgSource && svgText !== null) {
@@ -2792,7 +2804,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // entry sets fmt.md to raw before its own paint and returns above, so its exit repaints Raw and clears the record as any
     // paint that stands does.
     let held = false;                         // this paint waits for the math renderer (mathHeld above)
-    const ends = mathHeld;                    // a held paint before this one: if this one stands, what that paint's landing kept lands after it
+    const ends = mathHeld || landOwed;        // a held paint before this one, or a hold a takeover ended (endHold): if this one stands, what that paint's landing kept lands after it
     perfTimed("paint", () => {                // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed)
       if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
       const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
@@ -2819,7 +2831,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     });
     if (held) return;                         // the heading waits for the paint the renderer's arrival makes
     if ((rendered || !isMd) && pendingHeading !== null) spendHeading();   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
-    if (ends && !mathHeld) landTarget();     // a paint that ends a hold before the renderer arrives (a Raw pick while the chunk loads): the offset and the keyboard the held landing kept land over it, since no arrival paints after it
+    if (ends && !mathHeld) { landOwed = false; landTarget(); }   // a paint that ends a hold before the renderer arrives (a Raw pick while the chunk loads), or the first text paint after a takeover ended one (the editor's exit): the offset and the keyboard the held landing kept land over it, since no arrival paints after it
   };
   // Item 4's heading, spent at a paint that can land it (a note's Rendered paint, any text paint of a file that is not markdown)
   // and landed one frame later through scrollToFragment, or named in the notice bar as no section of the file. Never spent over
@@ -4109,6 +4121,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // moves the kept frame: the notice and the loader come and go around it inside pdfBlock's column, and the chunk's
   // host is laid out after the column rather than inside it.
   const showPdfPages = () => {
+    endHold();                                 // the pages, or their fallback frame, take the body: a hold ends here (endHold)
     notePdfPage();                             // a reload with the panel open: the pages come back where they were
     dropPdf();
     const blob = mediaBlob; const url = objUrl;
@@ -4208,6 +4221,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     ta.addEventListener("keydown", (e) => {     // the editor's own save chord; Esc falls through to onKey
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); doSave(); }
     });
+    endHold();                                  // the editor takes the body: a hold ends here (endHold)
     body.replaceChildren(ta);
     ta.focus();
   };
@@ -4249,11 +4263,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const wait = el("div", "fileview-load");
     wait.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
       + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
+    endHold();                                  // the editor's loader takes the body: a hold ends here, its landing owed to the exit's paint (endHold)
     body.replaceChildren(wait);
     const my = ++editSeq;
     editorChunk().then((ed) => {
       if (!editing || my !== editSeq) return;   // edit mode left (or re-entered) while the chunk loaded
       const host = el("div", "fileview-cm");
+      endHold();                                // the editor takes the body: a hold ends here (endHold)
       body.replaceChildren(host);
       cm = ed.mount(host, {
         text: norm(text!), ext: path.slice(path.lastIndexOf(".") + 1),
@@ -4947,6 +4963,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
       if (!inView()) { rearmDiskBar(my); return; }              // …nor over the Source view a press put up while a fetch that asked again was out, the changed-on-disk bar armed again as at a failure…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)
+      endHold();                                                // the pane below takes the body: a hold ends here, so the renderer's arrival paints no text over it (endHold; the PR's review, round 2)
       const why = el("div", "fileview-err");
       const msg = String(err && err.message || err);
       why.textContent = msg;
@@ -5248,6 +5265,7 @@ export function openUrlView(href: string): void {
     hint.textContent = href;
     why.appendChild(hint);
     why.appendChild(linkOut());
+    mathHeld = false;                                  // the pane takes the body: no hold stands over it (the local viewer's endHold; this viewer paints a pane only before its one text lands, so no hold meets it)
     body.replaceChildren(why);
   };
   const hostWord = (u: string) => urlTitleParts(u).dir.split("/")[0] || u;
