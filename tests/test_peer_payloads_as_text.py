@@ -108,7 +108,7 @@ class TunnelsOfIsAWhitelist(_Stubbed):
         self.assertNotIn(SECRET, flat)
 
     def test_a_well_formed_row_survives_intact_so_the_expand_loses_nothing(self):
-        good = {"host": "peerbox", "kernelPort": 29855, "localPort": 51000, "busPort": 51001,
+        good = {"host": "peerbox", "kernelPort": 29855, "localPort": 1, "busPort": 2,
                 "checkin": False, "checkinPeer": True, "hasToken": True, "status": "up", "detail": "fine",
                 "sids": [SID], "trust": "trusted", "kernelSha": "abc1234", "localSha": "def5678",
                 "kernelVer": "v0.1.3", "localVer": "v0.2.0+", "outOfDate": True, "behindBy": 2, "aheadBy": 0,
@@ -169,7 +169,7 @@ class TunnelsOfIsAWhitelist(_Stubbed):
 
 class TheRemotesPayloadCarriesNoToken(unittest.TestCase):
     def _row(self, token):
-        return {"host": "TESTHOST", "kernel_port": 29855, "local_port": 51000, "bus_port": 51001,
+        return {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "bus_port": 2,
                 "token": token, "status": "up", "detail": "", "sids": [SID], "trust": "directed",
                 "kernel_sha": "abc1234", "kernel_ver": "v0.1.3", "proc": None}
 
