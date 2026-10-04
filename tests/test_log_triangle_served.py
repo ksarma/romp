@@ -28,11 +28,19 @@ entries of it, and unmutes it with the Log open, by taps on its toggle; the togg
 unmute with the Log closed. tests/test_error_center.py executes that branch, the desktop's Open log count beside the
 triangle, and an arrival with a socket down and the Log open, against the Log script itself.
 
+The red must also read: at least 3:1 (WCAG) against the triangle's ground in both themes. The walk reads that ground at
+every step as the computed background of the first box from #merr up whose background is opaque (#mtabs today), and the
+ratio is asserted at the steps where the triangle is marked and the Log closed (unread, unreadOtherTab, downUnread,
+lightUnread). Not at downOpen: the Log's dimmed overlay (#rerr-back) covers the bar there, so the bar's own background is
+not what sits behind the triangle on screen. A ground the walk cannot read (no opaque box, a translucent one, a background
+image) fails the leg at those steps; it never skips the ratio.
+
 Red at the base tree in every engine at the first unread step (the computed colour there is the action grey). A mutant
 that restores the old precedence (the selector back to `#merr.has`) turns the dark steps red; one without the light rule
 turns the light step red; one that leaves an entry that arrives with the Log open unread (the write path before
 2026-10-03) turns the openNew step red; one that lists an unmuted kind's entries unread with the Log open (the toggle
-before 2026-10-04), or marks only the newest of them, turns the unmutedOpen step red.
+before 2026-10-04), or marks only the newest of them, turns the unmutedOpen step red; one that recolours the bar toward
+the red (either theme's #mtabs background) turns that theme's contrast assertion red.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), its port and its wait from tests/lab_ports.py, a
@@ -44,6 +52,7 @@ import json
 import lab_dist
 import lab_ports
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -96,6 +105,30 @@ STEPS = (("idle", DARK, False, False, "!"),
          ("unmutedClosed", DARK, False, False, "!"),
          ("lightIdle", LIGHT, False, False, "!"),
          ("lightUnread", LIGHT, True, False, "1"))
+# the steps where the triangle is marked and the Log closed, so the bar is what sits behind it, and the floor its red keeps
+# against that ground there (WCAG 1.4.11's 3:1 for a control's state); downOpen is marked too, under the Log's overlay
+CONTRAST_STEPS = ("unread", "unreadOtherTab", "downUnread", "lightUnread")
+CONTRAST_FLOOR = 3.0
+
+
+def _rgb(css):
+    """An engine's computed colour, rgb() or rgba() with an alpha of 1, as three channels; anything else is an error."""
+    m = re.fullmatch(r"rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)", css or "")
+    if not m:
+        raise AssertionError("not an rgb() colour: %r" % (css,))
+    if m.group(4) is not None and float(m.group(4)) / (100 if m.group(5) else 1) < 1:
+        raise AssertionError("a translucent colour cannot be measured alone: %r" % (css,))
+    return tuple(float(m.group(i)) for i in (1, 2, 3))
+
+
+def _contrast(fg, bg):
+    """The WCAG 2 contrast ratio of two computed colours."""
+    def lum(c):
+        ch = [v / 255 for v in _rgb(c)]
+        ch = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in ch]
+        return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+    hi, lo = sorted((lum(fg), lum(bg)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
 
 
 class LogTriangle(unittest.TestCase):
@@ -178,6 +211,21 @@ class LogTriangle(unittest.TestCase):
             self.assertEqual(s["color"], pal["red"], "%s %s: the marked triangle is red (tab %s, Log open %s); the rules that "
                              "match #merr and set a colour, in document order: %s"
                              % (engine, name, s["tab"], s["logOpen"], json.dumps(s["rules"])))
+        # THE CONTRAST FLOOR (the round-1 review, 2026-10-04): the red reads at 3:1 or better against the triangle's ground,
+        # the first box from #merr up with an opaque background, at each closed-Log step where it is marked, in both themes.
+        # A ground the walk could not read fails here; the ratio is never skipped. Every step is measured before the one
+        # assertion, so a failure names each step under the floor, in either theme
+        low = []
+        for name in CONTRAST_STEPS:
+            s = steps[name]
+            self.assertEqual((s["has"], s["logOpen"]), (True, False), "%s %s: a marked triangle under a closed Log: %r"
+                             % (engine, name, s))
+            self.assertIsNone(s.get("groundError", "the walk read no ground"), "%s %s: the triangle's ground: %r" % (engine, name, s))
+            ratio = _contrast(s["color"], s["ground"])
+            if ratio < CONTRAST_FLOOR:
+                low.append("%s (light theme %s): the red %s at %.2f:1 on %s (%s)" % (name, s["light"], s["color"], ratio,
+                                                                                    s["ground"], s["groundOf"]))
+        self.assertEqual(low, [], engine + ": the red triangle under the 3:1 floor on its ground")
         # THE ARRIVAL RULE (2026-10-03), second, so a tree that leaves the arrival unread is red for it: an entry logged with
         # the Log open is seen as it lands, so the triangle is grey with the '!' glyph under the open Log and after it closes,
         # and the reopened Log lists the entry. newListed is read at every open step: false before the entry is logged

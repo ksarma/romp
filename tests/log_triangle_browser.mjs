@@ -23,7 +23,8 @@
 // evidence: which rule set the colour), whether the Log's list holds the entry openNew logs (newListed) and each of the two
 // the muted steps log, the newer and the older (mutedListed, mutedOlderListed; the list is re-rendered only while the Log is
 // open, so these are read at the open steps), and those two entries' stored seen flags (mutedSeen, mutedOlderSeen, null
-// before they are logged). Prints one `RESULT:` JSON line; exits 3
+// before they are logged), and the triangle's ground: the computed background of the first box from #merr up whose background
+// is opaque (ground, groundOf), or why none could be read (groundError). Prints one `RESULT:` JSON line; exits 3
 // when the browser does not launch (the Python side turns that into a skip). Never touches a live kernel: cfg.healthz names
 // the LAB port and is asserted before any request. No sessions, no real data.
 import { createRequire } from "node:module";
@@ -115,6 +116,24 @@ const snap = async (name) => {
     };
     for (const sh of Array.from(document.styleSheets)) { try { walk(sh.cssRules, ""); } catch (e) { /* cross-origin */ } }
     const listedText = (t) => Array.from(document.querySelectorAll("#rerr-list .rerr-msg")).some((x) => x.textContent.indexOf(t) === 0);
+    // the triangle's ground: the first box from #merr up (the button itself first) whose computed background is opaque, so a
+    // background set later on the button, or a translucent bar, is read and never assumed. A partly transparent background,
+    // a background image, an unreadable colour or no opaque box at all is groundError, which the Python side fails on at
+    // every step where it measures the ratio
+    let ground = null, groundOf = null, groundError = null;
+    for (let el = m; el && !ground && !groundError; el = el.parentElement) {
+      const st = getComputedStyle(el);
+      const tag = el.id ? "#" + el.id : el.tagName.toLowerCase();
+      const bg = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)$/.exec(st.backgroundColor);
+      if (st.backgroundImage && st.backgroundImage !== "none") groundError = "a background image on " + tag + ": " + st.backgroundImage.slice(0, 120);
+      else if (!bg) groundError = "an unreadable background colour on " + tag + ": " + st.backgroundColor;
+      else {
+        const alpha = bg[4] === undefined ? 1 : parseFloat(bg[4]) / (bg[5] ? 100 : 1);
+        if (alpha >= 1) { ground = st.backgroundColor; groundOf = tag; }
+        else if (alpha > 0) groundError = "a translucent background on " + tag + ": " + st.backgroundColor;
+      }
+    }
+    if (!ground && !groundError) groundError = "no box from #merr up has an opaque background";
     let mutedSeen = null, mutedOlderSeen = null;
     try {
       const stored = JSON.parse(localStorage.getItem("romp:notices") || "[]") || [];
@@ -126,6 +145,7 @@ const snap = async (name) => {
              textFill: txt ? getComputedStyle(txt).fill : null, digit: txt ? txt.textContent : null,
              logOpen: !document.getElementById("rerr-back").hidden, tab: document.body.getAttribute("data-tab"),
              light: document.body.classList.contains("theme-light"), barDisplay: bar ? getComputedStyle(bar).display : null,
+             ground, groundOf, groundError,
              newListed: listedText(openText), mutedListed: listedText(mutedText), mutedSeen,
              mutedOlderListed: listedText(mutedOlderText), mutedOlderSeen, others, rules };
   }, [OPEN_TEXT, MUTED_TEXT, MUTED_OLDER_TEXT]);
