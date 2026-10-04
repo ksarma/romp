@@ -1,7 +1,7 @@
 // KaTeX's on-demand chunk (iOS item 6, 2026-10-02) loaded the way a page loads it, in Chromium: the scenes in math-chunk-leg.ts
 // run through the shared launcher (real-viewer-leg.ts inBrowser), so in the CI step that runs the rostered legs a lost browser
 // fails here instead of skipping. What they hold: a page that shows no math requests no chunk; the first formula requests it once (a
-// formula met before the page's own load event, once that load is in), its TeX
+// formula met before the page's own load event, once that load is in, the backstop counted from that request), its TeX
 // shown in the pending dress (the sheet's dim tier, a display formula in KaTeX's display box) until the chunk and the two
 // common faces are in, then KaTeX's layout in its place, and a formula met after the chunk registered but before its faces
 // waits too; the per-message budget charged per message across the wait; a failed load (a 404, a script that registers

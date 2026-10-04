@@ -601,11 +601,11 @@ export const SCENES: SceneDef[] = [
     },
   },
   {
-    name: "a formula met before the page's own load event waits for it: no chunk script is added or requested until the document has loaded, then the chunk is fetched and the formula laid out",
+    name: "a formula met before the page's own load event waits for it: no chunk script is added or requested until the document has loaded, and the backstop does not count that wait (past MATH_CHUNK_BACKSTOP_MS with the load held, the formula still waits); then the chunk is fetched and the formula laid out",
     timeout: 60000,
     run: async (browser) => {
       const lg = gate();
-      await withPage(browser, { loadGate: lg }, async (s) => {
+      await withPage(browser, { loadGate: lg, clock: true }, async (s) => {
         await show(s.page, "early $\\frac{a}{b}$ here");
         // read at once, with no wait: the fill appends a chunk tag synchronously, so one would be in the DOM by now; and while the page's
         // load is held WebKit runs no animation frame and defers a fetch, so a frame or a round trip (drain) would wait for that very load
@@ -613,11 +613,20 @@ export const SCENES: SceneDef[] = [
         let b = await box(s.page);
         assert.notEqual(st.ready, "complete", "the page's load is still held: " + JSON.stringify(st));
         assert.deepEqual([st.scripts, s.chunkRequests(), b.pending.length], [0, 0, 1], "no chunk script and no request before the load, the formula waiting: " + JSON.stringify([st, s.chunkRequests(), b]));
+        // the backstop is armed in the deferred request step (math.ts attempt), so its 60 s count from the request: past them with the
+        // load still held, no timer has run out. The clock's jump runs every timer due inside the evaluate it makes, and the reads after
+        // it are evaluates too, so this holds in WebKit, which runs no frame while the load is held
+        await s.page.clock.fastForward(MATH_CHUNK_BACKSTOP_MS + 5000);
+        const late = await s.page.evaluate(() => ({ ready: document.readyState, scripts: document.querySelectorAll('script[src*="math-chunk"]').length }));
+        b = await box(s.page);
+        assert.notEqual(late.ready, "complete", "the load is held still: " + JSON.stringify(late));
+        assert.deepEqual([late.scripts, b.pending.length, b.src.length], [0, 1, 0], "past the backstop's time with the load held: no tag, and the formula still waits, not shown as its source: " + JSON.stringify([late, b]));
         lg.open();
         await s.page.waitForFunction(() => document.readyState === "complete", null, { timeout: 10000, polling: 100 });   // a timed poll: no frame runs until the load (WebKit)
         await settled(s.page);
         b = await box(s.page);
         assert.deepEqual([b.katex, b.src.length, s.chunkRequests()], [1, 0, 1], "at the load the chunk is fetched and the formula laid out");
+        assert.deepEqual(said(s), [], "and no failure was said");
       });
     },
   },
