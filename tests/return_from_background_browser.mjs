@@ -75,7 +75,9 @@ let ctxOpts;
 if (cfg.shell === "phone") {
   const dev = { ...(playwright.devices["iPhone 14"] || {}) };
   delete dev.defaultBrowserType;
-  ctxOpts = { ...dev, viewport: { width: 390, height: 844 } };
+  // cfg.landscapeKeyboard (ruling 3 at 79dce614c, 2026-10-04): the same phone turned landscape with the keyboard up, 844 wide and
+  // 200 tall, the view of round 1's rehearsed check (the coarse pointer keeps the phone's shell at that width)
+  ctxOpts = { ...dev, viewport: cfg.landscapeKeyboard ? { width: 844, height: 200 } : { width: 390, height: 844 } };
   if (engine === "firefox") { delete ctxOpts.isMobile; }   // playwright: isMobile is not supported in Firefox
 } else {
   ctxOpts = { viewport: { width: 1600, height: 760 } };
@@ -263,7 +265,9 @@ const flip = (hidden) => page.evaluate((h) => {
 // 2026-10-03: the subagent viewer's sticky header and its pin, and the Feed's sticky column heads and their drag chips, sit inside
 // the container, and the recorder skipped them). A control is a link, button, form field, label, summary, an element with a button
 // role, an action (data-act), a tabindex or draggable=true, the strip's resize handle, or anything drawn with a pointer or grab
-// cursor (the Feed's drag chip and the chat's landing notice have their cursor and nothing else). Each control's box is the part a
+// cursor or one of CSS's resize cursors, the keywords that end in -resize (the Feed's drag chip and the chat's landing notice have
+// their cursor and nothing else, and so has the composer's resize handle; ruling 3 at 79dce614c, 2026-10-04, the same rule as the
+// loader's rctl). Each control's box is the part a
 // person can see (round 2 of the review, 2026-10-03, correctness-1): cut by every ancestor whose overflow clips it, along its chain
 // of containing blocks (a fixed control escapes every ancestor that is not its containing block, an absolute one the ancestors
 // between it and its positioned containing block), so a tab the desktop strip scrolls out of view, or a pinned-notes row below that
@@ -299,6 +303,7 @@ const cueRec = () => {
   // the pane's content container, the id each pane page hands _pane_spin: the chat's transcript, else the pane's list (<pane>-list)
   const content = document.getElementById(location.pathname === "/chat" ? "content" : location.pathname.slice(1) + "-list");
   const CONTROL = "button, a[href], [role=button], [data-act], input, textarea, select, [tabindex], #tabbar-resize, [draggable=true], summary, label";
+  const CURSOR = /^(pointer|grab|grabbing|(n|e|s|w|ne|nw|se|sw|ew|ns|nesw|nwse|col|row)-resize)$/;
   // the part of an element's box its overflow ancestors leave in view, [left, top, width, height] rounded, or null when none is
   const seen = (el, cs) => {
     const r = el.getBoundingClientRect(); let l = r.left, t = r.top, rt = r.right, bt = r.bottom, pos = cs.position;
@@ -330,7 +335,7 @@ const cueRec = () => {
       // inside the content container only what a sticky or fixed element holds stays put; the rest scrolls under the badge
       if (within && (cs.position === "sticky" || cs.position === "fixed")) stuck.push(el);
       if (within && !stuck.some((p) => p.contains(el))) continue;
-      if (!el.matches(CONTROL) && !/^(pointer|grab|grabbing)$/.test(cs.cursor)) continue;
+      if (!el.matches(CONTROL) && !CURSOR.test(cs.cursor)) continue;
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height || cs.visibility === "hidden" || cs.display === "none") continue;
       const cls = typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split(/\s+/)[0] : "";
@@ -763,6 +768,28 @@ try {
   // with rows built as pinned-notes.ts builds them, each with its details and unpin buttons, and shows it. Synthetic labels only.
   // Read back: the strip's visible and scrolled heights and the rows it holds; the rows are counted again when the leg ends.
   const stripRows = (kind) => frameOf("chat").evaluate((k) => document.querySelectorAll(k === "tabs" ? ".lab-tab" : ".lab-note").length, kind).catch(() => -1);
+  // THE LONG PINNED NOTE (ruling 3 at 79dce614c, 2026-10-04): cfg.pinnedNote shows the pinned-notes strip with one note whose text
+  // wraps (a row built as pinned-notes.ts builds it, its details and unpin buttons included; synthetic text), so on the landscape
+  // phone with the keyboard up the list below it is shorter than the badge, and the composer's resize handle, over the list's
+  // bottom edge, lies under the badge's first place. Read back: the strip's height, the list's top and height, the handle's box
+  if (cfg.pinnedNote) {
+    out.pinnedNote = await frameOf("chat").evaluate(() => {
+      const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+      const strip = document.getElementById("pinned-notes"), c = document.getElementById("content"), g = document.getElementById("composer-resize");
+      if (!strip || !c) return { err: "no-strip" };
+      strip.textContent = ""; strip.style.display = "";
+      const item = mk("div", "pn-item pn-with-detail lab-note"), line = mk("div", "pn-line");
+      line.appendChild(mk("span", "pn-text", "notes-api: " + "the search index rebuild reads its weights from the config file and the tokenizer covers hyphens and quotes, ".repeat(2)));
+      const more = mk("button", "ut-more", "details"); more.type = "button"; line.appendChild(more);
+      const un = mk("button", "pn-unpin", "unpin"); un.type = "button"; line.appendChild(un);
+      item.appendChild(line); strip.appendChild(item);
+      const r = c.getBoundingClientRect(), q = g ? g.getBoundingClientRect() : null;
+      return { shown: true, noteH: Math.round(strip.getBoundingClientRect().height), list: [Math.round(r.top), Math.round(r.height)],
+               handle: q ? [Math.round(q.left), Math.round(q.top), Math.round(q.width), Math.round(q.height)] : null, handleCursor: g ? getComputedStyle(g).cursor : null,
+               vh: document.documentElement.clientHeight };
+    }).catch((e) => ({ err: String(e).slice(0, 120) }));
+    await sleep(600);
+  }
   if (cfg.overflowStrip) {
     out.overflowStrip = await frameOf("chat").evaluate((kind) => {
       const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };

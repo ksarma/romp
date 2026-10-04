@@ -518,12 +518,13 @@ class ReturnFromBackground(unittest.TestCase):
 
     # ---- the driver ----
     def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False, post_tap=None,
-               cue_app=None, sub_view=False, notice_after_paint=False, overflow_strip=None):
+               cue_app=None, sub_view=False, notice_after_paint=False, overflow_strip=None, landscape_keyboard=False):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds%s%s%s%s%s%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "", "-posttap-" + post_tap if post_tap else "",
-                                                       "-cue-" + cue_app if cue_app else "", "-subview" if sub_view else "", "-notice" if notice_after_paint else "", "-strip-" + overflow_strip if overflow_strip else "")
+        name = "%s-%s-%s-%ds%s%s%s%s%s%s%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "", "-posttap-" + post_tap if post_tap else "",
+                                                         "-cue-" + cue_app if cue_app else "", "-subview" if sub_view else "", "-notice" if notice_after_paint else "", "-strip-" + overflow_strip if overflow_strip else "",
+                                                         "-landkbd" if landscape_keyboard else "")
         eager = _eager(shell, None if unmarked else tap)   # a tapped pane's document is loaded before the suspend (on the re-tap, under abort or denied); an unmarked document runs no shim, so the tapped pane never joins the eager set (pass 5, the author's label, taking the reviewer's round-4 finding tests-1)
         # a derived set that came out empty would hand the driver a boot wait and a fresh wait that end at once with nothing witnessed
         # (review round 2, 2026-09-19: every derived expectation must fail when the derivation yields nothing)
@@ -547,6 +548,7 @@ class ReturnFromBackground(unittest.TestCase):
                "holdActiveFullMs": hold_active_full_ms,   # fresh-2 (review round 3): the driver's proxy holds the boot chat dial's frames naming the active tab for this long
                "postTap": post_tap or "", "postTapMs": 2000, "cueHoldMs": cue_hold_ms() if post_tap else 0,
                "cueApp": cue_app or "chat", "subView": bool(sub_view), "noticeAfterPaint": bool(notice_after_paint),
+               "landscapeKeyboard": bool(landscape_keyboard), "pinnedNote": bool(landscape_keyboard),   # ruling 3 at 79dce614c (2026-10-04): the landscape phone with the keyboard up and a long pinned note
                "overflowStrip": overflow_strip or "",   # round 2 of the review (2026-10-03, correctness-1): the chat strip filled past its cap before the suspend ("tabs" or "notes")   # round 1 of the review (2026-10-03): the pane whose badge is read, the subagent viewer opened before the suspend, the landing notice shown over the painted badge   # iOS item 4: the tap after the return, 2 s on (inside the badge's 30 s failsafe, where the off-screen paint showed)
                "showFilesControl": tap == "files",   # extra9-2 (review round 3): the Files tab exists only with the gear's Files control on (romp:settings.showFilesControl, the literal true); the install seeds it before the shell parses
                "shots": os.path.join(self.lab, "return-harness-" + name) if os.environ.get("RETURN_HARNESS_SHOTS") else ""}
@@ -1388,6 +1390,40 @@ class ReturnFromBackground(unittest.TestCase):
     def test_phone_hung_4s_pinned_notes_the_strip_scrolls_out_of_view_do_not_move_the_badge(self):
         name, r = self._drive("phone", "hung", 4, "chromium", overflow_strip="notes")
         self._strip(name, r, "notes")
+
+    # Ruling 3 at 79dce614c (2026-10-04): an element with a resize cursor is a control, in the loader's rctl and in the recorder alike.
+    # The case is the landscape phone with the keyboard up (844 by 200) and a long pinned note: the list below the note is shorter
+    # than the badge, and the composer's resize handle (#composer-resize, 7 px across the width over the composer's top edge, a
+    # resize cursor and nothing else) lies under the badge's first place. At 79dce614c the handle was no control and the painted
+    # badge sat over it (the rehearsed check of round 2: over all 7 px of it). The leg reads each painted record's chrome, which now
+    # counts the handle (_cue's check), with a witness that the handle was read as chrome beside the painted badge and lay under its
+    # first place there, so the leg reached the case
+    def _composer_resize_surface(self, engine):
+        name, r = self._drive("phone", "hung", 4, engine, landscape_keyboard=True)
+        where = name + ": "
+        pn = r.get("pinnedNote") or {}
+        self.assertIs(pn.get("shown"), True, where + "the long pinned note was shown: %r" % (pn,))
+        self.assertTrue(r.get("mobileShell"), where + "the phone's shell at 844 by 200 (the coarse pointer): %r" % (r.get("mobileShell"),))
+        self.assertLess(pn["list"][1], 25, where + "the list below the note is shorter than the badge: %r" % (pn,))
+        self.assertTrue(pn.get("handle") and pn.get("handleCursor", "").endswith("-resize"), where + "the composer's resize handle, with its resize cursor: %r" % (pn,))
+        self._cue(name, r, "hung", 4)
+        recs = self._chrome_witness(where, r, lambda c: c["el"].startswith("div#composer-resize"), "the composer's resize handle")
+        self._chrome_witness(where, r, lambda c: c["el"].startswith("button.pn-unpin"), "the pinned note's unpin button (the note stood while the badge was painted)")
+        under = []
+        for b in recs:
+            x, y, w, h = b["box"]
+            y0, right = max(b["ctop"], 0) + 8, b["vw"] - 8
+            for c in b["chrome"]:
+                if c["el"].startswith("div#composer-resize"):
+                    cx, cy, cw, ch = c["box"]
+                    if cx < right and cx + cw > right - w and cy < y0 + h and cy + ch > y0:
+                        under.append((y0, c["box"], b["box"]))
+        self.assertTrue(under, where + "some record of the painted badge had the handle under its first place (8 px below the list's top): %r" % ([(b["box"], b.get("ctop")) for b in recs[:3]],))
+        type(self).measurements.setdefault(name, {})["composerResize"] = {"note": pn, "firstPlaceAndHandle": under[:4]}
+        self._surface(name, r)
+
+    def test_phone_landscape_keyboard_hung_4s_the_composers_resize_handle_stays_clear_of_the_badge(self):
+        self._composer_resize_surface("chromium")
 
     def test_phone_hung_12s(self):
         self._leg("phone", "hung", 12)

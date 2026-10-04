@@ -918,6 +918,49 @@ fire('romp:wsdown'); after(RHOLD_T);
 out({ atPaint: at() });""")
         self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True}, "the witness: the same element with no selector entry and no cursor is not a control")
 
+    # Ruling 3 at 79dce614c (2026-10-04): a resize cursor makes a control, as a pointer or grab cursor does (the composer's resize
+    # handle and the tab strip's have that cursor and nothing else). The keyword list is CSS's, the cursor property's values in CSS
+    # Basic User Interface Level 4, and the resize cursors are derived from it, the keywords that end in -resize; each keyword is
+    # tried alone, on an element at the badge's first place outside the list with no selector entry, so the product's list is
+    # checked against the whole of CSS's: a keyword it drops, or one it adds, fails here
+    CSS_CURSORS = ["auto", "default", "none", "context-menu", "help", "pointer", "progress", "wait", "cell", "crosshair", "text",
+                   "vertical-text", "alias", "copy", "move", "no-drop", "not-allowed", "grab", "grabbing", "e-resize", "n-resize",
+                   "ne-resize", "nw-resize", "s-resize", "se-resize", "sw-resize", "w-resize", "ew-resize", "ns-resize", "nesw-resize",
+                   "nwse-resize", "col-resize", "row-resize", "all-scroll", "zoom-in", "zoom-out"]
+
+    def test_a_pointer_grab_or_resize_cursor_alone_makes_a_control_and_no_other_cursor_does(self):
+        resize = [k for k in self.CSS_CURSORS if k.endswith("-resize")]
+        self.assertEqual(len(resize), 14, "CSS's resize cursors: the eight edges and corners, the four two-way ones, col and row: %r" % (resize,))
+        counted = {"pointer", "grab", "grabbing"} | set(resize)
+        for k in self.CSS_CURSORS:
+            with self.subTest(k):
+                o = self._fit(r"""
+add(null, [300, 54, 60, 20], { cursor: %s });
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atPaint: at() });""" % json.dumps(k))
+                if k in counted:
+                    self.assertEqual(o["atPaint"], {"top": "82px", "right": "8px", "painted": True}, k + ": a control, the badge goes below it (54 + 20 + 8)")
+                else:
+                    self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True}, k + ": not a control, the first place")
+
+    def test_on_a_short_list_the_composers_resize_handle_sends_the_badge_to_a_place_clear_of_it(self):
+        # the landscape phone with the keyboard up (ruling 3): the list 28 px tall below the header, the composer's resize handle (7 px
+        # across the whole width over the composer's top edge, a resize cursor and nothing else) over the list's bottom, the composer's
+        # text field below. At 79dce614c the handle was not a control and the first place, 8 px below the list's top, covered it
+        o = self._fit(r"""
+shortList(169, 89); resize(61);
+add(null, [0, 0, 390, 45], { sel: 'button' });                        // the header's session picker, across the page
+add(null, [0, 86, 390, 7], { cursor: 'ns-resize' });                  // the composer's resize handle, across the page
+add(null, [0, 100, 390, 60], { sel: 'textarea' });                    // its text field
+const atLoad = at();
+fire('romp:wsdown'); after(RHOLD_T);
+out({ atLoad, atPaint: at() });""")
+        self.assertEqual(o["atLoad"], {"top": "69px", "right": "8px", "painted": False})
+        self.assertEqual(o["atPaint"], {"top": "53px", "right": "8px", "painted": True},
+                         "8 px below the header (45 + 8), clear of everything: the first place (69 px) covers the handle's top 7 px, the walk "
+                         "below it passes the list's bottom and the handle spans the width, so the clear place in the view is taken "
+                         "(79dce614c: 69 px, over the handle)")
+
     def test_a_control_in_a_fixed_element_in_the_list_moves_the_badge_off_it(self):
         o = self._fit(r"""
 const pop = add(CONTENT, [200, 50, 190, 40], { position: 'fixed' }); add(pop, [300, 54, 60, 20], { sel: 'button' });

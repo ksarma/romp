@@ -70054,8 +70054,10 @@ def _pane_spin(cid, ignore_id=""):
             # view, at the right edge and 8 px above or below one of those controls, that covers the least of them, the nearest
             # the first place among equals: a clear one wherever the view's right edge has room for the badge with 8 px to spare
             # above and below, which may be over the chrome's text above the list; only a view without that room leaves it over a
-            # control (taps still pass through it). A control is anything RCTL matches or anything drawn with a pointer or grab
-            # cursor (the Feed's drag chip has its cursor and nothing else). Controls in the content itself (the top row of
+            # control (taps still pass through it). A control is anything RCTL matches or anything drawn with a pointer, grab or
+            # resize cursor (the Feed's drag chip has its cursor and nothing else, and so have the composer's resize handle and the
+            # tab strip's; ruling 3 at 79dce614c, 2026-10-04: on a landscape phone with the keyboard up and a long pinned note the
+            # badge sat over the composer's handle). Controls in the content itself (the top row of
             # messages or cards) are not avoided: they scroll out from under the badge, and taps pass through it (ruling 9 of
             # round 0).
             # When: the badge is placed at load and at each resize event of the container or the page (a scroll area's box moves
@@ -70101,7 +70103,9 @@ def _pane_spin(cid, ignore_id=""):
             # frame, reports at the frame's first show), and the badge is placed at the load, each resize event and its own paint.
             "function rscroll(){try{return /^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){return false;}}"
             "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true]',rmo=null,rsc=false,rob=null,rhs=null,rpins=[],rfr=0,rfull=false,rgeo=null;"
-            "function rctl(e,s){return (e.matches&&e.matches(RCTL))||/^(pointer|grab|grabbing)$/.test(s.cursor);}"
+            # a control: what RCTL matches, or what is drawn with a pointer or grab cursor or with one of CSS's resize cursors (the
+            # cursor keywords that end in -resize: n, e, s, w, ne, nw, se, sw, ew, ns, nesw, nwse, col and row)
+            "function rctl(e,s){return (e.matches&&e.matches(RCTL))||/^(pointer|grab|grabbing|(n|e|s|w|ne|nw|se|sw|ew|ns|nesw|nwse|col|row)-resize)$/.test(s.cursor);}"
             # what the badge must not cover: each shown control outside the container, and inside it each shown control that is
             # or sits in a sticky or fixed element, as [the control, the ancestors that clip it (rclip)]. Each element's style is
             # kept for the scan (M), so rclip reads its ancestors' from there: document order puts an ancestor before its children.
