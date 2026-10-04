@@ -10,7 +10,9 @@ in that run's log (the slowest single test 222 s). With the step inside the Shel
 minutes of bats time (the job's margin at 1d591384e was 190 s) ran the job past its cap. Raising the Shell cap was declined,
 since it would hide the growth; the step moved to its own job instead. The Shell cap was raised later, for the bats suite's
 own growth (Run bats alone took 1850 s on Linux in run 36716348831): main had a flat 35 until fork PR 940 landed on
-2026-10-04 with a line per OS, and check 4 holds the line; ci.yml's comment above that line carries the current figure.
+2026-10-04 with 60 on macOS and 50 on Linux, and fork PR 926, merging main after it, set the Linux figure to 55 by the rule
+(the slowest finished job plus 10 minutes, rounded up to a multiple of 5); check 4 holds that line, and ci.yml's comment
+above it carries the current figure.
 
 THE PIN IS EXACT EQUALITY, read as text: CI's Python cells install no YAML library, as the other tests/test_ci_*.py modules
 note. This module first held the job through a closed line reader that enumerated the shapes a line could take and the
