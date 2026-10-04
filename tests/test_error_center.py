@@ -566,6 +566,11 @@ out.pairSecondUnmutedClosed = Object.assign(state(), { retrySeen: seenOf('pair m
 // closed; the socket back up clears it
 window.__rompOpenErrs();
 post({ romp: 'wsState', app: 'chat', state: 'down' });
+// then the shim's word that the pane's redial closed without opening. A Log that writes the connection-lost entry only when a
+// reconnect fails writes it on this word, with the Log open; one that writes it at the drop has written it already and has no
+// listener for the word. So the step reads that entry landing seen from either Log. Without the word, the first kind of Log
+// writes no entry here and the state below reads the same, so the step would pass with no entry landing at all
+post({ romp: 'wsFail', app: 'chat' });
 out.downOpen = state();
 window.__rompCloseErrs();
 out.downClosed = state();
