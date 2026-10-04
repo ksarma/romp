@@ -78,7 +78,12 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
     %d, %i or %s, and then the whole right operand is read, each element of a tuple, whatever placeholder it fills;
     for format, a field takes the operand str.format gives it (by its number, its name or the next automatic number),
     and takes its automatic number before the fields nested in its format spec take theirs, so
-    "http://{:{}}:{}/".format(h, w, N) reads N, and "http://{:{}}:{}/".format(h, N, 1) reads nothing. A format
+    "http://{:{}}:{}/".format(h, w, N) reads N, and "http://{:{}}:{}/".format(h, N, 1) reads nothing. A field is
+    numbered when its name before any . or [ is decimal digits alone (str.isdecimal(), the test str.format makes), so
+    an Arabic-Indic digit numbers a field and a superscript digit, which str.isdigit() accepts, names one, as
+    str.format reads them. Such a name takes the keyword argument of that name, which a call can pass only in a **
+    mapping (no identifier holds a superscript digit), one the format reading does not open, so its operand is not
+    read; and as it is no numbered field, an automatic field beside it takes the operand str.format gives it. A format
     template is not read when string.Formatter().parse refuses its text or a field's format spec, when a field nested
     in a spec has an opening brace in its own spec ("http://{:{:{}}}:{}/", where str.format refuses a field nested two
     deep), or when automatic fields ({}) and numbered ones ({1}) mix ("http://{}:{1}/", where str.format refuses the
@@ -665,9 +670,11 @@ class _Scan:
 
     def _formatted(self, tmpl, args, keywords):
         """Each operand str.format places right after an address's colon in the template `tmpl`. A field takes the next
-        automatic number before the fields nested in its format spec take theirs ("{:{}}" takes two). The template is not
-        read when string.Formatter().parse refuses it or a field's spec, when a field nested in a spec has an opening
-        brace in its own spec, or when automatic and numbered fields mix: str.format refuses each of those for the text
+        automatic number before the fields nested in its format spec take theirs ("{:{}}" takes two). A field is
+        numbered when its name before any . or [ is decimal digits alone (str.isdecimal(), the test str.format makes),
+        so a superscript digit, which str.isdigit() accepts and int() refuses, makes a name. The template is not read
+        when string.Formatter().parse refuses it or a field's spec, when a field nested in a spec has an opening brace
+        in its own spec, or when automatic and numbered fields mix: str.format refuses each of those for the text
         alone. Nothing else it refuses is checked (a field with no operand, an unknown conversion, a spec an operand
         refuses)."""
         try:
@@ -677,7 +684,7 @@ class _Scan:
             return
         heads = [re.match(r"[^.\[]*", f).group(0) for _lit, field, nested in fields if field is not None
                  for f in [field] + [f for f, _s in nested]]          # each field's name before any . or [, in str.format's order
-        numbering = {"automatic" if h == "" else "numbered" for h in heads if h == "" or h.isdigit()}
+        numbering = {"automatic" if h == "" else "numbered" for h in heads if h == "" or h.isdecimal()}
         if len(numbering) > 1 or any("{" in s for _lit, _field, nested in fields for _f, s in nested):
             return                                  # str.format refuses a switch of numbering, and a field nested two deep
         rendered, auto = "", 0
@@ -688,7 +695,7 @@ class _Scan:
             head = re.match(r"[^.\[]*", field).group(0)
             if head == "":
                 arg, auto = (args[auto] if auto < len(args) else None), auto + 1
-            elif head.isdigit():
+            elif head.isdecimal():
                 arg = args[int(head)] if int(head) < len(args) else None
             else:
                 arg = keywords.get(head)
@@ -1511,6 +1518,25 @@ class Plants(unittest.TestCase):
                 ("another field with an unknown conversion", 'u = "http://{}:{}/{!x}".format(h, %d, p)\n' % n)):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, "formatted into an address")
+
+    def test_a_format_field_is_numbered_by_decimal_digits_alone(self):
+        """THE RULE's str.format reading, for a field name of digits other than ASCII's: a field is numbered when its
+        name is decimal digits alone (str.isdecimal()), as str.format reads it. An Arabic-Indic digit numbers a field.
+        A superscript two, a digit to str.isdigit() but not decimal, is a name: a numbered field beside it is read by
+        its number and an automatic one by the next automatic number, and the field itself takes the keyword argument
+        of its name, which no call writes as a keyword, so a port in it is not read (the green form, whose red twins
+        above show the template read). The census tested str.isdigit() here and then called int() on the name, which
+        raised ValueError for a superscript digit, and counted such a name as a numbered field, so beside an automatic
+        field the template was refused."""
+        n, sup2, ar1 = _n(), "\u00b2", "\u0661"                         # a superscript two; an Arabic-Indic one
+        for label, src in (
+                ("a numbered field after a superscript-digit name", 'u = "http://{%s}:{0}/x".format(%d)\n' % (sup2, n)),
+                ("an automatic field after a superscript-digit name", 'u = "http://{%s}:{}/x".format(%d)\n' % (sup2, n)),
+                ("a field numbered by an Arabic-Indic digit", 'u = "http://127.0.0.1:{%s}/x".format(1, %d)\n' % (ar1, n))):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, "formatted into an address")
+        with self.subTest("the port's field named by a superscript digit"):
+            self.assertGreen("test_x.py", 'u = "http://127.0.0.1:{%s}/x".format(%d)\n' % (sup2, n))
 
     def test_a_random_call_with_keyword_arguments(self):
         """THE RULE's random calls, with arguments given by their parameters' names (randint(a=..., b=...)), read as their
