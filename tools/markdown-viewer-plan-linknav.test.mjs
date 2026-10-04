@@ -989,17 +989,16 @@ const legsOffRoster = (files, legs) => files.filter((f) => /^ui\/webview\/[\w-]+
 /** The follow-on's legs that stay off the shared roster, each with the words its own header gives for it and the words the plan's
  *  Tests paragraph names it with, for one of two reasons. ENGINES_OFF: a leg that launches an engine the roster's job does not
  *  install, where a test in a rostered file would not run (the file review's round 17, tests-1 with regression-1, and the
- *  coordinator's decision 2 on it: the one gate's tap cells and stacking cells in WebKit and Firefox). BOUNDS_OFF: a leg whose whole
- *  run outlasts both of the step's bounds, its five minutes and the script's 240 s per file, so it runs locally alone and raising the
- *  step's bound is the owner's change to the workflow file (the coordinator's ruling on the roster after the file review's round
- *  19: the open leg, nearly ten minutes run alone, 586.7 s through the step's own command when node held the per-file
- *  bound). Each is a derived leg whose header carries its words,
- *  the plan names it with its own, and it is no roster line in either state of the pin below. The legs whose code names Firefox
- *  or WebKit as a string literal are exactly the entries of ENGINES_OFF. BOUNDS_OFF's reason is a measurement, which the PR's
- *  body records and no check in the tree reads, so its entry is held by its header's words and the plan's alone. PR 887 landed
- *  with no exclusions file, so a leg is kept off the roster by this list and its header's words alone (rewritten at the landing
- *  merge with main at 1d591384e, as PR 887's section on who owes what at the landing asks: this pin had modelled an exclusions
- *  line for it). */
+ *  coordinator's decision 2 on it: the one gate's tap cells and stacking cells in WebKit and Firefox). BOUNDS_OFF: a leg whose
+ *  whole run outlasts both of the step's bounds, its five minutes and the script's 240 s per file, so it runs locally alone
+ *  and raising the step's bound is the owner's change to the workflow file (the coordinator's ruling on the roster after the
+ *  file review's round 19: the open leg, nearly ten minutes run alone, 586.7 s through the step's own command when node held
+ *  the per-file bound). Each is a derived leg whose header carries its words, the plan names it with its own, and it is no
+ *  roster line in either state of the pin below. The legs whose code names Firefox or WebKit as a string literal are exactly
+ *  the entries of ENGINES_OFF. BOUNDS_OFF's reason is a measurement, which the PR's body records and no check in the tree
+ *  reads, so its entry is held by its header's words and the plan's alone. PR 887 landed with no exclusions file, so a leg is
+ *  kept off the roster by this list and its header's words alone (rewritten at the landing merge with main at 1d591384e, as PR
+ *  887's section on who owes what at the landing asks: this pin had modelled an exclusions line for it). */
 const ENGINES_OFF = 'that roster\'s job installs Chromium alone';
 const BOUNDS_OFF = 'outlasts both of that roster\'s step bounds';
 const OFF_ROSTER = [

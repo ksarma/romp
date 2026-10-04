@@ -9579,20 +9579,20 @@ nothing) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over t
 opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
 reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
 The browser legs named here run with a browser in the job that gates a landing, all but the legs kept off the roster
-named below: each is a line of the shared roster of browser legs, vscode-extension/ci-browser-legs.txt, one compiled bundle
-path per line, run by the step "Browser legs (node --test over ci-browser-legs.txt)" of that job after its Chromium install
-under the switch ROMP_BROWSER_LEGS_REQUIRE, which inBrowser reads itself, the three on main since PR 887 landed (the legs
-joined the roster after the landing merge with main at 1d591384e, as PR 887's section on who owes what at the landing asks,
-their timeout values that reached the 240 s per-file bound (node's --test-timeout then) lowered under it, and the PR's
-body gives each rostered leg's
-measured seconds); in the Test step before that install each leg skips at launch (the gate-before-adoption section's Tests
-paragraph states that job's shape and tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), and a source pin in a leg
-runs there without a browser; the legs kept off the roster are ui/webview/file-figure-open-engines-browser.test.ts, which
-launches WebKit and Firefox, since the roster's job installs Chromium alone, and ui/webview/file-figure-open-browser.test.ts,
-whose whole run outlasts both of the step's bounds, its five minutes and the script's 240 s per file, so it runs locally alone,
-and raising the step's bound, which sits in the workflow file, is the owner's choice (the coordinator's ruling on the roster
-after the file review's round 19); what gates the follow-on where landing is gated is the rostered legs' browser scenarios,
-its source pins, the node modules beside each leg in the Test step (their node cases; a browser scenario inside a node
+named below: each is a line of the shared roster of browser legs, vscode-extension/ci-browser-legs.txt, one compiled
+bundle path per line, run by the step "Browser legs (node --test over ci-browser-legs.txt)" of that job after its
+Chromium install under the switch ROMP_BROWSER_LEGS_REQUIRE, which inBrowser reads itself, the three on main since PR 887
+landed (the legs joined the roster after the landing merge with main at 1d591384e, as PR 887's section on who owes what
+at the landing asks, their timeout values that reached the 240 s per-file bound (node's --test-timeout then) lowered
+under it, and the PR's body gives each rostered leg's measured seconds); in the Test step before that install each leg
+skips at launch (the gate-before-adoption section's Tests paragraph states that job's shape and
+tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), and a source pin in a leg runs there without a browser; the
+legs kept off the roster are ui/webview/file-figure-open-engines-browser.test.ts, which launches WebKit and Firefox,
+since the roster's job installs Chromium alone, and ui/webview/file-figure-open-browser.test.ts, whose whole run outlasts
+both of the step's bounds, its five minutes and the script's 240 s per file, so it runs locally alone, and raising the
+step's bound, which sits in the workflow file, is the owner's choice (the coordinator's ruling on the roster after the
+file review's round 19); what gates the follow-on where landing is gated is the rostered legs' browser scenarios, its
+source pins, the node modules beside each leg in the Test step (their node cases; a browser scenario inside a node
 module, ui/webview/file-view-text-size.test.ts's bar case and ui/webview/file-trail.test.ts's Reload case, skips there as
 the legs do, and neither module is a roster line), and the pytest modules it added or re-aimed,
 tests/test_guide_trail_chords_and_figure_button.py, tests/test_guide_files_failures.py and
