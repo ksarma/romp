@@ -137,10 +137,16 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   that names none, or names one a positional argument fills, is passed over), and the call is read by the arguments
   that fill its parameters from the first up to the first left empty: random.randint(a=40000, b=50000) counts as
   random.randint(40000, 50000) does, randrange(start=S) and randrange(start=S, step=K) read as randrange(S), and
-  neither randint(b=N) nor randrange(stop=E) is read. A sum or difference with an unbounded operand counts when one of
-  its operands alone is a constant expression (one interval() bounds with no unknown in it) whose value is in the
-  range, found through str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so
-  is 40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read.
+  neither randint(b=N) nor randrange(stop=E) is read. A randrange(start, stop, step) whose start's interval lies wholly
+  below its stop's (start is below stop for every value each can take) is read as start to stop less one whatever its
+  step, bounded or not: every step but a positive one then raises, and a positive one returns a value in that span
+  (random.randrange(40000, 50000, k) is 40000-49999, and so are random.randrange(40000, 50000, step=k) and
+  random.randrange(40000, stop=50000, step=k)). Any other randrange with an unbounded step is not read (where the two
+  intervals overlap, start can lie above stop, and a negative step then returns values above stop less one). A sum or
+  difference with an unbounded operand counts when one of its operands alone is a constant expression (one interval()
+  bounds with no unknown in it) whose value is in the range, found through str() and int() and down a chain of sums and
+  differences: 40000 + i is built on 40000, and so is 40000 * 1 + i (offset_base()); one with no such operand (base +
+  i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -489,7 +495,9 @@ def interval(node, bound=None):
     name bound to one int literal, str() or int() around one, an unknown operand of % by a positive constant read as
     0 to the constant less one, and randint(a, b), randrange(stop), randrange(start, stop[, step]) and randbelow(n)
     over bounded arguments read as the values each can return, each argument given by position or by its parameter's
-    name (_random_args()). computed is True when an unknown took part."""
+    name (_random_args()); randrange(start, stop, step) whose start's interval lies wholly below stop's is read as start
+    to stop less one whatever its step, bounded or not, since only a positive step then does not raise. computed is True
+    when an unknown took part."""
     bound = bound or {}
     if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
         return node.value, node.value, False
@@ -503,6 +511,8 @@ def interval(node, bound=None):
     if isinstance(node, ast.Call) and _callee(node.func) in RANDOM_CALLS:
         ivs = [interval(a, bound) for a in _random_args(node) or ()]
         name, k = _callee(node.func), len(ivs)
+        if name == "randrange" and k == 3 and ivs[0] and ivs[1] and ivs[0][1] < ivs[1][0]:
+            return ivs[0][0], ivs[1][1] - 1, True   # start below stop for every value: only a positive step does not raise
         if ivs and all(ivs):
             if name == "randint" and k == 2:
                 return ivs[0][0], ivs[1][1], True
@@ -1567,6 +1577,27 @@ class Plants(unittest.TestCase):
                 ("randint by keyword below the range", 'port = random.randint(a=1024, b=2048)\n')):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
+
+    def test_a_randrange_whose_step_is_unbounded(self):
+        """randrange(start, stop, step) with a step the census cannot bound, given by position or by its name, the stop
+        by either too: read as start to stop less one when start's interval lies wholly below stop's, since every step but
+        a positive one then raises and a positive one returns a value in that span. The last red plant computes start
+        and stop, start's interval ending one below stop's. The green twin's intervals overlap (start lo to lo + 2999,
+        stop lo + 1000 to lo + 1999), so start can lie above stop, where a negative step returns values above stop less
+        one: it is not read."""
+        lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
+        for label, src, top in (
+                ("the step by position", 'port = random.randrange(%d, %d, k)\n' % (lo, hi), hi - 1),
+                ("the step by keyword", 'port = random.randrange(%d, %d, step=k)\n' % (lo, hi), hi - 1),
+                ("the stop and the step by keyword", 'port = random.randrange(%d, stop=%d, step=k)\n' % (lo, hi), hi - 1),
+                ("start and stop computed, start's interval wholly below stop's",
+                 'port = random.randrange(%d + os.getpid() %% 1000, %d + os.getpid() %% 1000, step=k)\n' % (lo, lo + 1000),
+                 lo + 1998)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, "computed into %d-%d" % (lo, top), n=lo)
+        with self.subTest("start's interval and stop's overlap"):
+            self.assertGreen("test_x.py", 'port = random.randrange(%d + os.getpid() %% 3000, %d + os.getpid() %% 1000, k)\n'
+                             % (lo, lo + 1000))
 
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
