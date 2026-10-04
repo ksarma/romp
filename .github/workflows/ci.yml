@@ -127,9 +127,10 @@ jobs:
     # same runs), read at 03:32 UTC on 2026-10-04: the slowest, the 3.14t cell of run 37158350467 (a
     # dispatch of fork PR 959's branch on 2026-10-03, job 111306365110), took 2276 s in its pytest
     # step with two workers and 32 s in the steps before it, so the rule gives 2276 + 600 + 32 =
-    # 2908 s, about 48 min 28 s, past the 40 minutes the cap had (set on 2026-09-30 from run
-    # 36664031774, whose slowest Linux pytest step took 1572 s), and 50 leaves about 1 min 32 s.
-    # Each step's time is the jobs API's.
+    # 2908 s, about 48 min 28 s, past the 35 minutes main had and past the 40 that fork PR 926's
+    # branch set on 2026-09-30 from run 36664031774 (whose slowest Linux pytest step took 1572 s)
+    # before it set 50 on 2026-10-02, and 50 leaves about 1 min 32 s. Each step's time is the
+    # jobs API's.
     timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 50 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a

@@ -58,16 +58,17 @@ class PythonJobCeiling(unittest.TestCase):
     42 to 43 minutes; the rule (the suite plus the 600 s per-test timeout plus setup) gives 53 to 54, the floor is 54
     and the ceiling 60, so a revert to 40 goes red. Linux 25 to 35 the same day by the same rule: the 3.10
     Linux cell took 19 min 34 s on the dispatch of 2026-09-24 03:48 UTC (run 35952964334), under six minutes short of
-    the cap where about 20 plus 10 plus setup is about 31. Linux 35 to 40 on 2026-09-30 by the same rule (the PR's narrow
-    landing delta, ruling 6): on this fork's dispatch run 36664031774, with two workers, the Linux cells' pytest steps
-    took 1326 to 1572 s and their other steps at most 30 s, so the 3.10 cell's 1572 s plus the 600 s per-test timeout
-    plus 30 s of setup is 2202 s, about 36 min 42 s; the floor was 37, so a revert to 35 went red, and the ceiling
-    stayed 45. Linux 40 to 50 on 2026-10-02 by the same rule, which still gives 50 when applied to the finished Linux
-    cells among the runs on main, on the batch branches and on the branches of the open and merged PRs (a cell cancelled
-    at a cap has no measured length), read at 03:32 UTC on 2026-10-04: the slowest, the 3.14t cell of run 37158350467,
-    took 2276 s in its pytest step with two workers and 32 s in the steps before it, so 2276 s plus the 600 s per-test
-    timeout plus 32 s is 2908 s, about 48 min 28 s; the floor is 49, so a revert to 40 or 45 goes red, and the ceiling
-    is 50, the rule's figure, so a larger cap is sized again in the change that sets it."""
+    the cap where about 20 plus 10 plus setup is about 31. On fork PR 926's branch (main kept 35 until that PR landed),
+    Linux 35 to 40 on 2026-09-30 by the same rule (the PR's narrow landing delta, ruling 6): on this fork's dispatch run
+    36664031774, with two workers, the Linux cells' pytest steps took 1326 to 1572 s and their other steps at most 30 s,
+    so the 3.10 cell's 1572 s plus the 600 s per-test timeout plus 30 s of setup is 2202 s, about 36 min 42 s; the floor
+    was 37, so a revert to 35 went red, and the ceiling stayed 45. Then, on the same branch, Linux 40 to 50 on
+    2026-10-02 by the same rule, which still gives 50 when applied to the finished Linux cells among the runs on main,
+    on the batch branches and on the branches of the open and merged PRs (a cell cancelled at a cap has no measured
+    length), read at 03:32 UTC on 2026-10-04: the slowest, the 3.14t cell of run 37158350467, took 2276 s in its pytest
+    step with two workers and 32 s in the steps before it, so 2276 s plus the 600 s per-test timeout plus 32 s is
+    2908 s, about 48 min 28 s; the floor is 49, so a revert to 40 or 45 goes red, and the ceiling is 50, the rule's
+    figure, so a larger cap is sized again in the change that sets it."""
     def setUp(self):
         src = open(WF).read()
         m = re.search(r"^  python:\n((?:    .*\n|\n)+?)    strategy:\n", src, re.M)
