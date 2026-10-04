@@ -76637,7 +76637,15 @@ def _landing():
             "#rerr-filters{display:flex;align-items:stretch;gap:9px;padding:8px 12px;border-bottom:1px solid #2a2a2a;flex:0 0 auto}"
             ".rerr-flabel{writing-mode:vertical-rl;transform:rotate(180deg);text-align:center;color:#e8eaed;"
             "font-size:9px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;user-select:none}"
-            "#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(5,1fr);gap:5px}"   # 9 kinds -> 2 rows (5+4), the minimum
+            # As many equal columns as fit at 96px or more each, never more than five (2026-10-04). 96px is the entry rows' chip
+            # column below, sized to hold the widest chip ("follow-up failed", 89 to 95px in the engines the served test runs). The
+            # other term, 20% - 5px, is a fifth of the grid less one 5px gap: five such tracks and their four gaps always fit and a
+            # sixth never does, so the desktop's 700px panel keeps exactly the five equal columns it had. Those were
+            # repeat(5,1fr), which could not narrow: a 1fr track's minimum is its chips' min-content width and the chips never
+            # wrap, so five columns stayed about 340 to 360px wide and ran past the panel, and off the screen, on a phone narrower
+            # than 414 to 435px, by engine. A phone now gets three columns from about 370px and two below it
+            # (tests/test_log_filter_grid_served.py measures them, and that every chip still holds its label).
+            "#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(max(96px,20% - 5px),1fr));gap:5px}"
             ".rerr-fbtn{cursor:pointer;user-select:none;text-align:center}"
             ".rerr-fbtn.off{opacity:0.35;border-style:dashed}"
             ".rerr-fbtn:hover{opacity:1}"

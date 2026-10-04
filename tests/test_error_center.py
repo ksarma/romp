@@ -418,7 +418,10 @@ class ErrorCenterWiring(unittest.TestCase):
         # every chip the same cell width) instead of one ragged wrapping row (the user 2026-07-28)
         self.assertIn("<div id=rerr-filters><span class=rerr-flabel>show</span><div id=rerr-fgrid></div></div>", html)
         self.assertIn("writing-mode:vertical-rl", html)
-        self.assertIn("#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(5,1fr);gap:5px}", html)
+        # ...in as many equal columns as fit at 96px or more each, five at most, so a phone's narrower panel takes fewer
+        # columns instead of overflowing (2026-10-04); the layout itself is measured in real engines by
+        # tests/test_log_filter_grid_served.py, this pin only guards the rule's text
+        self.assertIn("#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(max(96px,20% - 5px),1fr));gap:5px}", html)
         self.assertIn(".rerr-fbtn.off{opacity:0.35;border-style:dashed}", html)
         # the panel is 60% wider, and entry rows are a grid with a fixed chip column so every message
         # left-aligns past the widest chip
