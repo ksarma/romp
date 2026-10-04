@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""The secret scan runs on every push whose commit carries its workflow and on every push to an open pull request's
-branch, a workflow of its own, as one definition with ci.yml's secrets job (.github/workflows/secret-scan.yml, 2026-09-30).
+"""The secret scan runs on every push whose commit carries its workflow, a workflow of its own, as one definition with
+ci.yml's secrets job (.github/workflows/secret-scan.yml, 2026-09-30; push only since 2026-10-04).
 
-Since 2026-09-27 ci.yml runs only on a push to a batch branch, by hand and on its weekly schedule. A push the pre-push
-hook did not scan (CLAUDE.md, "Credentials", lists the kinds) then waited for the next of those runs, and a commit that
-left every branch before one (force-pushed over, or on a deleted branch) was never scanned by CI, though GitHub still
-serves it by its sha. secret-scan.yml runs ci.yml's secrets job on every push of a branch or a tag whose commit
-carries that file (the PR's narrow landing delta, ruling 1) and on a pull request's opened, synchronize and reopened
-events (the ruling of 2026-09-30 12:42Z, item 1): GitHub reads a push's workflows from the commit the push puts on its
-ref, and a pull request's from the merge commit it makes of the PR's head and its base, which carries the base's copy
-unless the branch edited or deleted it, so a PR's pushes are scanned on a branch cut before the file landed and on a PR
-from another repository, while a branch cut before the file with no open PR starts no run until it merges main (the
-file's header says which pushes start none). The two copies are held equal here instead of being written once as a
+Since 2026-09-27 ci.yml runs only on a push to a batch branch and by hand (its weekly schedule as well until 2026-10-04,
+when it was paused). A push the pre-push hook did not scan (CLAUDE.md, "Credentials", lists the kinds) then waited for
+the next of those runs, and a commit that left every branch before one (force-pushed over, or on a deleted branch) was
+never scanned by CI, though GitHub still serves it by its sha. secret-scan.yml runs ci.yml's secrets job on every push of
+a branch or a tag whose commit carries that file (the PR's narrow landing delta, ruling 1); GitHub reads a push's
+workflows from the commit the push puts on its ref, so a branch cut before the file landed starts no run until it merges
+main (the file's header says which pushes start none). From 2026-09-30 (the ruling of 12:42Z, item 1) to 2026-10-04 it
+also ran on a pull request's opened, synchronize and reopened events, which scanned a PR's pushes on a branch cut before
+the file landed and on a PR from another repository, and scanned a push to an open PR's branch twice when its commit
+carried the file. The private runner bills every run, and the trigger was dropped there (the user's approval of
+2026-10-04 of the private-runner CI shape), giving up those PR runs; the file's header says what that gives up. The two
+copies are held equal here instead of being written once as a
 reusable workflow that both call: GitHub renders a called job's check name as "<caller job> / <called job>", and
 scripts/batch.py land tells ci.yml's jobs by the names GitHub renders (ci_jobs, the coordinator's decision 18), as does
 the list of checks docs/batching.md's maintainer section gives.
@@ -35,13 +37,11 @@ files one way. No YAML library is in the test deps.
    rest (the focused re-check's item 2 after the merge of main: dropping --all from both copies passed every check).
 3. TRIGGERS. secret-scan.yml's top-level keys are name, on and jobs, in that order, so no concurrency group (whose cancel
    would drop a push's run when the next push to its branch arrives), and no workflow-level env:, defaults: or
-   permissions:. Its on: block is exactly `push:` with no filter, so every push of any branch or tag whose commit
-   carries the file starts a run, and `pull_request:` with `types: [opened, synchronize, reopened]` and no other
-   filter, so a PR onto any base is scanned when it opens, on each push to its branch and when it reopens (SCAN_ON_LINES;
-   a block that lacks either trigger, filters one, or adds another is red, the old push-only block among them). The
-   block is held to those exact lines, so a spelling GitHub reads the same way (the types line dropped, since those
-   three are its default) is red too, and is made together with SCAN_ON_LINES. Its jobs: holds the one job, and the job
-   has no concurrency: key.
+   permissions:. Its on: block is exactly `push:` with no filter and nothing else (SCAN_ON_LINES), so every push of any
+   branch or tag whose commit carries the file starts one run, and no pull request event starts a second: a block that
+   filters push, drops it, or adds a trigger is red, the pull_request trigger the file had from 2026-09-30 to 2026-10-04
+   among them. The block is held to those exact lines, so a spelling GitHub reads the same way is red too, and is made
+   together with SCAN_ON_LINES. Its jobs: holds the one job, and the job has no concurrency: key.
 4. NAMES. Each copy's name line is its literal, and each name is held by exactly one content line across the workflow
    files (tests/test_ci_vendored_job.py's check_name_once). The names differ on purpose: GitHub matches a required
    status check by job name whatever the workflow, so one name for two jobs would let either meet a rule that names it.
@@ -82,9 +82,9 @@ CHECKSUM = re.compile(r'^          echo "\$\{GITLEAKS_SHA256\}  /tmp/gitleaks\.t
 SCAN_RUN = re.compile(r"^        run: gitleaks git \. (?P<args>.*)$")
 LOG_OPTS = ("--all", "--diff-merges=first-parent", "--text")
 SCAN_TOP_KEYS = ["name", "on", "jobs"]
-# The on: block, comment-only lines dropped: push with no filter, and pull_request with GitHub's three default types
-# written out and no branch filter (under pull_request a branch filter selects the base branch).
-SCAN_ON_LINES = ["on:", "  push:", "  pull_request:", "    types: [opened, synchronize, reopened]", ""]
+# The on: block, comment-only lines dropped: push with no filter, and no other trigger (the pull_request trigger, dropped
+# on 2026-10-04 for the private runner, scanned a push to an open PR's branch a second time).
+SCAN_ON_LINES = ["on:", "  push:", ""]
 CI_NAME = "Secret scan (gitleaks)"
 SCAN_NAME = "Secret scan on push (gitleaks)"
 # A key line at four spaces, the job's own keys.
@@ -256,9 +256,8 @@ class SecretScanIsCiJobOnEveryPush(unittest.TestCase):
     def test_1_the_two_copies_of_the_job_are_equal_but_for_the_name(self):
         self.assertNoFaults(identity_faults(self.ci, self.scan), (
             "ci.yml's secrets job and secret-scan.yml's are not the same job (above). They are one definition of the secret "
-            "scan, run by ci.yml on a batch push, by hand and on the schedule, and by secret-scan.yml on every push whose "
-            "commit carries it and every push to an open pull request's branch; a "
-            "change to one copy is made to the other in the same commit, every key but the name."))
+            "scan, run by ci.yml on a batch push and by hand, and by secret-scan.yml on every push whose commit carries "
+            "it; a change to one copy is made to the other in the same commit, every key but the name."))
 
     def test_2_both_copies_hold_what_the_scan_needs(self):
         self.assertNoFaults(needs_faults(self.ci, self.scan), (
@@ -266,12 +265,13 @@ class SecretScanIsCiJobOnEveryPush(unittest.TestCase):
             "the checksum check on the pinned gitleaks download, or the history scan's git log options (--all, "
             "--diff-merges=first-parent, --text)."))
 
-    def test_3_secret_scan_runs_on_every_push_and_every_pull_request_push_and_cancels_no_run(self):
+    def test_3_secret_scan_runs_on_every_push_alone_and_cancels_no_run(self):
         self.assertNoFaults(trigger_faults(self.scan), (
             "secret-scan.yml's triggers or layout changed (above). It runs on every push of any branch or tag whose commit "
-            "carries it, and on a pull request's opened, synchronize and reopened events, with no "
-            "filter and no concurrency group, so each run completes; its one job is ci.yml's secrets job, and a "
-            "workflow-level env:, defaults: or permissions: would reach that job from outside the block check 1 compares."))
+            "carries it, and on nothing else (its pull_request trigger was dropped on 2026-10-04: the private runner bills "
+            "every run, and that trigger scanned a push to an open PR's branch a second time), with no filter and no "
+            "concurrency group, so each run completes; its one job is ci.yml's secrets job, and a workflow-level env:, "
+            "defaults: or permissions: would reach that job from outside the block check 1 compares."))
 
     def test_4_each_copy_keeps_its_own_name(self):
         self.assertNoFaults(name_faults(self.ci, self.scan, workflow_texts()), (
@@ -284,8 +284,8 @@ SCAN_LINE = ('        run: gitleaks git . --no-banner --redact -v --config .gitl
              '--log-opts="--all --diff-merges=first-parent --text"')
 
 
-# pull_request's types line as secret-scan.yml holds it, the anchor of the plants on that trigger.
-TYPES_LINE = "    types: [opened, synchronize, reopened]"
+# The pull_request trigger as secret-scan.yml held it from 2026-09-30 to 2026-10-04, the lines the plants add back.
+PULL_REQUEST_LINES = ["  pull_request:", "    types: [opened, synchronize, reopened]"]
 
 
 class EachFieldRedsOnItsDefect(unittest.TestCase):
@@ -406,13 +406,10 @@ class EachFieldRedsOnItsDefect(unittest.TestCase):
             ("a branch filter", "  push:", ["  push:", "    branches: [main]"], "top", "on: block"),
             ("a tags filter", "  push:", ["  push:", "    tags: ['v*']"], "top", "on: block"),
             ("push dropped", "  push:", [], "top", "on: block"),
-            ("a pull_request branch filter", TYPES_LINE, [TYPES_LINE, "    branches: [main]"], "top", "on: block"),
-            ("a pull_request type dropped", TYPES_LINE, ["    types: [opened, reopened]"], "top", "on: block"),
-            ("a pull_request type added", TYPES_LINE, ["    types: [opened, synchronize, reopened, edited]"], "top",
-             "on: block"),
-            ("pull_request replaced by pull_request_target", "  pull_request:", ["  pull_request_target:"], "top",
-             "on: block"),
-            ("a third trigger", TYPES_LINE, [TYPES_LINE, "  workflow_dispatch:"], "top", "on: block"),
+            ("push replaced by pull_request", "  push:", ["  pull_request:"], "top", "on: block"),
+            ("a bare pull_request trigger added", "  push:", ["  push:", "  pull_request:"], "top", "on: block"),
+            ("a pull_request_target trigger added", "  push:", ["  push:", "  pull_request_target:"], "top", "on: block"),
+            ("a second trigger", "  push:", ["  push:", "  workflow_dispatch:"], "top", "on: block"),
             ("a concurrency group", "on:", ["concurrency:", "  group: g", "  cancel-in-progress: true", "on:"], "top",
              "top-level keys"),
             ("a workflow env:", "on:", ["env:", "  GITLEAKS_CONFIG: other.toml", "on:"], "top", "top-level keys"),
@@ -424,11 +421,13 @@ class EachFieldRedsOnItsDefect(unittest.TestCase):
             with self.subTest(what=what):
                 self.red(self.ci, self.plant(self.scan, anchor, new, part), "triggers", word)
 
-    def test_the_push_only_triggers_are_red(self):
-        """The on: block as it stood before the pull_request trigger (`push:` alone) is red: a PR whose branch lacks the
-        file (cut before it landed, or from another repository) would start no run (the 12:42Z ruling's item 1)."""
-        scan = self.plant(self.plant(self.scan, "  pull_request:", [], "top"), TYPES_LINE, [], "top")
-        self.assertIn("on:\n  push:\n\njobs:", scan, "the plant rebuilds the old push-only block")
+    def test_the_pull_request_trigger_is_red(self):
+        """The on: block as it stood from 2026-09-30 to 2026-10-04 (`push:`, then `pull_request:` with GitHub's three
+        default types written out) is red: on the private runner every run is billed, and that trigger scanned a push to
+        an open PR's branch a second time (the private-runner CI shape the user approved on 2026-10-04)."""
+        scan = self.plant(self.scan, "  push:", ["  push:"] + PULL_REQUEST_LINES, "top")
+        self.assertIn("on:\n  push:\n  pull_request:\n    types: [opened, synchronize, reopened]\n\njobs:", scan,
+                      "the plant rebuilds the block of 2026-09-30")
         self.red(self.ci, scan, "triggers", "on: block")
 
     def test_a_concurrency_key_on_both_jobs_is_red(self):

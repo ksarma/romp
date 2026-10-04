@@ -14,16 +14,14 @@ then the merged tree is the tree the sweep and CI tested. `scripts/batch.py land
 right before the merge and refuses if the batch head no longer contains it; a move after that read
 is not stopped, and `finish` reports it loudly (maintainer step 6). One job of `ci.yml`, the secret
 scan, also runs in a workflow of its own (`.github/workflows/secret-scan.yml`) on every push of a
-branch or a tag whose commit carries that file, a member PR's and the merge to main included, and
-on every push to an open PR's branch. GitHub reads a push's workflows from the commit the push puts
-on its ref, and a PR's from the merge commit it makes of the PR's head and its base, which carries
-the base's copy of the file unless the branch edited or deleted it, so a member PR's pushes are
-scanned even on a branch cut from main before the file landed. Among the pushes that start no run: a
-push to such a branch that has no open PR, until it merges main; a tag on such a commit; and a push
-whose commit lacks the file because it or an earlier commit on its branch deleted it. A PR that
-conflicts with its base gets no run of its own until the conflict is resolved (CLAUDE.md,
-"Credentials", says what the scan reads, which pushes start no run and GitHub's other limits).
-Nothing in the landing reads that workflow's runs.
+branch or a tag whose commit carries that file, a member PR's and the merge to main included, once
+per push: it has no pull request trigger, since the private runner bills every run. GitHub reads a
+push's workflows from the commit the push puts on its ref, so among the pushes that start no run are
+a push to a branch cut from main before the file landed, until it merges main; a tag on such a
+commit; and a push whose commit lacks the file because it or an earlier commit on its branch deleted
+it (that file's header says what the scan reads, which pushes start no run, what dropping the pull
+request trigger gave up, and GitHub's other limits). Nothing in the landing reads that workflow's
+runs.
 
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
 `land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps the commit a
@@ -74,10 +72,10 @@ reached main (`finish` runs it, and it also runs on every push to main).
    (kind: coordinate); it re-pins your head and rebuilds. A push after the cut leaves your PR open
    after the batch merges, and `finish` reports that rather than hiding it.
 8. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
-9. Expect no `ci.yml` run on your PR. Its Checks tab shows the secret scan's runs of each push
-   (`Secret scan on push (gitleaks)`: one for the pull request, and one for the push when its commit
-   carries `.github/workflows/secret-scan.yml`, which a branch cut from main before that file landed
-   does not until it merges main), the tier-label check after
+9. Expect no `ci.yml` run on your PR. Its Checks tab shows the secret scan's run of each push
+   (`Secret scan on push (gitleaks)`, one for the push when its commit carries
+   `.github/workflows/secret-scan.yml`, which a branch cut from main before that file landed does
+   not until it merges main), the tier-label check after
    the PR opens or reopens or its labels change, not after a push, and Tier policy's skipped rows,
    which evaluate nothing on the fork. The tests run in your own sweep at your head (item 3), in the
    batch's sweep at the batch head, and in the one CI run on the batch branch.
@@ -91,8 +89,7 @@ to require are the job checks a batch push reports: `Python <version> (ubuntu-la
 Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t), `Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
 `Vendored tooling (node --test, ubuntu-latest)`, `vscode-extension (typecheck + test + build)` and
 `Served pages (pytest, ubuntu-latest)`. A batch push also reports `Secret scan on push
-(gitleaks)`, from `.github/workflows/secret-scan.yml`, for the push and, once the batch PR is open,
-for the pull request, the same scan as `Secret scan (gitleaks)`
+(gitleaks)`, from `.github/workflows/secret-scan.yml`, for the push, the same scan as `Secret scan (gitleaks)`
 under a name of its own, since a required check is matched by job name whatever the workflow;
 requiring `Secret scan (gitleaks)` already covers the scan. Do not require `Exactly one tier
 label` on the fork: its copy runs only when a PR opens or reopens or its labels change, never on a

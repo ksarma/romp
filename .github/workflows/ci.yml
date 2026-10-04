@@ -4,10 +4,10 @@ name: CI
 # postal/), the shell surfaces (hooks / postal / manager), and the VS Code
 # extension build; and scan the whole history for credentials (the secrets job).
 #
-# LINUX runs on every push to a batch branch (batch/**), on the weekly schedule and by hand; it is
-# free on a public repo, with no minute cap. Member PRs and merges to main run none of it (2026-09-27;
-# a copy of the secrets job runs on each push whose commit carries secret-scan.yml and on each push to
-# an open pull request's branch, and that file's header says why and which pushes start no run of it):
+# LINUX runs on every push to a batch branch (batch/**) and by hand; the weekly schedule that also
+# ran it is paused (see `on:`). Member PRs and merges to main run none of it (2026-09-27; a copy of
+# the secrets job runs on each push whose commit carries secret-scan.yml, and that file's header says
+# why and which pushes start no run of it):
 # the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate, and
 # scripts/batch.py land refuses a batch whose head does not contain main, reading main again right
 # before the merge, so the merge commit's tree is the batch head's tree, the one this workflow tested
@@ -590,9 +590,9 @@ jobs:
 
   secrets:
     # The same job runs as secret-scan.yml's secrets job on each push, of a branch or a tag, whose
-    # commit carries that file and on each push to an open pull request's branch (its header names the
-    # pushes that start no run), since this workflow runs only on a batch push, by hand and on the
-    # schedule (2026-09-30).
+    # commit carries that file (its header names the pushes that start no run), since this workflow
+    # runs only on a batch push and by hand (2026-09-30; that file's pull_request trigger was dropped
+    # on 2026-10-04, and this workflow's weekly schedule is paused).
     # tests/test_ci_secret_scan.py holds the two copies equal, every key but the name, so a change
     # here is made there too; the reasons for the steps are written here only.
     name: Secret scan (gitleaks)
