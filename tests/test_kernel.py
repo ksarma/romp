@@ -7345,8 +7345,48 @@ class ServeSecurity(unittest.TestCase):
         """The web Restart button (↻) POSTs /restart; the kernel must ACK {ok,restarting} (and, with a
         manager, relay /restart-all so the kernel process relaunches). Regression guard: the Python
         rewrite dropped do_POST entirely, so the button silently no-op'd and the user had to pkill.
-        No ROMP_MANAGER_PORT here → it acks without restarting anything."""
+        No ROMP_MANAGER_PORT and no remotes attached here → it acks without restarting anything."""
         import urllib.request, json as _json
+        # The empty remotes registry is this test's premise, so the test sets it rather than assuming it
+        # (2026-10-03). With a row in km._remotes a bodiless POST takes the broad leg: the handler starts a
+        # real `_fleet_restart_run` thread, which can run ssh against a row's host, writes its report and
+        # then calls whatever `km._restart_this_kernel` is by that time, after this test has returned.
+        # Every module that loads the kernel as `romp_kernel` shares this module object, and some leave rows
+        # behind (tests/test_kernel_trust.py's pair routes leave an 'up' one), so in a run that put a row
+        # here the thread's last call landed in the faked local leg of a later test in this class
+        # (test_restart_refuses_a_malformed_body_instead_of_restarting_everything, or the short-body test
+        # before it) and failed it. test_the_ack_test_owns_its_empty_remotes_premise runs this test under
+        # such a row.
+        with km._remotes_lock:
+            rows = dict(km._remotes)
+            km._remotes.clear()
+
+        def _restore_rows():
+            with km._remotes_lock:
+                km._remotes.clear()
+                km._remotes.update(rows)
+        self.addCleanup(_restore_rows)
+        # The rows go back only after the handler has asked the local leg, which is after it has read the
+        # registry. This kernel's handler reads the registry and runs the local leg before it acks, so the
+        # wait below returns at once here. A handler that acks first and reads the registry after would
+        # otherwise race the restore above: when the restore won, it read the restored rows and took the
+        # broad leg after all. The pass-through keeps the real local leg (no manager here, so it restarts
+        # nothing), records the reason of each call and marks that it was asked. The broad leg's
+        # `_fleet_restart_run` also ends with a call to `_restart_this_kernel`, under a reason of its own,
+        # so the event alone cannot tell the two legs apart; the recorded reasons can (review round 1).
+        import threading
+        asked = threading.Event()
+        reasons = []
+        real_local = km._restart_this_kernel
+
+        def _local_seen(*a, **k):
+            reasons.append(a[0] if a else k.get("reason", ""))
+            try:
+                return real_local(*a, **k)
+            finally:
+                asked.set()
+        km._restart_this_kernel = _local_seen
+        self.addCleanup(setattr, km, "_restart_this_kernel", real_local)
         saved = os.environ.pop("ROMP_MANAGER_PORT", None)   # never trigger a real restart-all in a test
         try:
             req = urllib.request.Request("http://127.0.0.1:%d/restart?token=testtok" % self.port,
@@ -7358,9 +7398,51 @@ class ServeSecurity(unittest.TestCase):
                 # this covers the whole fleet, so the ack names it rather than leaving the caller guessing
                 self.assertEqual(_json.loads(r.read().decode()),
                                  {"ok": True, "restarting": True, "boot": km._BOOT_ID, "fleet": True})
+            self.assertTrue(asked.wait(5), "the standalone ack asked the local leg before the rows go back")
+            self.assertEqual(reasons, ["http /restart (local-only)"],
+                             "the one restart this ack started was the local-only leg, not the broad leg's last call")
         finally:
             if saved is not None:
                 os.environ["ROMP_MANAGER_PORT"] = saved
+
+    def test_the_ack_test_owns_its_empty_remotes_premise(self):
+        """test_restart_endpoint_acks_post means a standalone kernel, no manager and no remotes, so it must
+        take the local leg even when another module left a row in the shared kernel module. Run here under
+        the kind of row tests/test_kernel_trust.py's pair routes leave (an 'up' peer), it asks the local
+        leg and starts no `_fleet_restart_run`. Before 2026-10-03 it took the broad leg instead: a real
+        thread that outlived it and called a later test's faked local leg. Both legs are recorders
+        here, so nothing restarts and nothing runs ssh."""
+        import threading
+        legs = {"local": [], "broad": [], "localDone": threading.Event()}
+        saved = (km._restart_this_kernel, km._fleet_restart_run, dict(km._remotes))
+
+        def _restore():
+            km._restart_this_kernel, km._fleet_restart_run = saved[0], saved[1]
+            km._remotes.clear()
+            km._remotes.update(saved[2])
+        self.addCleanup(_restore)
+
+        def _local(reason="", manager_port=None):
+            legs["local"].append(reason)
+            legs["localDone"].set()
+            return ""
+
+        def _broad(manager_port=None):
+            legs["broad"].append(manager_port)
+        km._restart_this_kernel, km._fleet_restart_run = _local, _broad
+        row = {"host": "TESTHOST", "status": "up", "kernel_port": 29855}
+        km._remotes.clear()
+        km._remotes["TESTHOST"] = row
+        result = unittest.TestResult()
+        ServeSecurity("test_restart_endpoint_acks_post").run(result)
+        self.assertEqual((result.testsRun, result.errors, result.failures), (1, [], []),
+                         "the ack test passes under the leftover row")
+        # The two legs are exclusive branches of one request, so once the local leg has run the broad
+        # one cannot follow from it: the wait is on that event, and the empty broad list is then final.
+        self.assertTrue(legs["localDone"].wait(5), "a standalone ack asks the local leg, got %r" % legs)
+        self.assertEqual(legs["local"], ["http /restart (local-only)"])
+        self.assertEqual(legs["broad"], [], "no broad restart started under the leftover row")
+        self.assertEqual(km._remotes, {"TESTHOST": row}, "the ack test puts back the row it found")
 
     def _post_restart(self, data):
         """POST /restart with `data` as the body → (status, decoded JSON). Content-Type says JSON the
