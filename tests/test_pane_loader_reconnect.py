@@ -1150,7 +1150,7 @@ out({ atPaint: at(), kid: kid.cs.cursor, body: document.body.cs.cursor });""" % 
         rec = re.sub(r"\s*\n\s*// ", " ", read("tests", "return_from_background_browser.mjs"))
         mine = re.sub(r"\s*\n\s*# ", " ", read("tests", "test_pane_loader_reconnect.py"))
         old = ["counts through the element " + "that sets it", "differs from its " + "parent's", "only where the element " + "sets it",
-               "only where an element " + "sets it", "counting only where the element " + "sets it"]
+               "only where an element " + "sets it", "counting only where the element " + "sets it", "cursor of each of the body's own " + "children", "counts only where it is " + "set"]
         for what, text, rule in (("the kernel's comment", comment, "unless that cursor equals the body's"), ("the placement entry", entry, "unless that cursor equals the body's"),
                                  ("the recorder's comments", rec, "unless that cursor equals the body's"), ("this module's comments", mine, "unless it equals the body's")):
             with self.subTest(what=what):
@@ -1417,9 +1417,9 @@ out({ atPaint, scrolled, reads: STYLE_READS - reads });""")
     # whole page while the badge was painted, one style read per element, and a chat changes the page at each second's tick and at
     # each keystroke. Now a change or a scroll asks for one placement at the next animation frame; the watch observes the list's own
     # children and attributes, each sticky or fixed element in it, and the page outside it, never the rest of the list's content;
-    # and only a change that can add a control scans again (an element added inside no control the last scan held, at any depth, or an
+    # and only a change that can add a control scans again (an element added to an element the last scan did not hold, or an
     # attribute changed on an element the last scan did not hold or that holds elements), every other one re-reads the boxes. A scan reads every element's style once and
-    # the body's (since round 3, which compares the cursor of each of the body's own children with the body's), and the placement reads
+    # the body's (since round 3, which compares each element's cursor with the body's), and the placement reads
     # the list's own once more, the scroll-area test, so a placement with no scan makes one read.
     _PAGE = r"""
 const header = add(null, [0, 0, 390, 44], { sel: 'button' }); header.id = 'header';
@@ -1544,14 +1544,15 @@ out({ icon, deep, unheld });""")
         self.assertEqual(o["deep"], {"reads": 1, "scanned": False}, "an element holding another, both boxes inside the button's: a re-read, no scan")
         self.assertIs(o["unheld"]["scanned"], True, "an element added inside the footer, which the scan does not hold: a scan")
 
-    # The round-3 build (2026-10-04): the held control a record's target lies in is the target or its nearest ancestor the scan holds
-    # (rheld). The chat's status line writes its mode icon each second into a span inside the mode chip (span.meta-btn, cursor:
-    # pointer), and the span only inherits the chip's cursor. Since a cursor counts only where it is set (round 3, correctness-1),
-    # the span is no control of its own, and a watch that read the record's target alone scanned at each write (the build's lab
-    # probe: one scan a second while painted, 4 of the 7 scans in ten wheel steps). Here the chip holds the icon's span, whose cursor
-    # is inherited (bodyCursor computes it), and a write adds an element inside the span within the chip's box: a re-read. One that
-    # reaches outside the chip scans, and so does the same write into a span of an element no scan holds
-    def test_an_element_added_deep_inside_a_held_control_re_reads_as_one_added_to_it_does(self):
+    # Round 3's call 1 at 5445e1e31 (2026-10-04): the chat's status line writes its mode icon each second into a span inside the mode
+    # chip (span.meta-btn, cursor: pointer), and the span only inherits the chip's cursor. Under the body comparison the span shows a
+    # pointer the body's cursor does not, so the scan holds the span itself, and the write, an element added inside a control the scan
+    # holds within its box, re-reads with no scan; the lab probe of the call measured no scan for it in Chromium at 20.8k elements,
+    # so the climb to a held ancestor that round 3 had added for the parent comparison went. Here the chip holds the icon's span,
+    # whose cursor is inherited (bodyCursor computes it): a write inside the span's box re-reads, one reaching outside it scans, and
+    # so does the same write into a span of an element no scan holds. Red under the parent comparison, where the span is no control
+    # of its own and the write into it scans
+    def test_the_status_lines_icon_written_into_a_span_that_shows_its_chips_pointer_re_reads(self):
         o = self._watch_fit(r"""
 const chip = add(footer, [80, 764, 90, 16], { cursor: 'pointer' }); chip.id = 'chip';   // the mode chip: its own pointer cursor
 const ico = add(chip, [82, 765, 14, 14]); ico.id = 'ico';                              // the icon's span, no cursor of its own
@@ -1562,17 +1563,16 @@ const step = (target, box) => { const reads = STYLE_READS; deliver(kids(target, 
 const within = step(ico, [83, 766, 12, 12]);
 const reaching = step(ico, [83, 700, 12, 12]);
 const unheld = step(plainIco, [203, 766, 12, 12]);
-out({ cursors: [chip.cs.cursor, ico.cs.cursor], within, reaching, unheld });""")
-        self.assertEqual(o["cursors"], ["pointer", "pointer"], "the span computes the chip's pointer cursor, inherited")
-        self.assertEqual(o["within"], {"reads": 1, "scanned": False}, "an icon written into the span inside the chip, within the chip's box: a re-read, no scan")
-        self.assertIs(o["reaching"]["scanned"], True, "an element written into the span that reaches outside the chip: a scan")
+out({ cursors: [chip.cs.cursor, ico.cs.cursor, document.body.cs.cursor], within, reaching, unheld });""")
+        self.assertEqual(o["cursors"], ["pointer", "pointer", "auto"], "the span computes the chip's pointer cursor, inherited, which the body's cursor is not")
+        self.assertEqual(o["within"], {"reads": 1, "scanned": False}, "an icon written into the span, which the scan holds, within the span's box: a re-read, no scan")
+        self.assertIs(o["reaching"]["scanned"], True, "an element written into the span that reaches outside it: a scan")
         self.assertIs(o["unheld"]["scanned"], True, "the same write into a span of an element no scan holds: a scan")
 
-    # ...and no text states the rule as it stood before rheld (the round-3 closing check: a comment in this module still said an element
-    # added to an element the scan did not hold scans, which the case above contradicts: the span is such an element, and the write
-    # into it re-reads). The census covers the kernel's comment, the placement entry and this module's comments, in the scan's words and
-    # the entry's; the old wording is assembled here, so this check does not find itself
-    def test_no_text_states_the_added_element_rule_from_before_rheld(self):
+    # ...and no text names the climb to a held ancestor that call 1 dropped, or states the added-element rule as that climb made it,
+    # in the kernel's comment, the placement entry or this module's comments (the names and wording are assembled here, so this check
+    # does not find itself)
+    def test_no_text_names_the_dropped_climb_to_a_held_ancestor(self):
         root = os.path.dirname(HERE)
         with open(os.path.join(root, "kernel", "kernel.py"), encoding="utf-8") as f:
             src = f.read()
@@ -1580,14 +1580,13 @@ out({ cursors: [chip.cs.cursor, ico.cs.cursor], within, reaching, unheld });""")
             entry = f.read()
         with open(os.path.abspath(__file__), encoding="utf-8") as f:
             mod = f.read()
-        texts = (("the kernel's comment", src[src.index("def _pane_spin"):src.index("def _chat_page")]), ("the placement entry", entry), ("this module", mod))
-        old = ["an element added to an element the last " + w + " did not hold" for w in ("scan", "search")]
+        texts = (("the kernel's loader", src[src.index("def _pane_spin"):src.index("def _chat_page")]), ("the placement entry", entry), ("this module", mod))
+        old = ["rhe" + "ld", "inside no control the last " + "scan held", "inside no control the last " + "search held", "Inside means at " + "any depth"]
         for what, text in texts:
             flat = re.sub(r"\s*\n\s*# ", " ", text)
             for o in old:
                 with self.subTest(what=what, old=o):
-                    self.assertNotIn(o, flat, what + " states the rule before rheld: an element added inside a held control at any depth re-reads "
-                                                    "when it stays within that control's visible box")
+                    self.assertNotIn(o, flat, what + " still names the dropped climb or states the added-element rule as it made it")
 
     # Ruling 2 at 79dce614c (2026-10-04): an element added inside a held control re-reads only when every box of the added subtree lies
     # inside the part of that control a person can see (its box cut by the ancestors that clip it, rvis); one that reaches outside it,
