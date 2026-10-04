@@ -8,8 +8,9 @@ can't catch scope slips in this class of inline JS) and drives the full story:
 
   a visible pane's WS drop logs an entry + reddens the bell with an unread count; a repeat of the same
   drop coalesces (event-exact, no time window); a HIDDEN pane's drop logs nothing; opening the popover
-  marks everything seen, and an entry that arrives while it is open is seen as it lands; panes can post
-  {romp:'notify'}; per-row clear and Clear all empty the store; entries persist in localStorage.
+  marks everything seen, and an entry that arrives while it is open is seen as it lands, as are a kind's
+  entries unmuted while it is open; panes can post {romp:'notify'}; per-row clear and Clear all empty the
+  store; entries persist in localStorage.
 
 Synthetic only — no network, no real DOM.
 """
@@ -144,7 +145,9 @@ post({ romp: 'wsState', app: 'chat', state: 'down' });
 out.afterMute = { stored: STORE['romp:errFilters'], n: notes().length,
   red: EL['rail-errs']._cls.has('has'),
   emptyText: EL['rerr-list'].children[0].textContent };
-// 11) unmuting shows what happened while muted, and the unread entry re-reddens the bell
+// 11) unmuting shows what happened while muted, and the live-down cue the mute held dark re-reddens the bell (the chat pane
+// is still down). The popover is open (since step 5), so the entry it now lists is seen: an entry is seen when an open Log
+// shows it (2026-10-04); ArrivalWhileOpen reads an unmute with the Log closed
 EL['rerr-fgrid'].children[0].fire('click');
 out.afterUnmute = { red: EL['rail-errs']._cls.has('has'), rows: EL['rerr-list'].children.length,
   chip: EL['rerr-list'].children[0].children[0].textContent, num: bellNum() };
@@ -312,10 +315,10 @@ class ErrorCenterExecutes(unittest.TestCase):
 
     def test_unmuting_shows_what_happened_and_re_reddens(self):
         a = self.out["afterUnmute"]
-        self.assertTrue(a["red"], "the entry logged while muted was never seen")
+        self.assertTrue(a["red"], "the live-down cue is back: the chat pane is still down and offline is shown again")
         self.assertEqual(a["rows"], 1)
         self.assertEqual(a["chip"], "offline")
-        self.assertEqual(a["num"], "1", "the missed entry counts again once unmuted")
+        self.assertEqual(a["num"], "!", "the popover is open, so the entry the unmute lists is seen (2026-10-04)")
 
     def test_an_entry_click_jumps_to_its_card(self):
         # the user 2026-07-28: click the chip or the text to jump to the thing — the popover closes,
@@ -527,16 +530,34 @@ out.closedAfter = state();
 // f) the same entry again with the Log closed: it coalesces and is unread again, a repeat the reader has not seen
 post({ romp: 'notify', kind: 'warn', text: 'arrival open' });
 out.repeatClosed = state();
-// g) a muted kind's arrival with the Log open stays unread, as an opening leaves it: unmuting re-reddens, open or closed
+// g) a muted kind's arrival with the Log open stays unread while the kind is muted, as an opening leaves it; unmuting the kind
+// with the Log open lists the entry in front of the reader, which marks it seen (2026-10-04), so the close leaves nothing unread
 window.__rompOpenErrs();
 const warnBtn = EL['rerr-fgrid'].children.find((c) => c.textContent === 'warning');
 warnBtn.fire('click');
 post({ romp: 'notify', kind: 'warn', text: 'arrival muted' });
 out.mutedOpen = state();
 warnBtn.fire('click');
-out.unmutedOpen = state();
+out.unmutedOpen = Object.assign(state(), { listed: listed('arrival muted') });
 window.__rompCloseErrs();
 out.unmutedClosed = state();
+// g2) an unmute marks only its own kind's entries, and only with the Log open: two kinds muted with the Log open and an entry
+// of each; the first kind unmuted with the Log open (its entry seen, the other's still stored unread); the Log closed; the
+// second kind unmuted with the Log closed (its entry unread, the triangle red). In the page the toggles sit in the Log's panel,
+// so a person unmutes with the Log open; the stub's toggle is clicked with the Log closed to read that branch
+function seenOf(t) { const n = notes().find((x) => x.text === t); return n ? n.seen : null; }
+window.__rompOpenErrs();
+const retryBtn = EL['rerr-fgrid'].children.find((c) => c.textContent === 'retrying');
+warnBtn.fire('click');
+retryBtn.fire('click');
+post({ romp: 'notify', kind: 'warn', text: 'pair muted warn' });
+post({ romp: 'notify', kind: 'retry', text: 'pair muted retry' });
+warnBtn.fire('click');
+out.pairFirstUnmutedOpen = Object.assign(state(), { warnSeen: seenOf('pair muted warn'), retrySeen: seenOf('pair muted retry'),
+                                                    listed: listed('pair muted warn') });
+window.__rompCloseErrs();
+retryBtn.fire('click');
+out.pairSecondUnmutedClosed = Object.assign(state(), { retrySeen: seenOf('pair muted retry'), filters: STORE['romp:errFilters'] });
 // h) a visible pane's socket down with the Log open: its entry lands seen, the live cue keeps the triangle red, open and
 // closed; the socket back up clears it
 window.__rompOpenErrs();
@@ -553,10 +574,13 @@ console.log(JSON.stringify(out));
 class ArrivalWhileOpen(unittest.TestCase):
     """An entry that arrives while the Log is open is seen as it lands (2026-10-03), with the mark an opening gives (markSeen):
     the reader is looking at the list it joins. Before, it landed unread, so closing the Log left the phone's triangle red
-    with an unread digit, and the gear's Open log count with a 1, for a line already read. Muted kinds and the live cue are
-    as they were: a muted kind's arrival stays unread, as an opening leaves it, and a visible pane's socket down keeps the
-    triangle red with the Log open. One script serves both layouts, so the desktop's cue (the gear's count) is read beside
-    the phone's triangle at every step."""
+    with an unread digit, and the gear's Open log count with a 1, for a line already read. A muted kind's arrival stays
+    unread while the kind is muted, as an opening leaves it; unmuting the kind with the Log open lists its entries in front of
+    the reader, which marks them seen with the same mark (2026-10-04): an entry is seen when an open Log shows it. Before,
+    such an unmute turned the triangle red under the open Log and left it red after the close. An unmute with the Log closed
+    leaves the entries unread. The live cue is as it was: a visible pane's socket down keeps the triangle red with the Log
+    open. One script serves both layouts, so the desktop's cue (the gear's count) is read beside the phone's triangle at
+    every step."""
 
     @classmethod
     def setUpClass(cls):
@@ -589,8 +613,22 @@ class ArrivalWhileOpen(unittest.TestCase):
 
     def test_a_muted_kinds_arrival_with_the_log_open_stays_unread_as_at_an_opening(self):
         self._is("mutedOpen", False, "!", 0, 1, True)       # stored unread, counted nowhere while muted
-        self._is("unmutedOpen", True, "1", 1, 1, True)      # unmuting re-reddens, with the Log open
-        self._is("unmutedClosed", True, "1", 1, 1, False)
+        self._is("unmutedOpen", False, "!", 0, 0, True)     # unmuted with the Log open: listed, and seen as it is listed
+        self.assertTrue(self.out["unmutedOpen"]["listed"], "the open Log lists the entry the unmute marked seen")
+
+    def test_an_unmute_with_the_log_open_then_a_close_leaves_the_triangle_grey_and_the_desktop_count_agrees(self):
+        # THE UNMUTE RULE (2026-10-04): the entry the unmute listed in the open Log is seen, so the close leaves the phone's
+        # triangle grey with its '!' and the gear's Open log count at 0, and nothing stored unread
+        self._is("unmutedClosed", False, "!", 0, 0, False)
+
+    def test_an_unmute_marks_only_its_kinds_entries_and_only_with_the_log_open(self):
+        a = self.out["pairFirstUnmutedOpen"]
+        self._is("pairFirstUnmutedOpen", False, "!", 0, 1, True)   # the still-muted kind's entry stays stored unread
+        self.assertEqual((a["warnSeen"], a["retrySeen"], a["listed"]), (True, False, True),
+                         "only the unmuted kind's entry is marked: %r" % (a,))
+        b = self.out["pairSecondUnmutedClosed"]
+        self._is("pairSecondUnmutedClosed", True, "1", 1, 1, False)   # unmuted with the Log closed: unread, red
+        self.assertEqual((b["retrySeen"], b["filters"]), (False, "{}"), "the closed unmute marks nothing: %r" % (b,))
 
     def test_a_socket_down_with_the_log_open_keeps_the_triangle_red_through_the_close(self):
         self._is("downOpen", True, "!", 0, 0, True)         # its entry seen as it lands; the live cue holds the red

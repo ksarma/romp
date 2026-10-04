@@ -13,11 +13,16 @@
 //   openNew         one entry logged with the Log still open: it lands seen, with the mark an opening gives what it shows
 //   closedNew       the Log closed: nothing unread was left behind
 //   reopenSeen      the Log opened again by a tap on the triangle: the entry is listed, and nothing is unread
+//   mutedOpen       a kind muted by a tap on its toggle in the open Log, then one entry of that kind logged: stored unread,
+//                   neither listed nor counted while the kind is muted
+//   unmutedOpen     the kind unmuted by a second tap, the Log still open: the entry is listed, and seen as it is listed
+//   unmutedClosed   the Log closed: nothing unread was left behind
 //   lightIdle       the light theme picked (romp:settings, the shell's theme reader), the Log closed, nothing unread
 //   lightUnread     one entry logged under the light theme, on another pane tab
 // Each snapshot also lists the stylesheet rules that match #merr and declare a colour, in document order (a failure's
-// evidence: which rule set the colour), and whether the Log's list holds the entry openNew logs (newListed; the list is
-// re-rendered only while the Log is open, so the field is read at the open steps). Prints one `RESULT:` JSON line; exits 3
+// evidence: which rule set the colour), whether the Log's list holds the entry openNew logs (newListed) and the one the muted
+// steps log (mutedListed; the list is re-rendered only while the Log is open, so both are read at the open steps), and that
+// muted entry's stored seen flag (mutedSeen, null before it is logged). Prints one `RESULT:` JSON line; exits 3
 // when the browser does not launch (the Python side turns that into a skip). Never touches a live kernel: cfg.healthz names
 // the LAB port and is asserted before any request. No sessions, no real data.
 import { createRequire } from "node:module";
@@ -32,6 +37,7 @@ const now = () => Date.now();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = { engine, errors: [], steps: {} };
 const OPEN_TEXT = "Synthetic warning for the triangle test, Log open";   // the entry openNew logs with the Log open
+const MUTED_KIND = "retry", MUTED_TEXT = "Synthetic retry for the triangle test, kind muted";   // the entry mutedOpen logs
 
 const healthz = await new Promise((resolve) => {
   const req = http.get(cfg.healthz, (res) => { res.resume(); resolve({ status: res.statusCode }); });
@@ -79,7 +85,7 @@ const until = async (what, fn, arg, ms = 8000) => {
 
 const snap = async (name) => {
   await frames();
-  out.steps[name] = await page.evaluate((openText) => {
+  out.steps[name] = await page.evaluate(([openText, mutedText]) => {
     const m = document.getElementById("merr");
     if (!m) return { missing: true };
     const cs = getComputedStyle(m);
@@ -104,14 +110,19 @@ const snap = async (name) => {
       }
     };
     for (const sh of Array.from(document.styleSheets)) { try { walk(sh.cssRules, ""); } catch (e) { /* cross-origin */ } }
+    const listedText = (t) => Array.from(document.querySelectorAll("#rerr-list .rerr-msg")).some((x) => x.textContent.indexOf(t) === 0);
+    let mutedSeen = null;
+    try {
+      const n = (JSON.parse(localStorage.getItem("romp:notices") || "[]") || []).find((x) => x && x.text === mutedText);
+      mutedSeen = n ? !!n.seen : null;
+    } catch (e) { mutedSeen = "unreadable: " + e; }
     return { has: m.classList.contains("has"), color: cs.color, stroke: path ? getComputedStyle(path).stroke : null,
              textFill: txt ? getComputedStyle(txt).fill : null, digit: txt ? txt.textContent : null,
              logOpen: !document.getElementById("rerr-back").hidden, tab: document.body.getAttribute("data-tab"),
              light: document.body.classList.contains("theme-light"), barDisplay: bar ? getComputedStyle(bar).display : null,
-             newListed: Array.from(document.querySelectorAll("#rerr-list .rerr-msg"))
-               .some((x) => x.textContent.indexOf(openText) === 0),
+             newListed: listedText(openText), mutedListed: listedText(mutedText), mutedSeen,
              others, rules };
-  }, OPEN_TEXT);
+  }, [OPEN_TEXT, MUTED_TEXT]);
   return out.steps[name];
 };
 
@@ -186,8 +197,24 @@ try {
   await until("the Log open", () => !document.getElementById("rerr-back").hidden);
   await until("the entry listed in the reopened Log", listed, OPEN_TEXT);
   await snap("reopenSeen");
+  // an unmute with the Log open (2026-10-04): an entry an open Log shows is seen, so the entry the unmute lists leaves the
+  // triangle grey there and after the close. The toggles sit in the Log's panel, so the walk can drive no unmute with the Log
+  // closed, as a person cannot; tests/test_error_center.py reads that branch against the Log script
+  const chip = "#rerr-fgrid .rerr-fbtn.k-" + MUTED_KIND;
+  await page.click(chip);
+  await until("the kind muted", (sel) => document.querySelector(sel).classList.contains("off"), chip);
+  await page.evaluate(([k, t]) => window.__rompNotify(k, t), [MUTED_KIND, MUTED_TEXT]);
+  await until("the muted kind's entry stored", (t) => (JSON.parse(localStorage.getItem("romp:notices") || "[]") || [])
+    .some((x) => x && x.text === t), MUTED_TEXT);
+  await snap("mutedOpen");
+  await page.click(chip);
+  // waits on the entry being listed (the toggle's own render), not on has, which this step expects to stay as it was: a tree
+  // that lists the entry unread is red at this step's assertion, not at a timeout
+  await until("the unmuted kind's entry listed in the open Log", listed, MUTED_TEXT);
+  await snap("unmutedOpen");
   await page.evaluate(() => window.__rompCloseErrs());
   await until("the Log closed", () => document.getElementById("rerr-back").hidden);
+  await snap("unmutedClosed");
   // the light theme, picked the way the gear picks it: the settings object, then the event the shell's theme reader hears
   await page.evaluate(() => {
     let s = {};

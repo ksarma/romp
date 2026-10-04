@@ -70537,7 +70537,8 @@ setTimeout(hide,5000);})();
 # They now land as entries in a sequential feed behind a bell in the bottom bar's action cluster (next to
 # ↻ / network / gear): the bell goes red when something arrives (no count badge — it clipped and the
 # number added nothing, the user 2026-07-27), the popover lists entries newest-first with per-row clear +
-# Clear all, and opening it marks everything seen; an entry that arrives while it is open is seen as it lands. Entries persist
+# Clear all, and opening it marks everything seen; an entry that arrives while it is open is seen as it lands, and so are a
+# kind's entries when the kind is unmuted with the Log open. Entries persist
 # in localStorage so a reload (kernel restart) keeps the story. Sources: pane WS drops (each pane iframe
 # posts {romp:'wsState',app,state}; the timeline/feed/etc. are pushed from the kernel, so a drop silently
 # freezes them), the usage-limit + judge-degraded signatures (see _LANDING_USAGE_JS), and any
@@ -70635,6 +70636,11 @@ b.className='rerr-chip rerr-fbtn k-'+k+(kindOn(k)?'':' off');b.textContent=KINDL
 b.title='Show or hide these entries. '+KINDLBL[k]+': '+DESC[k];
 b.addEventListener('click',function(ev){ev.stopPropagation();
 if(kindOn(k)){FILT[k]=1;}else{delete FILT[k];}saveFilt();
+// An unmute with the Log open lists the kind's entries in front of the reader, so they are seen, with the mark an opening
+// gives (markSeen below). Only that kind's: every other entry the open Log shows was marked when it was shown. Before
+// 2026-10-04 they were listed unread, and the triangle turned red under the open Log and stayed red after it closed, for
+// lines just listed. An unmute with the Log closed leaves them unread.
+if(kindOn(k)&&!back.hidden){for(var i=0;i<NOTES.length;i++)if(NOTES[i].kind===k)markSeen(NOTES[i]);save();}
 b.classList.toggle('off',!kindOn(k));renderList();paint();});
 filtBar.appendChild(b);});
 function renderList(){list.innerHTML='';var shown=0;
@@ -70730,9 +70736,11 @@ if(s==='down'&&prev!=='down'&&shown(m.app))
 window.__rompNotify('conn','Kernel connection lost: '+paneLabel(m.app)+' pane (reconnecting)');
 else paint();});
 window.addEventListener('romp-panes',paint);
-// opening marks seen only what the filters let you SEE: a muted kind's entries stay unread, so re-enabling its toggle
-// re-reddens the bell if something happened while it was muted. markSeen is that one mark, shared by an opening and by an
-// entry that lands while the Log is open (__rompNotify above), so the two can never disagree about what is seen.
+// opening marks seen only what the filters let you SEE: a muted kind's entries stay unread while it is muted. Re-enabling its
+// toggle with the Log open (the toggles sit in its panel) lists them, which marks them seen as an opening would; with the
+// Log closed they stay unread and the bell turns red. An entry is seen when an open Log shows it: markSeen is that one mark,
+// shared by an opening, by an entry that lands while the Log is open (__rompNotify above) and by an unmute while it is
+// open (the filter toggles above), so the three can never disagree about what is seen.
 function markSeen(n){if(kindOn(n.kind))n.seen=true;}
 function open(){for(var i=0;i<NOTES.length;i++)markSeen(NOTES[i]);save();back.hidden=false;renderList();paint();}
 function close(){back.hidden=true;}

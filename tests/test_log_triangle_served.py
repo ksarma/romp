@@ -17,18 +17,22 @@ markSeen). So with the Log open the triangle is red while a visible pane's socke
 and an entry logged with the Log open leaves it grey there and after the Log closes; the reopened Log lists that entry.
 Before 2026-10-03 such an entry landed unread: it turned the triangle red under the open Log and kept it red, with an
 unread digit, after the Log closed, a false red for a line the reader had seen, which the colour fix would have made
-visible. A muted kind is the one exception, at an opening and at an arrival alike: its entries stay unread, so unmuting it
-re-reddens the triangle, with the Log open or closed. The walk (tests/log_triangle_browser.mjs) reads the triangle's
-computed colour at each of the states above, on the tab the shell opened on and after a tap on another tab, then under the
-light theme, and reads every other bar button's colour at every step, so the fix is held to leaving the active tab's
-accent, the other tabs' grey and the other actions' grey as they were. The glyph's outline and digit are drawn in
-currentColor, and each is read as well. The walk mutes nothing; tests/test_error_center.py executes the muted kinds, and an
-arrival with a socket down and the Log open, against the Log script itself.
+visible. A muted kind's entries stay unread while it is muted, at an opening and at an arrival alike, and are seen when an
+unmute with the Log open lists them (2026-10-04): an entry is seen when an open Log shows it. Before, that unmute turned
+the triangle red under the open Log and left it red after the close, for lines just listed. The walk
+(tests/log_triangle_browser.mjs) reads the triangle's computed colour at each of the states above, on the tab the shell
+opened on and after a tap on another tab, then under the light theme, and reads every other bar button's colour at every
+step, so the fix is held to leaving the active tab's accent, the other tabs' grey and the other actions' grey as they
+were. The glyph's outline and digit are drawn in currentColor, and each is read as well. The walk mutes a kind and
+unmutes it with the Log open, by taps on its toggle; the toggles sit in the Log's panel, so no tap can unmute with the Log
+closed. tests/test_error_center.py executes that branch, the desktop's Open log count beside the triangle, and an arrival
+with a socket down and the Log open, against the Log script itself.
 
 Red at the base tree in every engine at the first unread step (the computed colour there is the action grey). A mutant
 that restores the old precedence (the selector back to `#merr.has`) turns the dark steps red; one without the light rule
 turns the light step red; one that leaves an entry that arrives with the Log open unread (the write path before
-2026-10-03) turns the openNew step red.
+2026-10-03) turns the openNew step red; one that lists an unmuted kind's entries unread with the Log open (the toggle
+before 2026-10-04) turns the unmutedOpen step red.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), its port and its wait from tests/lab_ports.py, a
@@ -87,6 +91,9 @@ STEPS = (("idle", DARK, False, False, "!"),
          ("openNew", DARK, False, True, "!"),
          ("closedNew", DARK, False, False, "!"),
          ("reopenSeen", DARK, False, True, "!"),
+         ("mutedOpen", DARK, False, True, "!"),
+         ("unmutedOpen", DARK, False, True, "!"),
+         ("unmutedClosed", DARK, False, False, "!"),
          ("lightIdle", LIGHT, False, False, "!"),
          ("lightUnread", LIGHT, True, False, "1"))
 
@@ -183,6 +190,24 @@ class LogTriangle(unittest.TestCase):
             self.assertEqual((s["has"], s["digit"], s["color"]), (False, "!", DARK["idle"]),
                              "%s %s: an entry that arrived with the Log open is seen, so nothing is unread (Log open %s): %r"
                              % (engine, name, s["logOpen"], s))
+        # THE UNMUTE RULE (2026-10-04), third, so a tree that lists an unmuted kind's entries unread is red for it: the entry
+        # logged while its kind is muted is not listed; the kind unmuted with the Log open, the entry is listed and seen, so the
+        # triangle is grey with the '!' glyph under the open Log and after it closes. mutedListed is read at every open step
+        for name, listed in (("openSeen", False), ("downOpen", False), ("upOpen", False), ("openNew", False),
+                             ("reopenSeen", False), ("mutedOpen", False), ("unmutedOpen", True)):
+            self.assertEqual(steps[name]["mutedListed"], listed, "%s %s: the open Log lists the entry logged while its kind was "
+                             "muted only once the kind is unmuted: %r" % (engine, name, steps[name]))
+        for name in ("unmutedOpen", "unmutedClosed"):
+            s = steps[name]
+            self.assertEqual((s["has"], s["digit"], s["color"]), (False, "!", DARK["idle"]),
+                             "%s %s: the entry an unmute listed in the open Log is seen, so nothing is unread (Log open %s): %r"
+                             % (engine, name, s["logOpen"], s))
+        # its stored seen flag: absent before it is logged, unread while its kind is muted, seen from the unmute on
+        names = [x[0] for x in STEPS]
+        for i, name in enumerate(names):
+            want = None if i < names.index("mutedOpen") else name != "mutedOpen"
+            self.assertEqual(steps[name]["mutedSeen"], want, "%s %s: the muted kind's entry's stored seen flag: %r"
+                             % (engine, name, steps[name]))
         prev_tab = None
         for name, pal, has, log_open, digit in STEPS:
             s = steps[name]
