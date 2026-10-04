@@ -3398,6 +3398,12 @@ class AHostThatDialsUsIsReachedOnItsNextExchange(_TwoBusHarness):
 
         t = threading.Thread(target=notify, daemon=True)
 
+        def end():                                    # on every exit path: release the close, wait for the notify
+            answered.set()
+            if t.is_alive():
+                t.join(10)
+        self.addCleanup(end)
+
         def put_then_notify(host, msg):
             ok = real_put(host, msg)
             if not held:                              # the first send only
@@ -3413,12 +3419,6 @@ class AHostThatDialsUsIsReachedOnItsNextExchange(_TwoBusHarness):
         pmb.outbox_put, pmb._inbound_link_down = put_then_notify, close_after_the_answer
         self.addCleanup(setattr, pmb, "outbox_put", real_put)
         self.addCleanup(setattr, pmb, "_inbound_link_down", real_close)
-
-        def end():                                    # on every exit path: release the close, wait for the notify
-            answered.set()
-            if t.is_alive():
-                t.join(10)
-        self.addCleanup(end)
         resp = self._send_on_b("is the export done?")
         answered.set()
         t.join(10)
