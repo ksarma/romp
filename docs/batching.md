@@ -324,8 +324,8 @@ subject; `verify` refuses the branch otherwise.
    tests with `ROMP_BROWSER_LEGS_REQUIRE=1`; the sweep's `npm test` runs those tests without the
    switch, so a Chromium that fails to launch there skips instead of failing), the other Python
    versions and macOS run only in GitHub's CI: the Linux jobs in every run of `ci.yml` (a batch
-   push, a manual run, the weekly schedule), and the macOS cells only in a manual run
-   (`workflow_dispatch`) or the weekly schedule. CI's free-threaded cell runs pytest with
+   push or a manual run; the weekly schedule is paused), and the macOS cells only in a manual run
+   (`workflow_dispatch`). CI's free-threaded cell runs pytest with
    `PYTHON_GIL=0`, which the sweep does not set, so a free-threaded `--python` runs with its own
    default. Each
    leg gets an allowlisted environment: a TMPDIR of its own, made when the leg starts and removed
@@ -367,8 +367,8 @@ subject; `verify` refuses the branch otherwise.
    records the commit (`runner.checkout.main`, null without one). CI's job checkouts hold no
    `origin/main` except in a run on main itself: `actions/checkout@v4`, at its default depth 1
    in every job a leg stands in for, fetches the one commit as the remote-tracking ref of the
-   branch the run is on (the batch branch's, in the run `land` reads), so a run on main (the
-   weekly schedule, or a dispatch on main) holds it at the commit it checks out, and a batch
+   branch the run is on (the batch branch's, in the run `land` reads), so a run on main (a
+   dispatch on main, or the weekly schedule while it ran) holds it at the commit it checks out, and a batch
    branch's run holds none. A test that reads `origin/main` can therefore behave differently in the
    sweep than in CI; one that first checks whether its clone is shallow (fork PR 954's history
    case does) takes its shallow-clone handling in CI whether or not `origin/main` is there.

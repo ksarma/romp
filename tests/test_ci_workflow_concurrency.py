@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """When CI runs, and which of its runs cancel which (.github/workflows/ci.yml, 2026-09-08 and 2026-09-27).
 
-Triggers (2026-09-27): the workflow runs on a push to a batch branch (`batch/**`), by hand
-(workflow_dispatch) and on its weekly schedule, and on nothing else. A member PR runs no ci.yml of its own:
+Triggers (2026-09-27): the workflow runs on a push to a batch branch (`batch/**`) and by hand
+(workflow_dispatch), and on nothing else; its weekly schedule is paused since 2026-10-04, until the first
+month's bill on the private runner is read (tests/test_ci_macos_schedule.py holds the pause and the
+restore). A member PR runs no ci.yml of its own:
 the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate (scripts/batch.py
 verify and land read it), and GitHub's full matrix runs once on the batch branch, whose PR is expected to
 show that push run's checks on its head (the first batch confirms it). A merge to main runs none: batch.py
@@ -11,8 +13,8 @@ land refuses a batch whose head does not contain main and reads main again right
 push already tested; a move after that read is finish's loud report (LandAndFinish). The gate is the workflow's `on:` block and not a job-level
 `if:`: `pull_request`'s branch filter selects the base branch, so singling out batch PRs there would
 need an `if:` on every job, and a skipped job reports success (a required check reads it as passing).
-CiTriggers reads the `on:` block and holds it to exactly those three triggers, so an added one (a merge queue, a
-review, another workflow's run) fails by name; NoJobLevelGate refuses an `if:` or `continue-on-error:` on any job
+CiTriggers reads the `on:` block and holds it to exactly those two triggers, so an added one (a merge queue, a
+review, another workflow's run, the paused schedule back) fails by name; NoJobLevelGate refuses an `if:` or `continue-on-error:` on any job
 ci.yml defines, read from the file.
 
 Concurrency (2026-09-08, extended 2026-09-27): the group was `ci-<event>-<ref>` with cancel-in-progress
@@ -148,17 +150,20 @@ def job_keys(src=None):
 
 
 class CiTriggers(unittest.TestCase):
-    """The workflow runs on pushes to batch branches, by hand, and on the schedule; never on a PR event or a push to main."""
+    """The workflow runs on pushes to batch branches and by hand (the weekly schedule is paused); never on a PR event or a
+    push to main."""
 
     def setUp(self):
         self.events = triggers()
         self.filters = push_filters()
 
-    def test_the_triggers_are_exactly_batch_pushes_the_dispatch_and_the_schedule(self):
-        # round 1, tests-3 and extra6-1: the docstring's "and on nothing else", held as a closed set
-        self.assertEqual(sorted(self.events), ["push", "schedule", "workflow_dispatch"],
+    def test_the_triggers_are_exactly_batch_pushes_and_the_dispatch(self):
+        # round 1, tests-3 and extra6-1: the docstring's "and on nothing else", held as a closed set; the schedule left it
+        # on 2026-10-04, paused until the first month's bill on the private runner is read
+        self.assertEqual(sorted(self.events), ["push", "workflow_dispatch"],
                          "ci.yml's triggers are %r; an added trigger changes which events run the full matrix (a PR event, "
-                         "a review, a merge queue, another workflow's run)" % sorted(self.events))
+                         "a review, a merge queue, another workflow's run, or the paused weekly schedule, whose restore is "
+                         "the user's call once the first month's bill is read)" % sorted(self.events))
 
     def test_no_pull_request_trigger(self):
         # a PR event would run the full matrix on every member push again: the cost the local gate removes
@@ -499,7 +504,8 @@ FIXED_JOBS = ("secrets", "vscode-extension", "served-pages")   # runs-on: a lite
 class CiMatrixRunners(unittest.TestCase):
     """Round 1, tests-5: a batch push gets Linux alone. Every job's runners on a push to refs/heads/batch/x: each matrix
     job's (MATRIX_JOBS) evaluated os: list joined with every include: entry's os, and each other job's (FIXED_JOBS)
-    literal runs-on. The weekly schedule and a manual dispatch add macOS to every matrix job."""
+    literal runs-on. A manual dispatch adds macOS to every matrix job, and so would the schedule event, whose weekly run is
+    paused (the expressions still name it, so restoring the run restores its macOS cells)."""
 
     def setUp(self):
         self.src = _source()
@@ -527,7 +533,8 @@ class CiMatrixRunners(unittest.TestCase):
         got = self.runners("push", BATCH_X)
         for job, labels in got.items():
             self.assertEqual(labels, ["ubuntu-latest"], "a batch push runs the %s job on %r; it gets Linux alone (macOS runs "
-                                                        "only on the weekly schedule or a manual dispatch)" % (job, labels))
+                                                        "only on a manual dispatch while the weekly schedule is paused)"
+                                                        % (job, labels))
         self.assertEqual(sorted(got), sorted(MATRIX_JOBS + FIXED_JOBS), "re-anchor: the jobs are %r" % sorted(got))
         for job in MATRIX_JOBS:
             self.assertEqual(job_value(self.src, job, "runs-on"), "${{ matrix.os }}", "the %s job runs on its matrix's os" % job)

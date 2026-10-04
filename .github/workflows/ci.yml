@@ -46,7 +46,8 @@ name: CI
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (a macOS bats
 # job alone has taken 48 min 1 s, above) and the runners are scarcer, so they do NOT run
-# on every push. They run once a week on a schedule (see `on:`) and
+# on every push. From 2026-09-16 they also ran once a week on a schedule; that run is paused until
+# the first month's bill on the private runner is read (see `on:`). They run
 # by hand from the Actions tab ("Run workflow") when you want a cross-platform
 # check before a release or after touching a platform-sensitive surface (launchd,
 # the folder opener, the CLI scope).
@@ -73,12 +74,20 @@ on:
     # would take a job-level `if:`, and a skipped job reports success.
     branches: ['batch/**']
   workflow_dispatch:   # the manual on-switch for the macOS cells (see above)
-  schedule:
-    # The macOS cells also run ONCE A WEEK on their own (2026-09-16): with the manual switch alone the
-    # release gate was the first macOS run in two weeks, and it found twenty-nine failures that had
-    # accumulated unseen. One run at a quiet hour Pacific (Monday 10:00 UTC is 03:00 Pacific in summer,
-    # 02:00 in winter); the manual dispatch stays for the release day and for a platform-sensitive change.
-    - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the same matrix a manual dispatch does
+  # The weekly schedule is PAUSED (2026-10-04) until the first month's bill on the private runner is
+  # read. On a private repository every run is billed, and the scheduled run would add its Linux jobs
+  # and the macOS cells, which bill at about ten times the Linux rate (about 1,320 Linux minutes' worth
+  # in run 36716348831, the header's figure), every week. While it is paused, nothing runs on a
+  # schedule, a batch push runs the Linux jobs alone, and a manual dispatch runs the Linux jobs and the
+  # macOS cells, as before: each matrix expression below still selects macOS on workflow_dispatch. Those
+  # expressions still name the schedule event as well, so un-commenting the two lines at the end of
+  # this comment restores the weekly run as it was (tests/test_ci_macos_schedule.py holds both).
+  # From 2026-09-16 the macOS cells ran ONCE A WEEK on their own: with the manual switch alone the
+  # release gate was the first macOS run in two weeks, and it found twenty-nine failures that had
+  # accumulated unseen. One run at a quiet hour Pacific (Monday 10:00 UTC is 03:00 Pacific in summer,
+  # 02:00 in winter); the manual dispatch stays for the release day and for a platform-sensitive change.
+  # schedule:
+  #   - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the same matrix a manual dispatch does
 
 # A newer push to a BATCH BRANCH cancels the older in-flight run on that branch:
 # a rebuild's new head supersedes the old one, whose verdict nobody reads and
@@ -110,8 +119,8 @@ jobs:
     # 600 s per-test timeout plus setup, or a stall that begins late in the run is killed by
     # this cap first - the identical silence the per-test timeout exists to end. On 2026-09-03 the
     # measured pytest phases ran 160-300 s, so 15 min left ~100 s of headroom and 25 min was
-    # 300 + 600 + setup with margin for a slow runner. The macOS cells (a manual dispatch or the
-    # weekly schedule) run the same suite on the image's slower runners, and the suite grows with
+    # 300 + 600 + setup with margin for a slow runner. The macOS cells (a manual dispatch, and the
+    # weekly schedule until its pause) run the same suite on the image's slower runners, and the suite grows with
     # every merge: 17 to 26 minutes on 2026-09-16 (the 3.10 cell cancelled at 25 min 27 s under a
     # 25-minute cap), 33 to 35 minutes on the dispatch of 2026-09-24 03:48 UTC, and on the release
     # dispatch five hours later (run 35976250043) the 3.13 cell finished green in 38 min 52 s while
@@ -138,7 +147,8 @@ jobs:
       fail-fast: false
       matrix:
         # macOS is in the matrix ONLY on a manual run (workflow_dispatch) or the weekly
-        # schedule; a batch push gets Linux alone. See the billing note in the header.
+        # schedule, which is paused (see `on:`); a batch push gets Linux alone. See the billing
+        # note in the header.
         os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
         python-version: ['3.10', '3.13']
         include:
@@ -453,7 +463,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS only on a manual run (workflow_dispatch) or the weekly schedule; see the header note.
+        # macOS only on a manual run (workflow_dispatch) or the weekly schedule, which is paused; see the header note.
         os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
@@ -684,7 +694,7 @@ jobs:
     # hour the python job's macOS cap keeps (tests/test_ci_bats_bound.py holds it at 60 or less,
     # since past an hour a hung cell holds the dispatch): the rule's figure for this step, 70 to 76
     # minutes, is already past that hour, so a hung macOS cell here holds a dispatch for up to 90
-    # minutes. The first macOS run (a dispatch or the weekly schedule) measures the step, and the
+    # minutes. The first macOS run (a dispatch, while the weekly schedule is paused) measures the step, and the
     # cap is re-read from it. A batch push's run starts the Linux cell alone, so batches are not
     # affected.
     # Follow-ups, in this order: (1) make the hook's per-paren case check linear (skipNested in
@@ -707,7 +717,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS only on a manual run (workflow_dispatch) or the weekly schedule, as in the Shell job; see the header note.
+        # macOS only on a manual run (workflow_dispatch) or the weekly schedule, which is paused, as in the Shell job; see the header note.
         os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
@@ -854,7 +864,7 @@ jobs:
         # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in
         # the batch push's CI run, or in a workflow_dispatch of the PR's branch (which also runs the macOS cells), since
         # the PR's own sweep does not run this step (scripts/sweep.py's docstring: it runs only in GitHub's CI, in every
-        # run of this workflow: a batch push, a manual run, the weekly schedule), and raises the step's timeout-minutes
+        # run of this workflow: a batch push or a manual run, the weekly schedule being paused), and raises the step's timeout-minutes
         # when the total needs it, and the job's cap with it when the new bound does not fit the margin (the job
         # comment above), and node's --test-timeout when one leg's own bound or its whole-file seconds need it. Step
         # seconds, job minutes and the job's cap:

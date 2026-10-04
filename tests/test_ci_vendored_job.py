@@ -43,16 +43,17 @@ literal, and any change to it is red until the literal changes with it, on purpo
    a check that those two keys are absent or an equality; the list is compared, so a quoted or spaced spelling of either, a
    merge key, a second YAML document (`---`) and any key added later are red with no spelling listed here. The on: block
    (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES too. CI runs on a push to
-   a batch branch, by hand and on the schedule, and on nothing else (the workflow's header): a paths or paths-ignore
+   a batch branch and by hand, and on nothing else (the workflow's header; its weekly schedule is commented out, paused
+   since 2026-10-04 until the first month's bill on the private runner is read): a paths or paths-ignore
    filter added to push, or its branch pattern narrowed, starts no run for the batch pushes it filters, and
    scripts/batch.py land then finds no CI run of the batch head and refuses the batch; an added trigger (a pull_request,
    a tags pattern on push, or main back on push) runs the whole matrix where no landing reads it. The value of name and
    the concurrency block stay free (tests/test_ci_workflow_concurrency.py reads concurrency, and its CiTriggers reads the
    triggers and the push filter).
    tests/test_ci_macos_schedule.py still reads the schedule and the dispatch: this equality refuses any change to the block,
-   and that module says what the values held must mean (one weekly cron at a quiet hour Pacific, the manual dispatch kept)
-   and ties them to every matrix expression's events, so a change made on purpose updates ON_LINES here and must still
-   pass that module.
+   and that module says what the lines must mean (no live schedule, the manual dispatch kept, and the commented schedule
+   lines, un-commented, one weekly cron at a quiet hour Pacific) and ties them to every matrix expression's events, so a
+   change made on purpose, the schedule's restore among them, updates ON_LINES here and must still pass that module.
 4. The Shell job's cap line EQUALS SHELL_CAP_LINE (60 minutes on macOS, 55 on Linux, in the python job's per-OS form;
    ci.yml's comment above the line sizes each, the slowest finished job of its OS plus 10 minutes rounded up to a multiple
    of 5. Main had a flat 35 until fork PR 940 landed on 2026-10-04 with 60 on macOS and 50 on Linux, the figures its
@@ -143,7 +144,7 @@ cells ran the Python suite about twice as long as the Linux cells, then 18 to 29
 again. 90 is 14 minutes past 76 because two of the estimate's inputs are weak (the job's comment names them). It is also past
 the hour the python job's macOS cap keeps (tests/test_ci_bats_bound.py holds that cap at 60 or less, since past an hour a hung
 cell holds the dispatch): the estimate alone is past that hour, so a hung macOS cell of this job holds a dispatch for up to
-90 minutes. The first macOS run (a dispatch or the weekly schedule) measures the step; the cap is then re-read from it, and
+90 minutes. The first macOS run (a dispatch, while the weekly schedule is paused) measures the step; the cap is then re-read from it, and
 the literal changes with it."""
 import difflib
 import os
@@ -184,15 +185,13 @@ EXPECTED_JOB = (
 NAME_TEXT = "Vendored tooling (node --test, "
 # The workflow's top-level keys, in file order: the text before the first colon of each top-level line.
 TOP_KEYS = ["name", "on", "concurrency", "jobs"]
-# The workflow's on: block as ci.yml writes it, comment-only lines removed (the trailing comments on two lines are content):
+# The workflow's on: block as ci.yml writes it, comment-only lines removed (the trailing comment on the dispatch line is content):
 # its top-level line to the blank line before the next top-level line.
 ON_LINES = (
     "on:",
     "  push:",
     "    branches: ['batch/**']",
     "  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)",
-    "  schedule:",
-    '    - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the same matrix a manual dispatch does',
     "",
 )
 # The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
@@ -630,7 +629,8 @@ class VendoredToolingJob(unittest.TestCase):
     def test_the_job_runs_on_the_shell_jobs_matrix(self):
         self.assertNoFaults(check_matrix_tie(raw()), (
             "The vendored-tooling job's matrix and the Shell job's differ (above). The job runs on the Shell job's cells "
-            "(ubuntu-latest always, macOS on a manual run or the weekly schedule), so moving the step lost none. If the "
+            "(ubuntu-latest always, macOS on a manual run, and on the weekly schedule were its paused run restored), so "
+            "moving the step lost none. If the "
             "Shell job's matrix changed on purpose, give the vendored-tooling job the same lines and update EXPECTED_JOB."))
 
     def test_the_two_jobs_pin_the_same_node(self):
@@ -747,6 +747,10 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
             (check_on_block, "the push branch pattern narrowed", "top", "    branches: ['batch/**']", ["    branches: ['batch/x']"]),
             (check_on_block, "a pull_request trigger added", "top", "  push:", ["  pull_request:", "  push:"]),
             (check_on_block, "push replaced by pull_request", "top", "  push:", ["  pull_request:"]),
+            (check_on_block, "the paused weekly schedule restored", "top",
+             "  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)",
+             ["  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)", "  schedule:",
+              '    - cron: "0 10 * * 1"']),
             (check_on_block, "the push branch filter widened to main", "top", "    branches: ['batch/**']",
              ["    branches: ['batch/**', main]"]),
             (check_top_keys, "a second, quoted on key", "top", "concurrency:", ["\"on\": [workflow_dispatch]", "concurrency:"]),
