@@ -146,13 +146,15 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   to stop less one whatever its step, bounded or not: every step but a positive one then raises, and a positive one
   returns a value in that span (random.randrange(40000, 50000, k) is 40000-49999, and so are
   random.randrange(40000, 50000, step=k) and random.randrange(40000, stop=50000, step=k)). Any other randrange with an
-  unbounded step is not read. Where start's highest value lies above stop's lowest, start can lie above stop, and a
-  negative step then returns values above stop less one. Where start's highest value is stop's lowest (a start of 40000
-  to 40999, a stop of 40999 to 41998), every value the call can return lies in start to stop less one, but the census
-  reads only a start below stop for every value, so that call is not read either. A sum or difference with an unbounded
-  operand counts when one of its operands alone is a constant expression (one interval() bounds with no unknown in it)
-  whose value is in the range, found through str() and int() and down a chain of sums and differences: 40000 + i is
-  built on 40000, and so is 40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read.
+  unbounded step is not read: start can then equal stop or lie above it, and where it lies above, a negative step
+  returns values from stop plus one up to start, which can fall outside start to stop less one (a start of 40000 to
+  42999 with a stop of 41000 to 41999 can return 42999). Some of those calls return only values in start to stop less
+  one all the same (a start of 40000 to 40999 with a stop of 40500 to 41499, or with a stop of 40999 to 41998, where
+  start's highest value is stop's lowest and start never lies above stop); the census does not read them either, since
+  it reads only a start below stop for every value. A sum or difference with an unbounded operand counts when one of its
+  operands alone is a constant expression (one interval() bounds with no unknown in it) whose value is in the range,
+  found through str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so is 40000 *
+  1 + i (offset_base()); one with no such operand (base + i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -1619,11 +1621,11 @@ class Plants(unittest.TestCase):
         """randrange(start, stop, step) with a step the census cannot bound, given by position or by its name, the stop
         by either too: read as start to stop less one when start's interval lies wholly below stop's, since every step but
         a positive one then raises and a positive one returns a value in that span. The last red plant computes start
-        and stop, start's interval ending one below stop's. The first green twin's intervals overlap (start lo to
-        lo + 2999, stop lo + 1000 to lo + 1999), so start can lie above stop, where a negative step returns values
-        above stop less one: it is not read. The second twin's intervals share one value (start lo to lo + 999, stop
-        lo + 999 to lo + 1998): start never lies above stop and every value the call can return lies in start to stop
-        less one, but start can equal stop, so start is not below stop for every value, and it is not read either."""
+        and stop, start's interval ending one below stop's. The green twins are not read. In the first, start's interval
+        (lo to lo + 2999) overlaps stop's (lo + 1000 to lo + 1999) and runs past it, so a negative step can return
+        values up to lo + 2999, above stop's highest less one. The other two return only values in start to stop less
+        one, but start is not below stop for every value: start lo to lo + 999 with stop lo + 500 to lo + 1499, where
+        start can lie above stop, and with stop lo + 999 to lo + 1998, where start's highest value is stop's lowest."""
         lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
         for label, src, top in (
                 ("the step by position", 'port = random.randrange(%d, %d, k)\n' % (lo, hi), hi - 1),
@@ -1637,6 +1639,9 @@ class Plants(unittest.TestCase):
         with self.subTest("start's interval and stop's overlap"):
             self.assertGreen("test_x.py", 'port = random.randrange(%d + os.getpid() %% 3000, %d + os.getpid() %% 1000, k)\n'
                              % (lo, lo + 1000))
+        with self.subTest("start's interval and stop's overlap, start's highest value below stop's highest"):
+            self.assertGreen("test_x.py", 'port = random.randrange(%d + os.getpid() %% 1000, %d + os.getpid() %% 1000, k)\n'
+                             % (lo, lo + 500))
         with self.subTest("start's highest value is stop's lowest"):
             self.assertGreen("test_x.py", 'port = random.randrange(%d + os.getpid() %% 1000, %d + os.getpid() %% 1000, k)\n'
                              % (lo, lo + 999))
