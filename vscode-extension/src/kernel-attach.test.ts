@@ -177,7 +177,8 @@ test("attachFailureToast: each reason names its own fix; a refusal never sends t
   assert.match(none, /romp up/);
   const dead = attachFailureToast({ ok: false, reason: "kernel-didnt-start" }, ctx);
   assert.match(dead, /port 29855/);
-  assert.match(dead, /romp status/);
+  assert.match(dead, /manager log/, "the pointer for a kernel that never came up is the manager log (its own test, below)");
+  assert.doesNotMatch(dead, /romp status/, "`romp status` names no cause for a kernel that never came up");
   const words = "serve token required: send it in X-Romp-Token (the serve-token file under the kernel's state root: /m/state/serve-token for the primary kernel)";
   const wrong = attachFailureToast({ ok: false, reason: "manager-refused", status: 401, detail: words }, ctx);
   assert.match(wrong, /does not hold the serve token this window read from \/x\/state\/serve-token/, "which root this window read");
@@ -208,4 +209,40 @@ test("attachFailureToast: each reason names its own fix; a refusal never sends t
   assert.match(other, /HTTP 500/);
   assert.match(other, /romp status/);
   for (const t of [none, dead, wrong, missing, env, notoken, other]) assert.doesNotMatch(t, /\u2014/, "no em dashes in a toast");
+});
+
+test("attachFailureToast: a 409 leads with the manager's own words and points to the manager log and kernels.json, never `romp status`", () => {
+  // the manager will not start the kernel, since it would share another kernel's state root (bin/romp-manager
+  // rootConflict); its body names the conflict and the remedy, and `romp status` lists no refused kernel
+  const ctx = { port: 29900, managerPort: 7432, tokenFile: "/x/state/serve-token", tokenFromEnv: false, hadToken: true };
+  const words = "kernel 'k29900' (port 29900) is not started: no kernels.json profile names port 29900, so it would run on the "
+    + "primary kernel's state root /m/state, which the primary kernel on port 29855 serves, and one state root serves one kernel. "
+    + "Add a profile for port 29900 with a stateDir no other kernel uses to /m/state/kernels.json. A kernel started by hand, which "
+    + "the manager does not see, needs its own ROMP_STATE_DIR.";
+  const conflict = attachFailureToast({ ok: false, reason: "manager-refused", status: 409, detail: words }, ctx);
+  assert.ok(conflict.startsWith(`romp: the manager on :7432 will not start a kernel on port 29900: ${words}`),
+    `the manager's words lead, the conflict and the remedy whole: ${conflict}`);
+  assert.match(conflict, /See the manager log and kernels\.json\.$/);
+  assert.doesNotMatch(conflict, /romp status/, "`romp status` never shows a refused kernel");
+  assert.doesNotMatch(conflict, /romp up/, "a manager IS running");
+  assert.doesNotMatch(conflict, /HTTP 409/, "the status is the toast's to read, not the user's");
+  assert.doesNotMatch(conflict, /\u2014/, "no em dashes in a toast");
+});
+
+test("attachFailureToast: a kernel that never came up names both causes, the port and the state root's lock, and points to the manager log", () => {
+  // The manager acked /ensure and no kernel answered. A kernel its instance lock refused (exit 75: kernel.lock under its
+  // state root held by another kernel, or not takeable) looks the same to the extension as one whose port was taken: no
+  // answer the manager gives (/ensure, /status) carries the kernel's exit status. So the toast names both, and the
+  // manager log, where the kernel's own line names the cause and, for the lock, the remedy. The text before asked only
+  // whether the port was in use and sent the user to `romp status`, which shows no cause.
+  const ctx = { port: 29855, managerPort: 7432, tokenFile: "/x/state/serve-token", tokenFromEnv: false, hadToken: true };
+  const dead = attachFailureToast({ ok: false, reason: "kernel-didnt-start" }, ctx);
+  assert.match(dead, /^romp: the manager couldn't bring up a kernel on port 29855\. /);
+  assert.match(dead, /The port may be in use/, "the port, one cause");
+  assert.match(dead, /the kernel could not take its state root's lock \(kernel\.lock\)/, "the lock refusal, the other");
+  assert.match(dead, /the kernel's own line in the manager log names the cause and, for the lock, the remedy\.$/,
+    "the manager log, where the cause and the remedy are");
+  assert.doesNotMatch(dead, /romp status/, "`romp status` shows no cause");
+  assert.doesNotMatch(dead, /romp up/, "a manager IS running");
+  assert.doesNotMatch(dead, /[\u2013\u2014]/, "no em or en dashes in a toast");
 });
