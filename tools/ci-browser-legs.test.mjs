@@ -1344,7 +1344,12 @@ function syntheticTree(t, prefix = 'cbl-') {
   };
   const run = (roster, stub = {}) => {
     const tmp = fresh(roster);
-    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : []), ...(stub.argv || [])], { cwd: root, env: envFor(tmp, stub), ...(stub.timeout ? { timeout: stub.timeout, killSignal: 'SIGKILL' } : {}) });
+    const argv = [path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : []), ...(stub.argv || [])];
+    // a run given stub.timeout is spawned here rather than through bash(), so a run that outlives that bound reads with a
+    // null status, which the case's own assertion names: bash() asserts first, so every such run would read "bash runs:
+    // spawnSync bash ETIMEDOUT" before the case read it. Any other error still fails here
+    const r = stub.timeout ? spawnSync('bash', argv, { encoding: 'utf8', cwd: root, env: envFor(tmp, stub), timeout: stub.timeout, killSignal: 'SIGKILL' }) : bash(argv, { cwd: root, env: envFor(tmp, stub) });
+    if (stub.timeout) assert.ok(r.error === undefined || (r.error.code === 'ETIMEDOUT' && r.status === null), 'bash runs: ' + (r.error && r.error.message));
     const lines = (roster || '').split('\n');
     const named = fs.existsSync(calls) ? fs.readdirSync(calls).map((f) => ({ pid: Number(f), args: fs.readFileSync(path.join(calls, f), 'utf8').split('\n').filter(Boolean) })) : [];
     named.sort((x, y) => lines.indexOf(x.args[x.args.length - 1]) - lines.indexOf(y.args[y.args.length - 1]));
@@ -1821,9 +1826,9 @@ function stateNow(pid) {
  *  so it leads its own group; x2, a keeper in the group of a launcher that led a session of its own and exited, a group
  *  whose leader has exited; and x3, a keeper in the file's own group, its launcher there too. The script's header states
  *  the rule these witness: a process whose parent exited before the walk, and which was adopted by a process outside
- *  the tree, is reached only through the group of a process the walk finds, and none of these groups is one. Returns
- *  the mark, the roles, each [the suffix of its pid file, what it is], and the escapees, of the same shape (none
- *  without `escapes`). */
+ *  the tree, is reached only through the group of a process the walk finds, and no process the walk finds leads any of
+ *  these groups (x3's group holds the file's process, which does not lead it). Returns the mark, the roles, each [the
+ *  suffix of its pid file, what it is], and the escapees, of the same shape (none without `escapes`). */
 function hangingLeg(ext, bundle, escapes = false) {
   fs.writeFileSync(path.join(ext, 'out-tests', 'keeper.cjs'), 'const fs = require("node:fs"); const { spawn } = require("node:child_process");\nconst [mark, depth, how] = process.argv.slice(2);\nif (how === "mid") { spawn(process.execPath, [__filename, mark, "1"], { stdio: "ignore" }).unref(); process.exit(0); }\nif (how === "escape-s" || how === "escape-g") { spawn(process.execPath, [__filename, mark, "1"], { detached: how === "escape-s", stdio: "ignore" }).unref(); process.exit(0); }\nfs.writeFileSync(mark + "." + depth, String(process.pid));\nif (Number(depth) > 1) spawn(process.execPath, [__filename, mark, String(Number(depth) - 1)].concat(how === "orphan" ? ["mid"] : []), { stdio: "ignore" });\nsetInterval(() => {}, 1000);\n');
   const mark = path.join(ext, bundle + '.pid');
@@ -1865,6 +1870,16 @@ test('the per-file bound ends a leg that outlives it, with every process under i
   const r = start(A + '\n' + B + '\n', { env: { ROMP_BROWSER_LEGS_FILE_MS: String(BOUND), ROMP_BROWSER_LEGS_GRACE_MS: String(GRACE) } });
   const pids = [], escaped = [];
   t.after(() => { for (const [, pid] of [...pids, ...escaped]) killPid(pid); for (const [pid] of runProcs(root)) killPid(pid); r.kill(); });
+  // every keeper of this run, the escapees and the roles alike, by one read of the process table for the processes whose
+  // arguments hold `mark` (the pid-file prefix under this case's own temporary tree, handed to each keeper), so a red
+  // before a list above is filled leaves none running: the script never reaches x1 or x2 by design, and r.kill() reaches
+  // only its own group. The pid files are not read here: the tree's removal, registered earlier, may already have run
+  t.after(() => {
+    for (const l of (spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'args='], { encoding: 'utf8' }).stdout || '').split('\n')) {
+      const m = /^\s*(\d+)\s+(.*)$/.exec(l);
+      if (m && m[2].includes(mark)) killPid(Number(m[1]));
+    }
+  });
   let ended = null;
   r.exited.then((status) => { ended = { status, ms: Date.now() - t0 }; });
   // the leg and the processes under it are up (each wrote its pid), and the escapees too, read before the bound
