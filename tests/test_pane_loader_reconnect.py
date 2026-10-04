@@ -802,7 +802,8 @@ const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, 
   get clientLeft() { return 0; }, get clientTop() { return 0; }, get clientWidth() { return this.box[2]; }, get clientHeight() { return this.box[3]; },
   getBoundingClientRect() { const [l, t, w, h] = this.box; return { left: l, top: t, right: l + w, bottom: t + h, width: w, height: h }; },
   contains(n) { return inside(this, n); }, matches(list) { return !!this.sel && list.split(',').indexOf(this.sel) >= 0; },
-  attrs: {}, getAttribute(n) { return attrOf(this, n); } };
+  attrs: {}, getAttribute(n) { return attrOf(this, n); },
+  getElementsByTagName(t) { return t === '*' ? ALL.filter((x) => x !== this && inside(this, x)) : []; } };
   const at = parent ? ALL.lastIndexOf(ALL.filter((x) => inside(parent, x)).pop()) + 1 : ALL.length; ALL.splice(at, 0, e); return e; };
 const rightOf = () => (BADGE.style.right ? BADGE.style.right : '8px');
 const at = () => ({ top: topOf(), right: rightOf(), painted: painted() });
@@ -1243,15 +1244,42 @@ out({ tick, key, grown });""")
 
     def test_an_element_added_inside_a_control_the_scan_holds_re_reads_and_scans_nothing(self):
         # the chat's 1 s interval writes the status line's mode icon again (innerHTML on the icon's span inside its button): an element
-        # added inside a control the scan holds lies in a box the badge already avoids; measured in the lab at f1a720ef2, one scan a
-        # second from that write alone
+        # added inside a control the scan holds, every box of it inside the part of that control a person can see, lies where the badge
+        # already avoids; measured in the lab at f1a720ef2, one scan a second from that write alone
         o = self._watch_fit(r"""
 fire('romp:wsdown'); after(RHOLD_T);
-let reads = STYLE_READS; change(send); frame(); const icon = STYLE_READS - reads;
-reads = STYLE_READS; change(footer); frame(); const unheld = STYLE_READS - reads;
-out({ icon, unheld, scan: scan() });""")
-        self.assertEqual(o["icon"], 1, "an element added inside the send button, a control the scan holds: a re-read, no scan")
-        self.assertEqual(o["unheld"], o["scan"], "an element added inside the footer, which the scan does not hold: a scan")
+const step = (el) => { const reads = STYLE_READS; added(el); frame(); const n = STYLE_READS - reads; return { reads: n, scanned: n === scan() }; };
+const icon = step(add(send, [340, 794, 20, 20]));
+const svg = add(send, [342, 796, 16, 16]); add(svg, [344, 798, 12, 12]);
+const deep = step(svg);
+const unheld = step(add(footer, [80, 764, 40, 16]));
+out({ icon, deep, unheld });""")
+        self.assertEqual(o["icon"], {"reads": 1, "scanned": False}, "an element added inside the send button, a control the scan holds, its box inside the button's: a re-read, no scan")
+        self.assertEqual(o["deep"], {"reads": 1, "scanned": False}, "an element holding another, both boxes inside the button's: a re-read, no scan")
+        self.assertIs(o["unheld"]["scanned"], True, "an element added inside the footer, which the scan does not hold: a scan")
+
+    # Ruling 2 at 79dce614c (2026-10-04): an element added inside a held control re-reads only when every box of the added subtree lies
+    # inside the part of that control a person can see (its box cut by the ancestors that clip it, rvis); one that reaches outside it,
+    # such as a popup child of a control, scans as before, so a control it brings is found
+    def test_an_element_added_inside_a_held_control_that_reaches_outside_its_visible_box_scans(self):
+        o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T);
+const step = (el) => { const reads = STYLE_READS; added(el); frame(); const n = STYLE_READS - reads; return { reads: n, scanned: n === scan(), place: at() }; };
+const popup = step(add(send, [250, 690, 130, 90], { position: 'absolute' }));          // a popup child above the button, reaching out of it
+const wrapEl = add(send, [330, 790, 40, 28]); add(wrapEl, [240, 52, 140, 40], { sel: 'button' });   // inside the button, a child of it far outside
+const inner = step(wrapEl);
+const tabs = add(null, [0, 760, 390, 30], { overflow: 'hidden' }); const tab = add(tabs, [300, 770, 80, 40], { cursor: 'pointer' });   // a tab whose bottom 20 px the strip hides
+added(tabs); frame();
+const seen = step(add(tab, [310, 772, 20, 10]));
+const clipped = step(add(tab, [310, 794, 20, 10]));
+out({ popup, inner, seen, clipped });""")
+        self.assertIs(o["popup"]["scanned"], True, "a popup child of the send button reaching above it: a scan, as before ruling 2's condition")
+        self.assertEqual((o["inner"]["scanned"], o["inner"]["place"]), (True, {"top": "100px", "right": "8px", "painted": True}),
+                         "an element inside the button whose own child reaches outside it: a scan, which finds that child's button and moves the badge "
+                         "below it (52 + 40 + 8)")
+        self.assertEqual((o["seen"]["reads"], o["seen"]["scanned"]), (1, False), "an element added inside the part of the tab the strip leaves in view: a re-read, no scan")
+        self.assertIs(o["clipped"]["scanned"], True, "an element added inside the tab's box but in the part the strip hides: a scan, since it lies outside "
+                      "the part of the tab a person can see")
 
     # Ruling 1 at 79dce614c (2026-10-04): on the desktop the chat writes the reply chips' hidden attribute at each scroll step, to the
     # value it had, and the chips (fixed, outside the list, holding elements, no control) are an element the watch must scan for when
