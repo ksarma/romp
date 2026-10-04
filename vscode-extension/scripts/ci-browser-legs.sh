@@ -59,15 +59,17 @@
 # with the process group each of them leads, which reaches a process left in such a group after its parent exited,
 # outside the parent links. What neither reaches follows one rule: a process whose parent exited before the walk, and
 # which was adopted by a process outside that node --test's tree (init, or a subreaper above the leg's node --test), is
-# reached only through the group of a process the walk finds, so it is reached by neither when no process the walk finds
-# leads its group. Examples, not the whole set: a process that leads its own group (started by setsid -f, or by a
+# reached only through the group of a process the walk finds, and so is every process under it, since the parent links
+# from that node --test lead to none of them. They are reached by neither when no process the walk finds leads their
+# group. Examples, not the whole set: a process that leads its own group (started by setsid -f, or by a
 # detached spawn whose launcher exited); one in a group whose leader has exited (as Chromium starts its crash handler by
 # a double fork: that handler ends when its browser does, recorded with Playwright's new-headless Chromium on a
 # development box, not executed here); and one in the file's own process group, this script's, since no kill signals
 # that group (the file's process shares this script's own process group, which holds the script itself). The rostered
 # legs launch Chromium directly, and no process of the step's command over the real roster was left after it ended
 # (measured on a development box). The tree test's case "the per-file bound ends a leg that outlives it" runs a keeper
-# of each of those three kinds, its launcher exited before the walk, and reads each still alive after the cut.
+# of each of those three kinds, its launcher exited before the walk, the first with a child of its own, and reads each
+# keeper and that child still alive after the cut.
 # The walk stops each process it finds and reads the table again until a read finds no new one, a guard against a
 # process that forks during the walk, which no case executes. node --test then records the file as failed as a whole
 # (its process ended on a signal), beside the results the file recorded before the kill, and the cut's red after the run
@@ -92,7 +94,8 @@
 # that outlives it" runs, with the real node and a short bound, a synthetic leg whose node process ignores SIGTERM
 # and starts a process in a session of its own and one in the file's own process group, each with a child, and a process
 # in a session of its own whose child exits at once and leaves a grandchild in its group, reparented out of the tree,
-# and reads every one of those processes gone by the bound plus the grace, and the three keepers above still alive; its
+# and reads every one of those processes gone by the bound plus the grace, and the three keepers above and the first
+# one's child still alive; its
 # case "the bound's kill reaches the cut leg's processes alone" runs, with the real node and two legs at a time, a leg
 # still running at another leg's cut (it watches that leg's process, so its green does not rest on timing) and a leg
 # queued behind the cut, and with one leg at a time a leg queued behind a cut leg, and reads only the cut leg named and
