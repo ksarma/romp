@@ -435,13 +435,19 @@ export const SCENES: SceneDef[] = [
         let b = await box(s.page);
         assert.deepEqual([b.src.length, s.chunkRequests()], [1, 1], "the backstop showed it as source; the first request is still out");
         // the next formula uses the retry the backstop's failure armed, in the same task as the read below: a second tag, the formula
-        // its source at once (a browser serves a URL already in flight from that one fetch, so this tag waits on the held answer too)
+        // its source at once. Chromium serves the second tag from the fetch already in flight, so there the retry waits on the held
+        // answer; WebKit and Firefox send a second request, which the route holds too (math.ts attempt; read below per engine)
         const r = await s.page.evaluate((src: string) => {
           const m = document.createElement("div"); m.className = "msg"; m.innerHTML = (window as any).__md(src); document.getElementById("out")!.appendChild(m);
           return { tags: document.querySelectorAll('script[src*="math-chunk.js"]').length, src: document.querySelectorAll("#out code.md-math-src").length,
             pending: document.querySelectorAll("#out .md-math-inline, #out .md-math-display").length };
         }, "then $z^2$");
         assert.deepEqual(r, { tags: 2, src: 2, pending: 0 }, "a fresh tag though the first attempt is out, and nothing waits on it: " + JSON.stringify(r));
+        await drain(s.page);
+        await drain(s.page);
+        const engine: string = browser.browserType().name();
+        assert.equal(s.chunkRequests(), engine === "chromium" ? 1 : 2,
+          engine + ": the second tag's request as math.ts attempt's comment states it, Chromium serving the tag from the fetch in flight, WebKit and Firefox asking again");
         first.open();
         const laid = await allLaidOut(s.page);
         b = await box(s.page);
