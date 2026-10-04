@@ -121,10 +121,15 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   constant; it reads an unknown operand of % by a positive constant as 0 to the constant less one, and a call to
   randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n) over bounded arguments (random's and
   secrets', by the callee's name) as the values it can return, so 20000 + os.getpid() % 20000 is 20000-39999 and
-  counts, and so does random.randint(40000, 50000). A sum or difference with an unbounded operand counts when one of its
-  operands alone is a constant expression (one interval() bounds with no unknown in it) whose value is in the range,
-  found through str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so is
-  40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read.
+  counts, and so does random.randint(40000, 50000). Each argument of such a call is given by position or by its
+  parameter's name (randint's a and b, randrange's start, stop and step, randbelow's exclusive_upper_bound; a keyword
+  that names none, or names one a positional argument fills, is passed over), and the call is read by the arguments
+  that fill its parameters from the first up to the first left empty: random.randint(a=40000, b=50000) counts as
+  random.randint(40000, 50000) does, randrange(start=S) reads as randrange(S), and randint(b=N) is not read. A sum or
+  difference with an unbounded operand counts when one of its operands alone is a constant expression (one interval()
+  bounds with no unknown in it) whose value is in the range, found through str() and int() and down a chain of sums
+  and differences: 40000 + i is built on 40000, and so is 40000 * 1 + i (offset_base()); one with no such operand
+  (base + i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -274,7 +279,8 @@ _D5 = r"\d(?:_?\d){4}"                              # five digits, digit separat
 FIVE = re.compile(r"(?<![\w.])(" + _D5 + r")(?![\w.])")   # a five-digit number standing alone (not inside an id, a decimal or a hash)
 WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
 COMPUTED = re.compile(r"%[ \t]*\d{4,5}\b|\brand(?:int|range|below)\(")   # the computed forms interval() bounds
-RANDOM_CALLS = ("randint", "randrange", "randbelow")
+RANDOM_CALLS = {"randint": ("a", "b"), "randrange": ("start", "stop", "step"),   # the calls interval() bounds, random's
+                "randbelow": ("exclusive_upper_bound",)}                         # and secrets', with their parameters' names
 MAX_CODE_DEPTH = 3                                  # code text inside code text inside code text, and no deeper
 
 
@@ -463,7 +469,8 @@ def interval(node, bound=None):
     """(lo, hi, computed) for an int expression the census can bound, else None: constants, + - * // and % over them, a
     name bound to one int literal, str() or int() around one, an unknown operand of % by a positive constant read as
     0 to the constant less one, and randint(a, b), randrange(stop), randrange(start, stop[, step]) and randbelow(n)
-    over bounded arguments read as the values each can return. computed is True when an unknown took part."""
+    over bounded arguments read as the values each can return, each argument given by position or by its parameter's
+    name (_random_args()). computed is True when an unknown took part."""
     bound = bound or {}
     if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
         return node.value, node.value, False
@@ -474,11 +481,10 @@ def interval(node, bound=None):
         return None
     if isinstance(node, ast.Call) and _callee(node.func) in ("str", "int") and len(node.args) == 1 and not node.keywords:
         return interval(node.args[0], bound)
-    if isinstance(node, ast.Call) and _callee(node.func) in RANDOM_CALLS and node.args \
-            and not any(isinstance(a, ast.Starred) for a in node.args):
-        ivs = [interval(a, bound) for a in node.args]
+    if isinstance(node, ast.Call) and _callee(node.func) in RANDOM_CALLS:
+        ivs = [interval(a, bound) for a in _random_args(node) or ()]
         name, k = _callee(node.func), len(ivs)
-        if all(ivs):
+        if ivs and all(ivs):
             if name == "randint" and k == 2:
                 return ivs[0][0], ivs[1][1], True
             if name in ("randrange", "randbelow") and k == 1:
@@ -506,6 +512,26 @@ def interval(node, bound=None):
                 return a // c, b // c, ca or cb
             return (a % c, b % c, ca or cb) if a == b else (0, c - 1, ca or cb)
     return None
+
+
+def _random_args(call):
+    """The arguments of a random call (RANDOM_CALLS) in its parameters' order, up to the first parameter left empty: each
+    positional argument in its place, then each keyword in the place of the parameter it names (randint(a=A, b=B) is
+    randint(A, B)), a keyword that names no parameter, or one a positional argument fills, passed over; None when an
+    argument is starred or the positional arguments outnumber the parameters."""
+    params = RANDOM_CALLS[_callee(call.func)]
+    if len(call.args) > len(params) or any(isinstance(a, ast.Starred) for a in call.args):
+        return None
+    got = dict(zip(params, call.args))
+    for kw in call.keywords:
+        if kw.arg in params and kw.arg not in got:
+            got[kw.arg] = kw.value
+    out = []
+    for p in params:
+        if p not in got:
+            break
+        out.append(got[p])
+    return out
 
 
 def offset_base(node, bound=None):
@@ -1417,6 +1443,33 @@ class Plants(unittest.TestCase):
         for label, src in (
                 ("the nested width of the host's field", 'u = "http://{:{}}:{}/x".format(h, %d, 1)\n' % n),
                 ("the nested width of the port's own field", 'u = "http://127.0.0.1:{:{}}/x".format(1, %d)\n' % n)):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", src)
+
+    def test_a_random_call_with_keyword_arguments(self):
+        """THE RULE's random calls, with arguments given by their parameters' names (randint(a=..., b=...)), read as their
+        positional forms are. Each green twin is in a file the census opens: a call whose first parameter is left empty,
+        one whose keyword names no parameter of the call, and keyword bounds below the range (that file opened by the
+        randint( form alone)."""
+        lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
+        for label, src, why, first in (
+                ("randint by keyword", 'port = random.randint(a=%d, b=%d)\n' % (lo, hi), "computed into %d-%d" % (lo, hi), lo),
+                ("randint by keyword, in the other order", 'port = random.randint(b=%d, a=%d)\n' % (hi, lo),
+                 "computed into %d-%d" % (lo, hi), lo),
+                ("randint by position, then by keyword", 'port = random.randint(%d, b=%d)\n' % (lo, hi),
+                 "computed into %d-%d" % (lo, hi), lo),
+                ("randrange by keyword", 'env = dict(ROMP_POSTAL_PORT=str(random.randrange(start=%d, stop=%d)))\n' % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("randrange's stop by keyword, after a start below the range", 'port = random.randrange(1024, stop=%d)\n' % hi,
+                 "computed into 1024-%d" % (hi - 1), LOW),
+                ("randbelow by keyword", 'port = secrets.randbelow(exclusive_upper_bound=%d)\n' % hi,
+                 "computed into 0-%d" % (hi - 1), LOW)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+        for label, src in (
+                ("randint with its first parameter left empty", 'port = random.randint(b=%d)\n' % hi),
+                ("randint with a keyword that names no parameter of it", 'port = random.randint(%d, high=%d)\n' % (lo, hi)),
+                ("randint by keyword below the range", 'port = random.randint(a=1024, b=2048)\n')):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
 
