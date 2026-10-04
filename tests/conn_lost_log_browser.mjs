@@ -15,6 +15,13 @@
 //     at once, never connecting: the kernel is down), "refused-panes" (the same for every pane dial while the shell's own
 //     dial passes: the pane's own reconnect fails while the page's link stands), "hung" (every new dial stays CONNECTING
 //     until the outage ends, the phone's dead path). An outage lasts cfg.outageMs from the return.
+//   * cfg.regime "slow" (the review of item 4b, 2026-10-03): from the suspend every dial waits in ONE line, as Chromium and
+//     Firefox hold each WebSocket handshake to a host until the one ahead of it has opened or failed (RFC 6455 section 4.1); a
+//     routed socket is a mock in the page, so the engine's own line does not apply here and the driver keeps it. A dial's turn
+//     comes when the dial ahead has opened or been cut, its handshake then takes cfg.handshakeMs, and it passes unless the page
+//     cut it first (the page's own 15 s connect cut, a timer); a dial the page cuts gives up its place at once. Every
+//     handshake succeeds: a slow network, not an outage. cfg.fin "return-panes-first" closes the pane sockets before the
+//     shell's, so the panes redial while the shell's link still stands and the shell's own redial waits behind theirs.
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip). Never
 // touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. Synthetic sessions only.
 import { createRequire } from "node:module";
@@ -62,9 +69,11 @@ const page = await context.newPage();
 page.on("pageerror", (e) => { if (out.errors.length < 40) out.errors.push(String(e).slice(0, 300)); });
 
 // --- the routed WebSocket path ---
-const state = { outage: false, phase: "boot" };
+const state = { outage: false, slow: false, phase: "boot" };
 let outageEnded = null, endOutage = null;
 const live = new Set();
+const liveApp = new Map();   // each held socket's app, so cfg.fin "return-panes-first" can close the shell's last
+let lineTail = Promise.resolve();   // the slow regime's one line: settled when the dial at its end has opened or been cut
 const appOf = (u) => { try { return new URL(u).searchParams.get("app") || "?"; } catch (e) { return "?"; } };
 const wire = (ws, d) => {
   const server = ws.connectToServer();
@@ -73,12 +82,28 @@ const wire = (ws, d) => {
   server.onClose((code, reason) => { live.delete(ws); try { ws.close({ code: code || 1000, reason: reason || "" }); } catch (e) { /* closed */ } });
   ws.onClose(() => { live.delete(ws); try { server.close(); } catch (e) { /* closed */ } });
   live.add(ws);
+  liveApp.set(ws, d.app);
 };
 const outageFor = (app) => state.outage && (cfg.regime === "refused" || cfg.regime === "hung" || (cfg.regime === "refused-panes" && app !== "shell"));
 await page.routeWebSocket((u) => /\/ws(\?|$)/.test(u.pathname + (u.search || "")), async (ws) => {
   const d = { app: appOf(ws.url()), t: now(), phase: state.phase };
   out.dials.push(d);
   try {
+    if (state.slow) {
+      let cutNow = null;
+      const cutP = new Promise((r) => { cutNow = r; });
+      ws.onClose((code) => { d.cutByPage = true; d.cutT = now(); cutNow(); try { ws.close({ code: code || 1000, reason: "lab-cut" }); } catch (e) { /* closed */ } });
+      const ahead = lineTail;
+      let done = null;
+      lineTail = new Promise((r) => { done = r; });
+      try {
+        await ahead;
+        if (!d.cutByPage) { d.turnT = now(); await Promise.race([sleep(cfg.handshakeMs), cutP]); }
+        if (d.cutByPage) { d.verdict = "slow-cut"; return; }
+        d.verdict = "passed"; d.openT = now(); wire(ws, d);
+      } finally { done(); }
+      return;
+    }
     if (!outageFor(d.app)) { d.verdict = "passed"; wire(ws, d); return; }
     if (cfg.regime !== "hung") { d.verdict = "refused"; await ws.close({ code: 1006, reason: "lab-refused" }); return; }
     d.verdict = "hung";   // the handler stays pending, so the page-side socket stays CONNECTING; a cut by the page completes it
@@ -183,10 +208,16 @@ try {
 
   // --- the suspend ---
   state.phase = "suspended";
-  if (cfg.regime !== "healthy") { outageEnded = new Promise((r) => { endOutage = r; }); state.outage = true; }
+  if (cfg.regime === "slow") state.slow = true;
+  else if (cfg.regime !== "healthy") { outageEnded = new Promise((r) => { endOutage = r; }); state.outage = true; }
   out.t.suspend = now();
   await flip(true);
-  const closeHeld = async () => { const held = Array.from(live); for (const ws of held) { live.delete(ws); try { await ws.close({ code: 1001, reason: "lab-suspend" }); } catch (e) { /* gone */ } } return held.length; };
+  const closeHeld = async (panesFirst) => {
+    let held = Array.from(live);
+    if (panesFirst) held = held.filter((ws) => liveApp.get(ws) !== "shell").concat(held.filter((ws) => liveApp.get(ws) === "shell"));
+    for (const ws of held) { live.delete(ws); try { await ws.close({ code: 1001, reason: "lab-suspend" }); } catch (e) { /* gone */ } }
+    return held.length;
+  };
   if (cfg.fin === "suspend") out.closedAtSuspend = await closeHeld();
   await sleep(cfg.hiddenDwellMs || 400);
 
@@ -194,8 +225,8 @@ try {
   state.phase = "returned";
   out.t.return = now();
   out.visibleDispatch = await flip(false);
-  if (cfg.fin === "return") out.closedAtReturn = await closeHeld();
-  if (cfg.regime === "healthy") {
+  if (cfg.fin === "return" || cfg.fin === "return-panes-first") out.closedAtReturn = await closeHeld(cfg.fin === "return-panes-first");
+  if (cfg.regime === "healthy" || cfg.regime === "slow") {
     out.upAfterReturn = await waitUp(out.t.return, cfg.upTimeoutMs || 15000);
     out.t.up = now();
   } else {

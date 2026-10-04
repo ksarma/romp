@@ -20,21 +20,31 @@ records every write to the Log (window.__rompNotify, wrapped as it is assigned),
 the Log control's digit and red cue, and the panes' socket words to the shell. The sockets close at the suspend (the OS
 dropped them while the page slept) or, in the `fin_after` legs, right after the return's handlers ran (the FIN a thawed page
 receives). The regimes: healthy (every redial passes), kernel down (from the suspend every dial is refused at once), pane
-dials refused (the shell's own dial passes, so the panes' own failed dials are the only failure), and hung (every dial
-stays CONNECTING until the outage ends at 18 s; the shell's 15 s connect cut is the failure).
+dials refused (the shell's own dial passes, so the panes' own failed dials are the only failure), hung (every dial
+stays CONNECTING until the outage ends at 18 s; the shell's 15 s connect cut is the failure), and slow (the review of
+item 4b, 2026-10-03: every handshake succeeds, but the driver holds the dials in one line, SLOW_MS each, the order
+Chromium and Firefox keep on a real network; a routed socket is a mock in the page, so the engine's own line does not
+apply here). In the `return-panes-first` leg the panes' sockets close before the shell's, so the panes redial while the
+shell's link stands and the shell's own redial waits behind theirs.
 
 What each leg asserts. Healthy: the return put a pane socket down (the event the old rule wrote on) and every socket came
 back, yet no connection-lost entry was written, the Log holds what it held, and the digit and the red cue are as before.
 An outage: one entry per shown pane whose socket was down, written no earlier than the first failed dial, unread, the digit
-counting them, and still unread after the sockets come back; in the hung leg nothing is written before the cut. Red at the
-fork's main 591436b2e on every leg in all three engines: each healthy leg on its no-entry check (the transition wrote one
+counting them, and still unread after the sockets come back; in the hung leg nothing is written before the cut. A slow
+return: the page's own connect cut, a timer, closed a shown pane's dial while it waited in line and another socket of the
+page stood (in the `return-panes-first` leg the shell's own redial too, while a pane's socket stood), every other dial
+passed, and nothing was written: a close that cut made fails nothing while a socket of the page is open. Red at the fork's
+main 591436b2e on every leg, in each engine it runs in: each healthy and slow leg on its no-entry check (the transition wrote one
 entry per shown pane), each outage leg, the hung one included, on its written-after-a-failing-dial check (the entries were
-written at the drop, before any dial had failed).
+written at the drop, before any dial had failed). The slow legs are red too at ed1c13e73, this branch's head before the
+review's finding was fixed, on the same check: the cut of a pane's dial, or of the shell's, wrote the shown panes still
+waiting in line.
 
 Engines: Chromium runs every leg (CI's served-pages job); Firefox and WebKit run the healthy phone and desktop legs, the
 kernel-down phone leg and the pane-dials-refused leg, as optional legs that skip with "optional:" where the runner does
-not declare the engine (ROMP_SERVED_TESTS_ENGINES). Skips loudly without the extension deps or a browser. CONN_LOG_OUT,
-when set, receives every leg's driver record. Synthetic throughout: no real session data.
+not declare the engine (ROMP_SERVED_TESTS_ENGINES). The slow legs run in Chromium alone: their line is the driver's, so
+another engine would run the same page code against the same line. Skips loudly without the extension deps or a browser.
+CONN_LOG_OUT, when set, receives every leg's driver record. Synthetic throughout: no real session data.
 """
 import json
 import lab_dist
@@ -76,6 +86,7 @@ def pane_labels():
     return pairs
 
 
+SLOW_MS = 5500   # the slow legs' handshake: the Feed, fourth of the panes in the desktop's line, opens 22 s after its dial, past the latest its connect cut can come (15 s and one 5 s watchdog tick)
 PHONE_EAGER = ("chat", "feed")   # the phone loads the chat (its src ships) and the Feed (exempt from the lazy boot) at boot; every other pane at its first tap (stage 0)
 
 
@@ -140,7 +151,7 @@ class ConnLostLog(unittest.TestCase):
             shutil.rmtree(cls.lab, ignore_errors=True)
 
     # ---- the driver ----
-    def _drive(self, engine, shell, regime, fin="suspend", outage_ms=0, reads_ms=()):
+    def _drive(self, engine, shell, regime, fin="suspend", outage_ms=0, reads_ms=(), handshake_ms=0, up_ms=0):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
@@ -149,10 +160,14 @@ class ConnLostLog(unittest.TestCase):
         cfg = {"engine": engine, "shell": shell, "regime": regime, "fin": fin, "outageMs": outage_ms, "readsMs": list(reads_ms),
                "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token), "healthz": "http://127.0.0.1:%d/healthz" % self.port,
                "eagerApps": list(eager(shell)), "hiddenDwellMs": 400, "settleMs": 1500, "afterMs": 2000}
+        if handshake_ms:
+            cfg["handshakeMs"] = handshake_ms
+        if up_ms:
+            cfg["upTimeoutMs"] = up_ms
         path = os.path.join(self.lab, "cfg-%s.json" % name)
         Path(path).write_text(json.dumps(cfg))
         try:
-            p = subprocess.run(["node", DRIVER], capture_output=True, text=True, timeout=180,
+            p = subprocess.run(["node", DRIVER], capture_output=True, text=True, timeout=240,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=path))
         except subprocess.TimeoutExpired as e:
             so = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode()
@@ -195,6 +210,30 @@ class ConnLostLog(unittest.TestCase):
         self.assertEqual(after["entries"], r["logAtBoot"]["entries"], name + ": the Log holds what it held before the suspend")
         self.assertEqual((after["digit"], after["has"]), ("!", False), name + ": no unread digit and no red cue after the return")
 
+    # ---- a slow return: the handshakes open one at a time, every one succeeds, nothing is written ----
+    def _slow(self, engine, shell, fin):
+        """A return on a slow network (the review of item 4b, 2026-10-03). The driver keeps the line Chromium and Firefox keep
+        (one WebSocket handshake to a host at a time, RFC 6455 section 4.1), each handshake taking SLOW_MS. On the desktop the
+        panes a return dials together then wait in line behind each other, and the page's own 15 s connect cut, a timer, closes
+        the dials still waiting, the Feed's among them (fourth in line, shown by default), although every handshake was
+        succeeding. A close that cut made fails nothing while another socket of the page is open, so nothing is written."""
+        name, r = self._drive(engine, shell, "slow", fin, handshake_ms=SLOW_MS, up_ms=90000)
+        after = [d for d in r["dials"] if d["t"] >= r["t"]["suspend"]]
+        self.assertTrue(after, name + ": the return dialed")
+        self.assertEqual([d for d in after if d.get("verdict") not in ("passed", "slow-cut")], [],
+                         name + ": every dial either passed after its turn in line or was cut by the page while it waited: %r" % after)
+        body = r["bodyClass"].split()
+        opened = sorted(d["openT"] for d in after if d["verdict"] == "passed")
+        self.assertTrue(opened, name + ": the dials in line opened: %r" % after)
+        stood = [d for d in after if d["verdict"] == "slow-cut" and d["app"] != "shell" and "po-" + d["app"] in body and d["cutT"] > opened[0]]
+        self.assertTrue(stood, name + ": the page's connect cut closed a SHOWN pane's dial while it waited in line and another socket of "
+                        "the page stood, the close the old rule wrote an entry for: %r" % after)
+        self.assertEqual(self._conn(r), [], name + ": a slow return whose handshakes all succeed writes no connection-lost entry")
+        log = r["logAfter"]
+        self.assertEqual(log["entries"], r["logAtBoot"]["entries"], name + ": the Log holds what it held before the suspend")
+        self.assertEqual((log["digit"], log["has"]), ("!", False), name + ": no unread digit and no red cue once the sockets are back")
+        return name, r, after, opened
+
     # ---- an outage: the entry is written at the reconnect's failure, unread ----
     def _outage(self, engine, shell, regime, outage_ms, reads_ms):
         name, r = self._drive(engine, shell, regime, "suspend", outage_ms, reads_ms)
@@ -228,6 +267,21 @@ class ConnLostLog(unittest.TestCase):
 
     def test_desktop_healthy_return_fin_after_the_return(self):
         self._healthy("chromium", "desktop", "return")
+
+    def test_desktop_slow_return(self):
+        name, r, after, opened = self._slow("chromium", "desktop", "suspend")
+        shell = [d["openT"] for d in after if d["app"] == "shell" and d["verdict"] == "passed"]
+        self.assertTrue(shell, name + ": the shell's own dial passed first: %r" % after)
+        self.assertTrue([d for d in after if d["verdict"] == "slow-cut" and d["app"] != "shell" and d["cutT"] > shell[0]],
+                        name + ": a pane dial was cut while the shell's link stood")
+
+    def test_desktop_slow_return_fin_on_the_panes_first(self):
+        name, r, after, opened = self._slow("chromium", "desktop", "return-panes-first")
+        panes = [d["openT"] for d in after if d["app"] != "shell" and d["verdict"] == "passed"]
+        cut = [d for d in after if d["app"] == "shell" and d["verdict"] == "slow-cut"]
+        self.assertTrue(cut and panes and cut[0]["cutT"] > min(panes),
+                        name + ": the shell's own redial waited behind the panes' and its connect cut closed it while a pane's socket "
+                        "stood, so its link's failure fails nothing: %r" % after)
 
     def test_phone_kernel_down(self):
         self._outage("chromium", "phone", "refused", 5000, (1500, 4500))
