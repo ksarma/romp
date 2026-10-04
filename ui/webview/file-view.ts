@@ -104,8 +104,8 @@ function langFor(path: string): string | null {
 // plans/markdown-viewer.md): GFM without hard breaks, strikethrough on DOUBLE tildes only, the math placeholders
 // KaTeX fills after the sanitize, front matter, footnotes, callouts, ==mark==, wikilinks and embeds. render.ts and
 // anchor-map.ts make the same call; the first configures and the rest are no-ops, so this module is correct in
-// any bundle it lands in (files.js and feed.js carry the grammar, the fill and KaTeX through this import; the
-// chat page's viewer parsed with the chat's grammar before, the other two with none).
+// any bundle it lands in (files.js and feed.js carry the grammar and the fill through this import, with KaTeX in
+// the on-demand math-chunk.js; the chat page's viewer parsed with the chat's grammar before, the other two with none).
 applyMdConfig();
 
 // ── view-format preferences ────────────────────────────────────────────────────────────────────────

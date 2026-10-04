@@ -1547,7 +1547,8 @@ function highlight(container: HTMLElement, lineNos = true) {
     // The math fill's source fallback (math.ts MATH_SOURCE_CLASS: a formula shown as its TeX because it passed a bound) is
     // not code: it keeps the Copy button and nothing else. Auto-detection over 20,000 characters of TeX cost 250 ms and
     // dressed the fallback in the tokens of whichever grammar it guessed, where the sheet dresses it as unrendered source
-    // (review round 3). Spelled here, not imported: render.ts imports nothing from math.ts (render-math.test.ts pins both).
+    // (review round 3). Spelled here, not imported: render.ts takes only the arrival's hook and the two tests from math.ts
+    // (onMathSettled, mathPendingIn, mathFailedIn), so the class is spelled (render-math.test.ts pins both).
     if (code.classList.contains("md-math-src")) { const host = code.parentElement; if (host && host.tagName === "PRE") addCopyBtn(host as HTMLElement, raw); return; }
     const lang = (code.className.match(/language-([\w-]+)/) || [])[1];
     try {
