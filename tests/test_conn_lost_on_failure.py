@@ -14,8 +14,9 @@ here under node against the code as served:
   ShimFailureWord        kernel/kernel.py _shim: a dial that never opened posts {romp:'wsFail',app,cut} to the shell after
                          its down word, cut true when the watchdog's CONNECTING arm closed it and false for a refusal (at
                          the bound's edge: a close at 15000 ms is a refusal, at 15001 ms a cut); an opened socket's close,
-                         the return's abandon() and a park post none, and the pane's frames reach no door of the shell's
-                         (the Log's leaving latch, below, clears on the shell link's frames, not a pane's). Through
+                         the return's abandon() and a park post none. The pane's frames reach no door of the shell's
+                         (the Log's leaving latch, below, clears on the shell link's frames, not a pane's): they call no
+                         window.__rompNotLeaving and post nothing to the shell but a return's wsFresh. Through
                          tests/test_pane_shim_return.py's harness.
   ShellLinkFailure       _LANDING_MOBILE_JS: the shell socket's close of a dial that never opened (refused, or its own
                          connect cut) calls window.__rompLinkFailed once, with true when its own cut timer or the tick's
@@ -37,7 +38,7 @@ here under node against the code as served:
                          _LANDING_ERRS_JS: from a beforeunload, neither the link's failure nor a failure word writes; the
                          shell's next dial, open or frame on its link (window.__rompNotLeaving), a pane's or a column's
                          open, and pageshow each clear the latch, so a navigation that did not unload hides no later
-                         outage. The same DOM stub.
+                         outage; a pane's wsFresh clears nothing. The same DOM stub.
 
 The composition in real engines (phone and desktop, healthy, slow and failing returns; reloads while a dial is connecting, and a
 204 followed by an outage) is tests/test_conn_lost_log_served.py.
@@ -131,15 +132,26 @@ open();recv({type:"ka"});park();out({words:words()});""")
         # review round 1 of item 4b (2026-10-04, call 1): the Log's leaving latch clears on the shell link's next frame, and a
         # pane's frames are not that event. Each pane's socket carries the link's keepalive and its own data besides, so a clear
         # on them would widen the race the call accepted (a frame between an unload's beforeunload and its closes) by every
-        # pane's frames. The pane's open, its up word, is the one clear a pane makes; after it, frames call no
-        # window.__rompNotLeaving and post no word the Log reads
+        # pane's frames. The pane's open, its up word, is the one clear a pane makes. After it, frames call no
+        # window.__rompNotLeaving, and they post nothing at all to the shell, so no listener there can take them for the clear,
+        # whatever word it would read (the review of call 1's build: a new word posted on each frame, with a Log listener
+        # clearing the latch on it, passed a check of the wsState and wsFail words alone). The one exception is a return's
+        # first frame of data, which posts wsFresh once, the end of the reconnecting cue; the Log does not clear the latch on
+        # it (AnUnloadsClosesFailNothing, below)
+        frames = r"""recv({type:"ka"});recv({type:"caps",caps:["tagEdit"],viewsSeq:null});recv({type:"ka"});sock().onmessage({data:"not json"});"""
         r = _shimret._run(WORDS + r"""
-open();var afterOpen=words();
-recv({type:"ka"});recv({type:"caps",caps:["tagEdit"],viewsSeq:null});recv({type:"ka"});sock().onmessage({data:"not json"});
-out({nl:NL,afterOpen:afterOpen,afterFrames:words()});""", app="feed", before="var NL=0;window.parent.__rompNotLeaving=function(){NL++;};")
+open();var afterOpen=words(),n=parentPosts.length;
+""" + frames + r"""
+var bootFrames=parentPosts.slice(n);
+hide();NOW+=46000;show();NOW+=300;open();n=parentPosts.length;   // a return: the quiet socket put down, the redial opened
+""" + frames + r"""
+out({nl:NL,afterOpen:afterOpen,bootFrames:bootFrames,returnFrames:parentPosts.slice(n)});""", app="feed",
+                          before="var NL=0;window.parent.__rompNotLeaving=function(){NL++;};")
         self.assertEqual(r["afterOpen"], ["up"], "the open's up word, which clears the latch in the Log")
         self.assertEqual(r["nl"], 0, "no frame of the pane's called the shell's door")
-        self.assertEqual(r["afterFrames"], ["up"], "and no frame posted a word the Log reads")
+        self.assertEqual(r["bootFrames"], [], "after the boot's open the pane's frames posted nothing to the shell")
+        self.assertEqual(r["returnFrames"], [{"romp": "wsFresh"}],
+                         "after a return's open they posted wsFresh once, at the first frame of data, and nothing else")
 
 
 # ---- the shell link's failure ----
@@ -519,6 +531,7 @@ postFrom({ col: '2' }, { romp: 'wsState', app: 'chat', state: 'down' });
 fire('beforeunload');
 window.__rompLinkFailed(false);
 out.linkWhileLeaving = snap();                             // the shell's dial that never opened, closed by the unload
+post({ romp: 'wsFresh' });                                 // a pane's first frame of data after a return, the one word its frames post: no clear
 post({ romp: 'wsFail', app: 'feed', cut: false });
 postFrom({ col: '2' }, { romp: 'wsFail', app: 'chat', cut: false });
 out.wordWhileLeaving = snap();                             // a pane's and a column's, the same
@@ -588,7 +601,8 @@ class AnUnloadsClosesFailNothing(unittest.TestCase):
         self.assertEqual(self.out["linkWhileLeaving"], [], "the shell's close made by the unload: three drops waiting, none written")
 
     def test_a_panes_failure_word_while_leaving_writes_nothing(self):
-        self.assertEqual(self.out["wordWhileLeaving"], [], "a pane's and a column's close made by the unload write nothing")
+        self.assertEqual(self.out["wordWhileLeaving"], [], "a pane's and a column's close made by the unload write nothing, and a "
+                         "pane's wsFresh before them cleared nothing")
 
     def test_the_shells_next_dial_clears_the_latch(self):
         self.assertEqual(self.out["afterTheShellsDial"], [self.FEED], "the page stayed: the next failure is written")
