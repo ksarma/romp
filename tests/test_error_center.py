@@ -562,16 +562,17 @@ out.pairFirstUnmutedOpen = Object.assign(state(), {
 window.__rompCloseErrs();
 retryBtn.fire('click');
 out.pairSecondUnmutedClosed = Object.assign(state(), { retrySeen: seenOf('pair muted retry'), filters: STORE['romp:errFilters'] });
-// h) a visible pane's socket down with the Log open: its entry lands seen, the live cue keeps the triangle red, open and
-// closed; the socket back up clears it
+// h) a visible pane's socket down with the Log open: its connection-lost entry lands seen, the live cue keeps the triangle
+// red, open and closed; the socket back up clears it
 window.__rompOpenErrs();
 post({ romp: 'wsState', app: 'chat', state: 'down' });
-// then the shim's word that the pane's redial closed without opening. A Log that writes the connection-lost entry only when a
-// reconnect fails writes it on this word, with the Log open; one that writes it at the drop has written it already and has no
-// listener for the word. So the step reads that entry landing seen from either Log. Without the word, the first kind of Log
-// writes no entry here and the state below reads the same, so the step would pass with no entry landing at all
+// then {romp:'wsFail'}, the failed-redial word PR 968 adds to the shim (netFail) and to the shell's Log; a tree without 968
+// neither sends nor hears it. A Log without 968 writes the connection-lost entry at the drop above and has no listener for
+// the word; 968's Log writes it on the word, with the Log open. downOpen reads the store's connection-lost entries, text and
+// seen flag: exactly one, stored seen, so the step fails on an entry that never landed as well as on one left unread, with or
+// without 968
 post({ romp: 'wsFail', app: 'chat' });
-out.downOpen = state();
+out.downOpen = Object.assign(state(), { conn: notes().filter((n) => n.kind === 'conn').map((n) => [n.text, n.seen]) });
 window.__rompCloseErrs();
 out.downClosed = state();
 post({ romp: 'wsState', app: 'chat', state: 'up' });
@@ -642,6 +643,9 @@ class ArrivalWhileOpen(unittest.TestCase):
 
     def test_a_socket_down_with_the_log_open_keeps_the_triangle_red_through_the_close(self):
         self._is("downOpen", True, "!", 0, 0, True)         # its entry seen as it lands; the live cue holds the red
+        # the entry landed, once, seen: read from the store, so a drop that wrote nothing fails here as well as an unread one
+        self.assertEqual(self.out["downOpen"]["conn"], [["Kernel connection lost: Chat pane (reconnecting)", True]],
+                         "the drop's one connection-lost entry, stored seen: %r" % (self.out["downOpen"],))
         self._is("downClosed", True, "!", 0, 0, False)
         self._is("upClosed", False, "!", 0, 0, False)
 
