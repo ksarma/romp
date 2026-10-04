@@ -591,7 +591,10 @@ process.exit(0);
 """
 
 # Two sessions on a phone: the reader on the paragraph in `web` with the reply's formulas waiting above it, a switch to `api`, the chunk
-# released and the swap done while `web` is hidden, then the switch back.
+# released and the swap done while `web` is hidden, then the switch back. With `failFirst` (the review of iOS item 6, round 2, tests-4) the
+# first chunk request is answered 404, so `web` is left on the paragraph with the failure's sources above it and no formula waiting, and
+# every later request is held: the retry, used by a formula reply the driver appends to `api` once `api` is on screen (or by an earlier
+# fill), is released only once `web`, hidden, still holds its sources, so the success lays `web` out while it is hidden.
 DRIVER_TABS = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -619,21 +622,27 @@ try {
     const ct = c.getBoundingClientRect().top;
     const p = Array.from(c.querySelectorAll("p")).find((e) => (e.textContent || "").startsWith(marker));
     const turn = p ? p.closest("[data-uuid]") : null;
-    const shown = turn ? Array.from(turn.querySelectorAll(".md-math-display, .katex-display")) : [];
+    const shown = turn ? Array.from(turn.querySelectorAll(".md-math-display, .katex-display, pre:has(> code.md-math-src)")) : [];
     const last = shown[shown.length - 1];
     return { displayed: !!(p && p.offsetParent !== null), markerTop: p ? p.getBoundingClientRect().top - ct : null,
       turnHeight: turn ? turn.getBoundingClientRect().height : null, lastFormulaBottom: last ? last.getBoundingClientRect().bottom - ct : null,
       pendingInTurn: turn ? turn.querySelectorAll(".md-math-inline, .md-math-display").length : null,
+      srcInTurn: turn ? turn.querySelectorAll("code.md-math-src").length : null,
       katexInTurn: turn ? turn.querySelectorAll(".katex").length : null, scrollTop: c.scrollTop,
       atBottom: c.scrollHeight - c.clientHeight - c.scrollTop < 4 };
   }, cfg.marker);
   const reqs = [];
   let release; const held = new Promise((r) => { release = r; });
-  await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => { reqs.push(route.request().url()); await held; await route.continue(); });
+  await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => {
+    const n = reqs.push(route.request().url());
+    if (cfg.failFirst && n === 1) return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
+    await held; await route.continue();
+  });
   await page.goto(cfg.chat);
   await page.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-id]").length >= 2, null, { timeout: 30000 });
   out.clickWeb = await tab(cfg.sid);
   await showing(cfg.lastFiller);
+  if (cfg.failFirst) await page.waitForFunction((sel) => !document.querySelector(sel) && !!document.querySelector("#content [data-math-failed]"), PENDING, { timeout: 30000 });
   await settle();
   const placed = await page.evaluate(({ marker, off }) => {
     const c = document.getElementById("content");
@@ -649,9 +658,17 @@ try {
   out.clickApi = await tab(cfg.sid2);
   await showing(cfg.apiMarker);
   await settle();
+  if (cfg.failFirst) {
+    fs.appendFileSync(cfg.apiTranscript, cfg.apiLines);                   // a formula reply in api, whose fill uses the retry if nothing has yet
+    await showing(cfg.apiRetryMarker);
+    for (let i = 0; i < 100 && reqs.length < 2; i++) await settle();
+    await settle();
+  }
   out.hidden = await measure();
+  out.requestsHeld = reqs.length;
   release();
-  await page.waitForFunction((sel) => !document.querySelector(sel) && document.querySelectorAll("#content .katex").length > 0, PENDING, { timeout: 30000 });
+  if (cfg.failFirst) await page.waitForFunction(() => !document.querySelector("#content [data-math-failed]") && document.querySelectorAll("#content .katex").length > 0, null, { timeout: 30000 });
+  else await page.waitForFunction((sel) => !document.querySelector(sel) && document.querySelectorAll("#content .katex").length > 0, PENDING, { timeout: 30000 });
   await settle();
   out.apiAfter = await page.evaluate(() => { const c = document.getElementById("content"); return { atBottom: c.scrollHeight - c.clientHeight - c.scrollTop < 4 }; });
   out.clickBack = await tab(cfg.sid);
@@ -786,6 +803,7 @@ class ServedMathChunk(unittest.TestCase):
             Path(state, "sdk", SID2 + ".json").write_text(json.dumps(
                 {"sid": SID2, "name": "api", "cwd": cwd, "mode": "auto", "effort": "high",
                  "lastSid": SID2, "alive": True, "model": "claude-opus-5", "liveModel": "Opus 5"}))
+            self.api_transcript = os.path.join(proj, SID2 + ".jsonl")
             recs = [{"type": "user", "timestamp": iso(self.t0 + 10), "uuid": "v1", "parentUuid": None, "promptSource": "typed",
                      "sessionId": SID2, "message": {"role": "user", "content": "what does the api tier cost?"}},
                     dict(reply("w0", "v1", self.t0 + 20, MATH_INTRO + "\n\n" + "\n\n".join("$$%s$$" % f for f in FORMULAS) + "\n"), sessionId=SID2)]
@@ -1165,6 +1183,58 @@ class ServedMathChunk(unittest.TestCase):
     @with_api_session
     def test_a_tab_hidden_while_the_chunk_lands_on_a_phone_webkit(self):
         self._hidden_tab("webkit")
+
+    def _hidden_tab_failed(self, engine):
+        """The hidden-tab case over a failed load (the review of iOS item 6, round 2, tests-4): web is left on its paragraph with the
+        failure's sources above it and no formula waiting, so setActive captures the line through mathFailedIn alone; the retry is held
+        until api is on screen and web, hidden, still holds its sources; the success lays web out while it is hidden, changing its turn's
+        height; back on web the paragraph is where the reader left it."""
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
+                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                reply("r1", "u2", self.t0 + 40, ranking_reply())]
+        for i in range(FILLERS):
+            recs.append(reply("g%d" % i, "r1" if i == 0 else "g%d" % (i - 1), self.t0 + 60 + i, FILLER % i))
+        with open(self.transcript, "a") as f:
+            f.write(jsonl(recs))
+        cfg = os.path.join(self.lab, "cfg-tabs-failed-%s.json" % engine)
+        Path(cfg).write_text(json.dumps({
+            "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID, "sid2": SID2,
+            "lastFiller": "Filler reply %d:" % (FILLERS - 1), "apiMarker": "API-TAB", "marker": "READ-03", "offset": 80, "failFirst": True,
+            "apiTranscript": self.api_transcript, "apiRetryMarker": "API-RETRY",
+            "apiLines": jsonl([dict(reply("w-retry", "w15", self.t0 + 300, "API-RETRY: the tier's monthly total is $$\\sum_{t=1}^{T} c_t$$ in all.\n"), sessionId=SID2)])}))
+        r = self._run(engine, DRIVER_TABS, cfg, "tabs-failed-" + engine)
+        w = engine + ": hidden tab over a failed load: "
+        self.assertNotIn("died", r, w + "the driver stopped early: %r\nkernel:\n%s" % (r.get("died"), Path(self.klog).read_text()[-1500:]))
+        self.assertEqual((r["clickWeb"], r["clickApi"], r["clickBack"]), (True, True, True), w + "both tabs on the strip: %r" % r)
+        n = len(STEP_FORMULAS)
+        b, h, a = r["before"], r["hidden"], r["after"]
+        self.assertTrue(b["displayed"], w + "the paragraph being read is on screen in web: %r" % b)
+        self.assertEqual((b["pendingInTurn"], b["srcInTurn"]), (0, 3 * n),
+                         w + "at the leave web has no waiting formula, every formula its source, so the capture runs through the failed-source test alone: %r" % b)
+        self.assertLess(b["lastFormulaBottom"], 0, w + "the sources sit above the viewport top, in the reader's own turn: %r" % b)
+        self.assertGreater(b["markerTop"], 0, w + "%r" % b)
+        self.assertFalse(h["displayed"], w + "web is hidden behind api when the retry is released: %r" % h)
+        self.assertEqual((h["pendingInTurn"], h["srcInTurn"]), (0, 3 * n), w + "web, hidden, still holds its sources then: %r" % h)
+        self.assertEqual(r["requestsHeld"], 2, w + "the retry was out, held, before the release: %r" % r)
+        self.assertTrue(a["displayed"], w + "%r" % a)
+        self.assertEqual((a["pendingInTurn"], a["srcInTurn"], r["requests"]), (0, 0, 2), w + "the retry's success laid out every formula of web's reply: %r" % r)
+        self.assertGreater(a["katexInTurn"], 0, w + "%r" % a)
+        self.assertGreater(abs(a["turnHeight"] - b["turnHeight"]), 5,
+                           w + "the success changed the reader's own turn while web was hidden: %r %r" % (b, a))
+        self.assertLessEqual(abs(a["markerTop"] - b["markerTop"]), 1,
+                             w + "back on web, the paragraph being read is within 1 px of where the reader left it: %r %r" % (b, a))
+        self.assertEqual(r["errors"], [], w + "no page error")
+
+    @with_api_session
+    def test_a_tab_hidden_while_a_retry_lands_over_a_failed_load_on_a_phone_chromium(self):
+        self._hidden_tab_failed("chromium")
+
+    @with_api_session
+    def test_a_tab_hidden_while_a_retry_lands_over_a_failed_load_on_a_phone_webkit(self):
+        self._hidden_tab_failed("webkit")
 
     def _comment_menu(self, engine):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
