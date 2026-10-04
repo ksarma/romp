@@ -32,7 +32,8 @@ Against a hermetic kernel serving the checkout's own build (tests/lab_dist.py), 
     formula; read right after the arrival (no frame between), the mark covers the whole passage and the formula's KaTeX root wears
     its tint (render.ts unwraps every mark in a view the arrival laid out and puts each thread back over the laid-out text);
   - a failed load and its retry, in both engines on the phone: the chunk's first answer is a 404, so every formula of the reply is its
-    source; with the reader on a paragraph below them, a new reply's formula uses the retry the failure armed (the second request,
+    source, each display formula's source block with its Copy button; with the reader on a paragraph below them, a new reply's formula
+    uses the retry the failure armed (the second request,
     held: nothing waits, the sources stand), and when it is served every formula is laid out, the failure's fallbacks included, with
     the paragraph within 1 px (math.ts retries a failed load; render.ts keeps the line across the success as across a first arrival).
 SYNTHETIC fixtures only; skips LOUDLY without the extension deps or a Playwright browser (CI's served job installs both)."""
@@ -934,6 +935,8 @@ class ServedMathChunk(unittest.TestCase):
         f, b, d, a = r["failed"], r["before"], r["during"], r["after"]
         self.assertEqual((f["requests"], f["pending"], f["katex"]), (1, 0, 0), w + "the first request failed and nothing waits: %r" % f)
         self.assertEqual(f["src"], 3 * n, w + "every formula of the reply is its source: %r" % f)
+        self.assertEqual((f["pres"], f["copy"]), (n, n),
+                         w + "each display formula the failure showed as a source block has the Copy button every source block has: %r" % f)
         self.assertLess(b["lastFormulaBottom"], 0, w + "the reply's formulas are above the viewport top: %r" % b)
         self.assertGreater(b["markerTop"], 0, w + "the paragraph being read is on screen: %r" % b)
         self.assertEqual(d["requests"], 2, w + "the new reply's formula used the retry the failure armed: %r" % d)

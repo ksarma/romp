@@ -28,10 +28,15 @@ const FORMULA = ".md-math-inline, .md-math-display, .katex, .katex-display, .kat
 /** The markdown blocks a point is named by. */
 const BLOCKS = "p, li, pre, blockquote, h1, h2, h3, h4, h5, h6, td, th, dt, dd, summary, figcaption";
 
-/** A formula's element: one of FORMULA, or the pre a display formula's source fallback stands in (math.ts showSource). */
+/** A formula's element: one of FORMULA, or the pre a display formula's source fallback stands in (math.ts showSource), with or
+ *  without the Copy button the chat gives a source block (render.ts highlight, and the math arrival's after-callback for the
+ *  fallbacks a failed load made). Counted by its code child, not by its child count: with the button the pre counted as a
+ *  markdown block, so every refused display formula above the reader moved the point's block index by one, and a failed
+ *  load's eight source blocks, laid out by a later success, put the reader 900 px off (the review of iOS item 6, round 1;
+ *  before it the button rode only a fallback a render made, and the residual named one block). */
 function isFormula(el: Element): boolean {
   if (el.matches(FORMULA)) return true;
-  return el.localName === "pre" && el.childElementCount === 1 && el.firstElementChild!.matches("code.md-math-src");
+  return el.localName === "pre" && !!el.querySelector(":scope > code.md-math-src");
 }
 
 /** The turn's markdown blocks in document order, formulas' own left out: the list `block` indexes. */

@@ -14683,6 +14683,11 @@ onMathSettled(() => {
       const hv = views.get(sid)!;
       for (const m of Array.from(hv.el.querySelectorAll("mark.cmt-hl"))) unwrapCommentMark(m as HTMLElement);
       applyCommentMarks(sid);
+      // A display formula a failed load showed as its source is a code block the highlighter never saw (it was a placeholder when
+      // the message rendered), so it takes the Copy button here that every other source fallback has (highlight); never through
+      // highlight() itself, which has no already-done check and would rewrite the block's lines. addCopyBtn skips a block that
+      // has one (the review of iOS item 6, round 1).
+      for (const code of Array.from(hv.el.querySelectorAll("pre > code.md-math-src"))) addCopyBtn(code.parentElement as HTMLElement, code.textContent || "");
     }
   };
 });

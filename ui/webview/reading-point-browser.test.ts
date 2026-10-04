@@ -57,6 +57,8 @@ const DONE_D = `<span class="katex-display"><span class="katex"><span class="tal
 const DONE_I = `<span class="katex">ab</span>`;
 const SRC_D = (tex: string): string => `<pre title="Not rendered"><code class="md-math-src">${tex}</code></pre>`;
 const SRC_I = (tex: string): string => `<code class="md-math-src">${tex}</code>`;
+// the same block with the Copy button the chat gives a source block (render.ts addCopyBtn: the button inside the pre, after the code)
+const SRC_D_COPY = (tex: string): string => `<pre title="Not rendered" class="has-copy"><code class="md-math-src">${tex}</code><button class="code-copy" type="button">Copy</button></pre>`;
 // A formula whose TeX is far longer than KaTeX's text for it, so an offset that counted formula text would miss by lines.
 const LONG_TEX = "\\sum_{i=1}^{n} \\frac{a_i + b_i}{c_i - d_i} + \\prod_{k=1}^{m} \\left(1 - \\frac{1}{k^2}\\right) + \\int_0^1 f(x)\\,dx";
 /** A reply in one form: steps with an inline formula and a display formula after each, then the paragraphs being read. With
@@ -144,10 +146,11 @@ test("chromium: a display formula inside the paragraph being read, above the rea
   });
 });
 
-test("chromium: a point taken over laid-out formulas, a comment mark in the reader's paragraph, lands the same line in a rebuilt turn whose formulas wait and in one whose formulas fell back to their source", { timeout: 60000 }, async (t) => {
+test("chromium: a point taken over laid-out formulas, a comment mark in the reader's paragraph, lands the same line in a rebuilt turn whose formulas wait and in one whose formulas fell back to their source, a source block's Copy button included", { timeout: 60000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openPage(browser);
-    for (const [name, rebuilt] of [["waiting", REPLY(WAIT_D, WAIT_I, false, true)], ["source fallback", REPLY(SRC_D, SRC_I, false, true)]] as const) {
+    for (const [name, rebuilt] of [["waiting", REPLY(WAIT_D, WAIT_I, false, true)], ["source fallback", REPLY(SRC_D, SRC_I, false, true)],
+      ["source fallback with the Copy button", REPLY(SRC_D_COPY, SRC_I, false, true)]] as const) {
       const r = await page.evaluate(([laid, again]: [string, string]) => {
         const w = window as any;
         w.set(laid); document.getElementById("sc")!.scrollTop = 0; w.put("MARK", -5);   // MARK's line, after the mark and the long formula, at the top
