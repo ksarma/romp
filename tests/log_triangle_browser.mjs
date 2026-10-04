@@ -25,7 +25,8 @@
 // the muted steps log, the newer and the older (mutedListed, mutedOlderListed; the list is re-rendered only while the Log is
 // open, so these are read at the open steps), and those two entries' stored seen flags (mutedSeen, mutedOlderSeen, null
 // before they are logged), and the triangle's ground: the computed background of the first box from #merr up whose background
-// is opaque (ground, groundOf), or why none could be read (groundError). Prints one `RESULT:` JSON line; exits 3
+// is opaque (ground, groundOf), or why none could be read or measured (groundError, an opacity under 1 on any box from #merr
+// up to the document's root among the reasons). Prints one `RESULT:` JSON line; exits 3
 // when the browser does not launch (the Python side turns that into a skip). Never touches a live kernel: cfg.healthz names
 // the LAB port and is asserted before any request. No sessions, no real data.
 import { createRequire } from "node:module";
@@ -120,11 +121,15 @@ const snap = async (name) => {
     // the triangle's ground: the first box from #merr up (the button itself first) whose computed background is opaque, so a
     // background set later on the button, or a translucent bar, is read and never assumed. A partly transparent background,
     // a background image, an unreadable colour or no opaque box at all is groundError, which the Python side fails on at
-    // every step where it measures the ratio
+    // every step where it measures the ratio. So is an opacity under 1 on any box from #merr up to the document's root (the
+    // round-2 review, 2026-10-04): on #merr it dims the triangle against its ground, and on the ground or any box above it,
+    // body and html among them, it dims the triangle and its ground together against what is behind them, so the two
+    // computed colours are not what the screen shows, and the ratio is never measured from them
+    const tagOf = (el) => el.id ? "#" + el.id : el.tagName.toLowerCase();
     let ground = null, groundOf = null, groundError = null;
     for (let el = m; el && !ground && !groundError; el = el.parentElement) {
       const st = getComputedStyle(el);
-      const tag = el.id ? "#" + el.id : el.tagName.toLowerCase();
+      const tag = tagOf(el);
       const bg = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)$/.exec(st.backgroundColor);
       if (st.backgroundImage && st.backgroundImage !== "none") groundError = "a background image on " + tag + ": " + st.backgroundImage.slice(0, 120);
       else if (!bg) groundError = "an unreadable background colour on " + tag + ": " + st.backgroundColor;
@@ -135,6 +140,12 @@ const snap = async (name) => {
       }
     }
     if (!ground && !groundError) groundError = "no box from #merr up has an opaque background";
+    // the dimming read: every box from #merr up to the document's root, the ground and every box above it among them, the
+    // first opacity under 1 named (an unreadable opacity fails the same way)
+    for (let el = m; el && !groundError; el = el.parentElement) {
+      const op = getComputedStyle(el).opacity;
+      if (!(parseFloat(op) >= 1)) groundError = "an opacity of " + op + " on " + tagOf(el);
+    }
     let mutedSeen = null, mutedOlderSeen = null;
     try {
       const stored = JSON.parse(localStorage.getItem("romp:notices") || "[]") || [];

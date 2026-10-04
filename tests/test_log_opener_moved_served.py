@@ -8,7 +8,10 @@ palette's log.open and the mobile bar's #merr are unchanged; the Log's own behav
 Two guards: SourcePins runs everywhere; ServedOpener boots the hermetic kernel, loads the dashboard, and drives
 the gear's button in the settings iframe, the /settings page that hosts the gear since 2026-09-10 (skips loudly
 without the extension deps or a Playwright browser). It also reads the button's unread count in both themes: the phone
-triangle's red in each (feed.css --log-unread, 2026-10-04), at 3:1 or better on the count's ground.
+triangle's red in each (feed.css --log-unread, 2026-10-04), at 3:1 or better on the count's ground. An opacity under 1 on
+any box from the count up to the settings page's root fails that read loudly, since it dims the colours the read takes
+(the round-2 review, 2026-10-04): a mutant that plants an opacity of 0.3 on the count, on its button (the count's ground),
+on body or on html turns it red through the ground error that names the box, not through the ratio.
 All fixtures synthetic.
 """
 import inspect
@@ -119,7 +122,7 @@ const btn = await feed.evaluate(() => { const b = document.getElementById("rs-lo
 await feed.click("#rsettings .rs-tab[data-tab=debug]");   // Open log lives on the Debug tab since T400 (System dissolved into it)
 await feed.waitForFunction(() => { const pn = document.querySelector("#rsettings .rs-pane[data-pane=debug]"); return !!pn && !pn.hidden; }, null, { timeout: 5000 });
 // the count's colour in each theme (2026-10-04): one entry logged through the shell's write path, so the count shows (the lab
-// may hold entries of its own, so the number is not fixed); the count read with its ground (the first box from the count up whose background is opaque, or why none could be read); then
+// may hold entries of its own, so the number is not fixed); the count read with its ground (the first box from the count up whose background is opaque, or why none could be read or measured); then
 // the light theme picked the way the gear picks it (the settings object; the settings page hears the store's event), and the
 // count read again
 const readCount = () => feed.evaluate(async () => {
@@ -131,10 +134,11 @@ const readCount = () => feed.evaluate(async () => {
   const mine = document.getAnimations().filter((a) => a.effect && a.effect.target && a.effect.target.contains && a.effect.target.contains(n));
   const settled = await Promise.race([Promise.all(mine.map((a) => a.finished.catch(() => null))).then(() => true),
                                       new Promise((r) => setTimeout(() => r(false), 3000))]);
+  const tagOf = (el) => el.id ? "#" + el.id : el.tagName.toLowerCase() + (el.className ? "." + String(el.className).split(" ")[0] : "");
   let ground = null, groundOf = null, groundError = null;
   for (let el = n; el && !ground && !groundError; el = el.parentElement) {
     const st = getComputedStyle(el);
-    const tag = el.id ? "#" + el.id : el.tagName.toLowerCase() + (el.className ? "." + String(el.className).split(" ")[0] : "");
+    const tag = tagOf(el);
     const bg = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)$/.exec(st.backgroundColor);
     if (st.backgroundImage && st.backgroundImage !== "none") groundError = "a background image on " + tag + ": " + st.backgroundImage.slice(0, 120);
     else if (!bg) groundError = "an unreadable background colour on " + tag + ": " + st.backgroundColor;
@@ -145,6 +149,15 @@ const readCount = () => feed.evaluate(async () => {
     }
   }
   if (!ground && !groundError) groundError = "no box from the count up has an opaque background";
+  // the dimming read (the round-2 review, 2026-10-04): an opacity under 1 on any box from the count up to this document's
+  // root, body and html among them, dims the count against its ground, or the count and its ground together against what
+  // is behind them, so the two computed colours are not what the screen shows; the first one is named and the ratio is
+  // never measured (an unreadable opacity fails the same way). The settings page is an iframe: the shell's boxes around
+  // it (#f-settings and up) belong to another document, and this read does not reach them
+  for (let el = n; el && !groundError; el = el.parentElement) {
+    const op = getComputedStyle(el).opacity;
+    if (!(parseFloat(op) >= 1)) groundError = "an opacity of " + op + " on " + tagOf(el);
+  }
   return { text: n.textContent, hidden: n.hidden, color: getComputedStyle(n).color, ground, groundOf, groundError,
            light: document.body.classList.contains("theme-light"), settled, animations: mine.length };
 });
