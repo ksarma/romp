@@ -7371,12 +7371,16 @@ class ServeSecurity(unittest.TestCase):
         # wait below returns at once here. A handler that acks first and reads the registry after would
         # otherwise race the restore above: when the restore won, it read the restored rows and took the
         # broad leg after all. The pass-through keeps the real local leg (no manager here, so it restarts
-        # nothing) and only marks that it was asked.
+        # nothing), records the reason of each call and marks that it was asked. The broad leg's
+        # `_fleet_restart_run` also ends with a call to `_restart_this_kernel`, under a reason of its own,
+        # so the event alone cannot tell the two legs apart; the recorded reasons can (review round 1).
         import threading
         asked = threading.Event()
+        reasons = []
         real_local = km._restart_this_kernel
 
         def _local_seen(*a, **k):
+            reasons.append(a[0] if a else k.get("reason", ""))
             try:
                 return real_local(*a, **k)
             finally:
@@ -7395,6 +7399,8 @@ class ServeSecurity(unittest.TestCase):
                 self.assertEqual(_json.loads(r.read().decode()),
                                  {"ok": True, "restarting": True, "boot": km._BOOT_ID, "fleet": True})
             self.assertTrue(asked.wait(5), "the standalone ack asked the local leg before the rows go back")
+            self.assertEqual(reasons, ["http /restart (local-only)"],
+                             "the one restart this ack started was the local-only leg, not the broad leg's last call")
         finally:
             if saved is not None:
                 os.environ["ROMP_MANAGER_PORT"] = saved
