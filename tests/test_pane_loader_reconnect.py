@@ -1147,6 +1147,24 @@ out({ atPaint, beforeFrame, afterFrame, scan: scan() });""")
         self.assertEqual(o["afterFrame"], {"place": {"top": "91px", "right": "8px", "painted": True}, "reads": o["scan"], "asks": 1},
                          "the frame places the badge once, with one scan (an element was added), below the notice (54 + 29 + 8)")
 
+    def test_a_frame_scans_when_any_request_in_it_asked_for_a_scan_whatever_the_order(self):
+        # the rehearsed check of round 2 (2026-10-04): a jump in the chat inserts the landing notice before the transcript and
+        # scrolls it in the same task, so one frame gets a request that needs a scan (the notice added) and one that needs only a
+        # re-read (the scroll), in either order. The case above ends its frame on a scan request and starts it with one, so a
+        # frame that kept only the last request's kind, or only the first's, passed it; either would re-read alone here, and the
+        # badge would stay over the only control that cancels the jump
+        for order in ("notice, then scroll", "scroll, then notice"):
+            with self.subTest(order):
+                o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T); const atPaint = at();
+const notice = add(null, [42, 54, 307, 29], { cursor: 'pointer' });
+const reads = STYLE_READS, asks = ASKS;
+if (%s) { added(notice); scroll(); } else { scroll(); added(notice); }
+frame();
+out({ atPaint, placed: { place: at(), reads: STYLE_READS - reads, asks: ASKS - asks }, scan: scan() });""" % ("true" if order.startswith("notice") else "false"))
+                self.assertEqual(o["atPaint"], {"top": "52px", "right": "8px", "painted": True})
+                self.assertEqual(o["placed"], {"place": {"top": "91px", "right": "8px", "painted": True}, "reads": o["scan"], "asks": 1},
+                                 order + " in one frame: one frame asked for, and it scans, so the badge goes below the notice (54 + 29 + 8)")
 
     def test_the_watch_observes_the_list_its_sticky_elements_and_the_page_outside_it_never_the_lists_other_content(self):
         o = self._watch_fit(r"""
