@@ -32,8 +32,8 @@ import { hideEdges } from "../test-dom-shim";
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
 function shimJs(app: string, caps = "", noStale = false, core = ""): string {
-  const def = KERNEL.indexOf("def _shim(app, v=0, caps=\"\", no_stale=False):");
-  assert.ok(def > 0, "the shim renderer exists with its caps parameter (this fork's) and its stale opt-out");
+  const def = KERNEL.indexOf("def _shim(app, v=0, caps=\"\", no_stale=False, pv=None, data=None):");
+  assert.ok(def > 0, "the shim renderer exists with its caps parameter (this fork's), its stale opt-out and the pane-set revision slots");
   const start = KERNEL.indexOf('return """', def) + 'return """'.length;
   // the tuple's first slot is the reload core (T265, its own executed test in tests/test_dashboard_auto_reload.py);
   // an empty core here leaves window.__rompReload undefined, so the shim's raise takes its fallback path; a `core` string
@@ -41,18 +41,21 @@ function shimJs(app: string, caps = "", noStale = false, core = ""): string {
   // slots that follow it: the chat pane's restart-diet read (PR 1661 round two: emitted for the chat app alone; the
   // harness's apps are not chat, so it substitutes the false the other panes carry, and the dial line compiles against
   // it), the app, the pane's label (_pane_label, T415), the version, this fork's caps slot (the page's caps: the Files pane
-  // announces readyGate alone) and the stale opt-out the Files page renders with (no_stale=True): a JS boolean literal, no
-  // longer a cap. The tuple's head is pinned; its tail may or may not carry the label slot (a copy-aside run at an older
-  // base lacks it), so the arguments follow the slots the slice actually has
-  const end = KERNEL.indexOf('""" % (_reload_core(v), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", app,', start);
+  // announces readyGate alone), the stale opt-out the Files page renders with (no_stale=True): a JS boolean literal, no
+  // longer a cap, and the pane-set revision (LOADEDPV, plans/panes-as-data.md). The tuple's head is pinned; its tail may or
+  // may not carry the label slot (a copy-aside run at an older base lacks it), so the arguments follow the slots the slice
+  // actually has
+  const end = KERNEL.indexOf('""" % (_reload_core(v, pvv), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", app,', start);
   assert.ok(end > start, "the template's format tuple is the one the test substitutes");
   const slice = KERNEL.slice(start, end);
   // the label slot: _pane_label's word for the key (kernel.py _PANE_ORDER), the capitalised key outside that list
   const LABELS: Record<string, string> = { chat: "Chat", timeline: "Sessions", fleet: "Outline", feed: "Feed", files: "Files" };
   const label = LABELS[app] || app.charAt(0).toUpperCase() + app.slice(1);
+  // the pane-set revision slot (plans/panes-as-data.md): a JSON string the shim compares against the keepalive's pv
+  const pv = slice.includes("var LOADEDPV=%s;") ? ['"0"'] : [];
   const args = slice.includes('var LABEL="%s"')
-    ? [core, "var RESTART_DIET=false;", app, label, "5", caps, noStale ? "true" : "false", app, app]
-    : [core, "var RESTART_DIET=false;", app, "5", caps, noStale ? "true" : "false", app, app];
+    ? [core, "var RESTART_DIET=false;", app, label, "5", caps, noStale ? "true" : "false", ...pv, app, app]
+    : [core, "var RESTART_DIET=false;", app, "5", caps, noStale ? "true" : "false", ...pv, app, app];
   let i = 0;
   return slice.replace(/%[sd]/g, () => args[i++]).replace(/%%/g, "%");
 }
@@ -607,7 +610,9 @@ test("queued breadcrumbs are capped while the socket is down; other queued messa
 test("a page served with the stale opt-out never arms the prompt after a reconnect, and never retires one", () => {
   assert.match(KERNEL, /_shim\("files", v, caps=READY_GATE_CAP, no_stale=True\)/, "the Files page is the one served with the opt-out, beside its ready-hold cap (this fork's caps slot; upstream's page passes no caps)");
   assert.match(KERNEL, /_shim\("settings", v, no_stale=True\)/, "upstream's settings page (T400, a pane of the shell whose bundle posts no ready and takes no pushed view) opts out too, with no caps");
-  assert.equal(KERNEL.match(/no_stale=True/g)!.length, 2, "no other page opts out");
+  assert.match(KERNEL, /_shim\("artifacts", v, no_stale=True\)/, "upstream's Artifacts page (PR 1911, request/response like the Files viewer) opts out too, with no caps");
+  assert.match(KERNEL, /_shim\(pid, _dist_ver\(\), no_stale=True, pv=snap\["rev"\], data=snap\["data"\]\)/, "and upstream's state-root data pane's shim (PR 1952, GET /pane/<id>/shim.js: no pushed view reaches such a page)");
+  assert.equal(KERNEL.match(/no_stale=True/g)!.length, 4, "no other page opts out");
   const h = new Harness(shimJs("files", "readyGate", true));
   assert.match(h.ws.url, /^ws:\/\/TESTHOST:29855\/ws\?app=files&delta=1&iid=/, "the same dial as every pane");
   assert.match(h.ws.url, /&caps=readyGate(&|$)/, "the ready-hold cap rides the URL as on every pane (this fork's); the opt-out does not: it is the kernel's keyword, baked into the shim");

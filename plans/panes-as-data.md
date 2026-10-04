@@ -36,7 +36,7 @@ shell repeats the five keys by hand:
 - the routes (`/feed`, `/fleet`, `/files`, `/timeline`, each its own page builder around `_shim(app)`),
   the pusher's view audiences (a pane app named in code gets pushed views; any other app on the socket gets
   keepalives and its own ops' replies, as the Files pane and the gear do), the conserve-memory viewer set;
-- the docking kit's lists: `ROW_ORDER`, `growKey`, `defaultDock` (`pane-dock.ts`), `paneTitle`
+- the docking kit's lists: `growKey`, `defaultDock` (`pane-dock.ts`; the row order is read off the DOM, the fixed `ROW_ORDER` list retired 2026-09-21), `paneTitle`
   (`panedock-main.ts`), and the grab detector's per-app empty backgrounds (`pane-grab.ts` `EMPTY_BY_APP`).
 
 What the user can do with this: show or hide a pane (the rail, `romp-panes`), decide a pane's membership in
@@ -53,7 +53,11 @@ reader on the directory's stat (`_boards()`), and code winning an id collision t
 
 ## 1. The model: a pane is a record
 
-**Decision: a pane is a definition in ONE schema; the five shipped panes are code constants in that schema
+**Decision: a pane is a definition in ONE schema; the shipped panes (six since the Artifacts pane, 2026-09-19) are code constants in that schema
+(an id the shell's derived element names already take, `tl`, `a` to `d`, `ghost`, `col`, or one beginning `chat-`, is refused at
+the door since 2026-09-21; a pane file already written under such an id is skipped at the next listing with one stderr line
+naming the file and the rule, the fail-loud convention, and its page is gone from the dashboards until it is re-defined under
+another id)
 and every other pane is a JSON document in the same schema under the state root.** The renderer of the
 shell (the rail, the tabs, the markup, the CSS, the broadcast, the gear) is a function of the list.
 
@@ -122,8 +126,10 @@ reload core OFFERS a reload through the shell's banner ("the pane set changed"),
 
 ## 3. The shell reads the list (the OFF path, today's flex row)
 
-Every reader of the five keys becomes a reader of `_pane_order()`; with no data pane defined the output is
-byte-identical to today's, which the source pins require (the inline `<script>` count of 21 in
+Every reader of the five keys becomes a reader of `_pane_order()`; with no data pane defined the code panes'
+RENDERING is unchanged (the rail, the phone tabs, the pane row, the column and gutter rules, the gutter calls and
+the body class, slice for slice against a stored rendering of the base; the page as a whole gains the guards and
+the attribute reads, deliberately), which the source pins require (the inline `<script>` count of 21 in
 `tests/test_kernel_mobile.py`, the exact substrings in `tests/test_kernel_pane_rail.py` and the split pins
 in `ui/webview/chat-split.test.ts`) and a pin in this design's tests asserts outright.
 
@@ -132,12 +138,14 @@ in `ui/webview/chat-split.test.ts`) and a pin in this design's tests asserts out
   rail button and tab appear after Files; an experimental pane gets no phone tab (section 1).
 - **The baked constants leave import time.** `PN` (the bell's label map), `KEYS` (the broadcast keys),
   `PANE` and `COLS` (the focus map) are built into module-level strings at import from `_PANE_ORDER`. They
-  read one JSON the landing emits ONCE per request as an attribute, `<body data-panes='[...]'>` (the list
-  of `{id, title, protocol, experimental}`), and the inline scripts parse it (`JSON.parse(document.body.
-  dataset.panes)`). An attribute, not a script: the inline count pin stays at 21 and no inline JS is added
-  (the docking plan's section 10 rule). The three module-level strings become per-request builders (a
-  function returning the string), or keep their shape and read the attribute; either way their pinned
-  substrings stay literal.
+  read one JSON the landing emits as an attribute, `<body data-panes='[...]'>` (the list of `{id, title,
+  protocol, experimental, on}` for the DATA panes), and the inline scripts parse it (`JSON.parse(document.
+  body.dataset.panes)`) and EXTEND their baked five with it. The attribute carries every pane after the hand-written
+  five (since phase three the Artifacts record rides it too, marked `builtin`), so with no data pane the hand-written
+  panes' rendering is unchanged (phase one's first pin, re-cut deliberately at phase three);
+  an attribute, not a script, so the inline count pin stays at 21 and no inline JS is added (the docking
+  plan's section 10 rule). The three module-level strings keep their shape and their pinned substrings
+  literal (the executed harnesses read them as constants); each gains a line that reads the attribute.
 - **The markup and the CSS are generated from the list.** For each pane not among the code five, `_landing`
   emits `<div class=pane id=<id>-pane><iframe id=f-<id> data-src=<served source>></iframe></div>` after
   the Files pane (always `data-src`: a data pane loads when shown, the optional panes' rule; a URL source's
@@ -179,8 +187,9 @@ in `ui/webview/chat-split.test.ts`) and a pin in this design's tests asserts out
 
 ## 4. The docking kit reads the list
 
-The kit's own fixed lists become functions of the same attribute. `pane-dock.ts`: `ROW_ORDER` is the
-column panes of the list in rail order; `growKey(id)` is the pane's id for a data pane (the code five keep
+The kit's own fixed lists become functions of the same attribute. `pane-dock.ts`: the row is read off the DOM
+in document order (`reconcileShown` opens new panes in that order; the fixed `ROW_ORDER` list is gone since the
+registry fix PR, 2026-09-21); `growKey(id)` is the pane's id for a data pane (the code five keep
 their store keys); `defaultDock` docks a data pane at the right end; `reconcileShown`'s shown set is read
 from the list's element ids. `panedock-main.ts`: `paneTitle` is the record's title; the frames it wires and
 marks are every `.pane` in `.col`, already generic. The grab detector (`pane-grab.ts`): a protocol pane
@@ -197,9 +206,12 @@ What a protocol pane page may rely on, and nothing else (a specific pane's other
   on its socket), every non-keepalive frame handed to the window as a message, the build-drift and
   pane-set reload offer, the `?v=` build token.
 - **Inbound from the shell** (`window` messages): `{romp:"panes", on, avail}` (which panes are on screen
-  and which exist), `{romp:"paneFocus", dir, from}` (a focus arrived by the shell's Alt+Arrow), and, with
-  the docking kit on, the body class `pane-docking` and the injected grab detector (the docking plan,
-  section 3).
+  and which exist), `{romp:"paneFocus", dir, from}` (a focus arrived by the shell's Alt+Arrow),
+  `{romp:"chatTabs", tabs}` (the open tabs of the chat panes, the union of every chat column's strip in
+  column order, `{id, name, color}` each, on every change and on the pane's load) and `{romp:"activeChat",
+  id, nonce, gesture}` (the chat's most recently selected tab, relayed on every switch), both since the
+  Artifacts pane's second pass (`plans/artifacts-pane.md` sections 9.2 and 9.5), and, with the docking kit
+  on, the body class `pane-docking` and the injected grab detector (the docking plan, section 3).
 - **Outbound to the shell** (`window.parent.postMessage`): `{romp:"notify", kind, text}` (a line in the
   shell's bell), `{romp:"viewFile", ...}` (the file relay to the Files pane, as the artifacts pane uses),
   `{romp:"ready"}`, `{romp:"paneGrab"}` and `{romp:"paneGrabEnd"}` (the detector's, section 4).
@@ -230,7 +242,11 @@ The pin: `tests/test_pane_registry_served.py`'s URL-pane leg loads a URL-source 
 origin): the Files pane opens nothing, the kit arms no press, the shell's bell shows no line, and the frame
 carries the sandbox attribute and a `src` without `?v=`; `tests/test_pane_registry.py` pins `_paneSourceOk`'s
 table (a protocol frame's window on our origin passes; a none frame's window, a foreign origin, the shell's
-own window and a nested frame all fail).
+own window and a nested frame all fail: the check rules on the message's IMMEDIATE source, an iframe of the
+shell document, so a frame nested inside a pane is not a pane and its page relays what it means to say). Every
+shell listener, inline and bundled (the palette's `openKeys` and `hotkeyConfigure`, the docking kit's grab and
+tab-drag messages), reads the one check FAIL-CLOSED: a page without the check acts on nothing; the same test
+takes the census over the built landing, the bundles' sources and the built bundles.
 
 ## 6. Roads not taken
 
@@ -260,17 +276,26 @@ own window and a nested frame all fail).
    the `data-panes` attribute and the three baked constants reading it, the generated markup and CSS for a
    data pane, the one gutter rule, the gear's rows, the widened `PaneSet`, the palette, the `/pane/<id>/`
    static root with `shim.js` and `theme.css`, the pane-set revision and the reload offer. Tier: `feature`
-   (additive: the code panes' output byte-identical with an empty registry, pinned; the old stores untouched).
+   (additive: the code panes' rendering unchanged with an empty registry, pinned slice by slice; the old stores untouched).
 2. **The docking kit reads the list** (section 4) and the grab detector's `data-pane-empty`. Tier: `feature`.
-3. **The artifacts pane folds in**: the feed owner's `artifacts` becomes a `_CODE_PANES` record (`{id:
-   "artifacts", title: "Artifacts", source: "/artifacts", on: false, experimental: true}`), its hand-written
-   hooks (the `_PANE_ORDER` entry, the label word, the `po-artifacts` class line, the column CSS, the
-   `f-artifacts` iframe) deleted for what the generic build emits, its page and its `showArtifactsControl`
-   kept (or mapped onto `experimental`, its call). Tier: `feature`, theirs or a joint one.
+3. **The artifacts pane folds in** (DONE, joint with the feed owner): the feed owner's `artifacts` is a `_CODE_PANES`
+   record (`{id: "artifacts", title: "Artifacts", source: "/artifacts", on: false, experimental: true}`), its
+   hand-written hooks (the `_PANE_ORDER` entry, the label word, the `po-artifacts` class line, the column CSS, the
+   `f-artifacts` iframe, every hand list) deleted for what the generic build emits (the generic build renders
+   every pane after the hand-written five, `_HAND_PANES`), its `showArtifactsControl` mapped onto `experimental`
+   (the gear's generic Panes row is the control; the bespoke key deleted, no migration), and a generic pane's iframe
+   takes its `src` only when the pane comes ON SCREEN, never when merely enabled (the Artifacts page's first load
+   walks the remembered session). Its page, its listing op and its bundle are untouched. Tier: `feature`, joint.
 4. **Bands and the phone**: a `band` member (a second fixed-px kid; the flex `.col`'s bottom slot
    generalised) and experimental panes on the phone. Tier: `feature`; if the `romp-panes` store's SHAPE ever
    changed for this (today a flat `{key: bool}`), that is a persisted-contract change and a `major-feature`
-   discussion; the plan avoids it by keeping keys flat.
+   discussion; the plan avoids it by keeping keys flat. Recorded for it (the 1922 read, 2026-09-21): with the
+   Files control on, the phone's tab bar is 403 px wide at a 390 px viewport, clipping the settings action,
+   unreachable at 375 px or with a data pane's tab beside it; the options are a scrolling tab strip beside a
+   fixed action cluster, or a content budget for the bar (shrink-with-ellipsis mangles the labels). Until then,
+   on a phone a generic pane loads by its TAB alone (the registry fix PR, 2026-09-21): the tab bar's tap, or the
+   pane controller's apply for the current tab; never by the desktop flag, and a pane with no tab (an
+   experimental record) falls to the chat.
 
 ## 8. Tests named
 
@@ -278,7 +303,7 @@ own window and a nested frame all fail).
   naming the member; `_CODE_PANES` pass the check at import; `define_pane` writes `STATE/panes/<id>.json`
   atomically and replaces; `_panes()` re-reads on the directory's stat and not otherwise; `_pane_order()`
   is the code five then the data panes by id; `GET /panes` marks the five builtin; `POST /pane` behind
-  `_authorize` and the remove; `_landing()` with an empty registry byte-identical to today's (the pin that
+  `_authorize` and the remove; `_landing()` with an empty registry rendering the code panes unchanged (the pin that
   keeps every existing landing pin honest), and with one data pane: the rail button after Files, the phone
   tab, the `data-src` iframe, the two CSS rules, the `data-panes` attribute, the inline `<script>` count still
   21; the pane-set revision bumps on define and remove and rides the keepalive.

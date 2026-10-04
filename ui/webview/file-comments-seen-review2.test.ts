@@ -2,7 +2,7 @@
 // Slice 2; the review of 2026-09-09, round 2), driven over the stand-in file-comments-seen-fixes.test.ts drives (copied here,
 // as the sibling modules copy it). What the round pins, behaviorally where the first round left source pins alone: Enter or
 // Space on the confirm's Send is the send's own press, and the send accepts nothing the box did not say (before: held by a
-// source pin alone); a key or a touch move after the landing ends the saved line, as the guide's sentence says; a Tab or a
+// source pin alone); a key or a touch move after the landing ends the saved line, as the reference's sentence says; a Tab or a
 // modifier pressed alone is no gesture, so the keyboard can reach the line, and the line's activation leaves the keyboard on
 // the card it showed, not on the body; the margin layout's line sticks to the Send section's bottom edge, so it is on screen
 // with the confirm up; the list layout's save leaves the send acknowledgment in place (the line stands under the header

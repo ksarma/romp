@@ -1,21 +1,21 @@
-// The guide's account of where the literal-tag rule stops, held to the viewer's own lexer (docs/guide.md, the paragraph on a
-// file's own HTML; plans/file-review.md, decision 52). The rule (md-literal-tags.ts literalizeUnclosedTags) converts an inline
-// start tag with no end tag in its block to its own characters, and the guide says where that ends: a tag first on its line, a
+// The reference's account of where the literal-tag rule stops, held to the viewer's own lexer (docs/reference.md, the paragraph on
+// a file's own HTML; plans/file-review.md, decision 52). The rule (md-literal-tags.ts literalizeUnclosedTags) converts an inline
+// start tag with no end tag in its block to its own characters, and the reference says where that ends: a tag first on its line, a
 // list marker or a `>` before it allowed, whose name is on CommonMark's HTML-block list, or any tag alone on a line where a
 // paragraph would begin, is a block `html` token, which owns no inline run, so the rule leaves it as lexed and the raw tag reaches
-// the browser; a tag that opens a heading or a table cell is not first on its line and stays the rule's input. The guide also
+// the browser; a tag that opens a heading or a table cell is not first on its line and stays the rule's input. The reference also
 // names the tags that take the rest of the file with them when they stay HTML (`<title>`, `<script>`, `<style>`, `<iframe>`;
 // `<textarea>` shows it as characters, the file's text first on its line, the viewer's HTML mid-sentence): first on its line each
 // is a block html token, and written with the slash mid-sentence each
 // is an inline html token the rule leaves html (isSelfClosingTag). The lexer legs here hold those clauses through the viewer's own
 // configuration (md-config.ts applyMdConfig, then mdBlock's lex and placeTokens' lex as file-review-plan-inlinetag-rawblock.test.ts
 // runs them), each placement lexed both ways and the rule run over the tokens after.
-// Why this module beside tools/guide-own-html-block-tag.test.mjs, which holds the same clauses to the guide's text and to marked's
+// Why this module beside tools/guide-own-html-block-tag.test.mjs, which holds the same clauses to the reference's text and to marked's
 // bare Lexer under vscode-extension/node_modules: that module skips its lexer legs when marked is not installed there, and CI's
 // shell job, the one runner of tools/*.test.mjs, runs no npm ci, so those legs skipped in every CI run (the whole review's first
 // round found it, 2026-09-19). This file is built and run by the extension job's `npm test` (esbuild.js's test build takes every
 // .test.ts under ui/webview), so a marked release, or an extension of the viewer's own configuration, that moves a placement
-// between block and prose goes red in CI here. The guide's sentences themselves are pinned in CI twice already (the tools
+// between block and prose goes red in CI here. The reference's sentences themselves are pinned in CI twice already (the tools
 // module's first leg, which needs no marked, and tests/test_guide_files_own_html_foreign_tag.py) and not a third time here.
 // Synthetic text only.
 import { test } from "node:test";

@@ -178,8 +178,8 @@ CENSUS = {
         "n": (NONE, _INT),
         "active": (PREFIXED, "skeleton: the active tab's id, prefixed for a remote session"),
         "ts": (NONE, _INT), "len": (NONE, _INT), "route": (NONE, "plain, quote or followup"),
-        "id": (PREFIXED, "empty-session-frame, and the project's dropped-history rows (PRs 1860 and 1877): full-frame-desync, both full-frame-desync-loop rows, "
-                         "frame-behind and the three regions-dropped rows: the frame's session id (msg.id; on the cleared loop row clearRefusedLatch's id, the session of "
+        "id": (PREFIXED, "empty-session-frame, and the project's dropped-history rows (PRs 1860, 1877 and 1912): full-frame-desync, both full-frame-desync-loop rows, "
+                         "frame-behind and the four regions-dropped rows: the frame's session id (msg.id; on the cleared loop row clearRefusedLatch's id, the session of "
                          "the frame or the delta that applied), prefixed by prefixInbound for a remote session"),
         "load": (NONE, "federation-missing: federationLoadEntry's four rounded numbers (frame-listener.ts) or null"),
         "first": (NONE, "federation-missing: the earlier pass's load figures, federationLoadEntry's four numbers read back from the sessionStorage retry marker ({load: entry}, its "
@@ -215,7 +215,7 @@ CENSUS = {
         "why": (NONE, "regionask: gap-scroll (requestTurns, a gap fill's region ask) or landing (the window ask at landing), the two writers' literals; spacer-dropped: "
                       "hidden or shown, the visibility edge its one writer names (render.ts dropSpacerRowsOnVisibility); full-frame-desync and the first "
                       "full-frame-desync-loop row: would-drop-held, upsert's desyncWhy, its one value (the project's PR 1860); regions-dropped: regions-less, "
-                      "no-tail-lo or not-proto2, its three call sites' literals (the project's PR 1877); delta-refused: gap, nobase or skeleton-delta, "
+                      "no-tail-lo or not-proto2 (the project's PR 1877) or rebased (the project's PR 1912), its four call sites' literals; delta-refused: gap, nobase or skeleton-delta, "
                       "requestFullSession's NeedFullWhy word filtered to the three delta words (the project's PR 1874)"),
         "notice": (NONE, _BOOL),
         "nav": (NONE, "regionask: whether the window ask is a fresh landing rather than keepPlaceAcrossWindow's re-land, nav = !relandAsk, a boolean"),
@@ -227,8 +227,9 @@ CENSUS = {
         # scroller did not measure in its frame; CLIENT_DIAG_VALUES bounds the key to that word and the kernel refuses any other value; no host
         "view": (NONE, _ENUM),
         # render.ts's dropped-history rows (the project's PRs 1860 and 1877; the twelve keys admitted on the owner's approval of 2026-10-02, as the
-        # project shipped them): full-frame-desync and the first full-frame-desync-loop row (upsert), the cleared loop row (clearRefusedLatch),
-        # frame-behind and the three regions-dropped rows (upsert, through chatDiagRow). Each value is classified from its writer.
+        # project shipped them; and the project's PR 1912, whose rebased regions-dropped row adds setAside, admitted on the owner's approval of
+        # 2026-10-03, as the project shipped it): full-frame-desync and the first full-frame-desync-loop row (upsert), the cleared loop row
+        # (clearRefusedLatch), frame-behind and the four regions-dropped rows (upsert, through chatDiagRow). Each value is classified from its writer.
         # tailLo: the frame's tail start, the kernel's turn index (m_send["tailLo"]). The two desync rows post msg.tailLo when it is a number and
         # null otherwise (the writer's ternary; desyncWhy is set only on a numeric tailLo, so today that arm is not reached, and the class keeps
         # the writer's spelling); frame-behind posts the merge's tailLo, msg.tailLo or 0 on a headKnown frame, inside the branch that requires it.
@@ -239,9 +240,12 @@ CENSUS = {
         "dropped": (NONE, _INT),          # frame-behind: split.dropped.length (splitHeldAgainstFrame)
         "afterLast": (NONE, _INT),        # frame-behind: split.afterLast, a count of held transcript rows after the frame's last key
         "rewindPending": (NONE, _BOOL),   # frame-behind: pendingRewind.has(msg.id)
-        "heldRuns": (NONE, _INT),         # regions-dropped: runsOf(prev.regions).length, or the literal 0 on the regions-less row
+        "heldRuns": (NONE, _INT),         # regions-dropped: runsOf(prev.regions).length (runsOf(prev.regions || []).length on the rebased row), or the literal 0 on the regions-less row
         "heldEvents": (NONE, _INT),       # regions-dropped (regions-less): prev.events.length
         "frameEvents": (NONE, _INT),      # regions-dropped: events.length, or (msg.events || []).length on the not-proto2 row
+        # setAside: regions-dropped (rebased, the project's PR 1912), a counter, `let setAside = 0` raised only by `setAside++` over prev.events (a
+        # held transcript row whose key the merged list lacks), posted only when non-zero, so a positive integer; a count, no host
+        "setAside": (NONE, _INT),
         "heldLast": (NONE, "frame-behind: (keyOf(e) ?? \"\").slice(-12) over the held run's last transcript row (not optimistic, not a held group, not an overlay "
                            "kind): the last 12 characters of an event KEY (key, else uuid; chat-window.ts keyOf), or empty. The keys are the kernel's, set by "
                            "_uniq_event_uuids over the built list (federation.ts prefixes session ids, never an event's key), and their range is a transcript "
@@ -308,24 +312,27 @@ MARKERS = {
                   "row's key order: positions of keys in the row, taken from the surface's own table, no host"),
 }
 
-# Keys the project's code posts that this fork's allowlist admits on the owner's word (fold 4, slice 1): a field a page posts to
-# client-diag.jsonl is admitted field by field, and the owner approved admitting these as the project shipped them (2026-10-02). Each set is
-# pinned PRESENT by the cell named beside it, which posts the writers' rows and asserts them stored whole with nothing said; drop any one key
-# from CLIENT_DIAG_KEYS and that cell reds (the kernel drops the key and says so), with the census and the posters cells.
+# Keys the project's code posts that this fork's allowlist admits on the owner's word (fold 4, slices 1 and 2): a field a page posts to
+# client-diag.jsonl is admitted field by field, and the owner approved admitting these as the project shipped them (2026-10-02, and setAside
+# on 2026-10-03). Each set is pinned PRESENT by the cell named beside it, which posts the writers' rows and asserts them stored whole with
+# nothing said; drop any one key from CLIENT_DIAG_KEYS and that cell reds (the kernel drops the key and says so), with the census and the
+# posters cells.
 # - The shim's wsclose row's readyAcked and readyQueued (the project's PR 1862, the fork's own offer; booleans):
 #   test_the_shims_wsclose_ready_keys_pass_whole_on_the_owners_approval.
 # - render.ts's dropped-history rows (the project's PRs 1860 and 1877: full-frame-desync, full-frame-desync-loop, frame-behind and
-#   regions-dropped): test_the_dropped_history_rows_pass_whole_on_the_owners_approval.
+#   regions-dropped; and the project's PR 1912's setAside on the regions-dropped row of why "rebased", a count of the held transcript rows
+#   the rebased frame set aside, approved 2026-10-03): test_the_dropped_history_rows_pass_whole_on_the_owners_approval.
 APPROVED_PANE_SHIM_KEYS = ("readyAcked", "readyQueued")
 APPROVED_CHAT_KEYS = ("tailLo", "count", "cleared", "heldLo", "heldLast", "dropped", "afterLast", "frameLast", "rewindPending",
-                      "heldRuns", "heldEvents", "frameEvents")
+                      "heldRuns", "heldEvents", "frameEvents", "setAside")
 
 
 def dropped_history_fixture_rows(sid):
-    """render.ts's dropped-history rows, one per call site in its writer's shape (the project's PRs 1860 and 1877): full-frame-desync and the
-    first full-frame-desync-loop row (upsert's guard 3), the cleared loop row (clearRefusedLatch), frame-behind (upsert's merge) and the three
-    regions-dropped rows (regions-less, no-tail-lo, not-proto2). heldLast and frameLast are (keyOf(e) ?? "").slice(-12) over a transcript row:
-    here the last 12 characters of a placeholder record uuid, the form a Claude CLI record's key takes (the census, chat.heldLast)."""
+    """render.ts's dropped-history rows, one per call site in its writer's shape (the project's PRs 1860, 1877 and 1912): full-frame-desync and
+    the first full-frame-desync-loop row (upsert's guard 3), the cleared loop row (clearRefusedLatch), frame-behind (upsert's merge) and the four
+    regions-dropped rows (regions-less, no-tail-lo, not-proto2, rebased). heldLast and frameLast are (keyOf(e) ?? "").slice(-12) over a
+    transcript row: here the last 12 characters of a placeholder record uuid, the form a Claude CLI record's key takes (the census,
+    chat.heldLast)."""
     tail = "555555555555"
     return [
         ("full-frame-desync", {"id": sid, "why": "would-drop-held", "proto": 2, "tailLo": 40}),   # desyncWhy needs msg.proto === 2 and a numeric tailLo, so the writer's null arms are not reached (the census, chat.tailLo)
@@ -336,6 +343,7 @@ def dropped_history_fixture_rows(sid):
         ("regions-dropped", {"id": sid, "why": "regions-less", "heldRuns": 0, "heldEvents": 12, "frameEvents": 30}),
         ("regions-dropped", {"id": sid, "why": "no-tail-lo", "heldRuns": 2, "frameEvents": 30}),
         ("regions-dropped", {"id": sid, "why": "not-proto2", "heldRuns": 2, "frameEvents": 30}),
+        ("regions-dropped", {"id": sid, "why": "rebased", "heldRuns": 2, "setAside": 3}),   # posted only when setAside is non-zero (the census, chat.setAside)
     ]
 
 
@@ -1024,13 +1032,14 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assert_shorthand_shapes("pane-shim", "wsclose", row)
 
     def test_the_dropped_history_rows_pass_whole_on_the_owners_approval(self):
-        # render.ts's dropped-history rows (the project's PRs 1860 and 1877) post twelve keys the owner approved admitting to this fork's
-        # allowlist as the project shipped them (2026-10-02; APPROVED_CHAT_KEYS). One row per call site in its writer's shape
-        # (dropped_history_fixture_rows), each stored whole with nothing said, every value of the shape its census row states. The fixture's
-        # key sets are read against the writers' own literals in render.ts, call site by call site (frame-behind's spread of `behind` read
-        # from that object's one literal), so a writer that grows a key reds here before its rows lose it. Red under the reverse plant: any
-        # one key out of CLIENT_DIAG_KEYS["chat"] and the kernel drops it with a stderr line, so a stored row is not the posted one (the census
-        # and the posters cells red with it).
+        # render.ts's dropped-history rows post thirteen keys the owner approved admitting to this fork's allowlist as the project shipped
+        # them (APPROVED_CHAT_KEYS): the twelve of the project's PRs 1860 and 1877 (2026-10-02) and setAside, which the project's PR 1912 added
+        # to the regions-dropped row of why "rebased" (2026-10-03). One row per call site in its writer's shape (dropped_history_fixture_rows),
+        # each stored whole with nothing said, every value of the shape its census row states. The fixture's key sets are read against the
+        # writers' own literals in render.ts, call site by call site (frame-behind's spread of `behind` read from that object's one literal),
+        # so a writer that grows a key reds here before its rows lose it. Red under the reverse plant: any one key out of
+        # CLIENT_DIAG_KEYS["chat"] (setAside included: the rebased row is then stored without it and the kernel names it on stderr) and a
+        # stored row is not the posted one (the census and the posters cells red with it).
         sid = "TESTHOST:11111111-2222-3333-4444-555555555555"
         rows = dropped_history_fixture_rows(sid)
         src = open(os.path.join(UI, "render.ts"), encoding="utf-8").read()
@@ -1061,7 +1070,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
 
         self.assertEqual(sorted((w, tuple(sorted(keys(b)))) for w, b in sites), sorted((w, tuple(sorted(d))) for w, d in rows),
                          "each fixture row carries exactly the keys its render.ts writer posts")
-        approved = "admitted on the owner's approval of 2026-10-02, as the project shipped it (APPROVED_CHAT_KEYS)"
+        approved = "admitted on the owner's approval, as the project shipped it (APPROVED_CHAT_KEYS: setAside on 2026-10-03, the rest on 2026-10-02)"
         posted, err = set(), ""
         for what, data in rows:
             said = self.post("chat", what, data)
@@ -1879,7 +1888,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("regionask", {"sid": sid, "why": "landing", "nav": True, "kind": "user", "keep": True, "reland": False, "trail": ["pre-jump"], "notice": True, "atBottom": False}),
                 ("scrollwrite-capped", {"sid": sid, "perMinute": 200}),
                 ("delta-refused", {"sid": sid, "why": "gap"}),   # render.ts requestFullSession: a refused needFull for a delta (the project's PR 1874); the admitted keys alone
-            ] + dropped_history_fixture_rows(sid),   # render.ts's dropped-history rows (the project's PRs 1860 and 1877; their keys admitted on the owner's approval of 2026-10-02)
+            ] + dropped_history_fixture_rows(sid),   # render.ts's dropped-history rows (the project's PRs 1860, 1877 and 1912; their keys admitted on the owner's approval of 2026-10-02, setAside's of 2026-10-03)
             "federation": federation_fixture_rows(host),
             "feed": [
                 ("colflip", {"id": parked, "from": "working", "to": "blocked", "ev": "feedDelta", "buildId": 7, "predicted": True}),
