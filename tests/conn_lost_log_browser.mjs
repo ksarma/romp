@@ -22,8 +22,9 @@
 //     cut it first (the page's own 15 s connect cut, a timer); a dial the page cuts gives up its place at once. Every
 //     handshake succeeds: a slow network, not an outage. cfg.fin "return-panes-first" closes the pane sockets before the
 //     shell's, so the panes redial while the shell's link still stands and the shell's own redial waits behind theirs.
-// Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip). Never
-// touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. Synthetic sessions only.
+// Writes its result to cfg.resultPath and prints one short `RESULT:` line naming it; exits 3 when the browser does not
+// launch (the Python side turns that into a skip). Never touches a live kernel: cfg.healthz names the LAB port and is
+// asserted before any request. Synthetic sessions only.
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import http from "node:http";
@@ -48,9 +49,17 @@ if (healthz.status !== 200) { console.error("lab kernel not healthy: " + JSON.st
 let browser;
 try { browser = await playwright[engine].launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+// The full result goes to cfg.resultPath and the RESULT: line names it (review round 1 of item 4b, 2026-10-04; the pattern of
+// tests/return_from_background_browser.mjs). Loading playwright leaves stdout non-blocking, so one writeSync to a pipe writes
+// what the pipe has room for and the rest is lost: up to 64 KiB, and 8 KiB on a loaded machine (a user past
+// fs.pipe-user-pages-soft gets minimum-size pipes, pipe(7)), where a 24 KB record was cut at 8 KiB and the Python side read
+// half a line. The line carries the died reason too.
 const result = async (extra) => {
   Object.assign(out, extra || {});
-  fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+  const line = { resultPath: cfg.resultPath || null };
+  if (out.died) line.died = String(out.died).slice(0, 600);
+  try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { line.resultWriteError = String(e).slice(0, 200); }
+  fs.writeSync(1, "RESULT:" + JSON.stringify(line) + "\n");
   try { await browser.close(); } catch (e) { /* closing */ }
   process.exit(0);
 };

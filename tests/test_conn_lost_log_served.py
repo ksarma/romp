@@ -187,6 +187,7 @@ class ConnLostLog(unittest.TestCase):
             cfg["handshakeMs"] = handshake_ms
         if up_ms:
             cfg["upTimeoutMs"] = up_ms
+        cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the driver's full record; its RESULT: line names it
         path = os.path.join(self.lab, "cfg-%s.json" % name)
         Path(path).write_text(json.dumps(cfg))
         try:
@@ -202,7 +203,7 @@ class ConnLostLog(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = self._full_result(line, cfg["resultPath"], p)
         type(self).legs[name] = r
         self.assertNotIn("died", r, "driver aborted: %r (kernel log tail: %s)" % (r.get("died"), Path(self.klog).read_text()[-800:]))
         self.assertEqual([x for x in r["installed"] if x.endswith(":MISSING")], [], name + ": every document reads the emulated visibility")
@@ -213,6 +214,16 @@ class ConnLostLog(unittest.TestCase):
         downs = [w for w in r["ws"] if w["romp"] == "wsState" and w["state"] == "down" and w["t"] >= r["t"]["suspend"]]
         self.assertTrue(downs, name + ": the return put a pane socket down, the event the old rule wrote its entry on: %r" % r["ws"])
         return name, r
+
+    def _full_result(self, line, result_path, p):
+        """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is
+        non-blocking, so one write to a pipe delivers what the pipe has room for, which was 8 KiB on a loaded machine, and a
+        24 KB record printed whole was cut there."""
+        head = json.loads(line[len("RESULT:"):])
+        self.assertEqual(head.get("resultPath"), result_path, "the driver named its result file: %r" % head)
+        self.assertTrue(os.path.exists(result_path), "the driver wrote its result (%r; died: %r):\n%s" % (
+            head.get("resultWriteError"), head.get("died"), (p.stdout[-1500:] + p.stderr[-1500:])))
+        return json.loads(Path(result_path).read_text(encoding="utf-8"))
 
     def _expected(self, r, shell):
         """The entries an outage owes: one per eager pane the shell shows (its po-<key> class), by the pane's label."""
@@ -362,6 +373,7 @@ class ConnLostLog(unittest.TestCase):
                "proxyPort": self.pport, "healthz": "http://127.0.0.1:%d/healthz" % self.port, "eagerApps": list(eager("desktop")),
                "hiddenDwellMs": 400, "settleMs": 1500, "afterMs": 2000}
         cfg.update(extra)
+        cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the driver's full record; its RESULT: line names it
         path = os.path.join(self.lab, "cfg-%s.json" % name)
         Path(path).write_text(json.dumps(cfg))
         try:
@@ -377,7 +389,7 @@ class ConnLostLog(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = self._full_result(line, cfg["resultPath"], p)
         type(self).legs[name] = r
         self.assertNotIn("died", r, "driver aborted: %r (kernel log tail: %s)" % (r.get("died"), Path(self.klog).read_text()[-800:]))
         self.assertTrue(r["upAfter"], name + ": every eager pane and the shell's link said up at the end (kernel log tail: %s)"
