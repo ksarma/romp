@@ -12,23 +12,24 @@ fails nothing (review round 1, 2026-10-04: Firefox delivers those closes to the 
 here under node against the code as served:
 
   ShimFailureWord        kernel/kernel.py _shim: a dial that never opened posts {romp:'wsFail',app,cut} to the shell after
-                         its down word, cut true when the watchdog's CONNECTING arm closed it and false for a refusal; an
-                         opened socket's close, the return's abandon() and a park post none. Through
-                         tests/test_pane_shim_return.py's harness.
+                         its down word, cut true when the watchdog's CONNECTING arm closed it and false for a refusal (at
+                         the bound's edge: a close at 15000 ms is a refusal, at 15001 ms a cut); an opened socket's close,
+                         the return's abandon() and a park post none. Through tests/test_pane_shim_return.py's harness.
   ShellLinkFailure       _LANDING_MOBILE_JS: the shell socket's close of a dial that never opened (refused, or its own
                          connect cut) calls window.__rompLinkFailed once, with true when its own cut timer or the tick's
-                         backstop made the close; an opened socket's close, the return's abandon and a superseded socket's
-                         late close call nothing. Each dial and each open calls window.__rompNotLeaving (the Log's leaving
+                         backstop made the close (a close the browser made reads the clock: at 14999 ms a refusal, at
+                         15000 ms a cut); an opened socket's close, the return's abandon and a superseded socket's late
+                         close call nothing. Each dial and each open calls window.__rompNotLeaving (the Log's leaving
                          latch, below). Through tests/test_kernel_mobile.py's probe harness.
   LogWaitsForTheFailure  _LANDING_ERRS_JS: a drop alone writes nothing (the live red cue shows it); a failure word, or the
                          link's failure for every waiting pane, writes one entry per drop, and one pane's word that pane's
                          entry alone; an up drops the waiting entry; a pane not shown keeps waiting and is written once
-                         shown; a parked pane is dropped; a split column waits under its own key. Through
-                         tests/test_error_center.py's DOM stub.
+                         shown; a parked pane, or a closed column, is dropped; a split column waits under its own key.
+                         Through tests/test_error_center.py's DOM stub.
   ACutFailsNothingWhileASocketStands
                          _LANDING_ERRS_JS: a cut word, or the link's failure with true, writes nothing while the shell's link,
-                         another pane's socket or a column's stands; a refusal writes whatever stands; with nothing open (a
-                         parked pane holds no socket) the cut writes. The same DOM stub.
+                         another pane's socket (a pane not shown included) or a column's stands; a refusal writes whatever
+                         stands; with nothing open (a parked pane holds no socket) the cut writes. The same DOM stub.
   AnUnloadsClosesFailNothing
                          _LANDING_ERRS_JS: from a beforeunload, neither the link's failure nor a failure word writes; the
                          shell's next dial or open (window.__rompNotLeaving), a pane's or a column's open, and pageshow each
@@ -103,6 +104,20 @@ NOW+=40;sock().readyState=3;sock().onclose({code:1006,reason:"",wasClean:false})
 out({words:words()});""")
         self.assertEqual(r["words"], ["up", "down", "down", "fail"], "a refused redial is a failure the Log counts whatever stands")
 
+    def test_the_cut_mark_at_the_bounds_edge(self):
+        # review round 1 of item 4b (2026-10-04, tests-3): the mark is the watchdog arm's own test, a strict > 15000 on the dial's
+        # age; a browser's close of the redial at exactly 15000 ms is a refusal and at 15001 ms a cut (no tick runs here)
+        got = {}
+        for ms in (15000, 15001):
+            r = _shimret._run(WORDS + r"""
+open();recv({type:"ka"});sock().readyState=3;sock().onclose({code:1006,reason:"",wasClean:false});
+var t=timers.filter(function(x){return x.live&&x.fn.name==="connect";});t.forEach(function(x){x.live=false;x.fn();});   // the redial, made now
+NOW+=%d;sock().readyState=3;sock().onclose({code:1006,reason:"",wasClean:false});   // the browser closes it, never opened
+out({words:words()});""" % ms)
+            got[ms] = r["words"]
+        self.assertEqual(got[15000], ["up", "down", "down", "fail"], "at exactly 15 s the close is a refusal")
+        self.assertEqual(got[15001], ["up", "down", "down", "fail-cut"], "past 15 s it is a cut")
+
     def test_a_park_posts_no_failure_word(self):
         r = _shimret._run(WORDS + r"""
 open();recv({type:"ka"});park();out({words:words()});""")
@@ -148,6 +163,19 @@ shOut({own:own.length,cut:cut,how:LFC});""")
         self.assertEqual(r["own"], 1)
         self.assertEqual(r["cut"], 3, "the dial's own cut timer closed it")
         self.assertEqual(r["how"], ["cut"], "marked cut by shCutHere although the clock reads 14999 ms")
+
+    def test_the_links_cut_mark_at_the_bounds_edge(self):
+        # review round 1 of item 4b (2026-10-04, tests-3): a browser's close of a dial the cut timer has not closed reads the clock,
+        # the ladder's complement of a refusal: at SH_CONNECT_MS - 1 a refusal, at SH_CONNECT_MS a cut
+        got = {}
+        for ms in (14999, 15000):
+            r = _mob._run_probe(LINKFAIL + r"""
+shOpen();shRecv({type:'ka'});shHide();SHSOCKS[0].readyState=3;SHNOW+=100;shShow();   // the return dials at once
+var d=shSock();SHNOW+=%d;d.readyState=3;d.onclose({code:1006});   // the browser's close; the dial's own cut timer has not run
+shOut({how:LFC});""" % ms)
+            got[ms] = r["how"]
+        self.assertEqual(got[14999], ["refused"], "a ms under the bound the close is a refusal")
+        self.assertEqual(got[15000], ["cut"], "at the bound it is a cut")
 
     def test_the_watchdogs_backstop_cut_is_marked_cut_too(self):
         r = _mob._run_probe(LINKFAIL + r"""
@@ -259,6 +287,13 @@ post({ romp: 'wsState', app: 'timeline', state: 'down' });
 const k1 = CONN.length;
 postFrom({ col: '2' }, { romp: 'wsFail', app: 'chat', cut: false });
 out.oneColumnsWord = CONN.slice(k1);                       // a column's word, the Sessions pane's drop waiting too
+// a column closed while its drop waits takes the drop with it (window.__rompColGone): a later failure writes nothing for it
+post({ romp: 'wsState', app: 'timeline', state: 'up' });  // the Sessions pane reopens first, so nothing else is waiting
+postFrom({ col: '4' }, { romp: 'wsState', app: 'chat', state: 'down' });
+window.__rompColGone('4');
+const k2 = CONN.length;
+linkFailed();
+out.colGone = CONN.slice(k2);
 console.log(JSON.stringify(out));
 """
 
@@ -320,6 +355,10 @@ class LogWaitsForTheFailure(unittest.TestCase):
         self.assertEqual(self.out["oneColumnsWord"], ["Kernel connection lost: chat split 2 (reconnecting)"],
                          "a column's failure word writes the column's entry, not the Sessions pane's")
 
+    def test_a_column_closed_while_its_drop_waits_takes_the_drop_with_it(self):
+        # review round 1 of item 4b (2026-10-04, tests-2): the column is shown (po-chat), so only the discard keeps it unwritten
+        self.assertEqual(self.out["colGone"], [], "a closed column's waiting drop is discarded, never written at a later failure")
+
     def test_a_split_column_waits_under_its_own_key(self):
         self.assertEqual(self.out["colDrop"]["conn"], 5, "the column's drop alone writes nothing")
         self.assertEqual(self.out["colFailed"]["texts"], ["Kernel connection lost: chat split 2 (reconnecting)"])
@@ -346,6 +385,12 @@ out.refusedWhileAPaneStands = snap();                      // a refusal fails wh
 post({ romp: 'wsState', app: 'chat', state: 'down' });
 post({ romp: 'wsFail', app: 'chat', cut: true });
 out.cutWithNothingOpen = snap();                           // nothing open: a hung outage's cut writes
+post({ romp: 'wsState', app: 'waiting', state: 'up' });   // the one socket open is a pane's the page does not show (no po-waiting)
+post({ romp: 'wsState', app: 'timeline', state: 'down' });
+post({ romp: 'wsFail', app: 'timeline', cut: true });
+window.__rompLinkFailed(true);
+out.cutWhileOnlyAHiddenPaneStands = snap();                // the kernel is answering that socket: neither cut writes
+post({ romp: 'wsState', app: 'waiting', state: 'parked' }); // and it goes, so the steps below read the page as before
 post({ romp: 'wsState', app: 'timeline', state: 'down' });
 LINK = true;
 post({ romp: 'wsFail', app: 'timeline', cut: true });
@@ -398,6 +443,12 @@ class ACutFailsNothingWhileASocketStands(unittest.TestCase):
 
     def test_a_cut_with_nothing_open_writes(self):
         self.assertEqual(self.out["cutWithNothingOpen"]["conn"], [self.FEED, self.CHAT], "no socket of the page is open: the cut is the failure")
+
+    def test_a_socket_of_a_pane_not_shown_stands_too(self):
+        # review round 1 of item 4b (2026-10-04, tests-4): on the desktop the Outline, Waiting and Files panes are hidden by
+        # default and their sockets open at boot; the kernel answering one of them is what stands() asks
+        self.assertEqual(self.out["cutWhileOnlyAHiddenPaneStands"]["conn"], [self.FEED, self.CHAT],
+                         "the Sessions pane's cut word and the link's cut write nothing while a hidden pane's socket is open")
 
     def test_the_shells_link_counts_as_a_socket_that_stands(self):
         self.assertEqual(self.out["cutWhileTheLinkStands"]["conn"], [self.FEED, self.CHAT], "the Sessions pane's cut while the link stands writes nothing")
