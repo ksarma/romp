@@ -1613,6 +1613,36 @@ out({ unchanged, unchangedHeld, changedFirst, changedLast, shown, again, then, s
                 self.assertEqual(v, {"reads": 0, "asks": 0}, k + " written to the value it had: skipped, no frame asked and no style read")
                 self.assertEqual(o["then"][k], {"reads": o["scan"], "asks": 1}, k + " written to a new value next: one frame, which scans (the record reaches the watch)")
 
+    # Round 3 (2026-10-04, extra5-1, disclosed): a scroll through a transcript that is not from today scans, because the chat moves its
+    # day label (.rail-day, its style top) and shows or hides its sticky stamp (.time-marker.rail-sticky, its display) at the handoffs
+    # between the rail's stamps: fixed elements outside the list that no scan holds, so each changed write asks for a scan (the build's
+    # lab probe: ten wheel steps up gave the rail's writes 2 scans in Chromium and in Firefox and 4 to 8 in WebKit). The narrowing that
+    # would spare them was declined, since a class or hidden write on such an element can show a control elsewhere through a sibling or
+    # :has() selector, so the scans stand and the texts say so. The case runs the writes; the text check holds the kernel's comment and
+    # the placement entry to naming them, which on its own proves nothing about behaviour
+    def test_the_rail_writes_of_a_transcript_not_from_today_scan_and_the_texts_say_so(self):
+        o = self._watch_fit(r"""
+const day = add(null, [11, 41, 60, 14], { position: 'fixed' }); day.attrs.style = 'left: 11px; top: 41px';      // the day label
+const stamp = add(null, [3, 50, 56, 14], { position: 'fixed' }); stamp.attrs.style = 'left: 3px; top: 50px';    // the sticky stamp
+fire('romp:wsdown'); after(RHOLD_T);
+const step = (fn) => { const reads = STYLE_READS, asks = ASKS; fn(); frame(); return { reads: STYLE_READS - reads, asks: ASKS - asks }; };
+const moved = step(() => { day.box[1] = 88; attr(day, 'style', 'left: 11px; top: 88px'); });
+const hidden = step(() => { stamp.cs.display = 'none'; attr(stamp, 'style', 'left: 3px; top: 50px; display: none'); });
+const unchanged = step(() => same(day, 'style'));
+out({ moved, hidden, unchanged, scan: scan() });""")
+        self.assertEqual(o["moved"], {"reads": o["scan"], "asks": 1}, "the day label's top written to a new value: one frame, which scans")
+        self.assertEqual(o["hidden"], {"reads": o["scan"], "asks": 1}, "the sticky stamp hidden by its style: one frame, which scans")
+        self.assertEqual(o["unchanged"], {"reads": 0, "asks": 0}, "the day label's style written to the value it had: skipped")
+        root = os.path.dirname(HERE)
+        with open(os.path.join(root, "kernel", "kernel.py"), encoding="utf-8") as f:
+            src = f.read()
+        with open(os.path.join(root, "upstream", "2026-10-02-reconnect-badge-below-pane-header.md"), encoding="utf-8") as f:
+            entry = f.read()
+        for what, text in (("the kernel's comment", src[src.index("def _pane_spin"):src.index("def _chat_page")]), ("the placement entry", entry)):
+            for name in (".rail-day", ".time-marker.rail-sticky", "not from today"):
+                with self.subTest(what=what, name=name):
+                    self.assertTrue(name in text, what + " names " + name + " among the changes that still scan (the case above runs them)")
+
     def test_a_change_that_can_add_a_control_scans_again(self):
         o = self._watch_fit(r"""
 fire('romp:wsdown'); after(RHOLD_T);

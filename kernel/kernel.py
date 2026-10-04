@@ -70088,13 +70088,20 @@ def _pane_spin(cid, ignore_id=""):
             # value now is skipped; ruling 1 at 79dce614c, 2026-10-04): on the desktop the chat writes the hidden attribute of the
             # reply chips, a fixed element outside the list that holds elements, at each scroll step, to the value it had, and the
             # lab measured a scan at each step before this. So a control that appears or moves under the badge moves it on, the viewer opened or the
-            # notice shown, and the timer, plain typing and a scroll scan nothing. Two changes outside the container that the watch
-            # sees, because it observes the page outside it, still ask for a scan at each event in the lab: each keystroke of a
-            # slash command (the slash menu, a fixed element outside the list, redraws its items, real controls; the rehearsed
-            # check of round 2, kept by the same ruling), and on the desktop each new line in the composer, as the chat writes a
-            # new height into the scroll marks' container (outside the list, holding elements). That scan is the one the resize
-            # the growing composer causes asks for in the same frame, so a new line scans once on every layout (the check of
-            # round 2's fixes, 2026-10-04). A sticky element that appears deep in the content, not as the
+            # notice shown, and the timer, plain typing and a scroll through a transcript from today scan nothing. Three changes
+            # outside the container that the watch sees, because it observes the page outside it, still ask for a scan in the lab:
+            # each keystroke of a slash command (the slash menu, a fixed element outside the list, redraws its items, real controls;
+            # the rehearsed check of round 2, kept by the same ruling); on the desktop each new line in the composer, as the chat
+            # writes a new height into the scroll marks' container (outside the list, holding elements), the scan the resize the
+            # growing composer causes asks for in the same frame, so a new line scans once on every layout (the check of round 2's
+            # fixes, 2026-10-04); and a scroll through a transcript that is not from today, as the chat moves its day label
+            # (.rail-day, its style top) and shows or hides its sticky stamp (.time-marker.rail-sticky, its display) at the
+            # handoffs between the rail's stamps, fixed elements outside the list that no scan holds (round 3, extra5-1: disclosed,
+            # not spared, since a rule that spared a class, style or hidden write on an element no scan holds could miss a control
+            # that write shows elsewhere through a sibling or :has() selector). Ten wheel steps of 120 px up from the bottom of the
+            # lab's transcript, dated 2024-01-01, gave the rail's writes 2 scans in Chromium and in Firefox and 4 to 8 in WebKit,
+            # beside 1 for the jump button the first step shows (the round-3 build's probe: three runs in Chromium and in WebKit,
+            # one in Firefox). A sticky element that appears deep in the content, not as the
             # container's own child, is found at the next scan, not at once. No timer. The search runs only while the badge is
             # painted (rwatch starts at the paint and stops at the first frame a change or scroll asks for after the badge is
             # down), so a healthy page scans nothing. Upstream's CSS rule stays
