@@ -1643,6 +1643,34 @@ out({ moved, hidden, unchanged, scan: scan() });""")
                 with self.subTest(what=what, name=name):
                     self.assertTrue(name in text, what + " names " + name + " among the changes that still scan (the case above runs them)")
 
+    # The slash keystroke (romp-manager's call 6 on round 3, 2026-10-04): the slash menu is a fixed element outside the list that no
+    # scan holds, and the chat redraws it at each keystroke, so an element added to it scans. The lab's session lists no commands, so
+    # its measured redraws added the menu's empty line (div.slash-empty, no control); in real use the menu redraws its rows (.slash-row,
+    # a pointer cursor), which are controls, and that is why those scans stand. The case adds each to a menu outside the list: the empty
+    # line scans, and a row scans and moves the badge off it; the text check holds the kernel's comment and the placement entry to
+    # saying which line the lab measured and why the scans stand, which on its own proves nothing about behaviour
+    def test_a_slash_menu_redraw_scans_and_the_texts_say_what_the_lab_measured(self):
+        o = self._watch_fit(r"""
+const pop = add(null, [10, 40, 380, 60], { position: 'fixed' }); pop.id = 'slash-pop';                    // the slash menu, over the list's top
+fire('romp:wsdown'); after(RHOLD_T);
+const step = (el) => { const reads = STYLE_READS; deliver(kids(pop, [el], [])); frame(); const n = STYLE_READS - reads; return { scanned: n === scan(), place: at() }; };
+const emptyLine = step(add(pop, [16, 44, 300, 20]));                                                         // div.slash-empty: no cursor, no control
+const slashRow = step(add(pop, [16, 44, 368, 24], { cursor: 'pointer' }));                                     // a .slash-row: its own pointer cursor
+out({ emptyLine, slashRow });""")
+        self.assertEqual(o["emptyLine"], {"scanned": True, "place": {"top": "52px", "right": "8px", "painted": True}},
+                         "the menu's empty line added: a scan, and the badge stays, since the line is no control")
+        self.assertEqual(o["slashRow"], {"scanned": True, "place": {"top": "76px", "right": "8px", "painted": True}},
+                         "a row added: a scan, and the badge moves below it (44 + 24 + 8), since a row is a control")
+        root = os.path.dirname(HERE)
+        with open(os.path.join(root, "kernel", "kernel.py"), encoding="utf-8") as f:
+            src = f.read()
+        with open(os.path.join(root, "upstream", "2026-10-02-reconnect-badge-below-pane-header.md"), encoding="utf-8") as f:
+            entry = f.read()
+        for what, text in (("the kernel's comment", src[src.index("def _pane_spin"):src.index("def _chat_page")]), ("the placement entry", entry)):
+            for name in ("div.slash-empty", ".slash-row", "lists no commands"):
+                with self.subTest(what=what, name=name):
+                    self.assertTrue(name in text, what + " names " + name + ": what the lab's slash keystrokes redrew, and what real use redraws")
+
     def test_a_change_that_can_add_a_control_scans_again(self):
         o = self._watch_fit(r"""
 fire('romp:wsdown'); after(RHOLD_T);

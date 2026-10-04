@@ -70090,8 +70090,13 @@ def _pane_spin(cid, ignore_id=""):
             # lab measured a scan at each step before this. So a control that appears or moves under the badge moves it on, the viewer opened or the
             # notice shown, and the timer, plain typing and a scroll through a transcript from today scan nothing. Three changes
             # outside the container that the watch sees, because it observes the page outside it, still ask for a scan in the lab:
-            # each keystroke of a slash command (the slash menu, a fixed element outside the list, redraws its items, real controls;
-            # the rehearsed check of round 2, kept by the same ruling); on the desktop each new line in the composer, as the chat
+            # each keystroke of a slash command (the slash menu, a fixed element outside the list that no scan holds, redraws, and an
+            # element added to it scans. The lab's session lists no commands, so there each keystroke redrew the menu's empty line,
+            # div.slash-empty, which is no control; in real use the menu redraws its rows, .slash-row with a pointer cursor, which
+            # are controls, and that is why the rehearsed check of round 2 and the same ruling kept these scans. With a synthetic
+            # list the typed name matched, "/" and 6 letters gave 8 scans in Chromium at 20.8k elements, as with the empty list,
+            # seven for the menu's redraws and one for the composer's placeholder; the round-3 build's probe); on the desktop each
+            # new line in the composer, as the chat
             # writes a new height into the scroll marks' container (outside the list, holding elements), the scan the resize the
             # growing composer causes asks for in the same frame, so a new line scans once on every layout (the check of round 2's
             # fixes, 2026-10-04); and a scroll through a transcript that is not from today, as the chat moves its day label
