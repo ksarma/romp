@@ -248,8 +248,10 @@ THE BIND BANDS are derived from THE FILES (bind_bands()):
   (tests/romp-postal.bats): B to B plus the file's count of tests, moved by every constant the file adds to that name
   in an arithmetic expansion (the squat test's), and by every retry step a helper adds to a port-named name (port +
   try * S, inside a function: S times each try below the most its callers ask for);
-  each draw from randint(a, b) with a at or above 1024: a call in Python, or the text in a shell file (the probe of
-  tests/free-port.bash);
+  each draw from randint(a, b) with a at or above 1024: a call in Python whose two arguments are int literals, each
+  given by position or by its parameter's name as THE RULE reads a random call (_random_args(): randint(a=A, b=B) is
+  randint(A, B), and randint(b=B) is no draw), since every reader of a random call reads its arguments one way; or the
+  text in a shell file, by position (the probe of tests/free-port.bash);
   each block keyed by a test file's name, 'name.test.js': [lo, hi] (tests/manager-ports.js).
 The machine's own fixed ports (the postal bus's, the kernel's, the manager's) are not among them: no test binds them,
 and the two modules write them on purpose, to show the belt and the licences refusing them. A band made any other way
@@ -971,12 +973,16 @@ def _shell_bands(text):
 
 
 def _python_draws(tree):
-    """[(a, b)]: every call to randint(a, b) in `tree` whose arguments are int literals."""
+    """[(a, b)]: every call to randint(a, b) in `tree` whose two arguments are int literals, each given by position or
+    by its parameter's name: the arguments THE RULE's port reading takes from a random call (_random_args()), since
+    every reader of a random call is one population (randint(a=A, b=B) and randint(A, b=B) are randint(A, B);
+    randint(b=B) is no draw)."""
     out = []
     for n in ast.walk(tree):
-        if isinstance(n, ast.Call) and _callee(n.func) == "randint" and len(n.args) == 2 and not n.keywords \
-                and all(isinstance(a, ast.Constant) and type(a.value) is int for a in n.args):
-            out.append((n.args[0].value, n.args[1].value))
+        if isinstance(n, ast.Call) and _callee(n.func) == "randint":
+            args = _random_args(n)
+            if args and len(args) == 2 and all(isinstance(a, ast.Constant) and type(a.value) is int for a in args):
+                out.append((args[0].value, args[1].value))
     return out
 
 
@@ -1743,6 +1749,7 @@ class SentinelPlants(unittest.TestCase):
     def test_each_band_shape_is_read(self):
         b, s, o = self.B, self.STEP, self.OFFSET
         draw = "random.randint(%d, %d)"                                   # a template, so this file holds no such call
+        kw = ("random.randint(a=%d, b=%d)", "random.randint(b=%d, a=%d)", "random.randint(%d, b=%d)")   # by keyword
         cases = (
             ("a per-test base with its offset and its retry steps", "romp-x.bats", self._shell(),
              [(b + x + y, b + 2 + x + y) for x in (0, o) for y in (0, s)]),
@@ -1750,6 +1757,11 @@ class SentinelPlants(unittest.TestCase):
              [(b - 5000, b - 4001)]),
             ("a draw in Python, a call and not a string", "helper_x.py",
              "import random\nP = %s\nDOC = %r\n" % (draw % (b - 4000, b - 3901), draw % (b - 3000, b - 2901)), [(b - 4000, b - 3901)]),
+            ("a draw in Python by keyword, read as THE RULE reads a random call", "helper_y.py",
+             "import random\nP = %s\nQ = %s\nR = %s\nLOW = %s\nHALF = %s\n"
+             % (kw[0] % (b - 2000, b - 1901), kw[1] % (b - 901, b - 1000), kw[2] % (b - 6000, b - 5901),
+                kw[0] % (10, 99), "random.randint(b=%d)" % (b - 7000)),
+             [(b - 2000, b - 1901), (b - 1000, b - 901), (b - 6000, b - 5901)]),
             ("a block keyed by a test file's name", "ports-x.js", "const RANGES = {\n  'a.test.js': [%d, %d],\n};\n" % (b - 13000, b - 12489),
              [(b - 13000, b - 12489)]))
         for label, name, text, want in cases:
