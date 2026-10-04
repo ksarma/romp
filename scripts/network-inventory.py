@@ -211,8 +211,10 @@ as UTF-8, so it refuses by name, as a page it cannot read: a bytes constant hold
 split across constants, among them); page text holding U+FEFF, refused on the safe side because a leading U+FEFF is a byte order mark
 the page's UTF-8 bytes carry; page text holding a NUL, by which a browser may read interleaved NULs as UTF-16; page text
 declaring a charset other than utf-8 (a `charset=` in any case, as a meta element's charset attribute and a content attribute's
-parameter spell it, or an XML declaration's `encoding=`, followed by any label but utf-8) in a string or bytes constant, an
-f-string's literal part or the joined text of a join of string constants; a script-running content type whose parameters name a
+parameter spell it, or an XML declaration's `encoding=`, followed by any label but utf-8, read in the text as spelled and again
+with its character references decoded, since a browser decodes them in an attribute's value before it reads the charset there) in
+a string or bytes constant, an f-string's literal part or the joined text of a join of string constants; a script-running content
+type whose parameters name a
 charset other than utf-8; and a page's read of a walked browser-text file whose text, as the walk decoded it, holds U+FFFD,
 U+FEFF or a NUL, or declares such a charset. A declaration split across texts the census reads apart (at any join but the joins of
 string constants it folds, below: a part other than a string constant among its pieces, between two literals or as one half, such
@@ -264,9 +266,14 @@ with or a walrus, or by an import, a def or class statement or an except clause)
 through a local whose every binding is read (a walrus in a nested def's, class's or lambda's header is a binding it does not
 read) and through a dict literal's values (refused before its type is read, below: a call inside a lambda's body, a Content-Type
 write inside one that is no `_send` definition's own write, and a call whose definition binds the parameter one of its own writes
-names other than as that parameter); a type holding a CR or LF is refused by name before it is compared (its header line ends
-there, and what follows is another header or the body, which the census does not read); the part before any `;`, stripped and
-lower-cased, is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
+names other than as that parameter); a type holding a CR or LF is refused by name before it is compared, even at a place
+SERVED_ALLOW names, where the census resolves the type there (its header line ends there, and what follows is another header or
+the body, which the census does not read); so is a type that is not exactly one listed type, since a browser may run a page under
+any other (a list of types by its last valid one, a type it sniffs where no nosniff header stands, a multipart's HTML part): one
+holding a character past ASCII or a comma, or whose part before any `;`, stripped of spaces and tabs alone and lower-cased, is in
+neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix (NO_SCRIPT_TYPES: the types the live tree serves that run no
+script, application/json, application/manifest+json, application/octet-stream, image/png and text/plain); the part before any `;`,
+stripped and lower-cased, is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml`
 suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
 application/javascript among them). A script-running route's page body is the call's second positional argument, read only when
@@ -328,9 +335,13 @@ or LF: each string or bytes constant in its value and in the value of each modul
 (a method call's receiver, as `T` in `T.lower()`, among the names followed), any other name there refusing it, save a bare name a
 call calls (`f` in `f(...)`); and so is each argument a `_send` call hands its definition but the page body and the content type
 (read above), positional, starred or keyword, a `**` among them: each string or bytes constant in it, a dict literal's keys and
-values among them, and each name in it that one top-level plain assignment binds and no function scope around the call binds, read
-through the module constants its value names, any other name there not read, one holding a CR or LF refusing the call by name
-before it is typed; a CR or LF the value computes at run time, a call's return or a number formatted as a character, is not read,
+values among them, and each name in it that no function scope around the call binds: a module constant (a name one top-level plain
+assignment binds and nothing rebinds), read through the module constants its value names, one holding a CR or LF refusing the call
+by name before it is typed; and any other name the module binds or a function rebinds (bound more than once or by an annotated
+assignment, or rebound under a `global` declaration or by a module-level statement), save a top-level import's name that nothing
+rebinds and a bare name a call calls, refusing the call by name as a name the census does not follow by binding, in the argument
+or in a module constant's value there; any other name there (a builtin's) not read; a CR or LF the value computes at run time, a
+call's return or a number formatted as a character, is not read,
 nor is a header value held anywhere else, a local, a parameter, an attribute, a call's return or an item, its witnesses a CR LF
 from chr and one from a `%c` of an int, and a header value held in a local dict and a CR LF a call of chr computes at the call),
 and a response that a Content-Type in its
@@ -1111,6 +1122,7 @@ import _string   # str.format's own field parser and field-name split (_Served._
 import ast
 import builtins
 import collections
+import html
 import json
 import os
 import re
@@ -1585,7 +1597,8 @@ def _runs_off(line, start, comma=True):
 
 
 _HELPER_CALL =re.compile(r"^(?:%s)\(" % "|".join(KERNEL_URL_HELPERS))   # a kernel-URL helper call as the fetch argument
-# The content types a browser runs script from, compared with a route's type cut at its first `;`, stripped and lower-cased
+# The content types a browser runs script from, compared with a route's type the census types (_typed_ctype, any other refused by name)
+# cut at its first `;`, stripped and lower-cased
 # (_script_type): HTML; the XML types, whose XHTML-namespaced script runs (text/xml, application/xml, text/xsl and, by rule
 # in _script_type, any type with a `+xml` suffix, image/svg+xml and application/xhtml+xml among them); and JavaScript under
 # every name a browser takes for it. A route candidate of one of these types has its text read by the served pass.
@@ -1593,6 +1606,10 @@ SCRIPT_TYPES = ("text/html", "text/xml", "application/xml", "text/xsl", "applica
                 "text/javascript", "application/javascript", "application/ecmascript", "application/x-ecmascript", "application/x-javascript",
                 "text/ecmascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4",
                 "text/javascript1.5", "text/jscript", "text/livescript", "text/x-ecmascript", "text/x-javascript")
+# The content types the live tree serves that run no script, the only others the census types (_typed_ctype; item 2 of the
+# reviewer's 02:3xZ ruling of 2026-10-04, fix C): derived from the live tree, every value judge typed there being one of these or a
+# script-running type above. A content type the census does not type is refused by name (judge): a browser may run a page under it.
+NO_SCRIPT_TYPES = ("application/json", "application/manifest+json", "application/octet-stream", "image/png", "text/plain")
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")                        # a URL scheme at the head of a literal
 _PY_SLOT = re.compile(r"%[sdr(]|\{[A-Za-z_0-9]*\}")                         # a Python format slot inside a served page's literal
 
@@ -3474,8 +3491,9 @@ _CONSTANT_KINDS = {bytes: "a non-empty bytes Constant", float: "a float Constant
 # (_BYTES_WIDE, resolve), page text holding U+FEFF, refused on the safe side wherever it stands, since a leading one is a byte order
 # mark (_BOM_TEXT, _Served._decoded), page text holding a NUL, by which a browser may read interleaved NULs as UTF-16 and decode the
 # page other than the census scans it (_NUL_TEXT, _Served._decoded; so a page encoded UTF-16 with no byte order mark, whose ASCII bytes
-# the bytes arm would read one to a character, is refused), page text declaring a charset other than utf-8 (_DECLARED,
-# _declared_charset; a join of string constants by its joined text, served_texts), a script-running content type naming one (judge,
+# the bytes arm would read one to a character, is refused), page text declaring a charset other than utf-8, read as spelled and with
+# its character references decoded (_DECLARED, _declared_charset; the reviewer's 02:3xZ ruling of 2026-10-04, item 1; a join of string
+# constants by its joined text, served_texts), a script-running content type naming one (judge,
 # _ctype_charset), and a walked browser-text file a page reads whose text, as the walk decoded it, holds a byte the walk could not
 # decode as UTF-8, a U+FEFF or a NUL, or declares such a charset (_undecoded, _FILE_UNDECODED)
 _BYTES_WIDE = "a bytes constant holding a byte past ASCII, which a browser may decode other than one byte to a character"
@@ -3490,14 +3508,19 @@ def _declared_charset(text):
     past spaces, by `=`, as a meta element's charset attribute and a content attribute's parameter spell it, and an XML declaration's
     encoding (`encoding=` inside one `<?xml ...>`); the label read after the `=` past spaces, quotes and backslashes, as far as it
     runs in letters, digits, `_`, `.`, `:` and `-`. Any label but utf-8, in any case (another label of UTF-8 and the empty one, where
-    something else follows, among them), is returned. A declaration split across texts the census reads apart (at any join but the
+    something else follows, among them), is returned. Each text is read twice, as spelled and with its character references decoded
+    (html.unescape; item 1 of the reviewer's 02:3xZ ruling of 2026-10-04), since a browser decodes them in an attribute's value before
+    it reads a charset there (`ch&#97;rset=`, `charset&#61;` and the like); html.unescape decodes more than a browser does in an
+    attribute (legacy names with no semicolon, an XML declaration's references), so the second reading only refuses more. A
+    declaration split across texts the census reads apart (at any join but the
     joins of string constants served_texts folds: a part other than a string constant among its pieces, between two literals or as one
     half, such as a name's text, a call, a conditional expression or a bytes constant, which the census reads each on its own, or a
     compiled pattern's .sub, whose replacement it reads apart from the subject even where both are string constants) is read as each
     text spells it, the literal match's limit; only a declaration a join of string constants folds to one text (served_texts) is
     caught there."""
-    for m in _DECLARED_RX.finditer(text):
-        if m.group(2).lower() != "utf-8": return "%s=%s" % ("charset" if m.group(1).lower() == "charset" else "encoding", m.group(2))
+    for t in (text, html.unescape(text)):
+        for m in _DECLARED_RX.finditer(t):
+            if m.group(2).lower() != "utf-8": return "%s=%s" % ("charset" if m.group(1).lower() == "charset" else "encoding", m.group(2))
     return None
 
 
@@ -3507,7 +3530,7 @@ def _undecoded(text):
     _FILE_UNDECODED): it holds U+FFFD, which the walk writes for a byte it cannot decode as UTF-8 (a UTF-16 byte order mark among them),
     or U+FEFF anywhere, refused on the safe side (a leading one is a byte order mark), or a NUL, by which a browser may read the file as
     UTF-16 (a UTF-16 page with no byte order mark, whose ASCII-and-NUL bytes the walk decodes as UTF-8 with no U+FFFD, among them), or
-    it declares a charset other than utf-8 (_declared_charset)."""
+    it declares a charset other than utf-8, as spelled or with its character references decoded (_declared_charset)."""
     if "\ufffd" in text: return "U+FFFD, which may stand for a byte the walk could not decode as UTF-8"
     if "\ufeff" in text: return "U+FEFF anywhere, refused on the safe side (a leading one is a byte order mark)"
     if "\x00" in text: return "a NUL, by which a browser may read the file as UTF-16"
@@ -3612,8 +3635,9 @@ SERVED_ALLOW = {
 # places (distinct source positions), is a SERVED LISTED line, as a stale SERVED_ALLOW entry is, and so is a key SERVED_ALLOW holds
 # too (a place is excused or listed, never both).
 _STAMP_LISTED = ("a compiled pattern's .sub whose replacement's group reference re-inserts the matched <html tag, the pattern's one "
-                 "group, in any case, a template expansion the census does not model; listed on the exact call, the pattern's text with "
-                 "its flags and the replacement's bytes, so a change to either matches no entry and the run fails")
+                 "group, in any case, a template expansion the census does not model; listed on the exact call with its replacement's "
+                 "bytes, and on its pattern's binding, the pattern's text with its flags, so a change to either matches no entry and "
+                 "the run fails")
 SERVED_LISTED = {
  ("kernel/kernel.py:_pane_label", "str(app or '').capitalize()"): (1,
   "a .capitalize() method whose return is not drawn from its receiver's text, on str() of the pane label's parameter: the seven "
@@ -4311,6 +4335,18 @@ def _ctype_values(e, scopes, consts, written, depth=0):
     return None
 
 
+def _typed_ctype(v):
+    """Whether the census types a content type (item 2 of the reviewer's 02:3xZ ruling of 2026-10-04, fix C; judge refuses one it does
+    not): the value is ASCII and holds no comma, and its essence, the part before its first `;` stripped of spaces and tabs only and
+    lower-cased, is exactly one listed type: one of SCRIPT_TYPES, a type with a `+xml` suffix, or one of NO_SCRIPT_TYPES. A browser
+    reads a list of types by its last valid one (`text/plain, text/html` runs as HTML), sniffs a type it cannot use (an empty one,
+    `*/*`, `unknown/unknown`, `application/unknown` or a malformed one, as `texthtml`) where no nosniff header stands, and runs a
+    multipart's HTML part (`multipart/x-mixed-replace`), so any other value may serve a page the census would never read."""
+    if not v.isascii() or "," in v: return False
+    essence = v.split(";")[0].strip(" \t").lower()
+    return essence in SCRIPT_TYPES or essence.endswith("+xml") or essence in NO_SCRIPT_TYPES
+
+
 def _script_type(v):
     """Whether a content type runs script in a browser: its essence (cut at the first `;`, stripped, lower-cased) is one of
     SCRIPT_TYPES or an XML type by its `+xml` suffix."""
@@ -4569,7 +4605,7 @@ _header_step = list   # _header_const's expansion of one module constant, called
 # reads this step from outside the script; without the walk's visited set a cycle of constants loops)
 
 
-def _header_const(consts, rebinds, name, strict=True):
+def _header_const(consts, rebinds, name, strict=True, unfollowed=frozenset()):
     """Why a module constant a `_send` definition reads outside its page text is refused (_send_gate, which takes the reason only for
     a statement in a listed shape, where such a constant is a header value), or None: the gate's guard on a string constant holding a
     CR or LF in a header call, applied where the value is bound. The census reads the constant's value
@@ -4585,7 +4621,9 @@ def _header_const(consts, rebinds, name, strict=True):
     here (choice 5 of the eleventh round's rulings): the callee set's `isinstance(x.func, ast.Name)`, since the set is read only for
     a Name node, which a callee of any other kind is not (the walk's `isinstance(x, ast.Name)` decides, its own red: dropped, a name
     a constant's value reads is no longer followed, so aet is read). With `strict` false (a module constant a `_send` call hands its
-    definition: _header_crlf) a name there that is no such constant is not read and refuses nothing: the value is read for a CR or
+    definition: _header_crlf) a name there that is no such constant refuses the value only where it is in `unfollowed` (_unfollowed: a
+    module name the census does not follow by binding), save a call's callee by its name alone, and any other (a builtin's, a
+    top-level import's nothing rebinds) is not read: the value is read for a CR or
     LF alone, what it computes at run time the stated limit."""
     seen, todo = set(), [name]
     while todo:
@@ -4601,21 +4639,39 @@ def _header_const(consts, rebinds, name, strict=True):
                     return "whose bound text holds a CR or LF"
             elif isinstance(x, ast.Name):
                 if x.id in consts and x.id not in rebinds: todo.append(x.id)
-                elif strict and id(x) not in callee: return "whose bound value reads %s, no module constant the census follows by binding" % x.id
+                elif (strict or x.id in unfollowed) and id(x) not in callee:
+                    return "whose bound value reads %s, no module constant the census follows by binding" % x.id
     return None
 
 
-def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds):
+def _unfollowed(tree, consts, rebinds):
+    """The module names the census does not follow by binding, which _header_crlf refuses in a header value at a `_send` call (NEW-2
+    of the closing check, item 4 of the reviewer's 02:3xZ ruling of 2026-10-04): every name the module binds at module level
+    (_module_bound) and every name a function rebinds under a `global` declaration or a module-level statement writes (`rebinds`),
+    unless it is a module constant (_module_consts) that nothing rebinds, or a name whose every module-level binding is a top-level
+    import statement and that nothing rebinds. So a name bound twice (an assignment and a module-level `+=` among them), one bound by
+    an annotated assignment and one rebound at run time under `global` are among them."""
+    bound = _module_bound(tree)
+    imported = collections.Counter(a.asname or (a.name.split(".")[0] if isinstance(n, ast.Import) else a.name)
+                                   for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names)
+    return frozenset(k for k in set(bound) | set(rebinds) if (k not in consts or k in rebinds)
+                     and not (k not in rebinds and bound.get(k) == imported.get(k)))
+
+
+def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed):
     """(the argument, why) for the first header value a `_send` call hands the definition it reaches that holds a CR or LF, or None
     (item 2 of the reviewer's 13:2xZ ruling of 2026-10-03; routes_of refuses the call by name before any typing). Read: every
     argument of the call, positional, starred or keyword, `**` among them, but the page body (the argument for the definition's
     second positional parameter, as routes_of reads a content type's: positional where no starred argument stands at or before its
     place, else by its keyword) and each content type a Content-Type write of the definition reads from the call (judge reads that
     one for a CR or LF, before it is typed). In each, a string or bytes constant holding a CR or LF, anywhere in it (a dict
-    literal's keys and values among them), and a name no function scope around the call binds that one top-level plain assignment
-    binds (_module_consts), its bound value read as _header_const reads one with `strict` false, whether or not code writes the name
-    or rebinds it later (a CR or LF in what it is bound to refuses it all the same): each string or bytes constant in that value and
-    in the value of each module constant it names. A header value held anywhere else, a local, a parameter, an attribute, a call's
+    literal's keys and values among them), and each name no function scope around the call binds: a module constant (_module_consts)
+    that nothing rebinds, its bound value read as _header_const reads one with `strict` false, `unfollowed` handed on (each string or
+    bytes constant in that value and in the value of each module constant it names); and any other name in `unfollowed` (_unfollowed:
+    a name the module binds other than as such a constant, or that a function rebinds, save a top-level import's name nothing
+    rebinds), save a call's callee by its name alone, whose return the census does not read, refused by name as a name the census does
+    not follow by binding, as the definition path refuses it with `strict` true (NEW-2 of the closing check, item 4 of the reviewer's
+    02:3xZ ruling of 2026-10-04). A header value held anywhere else, a local, a parameter, an attribute, a call's
     return or an item, or computed at run time, is not read: the stated limit, its witnesses the (ch) plants chv and chp."""
     kw = {k.arg: k.value for k in call.keywords if k.arg}
 
@@ -4629,13 +4685,17 @@ def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds):
                                                           if isinstance(w.args[1], ast.Name) and w.args[1].id in params] if x is not None}
     for x in list(call.args) + [k.value for k in call.keywords]:
         if id(x) in skip: continue
+        callee = {id(c.func) for c in ast.walk(x) if isinstance(c, ast.Call)}   # a call's callee, read for a name alone: `f` in `f(...)`
         for n in ast.walk(x):
             if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)):
                 if any(c in n.value for c in ((b"\r", b"\n") if isinstance(n.value, bytes) else ("\r", "\n"))):
                     return x, "a constant holding a CR or LF"
-            elif isinstance(n, ast.Name) and n.id in consts and not any(n.id in p or n.id in s or n.id in o for p, s, o in scopes):
-                why = _header_const(consts, rebinds, n.id, strict=False)
-                if why is not None: return x, "the module constant %s, %s" % (n.id, why)
+            elif isinstance(n, ast.Name) and not any(n.id in p or n.id in s or n.id in o for p, s, o in scopes):
+                if n.id in unfollowed and id(n) not in callee:
+                    return x, "the module name %s, no module constant the census follows by binding" % n.id
+                if n.id in consts:
+                    why = _header_const(consts, rebinds, n.id, strict=False, unfollowed=unfollowed)
+                    if why is not None: return x, "the module constant %s, %s" % (n.id, why)
     return None
 
 
@@ -5441,10 +5501,12 @@ def routes_of(rel, tree, sc, res):
     resolved (_ctype_values, through a module name no code writes after binding it: _module_consts less the names Result.writes
     records, and through a local whose every binding _scopes_of reads) and a script-running one (_script_type) makes the call a
     route whose text the served pass reads; an unresolved type is a SERVED line, and so is a type holding a CR or LF, before it is
-    compared, and a script-running type whose parameters name a charset other than utf-8 (_ctype_charset; the reviewer's 13:2xZ
+    compared, a type that is not exactly one listed type (_typed_ctype, NO_SCRIPT_TYPES; item 2 of the reviewer's 02:3xZ ruling of
+    2026-10-04), and a script-running type whose parameters name a charset other than utf-8 (_ctype_charset; the reviewer's 13:2xZ
     ruling of 2026-10-03, items 2 and 1); and before any typing, a call that hands its definition a header value holding a CR or LF
-    in any argument but its page body and its content type, a constant or a module constant it names (_header_crlf), is a SERVED
-    line too, which no allowlist entry excuses. A route's page body is the call's second
+    in any argument but its page body and its content type, a constant, a module constant it names or a module name the census does
+    not follow by binding (_header_crlf, _unfollowed), is a SERVED line too, which no allowlist entry excuses. A route's page body is
+    the call's second
     positional argument, read only when the call passes it positionally with no starred argument before it and no `**` and the
     definition's one output is its one write of that parameter, nothing in a method's definition binding self again or declaring it
     global, and its signature and every statement of its own body the kernel's Handler._send's (_body_param, _send_gate, which reads
@@ -5498,7 +5560,8 @@ def routes_of(rel, tree, sc, res):
     one is a SERVED line (the served pass follows a page's text through `_send` alone); a function outside `_send` that answers
     (send_response) more often than it writes a Content-Type header is a SERVED line, the browser typing that body by sniffing
     it. SERVED_ALLOW excuses a place by its function and expression (a `_send` call's place by the call's function, `self._send` or
-    `_send`), save an unread body. Returns the routes, (call, the
+    `_send`), save an unread body and a content type holding a CR or LF where the census resolves it (the allow hit recorded all the
+    same). Returns the routes, (call, the
     enclosing function, the class statement the call stands in (the served pass keys the route class on it, never on its name
     alone: _Served._top_class), the script-running type, the body expression), sorted by line."""
     ns = res.ns.get(rel) or _NS_NONE   # a file that writes its module namespace through a computed name, or may rewrite it at run
@@ -5519,8 +5582,16 @@ def routes_of(rel, tree, sc, res):
         res.allow_hits.setdefault(key, set()).add((call.lineno, call.col_offset)); return True
 
     def judge(call, where, expr, defs, direct):
-        """The script-running type of one candidate, or None: allowlisted, not script-running, or refused by name here."""
-        if allowed(where, expr, call): return None
+        """The script-running type of one candidate, or None: allowlisted, not script-running, or refused by name here. An allowlisted
+        place's content type is still read for a CR or LF where the census resolves it (the allow hit recorded all the same), and
+        a content type the census does not type (_typed_ctype) is refused by name before it is compared."""
+        if allowed(where, expr, call):   # the place's type read for a CR or LF all the same, where it resolves (NEW-3 of the closing
+            # check, item 5 of the reviewer's 02:3xZ ruling of 2026-10-04): no allowlist entry excuses a header that ends early
+            vals = _ctype_values(expr, scopes(defs), consts, written) if expr is not None else None
+            if vals is not None and any("\r" in v or "\n" in v for v in vals):
+                res.problems.append("SERVED %s:%d serves a response whose content type holds a CR or LF (%s in %s), which ends the header there: "
+                                    "what follows is another header or the body, which the census does not read" % (rel, call.lineno, ast.unparse(expr)[:60], where))
+            return None
         vals = _ctype_values(expr, scopes(defs), consts, written) if expr is not None else None
         if vals is None:
             res.problems.append("SERVED %s:%d serves a response whose content type the census cannot resolve (%s in %s): spell it so the "
@@ -5531,6 +5602,14 @@ def routes_of(rel, tree, sc, res):
             # does not read
             res.problems.append("SERVED %s:%d serves a response whose content type holds a CR or LF (%s in %s), which ends the header there: "
                                 "what follows is another header or the body, which the census does not read" % (rel, call.lineno, ast.unparse(expr)[:60], where))
+            return None
+        untyped = sorted(v for v in vals if not _typed_ctype(v))
+        if untyped:   # a content type that is no one listed type (item 2 of the reviewer's 02:3xZ ruling of 2026-10-04, fix C): a browser may
+            # run a page under it, so it is refused by name rather than typed as running no script
+            res.problems.append("SERVED %s:%d serves a response whose content type is no one type the census lists (%r, %s in %s): a browser "
+                                "may run a page under it (a list of types by its last valid one, a type it sniffs, a multipart's HTML "
+                                "part), so the census types only an ASCII value with no comma whose essence is one of SCRIPT_TYPES, a "
+                                "`+xml` type or one of NO_SCRIPT_TYPES" % (rel, call.lineno, untyped[0][:40], ast.unparse(expr)[:60], where))
             return None
         if not _ctype_simple(expr, scopes(defs), consts, written):   # the content-type face of the frame-local limit refused where one
             # check does it at 0 live (the 00:28Z rule): a content type the census resolves through anything but a string constant or a
@@ -5555,6 +5634,7 @@ def routes_of(rel, tree, sc, res):
     rebound = None   # why every `_send` call of the file is refused when a function or class body binds `_send` under a `global` declaration
     one_def = None   # whether the file binds `_send` outside function bodies at most once, and that once by a def statement direct in a body (_send_bindings)
     anywhere = None   # whether the file names `_send` anywhere but as its calls' called name (_names_send), read for a call that reaches no definition
+    unfollowed = None   # the module names the census does not follow by binding (_unfollowed), read for a header value at a call
     for call, defs, where in sc.sends:
         fn = next((x for x in reversed(defs) if not isinstance(x, ast.ClassDef)), None)
         cls = next((x for x in reversed(defs) if isinstance(x, ast.ClassDef)), None)
@@ -5636,7 +5716,8 @@ def routes_of(rel, tree, sc, res):
             continue
         # a header value the call hands the definition, read for a CR or LF (item 2 of the reviewer's 13:2xZ ruling of 2026-10-03: every
         # argument but the page body and the content type, _header_crlf): one found refuses the call by name before any typing
-        crlf = _header_crlf(call, pos, a.kwonlyargs, writes, scopes(defs), consts, res.rebinds.get(rel, {}))
+        if unfollowed is None: unfollowed = _unfollowed(tree, consts, res.rebinds.get(rel, {}))   # once per file
+        crlf = _header_crlf(call, pos, a.kwonlyargs, writes, scopes(defs), consts, res.rebinds.get(rel, {}), unfollowed)
         if crlf is not None:   # no allowlist entry excuses it
             res.problems.append("SERVED %s:%d calls _send on %s handing it %s (%s, in %s), which ends the header the definition writes it "
                                 "into: what follows is another header or the body, which the census does not read"
@@ -9045,16 +9126,17 @@ class _Served(object):
         params, local, cls, nested, where, scope = ctx
         if isinstance(e, ast.Constant):
             if isinstance(e.value, str):   # read where a browser decodes it as the census scans it (_Served._decoded, asked only of a
-                # text holding U+FEFF, a NUL or a declaration, so resolve's own depth at a plain constant is unchanged: decision 11 of the
+                # text holding U+FEFF, a NUL, an `&` (a character reference may spell a declaration: item 1 of the reviewer's 02:3xZ
+                # ruling of 2026-10-04) or a declaration, so resolve's own depth at a plain constant is unchanged: decision 11 of the
                 # tenth round's review)
-                if ("\ufeff" not in e.value and "\x00" not in e.value and _DECLARED_RX.search(e.value) is None) or self._decoded(e, e.value, where):
+                if ("\ufeff" not in e.value and "\x00" not in e.value and "&" not in e.value and _DECLARED_RX.search(e.value) is None) or self._decoded(e, e.value, where):
                     self.pieces.append((label, e.lineno, e.value, (e.lineno, e.col_offset, -1)))
             elif isinstance(e.value, bytes):   # page text, scanned like a string's (A(i) of the reviewer's 06:26Z ruling of 2026-10-01),
                 # each byte its own character, where every byte is ASCII, which a browser decodes one byte to a character; a byte past
                 # ASCII is refused by name (item 1 of the reviewer's 13:2xZ ruling of 2026-10-03: a byte order mark, whole or split
                 # across constants, among them), and a NUL byte, by which a browser may read the page as UTF-16 (_NUL_TEXT, _decoded)
                 if not e.value.isascii(): self._unread(e, _BYTES_WIDE, where)
-                elif (0 not in e.value and _DECLARED_RX.search(e.value.decode("latin-1")) is None) or self._decoded(e, e.value.decode("latin-1"), where):
+                elif (0 not in e.value and b"&" not in e.value and _DECLARED_RX.search(e.value.decode("latin-1")) is None) or self._decoded(e, e.value.decode("latin-1"), where):
                     self.pieces.append((label, e.lineno, e.value.decode("latin-1"), (e.lineno, e.col_offset, -1)))
             elif e.value is None or type(e.value) in (bool, int):
                 # a value slot read as no text: None, a bool or an int, refused by name where it stands directly as the right operand
@@ -9071,7 +9153,7 @@ class _Served(object):
             for idx, v in enumerate(e.values):
                 if isinstance(v, ast.Constant):
                     at = v.lineno if sys.version_info >= (3, 12) else prev
-                    if ("\ufeff" not in v.value and "\x00" not in v.value and _DECLARED_RX.search(v.value) is None) or self._decoded(e, v.value, where, at):
+                    if ("\ufeff" not in v.value and "\x00" not in v.value and "&" not in v.value and _DECLARED_RX.search(v.value) is None) or self._decoded(e, v.value, where, at):
                         self.pieces.append((label, at, v.value, (e.lineno, e.col_offset, idx)))
                 elif isinstance(v, ast.FormattedValue):
                     prev = v.value.end_lineno; self.resolve(v.value, ctx, label, done)

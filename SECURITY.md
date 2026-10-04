@@ -349,9 +349,12 @@ a byte past ASCII (a byte order mark, whole or split across constants, among
 them); page text holding U+FEFF, refused on the safe side because a leading U+FEFF is a byte order mark the page's UTF-8 bytes carry; page text holding a NUL, by which a browser may read interleaved
 NULs as UTF-16; page text declaring a charset other than utf-8 (a `charset=` in any
 case, as a meta element's charset attribute and a content attribute's parameter
-spell it, or an XML declaration's `encoding=`, followed by any label but utf-8)
-in a string or bytes constant, an f-string's literal part or the joined text of
-a join of string constants; a script-running content type whose parameters name
+spell it, or an XML declaration's `encoding=`, followed by any label but utf-8,
+read in the text as spelled and again with its character references decoded,
+since a browser decodes them in an attribute's value before it reads the charset
+there) in a string or bytes constant, an f-string's literal part or the joined
+text of a join of string constants; a script-running content type whose
+parameters name
 a charset other than utf-8; and a page's read of a walked browser-text file
 whose text, as the walk decoded it, holds U+FFFD, U+FEFF or a NUL, or declares such a
 charset. A declaration split across texts the census reads apart (at any join
@@ -435,9 +438,18 @@ header is a binding it does not read) and through a dict literal's values
 Content-Type write inside one that is no `_send` definition's own write, and a
 call whose definition binds the parameter one of its own writes names other than
 as that parameter); a type holding a CR or LF is refused by name before it is
-compared (its header line ends there, and what follows is another header or the
-body, which the census does not read); the part before any `;`, stripped and
-lower-cased, is compared with the types a browser runs script from
+compared, even at a place SERVED_ALLOW names, where the census resolves the type
+there (its header line ends there, and what follows is another header or the
+body, which the census does not read); so is a type that is not exactly one
+listed type, since a browser may run a page under any other (a list of types by
+its last valid one, a type it sniffs where no nosniff header stands, a
+multipart's HTML part): one holding a character past ASCII or a comma, or whose
+part before any `;`, stripped of spaces and tabs alone and lower-cased, is in
+neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix
+(NO_SCRIPT_TYPES: the types the live tree serves that run no script,
+application/json, application/manifest+json, application/octet-stream, image/png
+and text/plain); the part before any `;`, stripped and lower-cased, is compared
+with the types a browser runs script from
 (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and
 application/xhtml+xml among them; and text/javascript under each name a browser
@@ -536,10 +548,16 @@ other name there refusing it, save a bare name a call calls (`f` in `f(...)`);
 and so is each argument a `_send` call hands its definition but the page body
 and the content type (read above), positional, starred or keyword, a `**` among
 them: each string or bytes constant in it, a dict literal's keys and values
-among them, and each name in it that one top-level plain assignment binds and no
-function scope around the call binds, read through the module constants its
-value names, any other name there not read, one holding a CR or LF refusing the
-call by name before it is typed; a CR or LF the value computes at run time, a
+among them, and each name in it that no function scope around the call binds: a
+module constant (a name one top-level plain assignment binds and nothing
+rebinds), read through the module constants its value names, one holding a CR or
+LF refusing the call by name before it is typed; and any other name the module
+binds or a function rebinds (bound more than once or by an annotated assignment,
+or rebound under a `global` declaration or by a module-level statement), save a
+top-level import's name that nothing rebinds and a bare name a call calls,
+refusing the call by name as a name the census does not follow by binding, in
+the argument or in a module constant's value there; any other name there (a
+builtin's) not read; a CR or LF the value computes at run time, a
 call's return or a number formatted as a character, is not read, nor is a header
 value held anywhere else, a local, a parameter, an attribute, a call's return or
 an item, its witnesses a CR LF from chr and one from a `%c` of an int, and a
