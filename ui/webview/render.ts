@@ -7779,9 +7779,10 @@ function showSelectionMenu(e: MouseEvent) {
   const mk = (labelText: string, fn: () => void) => { items.push({ label: labelText, pick: fn }); };
   // Comment first, Quote second (the user 2026-08-23): Comment is the primary act — a side thread
   // about the passage — and Quote is the lighter one. Comment only when the selection sits in a real
-  // transcript turn (transcriptSelection's uuid) on a real session.
+  // transcript turn (transcriptSelection's uuid) on a real session, and meets no formula whose text the
+  // math renderer's arrival will change (selectionMeetsChangingMath).
   const q = transcriptSelection();
-  if (q?.uuid && activeId && !isProvisionalId(activeId) && liveSession(activeId)) {
+  if (q?.uuid && activeId && !isProvisionalId(activeId) && liveSession(activeId) && !selectionMeetsChangingMath(sel)) {
     const sid = activeId, uuid = q.uuid, qtext = q.text;
     mk("Comment", () => openCommentComposer(sid, uuid, qtext, e.clientX, e.clientY));
   }
@@ -19445,6 +19446,24 @@ function seedEditorQuote(id: string, quote: string, src?: string): void {
 // concatenates every range and merged two discontiguous sections into one chip (the user 2026-08-04).
 // The earlier ranges already own their chips from their own gestures. Endpoints come from the range's
 // own containers (anchor/focus describe only the last-modified range, and flip on a backwards drag).
+// The formulas whose text the math renderer's arrival changes (math.ts): one WAITING for it (its placeholder, .md-math-inline or
+// .md-math-display, holding the TeX as text) or SHOWING A FAILED LOAD'S SOURCE (the fallback the failure marked, data-math-failed,
+// which a later success lays out). A comment thread anchored across either records the TeX as its passage, and once the formula is
+// laid out its mark covers only the prose before it, or nothing, at that arrival and every later page life's (the review of iOS
+// item 6, round 2, regression-1). A laid-out formula (.katex: the fill unwraps the placeholder) and a refused one (code.md-math-src
+// with no mark: its source for good) keep their text, and Comment over them. Spelled here, not imported: render.ts takes only the
+// arrival's hook and the two tests from math.ts (render-math.test.ts holds the spelling to math.ts's own names).
+const MATH_CHANGING_SEL = ".md-math-inline, .md-math-display, [data-math-failed]";
+/** Whether the selection's newest range, the one Comment anchors (transcriptSelection), lies inside or across such a formula. */
+function selectionMeetsChangingMath(sel: Selection): boolean {
+  if (!sel.rangeCount) return false;
+  const r = sel.getRangeAt(sel.rangeCount - 1);
+  const c = r.commonAncestorContainer;
+  const host = c instanceof Element ? c : c.parentElement;
+  if (!host) return false;
+  if (host.closest(MATH_CHANGING_SEL)) return true;                                   // inside one
+  return Array.from(host.querySelectorAll(MATH_CHANGING_SEL)).some((n) => r.intersectsNode(n));   // across one
+}
 function transcriptSelection(): { text: string; uuid: string | null } | null {
   const sel = window.getSelection();
   if (!sel || !sel.rangeCount) return null;

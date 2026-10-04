@@ -22,7 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Marked } from "marked";
 import katex from "katex";
-import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS, MATH_TEX_MAX_CHARS, MATH_TEX_BUDGET_CHARS, MATH_MAX_SIZE_EM, MATH_EXPANSION_BUDGET_CHARS, MATH_SOURCE_CLASS, MATH_ERROR_COLOR, macroBounds, maxExpandFor } from "./math";
+import { mathBlock, mathInline, mathPlaceholder, MATH_INLINE_CLASS, MATH_DISPLAY_CLASS, MATH_TEX_MAX_CHARS, MATH_TEX_BUDGET_CHARS, MATH_MAX_SIZE_EM, MATH_EXPANSION_BUDGET_CHARS, MATH_SOURCE_CLASS, MATH_ERROR_COLOR, MATH_FAILED_ATTR, macroBounds, maxExpandFor } from "./math";
 
 const m = new Marked({ gfm: true, extensions: [mathBlock, mathInline] });
 const html = (src: string) => m.parse(src) as string;
@@ -316,6 +316,11 @@ test("the fill's bounds stand ahead of the one katex.render call, in order: the 
   assert.match(hl, new RegExp('if \\(code\\.classList\\.contains\\("' + MATH_SOURCE_CLASS + '"\\)\\) \\{ const host = code\\.parentElement; if \\(host && host\\.tagName === "PRE"\\) addCopyBtn\\(host as HTMLElement, raw\\); return; \\}'),
     "the highlighter skips the fallback (its Copy button kept) before any tokenizing");
   assert.ok(hl.indexOf('classList.contains("' + MATH_SOURCE_CLASS + '")') < hl.indexOf("highlightHtml("), "the exemption stands ahead of the tokenizer");
+  // the selection menu's Comment stands down over a formula whose text the arrival changes (the PR's review, round 2, regression-1):
+  // render.ts spells the two states' selectors for the same reason, and the spelling is math.ts's own names, the waiting placeholder's
+  // two classes and the failure's mark (tests/test_math_chunk_served.py runs the menu over all four states of a formula)
+  assert.match(render_, new RegExp('^const MATH_CHANGING_SEL = "\\.' + MATH_INLINE_CLASS + ', \\.' + MATH_DISPLAY_CLASS + ', \\[' + MATH_FAILED_ATTR + '\\]";$', "m"),
+    "render.ts's MATH_CHANGING_SEL is the waiting placeholder's two classes and the failure's mark, as math.ts names them");
 });
 
 test("executed: macroBounds reads a formula's macro bodies the way KaTeX will expand them, and maxExpandFor bounds the expansion by the longest", () => {

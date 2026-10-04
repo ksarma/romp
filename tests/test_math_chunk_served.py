@@ -667,6 +667,85 @@ await browser.close();
 process.exit(0);
 """
 
+# The selection menu over a formula in each of its four states (the review of iOS item 6, round 2, regression-1): a passage selected
+# from the prose before a formula to the prose after it, then a right-click inside the selection, and the menu's items read. Comment
+# is left off over a formula WAITING for the renderer and over one SHOWING A FAILED LOAD'S SOURCE (the arrival changes both texts, so
+# a thread made there would record the TeX as its passage) and offered over a REFUSED formula and a LAID-OUT one, whose text holds.
+# The first chunk request is held, then answered 404; the retry, used by a reply the driver appends, is served.
+DRIVER_COMMENT = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const out = {};
+const PENDING = "#content .md-math-inline, #content .md-math-display";
+try {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 } });
+  const errors = []; page.on("pageerror", (e) => errors.push(e.message));
+  const settle = () => page.evaluate(() => fetch("/healthz", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+  const reqs = [];
+  let release; const held = new Promise((r) => { release = r; });
+  await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => {
+    const n = reqs.push(route.request().url());
+    if (n === 1) { await held; return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" }); }
+    await route.continue();
+  });
+  await page.goto(cfg.chat);
+  await page.waitForFunction((t) => (document.body.innerText || "").includes(t), cfg.refusedMarker, { timeout: 30000 });
+  await settle();
+  // installed once (the page's policy allows no eval): select from `head` (the first text node of the paragraph starting `marker`
+  // that holds it) to `tail`, right-click inside the selection, read the menu's labels and the state of the formula selected across
+  await page.evaluate(() => {
+    window.__menuOver = (marker, head, tail) => {
+      const p = Array.from(document.querySelectorAll("#content p")).find((e) => (e.textContent || "").startsWith(marker));
+      if (!p) return { error: "no paragraph starting " + marker };
+      const texts = []; const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); let n;
+      while ((n = w.nextNode())) texts.push(n);
+      const a = texts.find((t) => t.data.includes(head)), b = texts.find((t) => t.data.includes(tail));
+      if (!a || !b) return { error: "no text holding " + (a ? tail : head) };
+      const r = document.createRange();
+      r.setStart(a, a.data.indexOf(head)); r.setEnd(b, b.data.indexOf(tail) + tail.length);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      const box = r.getBoundingClientRect();
+      p.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: box.left + 4, clientY: box.top + 4 }));
+      const labels = Array.from(document.querySelectorAll(".ctx-menu .ctx-item-label")).map((x) => x.textContent);
+      const f = p.querySelector(".md-math-inline, .md-math-display, code.md-math-src, .katex");
+      const state = !f ? "none" : f.matches(".md-math-inline, .md-math-display") ? "waiting" : f.matches("[data-math-failed]") ? "failed"
+        : f.matches("code.md-math-src") ? "refused" : "laid";
+      return { labels, state, across: !!f && r.intersectsNode(f) };
+    };
+  });
+  const over = async (marker, head, tail) => {
+    const m = await page.evaluate(([a, b, c]) => window.__menuOver(a, b, c), [marker, head, tail]);
+    await page.keyboard.press("Escape");                                  // the menu goes
+    await page.evaluate(() => window.getSelection().removeAllRanges());
+    await settle();
+    return m;
+  };
+  out.waiting = await over(cfg.marker, cfg.head, cfg.tail);
+  out.refused = await over(cfg.refusedMarker, cfg.refusedHead, cfg.refusedTail);
+  release();
+  await page.waitForFunction((sel) => !document.querySelector(sel) && !!document.querySelector("#content [data-math-failed]"), PENDING, { timeout: 30000 });
+  await settle();
+  out.failed = await over(cfg.marker, cfg.head, cfg.tail);
+  fs.appendFileSync(cfg.transcript, cfg.retryLines);
+  await page.waitForFunction(() => !document.querySelector("#content [data-math-failed]") && !!document.querySelector("#content .katex"), null, { timeout: 30000 });
+  await settle();
+  out.laid = await over(cfg.marker, cfg.head, cfg.tail);
+  out.requests = reqs.length;
+  out.errors = errors;
+} catch (e) {
+  out.died = String(e && e.message || e);
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
 
 class ServedMathChunk(unittest.TestCase):
     """One hermetic kernel per test, so each engine's chat opens on a transcript that has never held a formula (the chat
@@ -1084,6 +1163,45 @@ class ServedMathChunk(unittest.TestCase):
     @with_api_session
     def test_a_tab_hidden_while_the_chunk_lands_on_a_phone_webkit(self):
         self._hidden_tab("webkit")
+
+    def _comment_menu(self, engine):
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        refused = ("REFUSED-01: the doubled macro $\\def\\twice#1{#1#1}\\twice{x}$ stays as its source here, whatever the renderer "
+                   "does, since its argument is repeated.")
+        recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
+                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                reply("r1", "u2", self.t0 + 40, ranking_reply()), reply("r2", "r1", self.t0 + 50, refused)]
+        with open(self.transcript, "a") as f:
+            f.write(jsonl(recs))
+        cfg = os.path.join(self.lab, "cfg-comment-%s.json" % engine)
+        Path(cfg).write_text(json.dumps({
+            "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "transcript": self.transcript,
+            "marker": "STEP-01", "head": MARK_HEAD, "tail": MARK_TAIL,
+            "refusedMarker": "REFUSED-01", "refusedHead": "the doubled macro", "refusedTail": "stays as its source",
+            "retryLines": jsonl([reply("rr", "r2", self.t0 + 300, "RETRY-REPLY: and $$\\sum_{k=1}^{m} k$$ for the tally.\n")])}))
+        r = self._run(engine, DRIVER_COMMENT, cfg, "comment-" + engine)
+        w = engine + ": selection menu: "
+        self.assertNotIn("died", r, w + "the driver stopped early: %r\nkernel:\n%s" % (r.get("died"), Path(self.klog).read_text()[-1500:]))
+        every = dict((k, (r[k].get("state"), "Comment" in r[k].get("labels", []))) for k in ("waiting", "refused", "failed", "laid"))   # each state and whether Comment stood, for every message below
+        for name, state, comment in (("waiting", "waiting", False), ("refused", "refused", True), ("failed", "failed", False), ("laid", "laid", True)):
+            m = r[name]
+            self.assertNotIn("error", m, w + name + ": %r" % m)
+            self.assertEqual((m["state"], m["across"]), (state, True), w + name + ": the selection runs across a formula in that state: %r" % m)
+            self.assertIn("Quote", m["labels"], w + name + ": the menu opened over the selection: %r" % m)
+            self.assertEqual("Comment" in m["labels"], comment,
+                             w + "%s: Comment is %s over a formula %s: %r" % (name, "offered" if comment else "left off", {
+                                 "waiting": "waiting for the renderer, whose text the arrival changes", "failed": "showing a failed load's source, which a success lays out",
+                                 "refused": "refused for good, its source stable", "laid": "laid out, its text stable"}[name], every))
+        self.assertEqual(r["requests"], 2, w + "the held first request (a 404), then the retry: %r" % r)
+        self.assertEqual(r["errors"], [], w + "no page error")
+
+    def test_comment_is_left_off_over_a_formula_whose_text_the_arrival_changes_and_offered_over_a_stable_one_chromium(self):
+        self._comment_menu("chromium")
+
+    def test_comment_is_left_off_over_a_formula_whose_text_the_arrival_changes_and_offered_over_a_stable_one_webkit(self):
+        self._comment_menu("webkit")
 
 
 if __name__ == "__main__":
