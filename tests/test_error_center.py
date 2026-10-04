@@ -541,20 +541,24 @@ warnBtn.fire('click');
 out.unmutedOpen = Object.assign(state(), { listed: listed('arrival muted') });
 window.__rompCloseErrs();
 out.unmutedClosed = state();
-// g2) an unmute marks only its own kind's entries, and only with the Log open: two kinds muted with the Log open and an entry
-// of each; the first kind unmuted with the Log open (its entry seen, the other's still stored unread); the Log closed; the
-// second kind unmuted with the Log closed (its entry unread, the triangle red). In the page the toggles sit in the Log's panel,
-// so a person unmutes with the Log open; the stub's toggle is clicked with the Log closed to read that branch
+// g2) an unmute marks every entry of its own kind, only those, and only with the Log open: two kinds muted with the Log open,
+// two entries of the first and one of the second; the first kind unmuted with the Log open (both its entries listed and seen,
+// the older as well as the newest; the other kind's still stored unread); the Log closed; the second kind unmuted with the Log
+// closed (its entry unread, the triangle red). In the page the toggles sit in the Log's panel, so a person unmutes with the
+// Log open; the stub's toggle is clicked with the Log closed to read that branch. The older entry's text shares no prefix with
+// the newer's, since listed() matches a row by prefix
 function seenOf(t) { const n = notes().find((x) => x.text === t); return n ? n.seen : null; }
 window.__rompOpenErrs();
 const retryBtn = EL['rerr-fgrid'].children.find((c) => c.textContent === 'retrying');
 warnBtn.fire('click');
 retryBtn.fire('click');
+post({ romp: 'notify', kind: 'warn', text: 'older pair muted warn' });
 post({ romp: 'notify', kind: 'warn', text: 'pair muted warn' });
 post({ romp: 'notify', kind: 'retry', text: 'pair muted retry' });
 warnBtn.fire('click');
-out.pairFirstUnmutedOpen = Object.assign(state(), { warnSeen: seenOf('pair muted warn'), retrySeen: seenOf('pair muted retry'),
-                                                    listed: listed('pair muted warn') });
+out.pairFirstUnmutedOpen = Object.assign(state(), {
+  warnSeen: seenOf('pair muted warn'), olderSeen: seenOf('older pair muted warn'), retrySeen: seenOf('pair muted retry'),
+  listed: listed('pair muted warn'), olderListed: listed('older pair muted warn') });
 window.__rompCloseErrs();
 retryBtn.fire('click');
 out.pairSecondUnmutedClosed = Object.assign(state(), { retrySeen: seenOf('pair muted retry'), filters: STORE['romp:errFilters'] });
@@ -624,8 +628,9 @@ class ArrivalWhileOpen(unittest.TestCase):
     def test_an_unmute_marks_only_its_kinds_entries_and_only_with_the_log_open(self):
         a = self.out["pairFirstUnmutedOpen"]
         self._is("pairFirstUnmutedOpen", False, "!", 0, 1, True)   # the still-muted kind's entry stays stored unread
-        self.assertEqual((a["warnSeen"], a["retrySeen"], a["listed"]), (True, False, True),
-                         "only the unmuted kind's entry is marked: %r" % (a,))
+        # both of the unmuted kind's entries are listed and seen, the older as well as the newest; the other kind's is not
+        self.assertEqual((a["warnSeen"], a["olderSeen"], a["retrySeen"], a["listed"], a["olderListed"]),
+                         (True, True, False, True, True), "every entry of the unmuted kind is marked, only those: %r" % (a,))
         b = self.out["pairSecondUnmutedClosed"]
         self._is("pairSecondUnmutedClosed", True, "1", 1, 1, False)   # unmuted with the Log closed: unread, red
         self.assertEqual((b["retrySeen"], b["filters"]), (False, "{}"), "the closed unmute marks nothing: %r" % (b,))

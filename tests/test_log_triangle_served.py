@@ -23,16 +23,16 @@ the triangle red under the open Log and left it red after the close, for lines j
 (tests/log_triangle_browser.mjs) reads the triangle's computed colour at each of the states above, on the tab the shell
 opened on and after a tap on another tab, then under the light theme, and reads every other bar button's colour at every
 step, so the fix is held to leaving the active tab's accent, the other tabs' grey and the other actions' grey as they
-were. The glyph's outline and digit are drawn in currentColor, and each is read as well. The walk mutes a kind and
-unmutes it with the Log open, by taps on its toggle; the toggles sit in the Log's panel, so no tap can unmute with the Log
-closed. tests/test_error_center.py executes that branch, the desktop's Open log count beside the triangle, and an arrival
-with a socket down and the Log open, against the Log script itself.
+were. The glyph's outline and digit are drawn in currentColor, and each is read as well. The walk mutes a kind, logs two
+entries of it, and unmutes it with the Log open, by taps on its toggle; the toggles sit in the Log's panel, so no tap can
+unmute with the Log closed. tests/test_error_center.py executes that branch, the desktop's Open log count beside the
+triangle, and an arrival with a socket down and the Log open, against the Log script itself.
 
 Red at the base tree in every engine at the first unread step (the computed colour there is the action grey). A mutant
 that restores the old precedence (the selector back to `#merr.has`) turns the dark steps red; one without the light rule
 turns the light step red; one that leaves an entry that arrives with the Log open unread (the write path before
 2026-10-03) turns the openNew step red; one that lists an unmuted kind's entries unread with the Log open (the toggle
-before 2026-10-04) turns the unmutedOpen step red.
+before 2026-10-04), or marks only the newest of them, turns the unmutedOpen step red.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), its port and its wait from tests/lab_ports.py, a
@@ -190,24 +190,27 @@ class LogTriangle(unittest.TestCase):
             self.assertEqual((s["has"], s["digit"], s["color"]), (False, "!", DARK["idle"]),
                              "%s %s: an entry that arrived with the Log open is seen, so nothing is unread (Log open %s): %r"
                              % (engine, name, s["logOpen"], s))
-        # THE UNMUTE RULE (2026-10-04), third, so a tree that lists an unmuted kind's entries unread is red for it: the entry
-        # logged while its kind is muted is not listed; the kind unmuted with the Log open, the entry is listed and seen, so the
-        # triangle is grey with the '!' glyph under the open Log and after it closes. mutedListed is read at every open step
-        for name, listed in (("openSeen", False), ("downOpen", False), ("upOpen", False), ("openNew", False),
-                             ("reopenSeen", False), ("mutedOpen", False), ("unmutedOpen", True)):
-            self.assertEqual(steps[name]["mutedListed"], listed, "%s %s: the open Log lists the entry logged while its kind was "
-                             "muted only once the kind is unmuted: %r" % (engine, name, steps[name]))
+        # THE UNMUTE RULE (2026-10-04), third, so a tree that lists an unmuted kind's entries unread is red for it: the two
+        # entries logged while their kind is muted are not listed; the kind unmuted with the Log open, both are listed and
+        # seen, the older as well as the newer, so the triangle is grey with the '!' glyph under the open Log and after it
+        # closes. mutedListed and mutedOlderListed are read at every open step
+        for key in ("mutedListed", "mutedOlderListed"):
+            for name, listed in (("openSeen", False), ("downOpen", False), ("upOpen", False), ("openNew", False),
+                                 ("reopenSeen", False), ("mutedOpen", False), ("unmutedOpen", True)):
+                self.assertEqual(steps[name][key], listed, "%s %s %s: the open Log lists an entry logged while its kind was "
+                                 "muted only once the kind is unmuted: %r" % (engine, name, key, steps[name]))
         for name in ("unmutedOpen", "unmutedClosed"):
             s = steps[name]
             self.assertEqual((s["has"], s["digit"], s["color"]), (False, "!", DARK["idle"]),
-                             "%s %s: the entry an unmute listed in the open Log is seen, so nothing is unread (Log open %s): %r"
-                             % (engine, name, s["logOpen"], s))
-        # its stored seen flag: absent before it is logged, unread while its kind is muted, seen from the unmute on
+                             "%s %s: the entries an unmute listed in the open Log are seen, so nothing is unread (Log open "
+                             "%s): %r" % (engine, name, s["logOpen"], s))
+        # each one's stored seen flag: absent before it is logged, unread while its kind is muted, seen from the unmute on
         names = [x[0] for x in STEPS]
-        for i, name in enumerate(names):
-            want = None if i < names.index("mutedOpen") else name != "mutedOpen"
-            self.assertEqual(steps[name]["mutedSeen"], want, "%s %s: the muted kind's entry's stored seen flag: %r"
-                             % (engine, name, steps[name]))
+        for key in ("mutedSeen", "mutedOlderSeen"):
+            for i, name in enumerate(names):
+                want = None if i < names.index("mutedOpen") else name != "mutedOpen"
+                self.assertEqual(steps[name][key], want, "%s %s %s: a muted kind's entry's stored seen flag: %r"
+                                 % (engine, name, key, steps[name]))
         prev_tab = None
         for name, pal, has, log_open, digit in STEPS:
             s = steps[name]
