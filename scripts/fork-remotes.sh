@@ -61,15 +61,28 @@ git rev-parse --git-dir >/dev/null 2>&1 || { echo "fork-remotes: not a git clone
 
 # Compare repos by identity, not by string: https/ssh/.git-suffix spellings of
 # the same repo must count as equal, or the "origin is not upstream" guard below
-# would wave through an ssh-cloned upstream.
+# would wave through an ssh-cloned upstream. Trailing slashes are stripped before
+# and after the .git suffix, so 'X.git/' and 'X/.git' both read as 'X'. Limits:
+# an ssh port, a user other than git in user@host:, and a doubled slash each make
+# one repository read as two; and every url is lowercased, so two local paths
+# that differ only in case read as one.
 repo_id() {
     printf '%s' "$1" \
         | sed -e 's#^git@\([^:]*\):#\1/#' -e 's#^[a-z+]*://##' -e 's#^[^@/]*@##' \
-              -e 's#\.git$##' -e 's#/*$##' \
+              -e 's#/*$##' -e 's#\.git$##' -e 's#/*$##' \
         | tr '[:upper:]' '[:lower:]'
 }
 
 url_of() { git remote get-url "$1" 2>/dev/null || true; }
+
+# Every url a remote carries, one "<fetch|push> <url>" line each, as git resolves them: --all for a
+# remote with several, and get-url applies insteadOf and pushInsteadOf rewrites, so a url is read the
+# way a fetch or a push would use it. A remote with no push url prints its fetch urls under push.
+# The -- keeps a remote whose name starts with a dash from being read as an option.
+urls_of() {
+    git remote get-url --all -- "$1" 2>/dev/null | sed 's/^/fetch /' || true
+    git remote get-url --push --all -- "$1" 2>/dev/null | sed 's/^/push /' || true
+}
 
 origin_url="$(url_of origin)"
 [ -n "$origin_url" ] || { echo "fork-remotes: this clone has no 'origin' remote" >&2; exit 2; }
@@ -89,6 +102,8 @@ EOF
 fi
 
 problems=0
+shared=0   # of those, the shared-repository notes, which name their own fix (the fetch note's ends with a rerun)
+rerun_moves_pushes=0   # 1 once a fetch note fires while a push to origin goes somewhere its fetch url is not, which withholds the rerun line
 note() { problems=$((problems + 1)); echo "  ✗ $1"; }
 
 if [ $check_only -eq 1 ]; then
@@ -109,6 +124,71 @@ if [ $check_only -eq 1 ]; then
     if [ -n "$origin_push" ] && [ "$(repo_id "$origin_push")" != "$(repo_id "$origin_url")" ]; then
         note "origin PUSHES to $origin_push, not your fork — a bare push would not land on the fork"
     fi
+    # origin set by mistake to the url of another remote the clone carries (another fork kept as a
+    # second remote, say) passes every check above: they compare origin only with the project's url
+    # and with itself. A fetch from origin and a bare gh PR number would then read that other
+    # repository, and pushes may go there too. So each of origin's urls is compared by repo_id with
+    # each url of every other remote, and one note per remote names both, with the first match.
+    # origin's urls come in three kinds, read in this order: its first url, the one git fetches from
+    # (fetch); any url after the first (extra), which git never fetches from but pushes to when origin
+    # has no push url; and its push urls (push). The dead sentinel names no repository and is skipped
+    # on origin's side, which is enough (a match needs origin to carry it too): origin's push url set
+    # to it is the push check's finding above, which a rerun fixes.
+    origin_urls="$(urls_of origin | awk '$1 == "fetch" && seen++ { sub(/^fetch/, "extra") } { print }')"
+    # where a push to origin goes, read from git rather than assumed: every push url, or every url
+    # when origin has no push url
+    origin_pushes="$(printf '%s\n' "$origin_urls" | awk '$1 == "push" { sub(/^push /, ""); printf "%s%s", (n++ ? ", " : ""), $0 }')"
+    while IFS= read -r _dup_r; do
+        case "$_dup_r" in ""|origin) continue ;; esac
+        _dup_hit=""
+        while read -r _dup_okind _dup_ourl; do
+            case "$_dup_ourl" in ""|"$NOPUSH") continue ;; esac
+            while read -r _dup_rkind _dup_rurl; do
+                [ -n "$_dup_rurl" ] || continue
+                if [ "$(repo_id "$_dup_ourl")" = "$(repo_id "$_dup_rurl")" ]; then
+                    _dup_hit="origin's $_dup_okind url $_dup_ourl is the same repository as remote '$_dup_r' ($_dup_rkind url $_dup_rurl)"
+                    break 2
+                fi
+            done <<<"$(urls_of "$_dup_r")"
+        done <<<"$origin_urls"
+        [ -n "$_dup_hit" ] || continue
+        # Each note names its own fix and does not count toward the rerun advice. A rerun never
+        # rewrites origin's fetch url or removes an extra url, and resets origin's push url to its
+        # fetch url unless origin carries several push urls (its set-url refuses those). So:
+        # - fetch: a rerun copies origin's fetch url, the one the note names, onto its push url. Where a
+        #   push to origin already goes only to that repository, that moves no push, and the rerun line
+        #   stays for the other notes (upstream given the fork's url, say, which a rerun fixes). Where a
+        #   push goes anywhere else, the rerun would move it onto the repository the note names, so the
+        #   standalone line is withheld whatever else fired. The note's steps cannot move a push onto
+        #   that repository as long as each succeeds: the fetch url first, the push url next, the rerun
+        #   last. On an origin with several urls the first step names the url to replace, the form git
+        #   accepts there (a plain set-url origin refuses a remote with several).
+        # - extra: a rerun cannot remove it, so the note names the git command that does.
+        # - push: a match on origin's one push url is also the push check's finding above (it cannot
+        #   match the fetch url, or the fetch note would have fired), which brings the rerun line
+        #   back; a match on a second push url the rerun cannot clear.
+        shared=$((shared + 1))
+        case "$_dup_okind" in
+            fetch)
+                while read -r _dup_pkind _dup_purl; do
+                    if [ "$_dup_pkind" = push ] && [ "$(repo_id "$_dup_purl")" != "$(repo_id "$origin_url")" ]; then
+                        rerun_moves_pushes=1
+                    fi
+                done <<<"$origin_urls"
+                _dup_set="git remote set-url origin <your-fork-url>"
+                case "$origin_urls" in
+                    *$'\n'"extra "*) _dup_set="git remote set-url origin <your-fork-url> <that-url>, which replaces only that one of origin's urls" ;;
+                esac
+                note "$_dup_hit: if origin was set to that url by mistake, a fetch from origin and a bare gh PR number read that repository, not your fork, and a push to origin goes to $origin_pushes. Point origin's fetch and push urls at your fork ($_dup_set, then git remote set-url --push origin <your-fork-url>), then run scripts/fork-remotes.sh; or remove '$_dup_r' if it is a second name for your fork"
+                ;;
+            extra)
+                note "$_dup_hit: git fetches only from origin's first url, and a push to origin goes to $origin_pushes. Remove that url (git remote set-url --delete origin <that-url>), or remove '$_dup_r' if it is a second name for your fork"
+                ;;
+            *)
+                note "$_dup_hit: a push to origin lands there. Remove that push url (git remote set-url --delete --push origin <that-url>), or remove '$_dup_r' if it is a second name for your fork"
+                ;;
+        esac
+    done < <(git remote)
     pd="$(git config --get remote.pushDefault || true)"
     if [ -n "$pd" ] && [ "$pd" != "origin" ]; then
         note "remote.pushDefault is '$pd' — a bare 'git push' would not go to your fork"
@@ -142,10 +222,17 @@ if [ $check_only -eq 1 ]; then
         note "remote '$_gh_remote' carries gh's default-repository key ($_gh_key: $_gh_n value(s), '$_gh_vals'); only origin should, else gh may resolve a bare PR number there, not on your fork"
     done < <(git config --get-regexp '^remote\..*\.gh-resolved$' 2>/dev/null | awk '{print $1}' | sort -u || true)
     if [ $problems -eq 0 ]; then
-        echo "  ✓ origin (your fork) is the only pushable remote and gh's default repository"
+        # what the checks above verified, and nothing more: none of them reads where a bare push goes
+        # while remote.pushDefault is unset, or what a third remote pushes to
+        echo "  ✓ upstream fetches from the project and is fetch-only; origin pushes to the repository it fetches from, shares no repository with another remote, and is gh's only default repository; no pushDefault or pushRemote is set to anything but origin"
         exit 0
     fi
-    echo "Run scripts/fork-remotes.sh to fix." >&2
+    # The rerun advice only where a rerun fixes something and moves no push: the shared-repository notes
+    # name their own fix, and beside a fetch note whose rerun would move pushes (see the fetch case
+    # above) the standalone line is withheld.
+    if [ $rerun_moves_pushes -eq 0 ] && [ $problems -gt $shared ]; then
+        echo "Run scripts/fork-remotes.sh to fix." >&2
+    fi
     exit 1
 fi
 

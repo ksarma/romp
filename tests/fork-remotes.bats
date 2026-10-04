@@ -113,6 +113,221 @@ upstream_commit() {  # <file> <text> <subject>
     [ "$status" -eq 0 ]
 }
 
+# origin set by mistake to the url of another remote the clone carries (another fork kept as a second
+# remote, say) passes every check that compares origin with the project or with itself, and a fetch,
+# a bare gh PR number and possibly every push would go to that repository. --check compares each of
+# origin's urls (its first, any extra, and its push urls) with each url of every other remote, by
+# repo_id and as git resolves them. A mistake planted before configuring is left standing
+# (configuring never rewrites origin's fetch url) while the push guards go in place, so the shared
+# repository is the only thing wrong. The other remotes name local paths nothing fetches.
+
+@test "--check fails when origin is the same repository as another remote's fetch url, naming both" {
+    # Two spellings of one repository, a file:// url and a bare path: repo_id counts them equal.
+    git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
+    git -C "$REPO" remote set-url origin "file://$TEST_DIR/mirror.git"
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's fetch url file://$TEST_DIR/mirror.git is the same repository as remote 'mirror' (fetch url $TEST_DIR/mirror.git)"* ]]
+    # configuring copied the wrong fetch url onto the push url, and the note says so
+    [[ "$output" == *"a push to origin goes to file://$TEST_DIR/mirror.git. "* ]]
+    # the steps cover the push url as well as the fetch url, with the rerun after them, and the
+    # standalone rerun line stays out
+    [[ "$output" == *"(git remote set-url origin <your-fork-url>, then git remote set-url --push origin <your-fork-url>), then run scripts/fork-remotes.sh"* ]]
+    [[ "$output" != *"Run scripts/fork-remotes.sh to fix."* ]]
+    # and following them, in that order, clears --check
+    git -C "$REPO" remote set-url origin "$FORK"
+    git -C "$REPO" remote set-url --push origin "$FORK"
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "--check gives no rerun line when origin's fetch url moved after configuring, and says where pushes go" {
+    # Configured on the fork, then origin's fetch url set to another remote's: the push url that
+    # configuring set still names the fork. A rerun now would copy the wrong fetch url onto the push
+    # url and move pushes as well, so the rerun line is withheld though the push check also fires.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
+    git -C "$REPO" remote set-url origin "$TEST_DIR/mirror.git"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's fetch url $TEST_DIR/mirror.git is the same repository as remote 'mirror' (fetch url $TEST_DIR/mirror.git)"* ]]
+    [[ "$output" == *"a push to origin goes to $FORK. "* ]]
+    [[ "$output" == *"origin PUSHES to $FORK"* ]]        # a note a rerun would otherwise answer
+    [[ "$output" != *"Run scripts/fork-remotes.sh to fix."* ]]
+}
+
+@test "--check fails when origin is the same repository as another remote's push url" {
+    # The other remote fetches from one repository and pushes to another, and origin is the one it
+    # pushes to: a check that read only each remote's fetch url would pass this clone.
+    git -C "$REPO" remote add mirror "$TEST_DIR/elsewhere.git"
+    git -C "$REPO" remote set-url --push mirror "$TEST_DIR/mirror.git"
+    git -C "$REPO" remote set-url origin "$TEST_DIR/mirror.git"
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's fetch url $TEST_DIR/mirror.git is the same repository as remote 'mirror' (push url $TEST_DIR/mirror.git)"* ]]
+}
+
+@test "--check fails when origin's second push url is another remote's repository" {
+    # A push goes to every push url a remote carries. origin's first is the fork, which is all the
+    # origin push check reads; the second is the other remote's repository, so every push lands there
+    # as well. Planted after configuring, whose set-url refuses a remote with two push urls.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
+    git -C "$REPO" remote set-url --add --push origin "$TEST_DIR/mirror.git"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's push url $TEST_DIR/mirror.git is the same repository as remote 'mirror' (fetch url $TEST_DIR/mirror.git)"* ]]
+    [[ "$output" == *"git remote set-url --delete --push origin <that-url>"* ]]
+    [[ "$output" != *"Run scripts/fork-remotes.sh to fix."* ]]
+}
+
+@test "--check fails when a url of origin's after its first is another remote's repository" {
+    # git fetches from a remote's first url only, but with no push url a push goes to every url it
+    # carries, so the second one is a push destination and not a fetch url. Its remedy is the one git
+    # accepts on a remote with several urls (a plain set-url origin refuses those). Planted after
+    # configuring, with the push url that configuring set removed again, so pushes follow the urls.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
+    git -C "$REPO" config --unset remote.origin.pushurl
+    git -C "$REPO" config --add remote.origin.url "$TEST_DIR/mirror.git"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's extra url $TEST_DIR/mirror.git is the same repository as remote 'mirror' (fetch url $TEST_DIR/mirror.git): git fetches only from origin's first url, and a push to origin goes to $FORK, $TEST_DIR/mirror.git. "* ]]
+    [[ "$output" == *"git remote set-url --delete origin <that-url>"* ]]
+    [[ "$output" != *"origin's fetch url"* ]]
+    # and that remedy clears it
+    git -C "$REPO" remote set-url --delete origin "$TEST_DIR/mirror.git"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "--check reads another remote's url after git's insteadOf rewrite" {
+    # The other remote is written as an alias that url.<base>.insteadOf expands to origin's url. git
+    # fetches and pushes the expanded url, so the check must compare that one, not the alias.
+    git -C "$REPO" config "url.$TEST_DIR/.insteadOf" "short:"
+    git -C "$REPO" remote add mirror "short:mirror.git"
+    git -C "$REPO" remote set-url origin "$TEST_DIR/mirror.git"
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"remote 'mirror' (fetch url $TEST_DIR/mirror.git)"* ]]
+}
+
+@test "--check reads origin's push url set to the dead sentinel as a push to fix, not a shared repository" {
+    # upstream's push url is the sentinel, which names no repository, so origin carrying it too shares
+    # nothing with upstream: the origin push check names it, and a rerun resets it.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" remote set-url --push origin "no-push://upstream-is-fetch-only"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin PUSHES to"* ]]
+    [[ "$output" != *"is the same repository as"* ]]
+    [[ "$output" == *"Run scripts/fork-remotes.sh to fix."* ]]
+}
+
+@test "--check passes with origin, a fetch-only upstream and a third remote of its own" {
+    # The healthy shape: a third remote whose fetch and push urls are both repositories other than
+    # origin's.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
+    git -C "$REPO" remote set-url --push mirror "$TEST_DIR/mirror-push.git"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"✗"* ]]
+    # the all-clear names what --check verified and nothing more: the third remote stays pushable, and
+    # no clause says where a bare push goes
+    [[ "$output" == *"✓ upstream fetches from the project and is fetch-only; origin pushes to the repository it fetches from, shares no repository with another remote, and is gh's only default repository; no pushDefault or pushRemote is set to anything but origin"* ]]
+}
+
+@test "--check counts origin with a slash after .git as the same repository as a remote without one" {
+    git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
+    git -C "$REPO" remote set-url origin "$TEST_DIR/mirror.git/"
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's fetch url $TEST_DIR/mirror.git/ is the same repository as remote 'mirror' (fetch url $TEST_DIR/mirror.git)"* ]]
+}
+
+@test "--check counts a local repository and its .git directory as one repository" {
+    # A strip of trailing slashes ahead of the .git suffix alone would read 'X/.git' as 'X/', so this
+    # pins the strip after the suffix.
+    git -C "$REPO" remote add mirror "$TEST_DIR/work"
+    git -C "$REPO" remote set-url origin "$TEST_DIR/work/.git"
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's fetch url $TEST_DIR/work/.git is the same repository as remote 'mirror' (fetch url $TEST_DIR/work)"* ]]
+}
+
+@test "--check compares a remote whose name starts with a dash or a space" {
+    # git accepts both names ('remote add --', and a config section). Without the -- get-url reads a
+    # dash-led name as an option, and without IFS= read trims a space-led one, so neither is compared.
+    # '-mirror' shares origin's repository by its fetch url and '-pusher' by its push url only, one
+    # for each get-url call.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" remote add -- -mirror "$FORK"
+    git -C "$REPO" remote add -- -pusher "$TEST_DIR/elsewhere.git"
+    git -C "$REPO" remote set-url --push -- -pusher "$FORK"
+    git -C "$REPO" config "remote. mirror.url" "$FORK"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"is the same repository as remote '-mirror' (fetch url $FORK)"* ]]
+    [[ "$output" == *"is the same repository as remote '-pusher' (push url $FORK)"* ]]
+    [[ "$output" == *"is the same repository as remote ' mirror' (fetch url $FORK)"* ]]
+}
+
+@test "--check names the url to replace when origin carries several urls, and following the steps clears it" {
+    # git refuses a plain 'set-url origin <url>' on a remote with several urls; naming the url to
+    # replace is the form it accepts. Never configured, so a push goes to both of origin's urls, and a
+    # rerun now would move every push onto the other remote's repository. Each step is followed
+    # literally, and none of them sends a push there.
+    git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
+    git -C "$REPO" remote set-url origin "$TEST_DIR/mirror.git"
+    git -C "$REPO" config --add remote.origin.url "$FORK"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's fetch url $TEST_DIR/mirror.git is the same repository as remote 'mirror' (fetch url $TEST_DIR/mirror.git)"* ]]
+    [[ "$output" == *"a push to origin goes to $TEST_DIR/mirror.git, $FORK. "* ]]
+    [[ "$output" == *"(git remote set-url origin <your-fork-url> <that-url>, which replaces only that one of origin's urls, then git remote set-url --push origin <your-fork-url>), then run scripts/fork-remotes.sh"* ]]
+    [[ "$output" != *"Run scripts/fork-remotes.sh to fix."* ]]
+    git -C "$REPO" remote set-url origin "$FORK" "$TEST_DIR/mirror.git"
+    [[ "$(git -C "$REPO" remote get-url --push --all origin)" != *"$TEST_DIR/mirror.git"* ]]
+    git -C "$REPO" remote set-url --push origin "$FORK"
+    [[ "$(git -C "$REPO" remote get-url --push --all origin)" != *"$TEST_DIR/mirror.git"* ]]
+    "$REPO/scripts/fork-remotes.sh"
+    [ "$(git -C "$REPO" remote get-url --push --all origin)" = "$FORK" ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "--check keeps the rerun line beside a fetch note when a rerun moves no push, and the rerun clears it" {
+    # origin is right and upstream was added with the fork's url by mistake. The fetch note fires, but
+    # a push to origin already goes only to its fetch url, so a rerun moves no push and fixes upstream.
+    git -C "$REPO" remote add upstream "$FORK"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's fetch url $FORK is the same repository as remote 'upstream' (fetch url $FORK)"* ]]
+    [[ "$output" == *"a push to origin goes to $FORK. "* ]]
+    [[ "$output" == *"Run scripts/fork-remotes.sh to fix."* ]]
+    # the same once origin's push url spells the fork another way and origin carries a second url that
+    # names another repository: the rerun line is judged by the repositories a push goes to, and that
+    # url is not one of them while origin has a push url
+    git -C "$REPO" remote set-url --push origin "$FORK/"
+    git -C "$REPO" config --add remote.origin.url "$TEST_DIR/elsewhere.git"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"a push to origin goes to $FORK/. "* ]]
+    [[ "$output" == *"Run scripts/fork-remotes.sh to fix."* ]]
+    # and the first step names the url to replace, which origin's several urls need, push url or not
+    [[ "$output" == *"(git remote set-url origin <your-fork-url> <that-url>, which replaces only that one of origin's urls, then"* ]]
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
 @test "--check catches a branch.pushRemote that overrides pushDefault" {
     # branch.<name>.pushRemote wins over remote.pushDefault, so a bare push from that branch can land
     # on the project even with pushDefault=origin. --check must inspect it, and configure must clear it.
@@ -236,6 +451,15 @@ upstream_commit() {  # <file> <text> <subject>
     [ "$status" -ne 0 ]
     [[ "$output" == *"points at the upstream project"* ]]
     # Nothing half-configured is left behind.
+    run git -C "$REPO" remote get-url upstream
+    [ "$status" -ne 0 ]
+}
+
+@test "it refuses a clone whose origin is the project with a slash after .git" {
+    git -C "$REPO" remote set-url origin "$UP/"
+    run "$REPO/scripts/fork-remotes.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"points at the upstream project"* ]]
     run git -C "$REPO" remote get-url upstream
     [ "$status" -ne 0 ]
 }
