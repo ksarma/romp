@@ -537,7 +537,7 @@ class RoundThree(unittest.TestCase):
             km._SYNC_NOTICES[:] = []
         with km._remotes_lock:
             self._rows = dict(km._remotes); km._remotes.clear()
-            km._remotes["hostb"] = {"host": "hostb", "status": "up", "local_port": 51000, "token": "tok", "trust": "directed"}
+            km._remotes["hostb"] = {"host": "hostb", "status": "up", "local_port": 1, "token": "tok", "trust": "directed"}
         self.a.set("task-tracking", True, 1_000)
         self.b.set("task-tracking", False, 2_000)
 
@@ -591,7 +591,7 @@ class RoundThree(unittest.TestCase):
         # the self-name sent C's poll to hostb and drew it as B
         self.c.set("task-tracking", False, 3_000)
         with km._remotes_lock:
-            km._remotes["TESTHOSTB"] = {"host": "TESTHOSTB", "status": "up", "local_port": 51001, "token": "tok2", "trust": "directed"}
+            km._remotes["TESTHOSTB"] = {"host": "TESTHOSTB", "status": "up", "local_port": 1, "token": "tok2", "trust": "directed"}
         self._poll()                                                  # B under hostb, self-name TESTHOSTB learned on hostb's row
         self._poll(row_key="TESTHOSTB", peer=self.c, self_name="TESTHOSTC")
         self.assertEqual(self.a.records()["task-tracking"]["hosts"]["TESTHOSTB"]["gt"], 3_000, "C's record under C's row key")
@@ -723,7 +723,7 @@ class TheCard(unittest.TestCase):
 
     def test_a_re_key_moves_the_card_to_the_row_key_and_a_detached_row_takes_it(self):
         with km._remotes_lock:
-            km._remotes["hostb"] = {"host": "hostb", "status": "up", "local_port": 51000, "token": "tok", "trust": "directed"}
+            km._remotes["hostb"] = {"host": "hostb", "status": "up", "local_port": 1, "token": "tok", "trust": "directed"}
         self.a.push("TESTHOSTB", "task-tracking", False, 2_000)     # first contact: the push beats the poll
         self.assertEqual(sorted(self.a.cards()), [self.KEY])
         with self.a:
