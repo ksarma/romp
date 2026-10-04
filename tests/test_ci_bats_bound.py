@@ -49,20 +49,22 @@ class BatsStepBound(unittest.TestCase):
 
 # The Linux cap's three inputs, each a literal, for T230b's rule (the pytest phase plus the per-test timeout plus the time
 # before the step, rounded up to a multiple of 5 minutes; rule_minutes), held against ci.yml by PythonJobCeiling below.
-# PLACEHOLDER: the one-worker pytest phase on the private runner's shape (2 CPUs, 8 GB) is not measured yet. None marks it
-# unmeasured, and test_the_linux_cap_is_the_rules_figure_for_one_worker is red until the measured seconds replace it, here
-# and in ci.yml's comment, with the cap set to rule_minutes of the three.
-ONE_WORKER_PHASE_S = None
+# The one-worker phase is an ESTIMATE, to be measured on the new repo's first CI run: a local run of the Run pytest step's
+# command on 2026-10-04, under a CPUQuota of 200 percent and an 8 GiB memory cap with no swap, at a 1-minute load of 62
+# at the start and 36 to 44 at the end, had its one worker killed by the memory cap (once on 3.12, twice on 3.14t), so its
+# phases (4283 s and 4411 s) are not a clean figure. The estimate is the slowest finished two-worker Linux cell, the 3.10
+# cell of run 37208049133 (job 111453304880), 2312 s in its pytest step, scaled by the serial ratio measured on four CPUs
+# (1437 s against 739 s): ESTIMATE_INPUTS, rounded to the second.
+ONE_WORKER_PHASE_S = 4496
+ONE_WORKER_PHASE_ESTIMATED = True
+ESTIMATE_INPUTS = (2312, 1437, 739)
+# what ci.yml's cap comment says while the phase is an estimate, its comment lines joined
+ESTIMATE_MARK = "estimated; to be measured on the new repo's first CI run"
 # the Run pytest step's --timeout, read back from its run line by test_the_per_test_timeout_input_is_the_steps
 PER_TEST_TIMEOUT_S = 600
-# the steps before Run pytest in the 3.14t cell of run 37158350467 (job 111306365110), on the public runner, the jobs
-# API's figure; the private runner's is read from its first run
-SETUP_S = 32
-# The Linux figure ci.yml carries while ONE_WORKER_PHASE_S is unmeasured: an estimate, the slowest finished two-worker
-# Linux cell's pytest step (2276 s, that same job) scaled by the serial ratio measured on four CPUs (1437 s against 739 s)
-# to about 4426 s, then rule_minutes(4426, 600, 32), 85. Not a measurement; the placeholder test names it.
-ESTIMATED_PHASE_S = 4426
-PLACEHOLDER_LINUX_CAP = 85
+# the steps before Run pytest in that same job (the 3.10 cell of run 37208049133), on the public runner, the jobs API's
+# figure; the private runner's is read from its first run
+SETUP_S = 25
 
 
 def rule_minutes(phase_s, per_test_s, setup_s):
@@ -87,12 +89,15 @@ class PythonJobCeiling(unittest.TestCase):
     and 50 on 2026-10-02 (the slowest finished two-worker cell, the 3.14t cell of run 37158350467, 2276 s in its pytest
     step and 32 s before it: 2908 s, about 48 min 28 s). Since 2026-10-04 the Linux cells run one worker each on the
     private runner (2 CPUs and 8 GB; tests/test_ci_pytest_workers.py), and the cap is the rule's figure for that shape,
-    computed here from three literals: ONE_WORKER_PHASE_S, the one-worker phase as measured; PER_TEST_TIMEOUT_S, 600,
-    read back from the Run pytest step's --timeout; and SETUP_S, the 32 s before the step. The pin is equality with
-    rule_minutes of the three, so a cap above the rule's figure is red as well as one below it: past the figure a hung
-    cell holds its run's verdict for nothing, and short of it a stall that begins late in the run is cancelled before the
-    per-test timeout names it. While the phase is unmeasured (ONE_WORKER_PHASE_S None) the cap is PLACEHOLDER_LINUX_CAP,
-    the estimate, and the equality test is red, naming the placeholder: a guessed figure cannot ship as a measured one."""
+    computed here from three literals: ONE_WORKER_PHASE_S, the one-worker phase; PER_TEST_TIMEOUT_S, 600, read back
+    from the Run pytest step's --timeout; and SETUP_S, the 25 s before the step. The pin is equality with rule_minutes of
+    the three, so a cap above the rule's figure is red as well as one below it: past the figure a hung cell holds its
+    run's verdict for nothing, and short of it a stall that begins late in the run is cancelled before the per-test
+    timeout names it. The phase is an estimate (ONE_WORKER_PHASE_ESTIMATED; a local run on a 2-CPU, 8 GiB budget had its
+    worker killed by the memory cap, so it gave no clean figure): the estimate is held to its own inputs, and ci.yml's
+    comment must say it is estimated and to be measured on the new repo's first CI run, so a guessed figure cannot ship
+    as a measured one. Measuring it means setting ONE_WORKER_PHASE_S to the measured seconds and
+    ONE_WORKER_PHASE_ESTIMATED to False, with ci.yml's figure and comment to match."""
     def setUp(self):
         src = open(WF).read()
         m = re.search(r"^  python:\n((?:    .*\n|\n)+?)    strategy:\n", src, re.M)
@@ -111,24 +116,25 @@ class PythonJobCeiling(unittest.TestCase):
         self.assertLessEqual(self.macos, 60, "past an hour a hung macOS cell eats the dispatch")
 
     def test_the_linux_cap_is_the_rules_figure_for_one_worker(self):
-        if ONE_WORKER_PHASE_S is None:
-            # the placeholder's own consistency first, so the red below is the placeholder's and nothing else's
-            self.assertEqual(rule_minutes(ESTIMATED_PHASE_S, PER_TEST_TIMEOUT_S, SETUP_S), PLACEHOLDER_LINUX_CAP)
-            self.assertEqual(self.linux, PLACEHOLDER_LINUX_CAP, "while the phase is unmeasured ci.yml carries the "
-                             "placeholder, the estimate's figure, and no other number")
-            self.assertIn("PLACEHOLDER", self.head, "the cap's comment names its figure a placeholder while it is one")
-            self.fail("PLACEHOLDER: the one-worker pytest phase on the private runner's shape (2 CPUs, 8 GB) is not measured. "
-                      "ci.yml's Linux cap is %d, where the placeholder figure is %d, rule_minutes(%d, %d, %d), an estimate "
-                      "and not a measurement. Measure the phase, set ONE_WORKER_PHASE_S to its seconds, and set the cap and "
-                      "ci.yml's comment to rule_minutes(ONE_WORKER_PHASE_S, %d, %d)"
-                      % (self.linux, PLACEHOLDER_LINUX_CAP, ESTIMATED_PHASE_S, PER_TEST_TIMEOUT_S, SETUP_S,
-                         PER_TEST_TIMEOUT_S, SETUP_S))
         want = rule_minutes(ONE_WORKER_PHASE_S, PER_TEST_TIMEOUT_S, SETUP_S)
         self.assertEqual(self.linux, want, "the Linux cap must be T230b's rule for one worker on the private runner: %d s of "
                          "pytest phase plus the %d s per-test timeout plus %d s before the step, rounded up to a multiple of 5 "
                          "minutes, is %d; ci.yml has %d" % (ONE_WORKER_PHASE_S, PER_TEST_TIMEOUT_S, SETUP_S, want, self.linux))
         for figure in (ONE_WORKER_PHASE_S, SETUP_S):
             self.assertIn("%d s" % figure, self.head, "the cap's comment states the input %d s" % figure)
+
+    def test_an_estimated_phase_is_derived_from_its_inputs_and_named_an_estimate(self):
+        joined = " ".join(l.strip()[1:].strip() for l in self.head.splitlines() if l.strip().startswith("#"))
+        if not ONE_WORKER_PHASE_ESTIMATED:
+            self.assertNotIn(ESTIMATE_MARK, joined, "a measured phase: the cap's comment no longer calls it an estimate")
+            return
+        cell_s, serial_s, two_worker_s = ESTIMATE_INPUTS
+        self.assertEqual(ONE_WORKER_PHASE_S, round(cell_s * serial_s / two_worker_s), "the estimate is the slowest finished "
+                         "two-worker cell's phase scaled by the serial ratio, rounded to the second")
+        for figure in ESTIMATE_INPUTS:
+            self.assertIn("%d s" % figure, joined, "the cap's comment states the estimate's input %d s" % figure)
+        self.assertIn(ESTIMATE_MARK, joined, "while the phase is an estimate the cap's comment says so, and that the new "
+                      "repo's first CI run measures it")
 
     def test_the_per_test_timeout_input_is_the_steps(self):
         m = re.search(r"^  python:\n(?:    .*\n|\n)+?        run: python -m pytest .*--timeout=(\d+)", self.src, re.M)
@@ -138,6 +144,8 @@ class PythonJobCeiling(unittest.TestCase):
     def test_the_rules_arithmetic(self):
         self.assertEqual(rule_minutes(2276, 600, 32), 50, "the two-worker figure the cap had: 2908 s, about 48 min 28 s, so 50")
         self.assertEqual(rule_minutes(1572, 600, 30), 40, "run 36664031774's figure: 2202 s, about 36 min 42 s, so 40")
+        self.assertEqual(rule_minutes(4426, 600, 32), 85, "the estimate the cap carried while the build awaited a measurement: "
+                         "5058 s, about 84 min 18 s, so 85")
         self.assertEqual(rule_minutes(3000 - 632, 600, 32), 50, "exactly 50 minutes stays 50")
         self.assertEqual(rule_minutes(3001 - 632, 600, 32), 55, "a second past 50 minutes is 55")
 

@@ -25,9 +25,9 @@ name: CI
 # run 37158350467 about 61 to 74. Estimated so, a batch run's Linux jobs would bill about 325 minutes
 # there by run 36716348831 and about 444 by run 37158350467, whose Linux jobs bill 279 on the public
 # runner (each cell's pytest step scaled by that ratio, every other job at its public time). That is
-# an estimate, made before any run on 2 CPUs: the python job's cap comment carries the one-worker
-# phase once it is measured on a 2-CPU, 8 GB budget (a placeholder until then), and the first batch
-# push on the private runner gives the billed figures. The same push also runs secret-scan.yml's copy
+# an estimate: a local run on a 2-CPU, 8 GB budget gave no clean one-worker figure (the python
+# job's cap comment says why: one worker outgrew 8 GB), and the first batch push on the private
+# runner gives the measured and billed figures. The same push also runs secret-scan.yml's copy
 # of the secrets job once, for the push (that file has had no pull_request trigger since 2026-10-04),
 # about 3 minutes a run (2 to 5 measured, and more as the history grows; that file's header gives the
 # runs). A manual run adds the macOS cells: 132
@@ -131,21 +131,28 @@ jobs:
     # both cancelled at this cap, 3555 s and 3598 s into their pytest steps, so the macOS suite now
     # runs longer than the ceiling allows.
     # Linux: the cells run ONE worker each, sized for the private runner (2 CPUs and 8 GB; the Run
-    # pytest step says why), and the cap is T230b's rule for that shape: the one-worker pytest phase
-    # as measured, plus the 600 s per-test timeout, plus the time before the step, rounded up to a
-    # multiple of 5 minutes. PLACEHOLDER, to be replaced by the measurement: the one-worker phase has
-    # not been measured, and the Linux figure below, 85, is an estimate: the slowest finished
-    # two-worker Linux cell, the 3.14t cell of run 37158350467 (a dispatch of fork PR 959's branch on
-    # 2026-10-03, job 111306365110), took 2276 s in its pytest step, which the serial ratio measured
-    # on four CPUs (1437 s against 739 s, the Run pytest step's measurement) scales to about 4426 s;
-    # 4426 + 600 + 32 = 5058 s, about 84 min 18 s, so 85. tests/test_ci_bats_bound.py holds the
-    # figure to the rule from its three inputs and is red until the measured phase replaces the
-    # estimate there and here. The time before the step is that job's 32 s on the public runner; the
-    # private runner's is read from its first run. Each step's time is the jobs API's. With two
-    # workers on the public runner the same rule gave 50 from that cell (2276 + 600 + 32 = 2908 s,
-    # about 48 min 28 s), the Linux cap from 2026-10-02 to 2026-10-04, after the 40 fork PR 926's
-    # branch set on 2026-09-30 from run 36664031774 and the 35 main had before that PR.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 85 }}
+    # pytest step says why), and the cap is T230b's rule for that shape: the one-worker pytest phase,
+    # plus the 600 s per-test timeout, plus the time before the step, rounded up to a multiple of 5
+    # minutes. The phase is estimated; to be measured on the new repo's first CI run. A local
+    # measurement on 2026-10-04 did not give it: the Run pytest step's command at this branch, on a
+    # fresh checkout, under a systemd CPUQuota of 200 percent and an 8 GiB memory cap with no swap, on
+    # a shared machine whose 1-minute load was 62 at the start and 36 to 44 at the end, outgrew the
+    # cap. The one worker reached 8 GiB and was killed by the memory cap, once in the 3.12 run and
+    # twice in the 3.14t run (xdist started a new worker each time and failed the test it was
+    # running), so the runs' phases, 4283 s and 4411 s, include those restarts, and 8 GB does not hold
+    # one worker of this suite. The estimate is the slowest finished two-worker Linux cell, the 3.10
+    # cell of run 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880),
+    # 2312 s in its pytest step, scaled by the serial ratio measured on four CPUs (1437 s against
+    # 739 s, the Run pytest step's measurement) to 4496 s. The local runs bear that ratio out for
+    # 3.14t (4411 s against the same run's 2281 s, 1.93) and not for 3.12 (4283 s against 1579 s,
+    # 2.71). 4496 + 600 + 25 = 5121 s, about 85 min 21 s, so 90. The time before the step is that
+    # job's 25 s on the public runner; the private runner's is read from its first run. Each step's
+    # time is the jobs API's. tests/test_ci_bats_bound.py holds the figure to the rule from its three
+    # inputs, and the estimate to its own. With two workers on the public runner the same rule gave
+    # 50 (the 3.14t cell of run 37158350467: 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux
+    # cap from 2026-10-02 to 2026-10-04, after the 40 fork PR 926's branch set on 2026-09-30 from run
+    # 36664031774 and the 35 main had before that PR.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 90 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -397,7 +404,8 @@ jobs:
         # peaked at 15.8 GB. The Linux cells ran two workers on the public runner from 2026-09-25 to
         # 2026-10-04 (serially they had reached the 25-minute cap they had then: this fork's main,
         # run 35890814789, the 3.14t cell at 24 min 35 s); the two-worker peak is past the private
-        # runner's 8 GB. One worker (-n 1) rather than an in-process run (-n 0) or no xdist: under
+        # runner's 8 GB, and a local run on 2026-10-04 found one worker's peak past it too (the job's
+        # cap comment). One worker (-n 1) rather than an in-process run (-n 0) or no xdist: under
         # the one worker a test the per-test timeout ends fails by name and the other tests run on
         # (below, as under two workers), where in an in-process run, the macOS
         # cells', the timeout's thread method ends the whole run at the hung test; and the worker
