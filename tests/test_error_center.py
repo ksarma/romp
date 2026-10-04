@@ -646,6 +646,92 @@ class ArrivalWhileOpen(unittest.TestCase):
         self._is("upClosed", False, "!", 0, 0, False)
 
 
+# the state both page lives read: the phone's triangle, the gear's Open log count, the store's unread count, the Log's state
+NEXT_LIFE_STATE = r"""
+const LINE = %s;
+function lastCount() { const p = SETTINGS_POSTED.filter((m) => m.romp === 'logUnseen'); return p.length ? p[p.length - 1].n : null; }
+function listed(t) { return EL['rerr-list'].children.some((r) => r.children[1] && r.children[1].textContent.indexOf(t) === 0); }
+function lineSeen() { const n = notes().find((x) => x.text === LINE); return n ? n.seen : null; }
+function state() {
+  return { red: EL['merr']._cls.has('has'), num: EL['merr']._num.textContent, gear: lastCount(),
+           open: !EL['rerr-back'].hidden, unseenStored: notes().filter((n) => !n.seen).length, lineSeen: lineSeen() };
+}
+"""
+
+# the page life that reloads: the Log open, then the chat pane's loss hook run as the reload core runs it right before
+# location.reload(), with one message still queued. SHIM_PERSIST is the kernel's own hook, sliced from the chat pane's shim
+# and closed over a pane window embedded in this shell, so its call into the Log's write path is the product's
+NEXT_LIFE_FIRST = r"""
+const out = {};
+window.__rompOpenErrs();
+out.open = state();
+SHIM_PERSIST({ parent: window }, [{ type: 'activeTab', id: 'TESTTAB' }], 0)();
+out.written = Object.assign(state(), { listed: listed(LINE) });
+console.log(JSON.stringify({ out: out, store: STORE }));
+"""
+
+# the next page life: the same store, read as the reloaded page's Log script loads it; then the Log opened
+NEXT_LIFE_SECOND = r"""
+const out = {};
+out.nextLife = state();
+window.__rompOpenErrs();
+out.reopened = Object.assign(state(), { listed: listed(LINE) });
+console.log(JSON.stringify(out));
+"""
+
+
+class NextPageLifeLine(unittest.TestCase):
+    """A line written for the next page life arrives there unread (the round-1 review, 2026-10-04). The reload core asks every
+    pane's shim, right before location.reload(), what its queue still holds (__rompShimPersist), and an embedded pane writes
+    its loss line into the shell's Log synchronously, so the store carries it across the reload. With the Log open the
+    arrival rule (an entry is seen when an open Log lists it) marked that line seen as it landed, though the page went before
+    anyone could read the list, so the next page counted one unread entry too few: the phone's triangle and the gear's count
+    missed the line. The shim's write says it is made for the next page life (the write path's nextLife), and the Log skips
+    the arrival mark for it. Two node runs share one store: the page that reloads and the page after it."""
+
+    @staticmethod
+    def _run(script):
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, "the center's JS threw: " + r.stderr[:800]
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    @classmethod
+    def setUpClass(cls):
+        shim = km._shim("chat", 5)
+        a = shim.index("window.__rompShimPersist=function(){")
+        hook = shim[a:shim.index("};", a) + 2]
+        assert "window.parent.__rompNotify" in hook and "pn(" in hook, "the slice is the loss hook with its write: " + hook[-300:]
+        label = km._pane_label("chat")
+        line = "1 message queued for the %s pane could not be sent before the dashboard reloaded; it was not delivered." % label
+        persist = ("function SHIM_PERSIST(window, queue, queuedDiag) { var LABEL = %s; var SENDS_DROPPED_KEY = 'romp:sendsDropped';\n"
+                   "%s\nreturn window.__rompShimPersist; }\n" % (json.dumps(label), hook))
+        state = NEXT_LIFE_STATE % json.dumps(line)
+        first = cls._run(HARNESS + km._LANDING_ERRS_JS + state + persist + NEXT_LIFE_FIRST)
+        cls.out = dict(first["out"])
+        seed = "Object.assign(STORE, %s);\n" % json.dumps(first["store"])
+        cls.out.update(cls._run(HARNESS + seed + km._LANDING_ERRS_JS + state + NEXT_LIFE_SECOND))
+
+    def _is(self, step, red, num, gear, unseen_stored, log_open, line_seen):
+        self.assertEqual(self.out[step], dict(self.out[step], red=red, num=num, gear=gear, unseenStored=unseen_stored,
+                                              open=log_open, lineSeen=line_seen), step)
+
+    def test_the_loss_line_written_into_an_open_log_before_the_reload_arrives_unread_in_the_next_page_life(self):
+        self._is("open", False, "!", 0, 0, True, None)
+        self._is("written", True, "1", 1, 1, True, False)    # listed in the open Log, left unread: the page goes next
+        self.assertTrue(self.out["written"]["listed"], "the hook's line reached the Log's write path: %r" % (self.out["written"],))
+        self._is("nextLife", True, "1", 1, 1, False, False)  # THE FIX: the next page life counts the line, triangle and gear alike
+
+    def test_opening_the_log_in_the_next_page_life_shows_the_line_and_marks_it_seen(self):
+        self._is("reopened", False, "!", 0, 0, True, True)
+        self.assertTrue(self.out["reopened"]["listed"])
+
+
 class ParkedPaneCue(unittest.TestCase):
     """D2 (2026-09-18): the center against a parked pane's words. A pane off screen on the phone parks its return redial
     until its tab is tapped and posts wsState 'parked'; the shell keeps that as its own state, never 'down', so the live

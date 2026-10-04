@@ -389,7 +389,7 @@ class ApiHealthCell(unittest.TestCase):
         # with no reason anywhere, and the press read as ignored. The chat page toasts its own warn frames already.
         self.assertIn("else if(m&&m.type==='warn'&&typeof m.text==='string'&&m.text&&window.__rompNotify)"
                       "window.__rompNotify('warn',m.text);", self.html)
-        self.assertIn("window.__rompNotify=function(kind,text,tgt)", self.html, "the center the branch feeds is on this page")
+        self.assertIn("window.__rompNotify=function(kind,text,tgt", self.html, "the center the branch feeds is on this page")
 
     def test_the_cell_s_script_loads_after_the_usage_script_it_borrows_the_backdrop_from(self):
         self.assertLess(self.html.index("getElementById('rail-usage')"), self.html.index("getElementById('rail-api')"))

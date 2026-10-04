@@ -69314,7 +69314,7 @@ window.__rompPaneBusy=function(){var q=everConnected&&queue.length>queuedDiag;if
 window.__rompShimPersist=function(){var n=queue.length-queuedDiag;if(n<=0)return;
 var t=n+" message"+(n===1?"":"s")+" queued for the "+LABEL+" pane could not be sent before the dashboard reloaded; "+(n===1?"it was":"they were")+" not delivered.";
 try{if(window.parent!==window){var pn=null;try{pn=window.parent.__rompNotify;}catch(e3){}   // same origin: the shell's write path, synchronously, before location.reload() takes the page; a message would arrive too late
-if(typeof pn==="function")pn("warn",t);else window.parent.postMessage({romp:"notify",kind:"warn",text:t},"*");}
+if(typeof pn==="function")pn("warn",t,null,true);else window.parent.postMessage({romp:"notify",kind:"warn",text:t},"*");}   // true: the line is written for the next page life, so an open Log leaves it unread (the reload takes the page before anyone reads the list)
 else sessionStorage.setItem(SENDS_DROPPED_KEY,JSON.stringify({text:t,path:location.pathname}));}catch(e){}};
 // …and a standalone page (no same-origin shell) consumes its own reload marker: nobody else would
 try{if(window.__rompReload&&!window.__rompReload.inShell())window.__rompReload.announce(null);}catch(e){}
@@ -70690,8 +70690,10 @@ function jumpChat(sid){if(!sid)return;var ok=false;
 try{ok=!!(window.__rompShellSend&&window.__rompShellSend({type:'openSession',id:sid}));}catch(e){}
 if(!ok)window.__rompNotify('locate','Could not open the session: the dashboard has no live connection to the kernel');}
 // One write path. A repeat of the NEWEST entry (same kind+text — e.g. a reconnect loop dropping over and
-// over) coalesces into it with a count instead of flooding the feed: event-exact, no time window.
-window.__rompNotify=function(kind,text,tgt){if(!text)return;
+// over) coalesces into it with a count instead of flooding the feed: event-exact, no time window. nextLife: the line is written
+// for the page's next life (a pane shim's loss line, __rompShimPersist, which the reload core asks for just before
+// location.reload()), so it skips the arrival mark below.
+window.__rompNotify=function(kind,text,tgt,nextLife){if(!text)return;
 var last=NOTES[NOTES.length-1];
 if(last&&last.kind===kind&&last.text===String(text)){last.n=(last.n||1)+1;last.t=Math.floor(Date.now()/1000);last.seen=false;if(tgt)last.tgt=tgt;}
 else{NOTES.push({kind:String(kind||'error'),text:String(text),t:Math.floor(Date.now()/1000),n:1,seen:false,tgt:tgt||null});
@@ -70700,8 +70702,9 @@ if(NOTES.length>MAX)NOTES=NOTES.slice(-MAX);}
 // is looking at the list it joins, so the entry neither turns the triangle red under the open Log nor leaves it red once the
 // Log closes. Before 2026-10-03 it landed unread, and the phone's triangle stayed red with an unread digit after the Log
 // closed, for a line the reader had seen. A muted kind's entry stays unread here as at an opening. The last entry is the one
-// just written, pushed or coalesced.
-if(!back.hidden)markSeen(NOTES[NOTES.length-1]);
+// just written, pushed or coalesced. A line written for the next page life (nextLife) is not marked: the reload takes the page
+// before anyone reads the open list, so the line arrives unread in the next page life (the round-1 review, 2026-10-04).
+if(!back.hidden&&!nextLife)markSeen(NOTES[NOTES.length-1]);
 save();paint();};
 // pane iframes can feed the center too; sid/itemId ride along as the entry's jump target. An entry naming a CARD
 // (itemId: the feed's badge mirror, a card still loaded in a pane hidden mid-page) is not this browser's while its
