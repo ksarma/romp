@@ -81,12 +81,13 @@
 //     run) and with nothing cut (where the grace's red alone sets the status), a node --test that has exited and is not
 //     yet reaped at the grace's end is not held and its exit is the leg's status, a node --test that outlives the bound
 //     with no process under it, or with only a zombie (a child that has ended and is not yet reaped) under it, is not
-//     cut, the knobs' refusals, the count of legs at once read with nproc's OpenMP variables set and unset, the status
-//     of legs that exit differently, and a roster longer than the legs run at once, the most calls running at once
-//     counted and the outputs printed in roster order although the legs finish in another, and, with the real node, two
-//     legs run one at a time under a short bound each get their bound from their own start. A roster line holding a
-//     backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's row,
-//     each read as the script's comment above seen_at or above its awk pass states;
+//     cut, the knobs' refusals, the refusal of a ps that cannot read the process table as the bound reads it (one that
+//     exits 127, one that refuses -p), the count of legs at once read with nproc's OpenMP variables set and unset, the
+//     status of legs that exit differently, and a roster longer than the legs run at once, the most calls running at
+//     once counted and the outputs printed in roster order although the legs finish in another, and, with the real
+//     node, two legs run one at a time under a short bound each get their bound from their own start. A roster line
+//     holding a backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run
+//     key's row, each read as the script's comment above seen_at or above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -1989,7 +1990,7 @@ test('a SIGKILL to the script leaves no process of the run waiting on the event 
   }
 });
 
-test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the leg second in its roster and run one leg at a time, so the reds name it and not the first leg, and the leg queued behind it runs and is read, the other legs\' records read and no timer left behind; a node --test still running at the grace\'s end when the bound cut nothing is killed and named too, red by that red alone; a node --test that has exited and is not yet reaped at the grace\'s end, a zombie with nothing under it, is not, and its exit 0 is the leg\'s status; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
+test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the leg second in its roster and run one leg at a time, so the reds name it and not the first leg, and the leg queued behind it runs and is read, the other legs\' records read and no timer left behind; a node --test still running at the grace\'s end when the bound cut nothing is killed and named too, red by that red alone; a node --test that has exited and is not yet reaped at the grace\'s end, a zombie with nothing under it, is not, and its exit 0 is the leg\'s status; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; a ps that cannot read the process table as the bound reads it (one that exits 127, one that refuses -p) is refused by name and no leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
   const { run, root, rec, A, B } = syntheticTree(t);
   // what a red run left behind, if anything, scoped to this tree (runProcs), killed by the pids read here
   t.after(() => { for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
@@ -2077,6 +2078,24 @@ test('the per-file bound through the stub: a node --test that does not end after
   assert.deepEqual(refusals, [], 'each knob refuses a value that is not a whole number above 0 of at most 9 digits, naming it, with no leg run; the rows read otherwise: ' + JSON.stringify(refusals));
   const nine = run(A + '\n', { report: pass(A), env: { ROMP_BROWSER_LEGS_FILE_MS: '999999999', ROMP_BROWSER_LEGS_GRACE_MS: '999999999' } });
   assert.ok(nine.status === 0 && nine.err === '' && nine.out.includes('cut with every process under it if still running 999999999 ms after it starts'), 'a knob of 9 digits is accepted and the run reads green: exit ' + nine.status + ', stderr ' + JSON.stringify(nine.err));
+  // the ps preflight: before any leg runs the script reads the process table the two ways the bound reads it, and refuses
+  // by name, with no leg run, when either read fails. Two stand-in ps first on PATH: one that exits 127 (as a missing ps
+  // does), which fails the whole-table read; and one that refuses -p and hands every other form to the machine's ps, as
+  // busybox's ps reads the whole table and refuses -p, which passes the first read and fails the second. The control is
+  // every other run here, under the machine's ps
+  const machinePs = spawnSync('sh', ['-c', 'command -v ps'], { encoding: 'utf8' }).stdout.trim();
+  assert.ok(machinePs.startsWith('/'), 'control: the machine\'s ps is on PATH: ' + JSON.stringify(machinePs));
+  const psShim = (name, body) => { const d = path.join(root, 'ps-' + name); fs.mkdirSync(d); fs.writeFileSync(path.join(d, 'ps'), '#!/bin/sh\n' + body, { mode: 0o755 }); return { PATH: d + path.delimiter + path.join(root, 'bin') + path.delimiter + process.env.PATH }; };
+  const PS_ROWS = [
+    ['a ps that exits 127', psShim('missing', 'exit 127\n'), 'ci-browser-legs: ps -A -o pid= -o ppid= did not list this script\'s own process with its parent, so the per-file bound would find no process under a leg to kill and name no cut: put a ps on PATH that reads the whole process table so (procps, or BSD\'s); no leg ran'],
+    ['a ps that refuses -p, as busybox\'s does', psShim('nop', 'for a in "$@"; do [ "$a" != -p ] || { echo "ps: unrecognized option: p" >&2; exit 1; }; done\nexec ' + machinePs + ' "$@"\n'), 'ci-browser-legs: ps -o stat= -p printed no state for this script\'s own process, so the per-file bound could not tell a live process from an ended one and would name no cut: put a ps on PATH that reads one process\'s state so (procps, or BSD\'s; busybox\'s refuses -p); no leg ran'],
+  ];
+  const psWrong = [];
+  for (const [what, env, red] of PS_ROWS) {
+    const r = run(A + '\n', { report: pass(A), env });
+    if (!(r.status === 1 && r.node === null && r.err.includes(red))) psWrong.push(what + ': exit ' + r.status + ', node ' + JSON.stringify(r.node) + ', stderr ' + JSON.stringify(r.err));
+  }
+  assert.deepEqual(psWrong, [], 'with a ps that cannot read the process table as the bound reads it, the script refuses by name before any leg runs; the rows read otherwise: ' + JSON.stringify(psWrong));
   // the count of legs at once: GNU nproc honours OMP_NUM_THREADS and OMP_THREAD_LIMIT and node's count does not, so the
   // script runs nproc without them. A stand-in nproc first on PATH honours them the same way (8 CPUs unless they say fewer,
   // its control below), so the count with them set is the count without them on any machine; and the machine's own nproc

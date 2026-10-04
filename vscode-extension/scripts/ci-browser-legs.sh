@@ -71,28 +71,31 @@
 # (Playwright handles SIGTERM itself; recorded on a development box through the step's own command, not executed here),
 # and a file's process that does end on the signal leaves what is under it running, before any walk reads the tree. The
 # knobs are whole numbers above 0 of at most 9 digits (digits alone, no leading zero), refused by name before any leg
-# runs, and the step sets none of them. The tree test's case "the per-file bound ends a leg that outlives it" runs, with
-# the real node and a short bound, a synthetic leg whose node process ignores SIGTERM and starts a process in a session
-# of its own and one in the file's own process group, each with a child, and a process in a session of its own whose
-# child exits at once and leaves a grandchild in its group, reparented out of the tree, and reads every one of those
-# processes gone by the bound plus the grace; its case "the bound's kill reaches the cut leg's processes alone" runs,
-# with the real node and two legs at a time, a leg still running at another leg's cut (it watches that leg's process, so
-# its green does not rest on timing) and a leg queued behind the cut, and with one leg at a time a leg queued behind a
-# cut leg, and reads only the cut leg named and the queued legs started and passed; its case "a TERM to the script"
-# reads each leg's start line printed while the legs run, then those processes, the hanging leg's node --test and the
-# run's timers gone after a TERM, and the held output printed, the hanging leg's after a line naming its node --test's
-# exit (137, the kill's); its case "a second TERM to the script" sends a second TERM while the trap holds that node
-# --test stopped between its stop and its kill (read so by a poll after the first), and reads them and that node --test
-# gone, that leg's output after the same line, and the run's TMPDIR empty; its case "a SIGKILL to the script" reads the
-# leg's subshell and its timer gone once the leg and its bound have ended; its case "the per-file bound through the
-# stub" runs the grace's end after a cut (the leg second in its roster, one leg at a time, a leg queued behind it) and
-# with nothing cut, a node --test that has exited and is not yet reaped when the grace runs out, a node --test that
-# outlives the bound with nothing under it or with only a zombie under it, the knobs' refusals, the status of legs that
-# exit differently, and a roster longer than the legs run at once; its case "the per-file bound counts from each leg's
-# own start" runs, with the real node, two legs one at a time, each shorter than the bound and the two together longer,
-# and reads neither cut. The timers and the event pipe use what bash 3.2 has (no wait -n), as
-# tests/shell-portability.bats holds for every shell script the repo ships. The legs' records are joined in roster order
-# into the one record the pass below reads.
+# runs, and the step sets none of them. Before any leg runs the script also reads its own process the two ways the bound
+# reads the process table (ps -A -o pid= -o ppid= for the walk, ps -o stat= -p for a process's state) and refuses by
+# name when either read fails, since with a ps that cannot read them the bound would kill nothing and name no cut (a
+# missing ps fails both; busybox's ps reads the first and refuses -p). The tree test's case "the per-file bound ends a
+# leg that outlives it" runs, with the real node and a short bound, a synthetic leg whose node process ignores SIGTERM
+# and starts a process in a session of its own and one in the file's own process group, each with a child, and a process
+# in a session of its own whose child exits at once and leaves a grandchild in its group, reparented out of the tree,
+# and reads every one of those processes gone by the bound plus the grace; its case "the bound's kill reaches the cut
+# leg's processes alone" runs, with the real node and two legs at a time, a leg still running at another leg's cut (it
+# watches that leg's process, so its green does not rest on timing) and a leg queued behind the cut, and with one leg at
+# a time a leg queued behind a cut leg, and reads only the cut leg named and the queued legs started and passed; its
+# case "a TERM to the script" reads each leg's start line printed while the legs run, then those processes, the hanging
+# leg's node --test and the run's timers gone after a TERM, and the held output printed, the hanging leg's after a line
+# naming its node --test's exit (137, the kill's); its case "a second TERM to the script" sends a second TERM while the
+# trap holds that node --test stopped between its stop and its kill (read so by a poll after the first), and reads them
+# and that node --test gone, that leg's output after the same line, and the run's TMPDIR empty; its case "a SIGKILL to
+# the script" reads the leg's subshell and its timer gone once the leg and its bound have ended; its case "the per-file
+# bound through the stub" runs the grace's end after a cut (the leg second in its roster, one leg at a time, a leg
+# queued behind it) and with nothing cut, a node --test that has exited and is not yet reaped when the grace runs out, a
+# node --test that outlives the bound with nothing under it or with only a zombie under it, the knobs' refusals and
+# those of the ps reads, the status of legs that exit differently, and a roster longer than the legs run at once; its
+# case "the per-file bound counts from each leg's own start" runs, with the real node, two legs one at a time, each
+# shorter than the bound and the two together longer, and reads neither cut. The timers and the event pipe use what bash
+# 3.2 has (no wait -n), as tests/shell-portability.bats holds for every shell script the repo ships. The legs' records
+# are joined in roster order into the one record the pass below reads.
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (the reporter's header states
 # what each line records) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result
 # attributed to it is a pass that carries no skip or todo, is a test and not a suite, and is not marked as node's
@@ -216,6 +219,15 @@ whole() { case "$2" in ''|*[!0-9]*|0*|??????????*) echo "ci-browser-legs: $1='$2
 whole ROMP_BROWSER_LEGS_FILE_MS "$BOUND_MS"
 whole ROMP_BROWSER_LEGS_GRACE_MS "$GRACE_MS"
 whole ROMP_BROWSER_LEGS_JOBS "$JOBS"
+# The ps reads the header states, before any leg runs: the walk's read of every process's pid and parent must list this
+# script's own process with its parent, and the state read must print a state for it.
+if ! ps -A -o pid= -o ppid= 2>/dev/null | awk -v p="$$" -v pp="$PPID" '$1 == p && $2 == pp { f = 1 } END { exit !f }'; then
+  echo "ci-browser-legs: ps -A -o pid= -o ppid= did not list this script's own process with its parent, so the per-file bound would find no process under a leg to kill and name no cut: put a ps on PATH that reads the whole process table so (procps, or BSD's); no leg ran" >&2; exit 1
+fi
+own_state=$(ps -o stat= -p "$$" 2>/dev/null) || own_state=""
+if [ -z "${own_state// /}" ]; then
+  echo "ci-browser-legs: ps -o stat= -p printed no state for this script's own process, so the per-file bound could not tell a live process from an ended one and would name no cut: put a ps on PATH that reads one process's state so (procps, or BSD's; busybox's refuses -p); no leg ran" >&2; exit 1
+fi
 secs() { printf '%d.%03d' $(( $1 / 1000 )) $(( $1 % 1000 )); }
 
 # The run's files, in one directory under TMPDIR that the EXIT trap removes: per leg i (its place in the roster, from 0),
