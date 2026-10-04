@@ -2213,17 +2213,26 @@ CONNECTIONS_TEXT = ('\nexport function probeConnections(u: string): void {\n  ne
 IMPORTS_TEXT = ('\nimport * as fs from "node:fs";\nimport { probe } from "./probe-spawn";\nimport {\n  createSocket,\n} from "dgram";\nconst net = require("net");\n'
                 'void fs; void probe; void createSocket; void net;\n')
 DYNAMIC_TEXT = '\nexport async function probeImports(u: string): Promise<void> {\n  await import(u);\n  await import("./probe-spawn");\n  await import("dgram");\n}\n'
+# The zlib admission's scope (F1 of the second closing check, item C of the reviewer's ruling on it): a file of its own on the shared
+# browser run, so it adds no census run, whose lines import zlib under both spellings the gate reduces to the one entry, an unknown
+# built-in under `node:` and a name that only begins with zlib
+ZLIB_SCOPE_TEXT = ('import * as zn from "node:zlib";\nimport * as zb from "zlib";\nimport * as dg from "node:dgram";\nimport * as zx from "zlibx";\n'
+                   'void zn; void zb; void dg; void zx;\n')
 
 
 class TheBrowserSideHasTheChildProcessFamilyAndTheConnectionPrimitives(_SharedRun):
     """A child_process call is a site through its binding (`child_process.<fn>(`, `require('child_process').<fn>(`, a
     namespace or a bare name the file binds from the module), never as a bare `exec(`, which RegExp spells the same way;
     net.connect, net.createConnection, tls.connect, XMLHttpRequest and sendBeacon are sites; a package outside
-    KNOWN_JS_IMPORTS fails the run (correctness-1, extra6-1 of the third round). The shared run carries four blocks
-    appended in turn to ui/webview/strip.ts (the exec shapes, the connections, the imports, the dynamic imports), each
-    case's lines read as its block lands, and the new file probe-spawn.ts; none of the blocks binds a child_process name
-    into strip.ts, so the first block's bare exec( stays unbound whatever lands after it. The rowed program site's case
-    reads the whole run's class count and runs alone."""
+    KNOWN_JS_IMPORTS fails the run (correctness-1, extra6-1 of the third round), and the zlib entry admits zlib under
+    either spelling and nothing past it: `node:zlib` and bare `zlib` pass the gate, and an unknown built-in written with
+    `node:` (node:dgram) and a name that only begins with zlib (zlibx) are each refused at their lines (F1 of the second
+    closing check: a gate that admitted any `node:` specifier, any name starting with zlib, or refused bare zlib reds the
+    zlib case). The shared run carries four blocks appended in turn to ui/webview/strip.ts (the exec shapes, the
+    connections, the imports, the dynamic imports), each case's lines read as its block lands, and the new files
+    probe-spawn.ts and probe-zlib-scope.ts; none of the blocks binds a child_process name into strip.ts, so the first
+    block's bare exec( stays unbound whatever lands after it. The rowed program site's case reads the whole run's class
+    count and runs alone."""
 
     RUN = "browser"
 
@@ -2232,6 +2241,7 @@ class TheBrowserSideHasTheChildProcessFamilyAndTheConnectionPrimitives(_SharedRu
         n = len(_lines(_append("ui/webview/strip.ts", EXEC_TEXT, cleanup)))
         cls.at.update(qualified=n - 4, inline=n - 3, bare=n - 2, regexp=n - 1)
         _plant("ui/webview/probe-spawn.ts", SPAWN_TEXT, cleanup)
+        _plant("ui/webview/probe-zlib-scope.ts", ZLIB_SCOPE_TEXT, cleanup)
         n = len(_lines(_append("ui/webview/strip.ts", CONNECTIONS_TEXT, cleanup)))
         cls.at.update({"net.connect": n - 6, "net.createConnection": n - 5, "tls.connect": n - 4, "XMLHttpRequest": n - 3, "sendBeacon": n - 1})
         n = len(_lines(_append("ui/webview/strip.ts", IMPORTS_TEXT, cleanup)))
@@ -2298,6 +2308,13 @@ class TheBrowserSideHasTheChildProcessFamilyAndTheConnectionPrimitives(_SharedRu
                            "IMPORT ui/webview/strip.ts:%d imports net, a package the census does not know" % at["import_net"])
         for line in (at["import_known"], at["import_relative"]):
             self.assertNotIn("IMPORT ui/webview/strip.ts:%d " % line, out, "a known package and the project's own module pass the gate")
+
+    def test_zlib_in_either_spelling_reaches_its_entry_and_another_node_built_in_or_a_zlib_prefix_does_not(self):
+        out, f = self.out, "ui/webview/probe-zlib-scope.ts"
+        for line, spelled in ((1, "node:zlib"), (2, "zlib")):
+            self.assertNotIn("IMPORT %s:%d " % (f, line), out, "%s reaches the zlib entry, both spellings reduced to one name" % spelled)
+        self.assertRefused(self.rc, out, "IMPORT %s:3 imports dgram, a package the census does not know" % f,
+                           "IMPORT %s:4 imports zlibx, a package the census does not know" % f)
 
     def test_a_dynamic_import_of_a_computed_module_url_is_the_computed_class_and_a_literal_one_is_an_import(self):
         at, out = self.at, self.out
