@@ -36,7 +36,8 @@
 // as its placeholder, the TeX as text in the sheets' quiet pending dress (styles.css and feed.css, the
 // .md-math-inline and .md-math-display rule), stamped with its call's group so the arrival can charge the
 // per-message budget per message, and the fill asks for the chunk: one script tag, its URL and nonce taken
-// from the page's own bundle tag (chunk-url.ts), while the two common KaTeX faces load beside it (the sheet
+// from the page's own bundle tag (chunk-url.ts), added once the document has loaded (a tag added before its load
+// event joins it, and a stalled chunk would hold the page's load), while the two common KaTeX faces load beside it (the sheet
 // declares them font-display: block, so laying out before they arrive would show a blank formula). When the
 // chunk has run and the faces have settled, the settle handlers run (onMathSettled: the chat keeps the
 // reader's place around the swap, the viewer repaints a paint it held) and then one fill over the whole
@@ -461,15 +462,23 @@ function attempt(): void {
     clearTimeout(backstop);
     if (engineLoad !== "ready") engineSettled(null);      // the first success runs the arrival; a second is a no-op
   };
-  const faces = katexFaces();
-  backstop = setTimeout(() => fail("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
-  const sc = document.createElement("script");
-  sc.src = tag.src;
-  if (tag.nonce) sc.nonce = tag.nonce;
-  // a load that registers nothing (a script cut short, an engine too old to run it) is a failure, like an error
-  sc.onload = () => { if (!engine()) fail("the math renderer loaded but registered nothing"); else void faces.then(succeed); };
-  sc.onerror = () => fail("the math renderer failed to load");
-  (document.head || document.documentElement).appendChild(sc);
+  const request = (): void => {
+    const faces = katexFaces();
+    backstop = setTimeout(() => fail("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
+    const sc = document.createElement("script");
+    sc.src = tag.src;
+    if (tag.nonce) sc.nonce = tag.nonce;
+    // a load that registers nothing (a script cut short, an engine too old to run it) is a failure, like an error
+    sc.onload = () => { if (!engine()) fail("the math renderer loaded but registered nothing"); else void faces.then(succeed); };
+    sc.onerror = () => fail("the math renderer failed to load");
+    (document.head || document.documentElement).appendChild(sc);
+  };
+  // The chunk and the two faces wait for the document's own load, an exact event: a script tag added before it joins that load,
+  // so a chunk that stalled held the page's load event, on which the shell keys its pane steps (the review of iOS item 6,
+  // round 1: Firefox lost that race in 4 of 6 page lives). The backstop is armed in the deferred step, so its 60 s count from
+  // the request. The formulas wait in the pending dress meanwhile, as they do for the request itself.
+  if (document.readyState === "complete") request();
+  else window.addEventListener("load", request, { once: true });
 }
 
 /** An attempt failed (once: attempt's `fail`). Said on the console, one line per failed attempt, unless an attempt has already

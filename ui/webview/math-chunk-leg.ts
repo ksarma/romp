@@ -85,6 +85,9 @@ export type PageOpts = {
   webview?: boolean;
   /** Playwright's clock installed before the page loads, so a scene can fast-forward past MATH_CHUNK_BACKSTOP_MS */
   clock?: boolean;
+  /** held: the page carries a picture whose answer waits for it, so the document's load event waits too (the page is opened at
+   *  DOMContentLoaded, the bundle having run) */
+  loadGate?: Gate | null;
 };
 /** consoleErrors: every console error but the browser's own line for a missing resource (the sheet's media fonts, which the leg
  *  does not serve); a failed chunk shows in the box and in math.ts's own line, which is kept. */
@@ -100,7 +103,7 @@ function pageHtml(o: PageOpts): string {
   const script = o.inline ? `<script${nonce}>${probeBundle()}</script>` : `<script${nonce} src="/dist/render.js?v=7"></script>`;
   // the sheets as the chat page has them, KaTeX's first (the chat's styles.css imports it at its top); a dim probe to read the tier off
   return `<!DOCTYPE html><html><head><meta charset=utf-8>${csp}<style>${KATEX_CSS}\n${STYLES}\nbody{font-size:16px}</style></head>
-<body><div id=out class=md></div><span id=dim style="color: var(--dim)">dim</span>${script}</body></html>`;
+<body><div id=out class=md></div><span id=dim style="color: var(--dim)">dim</span>${o.loadGate ? '<img src="/held.png" alt="">' : ""}${script}</body></html>`;
 }
 
 /** Open the page in `browser` under `o`, wait for the probe, and hand the scene to `body`. */
@@ -117,6 +120,7 @@ export async function withPage(browser: any, o: PageOpts, body: (s: Scene) => Pr
     if (u.pathname === "/page") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html });
     if (u.pathname === "/dist/render.js") return route.fulfill({ status: 200, contentType: "text/javascript", body: probeBundle() });
     if (u.pathname === "/sentinel") return route.fulfill({ status: 200, contentType: "text/plain", body: "ok" });
+    if (u.pathname === "/held.png") { if (o.loadGate) await o.loadGate.promise; return route.fulfill({ status: 404, contentType: "text/plain", body: "" }); }
     if (u.pathname === "/dist/math-chunk.js") {
       const n = chunkAsked++;
       const mode: ChunkMode = Array.isArray(o.chunk) ? o.chunk[Math.min(n, o.chunk.length - 1)] : o.chunk || "serve";
@@ -136,7 +140,7 @@ export async function withPage(browser: any, o: PageOpts, body: (s: Scene) => Pr
   });
   try {
     if (o.clock) await page.clock.install();
-    await page.goto(ORIGIN + "/page");
+    await page.goto(ORIGIN + "/page", o.loadGate ? { waitUntil: "domcontentloaded" } : undefined);
     await page.waitForFunction(() => typeof (window as any).__md === "function", null, { timeout: 10000 });
     await body({ page, requests, consoleErrors, pageErrors, chunkRequests: () => requests.filter((r) => r.startsWith("/dist/math-chunk.js")).length });
     assert.deepEqual(pageErrors, [], "no page errors");
@@ -507,6 +511,27 @@ export const SCENES: SceneDef[] = [
         assert.ok(laid, "the late chunk lays out the backstop's fallbacks: " + JSON.stringify(b));
         assert.deepEqual([b.katex, b.src.length, s.chunkRequests()], [2, 0, 1], "both laid out, one request");
         assert.equal(said(s).length, 1, "the late success says nothing more");
+      });
+    },
+  },
+  {
+    name: "a formula met before the page's own load event waits for it: no chunk script is added or requested until the document has loaded, then the chunk is fetched and the formula laid out",
+    timeout: 60000,
+    run: async (browser) => {
+      const lg = gate();
+      await withPage(browser, { loadGate: lg }, async (s) => {
+        await show(s.page, "early $\\frac{a}{b}$ here");
+        await drain(s.page);
+        await drain(s.page);
+        const st = await s.page.evaluate(() => ({ ready: document.readyState, scripts: document.querySelectorAll('script[src*="math-chunk"]').length }));
+        let b = await box(s.page);
+        assert.notEqual(st.ready, "complete", "the page's load is still held: " + JSON.stringify(st));
+        assert.deepEqual([st.scripts, s.chunkRequests(), b.pending.length], [0, 0, 1], "no chunk script and no request before the load, the formula waiting: " + JSON.stringify([st, s.chunkRequests(), b]));
+        lg.open();
+        await s.page.waitForFunction(() => document.readyState === "complete", null, { timeout: 10000 });
+        await settled(s.page);
+        b = await box(s.page);
+        assert.deepEqual([b.katex, b.src.length, s.chunkRequests()], [1, 0, 1], "at the load the chunk is fetched and the formula laid out");
       });
     },
   },
