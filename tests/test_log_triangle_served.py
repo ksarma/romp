@@ -41,7 +41,8 @@ that restores the old precedence (the selector back to `#merr.has`) turns the da
 turns the light step red; one that leaves an entry that arrives with the Log open unread (the write path before
 2026-10-03) turns the openNew step red; one that lists an unmuted kind's entries unread with the Log open (the toggle
 before 2026-10-04), or marks only the newest of them, turns the unmutedOpen step red; one that recolours the bar toward
-the red (either theme's #mtabs background) turns that theme's contrast assertion red.
+the red (either theme's #mtabs background) turns that theme's contrast assertion red; one that paints the push bell with
+the triangle's red (a sibling selector on the triangle's rule) turns the bell's colour assertion red.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), its port and its wait from tests/lab_ports.py, a
@@ -86,9 +87,12 @@ DARK = {"red": "rgb(255, 107, 107)", "idle": "rgb(125, 132, 139)", "tabOn": "rgb
         "tab": "rgb(154, 160, 166)", "act": "rgb(125, 132, 139)"}
 LIGHT = {"red": "rgb(176, 42, 28)", "idle": "rgb(93, 87, 78)", "tabOn": "rgb(194, 65, 12)",
          "tab": "rgb(93, 87, 78)", "act": "rgb(93, 87, 78)"}
-# the actions whose colour is the plain action grey in this lab; the network button wears its own state (.on, .busy) from
-# the remotes poll, so it is held only to not moving with the triangle's state
-PLAIN_ACTS = ("usage", "restart", "settings")
+# the actions whose colour is the plain action grey in this lab, held at every step: usage, restart, settings, and the push
+# bell (#mbell, keyed by its id: it has no data-act), which the push script unhides unconditionally and which wears .on only
+# while notifications are on for this device; nothing turns them on in this lab, so it wears the plain grey in both themes.
+# The network button wears its own state (.on, .busy) from the remotes poll, so it is held only to not moving with the
+# triangle's state
+PLAIN_ACTS = ("usage", "restart", "settings", "mbell")
 # step: (palette, has, Log open, digit inside the triangle)
 STEPS = (("idle", DARK, False, False, "!"),
          ("unread", DARK, True, False, "1"),
