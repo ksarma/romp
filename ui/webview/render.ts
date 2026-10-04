@@ -1540,7 +1540,19 @@ function postalRepoFor(ev: { direction: "in" | "out"; peer: string; peerHost?: s
   return senderPrRepo(Array.from(sessions.values(), (s) => ({ sid: s.id, name: s.name, githubRepo: s.githubRepo })), ev.peer, postalSenderHost(ev.peerHost, localSelfHost, cardHost));
 }
 
+// The bodies highlight() has dressed: a reply, a tool's output, a report, a mail or notice body. The math arrival gives a failed
+// load's source block its Copy button only inside one of them, as highlight() gives one to every source block it meets; a bubble of
+// your own, a queued message and a romp notice are never highlighted, and no block in them has the button (the review of iOS item 6,
+// round 1). Elements, held weakly: a body that leaves the page leaves the set.
+const highlightedBodies = new WeakSet<Element>();
+/** Whether `n` sits inside a body highlight() has dressed (highlightedBodies). */
+function inHighlightedBody(n: Element): boolean {
+  for (let e: Element | null = n; e; e = e.parentElement) if (highlightedBodies.has(e)) return true;
+  return false;
+}
+
 function highlight(container: HTMLElement, lineNos = true) {
+  highlightedBodies.add(container);
   container.querySelectorAll("pre code").forEach((node) => {
     const code = node as HTMLElement;
     const raw = code.textContent || "";   // capture BEFORE we rewrite innerHTML: line-wrapping drops the \n joins, so the on-screen markup's textContent is NOT copy-safe
@@ -14685,10 +14697,14 @@ onMathSettled(() => {
       for (const m of Array.from(hv.el.querySelectorAll("mark.cmt-hl"))) unwrapCommentMark(m as HTMLElement);
       applyCommentMarks(sid);
       // A display formula a failed load showed as its source is a code block the highlighter never saw (it was a placeholder when
-      // the message rendered), so it takes the Copy button here that every other source fallback has (highlight); never through
-      // highlight() itself, which has no already-done check and would rewrite the block's lines. addCopyBtn skips a block that
-      // has one (the review of iOS item 6, round 1).
-      for (const code of Array.from(hv.el.querySelectorAll("pre > code.md-math-src"))) addCopyBtn(code.parentElement as HTMLElement, code.textContent || "");
+      // the message rendered), so it takes here the Copy button a source block has in a body the highlighter dresses, and only in
+      // such a body (inHighlightedBody): your own bubble, a queued message or a romp notice keeps it bare, as it keeps its fences.
+      // Never through highlight() itself, which has no already-done check and would rewrite the block's lines. addCopyBtn skips a
+      // block that has one (the review of iOS item 6, round 1).
+      for (const code of Array.from(hv.el.querySelectorAll("pre > code.md-math-src"))) {
+        const pre = code.parentElement as HTMLElement;
+        if (inHighlightedBody(pre)) addCopyBtn(pre, code.textContent || "");
+      }
     }
   };
 });

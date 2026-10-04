@@ -81,6 +81,8 @@ MARK_TID = "tid-math-1"   # the thread of the tests marked with_comment_thread
 MARK_HEAD = "the ranking term"   # the prose its passage starts with, before STEP-01's first formula
 MARK_TAIL = "weighs the api session"   # and the prose it ends with, after that formula
 MARK_TEX = r"w_1 = \frac{a_1}{b_1}"   # STEP-01's first formula (ranking_reply)
+# the user's own message in the retry case: a display formula and a fence, neither of which the highlighter dresses in a bubble
+BUBBLE_ASK = "walk me through the ranking math, starting from\n\n$$s(d) = \\sum_i w_i\\,f_i(d)$$\n\n```\nscore = bm25 + 0.3 * pagerank\n```\n"
 
 
 def ranking_reply():
@@ -357,7 +359,9 @@ process.exit(0);
 # down is its source; the reader is put on the paragraph below them; a new reply with a formula arrives, and the fill that meets it
 # uses the retry the failure armed (math.ts), the second request, held here while the formulas stay source; then it is served and
 # the success lays out every formula, the failure's fallbacks included, with the reader's line kept (render.ts onMathSettled counts
-# a view holding the failure's fallbacks as one that held a waiting formula; the review of iOS item 6, round 1).
+# a view holding the failure's fallbacks as one that held a waiting formula; the review of iOS item 6, round 1). The user's own
+# message above the reply carries a display formula and a fence: the reply's source blocks take the Copy button its body's other
+# blocks have, and the bubble's stay bare, as its fence does (the highlighter never dresses a bubble).
 DRIVER_RETRY = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -376,7 +380,7 @@ try {
   const errors = [];
   const settle = (page) => page.evaluate(() => fetch("/healthz", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
   const shown = (page, t) => page.waitForFunction((t) => (document.body.innerText || "").includes(t), t, { timeout: 30000 });
-  const measure = (page) => page.evaluate((marker) => {
+  const measure = (page) => page.evaluate(({ marker, bubbleMarker }) => {
     const c = document.getElementById("content");
     const ct = c.getBoundingClientRect().top;
     const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
@@ -384,14 +388,18 @@ try {
     const shownF = turn ? Array.from(turn.querySelectorAll(".md-math-display, .katex-display, pre:has(> code.md-math-src)")) : [];
     const last = shownF[shownF.length - 1];
     const pres = turn ? Array.from(turn.querySelectorAll("pre > code.md-math-src")).map((x) => x.parentElement) : [];
+    // the user's own bubble above the reply: its display formula and its fence, and the Copy buttons on them
+    const ub = Array.from(c.querySelectorAll(".user-bubble")).find((e) => (e.textContent || "").includes(bubbleMarker));
+    const bubble = ub ? { src: ub.querySelectorAll("pre > code.md-math-src").length, fences: ub.querySelectorAll("pre > code:not(.md-math-src)").length,
+      copy: ub.querySelectorAll("pre > .code-copy").length, katex: ub.querySelectorAll(".katex").length } : null;
     return { markerTop: p ? p.getBoundingClientRect().top - ct : null, turnHeight: turn ? turn.getBoundingClientRect().height : null,
       lastFormulaBottom: last ? last.getBoundingClientRect().bottom - ct : null,
       pending: document.querySelectorAll("#content .md-math-inline, #content .md-math-display").length,
       src: turn ? turn.querySelectorAll("code.md-math-src").length : -1, pres: pres.length,
       copy: pres.filter((x) => !!x.querySelector(":scope > .code-copy")).length,
       katex: turn ? turn.querySelectorAll(".katex").length : -1, allSrc: document.querySelectorAll("#content code.md-math-src").length,
-      scrollTop: c.scrollTop };
-  }, cfg.marker);
+      bubble, scrollTop: c.scrollTop };
+  }, { marker: cfg.marker, bubbleMarker: cfg.bubbleMarker });
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(e.message));
   const reqs = [];
@@ -916,7 +924,7 @@ class ServedMathChunk(unittest.TestCase):
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
         recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
-                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                 "sessionId": SID, "message": {"role": "user", "content": BUBBLE_ASK}},
                 reply("r1", "u2", self.t0 + 40, ranking_reply())]
         for i in range(FILLERS):
             recs.append(reply("g%d" % i, "r1" if i == 0 else "g%d" % (i - 1), self.t0 + 60 + i, FILLER % i))
@@ -926,7 +934,7 @@ class ServedMathChunk(unittest.TestCase):
         cfg = os.path.join(self.lab, "cfg-retry-%s.json" % engine)
         Path(cfg).write_text(json.dumps({
             "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "transcript": self.transcript,
-            "lastFiller": "Filler reply %d:" % (FILLERS - 1), "marker": "READ-03", "offset": 80, "retryMarker": "RETRY-REPLY",
+            "lastFiller": "Filler reply %d:" % (FILLERS - 1), "marker": "READ-03", "offset": 80, "retryMarker": "RETRY-REPLY", "bubbleMarker": "walk me through the ranking math",
             "retryLines": jsonl([reply("rr", "g%d" % (FILLERS - 1), self.t0 + 300, retry_text)])}))
         r = self._run(engine, DRIVER_RETRY, cfg, "retry-" + engine)
         w = engine + ": retry: "
@@ -936,7 +944,9 @@ class ServedMathChunk(unittest.TestCase):
         self.assertEqual((f["requests"], f["pending"], f["katex"]), (1, 0, 0), w + "the first request failed and nothing waits: %r" % f)
         self.assertEqual(f["src"], 3 * n, w + "every formula of the reply is its source: %r" % f)
         self.assertEqual((f["pres"], f["copy"]), (n, n),
-                         w + "each display formula the failure showed as a source block has the Copy button every source block has: %r" % f)
+                         w + "each display formula the failure showed as a source block in the reply has the Copy button the reply's source blocks have: %r" % f)
+        self.assertEqual(f["bubble"], {"src": 1, "fences": 1, "copy": 0, "katex": 0},
+                         w + "your own bubble keeps its blocks bare: the display formula the failure showed as a source block has no Copy button, as the bubble's fence has none: %r" % f["bubble"])
         self.assertLess(b["lastFormulaBottom"], 0, w + "the reply's formulas are above the viewport top: %r" % b)
         self.assertGreater(b["markerTop"], 0, w + "the paragraph being read is on screen: %r" % b)
         self.assertEqual(d["requests"], 2, w + "the new reply's formula used the retry the failure armed: %r" % d)
@@ -944,6 +954,7 @@ class ServedMathChunk(unittest.TestCase):
         self.assertLessEqual(abs(d["markerTop"] - b["markerTop"]), 1, w + "the new reply at the tail did not move the reader: %r %r" % (b, d))
         self.assertEqual((a["pending"], a["src"], a["allSrc"], a["requests"]), (0, 0, 0, 2), w + "the served retry laid out every formula, the failure's included: %r" % a)
         self.assertGreaterEqual(a["katex"], 3 * n, w + "%r" % a)
+        self.assertEqual(a["bubble"], {"src": 0, "fences": 1, "copy": 0, "katex": 1}, w + "the bubble's formula is laid out by the success too: %r" % a["bubble"])
         self.assertGreater(abs(a["turnHeight"] - b["turnHeight"]), 5,
                            w + "the swap from the sources to KaTeX's layout changed the reader's own turn above them: %r %r" % (b, a))
         self.assertLessEqual(abs(a["markerTop"] - b["markerTop"]), 1,

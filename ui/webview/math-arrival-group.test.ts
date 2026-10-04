@@ -53,7 +53,7 @@ function harness(views: Map<string, { el: unknown; lineMoved?: boolean }> = new 
     const views = env.views;
     const document = { getElementById: () => null };
     const atBottom = () => false, captureReadingAnchor = () => null, restoreReadingLine = () => false, restoreScrollAnchor = () => {}, writeScroll = () => {};
-    const marked = []; const applyCommentMarks = (sid) => { marked.push(sid); }, unwrapCommentMark = () => {}, addCopyBtn = () => {};
+    const marked = []; const applyCommentMarks = (sid) => { marked.push(sid); }, unwrapCommentMark = () => {}, addCopyBtn = () => {}, inHighlightedBody = () => true;
     let handler = null; const onMathSettled = (h) => { handler = h; return () => {}; };
     let kind = "waiting"; const renderQueued = () => env.node(kind);
     const mathPendingIn = env.mathPendingIn, mathFailedIn = env.mathFailedIn;
