@@ -147,10 +147,13 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
           ({ port: N }, "busPort": N, , port=N);
     decl  a port-named name declared and assigned (const port = N, local port=N, export ROMP_POSTAL_PORT=N);
     env   an upper-case port-named name, then : or = and the number, quoted or not (ROMP_POSTAL_PORT'] = 'N');
-    flag  a --*port option (above: --port N, --port=N, --no-port-check=N), or one quoted in a list with the number as
-          the next element ('--port', 'N'), with whitespace on either side of the comma (any character str.isspace()
-          accepts, newlines included, so a list split across lines reads the same), or one closed by a quote and then
-          spaces or tabs before the number (a shell argv's "--port" N, '--port' "N");
+    flag  a --*port option (above: --port N, --port=N, --no-port-check=N), or one followed by a quote, a comma and the
+          number, as in a list ('--port', 'N'), with whitespace on either side of the comma (any character
+          str.isspace() accepts, newlines included, so a list split across lines reads the same), or one followed by a
+          quote and then spaces or tabs before the number (a shell argv's "--port" N, '--port' "N"). Neither quoted
+          form checks that the quote closes a string, or that a string it closes opened at the option, so a quote that
+          opens one reads the same way (--port" N", --port", N"), and so does an option that ends a longer quoted word
+          ("serve --port" N);
     authority  host:N after an address (above) with no placeholder in its run (http://127.0.0.1:N, //TESTHOST:N), the
                number right after the colon, or after a quote, a + and an optional quote ('http://127.0.0.1:' + N),
                with whitespace on either side of the + (newlines included: a concatenation split across lines, the +
@@ -1303,6 +1306,14 @@ class Plants(unittest.TestCase):
                 ("a name and its value handed together", "g.test.js", "setEnv('ROMP_POSTAL_PORT', '%d');\n" % n, "rule pair"),
                 ("a quote that opens a string, then a +, after an address's colon", "o.test.mjs",
                  "const o = { localhost: '+%d' };\n" % n, "rule authority"),
+                ("a quote that opens a string after a --*port option, then a space", "p1.bats", 'echo --port" %d"\n' % n,
+                 "rule flag"),
+                ("a quote that opens a string after a --*port option, then a comma", "p2.bats", 'echo --port", %d"\n' % n,
+                 "rule flag"),
+                ("a --*port option that ends a longer quoted word, then a space", "p3.bats", 'run romp "serve --port" %d\n' % n,
+                 "rule flag"),
+                ("a quote that opens a string after a --*port option, in a JavaScript string", "p4.test.mjs",
+                 "execSync(\"romp --port' %d'\");\n" % n, "rule flag"),
                 ("other decimal digits", "k.bats", "export ROMP_POSTAL_PORT=%s\n" % _arabic(n), "rule env"),
                 ("a comment in a file read as text", "m.bats", "# the old default: localhost:%d\n" % n, "rule authority"),
                 ("a shell arithmetic expansion after a flag", "n.bats", "run romp --port $((%d + RANDOM %% 100))\n" % n,
@@ -1371,12 +1382,13 @@ class Plants(unittest.TestCase):
                 self.assertGreen("test_x.py", green)
                 self.assertRed("test_plant.py", red, why)
 
-    def test_an_option_closed_by_a_quote_then_spaces_before_its_number(self):
-        """THE RULE's flag rule, for an option closed by a quote and then spaces or tabs before its number: a shell argv
+    def test_an_option_then_a_quote_and_spaces_before_its_number(self):
+        """THE RULE's flag rule, for an option followed by a quote and then spaces or tabs before its number: a shell argv
         that quotes the option, and a JavaScript string that holds such a command. Each green twin is a near miss in a
         file the census opens (its number stands alone in the range), so the green is the rule's: a quoted option with no
-        port word, one with one dash, a quote that does not close the option, and a quoted option that ends its line, so
-        in shell the number belongs to the next command."""
+        port word, one with one dash, a word between the option and the quote, and a quoted option that ends its line,
+        so in shell the number belongs to the next command. That the quote need not close a string, nor one opened at
+        the option, is pinned in test_the_text_rules."""
         n = _n()
         for label, name, src in (
                 ("a quoted option, then a space", "q1.bats", 'run romp serve "--port" %d\n' % n),
@@ -1387,7 +1399,7 @@ class Plants(unittest.TestCase):
         for label, name, src in (
                 ("a quoted option with no port word", "q4.bats", 'run romp serve "--report" %d\n' % n),
                 ("a quoted option with one dash", "q5.bats", 'run romp serve "-p" %d\n' % n),
-                ("a quote that does not close the option", "q6.bats", 'echo "--port is" %d\n' % n),
+                ("a word between the option and the quote", "q6.bats", 'echo "--port is" %d\n' % n),
                 ("a quoted option that ends its line", "q7.bats", 'run romp serve "--port"\necho %d\n' % n)):
             with self.subTest(label):
                 self.assertGreen(name, src)
