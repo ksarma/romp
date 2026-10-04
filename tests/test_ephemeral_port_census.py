@@ -134,12 +134,16 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
     decl  a port-named name declared and assigned (const port = N, local port=N, export ROMP_POSTAL_PORT=N);
     env   an upper-case port-named name, then : or = and the number, quoted or not (ROMP_POSTAL_PORT'] = 'N');
     flag  a --*port option (above: --port N, --port=N, --no-port-check=N), or one quoted in a list with the number as
-          the next element ('--port', 'N'), or one closed by a quote and then spaces or tabs before the number (a shell
-          argv's "--port" N, '--port' "N");
+          the next element ('--port', 'N'), with whitespace on either side of the comma (any character str.isspace()
+          accepts, newlines included, so a list split across lines reads the same), or one closed by a quote and then
+          spaces or tabs before the number (a shell argv's "--port" N, '--port' "N");
     authority  host:N after an address (above) with no placeholder in its run (http://127.0.0.1:N, //TESTHOST:N), the
-               number right after the colon, or after a quote, a + and an optional quote ('http://127.0.0.1:' + N);
-               the rule does not check that the quote closes a string, so a quote that opens one reads the same way,
-               and an object literal's { localhost: '+N' } is read as a concatenation;
+               number right after the colon, or after a quote, a + and an optional quote ('http://127.0.0.1:' + N),
+               with whitespace on either side of the + (newlines included: a concatenation split across lines, the +
+               ending one line or starting the next) but only spaces or tabs between the colon and the quote, so a
+               newline inside the string after the colon ends the address; the rule does not check that the quote
+               closes a string, so a quote that opens one reads the same way, and an object literal's { localhost:
+               '+N' } is read as a concatenation;
     address    a loopback or wildcard address tuple in text (("127.0.0.1", N));
     call  a number handed first to .listen(, .connect(, createConnection( or .bind(;
     pair  a port-named string and the number handed together ("ROMP_POSTAL_PORT", "N").
@@ -302,8 +306,8 @@ TEXT_RULES = (
     ("key", re.compile(r"(?:^|[{,(\[;])[ \t]*[\"'`]?(?P<name>[\w$.-]+)[\"'`]?[ \t]*[:=][ \t]*" + _NUM, re.M)),
     ("decl", re.compile(r"\b(?:const|let|var|local|export|readonly|declare(?:[ \t]+-\w+)?)[ \t]+(?P<name>[\w$]+)[ \t]*=[ \t]*" + _NUM)),
     ("env", re.compile(r"\b(?P<name>[A-Z][A-Z0-9_]*)[\"'`]?\]?[ \t]*[:=][ \t]*" + _NUM)),
-    ("flag", re.compile(r"--(?P<name>" + _OPT + r")(?:=|[ \t]+|[\"'`][ \t]*,[ \t]*|[\"'`][ \t]+)" + _NUM)),   # or quoted: the next element, or after spaces
-    ("authority", re.compile(r"(?:" + _HOST + r"|//[\w.-]+)[ \t]*:[ \t]*(?:[\"'`][ \t]*\+[ \t]*[\"'`]?)?(?P<n>" + _D5
+    ("flag", re.compile(r"--(?P<name>" + _OPT + r")(?:=|[ \t]+|[\"'`]\s*,\s*|[\"'`][ \t]+)" + _NUM)),   # or quoted: the next element, or after spaces
+    ("authority", re.compile(r"(?:" + _HOST + r"|//[\w.-]+)[ \t]*:[ \t]*(?:[\"'`]\s*\+\s*[\"'`]?)?(?P<n>" + _D5
                              + r")(?![\w.])")),   # the number right after the colon, or concatenated onto it
     ("address", re.compile(r"\([ \t]*[\"'](?:127\.0\.0\.1|localhost|0\.0\.0\.0|::1?|)[\"'][ \t]*,[ \t]*(?P<n>" + _D5 + r")[ \t]*[,)]")),
     ("call", re.compile(r"(?:\.listen|\.connect|createConnection|\.bind)\([ \t]*(?P<n>" + _D5 + r")(?![\w.])")),
@@ -1362,6 +1366,31 @@ class Plants(unittest.TestCase):
                 ("a dotted option with no port word, in Python", "test_x.py",
                  'subprocess.run(["java", "-jar", "srv.jar", "--server.report", "%d"])\n' % n),
                 ("a dot that ends the option", "d6.bats", "# pass --port. %d was the old default\n" % n)):
+            with self.subTest(label):
+                self.assertGreen(name, src)
+
+    def test_a_javascript_concatenation_or_list_split_across_lines(self):
+        """THE RULE's authority and flag rules, for a concatenation onto an address and a list's --*port element split
+        across lines, the + or the comma ending one line or starting the next. Each green twin is a near miss in a file
+        the census opens: a template literal whose colon ends its line, so the address has ended before the +, and a
+        comment holding the number on the line after the + or the comma, prose and not the operand."""
+        n = _n()
+        for label, name, src, why in (
+                ("a + that ends the line", "s1.test.mjs", "await fetch('http://127.0.0.1:' +\n    %d + '/x');\n" % n,
+                 "rule authority"),
+                ("a + that starts the next line", "s2.test.mjs", "await fetch('http://127.0.0.1:'\n    + '%d' + '/x');\n" % n,
+                 "rule authority"),
+                ("a comma that ends the line", "s3.test.mjs", "spawn(bin, ['serve', '--port',\n    '%d']);\n" % n, "rule flag"),
+                ("a comma that starts the next line", "s4.test.mjs",
+                 "spawn(bin, [\n  'serve',\n  '--port'\n  , '%d',\n]);\n" % n, "rule flag")):
+            with self.subTest(label):
+                self.assertRed(name, src, why)
+        for label, name, src in (
+                ("a template literal whose colon ends its line", "s5.test.mjs", "await fetch(`http://127.0.0.1:\n` + %d);\n" % n),
+                ("a comment after the +", "s6.test.mjs",
+                 "await fetch('http://127.0.0.1:' +\n    // %d was the old port\n    port);\n" % n),
+                ("a comment after the comma", "s7.test.mjs",
+                 "spawn(bin, ['serve', '--port',\n    // %d was the old port\n    String(port)]);\n" % n)):
             with self.subTest(label):
                 self.assertGreen(name, src)
 
