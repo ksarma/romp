@@ -150,7 +150,10 @@ class DemandDoors(unittest.TestCase):
     def test_postal_parking_pokes_the_door(self):
         src = open(os.path.join(os.path.dirname(HERE), "postal", "postal_service.py")).read()
         self.assertIn('_kernel_post("/redial", {"host": phost})', src,
-                      "parking mail for an unreachable host re-sends the connect signal")
+                      "the bus still calls the kernel's /redial door: parking mail for a host with a PEERS port row that "
+                      "is not up asks for its tunnel, whatever the host's inbound link says. This text check proves only "
+                      "that the call is present; the executed proof is tests/test_postal_peers.py "
+                      "AHostThatDialsUsIsReachedOnItsNextExchange.test_a_held_down_port_row_redials_whatever_the_link_says")
 
 
 if __name__ == "__main__":
