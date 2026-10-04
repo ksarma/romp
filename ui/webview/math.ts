@@ -46,9 +46,19 @@
 // out at once, past the face wait and the viewer's hold). A load that fails, registers nothing or has not
 // settled within MATH_CHUNK_BACKSTOP_MS is a failure: every pending formula becomes the source fallback with
 // a title naming the failure, marked as one the failure made (MATH_FAILED_ATTR, with its call's group), the
-// console says so once, and later formulas take the same fallback. An answer of the failed attempt that
-// succeeds after all (the chunk, or the faces, landing after the backstop) is a success: the marked fallbacks
-// become placeholders again and the fill over the document lays out every formula, those included.
+// console says so once per failed attempt, and later formulas take the same fallback at once: nothing waits
+// on a retry, so the chat shows the TeX and the viewer paints. A failed load is retried, and only events arm
+// a retry, since renders repeat on every streaming delta and kernel push and must not be what asks: the page
+// life's first failure, the shim's reconnect (romp:wsup) and the window's `online` each set one flag (it does
+// not stack), and the next fill that meets a formula uses it up (not the failure's own fill, the arrival's
+// fill over the document or the viewer's repaint at the settle, which run inside the settle). So a chunk that
+// 404s for good costs two requests per page life plus one per reconnect, at any render rate (the review of
+// iOS item 6, round 1; the editor and PDF loaders retry the same way since 2026-09-06, on a gesture). A page
+// with no bundle tag to derive the URL from fails the same way every time and arms nothing. Whichever attempt
+// succeeds first, a retry or an earlier attempt landing after its backstop (the chunk, or the faces), runs the
+// arrival, once: the marked fallbacks become placeholders again and the fill over the document lays out every
+// formula, those included, while the chat keeps its reader's line and the viewer its place as at a first
+// arrival.
 //
 // The delimiter problem: `$` is everywhere in chat text that is NOT math (shell variables,
 // prices), and a naive $..$ tokenizer strikes a formula through half a sentence the way the
@@ -355,16 +365,42 @@ export const MATH_FAILED_ATTR = "data-math-failed";
 const FAILED_SEL = "[" + MATH_FAILED_ATTR + "]";
 
 let mathCalls = 0;                                        // the group numbers handed out so far
-// The load, for the page's life: idle until the first formula, loading while the chunk and the faces are out, ready once they
-// have settled as a success, failed after a failure (until a success). The fill lays out with KaTeX only while idle (a bundle that
-// imported the chunk for its side effect asks for nothing) or ready.
+// The load, for the page's life: idle until the first formula, loading while the first attempt's chunk and faces are out, ready
+// once an attempt has settled as a success, failed after a failure (until a success; a retry runs while the state stays failed,
+// so nothing waits on it). The fill lays out with KaTeX only while idle (a bundle that imported the chunk for its side effect
+// asks for nothing) or ready.
 let engineLoad: "idle" | "loading" | "ready" | "failed" = "idle";
-let engineFailure = "";                                   // what went wrong, for the fallback's title
+let engineFailure = "";                                   // what went wrong last, for the fallback's title
+let failures = 0;                                         // attempts that have failed in this page life: the first arms a retry
+let retryArmed = false;                                   // one retry, armed by an event, used by the next fill that meets a formula
+let retryable = true;                                     // false once the page proved to have no bundle tag to derive the URL from
+let settling = 0;                                         // inside engineSettled: its fills (the document's, a viewer's repaint) use no retry
 const settleHandlers: Array<() => (() => void) | void> = [];
+
+/** Arm one retry of a failed load, the flag set and not counted (a second event before the next formula changes nothing). The
+ *  events that arm it are the page life's first failure (in attemptFailed) and the two below, both a sign the network may be
+ *  back: the pane shim's reconnect, romp:wsup, on a kernel page (the shim dispatches it at every reopen of the page's socket;
+ *  a page without the shim, the VS Code webview, has the second only), and the window's `online`. A load that is not failed,
+ *  or a page with no bundle tag to derive the URL from, arms nothing. */
+function armRetry(): void {
+  if (engineLoad === "failed" && retryable) retryArmed = true;
+}
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("romp:wsup", armRetry);
+  window.addEventListener("online", armRetry);
+}
 
 /** Whether `root` holds a formula still waiting for the engine: after a fill, a placeholder that is left is one. */
 export function mathPendingIn(root: ParentNode): boolean {
   return !!root.querySelector(PLACEHOLDER_SEL);
+}
+
+/** Whether `root` holds a formula the load's failure showed as its source, which the arrival of a later success lays out
+ *  (restoreFailedFormulas): the chat's settle handler counts such a view with the ones that held a waiting formula, and the
+ *  viewer repaints a paint that holds one, so the success keeps the reader's line and the viewer's place as a first arrival
+ *  does. Never true before the load's first failure. */
+export function mathFailedIn(root: ParentNode): boolean {
+  return !!root.querySelector(FAILED_SEL);
 }
 
 /** Run `handler` when the engine's load settles, either way, BEFORE the fill over the document renders what is pending (or
@@ -384,31 +420,49 @@ function katexFaces(): Promise<unknown> {
   return Promise.all(["1em KaTeX_Main", "italic 1em KaTeX_Math"].map((f) => faces.load(f).catch(() => null)));
 }
 
-/** Ask for the chunk, once per page life: a script tag beside the page's bundle (chunk-url.ts), the faces in parallel. Every
- *  end settles through engineSettled, never synchronously, so a fill that asks is never re-entered by its own failure. The
- *  attempt fails once, at its first failure end (an error, a load that registered nothing, the backstop), and a later failure
- *  end of it is silent; an answer of it that SUCCEEDS after that (the chunk, or the faces, landing after the backstop) is a
- *  success all the same, the one way a failure is undone. */
+/** Ask for the chunk when the fill meets a formula it cannot lay out: the page life's first attempt (idle), or a retry while the
+ *  load is failed and a retry is armed, which this uses up. A fill inside the settle (the failure's own fill over the document,
+ *  the arrival's, a viewer's repaint in a settle handler) uses none, so a failure cannot re-arm itself through its own render,
+ *  and a persistent 404 costs the first request, the one retry the failure arms, and one per later event, at any render rate. */
 function requestEngine(): void {
-  if (engineLoad !== "idle" || typeof document === "undefined") return;
-  engineLoad = "loading";
+  if (typeof document === "undefined") return;
+  if (engineLoad === "idle") engineLoad = "loading";
+  else if (engineLoad === "failed" && retryArmed && settling === 0) retryArmed = false;
+  else return;
+  attempt();
+}
+
+/** One attempt: a script tag beside the page's bundle (chunk-url.ts), the faces in parallel. A retry while an earlier attempt is
+ *  still out (stalled past its backstop) adds a fresh tag all the same, as the PDF loader does, and whichever attempt succeeds first
+ *  runs the arrival. A browser serves a script URL already in flight from that one fetch (Chromium and WebKit reuse the loading
+ *  resource), so against a stalled answer the fresh tag waits on it; after an error or a 404 that fetch is over, and the retry is
+ *  a new request. Every end settles asynchronously, never inside the fill that asked, so a fill is never re-entered by its own
+ *  attempt. The attempt fails once, at its first failure end (an error, a load that registered nothing, its backstop), and a
+ *  later failure end of it is silent; an answer of it that SUCCEEDS after that (the chunk, or the faces, landing after the
+ *  backstop) is a success all the same. */
+function attempt(): void {
   const tag = chunkScript("math-chunk.js");
-  if (!tag) { queueMicrotask(() => engineSettled("no bundle script on this page to derive the math renderer's URL from")); return; }
-  const faces = katexFaces();
+  if (!tag) {
+    retryable = false;                                    // no URL now means no URL later: nothing a retry could change
+    queueMicrotask(() => attemptFailed("no bundle script on this page to derive the math renderer's URL from"));
+    return;
+  }
   let failed = false, done = false;
+  let backstop: ReturnType<typeof setTimeout> | undefined;
   const fail = (why: string): void => {
     if (failed || done) return;
     failed = true;
     clearTimeout(backstop);
-    engineSettled(why);
+    attemptFailed(why);
   };
   const succeed = (): void => {
     if (done) return;
     done = true;
     clearTimeout(backstop);
-    engineSettled(null);
+    if (engineLoad !== "ready") engineSettled(null);      // the first success runs the arrival; a second is a no-op
   };
-  const backstop = setTimeout(() => fail("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
+  const faces = katexFaces();
+  backstop = setTimeout(() => fail("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
   const sc = document.createElement("script");
   sc.src = tag.src;
   if (tag.nonce) sc.nonce = tag.nonce;
@@ -416,6 +470,20 @@ function requestEngine(): void {
   sc.onload = () => { if (!engine()) fail("the math renderer loaded but registered nothing"); else void faces.then(succeed); };
   sc.onerror = () => fail("the math renderer failed to load");
   (document.head || document.documentElement).appendChild(sc);
+}
+
+/** An attempt failed (once: attempt's `fail`). Said on the console, one line per failed attempt, unless an attempt has already
+ *  succeeded, which a stale failure does not contradict. The page life's first failure arms a retry, and the first failure of the
+ *  load as a whole (from loading) settles it: the waiting formulas become their source, marked. A retry's failure finds nothing
+ *  waiting (the fill shows the source at once while the load is failed), so it settles nothing. */
+function attemptFailed(why: string): void {
+  if (engineLoad === "ready") return;
+  failures++;
+  engineFailure = why;
+  if (failures === 1 && retryable) retryArmed = true;   // the page life's first failure arms one retry
+  const next = !retryable ? "" : failures === 1 ? "; the next formula asks for the renderer again" : "; a formula after the connection comes back asks for it again";
+  console.error("math: " + why + "; formulas are shown as their TeX source" + next);
+  if (engineLoad === "loading") engineSettled(why);
 }
 
 /** Each source fallback the load's failure made under `root` back to the placeholder it was (its tag, its mode, its TeX and its
@@ -435,23 +503,26 @@ function restoreFailedFormulas(root: ParentNode): void {
   });
 }
 
-/** The load is over: the handlers, then one fill over the document (each pending formula rendered, or shown as source on a
- *  failure), then what the handlers returned. A failure is said once on the console; a success after it first puts the
- *  failure's fallbacks back as placeholders (restoreFailedFormulas), so the fill lays out every formula, those included. */
+/** The load is over, as a failure (the first of the page life's load) or a success (the first, whichever attempt it was): the
+ *  handlers, then one fill over the document (each pending formula rendered, or shown as source on a failure), then what the
+ *  handlers returned. A success after a failure first puts the failure's fallbacks back as placeholders (restoreFailedFormulas),
+ *  so the fill lays out every formula, those included. The fills inside use no retry (settling, requestEngine). */
 function engineSettled(failure: string | null): void {
-  if (failure !== null) {
-    engineLoad = "failed";
-    engineFailure = failure;
-    console.error("math: " + failure + "; formulas are shown as their TeX source");
-  } else engineLoad = "ready";
-  const after: Array<() => void> = [];
-  for (const h of settleHandlers.slice()) {
-    try { const a = h(); if (typeof a === "function") after.push(a); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
-  }
-  if (failure === null) restoreFailedFormulas(document);
-  renderMathPlaceholders(document);
-  for (const a of after) {
-    try { a(); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
+  engineLoad = failure === null ? "ready" : "failed";
+  if (failure === null) retryArmed = false;
+  settling++;
+  try {
+    const after: Array<() => void> = [];
+    for (const h of settleHandlers.slice()) {
+      try { const a = h(); if (typeof a === "function") after.push(a); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
+    }
+    if (failure === null) restoreFailedFormulas(document);
+    renderMathPlaceholders(document);
+    for (const a of after) {
+      try { a(); } catch (e) { console.error("math: a handler for the renderer's arrival threw", e); }
+    }
+  } finally {
+    settling--;
   }
 }
 
@@ -672,8 +743,9 @@ function showSource(el: HTMLElement, tex: string, why: string, failedCall?: stri
  *  takes the belt, the source the same way and a word on the console once per call, so a formula can never
  *  blank a message. Until the load has settled as a success, a formula that passes the four bounds is left as
  *  its placeholder, stamped with this call's group, and the chunk is asked for (requestEngine); the fill over
- *  the document at the engine's arrival renders it, and after a failed load the fill shows it as source
- *  with the failure in its title, marked with its group so a later success lays it out (showSource). With the
+ *  the document at the engine's arrival renders it, and after a failed load the fill shows it as source at once
+ *  with the failure in its title, marked with its group so a later success lays it out (showSource), and uses
+ *  an armed retry (requestEngine). With the
  *  engine loaded, a second run over the same root is a no-op: no placeholder survives the first. Plain and
  *  exported: md-config.ts registers it as sanitizeMd's post-pass, the arrival runs it over the document, and
  *  the tests call it directly. */
@@ -712,7 +784,13 @@ export function renderMathPlaceholders(root: ParentNode): void {
     rendered += tex.length;
     meters.set(call, rendered);
     if (!katex) {
-      if (engineLoad === "failed") { showSource(el, tex, "Not rendered: " + engineFailure + "; reload the page to try again.", call || group || (group = String(++mathCalls))); return; }
+      if (engineLoad === "failed") {
+        // the failure's fallback, at once (nothing waits on a retry), marked so a later success lays it out; an armed retry is
+        // used here, by a fill that meets a formula outside the settle (requestEngine)
+        showSource(el, tex, "Not rendered: " + engineFailure + ".", call || group || (group = String(++mathCalls)));
+        requestEngine();
+        return;
+      }
       if (!call) el.setAttribute(MATH_CALL_ATTR, group || (group = String(++mathCalls)));
       requestEngine();
       return;

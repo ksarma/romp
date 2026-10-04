@@ -5,8 +5,11 @@
 // common faces are in, then KaTeX's layout in its place, and a formula met after the chunk registered but before its faces
 // waits too; the per-message budget charged per message across the wait; a failed load (a 404, a script that registers
 // nothing, a page with no bundle tag, the 60 s backstop over a stalled chunk or stalled faces) leaves each formula as its
-// source with the reason in its title, said once on the console, and a chunk or faces that land after the backstop lay out
-// every formula, the fallbacks included; a page shaped like the VS Code webview loads the chunk under its nonce-only policy. math-chunk-load-webkit-browser.test.ts runs the same scenes in WebKit. Synthetic values only.
+// source with the reason in its title, said once per failed attempt on the console; the next formula after the page life's
+// first failure asks again, nothing waiting on it, and a later one only after an online or reconnect event, so a persistent
+// 404 costs two requests plus one per event; a success, the retry's or a chunk or faces landing after the backstop, lays out
+// every formula, the failure's fallbacks included; a page shaped like the VS Code webview loads the chunk under its
+// nonce-only policy. math-chunk-load-webkit-browser.test.ts runs the same scenes in WebKit. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

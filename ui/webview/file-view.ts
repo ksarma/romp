@@ -19,7 +19,7 @@ import hljs from "highlight.js/lib/core";
 import { marked, type Token, type Tokens } from "marked";
 import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
-import { onMathSettled, mathPendingIn } from "./math";   // a paint of a note with math waits for the math renderer's arrival (the hold in renderBody)
+import { onMathSettled, mathPendingIn, mathFailedIn } from "./math";   // a paint of a note with math waits for the math renderer's arrival (the hold in renderBody)
 import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start tag with no end tag in its block renders as literal text, on this parse's tokens (plans/file-review.md, decision 52)
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
@@ -2510,8 +2510,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // as does a paint that ends the hold first (a Raw pick while the chunk loads: renderBody's `ends`).
   // Before, the landing spent both over the loader: the heading's frame found no section and said the note had none, the
   // offset found no rendered root and landed nothing, and the arrival's paint opened the note at its top.
+  // A failed load paints at once, each formula as its marked source (math.ts: nothing waits on a retry), and a later success
+  // repaints a paint that shows one (mathFailedIn), through renderBody like a held paint's arrival, so the reader's place is read
+  // off the source paint and seated in the new one and the hooks run over the laid-out formulas (round 1 of the PR's review: a
+  // failed load is retried).
   let mathHeld = false;
-  closeHooks.push(onMathSettled(() => { if (mathHeld) { mathHeld = false; renderBody(); landTarget(); } }));
+  closeHooks.push(onMathSettled(() => {
+    if (mathHeld) { mathHeld = false; renderBody(); landTarget(); }
+    else if (shownText !== null && mathFailedIn(body)) renderBody();
+  }));
   const renderBody = () => {
     const rendered = isMd && fmt.md === "rendered";
     for (const [mode, b] of segBtns) {
@@ -4007,7 +4014,10 @@ export function openUrlView(href: string): void {
   };
   body.addEventListener("scroll", () => { if (heldPlace && body.scrollTop !== heldScrollTop) heldPlace = null; }, { passive: true });
   let mathHeld = false;                                // a Rendered paint waiting for the math renderer: the local viewer's hold (renderBody there)
-  closeHooks.push(onMathSettled(() => { if (mathHeld) { mathHeld = false; renderBody(); } }));
+  closeHooks.push(onMathSettled(() => {                // and a paint a failed load left with sources, repainted by a later success (the local viewer's)
+    if (mathHeld) { mathHeld = false; renderBody(); }
+    else if (shownText !== null && mathFailedIn(body)) renderBody();
+  }));
   const renderBody = () => {
     for (const [mode, b] of segBtns) {
       const on = fmt.md === mode;

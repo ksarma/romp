@@ -28,6 +28,10 @@ Against a hermetic kernel serving the checkout's own build (tests/lab_dist.py), 
   - a hidden tab (a second session, `api`, beside `web`), in both engines on the phone: the reader on the paragraph in `web`, every formula
     above it waiting, switches to `api`; the chunk lands and the swap lays the formulas out while `web` is hidden; back on `web` the
     paragraph is within 1 px of where they left it (render.ts keeps the reader's line at the switch and lands it on the next show).
+  - a failed load and its retry, in both engines on the phone: the chunk's first answer is a 404, so every formula of the reply is its
+    source; with the reader on a paragraph below them, a new reply's formula uses the retry the failure armed (the second request,
+    held: nothing waits, the sources stand), and when it is served every formula is laid out, the failure's fallbacks included, with
+    the paragraph within 1 px (math.ts retries a failed load; render.ts keeps the line across the success as across a first arrival).
 SYNTHETIC fixtures only; skips LOUDLY without the extension deps or a Playwright browser (CI's served job installs both)."""
 import gzip
 import json
@@ -302,6 +306,88 @@ try {
     out.variants.reload = v;
     await page.close();
   }
+  out.errors = errors;
+} catch (e) {
+  out.died = String(e && e.message || e);
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+# A failed load and its retry, on a phone: the chunk's first answer is a 404, so every formula of the reply the reader is partway
+# down is its source; the reader is put on the paragraph below them; a new reply with a formula arrives, and the fill that meets it
+# uses the retry the failure armed (math.ts), the second request, held here while the formulas stay source; then it is served and
+# the success lays out every formula, the failure's fallbacks included, with the reader's line kept (render.ts onMathSettled counts
+# a view holding the failure's fallbacks as one that held a waiting formula; the review of iOS item 6, round 1).
+DRIVER_RETRY = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const out = {};
+const PENDING = "#content .md-math-inline, #content .md-math-display";
+try {
+  const device = Object.assign({}, pw.devices["iPhone 15"]);
+  delete device.defaultBrowserType;
+  const ctx = await browser.newContext(device);
+  const errors = [];
+  const settle = (page) => page.evaluate(() => fetch("/healthz", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+  const shown = (page, t) => page.waitForFunction((t) => (document.body.innerText || "").includes(t), t, { timeout: 30000 });
+  const measure = (page) => page.evaluate((marker) => {
+    const c = document.getElementById("content");
+    const ct = c.getBoundingClientRect().top;
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    const turn = p ? p.closest("[data-uuid]") : null;
+    const shownF = turn ? Array.from(turn.querySelectorAll(".md-math-display, .katex-display, pre:has(> code.md-math-src)")) : [];
+    const last = shownF[shownF.length - 1];
+    const pres = turn ? Array.from(turn.querySelectorAll("pre > code.md-math-src")).map((x) => x.parentElement) : [];
+    return { markerTop: p ? p.getBoundingClientRect().top - ct : null, turnHeight: turn ? turn.getBoundingClientRect().height : null,
+      lastFormulaBottom: last ? last.getBoundingClientRect().bottom - ct : null,
+      pending: document.querySelectorAll("#content .md-math-inline, #content .md-math-display").length,
+      src: turn ? turn.querySelectorAll("code.md-math-src").length : -1, pres: pres.length,
+      copy: pres.filter((x) => !!x.querySelector(":scope > .code-copy")).length,
+      katex: turn ? turn.querySelectorAll(".katex").length : -1, allSrc: document.querySelectorAll("#content code.md-math-src").length,
+      scrollTop: c.scrollTop };
+  }, cfg.marker);
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => errors.push(e.message));
+  const reqs = [];
+  let release; const held = new Promise((r) => { release = r; });
+  await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => {
+    const n = reqs.push(route.request().url());
+    if (n === 1) return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
+    await held; await route.continue();
+  });
+  await page.goto(cfg.chat);
+  await shown(page, cfg.lastFiller);
+  await page.waitForFunction((sel) => !document.querySelector(sel) && !!document.querySelector("#content code.md-math-src"), PENDING, { timeout: 30000 });
+  await settle(page);
+  out.failed = Object.assign(await measure(page), { requests: reqs.length });
+  const placed = await page.evaluate(({ marker, off }) => {
+    const c = document.getElementById("content");
+    c.style.overflowAnchor = "none";
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    if (!p) return "no paragraph starting " + marker;
+    c.scrollTop += p.getBoundingClientRect().top - c.getBoundingClientRect().top - off;
+    return "";
+  }, { marker: cfg.marker, off: cfg.offset });
+  if (placed) throw new Error(placed);
+  await settle(page);
+  out.before = await measure(page);
+  fs.appendFileSync(cfg.transcript, cfg.retryLines);
+  await shown(page, cfg.retryMarker);
+  for (let i = 0; i < 100 && reqs.length < 2; i++) await settle(page);
+  await settle(page);
+  out.during = Object.assign(await measure(page), { requests: reqs.length });
+  release();
+  await page.waitForFunction((sel) => !document.querySelector(sel) && !document.querySelector("#content code.md-math-src"), PENDING, { timeout: 30000 }).catch(() => {});
+  await settle(page);
+  out.after = Object.assign(await measure(page), { requests: reqs.length });
   out.errors = errors;
 } catch (e) {
   out.died = String(e && e.message || e);
@@ -722,6 +808,49 @@ class ServedMathChunk(unittest.TestCase):
 
     def test_reader_inside_the_math_reply_on_a_phone_webkit(self):
         self._in_turn("webkit")
+
+    def _retry(self, engine):
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
+                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                reply("r1", "u2", self.t0 + 40, ranking_reply())]
+        for i in range(FILLERS):
+            recs.append(reply("g%d" % i, "r1" if i == 0 else "g%d" % (i - 1), self.t0 + 60 + i, FILLER % i))
+        with open(self.transcript, "a") as f:
+            f.write(jsonl(recs))
+        retry_text = "RETRY-REPLY: one more identity, $$\\sum_{k=1}^{m} k = \\frac{m(m+1)}{2}$$ for the api session's tally.\n"
+        cfg = os.path.join(self.lab, "cfg-retry-%s.json" % engine)
+        Path(cfg).write_text(json.dumps({
+            "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "transcript": self.transcript,
+            "lastFiller": "Filler reply %d:" % (FILLERS - 1), "marker": "READ-03", "offset": 80, "retryMarker": "RETRY-REPLY",
+            "retryLines": jsonl([reply("rr", "g%d" % (FILLERS - 1), self.t0 + 300, retry_text)])}))
+        r = self._run(engine, DRIVER_RETRY, cfg, "retry-" + engine)
+        w = engine + ": retry: "
+        self.assertNotIn("died", r, w + "the driver stopped early: %r\nkernel:\n%s" % (r.get("died"), Path(self.klog).read_text()[-1500:]))
+        n = len(STEP_FORMULAS)
+        f, b, d, a = r["failed"], r["before"], r["during"], r["after"]
+        self.assertEqual((f["requests"], f["pending"], f["katex"]), (1, 0, 0), w + "the first request failed and nothing waits: %r" % f)
+        self.assertEqual(f["src"], 3 * n, w + "every formula of the reply is its source: %r" % f)
+        self.assertLess(b["lastFormulaBottom"], 0, w + "the reply's formulas are above the viewport top: %r" % b)
+        self.assertGreater(b["markerTop"], 0, w + "the paragraph being read is on screen: %r" % b)
+        self.assertEqual(d["requests"], 2, w + "the new reply's formula used the retry the failure armed: %r" % d)
+        self.assertEqual((d["pending"], d["src"]), (0, 3 * n), w + "while the retry is out, nothing waits and the reply keeps its sources: %r" % d)
+        self.assertLessEqual(abs(d["markerTop"] - b["markerTop"]), 1, w + "the new reply at the tail did not move the reader: %r %r" % (b, d))
+        self.assertEqual((a["pending"], a["src"], a["allSrc"], a["requests"]), (0, 0, 0, 2), w + "the served retry laid out every formula, the failure's included: %r" % a)
+        self.assertGreaterEqual(a["katex"], 3 * n, w + "%r" % a)
+        self.assertGreater(abs(a["turnHeight"] - b["turnHeight"]), 5,
+                           w + "the swap from the sources to KaTeX's layout changed the reader's own turn above them: %r %r" % (b, a))
+        self.assertLessEqual(abs(a["markerTop"] - b["markerTop"]), 1,
+                             w + "the paragraph being read stays within 1 px across the success: %r %r" % (b, a))
+        self.assertEqual(r["errors"], [], w + "no page error")
+
+    def test_a_failed_load_retried_keeps_the_reader_on_a_phone_chromium(self):
+        self._retry("chromium")
+
+    def test_a_failed_load_retried_keeps_the_reader_on_a_phone_webkit(self):
+        self._retry("webkit")
 
     def _window_reload(self, engine):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")

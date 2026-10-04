@@ -27,8 +27,10 @@ const PROBE = `
 import { marked } from "marked";
 import { applyMdConfig } from "./md-config";
 import { sanitizeMd } from "./md-sanitize";
+import { onMathSettled } from "./math";
 applyMdConfig();   // the one grammar on the singleton; importing md-config.ts registers the math fill as sanitizeMd's post-pass
 (window as any).__md = (src: string): string => sanitizeMd(marked.parse(src) as string).innerHTML;
+onMathSettled(() => { (window as any).__settles = ((window as any).__settles || 0) + 1; });   // each arrival, either way, counted for the scenes
 `;
 
 let probe: string | null = null;
@@ -69,10 +71,12 @@ export function gate(): Gate {
 
 export type ChunkMode = "serve" | "404" | "empty";
 export type PageOpts = {
-  /** how the chunk's URL is answered */
-  chunk?: ChunkMode;
+  /** how the chunk's URL is answered: one mode for every request, or one per request in order (the last repeats) */
+  chunk?: ChunkMode | ChunkMode[];
   /** held: the chunk's answer waits for it */
   chunkGate?: Gate | null;
+  /** held, per request in order: the n-th request's answer waits for the n-th gate (null or absent: not held) */
+  chunkGates?: (Gate | null)[];
   /** held: every KaTeX font's answer waits for it */
   fontGate?: Gate | null;
   /** the bundle inlined into the page instead of loaded by src (a page with no bundle tag to derive the chunk's URL from) */
@@ -106,6 +110,7 @@ export async function withPage(browser: any, o: PageOpts, body: (s: Scene) => Pr
   page.on("console", (m: any) => { if (m.type() === "error" && !/^Failed to load resource/.test(m.text())) consoleErrors.push(m.text()); });
   page.on("pageerror", (e: Error) => { pageErrors.push(e.message); });
   const html = pageHtml(o);
+  let chunkAsked = 0;
   await page.route((u: URL) => u.href.startsWith(ORIGIN), async (route: any) => {
     const u = new URL(route.request().url());
     requests.push(u.pathname + u.search);
@@ -113,10 +118,14 @@ export async function withPage(browser: any, o: PageOpts, body: (s: Scene) => Pr
     if (u.pathname === "/dist/render.js") return route.fulfill({ status: 200, contentType: "text/javascript", body: probeBundle() });
     if (u.pathname === "/sentinel") return route.fulfill({ status: 200, contentType: "text/plain", body: "ok" });
     if (u.pathname === "/dist/math-chunk.js") {
+      const n = chunkAsked++;
+      const mode: ChunkMode = Array.isArray(o.chunk) ? o.chunk[Math.min(n, o.chunk.length - 1)] : o.chunk || "serve";
       if (o.chunkGate) await o.chunkGate.promise;
+      const held = o.chunkGates && o.chunkGates[n];
+      if (held) await held.promise;
       const c = chunkBundle();
-      if ((o.chunk || "serve") === "404" || "error" in c) return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
-      return route.fulfill({ status: 200, contentType: "text/javascript", body: (o.chunk || "serve") === "empty" ? "/* registers nothing */" : c.js });
+      if (mode === "404" || "error" in c) return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
+      return route.fulfill({ status: 200, contentType: "text/javascript", body: mode === "empty" ? "/* registers nothing */" : c.js });
     }
     if (u.pathname.startsWith("/fonts/")) {
       if (o.fontGate) await o.fontGate.promise;
@@ -276,24 +285,105 @@ export const SCENES: SceneDef[] = [
     },
   },
   {
-    name: "a chunk that fails to load leaves every waiting formula as its source with the failure in its title, says so once, and later formulas take the fallback with no second request",
+    name: "a chunk that fails to load leaves every waiting formula as its source with the failure in its title and says so once; the failure's own fill asks for nothing; the next formula asks again, its fallback shown at once while the retry is out, and the retry, served, lays out every formula, the failure's fallbacks included",
     timeout: 60000,
     run: async (browser) => {
-      await withPage(browser, { chunk: "404" }, async (s) => {
+      const retry = gate();
+      await withPage(browser, { chunk: ["404", "serve"], chunkGates: [null, retry] }, async (s) => {
         await show(s.page, "a $\\frac{1}{2}$ half\n\n$$e^{i\\pi}$$\n");
         await settled(s.page);
         let b = await box(s.page);
         assert.equal(b.katex, 0);
         assert.deepEqual(b.src.map((x) => x.text), ["\\frac{1}{2}", "e^{i\\pi}"], "each formula's TeX, never a blank");
-        for (const x of b.src) assert.equal(x.title, "Not rendered: the math renderer failed to load; reload the page to try again.");
-        const said = () => s.consoleErrors.filter((e) => e.startsWith("math: "));
-        assert.equal(said().length, 1, "the console says it once: " + JSON.stringify(s.consoleErrors));
-        await show(s.page, "later $z$");
-        b = await box(s.page);
-        assert.deepEqual([b.src.length, b.pending.length], [3, 0], "a later formula is source in the call that meets it, waiting for nothing");
+        for (const x of b.src) assert.equal(x.title, "Not rendered: the math renderer failed to load.");
         await drain(s.page);
-        assert.equal(s.chunkRequests(), 1, "a failure is not retried by every render");
-        assert.equal(said().length, 1);
+        await drain(s.page);
+        assert.equal(s.chunkRequests(), 1, "the failure's own fill over the document uses no retry");
+        assert.deepEqual(said(s), ["math: the math renderer failed to load; formulas are shown as their TeX source; the next formula asks for the renderer again"], "said once");
+        await show(s.page, "later $z$ and\n\n$$w^2$$\n");
+        b = await box(s.page);
+        assert.deepEqual([b.src.length, b.pending.length], [4, 0], "the later formulas are source in the call that meets them: nothing waits on the retry");
+        await drain(s.page);
+        assert.equal(s.chunkRequests(), 2, "that fill used the retry the failure armed");
+        await show(s.page, "and $v$ while it is out");
+        await drain(s.page);
+        assert.equal(s.chunkRequests(), 2, "one retry, used once");
+        retry.open();
+        const laid = await allLaidOut(s.page);
+        b = await box(s.page);
+        assert.ok(laid, "the served retry lays out every formula: " + JSON.stringify(b));
+        assert.deepEqual([b.katex, b.src.length, b.pending.length], [5, 0, 0], "five formulas, none left as source, the failure's two included");
+        assert.equal(await s.page.evaluate(() => document.querySelectorAll("#out [data-math-call], #out [data-math-failed]").length), 0, "no group stamp or failure mark is left");
+        await show(s.page, "now $y_1$ at once");
+        b = await box(s.page);
+        assert.deepEqual([b.katex, b.pending.length], [6, 0], "with the engine in, a formula renders in the call that meets it");
+        assert.equal(said(s).length, 1, "the success says nothing");
+      });
+    },
+  },
+  {
+    name: "a chunk that 404s for good costs two requests at any render rate, then one per online or reconnect event, and events before a formula arm one retry between them",
+    timeout: 60000,
+    run: async (browser) => {
+      await withPage(browser, { chunk: "404" }, async (s) => {
+        const renders = async (from: number, n: number) => {   // fills meeting formulas, as a streaming message re-renders at every delta
+          for (let i = from; i < from + n; i++) await show(s.page, "render " + i + " $x_{" + i + "}$ and\n\n$$y_{" + i + "}$$\n");
+          await drain(s.page);
+          await drain(s.page);
+        };
+        await show(s.page, "first $a$");
+        await settled(s.page);
+        await renders(0, 6);
+        assert.equal(s.chunkRequests(), 2, "the first request and the one retry its failure armed, at six renders");
+        assert.equal(said(s).length, 2, "one line per failed attempt");
+        assert.match(said(s)[1], /^math: the math renderer failed to load; formulas are shown as their TeX source; a formula after the connection comes back asks for it again$/);
+        await s.page.evaluate(() => { window.dispatchEvent(new Event("online")); window.dispatchEvent(new Event("romp:wsup")); window.dispatchEvent(new Event("online")); });
+        await drain(s.page);
+        assert.equal(s.chunkRequests(), 2, "an event asks for nothing itself: the next fill that meets a formula does");
+        await renders(6, 4);
+        assert.equal(s.chunkRequests(), 3, "three events before the formula armed one retry, not three");
+        await s.page.evaluate(() => { window.dispatchEvent(new Event("romp:wsup")); });
+        await renders(10, 3);
+        assert.equal(s.chunkRequests(), 4, "the shim's reconnect arms one");
+        await renders(13, 5);
+        assert.equal(s.chunkRequests(), 4, "and no more without another event");
+        const b = await box(s.page);
+        assert.deepEqual([b.katex, b.pending.length, b.src.length], [0, 0, 37], "every formula is its source, none waits");
+        assert.ok(b.src.every((x) => x.title === "Not rendered: the math renderer failed to load."), "each titled with the failure");
+        assert.equal(said(s).length, 4, "one line per failed attempt: " + JSON.stringify(said(s)));
+      });
+    },
+  },
+  {
+    name: "a retry while the first attempt is still out (stalled past its backstop) adds a fresh tag at once, the formula shown as its source; when the held answer lands every formula is laid out by one arrival, and the other tag's success is a no-op",
+    timeout: 60000,
+    run: async (browser) => {
+      const first = gate();
+      await withPage(browser, { chunkGate: first, clock: true }, async (s) => {
+        await show(s.page, "a $\\frac{1}{2}$ half");
+        await drain(s.page);
+        await s.page.clock.fastForward(MATH_CHUNK_BACKSTOP_MS + 1000);
+        await settled(s.page);
+        let b = await box(s.page);
+        assert.deepEqual([b.src.length, s.chunkRequests()], [1, 1], "the backstop showed it as source; the first request is still out");
+        // the next formula uses the retry the backstop's failure armed, in the same task as the read below: a second tag, the formula
+        // its source at once (a browser serves a URL already in flight from that one fetch, so this tag waits on the held answer too)
+        const r = await s.page.evaluate((src: string) => {
+          const m = document.createElement("div"); m.className = "msg"; m.innerHTML = (window as any).__md(src); document.getElementById("out")!.appendChild(m);
+          return { tags: document.querySelectorAll('script[src*="math-chunk.js"]').length, src: document.querySelectorAll("#out code.md-math-src").length,
+            pending: document.querySelectorAll("#out .md-math-inline, #out .md-math-display").length };
+        }, "then $z^2$");
+        assert.deepEqual(r, { tags: 2, src: 2, pending: 0 }, "a fresh tag though the first attempt is out, and nothing waits on it: " + JSON.stringify(r));
+        first.open();
+        const laid = await allLaidOut(s.page);
+        b = await box(s.page);
+        assert.ok(laid, "the answer, once it lands, lays every formula out: " + JSON.stringify(b));
+        await s.page.waitForFunction(() => (window as any).__settles >= 2, null, { timeout: 10000 });
+        await drain(s.page);
+        await drain(s.page);
+        assert.equal(await s.page.evaluate(() => (window as any).__settles), 2, "two arrivals in all, the backstop's failure and one success: the second tag's success ran none");
+        assert.deepEqual([b.katex, b.src.length], [2, 0]);
+        assert.equal(said(s).length, 1, "and the success said nothing");
       });
     },
   },
@@ -305,21 +395,30 @@ export const SCENES: SceneDef[] = [
         await show(s.page, "a $q$ formula");
         await settled(s.page);
         const b = await box(s.page);
-        assert.deepEqual(b.src.map((x) => x.title), ["Not rendered: the math renderer loaded but registered nothing; reload the page to try again."]);
+        assert.deepEqual(b.src.map((x) => x.title), ["Not rendered: the math renderer loaded but registered nothing."]);
         assert.equal(s.chunkRequests(), 1);
       });
     },
   },
   {
-    name: "a page whose bundle ran from no tag with a src has no URL to derive the chunk's from: the formula falls back with the reason and nothing is requested",
+    name: "a page whose bundle ran from no tag with a src has no URL to derive the chunk's from: the formula falls back with the reason, nothing is requested, and the one attempt arms no retry, an online event included",
     timeout: 60000,
     run: async (browser) => {
       await withPage(browser, { inline: true }, async (s) => {
         await show(s.page, "a $q$ formula");
         await settled(s.page);
-        const b = await box(s.page);
-        assert.deepEqual(b.src.map((x) => x.title), ["Not rendered: no bundle script on this page to derive the math renderer's URL from; reload the page to try again."]);
+        let b = await box(s.page);
+        assert.deepEqual(b.src.map((x) => x.title), ["Not rendered: no bundle script on this page to derive the math renderer's URL from."]);
+        assert.deepEqual(said(s), ["math: no bundle script on this page to derive the math renderer's URL from; formulas are shown as their TeX source"], "said once, with no retry promised");
+        await show(s.page, "then $r$");
+        await s.page.evaluate(() => { window.dispatchEvent(new Event("online")); window.dispatchEvent(new Event("romp:wsup")); });
+        await show(s.page, "and $t$");
+        await drain(s.page);
+        b = await box(s.page);
+        assert.deepEqual([b.src.length, b.pending.length], [3, 0], "every formula falls back at once");
+        assert.equal(said(s).length, 1, "one attempt, no second: " + JSON.stringify(said(s)));
         assert.equal(s.chunkRequests(), 0);
+        assert.equal(await s.page.evaluate(() => document.querySelectorAll('script[src*="math-chunk"]').length), 0, "no script tag either");
       });
     },
   },

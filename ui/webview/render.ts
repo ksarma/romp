@@ -123,7 +123,7 @@ import { apiErrorReason } from "./api-error-reason";
 import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, billingHeld, billingHeldRow, billingHeldSub, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows, the held Billing readings and the menus' marks (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
-import { onMathSettled, mathPendingIn } from "./math";   // the math renderer's arrival: the reader's place kept around the swap (onMathSettled below rerenderAll)
+import { onMathSettled, mathPendingIn, mathFailedIn } from "./math";   // the math renderer's arrival: the reader's place kept around the swap (onMathSettled below rerenderAll)
 import { captureReadingPoint, readingPointShift, type ReadingPoint } from "./reading-point";   // the reader's line inside their anchor turn, for the math swap and the reload record (captureReadingAnchor)
 import { setTip, pruneTip } from "./tip";
 import { MetaKind, MetaHooks, metaButton as buildMetaButton, syncMetaControls as syncMetaControlsWith, ctxBar as buildCtxBar, setCtxBar as setCtxBarWith,
@@ -14651,7 +14651,10 @@ function rerenderAll(): void {
 // review of iOS item 6, 2026-10-02: about 133 px on a phone for eight short display formulas). A turn whose visible part holds
 // no such line keeps its top, as before. A view not on screen when the renderer lands has its formulas laid out unseen, so it is marked
 // (lineMoved) and its next show lands the line its reader was on when they left the tab (setActive keeps it while a formula waits,
-// landActive lands it; the review of iOS item 6, round two). A failed load takes the same road, each formula becoming its source. Then the comment
+// landActive lands it; the review of iOS item 6, round two). A failed load takes the same road, each formula becoming its source,
+// and a later success takes it again: a view holding a formula the failure showed as its source (mathFailedIn) counts as one that
+// held a waiting formula, since the success lays those out in place too (math.ts restoreFailedFormulas; round 1 of the PR's
+// review, which ruled that a failed load is retried). Then the comment
 // marks go back on every view that held a waiting formula (a mark on math pairs with the rendered .katex root,
 // applyCommentMarks), and a queued group whose cached node held one is marked changed, so its next render rebuilds the node's
 // children with the renderer in (renderPendingGroup).
@@ -14662,9 +14665,9 @@ onMathSettled(() => {
   const from = content ? content.scrollTop : 0;
   const bottom = live && atBottom(content!);
   const keep = live && !bottom ? captureReadingAnchor(content!, av!) : null;
-  const held = Array.from(views.entries()).filter(([, v]) => mathPendingIn(v.el)).map(([sid]) => sid);
+  const held = Array.from(views.entries()).filter(([, v]) => mathPendingIn(v.el) || mathFailedIn(v.el)).map(([sid]) => sid);
   for (const sid of held) { const hv = views.get(sid)!; if (!(live && hv === av)) hv.lineMoved = true; }   // a hidden view's formulas grow unseen: its next show lands the line read when it was left
-  for (const g of pendingGroupNode.values()) if (mathPendingIn(g.node)) g.sig = "";
+  for (const g of pendingGroupNode.values()) if (mathPendingIn(g.node) || mathFailedIn(g.node)) g.sig = "";
   return () => {
     if (live && content && av) {
       if (bottom) writeScroll(content, content.scrollHeight, "math-fill", true, from);
@@ -19629,9 +19632,10 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
     const cur = views.get(activeId);
     if (cur) {
       cur.scrollTop = content.scrollTop; cur.stick = atBottom(content);   // the leaving tab's follow mode: the true bottom
-      // …and, while a formula in it waits for the math renderer, the reader's line: the renderer can arrive while the tab is hidden, and the
-      // saved scrollTop then puts the text being read off by the formulas' growth (onMathSettled marks the view, landActive lands the line)
-      cur.leaveLine = !cur.stick && content.clientHeight > 0 && cur.el.style.display !== "none" && mathPendingIn(cur.el) ? captureReadingAnchor(content, cur) : null;
+      // …and, while a formula in it waits for the math renderer (or shows the source a failed load left, which a later success lays out),
+      // the reader's line: the renderer can arrive while the tab is hidden, and the saved scrollTop then puts the text being read off by
+      // the formulas' growth (onMathSettled marks the view, landActive lands the line)
+      cur.leaveLine = !cur.stick && content.clientHeight > 0 && cur.el.style.display !== "none" && (mathPendingIn(cur.el) || mathFailedIn(cur.el)) ? captureReadingAnchor(content, cur) : null;
     }
   }
   // Stash the leaving tab's draft; show the entering tab's own (usually empty).

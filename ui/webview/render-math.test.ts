@@ -192,12 +192,13 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: md-conf
   assert.doesNotMatch(UI("chat-md.ts"), /registerMdPostPass|renderMathPlaceholders/, "chat-md.ts registers nothing: the grammar module does");
   const render = UI("render.ts");
   assert.doesNotMatch(render, /renderMathPlaceholders\(/, "render.ts calls no fill of its own: sanitizeMd runs it, and math.ts runs it over the document at the renderer's arrival");
-  // the one import from math.ts each renderer has: the arrival's hook and the pending test (KaTeX is an on-demand chunk since
-  // iOS item 6, 2026-10-02): the chat keeps the reader's place around the swap, the viewer holds a paint until the arrival
-  assert.deepEqual(render.match(/^import [^\n]* from "\.\/math";/gm), ['import { onMathSettled, mathPendingIn } from "./math";'], "render.ts imports the arrival's hook from math.ts and nothing else");
+  // the one import from math.ts each renderer has: the arrival's hook, the pending test and the failed-source test (KaTeX is an
+  // on-demand chunk since iOS item 6, 2026-10-02): the chat keeps the reader's place around the swap, the viewer holds a paint
+  // until the arrival, and a success after a failed load lays out the failure's fallbacks on both (round 1 of the PR's review)
+  assert.deepEqual(render.match(/^import [^\n]* from "\.\/math";/gm), ['import { onMathSettled, mathPendingIn, mathFailedIn } from "./math";'], "render.ts imports the arrival's hook and the two tests from math.ts and nothing else");
   const view = UI("file-view.ts");
   assert.doesNotMatch(view, /from "katex"|renderMathPlaceholders/, "the viewer imports no KaTeX and no fill of its own: the grammar module (md-config.ts) carries the fill into every bundle the viewer lands in, and the sanitize runs it (Slice 4)");
-  assert.deepEqual(view.match(/^import [^\n]* from "\.\/math";/gm), ['import { onMathSettled, mathPendingIn } from "./math";'], "file-view.ts imports the arrival's hook from math.ts and nothing else");
+  assert.deepEqual(view.match(/^import [^\n]* from "\.\/math";/gm), ['import { onMathSettled, mathPendingIn, mathFailedIn } from "./math";'], "file-view.ts imports the arrival's hook and the two tests from math.ts and nothing else");
   // match on the two function bodies, not the file, so a failure prints the function and not render.ts
   const mdFn = render.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() must exist");
@@ -286,8 +287,8 @@ test("the fill's bounds stand ahead of the one katex.render call, in order: the 
   assert.match(fill, /const meters = new Map<string, number>\(\);/, "the meters are the call's own local");
   assert.match(fill, /const call = el\.getAttribute\(MATH_CALL_ATTR\) \|\| "";[^\n]*\n\s*let rendered = meters\.get\(call\) \|\| 0;/,
     "one meter per call group: one sanitizeMd call, one message or note, and a formula that waited for the engine charged to the call that met it");
-  assert.match(fill.slice(wait, count), /if \(engineLoad === "failed"\) \{ showSource\(el, tex, "Not rendered: " \+ engineFailure \+ "; reload the page to try again\.", call \|\| group \|\| \(group = String\(\+\+mathCalls\)\)\); return; \}\n\s*if \(!call\) el\.setAttribute\(MATH_CALL_ATTR, group \|\| \(group = String\(\+\+mathCalls\)\)\);\n\s*requestEngine\(\);\n\s*return;/,
-    "without the engine: a failed load shows the source with the failure in its title, marked with its call's group for a later success; else the formula keeps its placeholder, stamped with its call's group, and the chunk is asked for");
+  assert.match(fill.slice(wait, count), /if \(engineLoad === "failed"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*showSource\(el, tex, "Not rendered: " \+ engineFailure \+ "\.", call \|\| group \|\| \(group = String\(\+\+mathCalls\)\)\);\n\s*requestEngine\(\);\n\s*return;\n\s*\}\n\s*if \(!call\) el\.setAttribute\(MATH_CALL_ATTR, group \|\| \(group = String\(\+\+mathCalls\)\)\);\n\s*requestEngine\(\);\n\s*return;/,
+    "without the engine: a failed load shows the source at once with the failure in its title, marked with its call's group for a later success, and uses an armed retry; else the formula keeps its placeholder, stamped with its call's group, and the chunk is asked for (math-chunk-leg.ts runs both)");
   assert.match(fill, /const katex = engineLoad === "loading" \|\| engineLoad === "failed" \? null : engine\(\);/,
     "KaTeX only once the load has settled as a success: a registered engine is not used while the faces load or after a failure (math-chunk-leg.ts runs both windows)");
   assert.match(fill.slice(budget, repeat), /showSource\(el, tex, "Not rendered: the formulas above already total " \+ rendered \+ " characters of TeX; the limit for one message or note is " \+ MATH_TEX_BUDGET_CHARS \+ "\."\);/, "over the total: the source, the title saying what was rendered and the limit");

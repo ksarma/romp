@@ -2,7 +2,9 @@
 // paint whose block holds a formula still waiting for it is not swapped in. The body keeps the romp loader on an open, the chunk
 // is fetched once, and the renderer's arrival paints, so the note's first paint is its final one: one paint, the hooks once,
 // KaTeX in place, and the anchor map, the reader's place and the comment paint never meet a waiting formula. A note with no
-// math fetches no chunk and paints at once; a chunk that fails to load paints the note with each formula as its source. The
+// math fetches no chunk and paints at once; a chunk that fails to load paints the note with each formula as its source, and
+// after it the next Rendered paint asks again, paints at once while the retry is out, and the served retry repaints the note
+// once with the reader's place kept (math.ts: a failed load is retried, the review's round 1). The
 // real viewer in Chromium through the shared harness (real-viewer-leg.ts), its bundle built WITHOUT KaTeX (bundleViewer(false))
 // and loaded by src as the kernel's pages load theirs, so the chunk's URL derives from that tag as on a page (chunk-url.ts);
 // the chunk is the shipped build of math-chunk.ts (math-chunk-leg.ts chunkBundle), held until the leg lets it go.
@@ -14,27 +16,36 @@
 // `window.__paints` counts the seam's onRendered. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, bundleViewer, frames, paintsReach, REPORT, PARA } from "./real-viewer-leg";
+import { inBrowser, openViewer, bundleViewer, frames, paintsReach, topBlock, putAtTop, REPORT, PARA, ORIGIN } from "./real-viewer-leg";
 import { chunkBundle, gate, type Gate } from "./math-chunk-leg";
 
 const NOTE = "# Ratios\n\nThe ratio $\\frac{a}{b}$ holds.\n\n$$\\sum_{i=0}^{n} i^2$$\n\nAfter the formula.\n";
 const PLAIN = "# Plain\n\nNo formula here, and $HOME stays literal.\n";
 const OTHER = "/repo/notes-api/docs/plain.md";
 
-/** The viewer opened in the Files pane over `docs` with its bundle by src; the chunk's URL answered under `chunk`, held by `g`;
- *  `openOpts` is openFileView's third argument (an `at` target). */
-async function open(browser: any, docs: Record<string, string>, chunk: "serve" | "404", g: Gate | null, requests: string[], openOpts: Record<string, unknown> | null = null) {
+type Answer = "serve" | "404";
+/** The viewer opened in the Files pane over `docs` with its bundle by src; the chunk's URL answered under `chunk` (one answer, or
+ *  one per request in order, the last repeating), every answer held by `g` and the n-th by `more.gates[n]`; `openOpts` is
+ *  openFileView's third argument (an `at` target). `more` passes openViewer's url, urls, raw, waitFor and before through (the
+ *  URL viewer, a saved Raw preference, a page global installed before the open). */
+async function open(browser: any, docs: Record<string, string>, chunk: Answer | Answer[], g: Gate | null, requests: string[], openOpts: Record<string, unknown> | null = null,
+  more: { gates?: (Gate | null)[]; url?: string; urls?: Record<string, string>; raw?: boolean; waitFor?: string; before?: (page: any) => Promise<void> } = {}) {
   return openViewer(browser, "pane", 900, 700, {
-    docs, bundleSrc: "/dist/files.js?v=3", waitFor: ".fileview-body", openOpts,
+    docs, bundleSrc: "/dist/files.js?v=3", waitFor: more.waitFor || ".fileview-body", openOpts, url: more.url, urls: more.urls, raw: more.raw,
     serve: (u) => (u.pathname === "/dist/files.js" ? { status: 200, type: "text/javascript", body: bundleViewer(false) } : null),
     before: async (page) => {
       await page.route((u: URL) => u.pathname === "/dist/math-chunk.js", async (route: any) => {
+        const n = requests.length;
         requests.push(new URL(route.request().url()).pathname + new URL(route.request().url()).search);
+        const answer = Array.isArray(chunk) ? chunk[Math.min(n, chunk.length - 1)] : chunk;
         if (g) await g.promise;
+        const held = more.gates && more.gates[n];
+        if (held) await held.promise;
         const c = chunkBundle();
-        if (chunk === "404" || "error" in c) return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
+        if (answer === "404" || "error" in c) return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
         return route.fulfill({ status: 200, contentType: "text/javascript", body: c.js });
       });
+      if (more.before) await more.before(page);
     },
   });
 }
@@ -47,6 +58,31 @@ const bodyNow = (page: any): Promise<Body> => page.evaluate(() => {
     src: Array.from(b.querySelectorAll("code.md-math-src")).map((c) => ((c.closest("pre") || c) as HTMLElement).getAttribute("title") || ""),
     paints: (window as any).__paints - (window as any).__reflows };
 });
+
+// The viewer's body as a reader sees it, for both viewers: whether the romp loader is on screen in it, whether the Raw rows show
+// (and whether they are inert), the pressed buttons, the Rendered root and its KaTeX roots, and how many Rendered roots have been
+// put into the page (countRoots, installed before the open; the URL viewer fires no seam paint, so a root is its paint).
+const URL_PATH = "/notes-api/docs/report.md";
+type Over = { loader: boolean; rowsShown: boolean; inert: boolean; pressed: string[]; md: boolean; katex: number; src: number; roots: number };
+const overNow = (page: any): Promise<Over> => page.evaluate(() => {
+  const b = document.querySelector(".fileview-body") as HTMLElement;
+  const br = b.getBoundingClientRect();
+  const load = b.querySelector(".fileview-load") as HTMLElement | null;
+  const lr = load ? load.getBoundingClientRect() : null;
+  const row = b.querySelector(".fv-cl") as HTMLElement | null;
+  return { loader: !!lr && lr.height > 0 && lr.bottom > br.top && lr.top < br.bottom, rowsShown: !!row && getComputedStyle(row).visibility !== "hidden",
+    inert: !!row && !!row.closest("[inert]"), pressed: Array.from(document.querySelectorAll(".fileview-seg button.on, .fileview-acts button.on")).map((x) => x.textContent || ""),
+    md: !!b.querySelector(".fileview-md"), katex: b.querySelectorAll(".katex").length, src: b.querySelectorAll("code.md-math-src").length, roots: (window as any).__mdRoots };
+});
+/** Counts the `.fileview-md` roots put into the page (one per Rendered paint; the URL viewer fires no seam paint): installed before the open. */
+const countRoots = async (page: any): Promise<void> => {
+  await page.evaluate(() => {
+    (window as any).__mdRoots = 0;
+    new MutationObserver((recs) => { for (const r of recs) r.addedNodes.forEach((n) => { if (n instanceof HTMLElement && n.classList.contains("fileview-md")) (window as any).__mdRoots++; }); })
+      .observe(document.body, { childList: true, subtree: true });
+  });
+};
+const button = (page: any, label: string) => page.locator("#romp-fileview button.fileview-btn", { hasText: new RegExp("^" + label + "$") }).click();
 
 test("chromium: a note with math, opened before the math renderer is in, keeps the romp loader until the chunk lands, then paints once with KaTeX in place", { timeout: 60000 }, async (t) => {
   await inBrowser(t, async (browser) => {
@@ -95,9 +131,9 @@ test("chromium: a chunk that fails to load paints the note once, each formula as
     await frames(page, 6);
     const b = await bodyNow(page);
     assert.deepEqual([b.loader, b.md, b.katex, b.waiting], [false, true, 0, 0], JSON.stringify(b));
-    assert.deepEqual(b.src, ["Not rendered: the math renderer failed to load; reload the page to try again.", "Not rendered: the math renderer failed to load; reload the page to try again."]);
+    assert.deepEqual(b.src, ["Not rendered: the math renderer failed to load.", "Not rendered: the math renderer failed to load."]);
     assert.equal(b.paints, 1, "one paint");
-    assert.equal(requests.length, 1);
+    assert.equal(requests.length, 1, "the failure's own repaint of the held paint, inside the settle, uses no retry");
     assert.deepEqual(errors, []);
   });
 });
@@ -106,6 +142,8 @@ test("chromium: a chunk that fails to load paints the note once, each formula as
 const FILLER = Array.from({ length: 40 }, (_, i) => PARA(i + 1)).join("\n\n");
 const TARGETED = "# Ratios\n\nThe ratio $\\frac{a}{b}$ holds.\n\n" + FILLER + "\n\n## Second\n\nTarget paragraph here.\n\n" + FILLER + "\n";
 const TARGET_OFFSET = TARGETED.indexOf("Target paragraph here.");
+// the same note with a second formula in its first paragraph: a paint that meets two formulas while a retry is out (the retry scene)
+const TARGETED2 = TARGETED.replace("The ratio $\\frac{a}{b}$ holds.", "The ratio $\\frac{a}{b}$ holds, and $c^2$ with it.");
 
 type Landing = { loader: boolean; notice: string | null; scrollTop: number; clientHeight: number; heading: number | null; target: { top: number; bottom: number } | null; katex: number; paints: number };
 const landing = (page: any): Promise<Landing> => page.evaluate(() => {
@@ -176,3 +214,41 @@ test("chromium: a Raw pick while a math note opened at an offset is held paints 
     assert.deepEqual(errors, []);
   });
 });
+
+for (const viewer of ["file", "url"] as const) {
+  test(`chromium: ${viewer === "file" ? "the Files pane's viewer" : "the URL viewer"}: after a failed load the next Rendered paint asks again and paints at once while the retry is out (no loader, the source shown); the retry, served, repaints the note once with KaTeX, the reader's place kept`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const retry = gate(); const requests: string[] = [];
+      const { page, errors } = await open(browser, { [REPORT]: TARGETED2 }, ["404", "serve"], null, requests, null, {
+        gates: [null, retry], before: countRoots, ...(viewer === "url" ? { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: TARGETED2 } } : {}),
+      });
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body .fileview-md code.md-math-src"), null, { timeout: 15000 });
+      await frames(page, 6);
+      let b = await overNow(page);
+      assert.deepEqual([b.loader, b.md, b.katex, b.roots], [false, true, 0, 1], "the failed load painted the note once, its formulas as source: " + JSON.stringify(b));
+      assert.equal(requests.length, 1, "the failure's own repaint used no retry");
+      await putAtTop(page, "Paragraph 20");
+      await frames(page, 2);
+      const before = await topBlock(page);
+      await button(page, "Raw");
+      await frames(page, 4);
+      await button(page, "Rendered");
+      await frames(page, 4);
+      b = await overNow(page);
+      assert.deepEqual([b.loader, b.md, b.katex, b.roots, b.src], [false, true, 0, 2, 2], "the Rendered paint stands at once, both formulas as source: nothing waits on the retry, the second formula met after the first used it included: " + JSON.stringify(b));
+      assert.equal(requests.length, 2, "that paint's fill used the retry the failure armed");
+      const during = await topBlock(page);
+      assert.equal(during && during.text, before && before.text, "the place came back across Raw and Rendered: " + JSON.stringify([before, during]));
+      retry.open();
+      await page.waitForFunction(() => document.querySelectorAll(".fileview-body .katex").length === 2, null, { timeout: 15000 });
+      await frames(page, 6);
+      b = await overNow(page);
+      assert.deepEqual([b.loader, b.katex, b.roots], [false, 2, 3], "the served retry laid both formulas out by one repaint of the note, so the hooks ran over them: " + JSON.stringify(b));
+      assert.equal(await page.evaluate(() => document.querySelectorAll(".fileview-body code.md-math-src").length), 0, "no source left");
+      const after = await topBlock(page);
+      assert.ok(after !== null && before !== null && after.text === before.text && Math.abs(after.top - before.top) <= 1, "the reader's place kept across the repaint: " + JSON.stringify([before, after]));
+      assert.equal(requests.length, 2);
+      assert.deepEqual(errors, []);
+    });
+  });
+}
