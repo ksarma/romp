@@ -9211,10 +9211,11 @@ RD_SB = (("nsz", 'return self._send(200, _PROBE_PSQ.sub("\\\\0", %s), "text/html
 # charset parameter, a page Chromium, Firefox and WebKit decode as ISO-2022-JP: in a str constant (qs and the form's letter), an ASCII
 # bytes constant (qb), an f-string's literal part (qf, its field read), a join of string constants no literal of which declares alone,
 # the declaration split before its = and the fetch split too (qj, refused at its join), and a walked file a page reads (fq); each
-# silent at the head the closing check read (qj's joined fetch a site there) and refused here by name. An XML declaration's encoding so
-# written (qxe a letter, qxq the =, served as application/xhtml+xml), silent at that head, is refused the same way. qsp (a meta charset
-# of utf&#45;8, whose label as spelled is utf) is refused at both heads by the text as spelled, the read the decoded one does not
-# replace; qsr (a declaration of utf-8 so written) and qsa (an & with no declaration) are read at both, their fetches sites.
+# silent at the head the closing check read, where every str, bytes, f-string and join page was read as UTF-8 and its fetch was a site
+# (qj's once joined) and every file's read was covered, and refused here by name. An XML declaration's encoding so written (qxe a
+# letter, qxq the =, served as application/xhtml+xml), read at that head and its fetch a site there, is refused the same way. qsp (a
+# meta charset of utf&#45;8, whose label as spelled is utf) is refused at both heads by the text as spelled, the read the decoded one
+# does not replace; qsr (a declaration of utf-8 so written) and qsa (an & with no declaration) are read at both, their fetches sites.
 RD_CF_FORMS = (("d", "ch&#97;rset="), ("f", "&#99;harset="), ("q", "charset&#61;"), ("n", "charset&equals;"), ("x", "ch&#x61;rset="),
                ("s", "ch&#97rset="), ("h", "&#x63;&#x68;&#x61;&#x72;&#x73;&#x65;&#x74;&#x3d;"), ("u", "CH&#65;RSET="), ("z", "ch&#0097;rset="))
 _RD_CF_META = '<meta http-equiv=\\"Content-Type\\" content=\\"text/html; %siso-2022-jp\\">'   # in the probe's source
@@ -15866,6 +15867,23 @@ class TheAllowlistedContentTypeIsReadForACrOrLf(unittest.TestCase):
         key = ("%s:Handler._file_slice" % KERNEL_PATH, "ctype")
         self.assertEqual(res.allow_hits.get(key), {(_a_line(kernel, FGH_PAGE % "rals"), 15)},
                          "the allow hit is recorded at the refused place all the same, so no count gate moves")
+
+
+class TheNoScriptTypesAreTheLiveTreesOwn(unittest.TestCase):
+    """NO_SCRIPT_TYPES is the list of the live tree's types that run no script (item 2 of the reviewer's 02:3xZ ruling of 2026-10-04,
+    fix C, which derives it from the live tree), and this case holds it to that: the essence of every content type judge typed in the
+    tree's run (Result.typed_ctypes, each value's _ctype_essence), less those that run script (_script_type), is the list's set. An
+    entry for a type the tree does not serve, or that the tree stops serving, fails here, so no entry types a value as running no script
+    unless the tree serves that type; before this case an entry added for a type the tree did not serve, one that runs script among
+    them, typed it as running none with nothing red. A type the tree serves that the list lacks is refused by the census itself (judge),
+    and the tree's run fails on it. The tree's one derivation (_tree), no run of its own."""
+
+    def test_the_list_is_the_essences_of_the_types_the_tree_serves_that_run_no_script(self):
+        mod, res = script_module(ROOT), _tree().res
+        live = {e for e in res.typed_ctypes if not mod._script_type(e)}
+        self.assertEqual(live, set(mod.NO_SCRIPT_TYPES),
+                         "NO_SCRIPT_TYPES holds the essences of the types the live tree serves that run no script, and no other: drop an "
+                         "entry the tree's run typed no response as, and add a type only once the tree serves it and it runs no script")
 
 
 class TheStampIsListedOnItsExactCall(unittest.TestCase):

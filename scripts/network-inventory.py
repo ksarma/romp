@@ -1533,6 +1533,8 @@ class Result(object):
         # _Served._module_why's reason for a module name only such a body binds)
         self.allow_hits, self.writes, self.rebinds, self.global_decls = {}, {}, {}, {}
         self.listed_hits = {}   # SERVED_LISTED's matches this run, as allow_hits holds SERVED_ALLOW's (_Served._listed)
+        # the essence of each content type judge typed this run (_ctype_essence), which the census module holds NO_SCRIPT_TYPES to
+        self.typed_ctypes = set()
         # line_scan's import gate: each specifier its forms loop reads, (file, line, specifier), and each walked line where the
         # refusal of a require or import the gate cannot read fires, excused by JS_ALLOW or not, (file, line); js_reads hands both out
         self.reads, self.unread = [], []
@@ -1609,6 +1611,8 @@ SCRIPT_TYPES = ("text/html", "text/xml", "application/xml", "text/xsl", "applica
 # The content types the live tree serves that run no script, the only others the census types (_typed_ctype; item 2 of the
 # reviewer's 02:3xZ ruling of 2026-10-04, fix C): derived from the live tree, every value judge typed there being one of these or a
 # script-running type above. A content type the census does not type is refused by name (judge): a browser may run a page under it.
+# The census module holds the list equal to the essences of the types the tree's run typed that run no script (Result.typed_ctypes;
+# TheNoScriptTypesAreTheLiveTreesOwn), so an entry for a type the live tree does not serve fails there.
 NO_SCRIPT_TYPES = ("application/json", "application/manifest+json", "application/octet-stream", "image/png", "text/plain")
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")                        # a URL scheme at the head of a literal
 _PY_SLOT = re.compile(r"%[sdr(]|\{[A-Za-z_0-9]*\}")                         # a Python format slot inside a served page's literal
@@ -4343,8 +4347,14 @@ def _typed_ctype(v):
     `*/*`, `unknown/unknown`, `application/unknown` or a malformed one, as `texthtml`) where no nosniff header stands, and runs a
     multipart's HTML part (`multipart/x-mixed-replace`), so any other value may serve a page the census would never read."""
     if not v.isascii() or "," in v: return False
-    essence = v.split(";")[0].strip(" \t").lower()
+    essence = _ctype_essence(v)
     return essence in SCRIPT_TYPES or essence.endswith("+xml") or essence in NO_SCRIPT_TYPES
+
+
+def _ctype_essence(v):
+    """A content type's essence as _typed_ctype reads it: the part before its first `;`, stripped of spaces and tabs only and
+    lower-cased."""
+    return v.split(";")[0].strip(" \t").lower()
 
 
 def _script_type(v):
@@ -5611,6 +5621,8 @@ def routes_of(rel, tree, sc, res):
                                 "part), so the census types only an ASCII value with no comma whose essence is one of SCRIPT_TYPES, a "
                                 "`+xml` type or one of NO_SCRIPT_TYPES" % (rel, call.lineno, untyped[0][:40], ast.unparse(expr)[:60], where))
             return None
+        res.typed_ctypes.update(map(_ctype_essence, vals))   # each typed type's essence: the census module holds NO_SCRIPT_TYPES equal
+        # to those that run no script (TheNoScriptTypesAreTheLiveTreesOwn), so an entry for a type the live tree does not serve fails there
         if not _ctype_simple(expr, scopes(defs), consts, written):   # the content-type face of the frame-local limit refused where one
             # check does it at 0 live (the 00:28Z rule): a content type the census resolves through anything but a string constant or a
             # name bound once to one, which a frame may rewrite at run time, the census reading only what its text binds
