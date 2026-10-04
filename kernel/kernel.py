@@ -70072,8 +70072,8 @@ def _pane_spin(cid, ignore_id=""):
             # placements, a re-read and then a scan). So a frame places it twice only when its layout changed after its own
             # placement (a later frame callback resized the container). The watch observes the container's own children and attributes,
             # each sticky or fixed element in it (what it holds included), and the page outside it, never the container's other
-            # content, where a session's messages and their clocks change. A change that can add a control (an element added to an
-            # element the last scan did not hold, an element added inside a control it holds whose box, or a box of an element it
+            # content, where a session's messages and their clocks change. A change that can add a control (an element added inside
+            # no control the last scan held, at any depth, an element added inside a control it holds whose box, or a box of an element it
             # holds, reaches outside the part of that control a person can see, such as a popup child of a control (ruling 2 at
             # 79dce614c, 2026-10-04), or a class, style or hidden change on an element the last scan did not hold or that holds
             # elements) scans again; any other (a text change such as the status line's timer, an element removed, an
@@ -70187,17 +70187,22 @@ def _pane_spin(cid, ignore_id=""):
             "function rwire(){if(!rmo)return;rmo.disconnect();var F=['class','style','hidden'],O={childList:true,subtree:true,attributes:true,attributeOldValue:true,attributeFilter:F},N={childList:true,attributes:true,attributeOldValue:true,attributeFilter:F};"
             "rmo.observe(c,N);for(var i=0;i<rpins.length;i++)rmo.observe(rpins[i],O);"
             "for(var p=c;p&&p!==document.body&&p.parentElement;p=p.parentElement){var u=p.parentElement;rmo.observe(u,N);for(var k=u.firstElementChild;k;k=k.nextElementSibling)if(k!==p&&k!==rb)rmo.observe(k,O);}}"
-            # a change scans again when it can add a control: an element added to an element the last scan did not hold, or one
+            # a change scans again when it can add a control: an element added inside no control the last scan held, or one
             # added inside a control it holds with a box that reaches outside the part of that control a person can see (rin), or
             # an attribute changed on an element the last scan did not hold or that holds elements; any other change re-reads the
             # boxes (an element added inside a control the scan holds, every box of it inside the part of that control a person
             # can see, lies where the badge already avoids: the status line's mode icon, which the chat writes again every second;
             # ruling 2 at 79dce614c, 2026-10-04: a subtree that reaches outside, a popup child of a control, scans as before).
+            # Inside means at any depth: the held control is the record's target or its nearest ancestor the scan holds (rheld).
+            # The chat writes that icon into a span inside the mode chip, and the span only inherits the chip's pointer cursor,
+            # so since a cursor counts only where it is set (round 3) the span is no control of its own, and with the target
+            # alone read, the write scanned once a second while the badge was painted (the round-3 build's lab probe).
             # An attribute record whose value did not change (its old value
             # is the value the element has now) is skipped: it asks for nothing (the chat writes the reply chips' hidden attribute
             # at each desktop scroll step, to the value it had; ruling 1 at 79dce614c, 2026-10-04)
+            "function rheld(g){if(!rhs)return null;for(var e=g;e;e=e.parentElement)if(rhs.has(e))return e;return null;}"
             "function rrec(rs){var any=false,f=false;for(var i=0;i<rs.length;i++){var m=rs[i],g=m.target;if(g===rb||rb.contains(g))continue;if(m.type==='attributes'&&m.oldValue===g.getAttribute(m.attributeName))continue;any=true;var h=!!rhs&&rhs.has(g);"
-            "if(m.type==='childList'){if(!f)for(var j=0;j<m.addedNodes.length;j++){var n=m.addedNodes[j];if(n.nodeType===1&&(!h||!rin(n,rvis(rhs.get(g))))){f=true;break;}}}else if(!h||g.firstElementChild)f=true;}if(any)rwant(f);}"
+            "if(m.type==='childList'){if(!f){var hc=rheld(g);for(var j=0;j<m.addedNodes.length;j++){var n=m.addedNodes[j];if(n.nodeType===1&&(!hc||!rin(n,rvis(rhs.get(hc))))){f=true;break;}}}}else if(!h||g.firstElementChild)f=true;}if(any)rwant(f);}"
             # whether an element added inside a held control lies where the badge already avoids: the box of the element and of
             # each element it holds inside q, the part of that control a person can see (rvis); false when none of it can be seen
             "function rin(n,q){if(!q)return false;var a=n.getElementsByTagName?n.getElementsByTagName('*'):[],e=n;for(var i=-1;i<a.length;i++){if(i>=0)e=a[i];var r=e.getBoundingClientRect();"

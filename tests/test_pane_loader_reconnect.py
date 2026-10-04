@@ -1466,6 +1466,30 @@ out({ icon, deep, unheld });""")
         self.assertEqual(o["deep"], {"reads": 1, "scanned": False}, "an element holding another, both boxes inside the button's: a re-read, no scan")
         self.assertIs(o["unheld"]["scanned"], True, "an element added inside the footer, which the scan does not hold: a scan")
 
+    # The round-3 build (2026-10-04): the held control a record's target lies in is the target or its nearest ancestor the scan holds
+    # (rheld). The chat's status line writes its mode icon each second into a span inside the mode chip (span.meta-btn, cursor:
+    # pointer), and the span only inherits the chip's cursor. Since a cursor counts only where it is set (round 3, correctness-1),
+    # the span is no control of its own, and a watch that read the record's target alone scanned at each write (the build's lab
+    # probe: one scan a second while painted, 4 of the 7 scans in ten wheel steps). Here the chip holds the icon's span, whose cursor
+    # is inherited (bodyCursor computes it), and a write adds an element inside the span within the chip's box: a re-read. One that
+    # reaches outside the chip scans, and so does the same write into a span of an element no scan holds
+    def test_an_element_added_deep_inside_a_held_control_re_reads_as_one_added_to_it_does(self):
+        o = self._watch_fit(r"""
+const chip = add(footer, [80, 764, 90, 16], { cursor: 'pointer' }); chip.id = 'chip';   // the mode chip: its own pointer cursor
+const ico = add(chip, [82, 765, 14, 14]); ico.id = 'ico';                              // the icon's span, no cursor of its own
+const plain = add(footer, [200, 764, 40, 16]); const plainIco = add(plain, [202, 765, 14, 14]);   // a span in an element that is no control
+bodyCursor('auto');                                                                    // the span inherits the chip's pointer
+fire('romp:wsdown'); after(RHOLD_T);
+const step = (target, box) => { const reads = STYLE_READS; deliver(kids(target, [add(target, box)], [])); frame(); const n = STYLE_READS - reads; return { reads: n, scanned: n === scan() }; };
+const within = step(ico, [83, 766, 12, 12]);
+const reaching = step(ico, [83, 700, 12, 12]);
+const unheld = step(plainIco, [203, 766, 12, 12]);
+out({ cursors: [chip.cs.cursor, ico.cs.cursor], within, reaching, unheld });""")
+        self.assertEqual(o["cursors"], ["pointer", "pointer"], "the span computes the chip's pointer cursor, inherited")
+        self.assertEqual(o["within"], {"reads": 1, "scanned": False}, "an icon written into the span inside the chip, within the chip's box: a re-read, no scan")
+        self.assertIs(o["reaching"]["scanned"], True, "an element written into the span that reaches outside the chip: a scan")
+        self.assertIs(o["unheld"]["scanned"], True, "the same write into a span of an element no scan holds: a scan")
+
     # Ruling 2 at 79dce614c (2026-10-04): an element added inside a held control re-reads only when every box of the added subtree lies
     # inside the part of that control a person can see (its box cut by the ancestors that clip it, rvis); one that reaches outside it,
     # such as a popup child of a control, scans as before, so a control it brings is found. The popup and the inner child each reach
