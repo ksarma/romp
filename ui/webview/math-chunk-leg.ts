@@ -116,6 +116,10 @@ export type PageOpts = {
   /** held: the page carries a picture whose answer waits for it, so the document's load event waits too (the page is opened at
    *  DOMContentLoaded, the bundle having run) */
   loadGate?: Gate | null;
+  /** `#out` inside the user's own bubble (`.user-bubble.md`, styles.css's rule for YOUR messages) */
+  bubble?: boolean;
+  /** the light theme (body.theme-light, styles.css's second theme block); the dark theme otherwise */
+  light?: boolean;
 };
 /** consoleErrors: every console error but the browser's own line for a missing resource (the sheet's media fonts, which the leg
  *  does not serve); a failed chunk shows in the box and in math.ts's own line, which is kept. */
@@ -131,7 +135,7 @@ function pageHtml(o: PageOpts): string {
   const script = o.inline ? `<script${nonce}>${probeBundle()}</script>` : `<script${nonce} src="/dist/render.js?v=7"></script>`;
   // the sheets as the chat page has them, KaTeX's first (the chat's styles.css imports it at its top); a dim probe to read the tier off
   return `<!DOCTYPE html><html><head><meta charset=utf-8>${csp}<style>${KATEX_CSS}\n${STYLES}\nbody{font-size:16px}</style></head>
-<body><div id=out class=md></div><span id=dim style="color: var(--dim)">dim</span>${o.loadGate ? '<img src="/held.png" alt="">' : ""}${script}</body></html>`;
+<body class="${o.light ? "theme-light" : ""}">${o.bubble ? '<div class="user-bubble md" id=bubble><div id=out class=md></div></div>' : "<div id=out class=md></div>"}<span id=dim style="color: var(--dim)">dim</span>${o.loadGate ? '<img src="/held.png" alt="">' : ""}${script}</body></html>`;
 }
 
 /** Open the page in `browser` under `o`, wait for the probe, and hand the scene to `body`. */
@@ -606,6 +610,40 @@ export const SCENES: SceneDef[] = [
         assert.ok(r1.text !== null && r1.text.includes("@"), "the laid-out formula still reads its @: " + JSON.stringify(r1));
         assert.equal(r1.chips, 1);
       });
+    },
+  },
+  {
+    name: "in the user's own bubble a waiting formula, inline and display, wears the bubble's white tint, not the page's dim tier, and reads at 3:1 or better on the bubble's fill, in both themes",
+    timeout: 60000,
+    run: async (browser) => {
+      for (const light of [false, true]) {
+        const g = gate();
+        await withPage(browser, { chunkGate: g, bubble: true, light }, async (s) => {
+          await show(s.page, "you asked about $\\frac{a}{b}$ and\n\n$$\\sum_{i=1}^{n} i$$\n");
+          const r: { display: boolean; color: string; ratio: number }[] = await s.page.evaluate(() => {
+            const rgba = (c: string): number[] => { const v = (c.match(/[\d.]+/g) || []).map(Number); return [v[0], v[1], v[2], v.length > 3 ? v[3] : 1]; };
+            const lum = (c: number[]): number => { const f = (x: number) => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+            const fill = rgba(getComputedStyle(document.getElementById("bubble")!).backgroundColor);
+            return Array.from(document.querySelectorAll("#out .md-math-inline, #out .md-math-display")).map((e) => {
+              const color = getComputedStyle(e).color;
+              const c = rgba(color);
+              const seen = [0, 1, 2].map((i) => c[3] * c[i] + (1 - c[3]) * fill[i]);   // the tint over the fill, as it is seen
+              const [hi, lo] = [lum(seen), lum(fill)].sort((x, y) => y - x);
+              return { display: e.classList.contains("md-math-display"), color, ratio: Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100 };
+            });
+          });
+          const dim = (await box(s.page)).dim;
+          const theme = light ? "light" : "dark";
+          assert.deepEqual(r.map((x) => x.display), [false, true], theme + ": both waiting, inline and display: " + JSON.stringify(r));
+          for (const x of r) {
+            assert.equal(x.color, "rgba(255, 255, 255, 0.88)", theme + ": the bubble's tint (styles.css .user-bubble .md-math-inline, .md-math-display): " + JSON.stringify(x));
+            assert.notEqual(x.color, dim, theme + ": not the page's dim tier, which sits near 1.5:1 on the fill");
+            assert.ok(x.ratio >= 3, theme + ": at least 3:1 on the bubble's fill: " + JSON.stringify(x));
+          }
+          g.open();
+          await settled(s.page);
+        });
+      }
     },
   },
   {

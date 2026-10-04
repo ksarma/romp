@@ -10,8 +10,8 @@
 // first failure asks again, nothing waiting on it, and a later one only after an online or reconnect event, so a persistent
 // 404 costs two requests plus one per event; a success, the retry's or a chunk or faces landing after the backstop, lays out
 // every formula, the failure's fallbacks included; the glossary's term links and the mention chips skip a waiting formula, so a
-// first-mode link and an @ outlast the arrival; a page shaped like the VS Code webview loads the chunk under its nonce-only
-// policy. math-chunk-load-webkit-browser.test.ts runs the same scenes in WebKit. Synthetic values only.
+// first-mode link and an @ outlast the arrival; a waiting formula in the user's own bubble wears its white tint at 3:1 or better
+// on the fill, in both themes; a page shaped like the VS Code webview loads the chunk under its nonce-only policy. math-chunk-load-webkit-browser.test.ts runs the same scenes in WebKit. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
