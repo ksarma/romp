@@ -2,13 +2,24 @@
 """Peer-bus mode stage 1 (plans/postal-peer-buses.md): every machine runs its OWN bus — the
 client-only special case is retired under the flag — and the kernel feeds the bus a peer table
 over POST /peer on tunnel transitions. Synthetic only."""
+import ast
+import fcntl
+import http.client
 import json
 import os
+import resource
+import select
+import socket
+import struct
 import tempfile
 import threading
 import time
 import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -180,7 +191,9 @@ pmb = load_source("romp_postal_peers_b", os.path.join(BIN, "romp-postal-service"
 class _TwoBusHarness(unittest.TestCase):
     """The two-bus harness (plans/postal-peer-buses.md): A and B are two module instances with
     separate state dirs; the "tunnel" is a direct call — A builds a request, B handles it, A applies
-    the response. No tests of its own: TwoBusExchange and ExchangeRelaysAreBudgeted run on it."""
+    the response. No tests of its own: TwoBusExchange, ExchangeRelaysAreBudgeted, RecallAfterTheCarry and
+    AHostThatDialsUsIsReachedOnItsNextExchange run on it. _serve puts a real server over one bus's Handler,
+    for the classes that dial through the real route."""
 
     def setUp(self):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
@@ -201,6 +214,8 @@ class _TwoBusHarness(unittest.TestCase):
             getattr(m, "_inflight", {}).clear()      # no exchange is carrying anything at the start of a test
             #                                          (getattr: the module also runs against a bus without the
             #                                          flight table, to show each new test red for its own reason)
+            getattr(m, "_inbound_links", {}).clear()  # no inbound link a real-route exchange of an earlier test left
+            #                                           open (getattr, as above, for a bus without the link table)
             m._seen_ids = None
         import shutil
         for m in (pm, pmb):
@@ -230,6 +245,14 @@ class _TwoBusHarness(unittest.TestCase):
         self.assertEqual(status, 200)
         pm.peer_exchange_apply("srv", req, resp)
         return resp
+
+    def _serve(self, m):
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), m.Handler)
+        srv.handle_error = lambda *a: None           # a handler that raises is the point of some tests below
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return srv.server_address[1]
 
 
 class TwoBusExchange(_TwoBusHarness):
@@ -353,6 +376,7 @@ class ThreeBusRelay(unittest.TestCase):
             m.PEER_STATE.clear()
             m.PEERS.clear()
             m._peer_pending.clear()
+            getattr(m, "_inbound_links", {}).clear()  # as _TwoBusHarness.setUp: no inbound link left open
             m._seen_ids = None
             shutil.rmtree(m.OUTBOX, ignore_errors=True)
             shutil.rmtree(m.MAILROOT, ignore_errors=True)
@@ -660,6 +684,8 @@ class ExchangeRelaysAreBudgeted(_TwoBusHarness):
 class RecallAndReceipts(unittest.TestCase):
     def setUp(self):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
+        getattr(pm, "_inbound_links", {}).clear()     # the link state below reads PEERS beside the inbound link, which a
+        #                                               real-route exchange of a later class in file order leaves open
         import shutil
         shutil.rmtree(pm.OUTBOX, ignore_errors=True)
         try:
@@ -712,7 +738,7 @@ class RecallAndReceipts(unittest.TestCase):
         self.assertFalse(pm._sent_receipts("sid-a")[-1]["parkedUp"], "down link -> honestly unreachable")
         pm.PEERS.pop("srv", None)
         self.assertFalse(pm._sent_receipts("sid-a")[-1]["parkedUp"],
-                         "no tunnel record at all reads down, matching the send path's branch")
+                         "no tunnel record and no inbound link reads down, matching the send path's branch")
         row = pm._sent_receipts("sid-a")[-1]
         self.assertEqual(row["parked"], "srv", "the parked key keeps its host-string shape")
 
@@ -2051,14 +2077,6 @@ class RecallAfterTheCarry(_TwoBusHarness):
 
     # ── the dialed side: the response write is the event ───────────────────────────────────────
 
-    def _serve(self, m):
-        srv = ThreadingHTTPServer(("127.0.0.1", 0), m.Handler)
-        srv.handle_error = lambda *a: None           # a handler that raises is the point of one test below
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-        self.addCleanup(srv.server_close)
-        self.addCleanup(srv.shutdown)
-        return srv.server_address[1]
-
     def _outcome_event(self, m, want=None):
         """m._flight_done wrapped to set an Event (on any outcome, or only on one whose `carried` is `want`):
         the route records the outcome after the response is on the wire, so the client can hold the
@@ -2326,6 +2344,2106 @@ class RecallAfterTheCarry(_TwoBusHarness):
         desc = [t for t in pm.MCP_TOOLS if t["name"] == "recall_message"][0]["description"]
         self.assertIn("has not left for it yet", desc, "the tool says it withdraws mail still here")
         self.assertIn("check_sent shows which", desc)
+
+
+class _ParkSeen(threading.Event):
+    """B's wake for hosta, installed in place of the plain Event (pmb._peer_wakes): `parked` is set when B's handler
+    parks on it, so a test sends only once the park is in place (the handler clears the wake after its listing, so a
+    send between the two waits out the whole park); release() ends every park, one already waiting and one still on
+    its way to its clear, for good. After hold(), a wake (outbox_put's set, or peer_update's for a host the kernel
+    notifies down) is recorded in `woken` and ends no park until release(), so a test can read the receipts before B's
+    woken write runs."""
+
+    def __init__(self):
+        super().__init__()
+        self.parked = threading.Event()
+        self.released = False
+        self.holding = False
+        self.woken = False
+
+    def wait(self, timeout=None):
+        self.parked.set()
+        if self.released:
+            return True
+        return super().wait(timeout)
+
+    def hold(self):
+        self.holding = True
+
+    def set(self):
+        if self.holding and not self.released:
+            self.woken = True
+            return
+        super().set()
+
+    def release(self):
+        self.released = True
+        super().set()
+
+
+class _WatchedLock:
+    """A stand-in for B's _PEER_STATE_LOCK (pmb._PEER_STATE_LOCK, which peer_update, the handler and the mirror name at
+    call time): the real lock does the locking; `before` runs ahead of each acquisition and `after` once each release
+    has run, each on the thread that takes the lock, so a test can act at an exact entry to a hold or exit from one.
+    The test that installs it puts the real lock back in a cleanup."""
+
+    def __init__(self, real, before=None, after=None):
+        self.real, self.before, self.after = real, before or (lambda: None), after or (lambda: None)
+
+    def acquire(self, *a, **k):
+        self.before()
+        return self.real.acquire(*a, **k)
+
+    def release(self):
+        self.real.release()
+        self.after()
+
+    def locked(self):
+        return self.real.locked()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
+class AHostThatDialsUsIsReachedOnItsNextExchange(_TwoBusHarness):
+    """A host this bus does not dial up but that dials it (2026-10-02). B serves its real Handler on 127.0.0.1 port 0
+    (the stand-in for the -L forward A's kernel holds to B), B holds NO tunnel row for A (a test that needs one sets
+    it), and A's PEERS row for srv points at that port with B's serve token. Mail from B to A then parks in B's outbox
+    and leaves on A's next exchange, at once when A's dial is parked on B. At fork main B answered every such send
+    "parked for hosta (unreachable)", poked the kernel's /redial (a silent no-op: the kernel holds no tunnel for
+    hosta), and the receipt said unreachable too, because both read PEERS alone. The fix reads B's inbound link to A
+    (_inbound_links), keyed on events: an exchange's arrival (which can supersede another name's link), the dialer's
+    EOF before the write, the route's outcome, the busId fold, and B's kernel's down notify for a port row. Each test
+    says what it pins and whether it is red at fork main. Each thread is ended by a cleanup registered in the function
+    that starts it; every exchange B served is waited for at cleanup (_drain), before the server's shutdown."""
+
+    def setUp(self):
+        super().setUp()
+        pmb.PEERS.pop("hosta", None)                 # B holds no tunnel row for A: A only dials B
+        import shutil
+        for m in (pm, pmb):
+            try:
+                (m.TLDIR / "messages.jsonl").unlink()
+            except FileNotFoundError:
+                pass
+            # read receipts an earlier test's read queued for the other bus: B would hand them back at once instead of
+            # parking A's dial (the harness clears the outbox, not the readbox)
+            shutil.rmtree(m.READBOX, ignore_errors=True)
+        self.posted, saved_post = [], pmb._kernel_post
+        pmb._kernel_post = lambda path, body, timeout=2: self.posted.append(path)
+        self.addCleanup(setattr, pmb, "_kernel_post", saved_post)
+        self.wake = _ParkSeen()
+        pmb._peer_wakes["hosta"] = self.wake
+        self.addCleanup(pmb._peer_wakes.pop, "hosta", None)
+        # each /peer-exchange B serves: its socket, and the end of its do_POST (the route's finally has run by then)
+        self.cv, self.conns, self.ended = threading.Condition(), [], [0]
+        do_post = pmb.Handler.do_POST
+
+        def counted(handler):
+            exchange = handler.path.startswith("/peer-exchange")
+            if exchange:
+                with self.cv:
+                    self.conns.append(handler.connection)
+            try:
+                return do_post(handler)
+            finally:
+                if exchange:
+                    with self.cv:
+                        self.ended[0] += 1
+                        self.cv.notify_all()
+        pmb.Handler.do_POST = counted
+        self.addCleanup(setattr, pmb.Handler, "do_POST", do_post)
+        self.port = self._serve(pmb)
+        self.addCleanup(self._drain)                 # runs before the server's shutdown (cleanups run last-in first)
+        pm.PEERS["srv"] = {"port": self.port, "up": True, "token": pmb.SERVE_TOKEN, "trust": "trusted"}
+
+    def _drain(self):
+        """Ends every park on B and waits for each exchange B served to end, so none outlives the test."""
+        self.wake.release()
+        with self.cv:
+            done = self.cv.wait_for(lambda: self.ended[0] >= len(self.conns), 10)
+        if not done:
+            raise AssertionError("an exchange B served is still running 10 s after its park was released")
+
+    def _exchanges_ended(self, n):
+        with self.cv:
+            return self.cv.wait_for(lambda: self.ended[0] >= n, 5)
+
+    def _exchange_through_b(self, **change):
+        """One exchange from A through B's real route, wait=False (nothing parks), with `change` applied to the request;
+        waits for B's route to end. Returns the HTTP status."""
+        req = dict(pm.build_exchange_request("srv", wait=False), **change)
+        with self.cv:
+            before = self.ended[0]
+        try:
+            pm._peer_http(self.port, req, token=pmb.SERVE_TOKEN)
+            status = 200
+        except urllib.error.HTTPError as e:
+            status = e.code
+            e.close()
+        self.assertTrue(self._exchanges_ended(before + 1), "B's route ended the exchange")
+        return status
+
+    def _parked_dial(self, wake=None, **change):
+        """A dial of B, wait=True, with `change` applied to the request, over a client the test holds (http.client, so it
+        can close the socket, half-close it or reset it), parked on B, on `wake` (hosta's by default). Returns the
+        connection, closed by a cleanup."""
+        wake = wake or self.wake
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        self.addCleanup(c.close)
+        c.request("POST", "/peer-exchange?token=" + urllib.parse.quote(pmb.SERVE_TOKEN),
+                  body=json.dumps(dict(pm.build_exchange_request("srv", wait=True), **change)).encode(),
+                  headers={"Content-Type": "application/json"})
+        self.assertTrue(wake.parked.wait(5), "B parked the dial")
+        return c
+
+    def _readable_on_b(self):
+        """Waits until the socket of the last exchange B took reads ready: the dialer's FIN has reached B."""
+        with self.cv:
+            conn = self.conns[-1]
+        p = select.poll()
+        p.register(conn, select.POLLIN)
+        return bool(p.poll(5000))
+
+    def _send_on_b(self, body, **extra):
+        """A real /send on B from beta to alpha, over B's served route, with `extra` fields in the request (kind
+        coordinate unless one names another). Returns the answer."""
+        req = urllib.request.Request("http://127.0.0.1:%d/send" % self.port,
+                                     data=json.dumps(dict({"to": "alpha", "from": "beta", "from_id": "sid-b",
+                                                           "body": body, "kind": "coordinate"}, **extra)).encode(),
+                                     headers={"Content-Type": "application/json", "X-Romp-Token": pmb.SERVE_TOKEN},
+                                     method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            try:
+                self.fail("B refused the send: %s %s" % (e.code, e.read()))
+            finally:
+                e.close()
+
+    def _receipt(self, mid):
+        rows = [r for r in pmb._sent_receipts("sid-b") if r["id"] == mid]
+        self.assertEqual(len(rows), 1, "one receipt row for %s" % mid)
+        return rows[0]
+
+    def _assert_queued(self, resp, what, host="hosta"):
+        self.assertNotIn("unreachable", resp.get("note", ""), what)
+        self.assertIn("queued for 'alpha' on %s: it goes out on %s's next poll of this machine" % (host, host),
+                      resp["note"], what)
+        self.assertNotIn("parked", resp["note"].lower(),
+                         "kernel.py _postal_out_card files any send whose tool output contains the word as Parked")
+        self.assertEqual(resp.get("parked"), host, "the key the kernel reads for the host the mail waits on")
+        row = self._receipt(resp["id"])
+        self.assertIs(row["parkedUp"], True, what)
+        self.assertNotIn("unreachable", pmb.format_receipts([row]), what)
+
+    def _assert_unreachable(self, resp, what, host="hosta"):
+        self.assertIn("parked for %s (unreachable)" % host, resp.get("note", ""), what)
+        self.assertEqual(resp.get("parked"), host)
+        row = self._receipt(resp["id"])
+        self.assertIs(row["parkedUp"], False, what)
+        self.assertIn("parked for %s (unreachable)" % host, pmb.format_receipts([row]), what)
+
+    def _port_row_up_for_a(self):
+        """B's port row for A, up: the row B's kernel files for a check-in peer (A's one ssh carries the -L to B and the
+        -R B dials back through) or for two machines that attach each other. Set directly, so no dialer of B's starts:
+        the pins that use it need the row and its down notify, not B's own dial of A."""
+        pmb.PEERS["hosta"] = {"port": 1, "up": True, "token": "", "trust": "trusted"}
+
+    def _down_notify_on_b(self, host="hosta"):
+        """B's kernel's down notify for the port row `host` (A's, hosta, unless a test names another): the body
+        kernel.py _notify_bus_peer posts, over B's served /peer route, which runs peer_update."""
+        req = urllib.request.Request("http://127.0.0.1:%d/peer" % self.port,
+                                     data=json.dumps({"host": host, "port": 1, "up": False, "token": "",
+                                                      "trust": "trusted"}).encode(),
+                                     headers={"Content-Type": "application/json", "X-Romp-Token": pmb.SERVE_TOKEN},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual((r.status, json.loads(r.read()).get("ok")), (200, True), "B's /peer route took the notify")
+        self.assertIs(pmb.PEERS[host]["up"], False, "the row is down")
+
+    def _up_notify_on_b(self, host="hosta"):
+        """B's kernel's up notify for the port row `host` (A's, hosta, unless a test names another): the body kernel.py
+        _notify_bus_peer posts, over B's served /peer route, which runs peer_update. It asserts nothing, so a stub that
+        runs on one of B's handler threads can send it; returns the route's status and its ok."""
+        req = urllib.request.Request("http://127.0.0.1:%d/peer" % self.port,
+                                     data=json.dumps({"host": host, "port": 1, "up": True, "token": "",
+                                                      "trust": "trusted"}).encode(),
+                                     headers={"Content-Type": "application/json", "X-Romp-Token": pmb.SERVE_TOKEN},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read()).get("ok")
+
+    def _check_sent_on_b(self, mid):
+        """check_sent's line for `mid`, built as the tool builds it: B's served GET /sent for beta's session, then
+        format_receipts over the rows."""
+        req = urllib.request.Request("http://127.0.0.1:%d/sent?id=sid-b" % self.port,
+                                     headers={"X-Romp-Token": pmb.SERVE_TOKEN})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            rows = json.loads(r.read())["sent"]
+        lines = [line for line in pmb.format_receipts(rows).splitlines() if line.endswith("id %s" % mid)]
+        self.assertEqual(len(lines), 1, "one check_sent line for %s" % mid)
+        return lines[0]
+
+    def _origin_only_row_on_b(self, host="hosta"):
+        """B's kernel's origin-only row for `host` (A's, hosta, unless a test names another): the body kernel.py
+        _notify_bus_origin_trust posts, a trust for a host it holds no tunnel to, over B's served /peer route. The row
+        has no port."""
+        req = urllib.request.Request("http://127.0.0.1:%d/peer" % self.port,
+                                     data=json.dumps({"host": host, "trust": "trusted", "originOnly": True}).encode(),
+                                     headers={"Content-Type": "application/json", "X-Romp-Token": pmb.SERVE_TOKEN},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual((r.status, json.loads(r.read()).get("originOnly")), (200, True),
+                             "B's /peer route took the origin-only row")
+        self.assertEqual((pmb.PEERS[host]["port"], pmb.PEERS[host].get("originOnly")), (None, True), "a portless row")
+
+    def test_a_send_while_the_host_s_dial_is_parked_is_queued_and_crosses_on_that_dial(self):
+        """THE DEFECT. A's real dialer (_peer_exchange_once) is parked on B; a real /send on B to alpha answers queued
+        (no "unreachable", "parked" still names hosta, no /redial posted), the receipt read while B's response is held
+        mid-write has parkedUp True and check_sent's line has no "unreachable", and the message reaches alpha on A in
+        that same exchange. Red at fork main at the note's assertion: the note said "parked for hosta (unreachable)".
+        The hold's return is asserted after the receipt read, so a hold that expired before it is a loud red, not a
+        receipt read after the carry that passes anyway."""
+        listed, gate, held = threading.Event(), threading.Event(), []
+        send = pmb.Handler._send
+
+        def hold_then_send(handler, obj, code=200, close=False):
+            if isinstance(obj, dict) and obj.get("relays"):
+                listed.set()
+                held.append(gate.wait(60))           # B's response carrying the relay is mid-write until the test's set
+            return send(handler, obj, code, close)
+        pmb.Handler._send = hold_then_send
+        self.addCleanup(setattr, pmb.Handler, "_send", send)
+        out = []
+        t = threading.Thread(target=lambda: out.append(pm._peer_exchange_once("srv", self.port, pmb.SERVE_TOKEN)),
+                             daemon=True)
+
+        def end():                                   # on every exit path: release B's held write and its park, wait for the dial
+            gate.set()
+            self.wake.release()
+            t.join(10)
+        self.addCleanup(end)
+        t.start()
+        self.assertTrue(self.wake.parked.wait(5), "A's dial is parked on B")
+        resp = self._send_on_b("which port does the staging api use?")
+        self.assertNotIn("unreachable", resp.get("note", ""), "a host whose dial is parked here is not unreachable")
+        self.assertEqual(self.posted, [], "no redial: the kernel holds no tunnel for a host that only dials us")
+        self.assertTrue(listed.wait(5), "the send woke the park and B's response is carrying it")
+        self._assert_queued(resp, "the link is open while B writes the response")
+        gate.set()
+        t.join(10)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(held, [True], "B's write was held until the receipt was read: the read saw it mid-write")
+        self.assertEqual(out, ["ok"], "A's exchange completed")
+        box = pm.read_box("sid-a", consume=True)
+        self.assertEqual(len(box), 1, "the message crossed on that exchange")
+        self.assertIn("which port does the staging api use?", box[0]["body"])
+
+    def test_the_link_reads_open_between_the_returned_write_and_the_outcome(self):
+        """After B's write returns, a healthy dialer reads the response and closes its socket before B's route records
+        the outcome; the exchange is marked writing before the write, so no probe reads that close as the dialer
+        leaving. Held there (B's response written, A's socket closed and the FIN on B's socket), a send is queued.
+        Red at fork main (the note said unreachable), and under a read that probes a writing exchange. The hold's return
+        is asserted after the send, so a hold that expired before it (the outcome recorded ok, and the pin vacuous) is
+        a loud red."""
+        gate, held = threading.Event(), []
+        send = pmb.Handler._send
+
+        def send_then_hold(handler, obj, code=200, close=False):
+            out = send(handler, obj, code, close)
+            if isinstance(obj, dict) and "presenceAnswered" in obj:
+                held.append(gate.wait(60))           # B's exchange response is written; its outcome waits for the test
+            return out
+        pmb.Handler._send = send_then_hold
+        self.addCleanup(setattr, pmb.Handler, "_send", send)
+        self.addCleanup(gate.set)
+        resp = pm._peer_http(self.port, pm.build_exchange_request("srv", wait=False), token=pmb.SERVE_TOKEN)
+        self.assertEqual(resp.get("host"), "hostb", "A read B's whole response and closed its socket")
+        self.assertTrue(self._readable_on_b(), "A's FIN reached B's socket")
+        self._assert_queued(self._send_on_b("did the nightly build pass?"), "the exchange is writing, not left")
+        gate.set()
+        self.assertTrue(self._exchanges_ended(1), "B's route ended the exchange")
+        self.assertEqual(held, [True], "B's outcome was held through the send: the read saw the writing window")
+
+    def test_the_link_stays_open_across_a_completed_round_trip(self):
+        """Between two exchanges B holds no socket from A (one connection per exchange), so the link must not drop at
+        each round trip: after one exchange completes ok through the real route, with none in progress, a send is
+        queued and its receipt reads parkedUp True. Red at fork main: the note said unreachable."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual((getattr(pmb, "_inbound_links", {}).get("hosta") or {}).get("live", {}), {},
+                         "no exchange in progress")
+        resp = self._send_on_b("is the schema frozen for the release?")
+        self._assert_queued(resp, "the last exchange ended ok and nothing newer closed the link")
+        self.assertEqual(self.posted, [], "no redial for a host with no tunnel row")
+
+    def test_a_dial_closed_while_parked_reads_unreachable_and_posts_no_redial(self):
+        """A's parked dial is closed (FIN) and B's socket shows it; the send answers unreachable, posts no /redial (B has
+        no PEERS row for hosta, so the kernel holds no tunnel to redial) and the receipt reads parkedUp False. The read
+        probes the live exchange's socket (_inbound_open). Red at fork main on the /redial assertion alone: main posted
+        /redial for every park; its note and receipt already said unreachable. The send's wake is held until the
+        receipt is read, so B's woken write to the closed socket cannot mark the record carried under the read."""
+        c = self._parked_dial()
+        c.close()
+        self.assertTrue(self._readable_on_b(), "the FIN reached B's socket")
+        self.wake.hold()
+        resp = self._send_on_b("did the migration run?")
+        self.assertTrue(self.wake.woken, "the send woke the park, held until the receipt is read")
+        self._assert_unreachable(resp, "the only exchange from A is at EOF")
+        self.assertEqual(self.posted, [], "no tunnel row for hosta: a /redial would be a silent no-op")
+        self.wake.release()
+        self.assertTrue(self._exchanges_ended(1), "B's route ended the woken exchange")
+
+    def test_a_dial_reset_while_parked_reads_unreachable_and_posts_no_redial(self):
+        """The dialer's reset is a close, as its FIN is: A's parked dial sets SO_LINGER (1, 0) and closes, so its socket
+        sends a reset, and B's socket shows it; the send answers unreachable, posts no /redial (B has no PEERS row for
+        hosta) and the receipt reads parkedUp False. The probe reads the reset as its peek's OSError
+        (_peer_conn_closed); the send's read is the first peek after the reset, which the socket reports once (a later
+        peek reads EOF). The send's wake is held until the receipt is read, as in the FIN case. Red at fork main on the
+        /redial assertion alone (main posted /redial for every park); a guard against a probe that reads a reset as
+        open, under which this send answered queued."""
+        c = self._parked_dial()
+        c.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        c.close()
+        self.assertTrue(self._readable_on_b(), "the reset reached B's socket")
+        self.wake.hold()
+        resp = self._send_on_b("did the deploy roll back?")
+        self.assertTrue(self.wake.woken, "the send woke the park, held until the receipt is read")
+        self._assert_unreachable(resp, "the only exchange from A was reset")
+        self.assertEqual(self.posted, [], "no tunnel row for hosta: a /redial would be a silent no-op")
+        self.wake.release()
+        self.assertTrue(self._exchanges_ended(1), "B's route ended the woken exchange")
+
+    def test_a_dial_closed_after_an_ok_exchange_reads_unreachable(self):
+        """The newest evidence wins: an exchange that ended ok, then a newer dial parked and closed. Green at fork main
+        (main never reads the link open); a guard against a rule that lets an older ok outrank a newer close. The
+        send's wake is held until the receipt is read, as in the case above."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        c = self._parked_dial()
+        c.close()
+        self.assertTrue(self._readable_on_b(), "the FIN reached B's socket")
+        self.wake.hold()
+        resp = self._send_on_b("who owns the deploy today?")
+        self.assertTrue(self.wake.woken, "the send woke the park, held until the receipt is read")
+        self._assert_unreachable(resp, "the newer exchange closed the link")
+        self.wake.release()
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the woken exchange")
+
+    def test_a_held_down_port_row_redials_whatever_the_link_says(self):
+        """Parking is demand (the user 2026-08-16): a send that parks mail for a host with a PEERS port row that is not
+        up posts /redial whatever the host's inbound link says, so a held-down tunnel is asked back even while the
+        host's own dials carry the mail; the link changes only the note and the receipt. A portless originOnly row (the
+        kernel holds no tunnel for it) never gets one. The portless row with the link closed (A's row filed by a direct
+        handler call, which records no link): unreachable, no /redial. A port row held down, the link still closed:
+        unreachable and /redial. Once an exchange through the real route ends ok, the same row with the link open:
+        queued and /redial. The portless row again, the link open: queued, no /redial. Red at fork main at the first
+        step's /redial assertion (main posted /redial for every park); main also answered unreachable at the third step.
+        A guard against a queued branch that returns before the poke, and against a poke for a portless row."""
+        pmb.PEERS["hosta"] = {"port": None, "up": False, "trust": "trusted", "originOnly": True}
+        resp, status = pmb.peer_exchange_handle(pm.build_exchange_request("srv", wait=False))
+        self.assertEqual(status, 200)
+        self._assert_unreachable(self._send_on_b("first: is the cache warm?"), "no exchange through the route")
+        self.assertEqual(self.posted, [], "a portless row: the kernel holds no tunnel, so a /redial would be a no-op")
+        pmb.PEERS["hosta"] = {"port": 1, "up": False, "trust": "trusted"}
+        self._assert_unreachable(self._send_on_b("second: is the cache warm yet?"), "no exchange through the route yet")
+        self.assertEqual(self.posted, ["/redial"], "a port row with the link closed: the kernel can redial it")
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("third: is the cache warm now?"), "the link is open")
+        self.assertEqual(self.posted, ["/redial", "/redial"], "a port row with the link open: redialed all the same")
+        pmb.PEERS["hosta"] = {"port": None, "up": False, "trust": "trusted", "originOnly": True}
+        self._assert_queued(self._send_on_b("fourth: is it still warm?"), "the link is still open")
+        self.assertEqual(self.posted, ["/redial", "/redial"], "a portless row with the link open: no /redial")
+
+    def test_a_refused_exchange_after_an_ok_one_reads_unreachable(self):
+        """A 409 drift dial after an ok exchange closes the link: a drifted dialer's mail does not cross. BUS_ID is
+        minted per process and a process cannot change its protocol, so a drifted dial from A comes from a newer process
+        than the one that stored the row, as here. The handler refuses it before the arrival is filed, so the route
+        closes the link of the name it resolved, whatever the bus ids. Green at fork main (main never reads the link
+        open); a guard against a fix whose only close events follow an arrival, and against a close scoped to the row's
+        busId, which a drifted dial from a process that sends its busId never matches."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(pmb.PEER_STATE["hosta"].get("busId"), pm.BUS_ID, "the row carries the storing process's busId")
+        self.assertEqual(self._exchange_through_b(proto=999, busId="a-newer-process-bus-id"), 409)
+        self._assert_unreachable(self._send_on_b("can you rebase onto main?"), "the newest exchange was refused")
+
+    def test_a_half_closed_dial_whose_write_returns_reads_closed(self):
+        """After a healthy round trip, A's parked dial shuts down its sending side only (the ssh CHANNEL_EOF shape: the
+        read side stays open). When the park ends, B's write returns and A reads the 200, but the pre-write probe saw
+        the EOF and recorded the close, which outranks the earlier ok, so the link reads closed and a later send is
+        unreachable. Green at fork main (main never reads the link open); a guard against an outcome keyed on the write
+        alone, which would mark this exchange ok and the link open, and against a probe that only drops the exchange
+        from the live ones without recording its close, which would leave the earlier ok standing."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        c = self._parked_dial()
+        c.sock.shutdown(socket.SHUT_WR)
+        self.assertTrue(self._readable_on_b(), "the half-close reached B's socket")
+        self.wake.set()                              # the park ends with nothing to carry
+        r = c.getresponse()
+        self.assertEqual(r.status, 200, "B's write returned and A read it")
+        r.read()
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the exchange")
+        self._assert_unreachable(self._send_on_b("is the flaky test fixed?"), "the dialer left before the write")
+
+    def test_a_direct_handler_call_records_no_link(self):
+        """A direct peer_exchange_handle call (no route: the shape of 80 and more test call sites) files no inbound
+        link, so it can leave no entry that nobody ends: the table stays empty and a send reads unreachable. Green at
+        fork main (a guard: main has no link table and never reads one open)."""
+        resp, status = pmb.peer_exchange_handle(pm.build_exchange_request("srv", wait=False))
+        self.assertEqual(status, 200)
+        self.assertIn("hosta", pmb.PEER_STATE, "the row was filed")
+        self.assertEqual(getattr(pmb, "_inbound_links", {}), {}, "no link without the route")
+        self._assert_unreachable(self._send_on_b("lunch at noon?"), "no exchange through the route")
+
+    def test_the_busid_fold_forgets_the_link_of_the_name_it_forgets(self):
+        """When the busId fold forgets a name (A's dials now file under B's dialable alias for A), that name's link goes
+        with it: mail parked under the old name, orphaned by the fold, does not leave while A's dials fold under the
+        alias, so its receipt must not read queued. Red at fork main at the precondition (the send before the fold is
+        queued only under the fix); the assertions after the fold guard against a fix that leaves the forgotten name's
+        link open."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        resp = self._send_on_b("please review the notes-api branch")
+        self._assert_queued(resp, "before the fold the link is open")
+        # B's kernel attaches A under an alias with a port, and B's own dial of it files the alias's row with A's busId
+        pmb.PEERS["srv-a"] = {"port": 1, "up": True, "trust": "trusted"}
+        pmb.PEER_STATE["srv-a"] = {"presence": [], "busId": pm.BUS_ID, "seenAt": int(time.time())}
+        _, status = pmb.peer_exchange_handle(pm.build_exchange_request("srv", wait=False))
+        self.assertEqual(status, 200)
+        self.assertEqual(("hosta" in pmb.PEER_STATE, "srv-a" in pmb.PEER_STATE), (False, True),
+                         "A's dial filed under the alias and the fold forgot hosta")
+        self.assertNotIn("hosta", getattr(pmb, "_inbound_links", {}), "the forgotten name's link went with its row")
+        row = self._receipt(resp["id"])
+        self.assertEqual((row["parked"], row["parkedUp"]), ("hosta", False), "orphaned under hosta: not queued")
+        self.assertIn("parked for hosta (unreachable)", pmb.format_receipts([row]))
+
+    def test_a_raised_write_after_an_ok_exchange_reads_closed(self):
+        """A response write that raises after the pre-write probe marked the exchange writing is a close: the route
+        records the outcome in its finally, on every exit path. One ok exchange, then one whose write raises; a send is
+        then unreachable. Green at fork main (main never reads the link open); a guard against an outcome recorded on
+        the success path alone, which leaves the raised exchange live and writing, so the link reads open."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        send = pmb.Handler._send
+
+        def raising(handler, obj, code=200, close=False):
+            if isinstance(obj, dict) and "presenceAnswered" in obj:
+                raise OSError("the write failed")
+            return send(handler, obj, code, close)
+        pmb.Handler._send = raising
+        self.addCleanup(setattr, pmb.Handler, "_send", send)
+        with self.assertRaises(OSError):             # B's handler raised before any byte: the socket closed unanswered
+            pm._peer_http(self.port, pm.build_exchange_request("srv", wait=False), token=pmb.SERVE_TOKEN)
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the raised exchange")
+        pmb.Handler._send = send
+        self._assert_unreachable(self._send_on_b("did the backup finish?"), "the newest exchange's write raised")
+
+    def test_a_handler_that_raises_before_the_arrival_closes_the_link(self):
+        """A handler exception before the arrival closes the link as a refusal does: the route reads the name the dial
+        declares and the name it resolves to before the handler runs (the OUTCOME bullet at _inbound_links). After an
+        ok exchange, a dial whose handler raises in _heard_answering, which the handler runs before the arrival, gets no
+        response, and a send is then unreachable. No production input makes that helper raise; this guards the
+        placement. Red at fork main at its precondition, which reads the inbound link main does not have; a guard
+        against names read only after the handler returns, which a raise before the arrival never reaches, so the
+        earlier ok stood and the send answered queued while every dial from A failed."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the last exchange ended ok")
+        heard = pmb._heard_answering
+
+        def raising(row):
+            raise RuntimeError("a fault before the arrival")
+        pmb._heard_answering = raising
+        self.addCleanup(setattr, pmb, "_heard_answering", heard)
+        with self.assertRaises(OSError):             # B's handler raised before any byte: the socket closed unanswered
+            pm._peer_http(self.port, pm.build_exchange_request("srv", wait=False), token=pmb.SERVE_TOKEN)
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the raised exchange")
+        pmb._heard_answering = heard
+        self.assertEqual(pmb._inbound_links["hosta"]["live"], {}, "the raised dial filed no arrival")
+        self._assert_unreachable(self._send_on_b("did the rollout finish?"), "the handler raised before the arrival")
+
+    def test_a_raise_before_the_arrival_closes_the_resolved_link_whatever_name_it_declares(self):
+        """The resolved name the route reads before the handler runs: A's dials are filed under B's alias for A (srv-a),
+        declaring hosta. A dial from A's process (its busId resolves to the alias) declaring another name, hosta-renamed,
+        raises in _heard_answering, before its arrival. The route resolved srv-a before the handler ran, so srv-a's link
+        is superseded and a send to it is unreachable; srv-a's arrivals never declared hosta-renamed, so the declared
+        name's match alone reaches nothing. No production input makes that helper raise; this guards the placement. Red
+        at fork main at its precondition (main never reads the link open); a guard against a close keyed on the name the
+        route reads after the handler returns, which a raise before the arrival leaves unset, under which srv-a read
+        queued."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertNotIn("hosta", pmb.PEER_STATE, "precondition: A filed under the alias")
+        self._assert_queued(self._send_on_b("before the fault: is the cache warm?", to="srv-a:alpha"),
+                            "precondition: srv-a's link is open", host="srv-a")
+        heard = pmb._heard_answering
+
+        def raising(row):
+            raise RuntimeError("a fault before the arrival")
+        pmb._heard_answering = raising
+        self.addCleanup(setattr, pmb, "_heard_answering", heard)
+        with self.assertRaises(OSError):             # B's handler raised before any byte: the socket closed unanswered
+            pm._peer_http(self.port, dict(pm.build_exchange_request("srv", wait=False), host="hosta-renamed"),
+                          token=pmb.SERVE_TOKEN)
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the raised exchange")
+        pmb._heard_answering = heard
+        self.assertEqual(pmb._inbound_links["srv-a"]["live"], {}, "the raised dial filed no arrival")
+        self._assert_unreachable(self._send_on_b("after the fault: is the cache warm now?", to="srv-a:alpha"),
+                                 "the raise before the arrival superseded the resolved name's link", host="srv-a")
+
+    def test_a_raise_before_the_arrival_closes_the_declared_name_link_when_it_resolves_to_an_alias(self):
+        """The declared name the route reads before the handler runs: A's old process was filed under hosta, the name it
+        declares, and its link is open. B's alias srv-a now carries the busId of A's new process (B's own dial of the
+        alias reached it), so the new process's dials resolve to srv-a while declaring hosta. Its first dial raises in
+        _heard_answering, before its arrival: the route closes the link of the name it resolved (srv-a, which holds none)
+        and each link whose arrivals declared hosta, so hosta's link closes and a send to hosta:alpha is unreachable: the
+        new process's dials, filed under srv-a, never carry hosta's outbox. No production input makes that helper raise;
+        this guards the placement. Red at fork main at its precondition (main never reads the link open); a guard against
+        a close that matches the declared names against the resolved name instead of the declared one, under which hosta
+        read queued, promising a crossing no dial would carry."""
+        self.assertEqual(self._exchange_through_b(busId="a-old-process-bus-id"), 200)
+        self.assertIn("hosta", pmb.PEER_STATE, "precondition: the old process filed under hosta")
+        self._assert_queued(self._send_on_b("before the fault: is the cache warm?", to="hosta:alpha"),
+                            "precondition: hosta's link is open")
+        self._alias_for_a()
+        heard = pmb._heard_answering
+
+        def raising(row):
+            raise RuntimeError("a fault before the arrival")
+        pmb._heard_answering = raising
+        self.addCleanup(setattr, pmb, "_heard_answering", heard)
+        with self.assertRaises(OSError):             # B's handler raised before any byte: the socket closed unanswered
+            pm._peer_http(self.port, pm.build_exchange_request("srv", wait=False), token=pmb.SERVE_TOKEN)
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the raised exchange")
+        pmb._heard_answering = heard
+        self.assertNotIn("srv-a", pmb._inbound_links, "the raised dial filed no arrival under the alias")
+        self._assert_unreachable(self._send_on_b("after the fault: is the cache warm now?", to="hosta:alpha"),
+                                 "the raise before the arrival closed the declared name's link")
+
+    def test_a_healthy_parked_dial_newer_than_one_at_eof_reads_open(self):
+        """Two exchanges from A are live at once: an older dial closed while parked (A's bus restarted, say, while B's
+        old park lingers at EOF until its wait ends) and a newer one parked and healthy. A live exchange that reads open
+        keeps the link open, so a send is queued. The send's wake is held, so both stay parked through the read. Red at
+        fork main (the note said unreachable); a guard against a read that probes only the oldest live exchange, or
+        that lets a live exchange at EOF close the link whatever the others say."""
+        c1 = self._parked_dial()
+        c1.close()
+        self.assertTrue(self._readable_on_b(), "the old dial's FIN reached B")
+        self.wake.parked.clear()
+        self._parked_dial()
+        self.wake.hold()
+        resp = self._send_on_b("can you look at the release notes?")
+        self.assertTrue(self.wake.woken, "the send woke the parks, held through the read")
+        self._assert_queued(resp, "the newer exchange is parked and healthy")
+        self.wake.release()
+        self.assertTrue(self._exchanges_ended(2), "B's route ended both exchanges")
+
+    def _older_parked_dial_beside_a_newer_one_that_leaves(self, what, **newer):
+        """A's healthy dial parks on B; a newer dial, with `newer` applied to its request, is filed under hosta too,
+        parks, and leaves (FIN). A send with the wake held reads queued, and once the parks are released A's older dial
+        answers carrying the mail."""
+        c = self._parked_dial()
+        self.wake.parked.clear()
+        n = self._parked_dial(**newer)
+        n.close()
+        self.assertTrue(self._readable_on_b(), "the newer dial's FIN reached B")
+        self.wake.hold()
+        resp = self._send_on_b("is the queue drained?")
+        self.assertTrue(self.wake.woken, "the send woke the parks, held through the read")
+        self._assert_queued(resp, what)
+        self.wake.release()
+        r = c.getresponse()
+        self.assertEqual(r.status, 200, "A's older parked dial was answered")
+        relays = json.loads(r.read()).get("relays") or []
+        self.assertIn(resp["id"], [m.get("mid") for m in relays], "and that answer carried the mail")
+        self.assertTrue(self._exchanges_ended(2), "B's route ended both exchanges")
+
+    def test_a_namesake_s_newer_dial_leaving_keeps_the_older_parked_link_open(self):
+        """A close by a dialer that left ends its own exchange alone (the READ at _inbound_links). A's healthy dial is
+        parked on B; a second bus declaring hosta, with another busId and the same protocol, dials, is filed under hosta
+        too, parks, and leaves (FIN). A's older dial still carries the mail, so a send is queued: a live exchange that
+        reads open keeps the link open whatever a newer exchange under the name says, unless a refusal or an arrival
+        under another name superseded it. Red at fork main (the note said unreachable); a guard against a read in which
+        the newest live exchange decides, which read the namesake's EOF and answered unreachable while A's dial carried
+        the mail."""
+        self._older_parked_dial_beside_a_newer_one_that_leaves("A's older parked dial still reads open",
+                                                               busId="a-namesake-bus-id")
+
+    def test_a_second_dial_from_the_same_bus_leaving_keeps_the_older_parked_link_open(self):
+        """As the namesake case, with the newer dial from A's own bus (its busId): its leaving ends its own exchange alone,
+        and A's older parked dial keeps the link open. Red at fork main (the note said unreachable); a guard against a
+        read in which the newest live exchange decides."""
+        self._older_parked_dial_beside_a_newer_one_that_leaves("A's older parked dial still reads open")
+
+    def _older_parked_dial_beside_a_newer_recorded_close(self, fault):
+        """A's healthy dial parks on B; a newer wait=False exchange from A is filed under hosta and ends closed through
+        `fault` (installed after the park, removed after the exchange; it returns its undo), so the route records that
+        close. A send with the wake held reads queued, and once the park is released A's older dial answers carrying
+        the mail."""
+        c = self._parked_dial()
+        undo = fault()
+        try:
+            with self.assertRaises(OSError):         # B's route raised before any byte: the socket closed unanswered
+                pm._peer_http(self.port, pm.build_exchange_request("srv", wait=False), token=pmb.SERVE_TOKEN)
+        finally:
+            undo()
+        self.assertTrue(self._exchanges_ended(1), "B's route ended the newer exchange")
+        ent = pmb._inbound_links["hosta"]
+        self.assertGreater(ent["closed"], min(ent["live"]), "precondition: a recorded close newer than the parked dial")
+        self.wake.hold()
+        resp = self._send_on_b("is the queue drained?")
+        self.assertTrue(self.wake.woken, "the send woke the park, held through the read")
+        self._assert_queued(resp, "A's older parked dial still reads open after a newer exchange closed")
+        self.wake.release()
+        r = c.getresponse()
+        self.assertEqual(r.status, 200, "A's older parked dial was answered")
+        relays = json.loads(r.read()).get("relays") or []
+        self.assertIn(resp["id"], [m.get("mid") for m in relays], "and that answer carried the mail")
+        self.assertTrue(self._exchanges_ended(2), "B's route ended both exchanges")
+
+    def test_a_newer_exchange_whose_write_raised_leaves_the_older_parked_link_open(self):
+        """A close by a dialer that left ends its own exchange alone once it is recorded, too (the READ at
+        _inbound_links). A's healthy dial is parked on B; a newer wait=False exchange from A is filed under hosta and
+        its response write raises, so the route records that exchange closed. A's older dial still carries the mail, so
+        a send is queued. Red at fork main at its precondition (no link table there); a guard against a read in which
+        any recorded close outranks the older live exchanges, under which this send answered unreachable while A's
+        older dial carried the mail."""
+        send = pmb.Handler._send
+        self.addCleanup(setattr, pmb.Handler, "_send", send)
+
+        def fault():
+            def raising(handler, obj, code=200, close=False):
+                if isinstance(obj, dict) and "presenceAnswered" in obj:
+                    raise OSError("the write failed")
+                return send(handler, obj, code, close)
+            pmb.Handler._send = raising
+            return lambda: setattr(pmb.Handler, "_send", send)
+        self._older_parked_dial_beside_a_newer_recorded_close(fault)
+
+    def test_a_newer_exchange_that_raised_after_its_arrival_leaves_the_older_parked_link_open(self):
+        """As the raised-write case, with the newer exchange raising after its arrival, in the deadness mirror's write
+        (which the handler runs after the row's store): the route records that exchange closed, and A's older parked
+        dial keeps the link open. Red at fork main at its precondition (no link table there); a guard against a read in
+        which any recorded close outranks the older live exchanges."""
+        orig = pmb._write_remote_sids
+        self.addCleanup(setattr, pmb, "_write_remote_sids", orig)
+
+        def fault():
+            fired = []
+
+            def raising(*a, **k):
+                if not fired:
+                    fired.append(1)
+                    raise RuntimeError("a fault after the arrival")
+                return orig(*a, **k)
+            pmb._write_remote_sids = raising
+            return lambda: setattr(pmb, "_write_remote_sids", orig)
+        self._older_parked_dial_beside_a_newer_recorded_close(fault)
+
+    def test_a_newer_dial_that_left_before_the_write_leaves_the_older_parked_link_open(self):
+        """The pre-write probe's close ends its own exchange alone too (the PRE-WRITE and the READ at _inbound_links).
+        A's healthy dial is parked on B; a newer wait=False exchange from A is filed under hosta and its client shuts
+        its sending side (SHUT_WR) right after its request. B's pre-write probe, wrapped to wait until that socket reads
+        ready (the half-close has reached B), reads the EOF, returns True and records that exchange closed; B's write
+        still returns and A reads the 200. A's older dial still carries the mail, so a send is queued, and once the park
+        is released that dial answers carrying it. At fork main it errors at the wrap (no pre-write probe there); a
+        guard against a pre-write close recorded as a supersession, which outranks every older live exchange, under
+        which this send answered unreachable while A's older dial carried the mail."""
+        c = self._parked_dial()
+        probe, returned = pmb._inbound_pre_write, []
+
+        def probe_after_the_half_close(link):
+            p = select.poll()
+            p.register(link["conn"], select.POLLIN)
+            p.poll(5000)                             # bounded: a probe that runs before the FIN reads False, a loud red
+            returned.append(probe(link))
+            return returned[-1]
+        pmb._inbound_pre_write = probe_after_the_half_close
+        self.addCleanup(setattr, pmb, "_inbound_pre_write", probe)
+        n = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        self.addCleanup(n.close)
+        n.request("POST", "/peer-exchange?token=" + urllib.parse.quote(pmb.SERVE_TOKEN),
+                  body=json.dumps(pm.build_exchange_request("srv", wait=False)).encode(),
+                  headers={"Content-Type": "application/json"})
+        n.sock.shutdown(socket.SHUT_WR)
+        r = n.getresponse()
+        self.assertEqual(r.status, 200, "B's write returned and A read it")
+        r.read()
+        self.assertTrue(self._exchanges_ended(1), "B's route ended the newer exchange")
+        pmb._inbound_pre_write = probe
+        self.assertEqual(returned, [True], "the pre-write probe read the newer dial's EOF and recorded its close")
+        ent = pmb._inbound_links["hosta"]
+        self.assertGreater(max(ent["closed"], ent["superseded"]), min(ent["live"]),
+                           "precondition: a recorded close newer than the parked dial")
+        self.wake.hold()
+        resp = self._send_on_b("is the queue drained?")
+        self.assertTrue(self.wake.woken, "the send woke the park, held through the read")
+        self._assert_queued(resp, "A's older parked dial still reads open after a newer dial left before its write")
+        self.wake.release()
+        r = c.getresponse()
+        self.assertEqual(r.status, 200, "A's older parked dial was answered")
+        relays = json.loads(r.read()).get("relays") or []
+        self.assertIn(resp["id"], [m.get("mid") for m in relays], "and that answer carried the mail")
+        self.assertTrue(self._exchanges_ended(2), "B's route ended both exchanges")
+
+    def test_a_parked_dial_newer_than_a_refusal_reads_open_beside_an_older_superseded_one(self):
+        """THE NAMESAKE COST's recovery with A's older park still lingering: A's dial parks, a namesake's refused dial
+        (409, another busId) supersedes the link, then A's next dial parks, healthy. The link reads open on that newer
+        dial, so a send with the wake held is queued, as THE NAMESAKE COST at _inbound_links says (the link reads open
+        again when that bus's next dial arrives). Red at fork main at its precondition (no link table there); a guard
+        against a read that probes the live exchanges oldest first, which stops at the older, superseded park and never
+        reads the newer healthy one."""
+        self._parked_dial()
+        self.assertEqual(self._exchange_through_b(proto=999, busId="another-bus-id"), 409)
+        self.wake.parked.clear()
+        self._parked_dial()
+        ent = pmb._inbound_links["hosta"]
+        live = sorted(ent["live"])
+        self.assertEqual(len(live), 2, "precondition: two parked dials")
+        self.assertTrue(live[0] < ent["superseded"] < live[1], "precondition: the refusal sits between them")
+        self.wake.hold()
+        resp = self._send_on_b("and the replica?")
+        self.assertTrue(self.wake.woken, "the send woke the parks, held through the read")
+        self._assert_queued(resp, "A's newer parked dial reads open")
+        self.wake.release()
+        self.assertTrue(self._exchanges_ended(3), "B's route ended all three exchanges")
+
+    def test_an_older_exchange_ending_late_does_not_lower_the_newest_evidence(self):
+        """Outcomes can land out of arrival order: an old dial parks, a newer dial is refused (a 409 drift dial, which
+        closes the link), a newer one ends ok, and only then does the old park end ok. The newest evidence, the
+        newer ok, stands, so a send is queued: an outcome raises its kind's number to the max and never lowers it.
+        Red at fork main (the note said unreachable); a guard against an outcome that assigns its number, which would
+        set ok back below the refusal's close."""
+        c1 = self._parked_dial()
+        self.assertEqual(self._exchange_through_b(proto=999), 409)
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.wake.set()                              # the old park ends with nothing to carry
+        r = c1.getresponse()
+        self.assertEqual(r.status, 200, "the old park's write returned and A read it")
+        r.read()
+        self.assertTrue(self._exchanges_ended(3), "B's route ended all three exchanges")
+        self._assert_queued(self._send_on_b("is the demo still on?"), "the newest exchange ended ok")
+
+    def test_the_arrival_is_filed_inside_the_row_s_hold(self):
+        """The arrival runs while _PEER_STATE_LOCK is held, in the hold that stores the row, so a /send that routes on
+        the new row (peer_route reads PEER_STATE only under that lock) reads the link open too, and a fold cannot
+        forget the name between the store and the arrival. Red at fork main (no arrival there: nothing is seen); a
+        guard against an arrival moved out of the hold, which no other test here can see."""
+        seen, orig = [], getattr(pmb, "_inbound_arrived", None)
+
+        def spy(host, link, *rest):
+            seen.append(pmb._PEER_STATE_LOCK.locked())
+            return orig(host, link, *rest)
+        if orig is not None:
+            pmb._inbound_arrived = spy
+            self.addCleanup(setattr, pmb, "_inbound_arrived", orig)
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(seen, [True], "the arrival ran once, inside the row's hold")
+
+    def test_a_tracked_delegate_queued_for_the_host_says_tracking_does_not_cross(self):
+        """A tracked delegate to a host that dials us is queued like any send, and its note still says the report-back
+        tracking does not cross hosts, as the relaying and parked notes do: the sender asked for a report-back and must
+        hear it degraded. Red at fork main (the note said unreachable); a guard against a queued note that drops the
+        tracking suffix."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        resp = self._send_on_b("please take over the notes-api migration", kind="delegate", tracked=True)
+        self._assert_queued(resp, "the last exchange ended ok")
+        self.assertTrue(resp["note"].endswith("report-back tracking does not cross hosts yet; sent as a plain handoff"),
+                        "the queued note carries the tracking suffix: %r" % resp["note"])
+        self.assertNotIn("/redial", self.posted, "no redial for a host with no tunnel row")
+
+    def test_a_refused_namesake_closes_the_healthy_parked_link(self):
+        """A dial refused before its arrival closes the link of the name the route resolved, whatever the bus ids. So
+        while A's healthy dial is parked, a second bus declaring hosta, with another busId and a drifted protocol,
+        refused (409), closes the link: a send is unreachable though A's parked dial still carries the mail, and the
+        link reads open again after A's next exchange. That is the disclosed cost (THE NAMESAKE COST at
+        _inbound_links). This side was chosen over a close scoped to the row's busId because BUS_ID is minted per
+        process and a process cannot change its protocol: a drifted dial comes from another process than the one that
+        stored the row (on A's own machine, a newer one), so for a dialer that sends a busId a busId-scoped close would
+        never close the drifted dialer's own link, and whenever the old process's going left no EOF this side saw, B
+        would answer queued for the whole drift (test_a_refused_exchange_after_an_ok_one_reads_unreachable). The send's
+        wake is held, so A's park stays in place through the read. Red at fork main only at the last send (main never
+        reads the link open, so that send was unreachable there); the steps before it guard against a refusal close that
+        exempts another busId."""
+        c = self._parked_dial()
+        self.wake.hold()
+        self.assertEqual(self._exchange_through_b(proto=999, busId="another-bus-id"), 409)
+        resp = self._send_on_b("is the staging db back up?")
+        self.assertTrue(self.wake.woken, "the send woke the park, held through the read")
+        self._assert_unreachable(resp, "a namesake bus's refusal closed the link")
+        self.wake.release()
+        r = c.getresponse()
+        self.assertEqual(r.status, 200, "A's parked dial was answered")
+        relays = json.loads(r.read()).get("relays") or []
+        self.assertIn(resp["id"], [m.get("mid") for m in relays], "and that answer carried the mail")
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the refused exchange and the parked one")
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("and the replica?"), "A's next exchange reopened the link")
+
+    def test_a_host_dialed_up_that_also_dials_us_answers_relaying(self):
+        """Two machines that dial each other: B dials hosta up (its PEERS row is up) and hosta's dials of B keep the
+        inbound link open. A send answers the unchanged relaying note, with no "parked" key (the key the kernel reads
+        for the host the mail waits on) and no /redial: the up branch comes before the queued one. Red at fork main at
+        its precondition, which reads the inbound link main does not have (main's answer here was the same relaying
+        note); a guard against a queued branch put ahead of the up branch."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the inbound link is open")
+        pmb.PEERS["hosta"] = {"port": 1, "up": True, "trust": "trusted"}
+        resp = self._send_on_b("is the cache warm?")
+        self.assertTrue(resp.get("note", "").startswith("relaying to 'alpha' on hosta"), "the up branch answers: %r" % resp)
+        self.assertNotIn("parked", resp, "the relaying answer carries no parked key")
+        self.assertEqual(self.posted, [], "no redial for a host dialed up")
+
+    def test_a_down_notify_after_the_last_ok_exchange_closes_the_link_until_the_next_arrival(self):
+        """THE DOWN NOTIFY after the last ok (DOWN NOTIFY at _inbound_links). B holds a port row for A, up (a check-in
+        peer, or two machines that attach each other), and A dials B too. One exchange from A ends ok and A goes
+        silent; B's kernel notifies A's row down over B's /peer route (peer_update, the path kernel.py _notify_bus_peer
+        reaches). That notify is an event this side attributes to A, newer than the link's last ok, so it closes the
+        link: a send answers unreachable and check_sent's line for it says unreachable, not queued for relay. A's next
+        exchange reopens the link, and a send is queued again. Each send posts /redial for the port row held down. Red
+        at fork main at the send after the reopen (main never reads the link open); a guard against a link the down
+        notify does not reach, under which the first send answered queued and check_sent said queued for relay for the
+        whole outage, where main said unreachable."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._down_notify_on_b()
+        resp = self._send_on_b("did the overnight import finish?")
+        self._assert_unreachable(resp, "the down notify is newer than the last ok: the link is closed")
+        line = self._check_sent_on_b(resp["id"])
+        self.assertNotIn("queued for relay", line, "check_sent does not promise the relay")
+        self.assertIn("parked for hosta (unreachable)", line)
+        self.assertEqual(self._exchange_through_b(), 200)
+        resp = self._send_on_b("and the reindex?")
+        self._assert_queued(resp, "A's next arrival is newer than the notify: the link is open again")
+        self.assertIn("queued for relay to hosta", self._check_sent_on_b(resp["id"]))
+        self.assertEqual(self.posted, ["/redial", "/redial"], "a port row held down: each park asks for its tunnel")
+
+    def test_a_down_notify_while_a_dial_is_parked_outranks_that_dial_s_later_ok(self):
+        """THE DOWN NOTIFY while A's dial is parked, that dial ending ok after it (DOWN NOTIFY at _inbound_links). B
+        holds a port row for A, up, and A's dial is parked on B when B's kernel notifies the row down over B's /peer
+        route. The notify's own wake reaches the park (peer_update wakes a host the kernel notifies down); the test
+        holds that wake, standing in for the window between the notify and the parked dial's write. A send then answers
+        unreachable: the close is numbered after the parked dial's arrival, so it outranks that live exchange. Released,
+        the parked dial ends ok carrying the mail (the disclosed cost: the note said unreachable while a dial carried
+        the mail), and its ok, older than the notify by arrival number, leaves the link closed, so the next send answers
+        unreachable too. A's next arrival reopens the link and a send is queued. Red at fork main at the send after the
+        reopen (main never reads the link open); a guard against a link the down notify does not reach, under which the
+        first send answered queued, and against a close recorded as an exchange's own close, which a live exchange older
+        than it outlasts (the READ at _inbound_links)."""
+        self._port_row_up_for_a()
+        c = self._parked_dial()
+        self.wake.hold()
+        self._down_notify_on_b()
+        self.assertTrue(self.wake.woken, "the notify's wake reached the park, held through the read")
+        first = self._send_on_b("is the staging db back up?")
+        self._assert_unreachable(first, "the notify is newer than the parked dial's arrival")
+        self.wake.release()
+        r = c.getresponse()
+        self.assertEqual(r.status, 200, "A's parked dial was answered")
+        relays = json.loads(r.read()).get("relays") or []
+        self.assertIn(first["id"], [m.get("mid") for m in relays], "and that answer carried the mail")
+        self.assertTrue(self._exchanges_ended(1), "B's route ended the parked dial")
+        second = self._send_on_b("and the replica?")
+        self._assert_unreachable(second, "the parked dial's ok is older than the notify: the link stays closed")
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("and the cache?"), "A's next arrival is newer than the notify")
+
+    def test_a_down_notify_for_a_row_already_down_closes_the_link_too(self):
+        """EVERY DOWN NOTIFY closes the link, whether the row was up before or not (DOWN NOTIFY at _inbound_links). B's
+        port row for A is held down, and A's exchange ends ok, so a send is queued: the row is down and the link open.
+        B's kernel then re-tells the row down over B's /peer route, as it does at a change of the row's trust or at its
+        first sighting of a bus process (after its own restart or the bus's). The re-tell closes the link: a send
+        answers unreachable. Red at fork main at the queued send before the re-tell (main never reads the link open); a
+        guard against a close only when the row was up before the notify, under which a host gone silent behind a row
+        held down read queued after every re-tell."""
+        pmb.PEERS["hosta"] = {"port": 1, "up": False, "token": "", "trust": "trusted"}
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("did the overnight import finish?"), "the row is down and the link open")
+        self._down_notify_on_b()
+        self._assert_unreachable(self._send_on_b("and the reindex?"), "the re-told down notify closed the link")
+
+    def test_a_down_notify_for_the_alias_row_closes_the_link_filed_under_the_alias(self):
+        """THE CLOSE'S KEY: the name the link is filed under, the port row's (DOWN NOTIFY at _inbound_links). B's port
+        row for A is the alias srv-a, up (B's kernel attached A by that ssh alias, and A's bus declares its own
+        hostname), and A's dials, declaring hosta, are filed under srv-a by the busId fold (B's own dial of the alias
+        stores A's busId on its row). A's exchange ends ok and A goes silent; B's kernel notifies srv-a down. The close
+        reaches the link filed under srv-a: a send to srv-a:alpha answers unreachable and check_sent's line for it does
+        not say queued for relay. A's next arrival, filed under srv-a again, reopens the link, and a send is queued. Red
+        at fork main at its precondition (no link table there); a guard against a close keyed on the names the link's
+        arrivals declared (hosta), under which the send after the notify answered queued and check_sent said queued for
+        relay for the whole outage."""
+        self._alias_for_a()
+        pmb.PEERS["srv-a"]["up"] = True
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual((sorted(pmb._inbound_links), "hosta" in pmb.PEER_STATE), (["srv-a"], False),
+                         "precondition: A's link is filed under the alias")
+        self.assertEqual(pmb._inbound_links["srv-a"]["declared"], {"hosta"},
+                         "precondition: its arrivals declared hosta")
+        self._down_notify_on_b("srv-a")
+        resp = self._send_on_b("is the export done?", to="srv-a:alpha")
+        self._assert_unreachable(resp, "the down notify for the alias row closed the link filed under it", host="srv-a")
+        line = self._check_sent_on_b(resp["id"])
+        self.assertNotIn("queued for relay", line, "check_sent does not promise the relay")
+        self.assertIn("parked for srv-a (unreachable)", line)
+        self.assertEqual(self._exchange_through_b(), 200)
+        resp = self._send_on_b("and the reindex?", to="srv-a:alpha")
+        self._assert_queued(resp, "A's next arrival under the alias reopened the link", host="srv-a")
+        self.assertIn("queued for relay to srv-a", self._check_sent_on_b(resp["id"]))
+
+    def test_a_down_notify_for_another_row_leaves_an_alias_filed_link_of_the_same_host_open(self):
+        """THE CLOSE'S REACH: the entry filed under the notify's host, alone (DOWN NOTIFY at _inbound_links). A's dials,
+        declaring hosta, are filed under the alias srv-a (held down), and that link is open. B also holds a port row
+        named hosta, up (a second dialable name of the same machine, or another machine). B's kernel notifies hosta
+        down. No link is filed under hosta, so the close reaches nothing, and the link filed under srv-a reads as it
+        was: a send to srv-a:alpha is queued. Red at fork main at its precondition (no link table there); a guard
+        against a close that reaches the links whose arrivals declared the notify's host, in place of the link filed
+        under it or beside it, and against one that reaches every link, under each of which that send answered
+        unreachable."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(sorted(pmb._inbound_links), ["srv-a"], "precondition: A's link is filed under the alias")
+        self._assert_queued(self._send_on_b("before: is the export done?", to="srv-a:alpha"),
+                            "precondition: the alias's link is open", host="srv-a")
+        pmb.PEERS["hosta"] = {"port": 1, "up": True, "token": "", "trust": "trusted"}
+        self._down_notify_on_b()
+        self._assert_queued(self._send_on_b("after: is the export done?", to="srv-a:alpha"),
+                            "a down notify for hosta leaves the link filed under srv-a as it was", host="srv-a")
+
+    def test_a_down_notify_for_one_host_leaves_another_host_s_link_open(self):
+        """THE CLOSE'S REACH across hosts (DOWN NOTIFY at _inbound_links). A's link (hosta) and another machine's link
+        (hostc, its own busId) both read open after an ok exchange each. B holds a port row for A, up, and B's kernel
+        notifies it down. The close reaches hosta's link alone: a send to hosta:alpha answers unreachable, and one to
+        hostc:alpha is still queued. Red at fork main at its precondition (no link table there); a guard against a
+        close that reaches every link, under which the send to hostc answered unreachable until hostc's next arrival
+        (hosta's notify wakes no park of hostc's)."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(self._exchange_through_b(host="hostc", busId="hostc-bus-id"), 200)
+        self.assertEqual((pmb._inbound_open("hosta"), pmb._inbound_open("hostc")), (True, True), "precondition")
+        self._down_notify_on_b()
+        self._assert_unreachable(self._send_on_b("to hosta: is the export done?", to="hosta:alpha"),
+                                 "hosta's link is closed")
+        self._assert_queued(self._send_on_b("to hostc: is the export done?", to="hostc:alpha"),
+                            "hostc's link is not hosta's: it reads as it was", host="hostc")
+
+    def test_an_arrival_racing_the_down_notify_lands_after_the_close(self):
+        """THE CLOSE RUNS IN THE HOLD THAT MARKS THE ROW (DOWN NOTIFY at _inbound_links). B holds a port row for A, up,
+        and A's exchange ended ok. While B's kernel's down notify runs, an exchange from A arrives: the test starts it
+        from inside the close, through a wrapper around _inbound_link_down that starts A's exchange on another thread
+        and waits up to 2 s for it to end before the real close runs. The close runs in peer_update's _PEER_STATE_LOCK
+        hold, beside the linkDown mark, so the exchange, whose arrival is filed in the handler's hold on the same lock,
+        waits for that hold to end and lands after the close: its row carries no linkDown mark, and the link reads
+        open, so a send is queued. Red at fork main at its setup (no close to wrap); a guard against the close called
+        after that hold, under which the exchange landed between the mark and the close, clearing the mark, and the
+        close then outranked that newer arrival, so the send answered unreachable."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertIn("hosta", pmb.PEER_STATE, "precondition: the row the notify marks")
+        real = pmb._inbound_link_down
+        done, status = threading.Event(), []
+
+        def exchange():
+            try:
+                pm._peer_http(self.port, pm.build_exchange_request("srv", wait=False), token=pmb.SERVE_TOKEN)
+                status.append(200)
+            except Exception as e:                    # recorded, asserted below
+                status.append(repr(e))
+            finally:
+                done.set()
+
+        def wrapped(host):
+            threading.Thread(target=exchange, daemon=True).start()
+            landed = done.wait(2)
+            status.append("landed-before-close" if landed else "waited-for-the-hold")
+            return real(host)
+
+        pmb._inbound_link_down = wrapped
+        self.addCleanup(setattr, pmb, "_inbound_link_down", real)
+        self._down_notify_on_b()
+        self.assertTrue(done.wait(10), "A's exchange ended")
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the exchange")
+        self.assertNotIn("linkDown", pmb.PEER_STATE["hosta"],
+                         "the arrival replaced the row after the mark: %r" % status)
+        self._assert_queued(self._send_on_b("is the export done?"),
+                            "the arrival is newer than the close: the link is open (%r)" % status)
+
+    def test_a_send_racing_the_down_notify_answers_as_before_it_or_as_after_it(self):
+        """THE ROW'S STORE COMES AFTER THE CLOSE (DOWN NOTIFY at _inbound_links). B holds a port row for A, up, and A's
+        exchange ended ok. A send reads PEERS and then the link, with no lock held across the two reads (the link read
+        takes only the leaf lock), so it must not read the notify's row down beside a link the notify's close has not
+        reached yet: that answer, queued, is neither the one from before the notify (relaying) nor the one from after it
+        (unreachable). The test holds a down notify at its close, inside its hold, while the send reads PEERS (and, with
+        the row stored before the close, the link), the close waiting for the send's answer: a wrapper around B's
+        outbox_put, which the send calls after it resolved the recipient and before it reads PEERS, starts B's kernel's
+        down notify over B's /peer route and returns once the notify has reached its close, which a wrapper around
+        _inbound_link_down holds there until the send has answered. peer_update stores the notify's row after the close,
+        in the same hold, so the send reads the row from before the notify and answers relaying, with no /redial;
+        released, the notify ends, and the next send answers unreachable. Red at fork main at its precondition (no link
+        table there); a guard against the row's store before the close, before the hold or inside it, under which the
+        send read the row down and the link open, answered queued and posted /redial."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the link is open")
+        real_put, real_close = pmb.outbox_put, pmb._inbound_link_down
+        at_close, answered, held, notified = threading.Event(), threading.Event(), [], []
+
+        def notify():
+            try:
+                self._down_notify_on_b()
+                notified.append("ok")
+            except BaseException as e:                # recorded, asserted below
+                notified.append(repr(e))
+
+        t = threading.Thread(target=notify, daemon=True)
+
+        def end():                                    # on every exit path: release the close, wait for the notify
+            answered.set()
+            if t.is_alive():
+                t.join(10)
+        self.addCleanup(end)
+
+        def put_then_notify(host, msg):
+            ok = real_put(host, msg)
+            if not held:                              # the first send only
+                t.start()
+                held.append(at_close.wait(10))        # the notify is in its hold, at its close
+            return ok
+
+        def close_after_the_answer(host):
+            at_close.set()
+            held.append(answered.wait(10))            # the close waits for the send's answer
+            return real_close(host)
+
+        pmb.outbox_put, pmb._inbound_link_down = put_then_notify, close_after_the_answer
+        self.addCleanup(setattr, pmb, "outbox_put", real_put)
+        self.addCleanup(setattr, pmb, "_inbound_link_down", real_close)
+        resp = self._send_on_b("is the export done?")
+        answered.set()
+        t.join(10)
+        self.assertFalse(t.is_alive(), "the notify ended")
+        self.assertEqual(held, [True, True], "the send waited for the notify to reach its close, and the close for the "
+                         "send's answer: the notify was held at its close, inside its hold, while the send read PEERS")
+        note = resp.get("note", "")
+        self.assertNotIn("queued", note, "the send read the notify's row down beside a link the close had not reached")
+        self.assertTrue(note.startswith("relaying to 'alpha' on hosta"), "the row from before the notify: %r" % resp)
+        self.assertNotIn("parked", resp, "the relaying answer carries no parked key")
+        self.assertEqual(self.posted, [], "no /redial: the send read the row up")
+        self.assertEqual(notified, ["ok"], "B's /peer route took the notify, and the row is down")
+        self._assert_unreachable(self._send_on_b("and the reindex?"), "after the notify: the row down, the link closed")
+
+    def test_an_up_notify_between_a_send_s_row_read_and_its_link_read_closes_nothing(self):
+        """AN UP NOTIFY CLOSES NOTHING (DOWN NOTIFY at _inbound_links: every down notify closes the link, and no up
+        notify does). B's port row for A is held down and A's exchange ended ok, so the link is open. A send reads the
+        row down and posts /redial for its tunnel before it reads the link, and the kernel's tunnel pass that post wakes
+        can bring the row's up notify in between; the test makes it do so, through a stub of B's _kernel_post that sends
+        B's kernel's up notify over B's /peer route (peer_update) when the send posts /redial. The notify does not close
+        the link, so the send answers queued, as it does with no notify, and the next send answers relaying (the row is
+        up). B's dialer, which an up notify starts, is not under test (it would dial a port nothing listens on), so
+        peer_update's _peer_threads_reconcile is stubbed here. Red at fork main at its precondition (no link table
+        there); a guard against a close at every notify, the up notify's included, under which the up notify superseded
+        the link between the send's two reads and the send answered unreachable."""
+        pmb.PEERS["hosta"] = {"port": 1, "up": False, "token": "", "trust": "trusted"}
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the row is down and the link open")
+        reconcile, post = pmb._peer_threads_reconcile, pmb._kernel_post
+        notified = []
+
+        def redial_brings_the_up_notify(path, body, timeout=2):
+            post(path, body, timeout)                 # the setUp's stub records the path
+            if path == "/redial" and not notified:
+                try:
+                    notified.append(self._up_notify_on_b())
+                except Exception as e:                # recorded, asserted below
+                    notified.append(repr(e))
+
+        pmb._peer_threads_reconcile, pmb._kernel_post = (lambda host: None), redial_brings_the_up_notify
+        self.addCleanup(setattr, pmb, "_peer_threads_reconcile", reconcile)
+        self.addCleanup(setattr, pmb, "_kernel_post", post)
+        resp = self._send_on_b("is the export done?")
+        self.assertEqual(notified, [(200, True)], "the up notify landed between the send's row read and its link read")
+        self.assertIs(pmb.PEERS["hosta"]["up"], True, "the row is up")
+        self._assert_queued(resp, "an up notify closes nothing: the link the send read after it is open")
+        self.assertEqual(self.posted, ["/redial"], "the send read the row held down and asked for its tunnel")
+        relay = self._send_on_b("and the reindex?")
+        self.assertTrue(relay.get("note", "").startswith("relaying to 'alpha' on hosta"), "the row is up: %r" % relay)
+
+    def _up_notify_at_the_link_read(self, prior):
+        """B's kernel's up notify for hosta's port row, landed at a send's link read, for the pins whose row for hosta
+        before the notify is not the held-down port row (`prior` names it in the messages). A's exchange ends ok, so the
+        link is open. A wrapper around B's _inbound_open sends the up notify over B's /peer route (peer_update) at its
+        first call for hosta, the send's link read (the one _inbound_open call in /send), and then runs the real read.
+        With no port row before the notify the send posts no /redial, so nothing else sits between its row read and its
+        link read. The notify closes nothing, so the send answers queued, as it does with no notify, and the next send
+        answers relaying (the row is up). B's dialer, which an up notify starts, is not under test, so peer_update's
+        _peer_threads_reconcile is stubbed, as in the held-down row's pin. The pins start no thread: the wrapper runs on
+        the handler thread B's server gave the send, and the server serves the notify on a handler thread of its own."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the link is open (prior row: %s)" % prior)
+        reconcile, real_open = pmb._peer_threads_reconcile, pmb._inbound_open
+        notified = []
+
+        def open_brings_the_up_notify(host):
+            if host == "hosta" and not notified:
+                try:
+                    notified.append(self._up_notify_on_b())
+                except Exception as e:                # recorded, asserted below
+                    notified.append(repr(e))
+            return real_open(host)
+
+        pmb._peer_threads_reconcile, pmb._inbound_open = (lambda host: None), open_brings_the_up_notify
+        self.addCleanup(setattr, pmb, "_peer_threads_reconcile", reconcile)
+        self.addCleanup(setattr, pmb, "_inbound_open", real_open)
+        resp = self._send_on_b("is the export done?")
+        self.assertEqual(notified, [(200, True)],
+                         "the up notify landed at the send's link read (prior row: %s)" % prior)
+        self.assertIs(pmb.PEERS["hosta"]["up"], True, "the row is up")
+        self._assert_queued(resp, "an up notify closes nothing: the link the send read after it is open (prior row: %s)"
+                            % prior)
+        self.assertEqual(self.posted, [], "no /redial: the send read no port row (prior row: %s)" % prior)
+        relay = self._send_on_b("and the reindex?")
+        self.assertTrue(relay.get("note", "").startswith("relaying to 'alpha' on hosta"), "the row is up: %r" % relay)
+
+    def test_an_up_notify_for_a_host_with_no_row_closes_nothing(self):
+        """AN UP NOTIFY CLOSES NOTHING, a first one for a host B holds no row for included (DOWN NOTIFY at
+        _inbound_links). B holds no row for A, and A dials B: its exchange ends ok, so the link is open. B's kernel
+        tells the bus at each change of a row's up or trust from its last tell, and a remote it has just attached has
+        no last tell, so its first tell for hosta can be up; _up_notify_at_the_link_read lands that notify at a send's
+        link read. The send answers queued and the next send relaying. Red at fork main at its precondition (no link
+        table there); a guard against a close on an up notify for a host B held no row for, under which the notify
+        superseded the link between the send's row read and its link read and the send answered unreachable."""
+        self.assertNotIn("hosta", pmb.PEERS, "precondition: B holds no row for A")
+        self._up_notify_at_the_link_read("none")
+
+    def test_an_up_notify_after_an_origin_only_row_closes_nothing(self):
+        """AN UP NOTIFY CLOSES NOTHING, one for a host whose row was portless included (DOWN NOTIFY at _inbound_links).
+        B's kernel files an origin-only row for hosta over B's /peer route (a trust for a host it holds no tunnel to),
+        and A dials B: its exchange ends ok, so the link is open. B's kernel then attaches A and tells the new port row
+        up; _up_notify_at_the_link_read lands that notify at a send's link read. The send answers queued and the next
+        send relaying. Red at fork main at its precondition (no link table there); a guard against a close on an up
+        notify whose row before it had no port, absent or origin-only, under which the notify superseded the link
+        between the send's row read and its link read and the send answered unreachable."""
+        self._origin_only_row_on_b()
+        self._up_notify_at_the_link_read("origin-only")
+
+    def test_an_arrival_at_the_down_notify_s_second_lock_entry_stores_a_row_the_notify_does_not_mark(self):
+        """THE MARK AND THE STORE SHARE THE CLOSE'S HOLD (DOWN NOTIFY at _inbound_links). B holds a port row for A, up,
+        and A's exchange ended ok. While B's kernel's down notify runs, an exchange from A arrives at the notify
+        thread's second entry to _PEER_STATE_LOCK: a _WatchedLock in the lock's place, at that entry and before it
+        acquires, starts A's exchange through B's real route and waits for a wrapper around _inbound_arrived to say the
+        arrival is filed. peer_update takes the lock once, for the mark, the close and the store, so that entry comes
+        after its hold (the mirror's snapshot in _write_remote_sids), and the arrival, numbered after the close,
+        replaces the marked row: the row it stored carries no linkDown mark, the link reads open, and with the row down
+        a send is queued. Red at fork main at its precondition (no link table there); a guard against the close in a
+        first hold and the mark and the store in a second, under which the arrival landed between the two holds and the
+        second hold marked the row it stored."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the link is open")
+        found = pmb.PEER_STATE["hosta"]               # the row the notify finds and marks
+        real_lock, real_update, real_arrived = pmb._PEER_STATE_LOCK, pmb.peer_update, pmb._inbound_arrived
+        notify_thread, entries, arrived, fired, status = [], [0], threading.Event(), [], []
+
+        def exchange():
+            try:
+                pm._peer_http(self.port, pm.build_exchange_request("srv", wait=False), token=pmb.SERVE_TOKEN)
+                status.append(200)
+            except Exception as e:                    # recorded, asserted below
+                status.append(repr(e))
+
+        ex = threading.Thread(target=exchange, daemon=True)
+
+        def before():                                 # on every entry to the lock, ahead of the acquisition
+            if notify_thread and threading.current_thread() is notify_thread[0]:
+                entries[0] += 1
+                if entries[0] == 2:                   # the notify thread's second entry: A's exchange arrives now
+                    ex.start()
+                    fired.append(arrived.wait(10))
+
+        def update(data, write=True):
+            if data.get("host") == "hosta" and data.get("up") is False and not notify_thread:
+                notify_thread.append(threading.current_thread())
+            return real_update(data, write)
+
+        def arrived_then_say_so(*a, **k):
+            r = real_arrived(*a, **k)
+            arrived.set()
+            return r
+
+        pmb._PEER_STATE_LOCK = _WatchedLock(real_lock, before=before)
+        pmb.peer_update, pmb._inbound_arrived = update, arrived_then_say_so
+        self.addCleanup(setattr, pmb, "_PEER_STATE_LOCK", real_lock)
+        self.addCleanup(setattr, pmb, "peer_update", real_update)
+        self.addCleanup(setattr, pmb, "_inbound_arrived", real_arrived)
+        self.addCleanup(lambda: ex.join(10) if ex.ident is not None else None)
+        self._down_notify_on_b()
+        self.assertEqual(fired, [True], "A's exchange arrived at the notify thread's second entry to the lock")
+        ex.join(10)
+        self.assertFalse(ex.is_alive(), "A's exchange returned")
+        self.assertEqual(status, [200], "A's exchange ended ok")
+        self.assertTrue(self._exchanges_ended(2), "B's route ended A's exchange")
+        self.assertIsNot(pmb.PEER_STATE["hosta"], found, "A's arrival stored a row of its own")
+        self.assertNotIn("linkDown", pmb.PEER_STATE["hosta"],
+                         "the row A's arrival stored after the close carries no mark")
+        self._assert_queued(self._send_on_b("is the export done?"),
+                            "the arrival is newer than the close: the link is open")
+
+    def test_a_holder_of_the_lock_after_the_down_notify_s_hold_sees_its_row_mark_and_close_together(self):
+        """EVERY HOLDER OF _PEER_STATE_LOCK SEES THE ROW, THE MARK AND THE CLOSE AS ONE STEP (_PEER_STATE_LOCK's
+        comment; peer_update's hold). B holds a port row for A, up, and A's exchange ended ok. A _WatchedLock in the
+        lock's place runs a check each time the down notify's thread releases the lock while peer_update runs: the check
+        takes the lock and reads, together, the up of A's PEERS row, the linkDown mark on A's row in the table and
+        whether the link reads open. The mark, the close and the store share one hold, so each check reads the state
+        after the whole notify: the row down, the mark, the link closed. Red at fork main at its precondition (no link
+        table there); a guard against the store after the hold, outside the lock or in a second hold, under which the
+        check at the hold's release read the row still up beside the mark and the closed link."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("hosta"), "precondition: the link is open")
+        real_lock, real_update = pmb._PEER_STATE_LOCK, pmb.peer_update
+        notify_thread, seen = [], []
+
+        def check():                                  # once each release has run, on the thread that released
+            if notify_thread and threading.current_thread() is notify_thread[0]:
+                try:
+                    with real_lock:
+                        seen.append((pmb.PEERS.get("hosta", {}).get("up"),
+                                     pmb.PEER_STATE.get("hosta", {}).get("linkDown") is True,
+                                     pmb._inbound_open("hosta")))
+                except Exception as e:                # recorded, asserted below
+                    seen.append(repr(e))
+
+        def update(data, write=True):
+            mine = data.get("host") == "hosta" and data.get("up") is False and not notify_thread
+            if mine:
+                notify_thread.append(threading.current_thread())
+            try:
+                return real_update(data, write)
+            finally:
+                if mine:
+                    notify_thread[0] = None           # the checks run while peer_update runs, and no longer
+
+        pmb._PEER_STATE_LOCK = _WatchedLock(real_lock, after=check)
+        pmb.peer_update = update
+        self.addCleanup(setattr, pmb, "_PEER_STATE_LOCK", real_lock)
+        self.addCleanup(setattr, pmb, "peer_update", real_update)
+        self._down_notify_on_b()
+        self.assertTrue(seen, "the check ran at the notify thread's release of the lock")
+        self.assertEqual([s for s in seen if s != (False, True, False)], [],
+                         "each check read A's row down, its mark and the link closed, as one step: %r" % seen)
+
+    def test_the_close_keeps_the_link_s_busids_so_a_renamed_old_process_supersedes_the_reopened_link(self):
+        """A DISCLOSED COST the close keeps (DOWN NOTIFY at _inbound_links: the close changes only the link's reading
+        and leaves the names and busIds its arrivals brought as they were). B holds a port row for A, up. A's process
+        dials with success; B's kernel notifies the row down; A's new process (a new busId, declaring hosta) dials and
+        reopens the link, and its busId joins the old one (it declares a name the link has seen, so nothing resets).
+        The old process, still running, then dials declaring another name, hosta-renamed (its machine renamed while it
+        runs): its arrival carries the old busId, which the link kept, so it supersedes the reopened link by the busId
+        clause, and a send to hosta answers unreachable while the new process's dials still carry the mail, the busId
+        clause's false unreachable, as without the notify. This pins the disclosed cost of the ruled mechanism, not a
+        wanted behaviour. Red at fork main at the queued send after the reopen (main never reads the link open); a
+        guard against a close that forgets the entry (the fold's way), which drops the old busId, under which that
+        send answered queued."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._down_notify_on_b()
+        self.assertEqual(self._exchange_through_b(busId="a-new-process-bus-id"), 200)
+        self._assert_queued(self._send_on_b("after the restart: is the export done?"), "the new process reopened it")
+        self.assertEqual(self._exchange_through_b(host="hosta-renamed", busId=pm.BUS_ID), 200)
+        self._assert_unreachable(self._send_on_b("after the rename: is the export done?", to="hosta:alpha"),
+                                 "the old busId the link kept: the renamed old process superseded the reopened link")
+
+    def test_a_first_down_notify_for_a_host_with_no_row_closes_the_link_too(self):
+        """EVERY DOWN NOTIFY closes the link, a first one for a host B holds no row for included (DOWN NOTIFY at
+        _inbound_links). B holds no row for A, and A dials B: its exchange ends ok, so a send is queued. B's kernel then
+        notifies hosta for the first time, down, over B's /peer route (its supervisor's first notify for a row it has
+        just attached, whose tunnel is not up yet: no memo to match). The notify closes the link: a send answers
+        unreachable and check_sent's line for it does not say queued for relay. A's next arrival reopens the link, and a
+        send is queued. Red at fork main at the queued send before the notify (main never reads the link open); a guard
+        against a close only when B held a row for the host before the notify, or only when that row had a port, under
+        either of which the send after the notify answered queued and check_sent said queued for relay."""
+        self.assertNotIn("hosta", pmb.PEERS, "precondition: B holds no row for A")
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("before: is the export done?"), "precondition: the link is open")
+        self._down_notify_on_b()
+        resp = self._send_on_b("after: is the export done?")
+        self._assert_unreachable(resp, "a first notify that is down closes the link")
+        line = self._check_sent_on_b(resp["id"])
+        self.assertNotIn("queued for relay", line, "check_sent does not promise the relay")
+        self.assertIn("parked for hosta (unreachable)", line)
+        self.assertEqual(self._exchange_through_b(), 200)
+        resp = self._send_on_b("and the reindex?")
+        self._assert_queued(resp, "A's next arrival is newer than the notify: the link is open again")
+        self.assertIn("queued for relay to hosta", self._check_sent_on_b(resp["id"]))
+
+    def test_a_down_notify_after_an_origin_only_row_closes_the_link_too(self):
+        """EVERY DOWN NOTIFY closes the link, one for a host whose row was portless included (DOWN NOTIFY at
+        _inbound_links). B's kernel files an origin-only row for hosta over B's /peer route (a trust for a host it holds
+        no tunnel to), and A dials B: its exchange ends ok, so a send is queued. B's kernel then attaches A and notifies
+        the new port row down, its tunnel not up yet. The notify closes the link: a send answers unreachable and
+        check_sent's line for it does not say queued for relay. A's next arrival reopens the link, and a send is queued.
+        Red at fork main at the queued send before the notify (main never reads the link open); a guard against a close
+        only when the row before the notify had a port, under which the send after the notify answered queued and
+        check_sent said queued for relay."""
+        self._origin_only_row_on_b()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("before: is the export done?"), "precondition: the link is open")
+        self._down_notify_on_b()
+        resp = self._send_on_b("after: is the export done?")
+        self._assert_unreachable(resp, "a down notify after a portless row closes the link")
+        line = self._check_sent_on_b(resp["id"])
+        self.assertNotIn("queued for relay", line, "check_sent does not promise the relay")
+        self.assertIn("parked for hosta (unreachable)", line)
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("and the reindex?"), "A's next arrival is newer than the notify")
+
+    def test_a_down_notify_closes_the_link_of_a_host_that_sends_no_busid(self):
+        """EVERY DOWN NOTIFY closes the link, one whose arrivals brought no busId included (DOWN NOTIFY at
+        _inbound_links). B holds a port row for A, up, and A is an older peer that sends no busId: its exchange ends ok,
+        and the link holds no busId. B's kernel notifies the row down. The notify closes the link: a send answers
+        unreachable. A's next arrival, with no busId again, reopens the link, and a send is queued. Red at fork main at
+        its precondition (no link table there); a guard against a close that spares a link holding no busId, under
+        which the send after the notify answered queued for the whole outage."""
+        self._port_row_up_for_a()
+        self.assertEqual(self._exchange_through_b(busId=""), 200)
+        self.assertEqual(pmb._inbound_links["hosta"]["busIds"], set(), "precondition: the link holds no busId")
+        self._down_notify_on_b()
+        self._assert_unreachable(self._send_on_b("after: is the export done?"),
+                                 "the down notify closes a link that holds no busId")
+        self.assertEqual(self._exchange_through_b(busId=""), 200)
+        self._assert_queued(self._send_on_b("and the reindex?"), "A's next arrival reopened it")
+
+    def test_a_pre_write_probe_that_raises_frees_the_flights_and_closes_the_link(self):
+        """The pre-write probe runs inside the try that frees the exchange's flights when the write fails, so a probe
+        that raises frees the records the listing put in flight (they ride the next exchange and stay recallable) and
+        the outcome closes the link. No production socket makes the probe raise; this guards the placement. Red at
+        fork main at its precondition (main never reads the link open, so the first send is unreachable); a guard
+        against a probe outside that try, which leaves the flight open until a restart."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        resp = self._send_on_b("is the release branch cut?")
+        self._assert_queued(resp, "the last exchange ended ok")
+
+        def probe_raises(link):
+            raise RuntimeError("the probe failed")
+        probe = pmb._inbound_pre_write
+        pmb._inbound_pre_write = probe_raises
+        self.addCleanup(setattr, pmb, "_inbound_pre_write", probe)
+        with self.assertRaises(OSError):            # B's handler raised before any byte: the socket closed unanswered
+            pm._peer_http(self.port, pm.build_exchange_request("srv", wait=False), token=pmb.SERVE_TOKEN)
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the exchange")
+        self.assertFalse(pmb._inflight.get("hosta"), "the listed record's flight was freed")
+        row = self._receipt(resp["id"])
+        self.assertNotIn("carried", row, "nothing carried the record")
+        self.assertIs(row["parkedUp"], False, "the outcome closed the link")
+
+    def _alias_for_a(self):
+        """B's dialable alias for A: srv-a, a port row held down, whose PEER_STATE row carries A's busId, so the busId
+        fold files A's dials under it."""
+        pmb.PEERS["srv-a"] = {"port": 1, "up": False, "trust": "trusted"}
+        pmb.PEER_STATE["srv-a"] = {"presence": [], "busId": pm.BUS_ID, "seenAt": int(time.time())}
+
+    def test_a_drifted_dialer_filed_under_an_alias_closes_the_alias_link(self):
+        """A's dials are filed under B's alias for A (srv-a) and its link is open. A comes back on a drifted protocol
+        from a newer process: its dials carry a busId that cannot resolve to the alias, so the route resolves the name A
+        declares, hosta, which holds no link. The refusal still closes the alias's link, whose arrivals declared hosta,
+        so a send is unreachable. Each send posts /redial for the alias's port row, the link open or not. Red at fork
+        main at its precondition (main never reads the link open, so the first send is unreachable); the steps after
+        the drift guard against a refusal close keyed on the resolved name alone, which leaves the alias's link
+        open."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertNotIn("hosta", pmb.PEER_STATE, "the fold filed A under the alias")
+        self._assert_queued(self._send_on_b("before the update: is the cache warm?"), "the alias's link is open",
+                            host="srv-a")
+        self.assertEqual(self.posted, ["/redial"], "the alias is a port row: redialed though its link is open")
+        for _ in range(2):
+            self.assertEqual(self._exchange_through_b(proto=999, busId="a-newer-process-bus-id"), 409)
+        self.assertNotIn("hosta", pmb._inbound_links, "the drifted dials resolved to hosta, which holds no link")
+        self._assert_unreachable(self._send_on_b("after the update: is the cache warm now?"),
+                                 "the drifted dial declaring hosta closed the alias's link", host="srv-a")
+        self.assertEqual(self.posted, ["/redial", "/redial"], "the alias is a port row: the kernel can redial it")
+
+    def test_a_refusal_closes_the_resolved_link_and_the_alias_link_together(self):
+        """One refused dial closes every link it matches: the link of the name the route resolved, and each link whose
+        arrivals declared the name the dial declares. A's dials are filed under B's alias for A (srv-a), declaring
+        hosta. B also holds a port row named hosta, held down, for another machine (an alias that bears A's name), whose
+        row carries that machine's busId, so that machine's dials, declaring hostc, are filed under hosta by their busId.
+        The two links share no declared name and no busId, so neither arrival supersedes the other (the ARRIVAL at
+        _inbound_links) and both read open. A then comes back on a drifted protocol from a newer process: the refused
+        dial resolves to hosta, a dialable name standing as itself, and closes hosta's link (the resolved name's) and
+        the alias's link (whose arrivals declared hosta) together. Each link is matched one way, hosta's by the resolved
+        name and the alias's by the declared name, since an arrival declaring a name that another link's arrivals
+        declared supersedes that link, which would close it before the refusal. Red at fork main at its precondition (no
+        link table there); a guard against a refusal close that ends only the first link it matches, which leaves the
+        other open, and, at the precondition, against an arrival that supersedes a link sharing neither a declared name
+        nor a busId with it (keyed on the name it is filed under, say)."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        pmb.PEERS["hosta"] = {"port": 1, "up": False, "trust": "trusted"}
+        pmb.PEER_STATE["hosta"] = {"presence": [], "busId": "hostc-bus-id", "seenAt": int(time.time())}
+        self.assertEqual(self._exchange_through_b(host="hostc", busId="hostc-bus-id"), 200)
+        self.assertEqual((pmb._inbound_links["srv-a"]["declared"], pmb._inbound_links["hosta"]["declared"]),
+                         ({"hosta"}, {"hostc"}), "precondition: A filed under the alias, the other machine under hosta")
+        self.assertEqual((pmb._inbound_open("srv-a"), pmb._inbound_open("hosta")), (True, True),
+                         "precondition: two buses' links, sharing no declared name and no busId, both read open")
+        self.assertEqual(self._exchange_through_b(proto=999, busId="a-newer-process-bus-id"), 409)
+        self.assertEqual((pmb._inbound_open("srv-a"), pmb._inbound_open("hosta")), (False, False),
+                         "the refusal closed the resolved name's link and the alias's link")
+
+    def test_a_new_process_filed_under_its_declared_name_closes_the_alias_link(self):
+        """THE ALIAS SHAPE. A's first process is filed under B's alias for A (srv-a, a port row held down whose PEER_STATE
+        row carries that process's busId), and its exchange ended ok. That process ends with no FIN B sees, and A comes
+        back as a new process on the same protocol: its busId cannot resolve to the alias (B holds the alias down, so no
+        dial of B's refreshed the alias's row), so its dials are filed under hosta, the name it declares, and never
+        carry the alias's outbox. Its arrival supersedes the alias's link, whose arrivals declared hosta under a busId
+        the new process does not carry: a send to the alias answers unreachable, posts /redial for its port row, and its
+        receipt reads parkedUp False. Red at fork main at its precondition (main never reads the link open); the steps
+        after the new process's dial guard against an arrival that closes nothing under another name, under which the
+        old process's last ok kept the alias reading queued, promising a crossing on a poll that could not carry it."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertNotIn("hosta", pmb.PEER_STATE, "precondition: the fold filed A's first process under the alias")
+        self._assert_queued(self._send_on_b("before the restart: is the cache warm?", to="srv-a:alpha"),
+                            "precondition: the alias's link is open", host="srv-a")
+        self.assertEqual(self._exchange_through_b(busId="a-new-process-bus-id"), 200)
+        self.assertEqual(("hosta" in pmb.PEER_STATE, "srv-a" in pmb.PEER_STATE), (True, True),
+                         "the new process's dial filed under hosta, beside the alias")
+        self._assert_unreachable(self._send_on_b("after the restart: is the cache warm now?", to="srv-a:alpha"),
+                                 "the new process's arrival under hosta closed the alias's link", host="srv-a")
+        self.assertEqual(self.posted, ["/redial", "/redial"], "the alias is a port row: each park asks for its tunnel")
+
+    def test_a_new_process_supersedes_the_old_process_s_parked_dial_under_the_alias(self):
+        """THE ALIAS SHAPE with the old process's dial parked: A's first process is filed under the alias srv-a and its
+        dial is parked there when the process ends with no FIN B sees (the test holds the socket open, so B's socket
+        shows no EOF). A's new process dials under hosta. Its arrival supersedes the alias's link, the parked dial
+        included, since the old process will carry nothing more: a send to the alias answers unreachable, posts
+        /redial, and its receipt reads parkedUp False. The alias's wake is held, so the parked dial stays parked through
+        the read. Red at fork main at its precondition, which reads the inbound link main does not have; a guard against
+        an arrival that closes nothing under another name, and against one recorded as an exchange's own close, which a
+        live exchange older than it outlasts (the READ at _inbound_links)."""
+        wake_alias = _ParkSeen()
+        pmb._peer_wakes["srv-a"] = wake_alias
+        self.addCleanup(pmb._peer_wakes.pop, "srv-a", None)
+        self.addCleanup(wake_alias.release)          # runs before _drain, which waits for the parked dial to end
+        self._alias_for_a()
+        self._parked_dial(wake=wake_alias)
+        self.assertNotIn("hosta", pmb.PEER_STATE, "precondition: the fold filed A's first process under the alias")
+        self.assertTrue(pmb._inbound_open("srv-a"), "precondition: the old process's parked dial holds the link open")
+        self.assertEqual(self._exchange_through_b(busId="a-new-process-bus-id"), 200)
+        wake_alias.hold()
+        resp = self._send_on_b("after the restart: is the cache warm now?", to="srv-a:alpha")
+        self.assertTrue(wake_alias.woken, "the send woke the alias's park, held through the read")
+        self._assert_unreachable(resp, "the new process's arrival under hosta superseded the parked dial", host="srv-a")
+        self.assertEqual(self.posted, ["/redial"], "the alias is a port row: the park asks for its tunnel")
+
+    def test_a_new_process_filed_under_an_alias_supersedes_the_declared_name_link(self):
+        """THE ALIAS SHAPE the other way round: A's old process was filed under hosta, the name it declares (B held no
+        alias for it then), and its link is open. A's new process is filed under B's alias srv-a, whose row now carries
+        the new busId; it declares hosta, a name hosta's link's arrivals declared, so its arrival under the alias
+        supersedes hosta's link and a send to hosta:alpha is unreachable: no dial filed under hosta will carry its
+        outbox. Red at fork main at its precondition (main never reads the link open); a guard against a supersession
+        keyed on the name the arrival is filed under (the alias) instead of the name it declares, under which hosta's
+        link read queued."""
+        self.assertEqual(self._exchange_through_b(busId="a-old-process-bus-id"), 200)
+        self.assertIn("hosta", pmb.PEER_STATE, "precondition: the old process filed under hosta")
+        self._assert_queued(self._send_on_b("before the restart: is the cache warm?", to="hosta:alpha"),
+                            "precondition: hosta's link is open")
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(("hosta" in pmb.PEER_STATE, "srv-a" in pmb.PEER_STATE), (True, True),
+                         "the new process filed under the alias, beside hosta")
+        self._assert_unreachable(self._send_on_b("after the restart: is the cache warm now?", to="hosta:alpha"),
+                                 "the new process's arrival under the alias superseded hosta's link")
+
+    def test_the_same_bus_filed_under_a_second_dialable_name_supersedes_the_alias_link(self):
+        """THE SAME BUS UNDER A SECOND NAME: A's process is filed under B's alias srv-a, declaring hosta, and its link is
+        open. B's kernel then attaches A under hosta as well, a port row held down (a second dialable name for one bus,
+        which the kernel's token dedupe ends), so A's dials, with the same busId, are filed under hosta, a dialable name
+        standing as itself, and never carry the alias's outbox. A's arrival under hosta supersedes the alias's link,
+        whose arrivals declared the name it declares (and carried its busId; the ARRIVAL at _inbound_links): a send to
+        srv-a:alpha, and one to alpha (which routes to the alias, the first row naming A's session), answer unreachable,
+        and each posts /redial for the alias's port row. Red at fork main at its precondition (main never reads the link
+        open); a guard against an arrival that supersedes another name's link only under a busId that link does not hold,
+        under which the alias read queued while every dial of A's went to hosta."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertNotIn("hosta", pmb.PEER_STATE, "precondition: the fold filed A under the alias")
+        self._assert_queued(self._send_on_b("before the move: is the cache warm?", to="srv-a:alpha"),
+                            "precondition: the alias's link is open", host="srv-a")
+        pmb.PEERS["hosta"] = {"port": 1, "up": False, "trust": "trusted"}
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(("hosta" in pmb.PEER_STATE, "srv-a" in pmb.PEER_STATE), (True, True),
+                         "A's dial filed under hosta, beside the alias")
+        self._assert_unreachable(self._send_on_b("after the move: is the cache warm now?", to="srv-a:alpha"),
+                                 "A's arrival under hosta superseded the alias's link", host="srv-a")
+        self._assert_unreachable(self._send_on_b("after the move: and the replica?"),
+                                 "a send to alpha routes to the alias and reads it superseded", host="srv-a")
+        self.assertEqual(self.posted, ["/redial"] * 3, "the alias is a port row: each park asks for its tunnel")
+
+    def test_an_alias_pointed_at_another_machine_whose_old_machine_keeps_dialing_reads_unreachable(self):
+        """AN ALIAS POINTED AT ANOTHER MACHINE WHILE THE OLD ONE KEEPS DIALING: B's alias srv-a reached hostx, whose dials,
+        declaring hostx, were filed under it (the alias's row carried hostx's busId), and its link is open. B's kernel
+        then points the alias at A (B's own dial of it refreshed the row with A's busId); A does not dial B. hostx's
+        process keeps dialing: its busId no longer resolves to the alias, so its dials are filed under hostx and never
+        carry the alias's outbox. hostx's arrival under hostx supersedes the alias's link, whose arrivals declared the
+        name it declares (and carried its busId; the ARRIVAL at _inbound_links): a send to alpha, which routes to the
+        alias, answers unreachable and posts /redial for it. Red at fork main at its precondition (main never reads the
+        link open); a guard against an arrival that supersedes another name's link only under a busId that link does not
+        hold, under which the alias read queued while no dial filed under it would follow."""
+        self._alias_for_a()
+        pmb.PEER_STATE["srv-a"]["busId"] = "hostx-bus-id"     # the alias first reached hostx
+        self.assertEqual(self._exchange_through_b(host="hostx", busId="hostx-bus-id"), 200)
+        self.assertNotIn("hostx", pmb.PEER_STATE, "precondition: hostx filed under the alias")
+        self._assert_queued(self._send_on_b("before the repoint: is the index rebuilt?", to="srv-a:alpha"),
+                            "precondition: the alias's link is open", host="srv-a")
+        pmb.PEER_STATE["srv-a"]["busId"] = pm.BUS_ID          # B's own dial of the alias now reaches A
+        self.assertEqual(self._exchange_through_b(host="hostx", busId="hostx-bus-id"), 200)
+        self.assertEqual(("hostx" in pmb.PEER_STATE, "srv-a" in pmb.PEER_STATE), (True, True),
+                         "hostx's dial filed under hostx, beside the alias")
+        self._assert_unreachable(self._send_on_b("after the repoint: is the index rebuilt now?"),
+                                 "hostx's arrival under hostx superseded the alias's link", host="srv-a")
+        self.assertEqual(self.posted, ["/redial"] * 2, "the alias is a port row: each park asks for its tunnel")
+
+    def test_the_same_process_renamed_under_a_dialable_name_supersedes_the_alias_link(self):
+        """THE SAME PROCESS RENAMED: A's process is filed under B's alias srv-a, declaring hosta, and its link is open.
+        A's machine is renamed while the process runs (self_host reads the hostname live), and B's kernel attaches it
+        under the new name, hosta-renamed, a port row held down, so A's dials, declaring hosta-renamed with the same
+        busId, are filed under that dialable name. The arrival declares no name the alias's arrivals declared, but
+        carries a busId the alias's link holds, so it supersedes that link (the ARRIVAL at _inbound_links): a send to
+        srv-a:alpha answers unreachable. Red at fork main at its precondition (main never reads the link open); a guard
+        against a supersession keyed on the declared names alone, and against an arrival handed no busId, under either
+        of which the alias read queued."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("before the rename: is the cache warm?", to="srv-a:alpha"),
+                            "precondition: the alias's link is open", host="srv-a")
+        pmb.PEERS["hosta-renamed"] = {"port": 1, "up": False, "trust": "trusted"}
+        self.assertEqual(self._exchange_through_b(host="hosta-renamed"), 200)
+        self.assertEqual(("hosta-renamed" in pmb.PEER_STATE, "srv-a" in pmb.PEER_STATE), (True, True),
+                         "A's dial filed under its new name, beside the alias")
+        self.assertEqual(pmb._inbound_links["hosta-renamed"]["declared"] & pmb._inbound_links["srv-a"]["declared"],
+                         set(), "precondition: the two links share no declared name")
+        self._assert_unreachable(self._send_on_b("after the rename: is the cache warm now?", to="srv-a:alpha"),
+                                 "the renamed process's arrival superseded the alias's link", host="srv-a")
+
+    def test_two_machines_declaring_one_name_under_two_aliases_read_unreachable_while_the_mail_crosses(self):
+        """TWO MACHINES THAT SHARE A SHORT HOSTNAME, a witness of a disclosed false unreachable (THE NAMESAKE COST at
+        _inbound_links). B files each under an alias of its own by busId: srv-a for A, and srv-c for another machine
+        whose dials also declare hosta (two port rows held down and two PEER_STATE rows, each carrying its machine's
+        busId: not a collision). A's dial is parked under srv-a when the other machine's arrival under srv-c, declaring
+        hosta, a name srv-a's arrivals declared, supersedes srv-a's link, the parked dial included. So a send to
+        srv-a:alpha answers unreachable and posts /redial for the alias's port row while A's parked dial, once released,
+        carries the mail; and A's next arrival supersedes srv-c's link the same way. This pins a disclosed cost, not a
+        wanted behaviour (the broad key's supersessions only close links, so the key never makes a send say queued): a
+        later fix that narrows the declared-name key, to a link filed under the name and an alias's link say, turns it
+        red at the note, and THE NAMESAKE COST's sentence on two machines changes with it. Red at fork main at its
+        precondition (no link table there)."""
+        wake_alias = _ParkSeen()
+        pmb._peer_wakes["srv-a"] = wake_alias
+        self.addCleanup(pmb._peer_wakes.pop, "srv-a", None)
+        self.addCleanup(wake_alias.release)          # runs before _drain, which waits for the parked dial to end
+        self._alias_for_a()
+        pmb.PEERS["srv-c"] = {"port": 1, "up": False, "trust": "trusted"}
+        pmb.PEER_STATE["srv-c"] = {"presence": [], "busId": "hostc-bus-id", "seenAt": int(time.time())}
+        c = self._parked_dial(wake=wake_alias)
+        self.assertTrue(pmb._inbound_open("srv-a"), "precondition: A's parked dial holds the alias's link open")
+        self.assertEqual(self._exchange_through_b(busId="hostc-bus-id"), 200)
+        self.assertEqual(sorted(k for k in ("hosta", "srv-a", "srv-c") if k in pmb.PEER_STATE), ["srv-a", "srv-c"],
+                         "precondition: each machine filed under its own alias, two rows")
+        self.assertEqual((pmb._inbound_links["srv-a"]["declared"], pmb._inbound_links["srv-c"]["declared"]),
+                         ({"hosta"}, {"hosta"}), "precondition: both machines' arrivals declared hosta")
+        wake_alias.hold()
+        resp = self._send_on_b("is the cache warm?", to="srv-a:alpha")
+        self.assertTrue(wake_alias.woken, "the send woke the alias's park, held through the read")
+        self._assert_unreachable(resp, "the disclosed false unreachable: the other machine's arrival under srv-c "
+                                 "superseded A's link, its parked dial included", host="srv-a")
+        self.assertEqual(self.posted, ["/redial"], "the alias is a port row: the park asks for its tunnel")
+        wake_alias.release()
+        r = c.getresponse()
+        self.assertEqual(r.status, 200, "A's parked dial was answered")
+        relays = json.loads(r.read()).get("relays") or []
+        self.assertIn(resp["id"], [m.get("mid") for m in relays], "and that answer carried the mail")
+        self.assertTrue(self._exchanges_ended(2), "B's route ended the other machine's exchange and the parked one")
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual((pmb._inbound_open("srv-a"), pmb._inbound_open("srv-c")), (True, False),
+                         "A's next arrival under srv-a superseded the other machine's link the same way")
+
+    def test_an_alias_left_by_a_process_restarted_under_a_second_alias_reads_unreachable(self):
+        """A RESTART FILED UNDER A SECOND ALIAS: A's process is filed under B's alias srv-a by busId, declaring hosta,
+        and its exchange ended ok. B also holds A under a second alias, srv-b, a port row held down whose PEER_STATE row
+        carries the busId of A's restarted process (the state the kernel's attach dedupe can leave here: it absorbs one
+        of a machine's two aliases and notifies it down, and this bus keeps that alias as a port row held down whose row
+        still carries the old busId). A restarts, and its new process, declaring hosta, is filed under srv-b and never
+        carries srv-a's outbox. Its arrival supersedes srv-a's link, whose arrivals declared hosta (the ARRIVAL at
+        _inbound_links): a send to srv-a:alpha answers unreachable and posts /redial for the alias's port row. Red at
+        fork main at its precondition (main never reads the link open, so the first send is unreachable); a guard
+        against a declared-name key narrowed to a link filed under the name and an alias's link, under which srv-a's
+        link read open on the old process's last ok exchange and the send answered queued, promising a crossing no dial
+        filed under srv-a would carry."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("before the restart: is the cache warm?", to="srv-a:alpha"),
+                            "precondition: the alias's link is open", host="srv-a")
+        pmb.PEERS["srv-b"] = {"port": 1, "up": False, "trust": "trusted"}
+        pmb.PEER_STATE["srv-b"] = {"presence": [], "busId": "a-restarted-process-bus-id", "seenAt": int(time.time())}
+        self.assertEqual(self._exchange_through_b(busId="a-restarted-process-bus-id"), 200)
+        self.assertEqual(sorted(k for k in ("hosta", "srv-a", "srv-b") if k in pmb.PEER_STATE), ["srv-a", "srv-b"],
+                         "precondition: the old process filed under srv-a, the restarted one under srv-b")
+        self._assert_unreachable(self._send_on_b("after the restart: is the cache warm now?", to="srv-a:alpha"),
+                                 "the restarted process's arrival under srv-b superseded the first alias's link",
+                                 host="srv-a")
+        self.assertEqual(self.posted, ["/redial", "/redial"], "the alias is a port row: each park asks for its tunnel")
+
+    def test_an_alias_pointed_at_another_machine_whose_old_one_restarts_under_a_second_alias_reads_unreachable(self):
+        """AN ALIAS POINTED AT ANOTHER MACHINE WHOSE OLD MACHINE RESTARTS UNDER A SECOND ALIAS: B's alias srv-a reached
+        hostx, whose dials, declaring hostx, were filed under it (the alias's row carried hostx's busId), and its link
+        is open. B's kernel then points the alias at A (B's own dial of it refreshed the row with A's busId); A does not
+        dial B, so the alias's link keeps hostx's names. hostx restarts, and B holds its new process under a second
+        alias, srv-x, a port row held down whose PEER_STATE row carries the new busId, so its dials are filed under
+        srv-x and never carry srv-a's outbox. Its arrival under srv-x, declaring hostx, a name srv-a's arrivals
+        declared, supersedes srv-a's link by the declared-name key, the two links sharing no busId (the ARRIVAL at
+        _inbound_links): a send to srv-a:alpha answers unreachable and posts /redial for the alias's port row. Red at
+        fork main at its precondition (main never reads the link open, so the first send is unreachable); a guard
+        against a declared-name key narrowed to a link filed under the name and an alias's link, under which srv-a's
+        link read open on hostx's last ok exchange and the send answered queued, promising a crossing no dial filed
+        under srv-a would carry."""
+        self._alias_for_a()
+        pmb.PEER_STATE["srv-a"]["busId"] = "hostx-bus-id"     # the alias first reached hostx
+        self.assertEqual(self._exchange_through_b(host="hostx", busId="hostx-bus-id"), 200)
+        self.assertNotIn("hostx", pmb.PEER_STATE, "precondition: hostx filed under the alias")
+        self._assert_queued(self._send_on_b("before the repoint: is the index rebuilt?", to="srv-a:alpha"),
+                            "precondition: the alias's link is open", host="srv-a")
+        pmb.PEER_STATE["srv-a"]["busId"] = pm.BUS_ID          # B's own dial of the alias now reaches A
+        pmb.PEERS["srv-x"] = {"port": 1, "up": False, "trust": "trusted"}
+        pmb.PEER_STATE["srv-x"] = {"presence": [], "busId": "hostx-restarted-bus-id", "seenAt": int(time.time())}
+        self.assertEqual(self._exchange_through_b(host="hostx", busId="hostx-restarted-bus-id"), 200)
+        self.assertEqual(sorted(k for k in ("hostx", "srv-a", "srv-x") if k in pmb.PEER_STATE), ["srv-a", "srv-x"],
+                         "precondition: hostx's restarted process filed under srv-x, beside the alias")
+        self.assertEqual((pmb._inbound_links["srv-a"]["declared"], pmb._inbound_links["srv-x"]["declared"]),
+                         ({"hostx"}, {"hostx"}), "precondition: both links' arrivals declared hostx")
+        self.assertEqual(pmb._inbound_links["srv-a"]["busIds"] & pmb._inbound_links["srv-x"]["busIds"], set(),
+                         "precondition: the two links share no busId")
+        self._assert_unreachable(self._send_on_b("after the restart: is the index rebuilt now?", to="srv-a:alpha"),
+                                 "hostx's restarted process's arrival under srv-x superseded the alias's link",
+                                 host="srv-a")
+        self.assertEqual(self.posted, ["/redial"] * 2, "the alias is a port row: each park asks for its tunnel")
+
+    def test_an_alias_pointed_at_another_machine_drops_the_names_the_old_one_declared(self):
+        """STALE DECLARED NAMES. B's alias srv-a first pointed at another machine, hostx: its dials, declaring hostx, were
+        filed under the alias (the alias's row carried hostx's busId). The alias now points at A (B's own dial of it
+        refreshed the row with A's busId), and A's dial, declaring hosta under a busId the entry has not seen, resets
+        the entry's declared names to hosta (the ARRIVAL at _inbound_links). So when hostx comes back on a drifted
+        protocol and its dial, declaring hostx, is refused, A's healthy link stays open and a send to the alias is
+        queued. A drifted process of A itself re-declares hosta, a name already in the set, so its refusal still closes
+        the link (test_a_drifted_dialer_filed_under_an_alias_closes_the_alias_link). Red at fork main at its
+        precondition (no link table there); a guard against declared names never pruned, under which hostx's refusal
+        closed A's link."""
+        self._alias_for_a()
+        pmb.PEER_STATE["srv-a"]["busId"] = "hostx-bus-id"     # the alias first pointed at hostx
+        self.assertEqual(self._exchange_through_b(host="hostx", busId="hostx-bus-id"), 200)
+        self.assertEqual(pmb._inbound_links["srv-a"]["declared"], {"hostx"}, "precondition: hostx filed under the alias")
+        pmb.PEER_STATE["srv-a"]["busId"] = pm.BUS_ID          # B's own dial of the alias now reaches A
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertNotIn("hosta", pmb.PEER_STATE, "precondition: A's dial filed under the alias")
+        self.assertEqual(self._exchange_through_b(host="hostx", busId="hostx-newer-bus-id", proto=999), 409)
+        self._assert_queued(self._send_on_b("is the index rebuilt?", to="srv-a:alpha"),
+                            "a refusal from the machine the alias used to reach leaves A's link open", host="srv-a")
+
+    def test_an_alias_pointed_back_at_the_first_machine_drops_the_second_machine_s_names(self):
+        """STALE DECLARED NAMES when the alias flips back: hostx, then A, then hostx again (with the busId of its first
+        time) are filed under the alias srv-a. hostx's second arrival brings a name and a busId the entry, reset by A's
+        arrival, has not seen, so the entry resets to hostx's, its busIds as well as its names. A's drifted dial
+        declaring hosta, refused, then leaves the alias's link open, and a send to the alias is queued. Red at fork main
+        at the send (main never reads the link open); a guard against a reset that keeps the old busIds, under which
+        hostx's second arrival found its busId still held, reset nothing, and A's refusal closed hostx's link."""
+        self._alias_for_a()
+        pmb.PEER_STATE["srv-a"]["busId"] = "hostx-bus-id"     # the alias first reached hostx
+        self.assertEqual(self._exchange_through_b(host="hostx", busId="hostx-bus-id"), 200)
+        pmb.PEER_STATE["srv-a"]["busId"] = pm.BUS_ID          # then A
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertNotIn("hosta", pmb.PEER_STATE, "precondition: A filed under the alias")
+        pmb.PEER_STATE["srv-a"]["busId"] = "hostx-bus-id"     # then hostx again
+        self.assertEqual(self._exchange_through_b(host="hostx", busId="hostx-bus-id"), 200)
+        self.assertEqual(self._exchange_through_b(proto=999, busId="a-newer-process-bus-id"), 409)
+        self._assert_queued(self._send_on_b("is the index rebuilt?", to="srv-a:alpha"),
+                            "a refusal from the machine the alias used to reach leaves the link open", host="srv-a")
+
+    def test_a_process_renamed_while_it_runs_then_restarted_under_its_first_name_closes_the_alias_link(self):
+        """STALE DECLARED NAMES, the keep half: an arrival resets the entry's sets only when its name AND its busId are
+        both new to the entry (the ARRIVAL at _inbound_links). A's process is filed under B's alias srv-a by busId,
+        declaring hosta. The machine is renamed while the process runs, and its next dial, declaring hosta-dhcp under
+        the same busId, is filed under the alias too; its busId is one the entry holds, so hosta stays in the entry's
+        names. A then restarts declaring hosta under a new busId, which no alias row carries, so it is filed under
+        hosta, and its arrival supersedes the alias's link, whose arrivals declared hosta: a send to srv-a:alpha answers
+        unreachable. Red at fork main at its precondition, which reads the inbound link main does not have; a guard
+        against a reset on a new name alone, against declared names that keep only the latest, and against a reset at
+        every arrival, under each of which the rename dropped hosta from the entry, the restart superseded nothing and
+        the alias read queued, promising a crossing no dial filed under it would carry."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertTrue(pmb._inbound_open("srv-a"), "precondition: the alias's link is open")
+        self.assertEqual(self._exchange_through_b(host="hosta-dhcp"), 200)
+        self.assertNotIn("hosta-dhcp", pmb.PEER_STATE, "precondition: the renamed process filed under the alias")
+        self.assertEqual(self._exchange_through_b(busId="a-restarted-process-bus-id"), 200)
+        self.assertEqual(("hosta" in pmb.PEER_STATE, "srv-a" in pmb.PEER_STATE), (True, True),
+                         "the restarted process filed under hosta, beside the alias")
+        self._assert_unreachable(self._send_on_b("after the restart: is the cache warm?", to="srv-a:alpha"),
+                                 "the restart's arrival under hosta superseded the alias's link", host="srv-a")
+
+    def test_an_alias_moved_to_a_restarted_process_keeps_the_names_its_old_process_declared(self):
+        """STALE DECLARED NAMES, the keep half from the busId side. A's first process is filed under B's alias srv-a,
+        declaring hosta, then hosta-dhcp (the machine renamed while it runs). B's own dial of the alias then reaches A's
+        restarted process (the alias's row carries its new busId), which declares hosta and is filed under the alias: a
+        name the entry holds, so nothing resets, though its busId is new. That process is renamed and restarted in turn,
+        and its successor declares hosta-dhcp under a third busId, which no alias row carries, so it is filed under
+        hosta-dhcp, and its arrival supersedes the alias's link, whose arrivals declared hosta-dhcp: a send to
+        srv-a:alpha answers unreachable. Red at fork main at its precondition, which reads the inbound link main does
+        not have; a guard against a reset on a new busId alone, and against each mutant the test above names, under any
+        of which the entry held hosta alone once the restarted process arrived, the successor superseded nothing and the
+        alias read queued."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(self._exchange_through_b(host="hosta-dhcp"), 200)
+        pmb.PEER_STATE["srv-a"]["busId"] = "a-restarted-process-bus-id"   # B's own dial of the alias reached it
+        self.assertEqual(self._exchange_through_b(busId="a-restarted-process-bus-id"), 200)
+        self.assertEqual([k for k in ("hosta", "hosta-dhcp") if k in pmb.PEER_STATE], [],
+                         "precondition: every dial so far filed under the alias")
+        self.assertTrue(pmb._inbound_open("srv-a"), "precondition: the alias's link is open")
+        self.assertEqual(self._exchange_through_b(host="hosta-dhcp", busId="a-third-process-bus-id"), 200)
+        self.assertEqual(("hosta-dhcp" in pmb.PEER_STATE, "srv-a" in pmb.PEER_STATE), (True, True),
+                         "the successor filed under hosta-dhcp, beside the alias")
+        self._assert_unreachable(self._send_on_b("after the second restart: is the cache warm?", to="srv-a:alpha"),
+                                 "the successor's arrival under hosta-dhcp superseded the alias's link", host="srv-a")
+
+    def test_an_older_peer_named_as_the_alias_resets_the_alias_link_s_names(self):
+        """STALE DECLARED NAMES, the half for an arrival with no busId: one that declares a name the entry does not hold
+        resets the entry's sets too (the ARRIVAL at _inbound_links). The population is narrow: a dial with no busId is
+        always filed under the name it declares, so this half acts only when an alias's link, filled by arrivals filed
+        under the alias by busId, takes a dial from an older peer (one that sends no busId) whose hostname is the
+        alias's name. A's process is filed under B's alias srv-a by busId, declaring hosta. B's own dial of the alias
+        then reaches an older peer, so the alias's row carries no busId, and A's next dial is filed under hosta. The
+        older peer, named srv-a, dials with no busId and is filed under srv-a, and the entry's names and busIds reset to
+        its own. A's next arrival under hosta then shares no declared name and no busId with the alias's link and leaves
+        it open, so a send to srv-a:alpha is queued. Red at fork main (the note said unreachable); a guard against a
+        reset that skips an arrival with no busId, under which the alias's link kept hosta and A's busId, and A's next
+        arrival superseded it."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        pmb.PEER_STATE["srv-a"].pop("busId")                 # B's own dial of the alias now reaches an older peer
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertIn("hosta", pmb.PEER_STATE, "precondition: A's dial filed under hosta once the alias lost A's busId")
+        self.assertEqual(self._exchange_through_b(host="srv-a", busId=""), 200)
+        self.assertEqual(self._exchange_through_b(), 200)
+        self._assert_queued(self._send_on_b("is the replica caught up?", to="srv-a:alpha"),
+                            "the older peer's arrival reset the alias's names, so A's arrival left its link open",
+                            host="srv-a")
+
+    def test_two_exchanges_declaring_one_name_record_it_once(self):
+        """The link's declared names grow with the distinct names a host's dials declare, not with its exchanges: two
+        ok exchanges from A, each declaring hosta, leave hosta's entry holding that name once. Red at fork main (no
+        link table there); a guard against a name recorded at every arrival, which grows at each long-poll exchange
+        for the bus's lifetime."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(self._exchange_through_b(), 200)
+        declared = pmb._inbound_links["hosta"]["declared"]
+        self.assertEqual(len(declared), 1, "two exchanges declaring one name record it once: %r" % (declared,))
+        self.assertIn("hosta", declared)
+
+    def test_an_ok_exchange_with_no_busid_reads_open(self):
+        """An older peer's dial carries no busId; its exchange ends ok and a send is queued. The arrival supersedes OTHER
+        entries only: the name it declares is in its own entry's declared names, so without that exclusion every
+        arrival would supersede its own link, an older peer's included. Red at fork main (the note said unreachable); a
+        guard against a supersession that reaches the arrival's own entry, under which this send answered
+        unreachable."""
+        self.assertEqual(self._exchange_through_b(busId=""), 200)
+        self.assertIsNone(pmb.PEER_STATE["hosta"].get("busId"), "precondition: a row with no busId")
+        self._assert_queued(self._send_on_b("did the build pass?"), "an older peer's ok exchange reads open")
+
+    def test_two_hosts_that_send_no_busid_each_read_open(self):
+        """Two older peers that send no busId, hosta and hostc, each dial B with success, and each link reads open. An
+        arrival supersedes another link by its busId only when it carries one (the ARRIVAL at _inbound_links), so an
+        arrival that carries none supersedes only through the name it declares, and these two declare different names.
+        Red at fork main at its precondition (no link table there); a guard against an arrival with no busId that
+        supersedes every other link holding no busId, or every other link, under either of which hostc's arrival
+        superseded hosta's link."""
+        self.assertEqual(self._exchange_through_b(busId=""), 200)
+        self.assertEqual(self._exchange_through_b(host="hostc", busId=""), 200)
+        self.assertEqual((pmb._inbound_links["hosta"]["busIds"], pmb._inbound_links["hostc"]["busIds"]),
+                         (set(), set()), "precondition: neither link holds a busId")
+        self.assertEqual((pmb._inbound_open("hosta"), pmb._inbound_open("hostc")), (True, True),
+                         "two hosts with no busId: each link open")
+
+    def test_an_arrival_with_no_busid_leaves_another_host_s_link_open(self):
+        """A dials B with its busId; an older peer, hostc, that sends no busId then dials B with success, and both links
+        read open: an arrival with no busId shares no busId with A's link, and declares another name. Red at fork main
+        (no link table there); a guard against an arrival with no busId that supersedes every other link, under which
+        hostc's arrival superseded A's."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(self._exchange_through_b(host="hostc", busId=""), 200)
+        self.assertEqual((pmb._inbound_open("hosta"), pmb._inbound_open("hostc")), (True, True),
+                         "an arrival with no busId leaves another host's link open")
+
+    def test_a_missing_host_refusal_closes_the_alias_link_its_busid_resolves_to(self):
+        """The 400 for a missing host is a refusal before the arrival. The route canonicalizes the empty name by the
+        dial's busId to B's alias for A (srv-a), and the refusal closes that alias's link. Only a malformed dialer sends
+        no host (self_host falls back). Red at fork main at its precondition (no link table there); a guard against a
+        refusal close that skips a dial with no host."""
+        self._alias_for_a()
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertIn("srv-a", pmb._inbound_links, "precondition: the link is filed under the alias")
+        self.assertTrue(pmb._inbound_open("srv-a"), "precondition: the alias's link is open")
+        self.assertEqual(self._exchange_through_b(host=""), 400)
+        self.assertFalse(pmb._inbound_open("srv-a"), "the missing-host refusal closed the alias's link")
+
+    def test_a_refused_dial_with_no_busid_closes_the_link(self):
+        """A refused dial that carries no busId (a peer that predates busIds, whose dial is refused 409) closes the link
+        of the name the route resolved, whatever the bus ids. Green at fork main (main never reads the link open); a
+        guard against a refusal close that exempts a dial with no busId."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        self.assertEqual(pmb.PEER_STATE["hosta"].get("busId"), pm.BUS_ID, "precondition: the row carries A's busId")
+        self.assertEqual(self._exchange_through_b(proto=999, busId=""), 409)
+        self._assert_unreachable(self._send_on_b("did the nightly job run?"),
+                                 "a refused dial carrying no busId closed the link")
+
+    def test_receipts_for_two_hosts_read_each_host_s_link(self):
+        """One _sent_receipts call over mail to two hosts reads each host's own link: hosta, whose last exchange ended
+        ok, reads parkedUp True, and hostc, with a row and no link, reads False. Red at fork main (hosta's receipt read
+        False: main read PEERS alone); a guard against a per-call link cache that is not keyed on the host."""
+        self.assertEqual(self._exchange_through_b(), 200)
+        pmb.PEER_STATE["hostc"] = {"presence": [{"name": "gamma", "id": "sid-c"}], "seenAt": int(time.time())}
+        r1 = self._send_on_b("first: to alpha on hosta")
+        r2 = self._send_on_b("second: to gamma on hostc", to="gamma")
+        self.assertEqual((r1.get("parked"), r2.get("parked")), ("hosta", "hostc"), "precondition: one per host")
+        rows = {r["id"]: r for r in pmb._sent_receipts("sid-b")}
+        self.assertEqual((rows[r1["id"]]["parkedUp"], rows[r2["id"]]["parkedUp"]), (True, False),
+                         "each host's own link state")
+        r3 = self._send_on_b("third: to gamma on hostc again", to="gamma")
+        rows = {r["id"]: r for r in pmb._sent_receipts("sid-b")}
+        self.assertEqual([rows[m["id"]]["parkedUp"] for m in (r3, r1, r2)], [False, True, False],
+                         "each host's own link state")
+
+
+class TheInboundLinkUnits(unittest.TestCase):
+    """Units of the inbound link (_inbound_links, 2026-10-02) that need no served bus: the socket probe at a descriptor
+    past FD_SETSIZE, on an idle socket that carries a timeout, on a reset, and on a socket holding data, and an arrival
+    whose link carries no socket. Red at fork main, where neither function exists."""
+
+    def setUp(self):
+        getattr(pmb, "_inbound_links", {}).clear()
+        self.addCleanup(getattr(pmb, "_inbound_links", {}).clear)
+
+    def test_a_socket_past_fd_setsize_reads_open_then_closed(self):
+        """_peer_conn_closed polls (select.poll), never select.select, which raises ValueError for a descriptor at or
+        past FD_SETSIZE (1024): the probe would read that as closed, so a bus holding that many descriptors would read
+        every link closed, main's behaviour. An idle socket at descriptor 1024 or above reads open, then closed once its
+        peer closes. The soft RLIMIT_NOFILE is raised to min(hard, 4096) for the test and restored after it."""
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard != resource.RLIM_INFINITY and hard < 1100:
+            self.skipTest("the hard RLIMIT_NOFILE is %d, below the 1100 this test asks for (a descriptor past "
+                          "FD_SETSIZE, 1024, with room to spare)" % hard)
+        want = 4096 if hard == resource.RLIM_INFINITY else min(hard, 4096)
+        if soft != resource.RLIM_INFINITY and soft < want:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+            self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))   # runs after the closes below
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        hi = socket.socket(fileno=fcntl.fcntl(a.fileno(), fcntl.F_DUPFD, 1024))
+        self.addCleanup(hi.close)
+        self.assertGreaterEqual(hi.fileno(), 1024, "the descriptor is past FD_SETSIZE")
+        self.assertFalse(pmb._peer_conn_closed(hi), "an idle open socket past FD_SETSIZE reads open")
+        b.close()
+        self.assertTrue(pmb._peer_conn_closed(hi), "and its peer's close reads closed")
+
+    def test_an_idle_socket_with_a_timeout_reads_open_at_once(self):
+        """_peer_conn_closed polls before it peeks, so an idle socket that carries a timeout is not peeked and reads
+        open at once. A peek with no poll first would wait out the timeout under the leaf lock (Python waits for
+        readability before a recv on a socket with a timeout) and then read the timeout as a close. No live exchange's
+        socket carries a timeout today (the route's body read restores the prior one); this guards the never-blocking
+        contract the function's docstring states."""
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        a.settimeout(3)
+        t0 = time.monotonic()
+        self.assertFalse(pmb._peer_conn_closed(a), "an idle socket with a timeout reads open")
+        self.assertLess(time.monotonic() - t0, 1.0, "and the probe does not wait out the timeout")
+
+    def test_a_reset_tcp_socket_reads_closed(self):
+        """A TCP socket whose peer resets it (SO_LINGER (1, 0), then close) reads closed: the reset is its peek's
+        OSError. The first probe after the reset is the one asserted, since the socket reports a reset once and a later
+        peek reads EOF. A guard against a probe that reads a reset as open."""
+        srv = socket.create_server(("127.0.0.1", 0))
+        self.addCleanup(srv.close)
+        cli = socket.create_connection(srv.getsockname(), timeout=5)
+        self.addCleanup(cli.close)
+        conn, _ = srv.accept()
+        self.addCleanup(conn.close)
+        self.assertFalse(pmb._peer_conn_closed(conn), "an idle connected socket reads open")
+        cli.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        cli.close()
+        p = select.poll()
+        p.register(conn, select.POLLIN)
+        self.assertTrue(p.poll(5000), "the reset reached the socket")
+        self.assertTrue(pmb._peer_conn_closed(conn), "the reset reads closed")
+
+    def test_the_probe_consumes_no_byte(self):
+        """_peer_conn_closed peeks and never reads: a socket holding a byte reads open, and the byte is still there for
+        the next read. A guard against a probe without MSG_PEEK, which takes the byte, so the read below returns b"y"."""
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        b.sendall(b"x")
+        self.assertFalse(pmb._peer_conn_closed(a), "a socket holding a byte reads open")
+        b.sendall(b"y")
+        b.close()
+        a.settimeout(5)
+        got = b""
+        while True:
+            chunk = a.recv(16)
+            if not chunk:
+                break
+            got += chunk
+        self.assertEqual(got, b"xy", "the probe left the byte for the next read")
+
+    def test_a_byte_ahead_of_the_peer_s_close_reads_open_until_it_is_read(self):
+        """Data ahead of the peer's close reads open (the peek sees the byte, not the EOF behind it) at every probe, and
+        stays readable; once it is read, the EOF reads closed. A guard against a probe without MSG_PEEK, whose first
+        probe takes the byte and whose second reads the EOF."""
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        b.sendall(b"z")
+        b.close()
+        self.assertFalse(pmb._peer_conn_closed(a), "a byte ahead of the close reads open")
+        self.assertFalse(pmb._peer_conn_closed(a), "and again: the first probe took nothing")
+        a.settimeout(5)
+        self.assertEqual(a.recv(1), b"z", "the byte is still there")
+        self.assertTrue(pmb._peer_conn_closed(a), "with the byte read, the EOF reads closed")
+
+    def test_an_arrival_whose_link_carries_no_socket_files_nothing(self):
+        """_inbound_arrived files nothing for a link with no socket and hands no number back: an entry with no socket
+        would make the probe raise TypeError on every read of the host's link (every /send to it and every receipt
+        read) until a newer exchange arrived. The route builds a link only over a socket; this guards the shape."""
+        link = {"conn": None}
+        pmb._inbound_arrived("hosta", link, "hosta", "a-bus-id")
+        self.assertNotIn("hosta", pmb._inbound_links, "nothing filed")
+        self.assertNotIn("n", link, "no arrival number handed back")
+        self.assertFalse(pmb._inbound_open("hosta"))
+
+
+class InboundLinkLockDiscipline(unittest.TestCase):
+    """The inbound link table's discipline (_inbound_links, 2026-10-02), derived by AST over the bus's source: every
+    read or write of the table or of _inbound_seq sits lexically inside `with _inbound_links_lock:` in its own
+    function (a lambda is its own function, so a reference in one is outside), the module-level declaration aside; and
+    the leaf lock's body takes no other lock: no `with` statement and no `.acquire()` in it, nor in any module function
+    it names, followed to every depth. The PeerStateLock census (tests/test_postal_remote_sids_mirror.py) reads
+    PEER_STATE's fixed names and does not see this table, so this pin carries its rules. Limits: the table reached
+    through an alias or globals() is not seen, and a call through an attribute (a method, a library) is not followed.
+    The population test is red at fork main (the census finds no reference to the table); the plants test passes at
+    any bus head that keeps the discipline, fork main included."""
+
+    TABLE, SEQ, LOCK = "_inbound_links", "_inbound_seq", "_inbound_links_lock"
+    SOURCE = Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text()
+
+    @classmethod
+    def _census(cls, source):
+        """{"refs": [(function, line)], "outside": [(function, line, name)], "holds": [(function, line)],
+        "takes": [(function, line, how)]} over `source`."""
+        tree = ast.parse(source)
+        funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        got = {"refs": [], "outside": [], "holds": [], "takes": []}
+
+        def leaf(node):
+            return isinstance(node, (ast.With, ast.AsyncWith)) and any(
+                isinstance(i.context_expr, ast.Name) and i.context_expr.id == cls.LOCK for i in node.items)
+
+        def takers(fn, line, nodes, seen):
+            for top in nodes:
+                for n in ast.walk(top):
+                    if isinstance(n, (ast.With, ast.AsyncWith)):
+                        got["takes"].append((fn, line, "a with at line %d" % n.lineno))
+                    elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "acquire":
+                        got["takes"].append((fn, line, "an acquire at line %d" % n.lineno))
+                    elif isinstance(n, ast.Name) and n.id in funcs and n.id not in seen:
+                        seen.add(n.id)
+                        takers(fn, line, funcs[n.id].body, seen)
+
+        def visit(node, fn, held):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                name = node.name if not isinstance(node, ast.Lambda) else "%s.<lambda>" % fn
+                for child in ast.iter_child_nodes(node):
+                    visit(child, name, False)
+                return
+            if isinstance(node, ast.Name) and node.id in (cls.TABLE, cls.SEQ):
+                if fn is None:
+                    if not isinstance(node.ctx, ast.Store):
+                        got["outside"].append(("<module>", node.lineno, node.id))
+                else:
+                    got["refs"].append((fn, node.lineno))
+                    if not held:
+                        got["outside"].append((fn, node.lineno, node.id))
+            if leaf(node) and fn is not None:
+                got["holds"].append((fn, node.lineno))
+                takers(fn, node.lineno, node.body, set())
+                for item in node.items:
+                    visit(item, fn, held)
+                for stmt in node.body:
+                    visit(stmt, fn, True)
+                return
+            for child in ast.iter_child_nodes(node):
+                visit(child, fn, held)
+
+        visit(tree, None, False)
+        return got
+
+    def _plant(self, text):
+        return self._census(self.SOURCE + "\n\n" + text)
+
+    def test_every_use_of_the_table_holds_its_leaf_lock_and_the_lock_takes_no_other(self):
+        got = self._census(self.SOURCE)
+        self.assertEqual(sorted({fn for fn, _ in got["refs"]}),
+                         ["_inbound_arrived", "_inbound_forget", "_inbound_link_down", "_inbound_open",
+                          "_inbound_outcome", "_inbound_pre_write"],
+                         "the table's population, derived from the source (a new reader joins this list): %r" % got["refs"])
+        self.assertEqual(got["outside"], [], "every read and write of the table and its counter holds the leaf lock")
+        self.assertEqual(len(got["holds"]), 6, "the census found the leaf lock's holds, one in each function of the "
+                         "population: %r" % got["holds"])
+        self.assertEqual(got["takes"], [], "the leaf lock's holder takes no other lock")
+        self.assertIsInstance(pmb._inbound_links_lock, type(threading.Lock()), "a plain lock")
+        for other in ("_PEER_STATE_LOCK", "_peer_lock", "_outbox_lock", "_lock"):
+            self.assertIsNot(pmb._inbound_links_lock, getattr(pmb, other), "its own lock, not %s" % other)
+
+    def test_the_census_refuses_its_plants(self):
+        """Each rule's plant is refused by name, so a census that loses a rule fails here at any bus head."""
+        plants = {
+            "a read outside every hold": ("def _plant_read(h):\n    return _inbound_links.get(h)\n", "outside", "_plant_read"),
+            "a read under another lock": ("def _plant_other(h):\n    with _PEER_STATE_LOCK:\n        return _inbound_links.get(h)\n",
+                                          "outside", "_plant_other"),
+            "the counter outside the lock": ("def _plant_seq():\n    return next(_inbound_seq)\n", "outside", "_plant_seq"),
+            "a read in a lambda under the lock": ("def _plant_lambda(h):\n    with _inbound_links_lock:\n"
+                                                  "        return lambda: _inbound_links.get(h)\n",
+                                                  "outside", "_plant_lambda.<lambda>"),
+            "a module-level read": ("_plant_alias = _inbound_links\n", "outside", "<module>"),
+            "a lock nested in the leaf": ("def _plant_nest(h):\n    with _inbound_links_lock:\n        with _PEER_STATE_LOCK:\n"
+                                          "            return _inbound_links.get(h)\n", "takes", "_plant_nest"),
+            "a call that takes a lock": ("def _plant_call(h):\n    with _inbound_links_lock:\n        _peer_wake(h)\n",
+                                         "takes", "_plant_call"),
+            "a lock two calls down": ("def _plant_low():\n    with _outbox_lock:\n        pass\n\n\ndef _plant_mid():\n"
+                                      "    _plant_low()\n\n\ndef _plant_deep(h):\n    with _inbound_links_lock:\n"
+                                      "        _plant_mid()\n", "takes", "_plant_deep"),
+            "a function handed on as a value": ("def _plant_map(hs):\n    with _inbound_links_lock:\n"
+                                                "        return list(map(_peer_wake, hs))\n", "takes", "_plant_map"),
+            "an acquire in the leaf": ("def _plant_acquire():\n    with _inbound_links_lock:\n        _peer_lock.acquire()\n",
+                                       "takes", "_plant_acquire"),
+        }
+        for what, (text, rule, fn) in plants.items():
+            got = self._plant(text)
+            self.assertIn(fn, [row[0] for row in got[rule]], "%s is refused under %s: %r" % (what, rule, got[rule]))
+        clean = self._plant("def _plant_ok(h):\n    with _inbound_links_lock:\n        return _inbound_links.get(h)\n")
+        self.assertEqual((clean["outside"], clean["takes"]), ([], []), "the same read under the leaf lock is accepted")
+        self.assertIn("_plant_ok", [fn for fn, _ in clean["refs"]])
 
 
 class TheStartSweepLeavesAStandingOutboxRecordAlone(_LoudBus):
