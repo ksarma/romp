@@ -70087,10 +70087,13 @@ def _pane_spin(cid, ignore_id=""):
             # value now is skipped; ruling 1 at 79dce614c, 2026-10-04): on the desktop the chat writes the hidden attribute of the
             # reply chips, a fixed element outside the list that holds elements, at each scroll step, to the value it had, and the
             # lab measured a scan at each step before this. So a control that appears or moves under the badge moves it on, the viewer opened or the
-            # notice shown, and the timer, plain typing and a scroll scan nothing. One case measured in the lab still scans at each
-            # event, a change outside the container that the watch sees because it observes the page outside it: each keystroke of
-            # a slash command (the slash menu, a fixed element outside the list, redraws its items, real controls; the rehearsed
-            # check of round 2, kept by the same ruling). A sticky element that appears deep in the content, not as the
+            # notice shown, and the timer, plain typing and a scroll scan nothing. Two changes outside the container that the watch
+            # sees, because it observes the page outside it, still ask for a scan at each event in the lab: each keystroke of a
+            # slash command (the slash menu, a fixed element outside the list, redraws its items, real controls; the rehearsed
+            # check of round 2, kept by the same ruling), and on the desktop each new line in the composer, as the chat writes a
+            # new height into the scroll marks' container (outside the list, holding elements). That scan is the one the resize
+            # the growing composer causes asks for in the same frame, so a new line scans once on every layout (the check of
+            # round 2's fixes, 2026-10-04). A sticky element that appears deep in the content, not as the
             # container's own child, is found at the next scan, not at once. No timer. The search runs only while the badge is
             # painted (rwatch starts at the paint and stops at the first frame a change or scroll asks for after the badge is
             # down), so a healthy page scans nothing. Upstream's CSS rule stays
