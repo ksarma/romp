@@ -697,7 +697,7 @@ jobs:
     # chat leg, about 227 s on a development box (by that PR's review); fork PR 860's gear leg, about
     # 29 s (the step took 31 s on its run 36519655646); and fork PR 862's nine legs, about 24 s (26 s
     # on its run 36456120720). Added one after another, those give a job of about 565 s and a Browser
-    # legs step of about 282 s. Node runs roster files side by side on the runner (on 862's run the
+    # legs step of about 282 s. The legs run side by side on the runner (on 862's run the
     # 41 tests add up to 68.55 s in the step's 26 s), so the sum overstates the legs as timed; it is
     # kept because 931's leg, one file whose tests run in order, was timed on a development box and
     # not on the runner, where it may take longer. A bound of 7 minutes (420 s) is about that step
@@ -798,19 +798,27 @@ jobs:
         # line is a bundle path, listed once, whose source is in the tree and whose bundle is under out-tests/ (the Test
         # step's npm test built it; the Build step writes dist/ only), a red naming the line and the fix; after node
         # --test it reads its own reporter's record (scripts/ci-browser-legs-reporter.mjs) and a rostered leg with no
-        # passing test of its own, a skipped test, a failure inside a todo, or a file that failed as a whole is red too,
-        # naming the leg or the test, within the scope the script's header states; an empty roster prints "no legs in
-        # the roster" and exits 0 without starting node --test, whose default glob would rerun the whole suite
+        # passing test of its own, a skipped test, a failure inside a todo, a file that failed as a whole, a leg the
+        # per-file bound cut, or a leg whose node --test the script killed at the end of the grace after the bound is
+        # red too, naming the leg or the test, within the scope the script's header states; an empty roster prints "no
+        # legs in the roster" and exits 0 without starting node --test, whose default glob would rerun the whole suite
         # (tools/ci-browser-legs.test.mjs, in the vendored-tooling job, runs the script over synthetic trees).
-        # Two bounds: this step's timeout-minutes (the job comment above says it fits within the margin under the
-        # job's cap at the measured head), so a roster whose legs together exceed it fails this step by name instead of
-        # cancelling the job nameless; and node's --test-timeout in the script, a per-FILE bound under the step's, so
-        # one hung leg fails by name (node cancels that file and ends its process at the bound, naming it, and runs the
-        # other files on; a leg's own { timeout } does not end the process, since a live browser handle keeps it up
-        # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in
-        # its own run, raises the step's timeout-minutes when the total needs it, and the job's cap with it when the new
-        # bound does not fit the margin (the job comment above), and node's --test-timeout when one leg's own bound or
-        # its whole-file seconds need it. Step seconds, job minutes and the job's cap:
+        # Two bounds: this step's timeout-minutes (the job comment above says it fits within the margin under the job's
+        # cap at the measured head), so a roster whose legs together exceed it fails this step by name instead of
+        # cancelling the job nameless; and the script's per-FILE bound under the step's (ROMP_BROWSER_LEGS_FILE_MS,
+        # default 240000 ms, which this step does not set), so one hung leg fails by name: the script runs each rostered
+        # leg as its own node --test and, at the bound, kills that file's node process and every process under it (a
+        # browser the leg launched among them), and the leg's node --test too if it is still running 10 s after the
+        # bound, names the leg and the bound, and runs the other legs on. The bound counts from each leg's own start, so
+        # a hung leg that starts later than the step's timeout-minutes less the bound and that 10 s (50 s today) can be
+        # cut by the step first. node's own --test-timeout is not used: on node 22.23.2 its cancel at the bound sends
+        # the file's process a SIGTERM and waits for it, so a leg whose process outlived that signal ran on past it, and
+        # a process that ends on it leaves its children running; and a leg's own { timeout } does not end the process
+        # either, since a live browser handle keeps it up after the named failure. Nothing reads a leg's cost before it
+        # runs: a PR that rosters a leg measures it in its own run, raises the step's timeout-minutes when the total
+        # needs it, and the job's cap with it when the new bound does not fit the margin (the job comment above), and
+        # the script's per-file bound when one leg's own bound or its whole-file seconds need it. Step seconds, job
+        # minutes and the job's cap:
         # (measured on the runner at 6dd80a6e7, the fork's main after batch 932, in main's run 36555049532, the first run on main after the served-page tests moved to a job of their own, one leg rostered, the launcher's own switch test: 2 s for this step (node's own duration 2.36 s) in a job of 4 min 45 s, under the 17-minute cap, a margin of 735 s. The step's and the job's times are the jobs API's, in whole seconds. A later commit is read against the files this step runs: the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts); one that changes none of them leaves the step as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds and the job's length, which moves with the suite, are re-read from CI at each pushed head in the PR's body. tools/ci-browser-legs.test.mjs holds the job time here against the cap and the step's own bound, and the cap's figure to the job's timeout-minutes line; of its other figures it checks only that one spelled N s is present, and reads the step's seconds, the stated margin, the sha and the run not at all. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; each PR that adds a leg states its own leg's numbers in its body.)
         # The rostered leg's source named in that parenthesis is the measured head's own: the roster also holds
         # ui/webview/gear-sub-focus-browser.test.ts since fork PR 860 added its line, and that PR's body states the leg's
