@@ -225,6 +225,9 @@ these turns its plant red, and the example leaves this list.
   an option the flag rules do not read, in Python and in text: an option spelled with one dash (-p N), an option whose
   name has no port word (["romp", "serve", "--listen", "N"]), and an option and its number that are not neighbours
   (["--port"] + [N], ['--port'].concat(['N'])), and a flag built at run time (["romp", "--" + "port", "N"]);
+  in text, a line continuation or a comment where a rule takes only whitespace: a shell line continuation between an
+  option and its number (--port, a backslash, a newline, then N), and a JavaScript comment, a block or a line one,
+  between the + or the comma and the number ('http://127.0.0.1:' + /* the port */ N, ['--port', /* the port */ 'N']);
   a value under a key that names no port by THE RULE: a bare name with no port word, whatever it holds (K = "port",
   then {K: N});
   code text that does not parse on its own (an indented fragment, a %-template), which the text rules read instead, so
@@ -1616,6 +1619,13 @@ class Plants(unittest.TestCase):
                 ("a short option in shell", "z.bats", "    romp serve -p %d\n" % n),
                 ("an option and its number apart in JavaScript", "w.test.mjs", "spawn(bin, ['--port'].concat(['%d']));\n" % n),
                 ("a flag built at run time", "test_x.py", 'subprocess.run(["romp", "--" + "port", "%d"])\n' % n),
+                ("a shell line continuation between an option and its number", "c1.bats",
+                 "    run romp serve --port \\\n        %d\n" % n),
+                ("a JavaScript comment, a block or a line one, between the + or the comma and the number", "c2.test.mjs",
+                 "await fetch('http://127.0.0.1:' + /* the port */ %d + '/x');\n"
+                 "await fetch('http://127.0.0.1:' + // the port\n    %d + '/x');\n"
+                 "spawn(bin, ['serve', '--port', /* the port */ '%d']);\n"
+                 "spawn(bin, ['serve', '--port', // the port\n    '%d']);\n" % (n, n, n, n)),
                 ("a key that is a bare name with no port word", "test_x.py", 'K = "port"\nrow = {K: %d}\n' % n),
                 ("code text that does not parse", "test_x.py", 'FRAG = "    km._notify_bus_peer(\'h\', %d, True)"\n' % n),
                 ("code text that does not parse, a %-template", "test_x.py",
