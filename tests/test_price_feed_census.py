@@ -589,8 +589,11 @@ def _collect_before_freeze(value):
     in five runs, two of which ran under that cap and completed. On every interpreter the collection also frees what the
     build itself drops while derived() holds the collector off, about a quarter of a million objects per build when the
     module runs alone, in under a second each on 3.10, 3.12 and 3.14t; on the interpreters with a GIL that is about all it
-    finds, since their young collections run after a fixed count of allocations whatever the heap's size.
-    tests/parse_cache.py is unchanged: its retention shape keeps a collection out of derived() for every caller."""
+    finds, since their young collections run after a fixed count of allocations whatever the heap's size. Since 2026-10-04
+    tests/parse_cache.py's derived() also collects just before its freeze where the GIL is off (its free-threaded exception),
+    so with the GIL off each of these builds ends in two collections back to back, the second finding nothing (in one
+    process on 3.14.6t, 0.07 s after the tree's build and 0.12 s after the served pass's, against 0.22 s and 0.33 s for this
+    one); on 3.10 and 3.12 this is the builds' only collection."""
     gc.collect()
     return value
 

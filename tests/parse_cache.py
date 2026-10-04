@@ -75,19 +75,35 @@ with a GIL the freeze itself is a list splice, microseconds whatever the count, 
 heaps to mark them, milliseconds per million objects). The freeze is PROCESS-GLOBAL: every object TRACKED at that moment
 leaves the collector's generations for the rest of the process, the cache's trees and everything else tracked, each
 build freezing what is tracked then, a hit on the memo freezing nothing, and gc.unfreeze is never called. Tracked, not
-alive, and that is THE RULE FOR A BUILD: the collector is off for the whole build, so a cycle the build drops before
-returning is still in the generations at the freeze and is frozen with the result, never reclaimed; a build must break
-its own cycles before it returns, so that reference counting frees what it drops. The rule was found by measurement
-(the fifteenth pass): the thread-stop census's build kept its modules index as a local, whose _Module/_Unit graph is
-cyclic, and the derivation froze about 780 thousand dead objects with the trees (a tenth of what it froze; about 150 MB
-by sys.getsizeof and 2.7 million allocator blocks the process never reused, per deriving process), until the census's
-build released them (tests/test_thread_stop_census.py, _Tree; its ParseCacheRetention pin builds the census's _Tree over
-a plant with the collector off and asserts gc.collect() finds nothing). A collection in derived() before the freeze was
-the other road, refused: it walks every tracked object, about 4 s at the census's heap on 3.10 and 3.12, a third of what
-the shape saves. The count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen
-object dies by reference count, and reading it WALKS the permanent generation's list: a tenth of a second per read over
-the eight million objects the census freezes, up to a second once a collection has scattered the heap, so nothing in
-this module reads it and a pin reads it at most twice. EVERY READER PAYS THAT after a derivation, not this module's pins
+alive, and that is THE RULE FOR A BUILD: the collector is off for the whole build, so where the GIL is on a cycle the
+build drops before returning is still in the generations at the freeze and is frozen with the result, never reclaimed
+(where it is off, the collection before the freeze reclaims it: the free-threaded exception, below); a build must break
+its own cycles before it returns all the same, so that reference counting frees what it drops on every interpreter. The
+rule was found by measurement (the fifteenth pass): the thread-stop census's build kept its modules index as a local,
+whose _Module/_Unit graph is cyclic, and the derivation froze about 780 thousand dead objects with the trees (a tenth of
+what it froze; about 150 MB by sys.getsizeof and 2.7 million allocator blocks the process never reused, per deriving
+process), until the census's build released them (tests/test_thread_stop_census.py, _Tree; its ParseCacheRetention pin
+builds the census's _Tree over a plant with the collector off and asserts gc.collect() finds nothing). A collection in
+derived() before the freeze was the other road, refused on the interpreters with a GIL for the time it takes: it walks
+every tracked object, about 4 s at the census's heap on 3.10 and 3.12, a third of what the shape saves. THE
+FREE-THREADED EXCEPTION (PR 878, 2026-10-04): where the running interpreter reports its GIL off (_gil_off:
+sys._is_gil_enabled() false, a free-threaded build run as CI's 3.14t cell runs it, with PYTHON_GIL=0), derived() runs
+one gc.collect() just before the freeze, after the memo and on the returning road alone, because there the freeze's
+measured cost is memory: that build's collector starts an automatic collection only once the objects allocated since its
+last one reach a quarter of the objects in its heap, frozen ones counted (up to a half, by its memory check), so a
+worker several GiB into the suite holds millions of dead objects when a build returns, and the freeze kept them for the
+process (about 12 million across one run's two workers, 2026-10-03). Measured with CI's 3.14t pytest command on 3.14.6t:
+as the run's peak anonymous memory, 16.8 to 18.6 GiB without a collection before the freeze and 14.8 GiB with this one,
+at this pull request's head of 2026-10-03; at its head of 2026-10-04, where the census module's builds already collect
+before their freeze and the module releases its derivations after its last case, memory.peak under a 16.5 GiB cap with
+no swap was 16.30 GiB without this collection and 15.64 GiB with it (16.22 and 15.78 GiB with no cap; four runs at
+once). An interpreter without that function (3.10 to 3.12) is read as having its GIL, so nothing changes on 3.10 or
+3.12, nor on a GIL build of 3.13 or later (it reports true); a free-threaded build run with its GIL on keeps that
+collector and is not collected here, since the test is the GIL. The count gc.get_freeze_count() reads is live, growing
+with each build here and dropping when a frozen object dies by reference count, and reading it WALKS the permanent
+generation's list: a tenth of a second per read over the eight million objects the census freezes, up to a second once a
+collection has scattered the heap, so nothing in this module reads it and a pin reads it at most twice.
+EVERY READER PAYS THAT after a derivation, not this module's pins
 alone: kernel/kernel.py's perf snapshot (_PerfStats.snapshot) reads gc.get_freeze_count() on every call, so a test that
 reads the snapshot after the census in the same process runs 2 to 60 times slower per read, about 2 s over a serial run
 (CI's cells until 2026-09-25, its macOS cells since; four snapshot-reading modules sort after the census) and 18 to 25 s
@@ -155,6 +171,7 @@ Only the standard library is imported here: the module is imported into test mod
 import ast
 import gc
 import os
+import sys
 import threading
 
 _PARSED = {}          # realpath -> ((size, mtime_ns, inode, ctime_ns), text, tree)
@@ -272,6 +289,14 @@ def trees(paths):
     return [(p,) + source_and_tree(p) for p in paths]
 
 
+def _gil_off():
+    """True only when the running interpreter reports its GIL off (sys._is_gil_enabled() false: a free-threaded build run
+    with the GIL disabled, as CI's 3.14t cell runs it); an interpreter without that function (3.12 and earlier) is read as
+    having its GIL. Read at each call, never at import (the free-threaded exception in the module docstring)."""
+    enabled = getattr(sys, "_is_gil_enabled", None)
+    return enabled is not None and not enabled()
+
+
 def derived(key, build):
     """build()'s value the first time `key` is asked for in this process, the memo after. A build that raises caches
     nothing, so the next call builds again (and is counted again). Under the module's lock, held through the build: two
@@ -286,10 +311,12 @@ def derived(key, build):
     trees while the build allocates them; a collector the caller had disabled is never touched. The exit state in one
     rule: a collector found on is handed back on whatever the build did to it; a collector found off is left as the build
     left it (never enabled here). After a build that returned and passed the after-check, and after the memo, gc.freeze()
-    runs once, before this call returns: every object TRACKED then, the trees this build read among them and any cycle
-    the build dropped without breaking it (the rule for a build, in the module docstring), leaves the collector's
-    generations for the rest of the process. A build that raised, or that the after-check refused, freezes nothing; a hit
-    freezes nothing; nothing here unfreezes."""
+    runs once, before this call returns: every object TRACKED then, the trees this build read among them and, where the
+    GIL is on, any cycle the build dropped without breaking it (the rule for a build, in the module docstring), leaves the
+    collector's generations for the rest of the process. Where the GIL is off (_gil_off) one gc.collect() runs just before
+    that freeze, so such a cycle is reclaimed instead (the free-threaded exception, in the module docstring). A build that
+    raised, or that the after-check refused, collects and freezes nothing; a hit collects and freezes nothing; nothing here
+    unfreezes."""
     with _LOCK:
         if key in _DERIVED:
             _STATS["derived_hits"] += 1
@@ -312,6 +339,8 @@ def derived(key, build):
                 raise
             check_singletons("after the build of %r (parse_cache.derived): the build itself wrote them, or a thread beside it" % (key,))
             _DERIVED[key] = value
+            if _gil_off():
+                gc.collect()                 # THE FREE-THREADED EXCEPTION: with the GIL off, what the build dropped is reclaimed here instead of frozen below
             gc.freeze()                      # THE RETENTION SHAPE: what is tracked now leaves the collector's generations for good, before this call returns
         finally:
             if collecting:

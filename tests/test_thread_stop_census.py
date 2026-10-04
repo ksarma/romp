@@ -402,13 +402,14 @@ the build has returned, freezes every object then tracked, before derived() retu
 tests/parse_cache.py's docstring carries the whole-suite measurement the shape was ruled from and the freeze's
 process-global cost; ParseCacheRetention below pins the mechanism). Two consequences, found by the fifteenth pass's
 verification (2026-09-22). A BUILD BREAKS ITS OWN CYCLES BEFORE IT RETURNS: with the collector off for the whole build, a
-cycle the build drops before returning is not reclaimed but frozen with the result, for the process. Through the
-fourteenth pass _Tree.__init__ kept the modules index as a local, and the _Module/_Unit graph is cyclic (a unit holds its
-module, the module its units), so the derivation froze about 780 thousand dead objects with the trees: the population
-modules that produced no row (three quarters of them), their units and their tables, about 150 MB by sys.getsizeof and
-2.7 million allocator blocks the process never reused, plus one closure cycle per bound helper body from the stdlib's
-recursive ast.fix_missing_locations. Now _Tree releases the units of every population module its results do not hold
-(_units_held, _Module.release_units) and the bound bodies are located by an iterative fixer (_fix_locations), so
+cycle the build drops before returning is not reclaimed but frozen with the result, for the process, on an interpreter with
+its GIL on (with it off the helper collects just before the freeze: tests/parse_cache.py's free-threaded exception,
+2026-10-04). Through the fourteenth pass _Tree.__init__ kept the modules index as a local, and the _Module/_Unit graph is
+cyclic (a unit holds its module, the module its units), so the derivation froze about 780 thousand dead objects with the
+trees: the population modules that produced no row (three quarters of them), their units and their tables, about 150 MB by
+sys.getsizeof and 2.7 million allocator blocks the process never reused, plus one closure cycle per bound helper body from
+the stdlib's recursive ast.fix_missing_locations. Now _Tree releases the units of every population module its results do not
+hold (_units_held, _Module.release_units) and the bound bodies are located by an iterative fixer (_fix_locations), so
 reference counting frees both before the freeze; ParseCacheRetention's plant builds a _Tree with the collector off and
 asserts gc.collect() finds nothing. And EVERY gc.get_freeze_count() READ AFTER THE DERIVATION WALKS the permanent
 generation's list, a tenth of a second per read over the eight million objects this module freezes (up to a second once
@@ -1238,7 +1239,8 @@ class _Module:
     def release_units(self):
         """Forget the units built for this module (units, unit_for). A unit holds its module and the module its units, a
         reference cycle only the collector reclaims, and parse_cache.derived holds the collector off for a build and freezes
-        what is still tracked when the build returns, so a module the tree's results do not hold is released here before
+        what is still tracked when the build returns (collecting first only where the GIL is off), so a module the tree's
+        results do not hold is released here before
         _Tree.__init__ returns and freed by reference count (the rule for a build in tests/parse_cache.py's docstring; the
         fifteenth pass, 2026-09-22). A later units() or unit_for() call builds the units again."""
         self._units = None
@@ -6206,8 +6208,9 @@ class ParseCacheRetention(unittest.TestCase):
 
     def test_the_trees_build_drops_no_cycle_so_the_freeze_pins_nothing_dead(self):
         """THE RULE FOR A BUILD (tests/parse_cache.py's CONTRACT paragraph): the collector is off for the whole build, so a cycle
-        the build drops before returning is frozen with its result and never reclaimed; a build breaks its own cycles before
-        it returns. The census's build is _Tree.__init__, whose modules index is a local: through the fourteenth pass every
+        the build drops before returning is frozen with its result and never reclaimed where the GIL is on (where it is off
+        the helper collects just before the freeze); a build breaks its own cycles before it returns, on every interpreter.
+        The census's build is _Tree.__init__, whose modules index is a local: through the fourteenth pass every
         population module that produced no row was dropped in a cycle with its units (a unit holds its module, the module
         its units) and frozen dead, about 780 thousand objects at the tree's derivation (the module docstring's retention
         paragraph). Pinned by MECHANISM on a plant, a root of the census's shape (_planted_root) with one module that starts
@@ -6243,6 +6246,105 @@ class ParseCacheRetention(unittest.TestCase):
         self.assertEqual(unreachable, 0, "the tree's build dropped %d objects only the collector could reclaim (%s): a cycle the build "
                                          "made and did not break before returning, which derived()'s freeze would pin for the process"
                                          % (unreachable, ", ".join("%s %d" % kv for kv in kinds.most_common(8))))
+
+
+class ParseCacheCollectsWhereTheGilIsOff(unittest.TestCase):
+    """tests/parse_cache.py's free-threaded exception (PR 878, 2026-10-04; the helper's docstring has the measurement it was
+    ruled from): derived() runs one gc.collect() just before its gc.freeze() where the running interpreter reports its GIL
+    off (sys._is_gil_enabled() false), and none where it reports it on or has no such function (3.12 and earlier), so 3.10
+    and 3.12 keep the retention shape as ruled (ParseCacheRetention, unchanged). Two cases. The first reads the CALLS:
+    sys._is_gil_enabled is planted each way (reporting off, reporting on, absent), gc.collect and gc.freeze are replaced
+    for each derived() call by recorders that call neither, and the build records its own run in the same list, so the list
+    reads build, collect, freeze where the GIL is reported off and build, freeze where it is reported on or absent; a build
+    that raises collects and freezes nothing with the GIL reported off. The interpreter's own binding of sys._is_gil_enabled
+    (or its absence) and gc's two functions are restored by cleanups registered BEFORE the first change, and each swap is
+    undone in a finally around its one call, so no other caller in the process meets a recorder. The second reads the
+    EFFECT on the running interpreter, nothing planted: a build drops a cycle only the collector reclaims (a node that holds
+    itself, a weak reference to it kept outside) and returns None; where the GIL is on the freeze keeps the node alive for
+    the process, as ruled, and where it is off the collection has reclaimed it first. Every key is this class's own, so
+    these run in any worker and need no tree, and neither case reads gc.get_freeze_count(). THE PLANTS: derived() without
+    the collection reds the first case's reporting-off subtest and, on a run with the GIL off (CI's 3.14t cell), the second
+    case; a collection on every interpreter reds the reporting-on and absent subtests and, on 3.10, 3.12 or any run with
+    the GIL on, the second case; a collection after the freeze or before the build reds the reporting-off subtest's order;
+    an absent function read as reporting off reds the absent subtest."""
+    KEY = ("tests/test_thread_stop_census.py", "a planted key of ParseCacheCollectsWhereTheGilIsOff")
+
+    class _Node(object):
+        __slots__ = ("peer", "__weakref__")
+
+    def test_the_collection_runs_just_before_the_freeze_only_where_the_gil_is_reported_off(self):
+        """sys._is_gil_enabled planted as reporting off, reporting on and absent, one subtest each, and a raising build with
+        it reporting off; gc.collect and gc.freeze recorded, never called, around each derived() call (the class docstring)."""
+        missing = object()
+        own = getattr(sys, "_is_gil_enabled", missing)
+
+        def restore_gil():
+            if own is not missing:
+                sys._is_gil_enabled = own
+            elif hasattr(sys, "_is_gil_enabled"):
+                del sys._is_gil_enabled
+
+        def plant_gil(state):
+            if state == "absent":
+                if hasattr(sys, "_is_gil_enabled"):
+                    del sys._is_gil_enabled
+            else:
+                sys._is_gil_enabled = (lambda: False) if state == "off" else (lambda: True)
+        real_collect, real_freeze, calls = gc.collect, gc.freeze, []
+        self.addCleanup(restore_gil)                              # BEFORE the first plant
+        self.addCleanup(setattr, gc, "collect", real_collect)     # BEFORE the first swap
+        self.addCleanup(setattr, gc, "freeze", real_freeze)
+        keys = {state: self.KEY + ("the GIL reported %s" % state,) for state in ("off", "on", "absent")}
+        raising_key = self.KEY + ("a raising build, the GIL reported off",)
+        self.addCleanup(PC.clear, raising_key, *keys.values())
+
+        def call(state, key, build):
+            del calls[:]
+            plant_gil(state)
+            gc.collect, gc.freeze = (lambda *a, **k: calls.append("collect") or 0), (lambda: calls.append("freeze"))
+            try:
+                return PC.derived(key, build)
+            finally:
+                gc.collect, gc.freeze = real_collect, real_freeze
+                restore_gil()
+        sentinel = object()
+        for state, want in (("off", ["build", "collect", "freeze"]), ("on", ["build", "freeze"]), ("absent", ["build", "freeze"])):
+            with self.subTest(gil=state):
+                self.assertIs(call(state, keys[state], lambda: calls.append("build") or sentinel), sentinel)
+                self.assertEqual(calls, want, "with sys._is_gil_enabled %s, derived()'s calls in order" % (
+                    "absent" if state == "absent" else "reporting the GIL " + state))
+
+        def raising_build():
+            calls.append("build")
+            raise RuntimeError("the build's own failure")
+        with self.subTest(gil="off", build="raises"):
+            with self.assertRaises(RuntimeError):
+                call("off", raising_key, raising_build)
+            self.assertEqual(calls, ["build"], "a build that raised collects and freezes nothing, the GIL reported off")
+
+    def test_a_cycle_the_build_drops_is_frozen_where_the_gil_is_on_and_reclaimed_where_it_is_off(self):
+        """On the running interpreter, nothing planted: the build drops a node that holds itself and returns None; after the
+        call the node is alive where the GIL is on (frozen with the build's result, never reclaimed: 3.10 and 3.12 as ruled)
+        and gone where it is off (the collection before the freeze reclaimed it). A weak reference reads which."""
+        import weakref
+        self.assertTrue(gc.isenabled(), "the case reads the road a caller with the collector on takes, the state pytest runs in")
+        key = self.KEY + ("a build that drops a cycle",)
+        self.addCleanup(PC.clear, key)
+        refs = []
+
+        def build():
+            node = self._Node()
+            node.peer = node                                      # a cycle only the collector reclaims
+            refs.append(weakref.ref(node))
+            return None                                           # the frame drops `node`: unreachable, still tracked
+        gil_on = getattr(sys, "_is_gil_enabled", lambda: True)()
+        self.assertIsNone(PC.derived(key, build))
+        if gil_on:
+            self.assertIsNotNone(refs[0](), "the GIL is on and the cycle the build dropped was reclaimed: derived() collected before its "
+                                            "freeze, which only its free-threaded exception does, where the GIL is off")
+        else:
+            self.assertIsNone(refs[0](), "the GIL is off and the cycle the build dropped is still alive: derived() froze it without the "
+                                         "collection its free-threaded exception runs just before the freeze")
 
 
 class IterativeHandCopier(unittest.TestCase):
