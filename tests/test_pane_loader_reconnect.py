@@ -1344,6 +1344,9 @@ out({ popup, inner, seen, clipped, upOnly, rightOnly, leftOnly, unseen });""")
     # an attribute changes, so the lab measured a scan of every element at each scroll step. Each attribute record now carries the
     # value it had (attributeOldValue), and a record whose old value is the value the element has now is skipped: it asks for no frame
     # and reads nothing. A record whose value did change scans as before, alone or beside an unchanged one in the same delivery.
+    # The skip holds for each attribute the watch filters on and on each surface it observes: a class written to the value it had on
+    # the chips, and a class, style and hidden attribute each written to the value it had on the list itself and on a sticky element
+    # in it (the list and that element hold elements, so a changed write on either scans), ask for nothing too
     def test_an_attribute_written_to_the_value_it_had_asks_for_nothing_and_a_changed_one_scans(self):
         o = self._watch_fit(r"""
 const chips = add(null, [200, 600, 190, 40], { position: 'fixed' }); chips.id = 'chips'; chips.attrs.hidden = '';   // the reply chips, hidden
@@ -1355,13 +1358,29 @@ const unchangedHeld = step(() => { field.attrs.style = 'height: 40px'; same(fiel
 const changedFirst = step(() => deliverAll([attrRec(chips, 'class', 'reply-chips'), sameRec(chips, 'hidden')]));
 const changedLast = step(() => deliverAll([sameRec(chips, 'hidden'), attrRec(chips, 'class', 'reply-chips on')]));
 const shown = step(() => attr(chips, 'hidden', null));
-out({ unchanged, unchangedHeld, changedFirst, changedLast, shown, scan: scan() });""")
+// each attribute present, then written again to the value it has (a classList.add of a class it holds, a style property set to its value)
+CONTENT.attrs.class = 'list'; CONTENT.attrs.style = 'padding-top: 8px'; CONTENT.attrs.hidden = '';
+head.attrs.class = 'sub-head'; head.attrs.style = 'top: 0px'; head.attrs.hidden = '';
+// and then each written to a new value (hidden removed), which shows the record reaches the watch: a scan
+const again = {}, then = {};
+for (const [nm, el, a] of [['chips', chips, 'class'], ['list', CONTENT, 'class'], ['list', CONTENT, 'style'], ['list', CONTENT, 'hidden'],
+                           ['sticky', head, 'class'], ['sticky', head, 'style'], ['sticky', head, 'hidden']]) {
+  again[nm + ' ' + a] = step(() => same(el, a));
+  then[nm + ' ' + a] = step(() => attr(el, a, a === 'hidden' ? null : el.attrs[a] + ' x'));
+}
+out({ unchanged, unchangedHeld, changedFirst, changedLast, shown, again, then, scan: scan() });""")
         self.assertEqual(o["unchanged"], {"reads": 0, "asks": 0},
                          "the chips' hidden attribute written to the value it had: skipped, no frame asked and no style read (79dce614c: a scan of every element)")
         self.assertEqual(o["unchangedHeld"], {"reads": 0, "asks": 0}, "the composer's style written to the value it had: skipped too, not even a re-read")
         for k in ("changedFirst", "changedLast"):
             self.assertEqual(o[k], {"reads": o["scan"], "asks": 1}, k + ": a changed class beside an unchanged hidden write in one delivery: one frame, which scans")
         self.assertEqual(o["shown"], {"reads": o["scan"], "asks": 1}, "the hidden attribute removed, a value that changed: one frame, which scans")
+        self.assertEqual(sorted(o["again"]), sorted(["chips class", "list class", "list style", "list hidden", "sticky class", "sticky style", "sticky hidden"]),
+                         "every surface and attribute was tried")
+        for k, v in sorted(o["again"].items()):
+            with self.subTest(k):
+                self.assertEqual(v, {"reads": 0, "asks": 0}, k + " written to the value it had: skipped, no frame asked and no style read")
+                self.assertEqual(o["then"][k], {"reads": o["scan"], "asks": 1}, k + " written to a new value next: one frame, which scans (the record reaches the watch)")
 
     def test_a_change_that_can_add_a_control_scans_again(self):
         o = self._watch_fit(r"""
