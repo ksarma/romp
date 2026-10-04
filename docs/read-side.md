@@ -276,7 +276,17 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   boot dial is the probe), the `hiddenMs` and `quietMs` gaps, and the path's
   recovery on that one socket, `attempts`, `firstFailMs` and `ms` (foreground to
   open); `ms` and `firstFailMs` are -1 when the next return came before the
-  open, the row filed at that return with the attempts as they stood. A pane
+  open, the row filed at that return with the attempts as they stood. Each
+  attempt that hangs is cut on the dial's own timer 15 s after its dial, but
+  `firstFailMs` is stamped at the close event that follows the cut, so on a
+  return whose first attempt hung `ms` minus `firstFailMs` reads 15,000 (or a
+  millisecond under, since the timer can fire while the clock reads a
+  millisecond short) plus the timer's lateness and the close event's delay
+  after the cut. A reading well above 15,000 means a late timer or a late
+  close event. Earlier builds also waited for the next 5 s watchdog tick
+  before the cut, so they read 15,000 to 20,000 plus the same delays, and on
+  the phone some returns after a resume read above even that, which only a
+  late timer or a late close event explains. A pane
   whose wait outlived the shell's loop-alive stamp (its `connT`, the later of
   its last dial and its watchdog's last tick with a socket to watch, 25 s stale)
   dials on its own and files a `link-backstop` stale row, the loud sign that the

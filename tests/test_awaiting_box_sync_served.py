@@ -24,14 +24,13 @@ All fixtures synthetic.
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -69,14 +68,6 @@ class SourcePins(unittest.TestCase):
         self.assertIn('const chip = statusChip(chipWords(s.status), "button") as HTMLButtonElement;', RENDER)
         self.assertIn("const word = awaitWord(st.awaitingKind, st.awaitingCount, items);", open(os.path.join(ROOT, "ui", "webview", "status-chip.ts")).read())
         self.assertIn("const word = awaitWord(s.status.awaitingKind, s.status.awaitingCount, items);", RENDER)   # `s` narrowed by the one renderer's gate (2026-09-06)
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -140,6 +131,7 @@ class ServedSync(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served sync needs them")
         cls.lab = tempfile.mkdtemp(prefix="awaiting-sync-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
@@ -169,28 +161,23 @@ class ServedSync(unittest.TestCase):
                         "message": {"role": "assistant", "model": "claude-fable-5-1",
                                     "content": [{"type": "text", "text": "hi from the lab"}],
                                     "stop_reason": "end_turn"}}) + "\n")
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-awaitsync"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
         if getattr(cls, "kernel", None):
             cls.kernel.kill()
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_the_box_shows_within_one_frame_of_the_chip_and_clears_with_it(self):

@@ -26,6 +26,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -38,11 +39,6 @@ WEB = "aaaaaaaa-3333-4222-8333-444444444444"
 API = "bbbbbbbb-3333-4222-8333-444444444444"
 TESTS = "cccccccc-3333-4222-8333-444444444444"
 ALL = (WEB, API, TESTS)
-
-
-def _free_port():
-    import socket
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
 def iso(t):
@@ -215,23 +211,19 @@ class ExitThenBoot(unittest.TestCase):
             for f in os.listdir(cls.lab):
                 if f.startswith("kernel-") and f.endswith(".log"):
                     shutil.copy(os.path.join(cls.lab, f), os.path.join(keep, f))
+        lab_ports.release(cls.lab)
         shutil.rmtree(cls.lab, ignore_errors=True)
 
     def _boot(self):
-        port = _free_port()
+        port = lab_ports.reserve(self.lab)
         env = _lab.kernel_env(self.lab, self.claude, self.dist, port, self.token, ROMP_HOST_NAME="TESTHOST",
                               ROMP_READER_TRACE=os.environ.get("ROMP_READER_TRACE", ""))   # a diagnosis aid: one stderr line per read
         log = open(os.path.join(self.lab, "kernel-%d.log" % port), "w")
         k = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=log, stderr=subprocess.STDOUT, env=env)
-        for _ in range(200):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(k, env, tries=200)
+        if why:
             k.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         for _ in range(40):                                     # the boot reconcile and a few pusher cycles
             try:
                 if self._get(port, "/version").get("uptime_s", 0) >= 4:

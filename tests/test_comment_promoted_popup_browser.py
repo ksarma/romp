@@ -26,10 +26,10 @@ dev box with the extension installed. SYNTHETIC fixtures only: session `web`, th
 and `web-comment-1`, the notes-api demo world, placeholder uuids."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -54,14 +54,6 @@ REPLY = ("Use exponential backoff with a jitter of ten percent. "
 PROMOTED_EXACT = "Cap the delay at two minutes"
 OPEN_EXACT = "exponential backoff"
 VIEW_W, VIEW_H = 1400, 900
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def iso(t):
@@ -224,21 +216,15 @@ class ServedPromotedPopup(unittest.TestCase):
              "status": "open", "promotedName": "", "name": "web-comment-1", "color": "",
              "createdT": t0 + 100, "lastSeenT": now}]}))
         Path(state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 10}, "seven_day": {"pct": 10}}))
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-cmtpromoted"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -246,6 +232,7 @@ class ServedPromotedPopup(unittest.TestCase):
         if k:
             k.kill()
             k.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _drive(self):

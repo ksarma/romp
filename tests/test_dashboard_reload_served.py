@@ -22,11 +22,11 @@ Skips LOUDLY when the extension deps or a playwright browser are absent (CI inst
 in node in test_dashboard_auto_reload.py regardless. All fixtures synthetic."""
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import tempfile
 import time
@@ -43,14 +43,6 @@ import sys
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment and the cfg.relaunch stanza (the module,
 #                                   not its classes: an imported TestCase would be collected here a second time)
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 def _transcript(cwd, pairs):
@@ -123,7 +115,15 @@ const banner = () => page.evaluate(() => { const b = document.getElementById("rs
 const waitOffer = (ms) => page.waitForFunction(() => { const b = document.getElementById("rstale"); return !!b && b.classList.contains("show") && b.classList.contains("offer"); }, null, { timeout: ms }).then(() => true).catch(() => false);
 const paneBox = () => page.evaluate(() => { const f = document.querySelector('iframe[src^="/chat"]'); const r = f.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; });
 const bump = (n) => { const t = new Date(Date.now() + n * 60 * 1000); fs.utimesSync(cfg.bumpFile, t, t); };
-const relaunch = (env) => { const k = spawn(cfg.relaunch.cmd, [], { env, detached: true,
+// the killed kernel releases its instance lock at its exit (the first kernel is the runner's process, so this driver cannot
+// reap it): block on the lock itself (cfg.relaunch.waitFree) before each relaunch, which a still-held lock would refuse
+const waitFree = () => new Promise((resolve) => {
+  const w = spawn(cfg.relaunch.waitFree[0], cfg.relaunch.waitFree.slice(1), { stdio: "ignore" });
+  w.on("error", (e) => resolve(String(e)));
+  w.on("exit", (code, sig) => resolve(code === 0 ? true : String(sig || code)));
+});
+const relaunch = async (env) => { const freed = await waitFree(); if (freed !== true) await die("the killed kernel's instance lock never freed: " + freed);
+  const k = spawn(cfg.relaunch.cmd, [], { env, detached: true,
   stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] }); k.unref(); fs.writeSync(1, "KPID:" + k.pid + "\n"); return k; };
 
 // ---- load, scroll to mid-history ----
@@ -177,7 +177,7 @@ out.bannerAfterReload = await banner();
 const beforeRestart = await info(fr);
 process.kill(cfg.kernelPid, "SIGKILL");
 await page.waitForTimeout(500);
-const k2 = relaunch(cfg.relaunch.env);
+const k2 = await relaunch(cfg.relaunch.env);
 out.restartSeen = await page.waitForFunction(() => window.__rompReload && window.__rompReload.restarted() >= 1, null, { timeout: 60000 }).then(() => true).catch(() => false);
 out.freshAfterRestart = await fr.waitForFunction(() => window.__rompFreshPending === false, null, { timeout: 60000 }).then(() => true).catch(() => false);
 await page.waitForTimeout(7000);                           // three keepalives on the new kernel
@@ -191,7 +191,7 @@ out.noticesAfterRestart = await notices();
 // ---- 5. a restart onto a CHANGED build: the offer, no reload; an unknown op sharpens its wording; the accept reloads ----
 process.kill(k2.pid, "SIGKILL");
 await page.waitForTimeout(500);
-relaunch({ ...cfg.relaunch.env, ROMP_CODE_IDENT: "changed-build" });
+await relaunch({ ...cfg.relaunch.env, ROMP_CODE_IDENT: "changed-build" });
 out.offerOnChangedBuild = await waitOffer(60000);
 out.bannerChangedBuild = await banner();
 await page.waitForTimeout(7000);
@@ -227,6 +227,7 @@ class ServedAutoReload(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served leg needs them")
         cls.lab = tempfile.mkdtemp(prefix="auto-reload-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.bump_file = os.path.join(dist, "render.js")
@@ -245,7 +246,7 @@ class ServedAutoReload(unittest.TestCase):
         proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
         os.makedirs(proj, exist_ok=True)
         Path(proj, SID + ".jsonl").write_text(_transcript(cwd, 60))   # long: overflows the pane several times over
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-autoreload"
         cls.env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token,
                                   ROMP_WS_KEEPALIVE="2")                       # the dv rides the keepalive: keep the wait short
@@ -256,16 +257,10 @@ class ServedAutoReload(unittest.TestCase):
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=cls.env)
         cls.relaunched_pids = []
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, cls.env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -277,6 +272,7 @@ class ServedAutoReload(unittest.TestCase):
                     pass
         if getattr(cls, "kernel", None):
             cls.kernel.wait()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def test_a_newer_build_is_offered_not_now_is_kept_reload_is_a_click_and_a_same_build_restart_is_invisible(self):

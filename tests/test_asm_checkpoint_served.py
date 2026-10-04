@@ -22,6 +22,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 import lab_dist
+import lab_ports
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -29,7 +30,7 @@ BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab                      # noqa: E402  the lab kernel's environment
-from test_fold_checkpoints_served import ChatClient, _free_port, iso   # noqa: E402  the websocket client
+from test_fold_checkpoints_served import ChatClient, iso   # noqa: E402  the websocket client
 
 WEB = "aaaaaaaa-4444-4222-8333-444444444444"
 WORDS = ("fixture", "suite", "backoff", "jitter", "cap", "retry", "review", "branch", "merge", "green", "README", "wire")
@@ -114,24 +115,20 @@ class RestartOverACheckpointedSession(unittest.TestCase):
             for f in os.listdir(cls.lab):
                 if f.startswith("kernel-") and f.endswith(".log"):
                     shutil.copy(os.path.join(cls.lab, f), os.path.join(keep, f))
+        lab_ports.release(cls.lab)
         shutil.rmtree(cls.lab, ignore_errors=True)
 
     def _boot(self):
-        port = _free_port()
+        port = lab_ports.reserve(self.lab)
         env = _lab.kernel_env(self.lab, self.claude, self.dist, port, self.token, ROMP_HOST_NAME="TESTHOST",
                               ROMP_READER_TRACE="1",   # one stderr line per byte-pulling read, quoted when a bound fails
                               ROMP_PERF_STACKS="1")    # /perf carries every thread's last frames, sampled while a frame is awaited
         logp = os.path.join(self.lab, "kernel-%d.log" % port)
         k = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(logp, "w"), stderr=subprocess.STDOUT, env=env)
-        for _ in range(200):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(k, env, tries=200)
+        if why:
             k.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
         for _ in range(40):
             try:
                 if self._get(port, "/version").get("uptime_s", 0) >= 4:

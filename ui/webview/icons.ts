@@ -20,6 +20,14 @@ export const ICON_ZOOM = svg('<circle cx="11" cy="11" r="8"/><line x1="21" y1="2
 /** a fork: one line in from the left that branches into two, up-right and down-right, running on to the right
  *  edge; no arrowheads (the user 2026-09-12, describing the chat's fork control) */
 export const ICON_FORK = svg('<polyline points="2 12 9 12 15 7 22 7"/><polyline points="9 12 15 17 22 17"/>');
+/** the viewer's Back and Forward (plans/markdown-viewer.md, "Follow-on: Link navigation", L2): an arrow left, an arrow right */
+export const ICON_BACK = svg('<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>');
+export const ICON_FORWARD = svg('<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>');
+/** a figure's "Open the picture" (the same follow-on, L3): two arrows out of opposite corners */
+export const ICON_EXPAND = svg('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>');
+/** the same control on a picture from the web (the file review's round 11, ui-1 with extra8-1): a box with an arrow leaving
+ *  its top-right corner, the open that leaves for another host in a new tab; keyed on the figure's target, never on its state */
+export const ICON_OUTBOUND = svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>');
 /** the acknowledgements a glyph button swaps to: done, and failed */
 export const ICON_CHECK = svg('<polyline points="20 6 9 17 4 12"/>');
 export const ICON_CROSS = svg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');

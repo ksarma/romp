@@ -33,6 +33,31 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   node_modules that exists and lacks the package makes it throw, and a skip
   inside its block is a failure). `tests/test_lab_dist.py`
   refuses a module that builds or copies dist on its own.
+  Every served module that boots a kernel takes the kernel's ports from
+  `tests/lab_ports.py` and waits for the kernel there: `lab_ports.reserve(lab)`
+  for each port it hands out (the serve port, a check-in's `busPort`; `kernel_env`
+  reserves the postal port under the kernel's lab itself), `lab_ports.wait_owned(proc,
+  env)` after the `Popen`, with the exact environment handed to it, and
+  `lab_ports.release(lab)` in the teardown once the lab's kernels are killed and
+  reaped. A class that reserves in `setUpClass` releases on its failure path too,
+  since `tearDownClass` never runs after a `setUpClass` that raised:
+  `cls.addClassCleanup(lab_ports.release, cls.lab)` right after the lab is made, or
+  the reserve inside a `try` whose handler calls `cls.tearDownClass()` and re-raises.
+  A port drawn by binding port 0 and closing the socket can be drawn again
+  before the kernel binds it, by the lab's next draw or by anything else on the
+  machine, and a `/healthz` answer says nothing about which kernel gave it: a
+  federated lab whose hub was handed its remote's port called the hub ready on the
+  remote's answer, and the check-in to the hub got the remote's 403. `reserve` keeps
+  each port held until it is released (on Linux its socket stays bound), and
+  `wait_owned` returns only once the kernel's own pid answers in `X-Romp-Boot` and
+  its state root records the port; otherwise it returns the reason, for the lab's
+  skip. `tests/test_lab_ports_census.py` holds every module CI's served step names,
+  and every module under `tests/` they import, to that rule. A test that calls
+  `kernel_env`, directly or through a helper, without booting a kernel holds the
+  postal port too, so it releases the lab it named
+  (`self.addCleanup(lab_ports.release, lab)`); the census reads every module under
+  `tests/` that reserves, and every class in it that does, in its own body or
+  through a function its module defines, for that release.
   Golden transcript fixtures: `test_romp_events_golden.py` + `fixtures/`.
   Run: `python3 -m pytest tests/ -q` (~20s; a stalled run is a hang, not slow).
   The `_HAVE_SDK`-gated classes in `test_sdk_backend.py` (OptionsAssembly, the
@@ -798,7 +823,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `vscode-extension/`. Many pin lines of `kernel/kernel.py` as strings — run
   BOTH this and pytest on every kernel change.
 - **`manager-*.test.js`** — the node supervisor (`bin/romp-manager`): restart
-  gating, the kernel registry, and the drain-poll handshake. Run:
+  gating, the kernel registry and its refusal to start two kernels on one state
+  root (`manager-registry.test.js`, whose stand-in kernel runs under `python3`
+  for the kernel lock's flock, with HOME and XDG_STATE_HOME floored under the
+  test's own directory), and the drain-poll handshake. Run:
   `node --test tests/manager-*.test.js`. The runner runs the files
   concurrently, so a file that starts a real manager takes its ports from
   `tests/manager-ports.js` (`freePort(__filename)`), which owns a disjoint
@@ -978,8 +1006,8 @@ the patterns, the scrub's cost and the hook end to end.
 **A lab kernel's environment is built from a list of names, and the file a
 relaunch reads from carries a shorter list.** Every module that boots a hermetic
 kernel (`bin/romp-kernel` under a lab's own `XDG_STATE_HOME`,
-`CLAUDE_CONFIG_DIR` and `ROMP_DIST_DIR`, at a free port with a synthetic serve
-token) builds its environment with `kernel_env` in `tests/test_ship_reship_served.py`,
+`CLAUDE_CONFIG_DIR` and `ROMP_DIST_DIR`, at a port reserved through
+`tests/lab_ports.py`, with a synthetic serve token) builds its environment with `kernel_env` in `tests/test_ship_reship_served.py`,
 never from a copy of the runner's. A run from a shell on a machine running romp
 carries the live kernel's exports, and a lab kernel that inherited them exited
 when the live manager restarted (`ROMP_MANAGER_PID`, the kernel's parent-death
@@ -991,7 +1019,7 @@ the suite sets for the run's children (`TMPDIR` the tests package's since
 `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`, `ROMP_SERVICE_ENV_FILE`,
 `ROMP_SERVICE_ENV`, `ROMP_CLAUDE_BIN` and `ROMP_CLI_SCOPE`; over those go the
 lab's roots and seams, any seam the lab adds by keyword, and a postal bus of its
-own that is never started (`ROMP_POSTAL_PORT` at a free port,
+own that is never started (`ROMP_POSTAL_PORT` at a port reserved under the lab,
 `ROMP_POSTAL_PEERS=0`, `ROMP_POSTAL_CLIENT_ONLY=1`). The served labs whose
 driver kills and relaunches the kernel (`test_ship_reship_served.py`,
 `test_dashboard_reload_served.py`) write the relaunch's command, environment and
@@ -1005,7 +1033,12 @@ its kernel's environment reaches the file; each served lab plants a probe name
 in that environment and checks the written file for its absence. To give a lab
 kernel another name of the runner's, add the name to the list with its reason
 beside it. `LabKernelEnv` and `RelaunchEnv` in `tests/test_ship_reship_served.py` pin
-both functions; the served legs check the file itself.
+both functions; the served legs check the file itself. The stanza also carries
+`waitFree`, a command the driver runs between its SIGKILL and the relaunch: it
+returns once the killed kernel's instance lock (`kernel.lock` in the lab's state
+root) is free. A SIGKILLed kernel releases that lock when it exits, the runner
+owns its process, and a kernel relaunched before that exit is refused with exit
+status 75, so the wait keys on the lock itself rather than on a sleep.
 
 `fixtures/` must stay SYNTHETIC: invented prompts, placeholder UUIDs, hostname
 `TESTHOST` — never real session data.

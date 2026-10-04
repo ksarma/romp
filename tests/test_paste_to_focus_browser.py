@@ -17,14 +17,13 @@ dev box with the extension installed, which is where ships are gated. All fixtur
 """
 import json
 import lab_dist
+import lab_ports
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -38,14 +37,6 @@ import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environm
 
 SID = "aaaaaaaa-1111-2222-3333-444444444444"
 REPLY = "The web session finished the notes-api login flow and every test passes now. Next up is the password reset path."
-
-
-def _free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
 
 
 DRIVER = r"""
@@ -130,6 +121,7 @@ class ServedPaste(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here) — the served paste needs them")
         cls.lab = tempfile.mkdtemp(prefix="paste-to-focus-")
+        cls.addClassCleanup(lab_ports.release, cls.lab)   # runs on a failed setUpClass too, which skips tearDownClass
         dist = os.path.join(cls.lab, "dist")
         lab_dist.copy_dist(dist)   # the checkout's ONE build of the bundles, copied under its lock (tests/lab_dist.py)
         cls.state = os.path.join(cls.lab, "xdg", "romp")
@@ -158,22 +150,16 @@ class ServedPaste(unittest.TestCase):
                         "message": {"role": "assistant", "model": "claude-fable-5-1",
                                     "content": [{"type": "text", "text": REPLY}],
                                     "stop_reason": "end_turn"}}) + "\n")
-        cls.port = _free_port()
+        cls.port = lab_ports.reserve(cls.lab)
         cls.token = "testtok-pastefocus"
         env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = open(os.path.join(cls.lab, "kernel.log"), "w")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=cls.klog, stderr=subprocess.STDOUT, env=env)
-        import urllib.request
-        for _ in range(120):
-            try:
-                urllib.request.urlopen("http://127.0.0.1:%d/healthz" % cls.port, timeout=1)
-                break
-            except Exception:
-                time.sleep(0.5)
-        else:
+        why = lab_ports.wait_owned(cls.kernel, env)
+        if why:
             cls.kernel.kill()
-            raise unittest.SkipTest("hermetic kernel never served /healthz here")
+            raise unittest.SkipTest("hermetic kernel never served /healthz here: " + why)
 
     @classmethod
     def tearDownClass(cls):
@@ -182,6 +168,7 @@ class ServedPaste(unittest.TestCase):
             cls.kernel.wait()
         if getattr(cls, "klog", None):
             cls.klog.close()
+        lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
     def _drive(self):
