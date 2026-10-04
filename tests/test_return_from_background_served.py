@@ -1426,7 +1426,7 @@ class ReturnFromBackground(unittest.TestCase):
     def test_phone_landscape_keyboard_hung_4s_the_composers_resize_handle_stays_clear_of_the_badge(self):
         self._composer_resize_surface("chromium")
 
-    # Round 3 of the review (2026-10-04, correctness-1 and regression-1): a cursor counts as a control only where the element sets it.
+    # Round 3 of the review (2026-10-04, correctness-1 and regression-1): a cursor counts as a control unless it equals the body's.
     # During a drag of the composer's resize handle the chat puts composer-resizing on the body (cursor: ns-resize), and during the tab
     # strip's, tabbar-resizing; every element that sets no cursor inherits it. At 94f85bca3 the loader's rctl and the recorder's chrome
     # both read the computed cursor, so mid-drag the loader's full-view sheet (#pane-spin) and every element outside the list counted
@@ -1438,8 +1438,8 @@ class ReturnFromBackground(unittest.TestCase):
     # left of a scroll mark), and fills the tab strip past its cap (the overflowing strip's tabs), so the strip stands at its cap and
     # the drag down grows it, moving the list's top and the pin with it. The badge must hold its place through the drag: its right
     # edge where it was, and its top as far below the list's top as before the drag. The dragged handle must be in the recorder's
-    # chrome in some record read between the press and the release, while the class is on the body: each handle's cursor equals its
-    # parent's then, so only its name in the recorder's CONTROL keeps it there (the loader's RCTL names it too, which the node cases
+    # chrome in some record read between the press and the release, while the class is on the body: each handle's cursor equals the
+    # body's then, so only its name in the recorder's CONTROL keeps it there (the loader's RCTL names it too, which the node cases
     # pin). _cue's chrome check runs on every record, so a recorder that read the inherited cursor fails there.
     def _handle_drag_surface(self, engine, shell, kind):
         sub = kind == "tabbar"

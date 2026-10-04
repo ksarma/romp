@@ -267,9 +267,9 @@ const flip = (hidden) => page.evaluate((h) => {
 // role, an action (data-act), a tabindex or draggable=true, the strip's and the composer's resize handles, or anything drawn with a
 // pointer or grab cursor or one of CSS's resize cursors, the keywords that end in -resize (the Feed's drag chip and the chat's
 // landing notice have their cursor and nothing else, and so has the composer's resize handle; ruling 3 at 79dce614c, 2026-10-04,
-// the same rule as the loader's rctl), where the element sets that cursor: where it differs from its parent's (round 3 of the
-// review, 2026-10-04: the body's class during a handle's drag gives every element that sets no cursor the drag's, so the whole
-// page read as chrome; the handles are named, since each one's cursor equals its parent's during its own drag). Each control's box is the part a
+// the same rule as the loader's rctl), unless that cursor equals the body's (round 3 of the review, 2026-10-04: the body's class
+// during a handle's drag gives the body the drag's cursor and every element that sets no cursor the same, so the whole page read
+// as chrome; the handles are named, since each one's cursor equals the body's during its own drag). Each control's box is the part a
 // person can see (round 2 of the review, 2026-10-03, correctness-1): cut by every ancestor whose overflow clips it, along its chain
 // of containing blocks (a fixed control escapes every ancestor that is not its containing block, an absolute one the ancestors
 // between it and its positioned containing block), so a tab the desktop strip scrolls out of view, or a pinned-notes row below that
@@ -330,6 +330,7 @@ const cueRec = () => {
     const out = [], hid = [], b = document.getElementById("pane-reconn"), stuck = [];
     // the badge's column: from its left edge, or from where its left edge is at the first place (8 px from the view's right) if that is further left
     const bb = b ? b.getBoundingClientRect() : null, colR = bb ? document.documentElement.clientWidth - 8 : 0, colL = bb ? Math.min(bb.left, colR - bb.width) : 0;
+    const bodyCursor = getComputedStyle(document.body).cursor;
     for (const el of Array.from(document.body.getElementsByTagName("*"))) {
       if (el === b || (b && b.contains(el)) || el === content) continue;
       const cs = getComputedStyle(el);
@@ -337,8 +338,8 @@ const cueRec = () => {
       // inside the content container only what a sticky or fixed element holds stays put; the rest scrolls under the badge
       if (within && (cs.position === "sticky" || cs.position === "fixed")) stuck.push(el);
       if (within && !stuck.some((p) => p.contains(el))) continue;
-      // a cursor counts where the element sets it, where it differs from its parent's (the body's own children compare with the body's)
-      if (!el.matches(CONTROL) && !(CURSOR.test(cs.cursor) && cs.cursor !== getComputedStyle(el.parentElement).cursor)) continue;
+      // a cursor counts unless it equals the body's (the cursor a handle's drag sets on the body counts nowhere)
+      if (!el.matches(CONTROL) && !(CURSOR.test(cs.cursor) && cs.cursor !== bodyCursor)) continue;
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height || cs.visibility === "hidden" || cs.display === "none") continue;
       const cls = typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split(/\s+/)[0] : "";

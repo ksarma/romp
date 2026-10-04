@@ -797,11 +797,12 @@ CONTENT.contains = (n) => inside(CONTENT, n);
 const attrOf = (t, n) => (t.attrs && Object.prototype.hasOwnProperty.call(t.attrs, n) ? t.attrs[n] : null);
 CONTENT.attrs = {}; CONTENT.getAttribute = (n) => attrOf(CONTENT, n); document.body.attrs = {}; document.body.getAttribute = (n) => attrOf(document.body, n);
 // add(parent, box [left, top, width, height], { position, cursor, sel, overflow, overflowX, overflowY, contain, transform, filter,
-// perspective, willChange, display, clientLeft, clientTop, clientWidth, clientHeight }): an element under `parent` (null: the body,
-// outside the list); `overflow` sets both axes; the four client values set its padding box (by default its whole box: 0, 0, its
-// width, its height), as a border or a scrollbar would
+// perspective, willChange, display, visibility, clientLeft, clientTop, clientWidth, clientHeight }): an element under `parent` (null:
+// the body, outside the list); `overflow` sets both axes; the four client values set its padding box (by default its whole box: 0, 0,
+// its width, its height), as a border or a scrollbar would; `visibility` is 'visible' unless its case sets it (a case that hides an
+// element and shows its child sets each, as CSS lets a child of a hidden element be visible)
 const add = (parent, box, o) => { o = o || {}; const e = { nodeType: 1, parent, box: box.slice(), sel: o.sel || '', own: o.cursor || null,
-  cs: { position: o.position || 'static', cursor: o.cursor || 'auto', visibility: 'visible', display: o.display || 'block',
+  cs: { position: o.position || 'static', cursor: o.cursor || 'auto', visibility: o.visibility || 'visible', display: o.display || 'block',
         overflowX: o.overflowX || o.overflow || 'visible', overflowY: o.overflowY || o.overflow || 'visible', contain: o.contain || 'none',
         transform: o.transform || 'none', filter: o.filter || 'none', perspective: o.perspective || 'none', willChange: o.willChange || 'auto' },
   get parentElement() { return this.parent || document.body; },
@@ -985,27 +986,30 @@ out({ atLoad, atPaint: at() });""")
     # The served legs reach the recorder's rule through one resize keyword, the composer's handle's ns-resize, so a recorder that
     # dropped col-resize and row-resize passed them. Here CSS's keywords run through both rules, the regular expression rctl tests in
     # the script _pane_spin returns and the recorder's CURSOR, executed in node, and each must count the same 17: pointer, grab,
-    # grabbing and the 14 resize cursors. Since round 3 (2026-10-04) both rules count a cursor only where the element sets it, where
-    # it differs from its parent's, and both name the two resize handles: the drag cases below execute rctl's half, and the served
-    # legs of the two handle drags (test_return_from_background_served.py, _handle_drag_surface) execute the recorder's; the text
-    # checks here keep the two rules one rule, and say nothing on their own about behaviour
+    # grabbing and the 14 resize cursors. Since round 3 (2026-10-04) both rules count a cursor unless it equals the body's (round 3's
+    # call 2 at 5445e1e31, in place of a comparison with the parent's), and both name the two resize handles: the drag cases and the
+    # inherited-cursor cases below execute rctl's half, and the served legs of the two handle drags
+    # (test_return_from_background_served.py, _handle_drag_surface) execute the recorder's; the text checks here keep the two rules
+    # one rule, and say nothing on their own about behaviour
     def test_the_served_recorder_counts_a_cursor_as_a_control_exactly_when_rctl_does(self):
         node = shutil.which("node")
         if not node:
             raise unittest.SkipTest("node not installed")
         js = km._pane_spin("content", "live-ask")
         script = js[js.index("<script>") + len("<script>"):js.index("</script>")]
-        mine = re.findall(r"function rctl\(e,s,u\)\{return \(e\.matches&&e\.matches\(RCTL\)\)\|\|\((/[^/\n]+/[a-z]*)\.test\(s\.cursor\)&&s\.cursor!==\(u\|\|getComputedStyle\(e\.parentElement\)\)\.cursor\);\}", script)
-        self.assertEqual(len(mine), 1, "rctl's cursor rule is found once in the loader script, compared with the parent's cursor")
+        mine = re.findall(r"function rctl\(e,s,b\)\{return \(e\.matches&&e\.matches\(RCTL\)\)\|\|\((/[^/\n]+/[a-z]*)\.test\(s\.cursor\)&&s\.cursor!==b\.cursor\);\}", script)
+        self.assertEqual(len(mine), 1, "rctl's cursor rule is found once in the loader script, compared with the body's cursor")
         self.assertEqual(script.count(".test(s.cursor)"), 1, "and it is the only cursor rule the loader script tests")
-        self.assertEqual(script.count("rctl(e,s,M&&M.get(e.parentElement))"), 1, "robs hands rctl the parent's style from the scan's map")
+        self.assertEqual((script.count("var B=getComputedStyle(d),"), script.count("rctl(e,s,B)"), script.count("rctl(")), (1, 1, 2),
+                         "robs reads the body's style once (d is the body) and hands it to rctl, its one caller")
         with open(os.path.join(HERE, "return_from_background_browser.mjs"), encoding="utf-8") as f:
             rec = f.read()
         theirs = re.findall(r"^\s*const CURSOR = (/[^/\n]+/[a-z]*);$", rec, re.M)
         self.assertEqual(len(theirs), 1, "the recorder's CURSOR is found once")
         self.assertEqual(re.findall(r"[\w.]+\.test\(cs\.cursor\)", rec), ["CURSOR.test(cs.cursor)"], "the recorder's control test reads CURSOR, and no other cursor rule")
-        self.assertEqual(rec.count("if (!el.matches(CONTROL) && !(CURSOR.test(cs.cursor) && cs.cursor !== getComputedStyle(el.parentElement).cursor)) continue;"), 1,
-                         "the recorder counts a cursor where it differs from the parent's, as rctl does (executed in the served handle drag legs)")
+        self.assertEqual((rec.count("const bodyCursor = getComputedStyle(document.body).cursor;"),
+                          rec.count("if (!el.matches(CONTROL) && !(CURSOR.test(cs.cursor) && cs.cursor !== bodyCursor)) continue;")), (1, 1),
+                         "the recorder counts a cursor unless it equals the body's, as rctl does (executed in the served handle drag legs)")
         rctl_list = re.findall(r"var RCTL='([^']*)'", script)
         control = re.findall(r'^\s*const CONTROL = "([^"]*)";$', rec, re.M)
         self.assertEqual((len(rctl_list), len(control)), (1, 1), "RCTL and the recorder's CONTROL are found once each")
@@ -1026,10 +1030,11 @@ out({ atLoad, atPaint: at() });""")
         self.assertEqual(sorted(o["rctl"]), sorted(counted), "rctl counts pointer, grab, grabbing and the 14 resize cursors, and no other keyword")
         self.assertEqual(sorted(o["recorder"]), sorted(o["rctl"]), "the served recorder counts exactly the keywords rctl counts")
 
-    # Round 3 (2026-10-04, correctness-1 and regression-1): a cursor counts only where an element sets it. During a drag of the
-    # composer's resize handle the chat puts composer-resizing on the body, and during a drag of the tab strip's, tabbar-resizing;
-    # each sets cursor: ns-resize there, and cursor inherits, so every element that sets no cursor of its own computes ns-resize
-    # (bodyCursor). At 94f85bca3 rctl tested the computed cursor, so mid-drag the loader's full-view sheet (#pane-spin, fixed over the
+    # Round 3 (2026-10-04, correctness-1 and regression-1): a cursor counts unless it equals the body's (round 3's call 2 at
+    # 5445e1e31). During a drag of the composer's resize handle the chat puts composer-resizing on the body, and during a drag of the
+    # tab strip's, tabbar-resizing; each sets cursor: ns-resize there, and cursor inherits, so every element that sets no cursor of
+    # its own computes ns-resize (bodyCursor), the body's cursor, which counts nowhere. At 94f85bca3 rctl tested the computed cursor
+    # alone, so mid-drag the loader's full-view sheet (#pane-spin, fixed over the
     # whole view, faded but shown), the viewer's sticky header and a scroll-marks column counted as controls, and the painted badge
     # left its place for the drag. Each drag: pointerdown (the class on the body, which the watch sees and scans for), the drag's
     # moves, pointerup. The composer's drag shrinks it: each move writes the text field's height, and the list's bottom follows the
@@ -1070,10 +1075,10 @@ out({ atPaint, d, bottom: CONTENT.getBoundingClientRect().bottom });""" % (json.
                 if cls == "composer-resizing":
                     self.assertEqual(o["bottom"], 764, what + ": the composer shrank 60 px and the list's bottom followed it")
 
-    # ...and the handle under the drag stays a control: during its own drag a handle's cursor (ns-resize, its own) equals its parent's
+    # ...and the handle under the drag stays a control: during its own drag a handle's cursor (ns-resize, its own) equals the body's
     # (the body's class), so only RCTL's naming keeps it counted. Each handle here lies under the badge's first place, across the page
     # (the landscape phone with the keyboard up puts the composer's there); the badge sits below it at the paint and must stay below
-    # it while the handle is dragged (with the parent rule and no naming, it went back to the first place, over the handle)
+    # it while the handle is dragged (with no naming, it went back to the first place, over the handle)
     def test_each_resize_handle_stays_a_control_during_its_own_drag(self):
         for cls, sel in (("composer-resizing", "#composer-resize"), ("tabbar-resizing", "#tabbar-resize")):
             with self.subTest(sel):
@@ -1086,38 +1091,72 @@ bodyCursor('auto'); attr(document.body, 'class', null); frame();
 out({ atPaint, mid, up: at() });""" % (json.dumps(sel), json.dumps(cls)))
                 below = {"top": "71px", "right": "8px", "painted": True}
                 self.assertEqual(o["atPaint"], below, sel + ": painted below the handle (56 + 7 + 8)")
-                self.assertEqual(o["mid"], below, sel + ": mid-drag the handle, whose cursor now equals its parent's, is still a control (RCTL names it)")
+                self.assertEqual(o["mid"], below, sel + ": mid-drag the handle, whose cursor now equals the body's, is still a control (RCTL names it)")
                 self.assertEqual(o["up"], below, sel + ": and after the drag")
 
-    # The cursor rule's residual (round 3's closing check, 2026-10-04): an element that only inherits a cursor is no control of its
-    # own; it counts through the element that sets the cursor, whose box holds it, unless it is drawn outside that box. The case runs
-    # both halves over a chip that sets a pointer cursor and matches no RCTL entry, with an absolute child that sets none: drawn
-    # outside the chip, over the first place, the child is not counted and the badge stays over it (the residual, disclosed); drawn
-    # inside the chip's box, it lies under the chip, which counts, and the badge goes below the chip. The text check holds the
-    # kernel's comment and the placement entry to stating the residual with its limit (the entry had stated it without the limit)
-    def test_an_element_that_only_inherits_a_cursor_counts_through_its_setter_unless_drawn_outside_its_box(self):
+    # Round 3's call 2 at 5445e1e31 (2026-10-04): a cursor is compared with the body's, not with the parent's, so an element that
+    # shows a pointer it inherits from a control counts wherever it is drawn. Under the parent comparison (5445e1e31's rctl) such an
+    # element counted only through the element that set the cursor, and three shapes left it counted nowhere: drawn outside its
+    # setter's box; under a setter with visibility:hidden, which the scan leaves out; and a sticky or fixed child of a setter inside
+    # the list that is neither, which the scan leaves out too. Each case puts the inheriting element (kid) over the badge's first place
+    # (52 to 77 down, 300 to 360 across), with no other control there or below it: it counts, and the badge goes below it (54 + 20 +
+    # 8). Its witness gives the setter a cursor that makes no control (text), and the badge keeps its first place, so the move is the
+    # inherited pointer's. Each is red under the parent comparison (the badge at 52 px with the pointer)
+    def _inherited(self, setter, kid):
         o = {}
-        for k, chip in (("outside", [200, 100, 190, 40]), ("inside", [200, 40, 190, 50])):
+        for k in ("pointer", "text"):
             o[k] = self._fit(r"""
-const chip = add(null, %s, { cursor: 'pointer' });                    // sets a pointer cursor; no RCTL entry matches it
-const kid = add(chip, [300, 54, 60, 20], { position: 'absolute' });   // sets none and inherits the pointer; over the first place (52 to 77)
-bodyCursor('auto');                                                    // computes each element's cursor: the child's is the chip's pointer
+const setter = add(%s, %s, Object.assign({ cursor: %s }, %s));            // sets the cursor; no RCTL entry matches it
+const kid = add(setter, [300, 54, 60, 20], %s);                           // sets none and inherits the setter's; over the first place
+bodyCursor('auto');                                                        // computes each element's cursor: the kid's is the setter's
 fire('romp:wsdown'); after(RHOLD_T);
-out({ atPaint: at(), kid: kid.cs.cursor });""" % json.dumps(chip))
-        self.assertEqual((o["outside"]["atPaint"], o["outside"]["kid"]), ({"top": "52px", "right": "8px", "painted": True}, "pointer"),
-                         "the child drawn outside the chip (100 to 140) inherits the pointer and is no control of its own: the badge stays over it")
-        self.assertEqual((o["inside"]["atPaint"], o["inside"]["kid"]), ({"top": "98px", "right": "8px", "painted": True}, "pointer"),
-                         "the child inside the chip's box: the chip counts, and the badge goes below it (40 + 50 + 8)")
+out({ atPaint: at(), kid: kid.cs.cursor, body: document.body.cs.cursor });""" % (setter[0], json.dumps(setter[1]), json.dumps(k), json.dumps(setter[2]), json.dumps(kid)))
+        return o
+
+    def _assert_inherited(self, o, what):
+        self.assertEqual((o["pointer"]["kid"], o["pointer"]["body"]), ("pointer", "auto"), what + ": the kid inherits the setter's pointer, and the body's cursor is auto")
+        self.assertEqual(o["pointer"]["atPaint"], {"top": "82px", "right": "8px", "painted": True},
+                         what + ": the kid shows a pointer the body's cursor does not, so it counts and the badge goes below it (54 + 20 + 8); under the "
+                         "parent comparison it counted nowhere and the badge stayed at 52 px, over it")
+        self.assertEqual((o["text"]["kid"], o["text"]["atPaint"]), ("text", {"top": "52px", "right": "8px", "painted": True}),
+                         what + ": the witness, a text cursor inherited the same way, makes no control: the first place")
+
+    def test_an_element_that_inherits_a_pointer_counts_when_drawn_outside_its_setters_box(self):
+        # an absolute child drawn outside the box of the element that sets its cursor (the setter at the page's left, 300 to 340 down)
+        self._assert_inherited(self._inherited(("null", [10, 300, 100, 40], {}), {"position": "absolute"}), "drawn outside its setter's box")
+
+    def test_an_element_that_inherits_a_pointer_counts_under_a_hidden_setter(self):
+        # the setter is hidden (visibility:hidden, so the scan leaves it out) and its child is shown (visibility:visible), inside its box
+        self._assert_inherited(self._inherited(("null", [200, 40, 190, 50], {"visibility": "hidden"}), {"visibility": "visible"}), "under a hidden setter")
+
+    def test_an_element_that_inherits_a_pointer_counts_as_a_sticky_or_fixed_child_of_a_setter_in_the_list(self):
+        # the setter sits in the list and is neither sticky nor fixed, so it scrolls and the scan leaves it out; its child is sticky,
+        # or fixed, and stays put, so the scan reads it
+        for pos in ("sticky", "fixed"):
+            with self.subTest(pos):
+                self._assert_inherited(self._inherited(("CONTENT", [200, 40, 190, 300], {}), {"position": pos}), "a " + pos + " child of a setter in the list")
+
+    # ...and the texts state that rule: the kernel's comment, the placement entry, the recorder's comments and this module's own state
+    # that a cursor counts unless it equals the body's, and none states the parent comparison or the residual it left (the old
+    # wording is assembled at run time, so this case does not find itself)
+    def test_the_texts_state_the_body_comparison_and_no_residual(self):
         root = os.path.dirname(HERE)
-        with open(os.path.join(root, "kernel", "kernel.py"), encoding="utf-8") as f:
-            src = f.read()
-        with open(os.path.join(root, "upstream", "2026-10-02-reconnect-badge-below-pane-header.md"), encoding="utf-8") as f:
-            entry = f.read()
+        def read(*p):
+            with open(os.path.join(root, *p), encoding="utf-8") as f:
+                return f.read()
+        src = read("kernel", "kernel.py")
         comment = re.sub(r"\s*\n\s*# ", " ", src[src.index("def _pane_spin"):src.index("def _chat_page")])
-        clause = "An element that only inherits a cursor counts through the element that sets it, whose box holds it unless it is drawn outside that box."
-        for what, text in (("the kernel's comment", comment), ("the placement entry", entry)):
+        entry = read("upstream", "2026-10-02-reconnect-badge-below-pane-header.md")
+        rec = re.sub(r"\s*\n\s*// ", " ", read("tests", "return_from_background_browser.mjs"))
+        mine = re.sub(r"\s*\n\s*# ", " ", read("tests", "test_pane_loader_reconnect.py"))
+        old = ["counts through the element " + "that sets it", "differs from its " + "parent's", "only where the element " + "sets it",
+               "only where an element " + "sets it", "counting only where the element " + "sets it"]
+        for what, text, rule in (("the kernel's comment", comment, "unless that cursor equals the body's"), ("the placement entry", entry, "unless that cursor equals the body's"),
+                                 ("the recorder's comments", rec, "unless that cursor equals the body's"), ("this module's comments", mine, "unless it equals the body's")):
             with self.subTest(what=what):
-                self.assertIn(clause, text, what + " states the residual with its limit, as the case above runs it")
+                self.assertIn(rule, text, what + " states the body comparison")
+                for o in old:
+                    self.assertNotIn(o, text, what + " still states the parent comparison or its residual: " + o)
 
     def test_a_control_in_a_fixed_element_in_the_list_moves_the_badge_off_it(self):
         o = self._fit(r"""
