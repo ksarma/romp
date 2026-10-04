@@ -145,9 +145,9 @@ post({ romp: 'wsState', app: 'chat', state: 'down' });
 out.afterMute = { stored: STORE['romp:errFilters'], n: notes().length,
   red: EL['rail-errs']._cls.has('has'),
   emptyText: EL['rerr-list'].children[0].textContent };
-// 11) unmuting shows what happened while muted, and the live-down cue the mute held dark re-reddens the bell (the chat pane
-// is still down). The popover is open (since step 5), so the entry it now lists is seen: an entry is seen when an open Log
-// shows it (2026-10-04); ArrivalWhileOpen reads an unmute with the Log closed
+// 11) unmuting shows what happened while muted, and the live-down cue the mute held dark re-reddens the Log's triangle (the
+// chat pane is still down). The popover is open (since step 5), so the entry it now lists is seen: an entry is seen when an
+// open Log shows it (2026-10-04); ArrivalWhileOpen reads an unmute with the Log closed
 EL['rerr-fgrid'].children[0].fire('click');
 out.afterUnmute = { red: EL['rail-errs']._cls.has('has'), rows: EL['rerr-list'].children.length,
   chip: EL['rerr-list'].children[0].children[0].textContent, num: bellNum() };
