@@ -146,11 +146,13 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   to stop less one whatever its step, bounded or not: every step but a positive one then raises, and a positive one
   returns a value in that span (random.randrange(40000, 50000, k) is 40000-49999, and so are
   random.randrange(40000, 50000, step=k) and random.randrange(40000, stop=50000, step=k)). Any other randrange with an
-  unbounded step is not read (where the two intervals overlap, start can lie above stop, and a negative step then
-  returns values above stop less one). A sum or difference with an unbounded operand counts when one of its operands
-  alone is a constant expression (one interval() bounds with no unknown in it) whose value is in the range, found
-  through str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so is 40000 * 1 +
-  i (offset_base()); one with no such operand (base + i) is not read.
+  unbounded step is not read. Where start's highest value lies above stop's lowest, start can lie above stop, and a
+  negative step then returns values above stop less one. Where start's highest value is stop's lowest (a start of 40000
+  to 40999, a stop of 40999 to 41998), every value the call can return lies in start to stop less one, but the census
+  reads only a start below stop for every value, so that call is not read either. A sum or difference with an unbounded
+  operand counts when one of its operands alone is a constant expression (one interval() bounds with no unknown in it)
+  whose value is in the range, found through str() and int() and down a chain of sums and differences: 40000 + i is
+  built on 40000, and so is 40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -1617,9 +1619,11 @@ class Plants(unittest.TestCase):
         """randrange(start, stop, step) with a step the census cannot bound, given by position or by its name, the stop
         by either too: read as start to stop less one when start's interval lies wholly below stop's, since every step but
         a positive one then raises and a positive one returns a value in that span. The last red plant computes start
-        and stop, start's interval ending one below stop's. The green twin's intervals overlap (start lo to lo + 2999,
-        stop lo + 1000 to lo + 1999), so start can lie above stop, where a negative step returns values above stop less
-        one: it is not read."""
+        and stop, start's interval ending one below stop's. The first green twin's intervals overlap (start lo to
+        lo + 2999, stop lo + 1000 to lo + 1999), so start can lie above stop, where a negative step returns values
+        above stop less one: it is not read. The second twin's intervals share one value (start lo to lo + 999, stop
+        lo + 999 to lo + 1998): start never lies above stop and every value the call can return lies in start to stop
+        less one, but start can equal stop, so start is not below stop for every value, and it is not read either."""
         lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
         for label, src, top in (
                 ("the step by position", 'port = random.randrange(%d, %d, k)\n' % (lo, hi), hi - 1),
@@ -1633,6 +1637,9 @@ class Plants(unittest.TestCase):
         with self.subTest("start's interval and stop's overlap"):
             self.assertGreen("test_x.py", 'port = random.randrange(%d + os.getpid() %% 3000, %d + os.getpid() %% 1000, k)\n'
                              % (lo, lo + 1000))
+        with self.subTest("start's highest value is stop's lowest"):
+            self.assertGreen("test_x.py", 'port = random.randrange(%d + os.getpid() %% 1000, %d + os.getpid() %% 1000, k)\n'
+                             % (lo, lo + 999))
 
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
