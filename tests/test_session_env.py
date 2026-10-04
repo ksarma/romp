@@ -321,7 +321,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3325,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3341,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -367,7 +367,19 @@ COUNTS = {
     #                                _price_feed_first, _price_feed_clip, _price_feed_error_class, _price_feed_status,
     #                                _price_feed_line, _price_rate_value and the nested cache_rate of _refresh_remote_prices's work
     #                                in kernel/kernel.py, the census's own derivation on the merged tree; no lambda and no other
-    #                                entry moved
+    #                                entry moved; then on the kernel instance lock's branch as 3328, over fork main
+    #                                e015c014e's 3316: the lock adds _kernel_lock_path, _kernel_lock_write, _kernel_lock_read,
+    #                                _kernel_lock_pid_alive, _kernel_lock_when, _kernel_lock_wait with its nested _expired,
+    #                                _kernel_lock_refusal, _kernel_lock_holder_why, _kernel_lock_acquire, _kernel_lock_refuse and
+    #                                _kernel_lock_announce_drain to kernel/kernel.py, the census's own derivation; no lambda and no
+    #                                other entry moved; then at fork PR 947's round-1 fix as 3331: every failure of the lock step
+    #                                a named refusal adds _kernel_lock_parse, _kernel_lock_fault and _kernel_lock_label to
+    #                                kernel/kernel.py, the census's own derivation; no lambda and no other entry moved; then at
+    #                                fork PR 947's round-1 closing fix as 3332: making the lock step's stderr lines best-effort
+    #                                adds _kernel_lock_say to kernel/kernel.py, the census's own derivation; no lambda and no
+    #                                other entry moved; then at fork PR #878's merge of fork main df34f7f25 as 3341, both sides'
+    #                                functions kept (fork PR 947's 16 and fork PR #878's 9 over 3316), the census's own derivation
+    #                                on the merged tree; no lambda and no other entry moved
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
