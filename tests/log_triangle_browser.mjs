@@ -6,7 +6,8 @@
 //   unreadOtherTab  the same, after a tap on another pane tab
 //   openSeen        the Log opened by a tap on the triangle, which marks every shown entry seen
 //   closedSeen      the Log closed again
-//   downUnread      a pane's socket reported down ({romp:'wsState'}, the shims' message): a new entry and a live problem
+//   downUnread      a pane's socket reported down ({romp:'wsState'}, the shims' message), then its redial reported failed
+//                   ({romp:'wsFail'}, the shim's word for a dial that closed without opening): a new entry and a live problem
 //   downOpen        the Log opened again: everything seen, the socket still down
 //   upOpen          the socket reported up, the Log still open
 //   openNew         one entry logged with the Log still open: it lands seen, with the mark an opening gives what it shows
@@ -159,6 +160,10 @@ try {
   // a live problem: the chat pane's socket reported down, as its shim reports it (logs one entry and holds the cue while down)
   await until("the chat pane's socket up", () => (window.__labWs || []).indexOf("chat:up") >= 0, null, 20000);
   await page.evaluate(() => window.postMessage({ romp: "wsState", app: "chat", state: "down" }, "*"));
+  // then the shim's word that the pane's redial closed without opening, so the step reads one unread entry from either Log: one
+  // that writes the connection-lost entry when a reconnect fails writes it on this word, and one that writes it at the drop has
+  // written it already and has no listener for the word
+  await page.evaluate(() => window.postMessage({ romp: "wsFail", app: "chat" }, "*"));
   await has(true);
   await snap("downUnread");
   await page.click("#merr");
