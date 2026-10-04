@@ -436,10 +436,10 @@ jobs:
     # job's rule requires over its own 600 s per-test bound. Linux, 55: the slowest Linux job
     # among the finished runs on main, on the batch branches and on the branches of the open and
     # merged PRs (a run cancelled at a cap has no measured length), read at 03:32 UTC on
-    # 2026-10-04, took 40 min 43 s, in run 37128151383 (the pull_request run of batch PR #960,
-    # the batch that landed fork PR 940, on 2026-10-03, job 111217616222; its Run bats step
-    # 2365 s; it concluded success); 40 min 43 s plus 10 minutes is 50 min 43 s, so 55. macOS,
-    # 60: the slowest macOS job among the same runs took 48 min 1 s, in run 37045964763 (a
+    # 2026-10-04, took 40 min 43 s, in run 37128151383 (batch PR #960's pull_request run on
+    # 2026-10-03, job 111217616222; its Run bats step 2365 s; it concluded success; that batch
+    # landed fork PR 940 on 2026-10-04); 40 min 43 s plus 10 minutes is 50 min 43 s, so 55.
+    # macOS, 60: the slowest macOS job among the same runs took 48 min 1 s, in run 37045964763 (a
     # dispatch of fork PR 940's branch on 2026-10-02, job 110967357963; its Run bats step 2856 s;
     # it concluded failure, which still gives a measured length); 48 min 1 s plus 10 minutes is
     # 58 min 1 s, so 60. Fork PR 940, since merged, set this line, at 60 on macOS and 50 on
