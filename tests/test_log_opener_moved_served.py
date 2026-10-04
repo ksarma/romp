@@ -8,10 +8,12 @@ palette's log.open and the mobile bar's #merr are unchanged; the Log's own behav
 Two guards: SourcePins runs everywhere; ServedOpener boots the hermetic kernel, loads the dashboard, and drives
 the gear's button in the settings iframe, the /settings page that hosts the gear since 2026-09-10 (skips loudly
 without the extension deps or a Playwright browser). It also reads the button's unread count in both themes: the phone
-triangle's red in each (feed.css --log-unread, 2026-10-04), at 3:1 or better on the count's ground. An opacity under 1 on
-any box from the count up to the settings page's root fails that read loudly, since it dims the colours the read takes
-(the round-2 review, 2026-10-04): a mutant that plants an opacity of 0.3 on the count, on its button (the count's ground),
-on body or on html turns it red through the ground error that names the box, not through the ratio.
+triangle's red in each (feed.css --log-unread, 2026-10-04), at 3:1 or better on the count's ground. An opacity under 1, a
+filter other than none or a mix-blend-mode other than normal on any box from the count up to the settings page's root fails
+that read loudly, since each changes how the colours the read takes are drawn (the round-2 review, 2026-10-04): a mutant
+that plants an opacity of 0.3 on the count, on its button (the count's ground), on body or on html, or
+`filter: opacity(.45)` or `mix-blend-mode: multiply` on the count, on its button or on html, turns it red through the
+ground error that names the box and the property, not through the ratio.
 All fixtures synthetic.
 """
 import inspect
@@ -149,14 +151,18 @@ const readCount = () => feed.evaluate(async () => {
     }
   }
   if (!ground && !groundError) groundError = "no box from the count up has an opaque background";
-  // the dimming read (the round-2 review, 2026-10-04): an opacity under 1 on any box from the count up to this document's
-  // root, body and html among them, dims the count against its ground, or the count and its ground together against what
-  // is behind them, so the two computed colours are not what the screen shows; the first one is named and the ratio is
-  // never measured (an unreadable opacity fails the same way). The settings page is an iframe: the shell's boxes around
-  // it (#f-settings and up) belong to another document, and this read does not reach them
+  // then the read of how the boxes are drawn (the round-2 review, 2026-10-04, which ruled in the filter and the blend mode
+  // beside the opacity): an opacity under 1, a computed filter other than none or a mix-blend-mode other than normal on any
+  // box from the count up to this document's root, body and html among them, changes how the count is drawn against its
+  // ground, or the count and its ground together against what is behind them, so the two computed colours are not what
+  // the screen shows; the first such box is named with the property and the ratio is never measured (an unreadable value
+  // fails the same way). The settings page is an iframe: the shell's boxes around it (#f-settings and up) belong to
+  // another document, and this read does not reach them
   for (let el = n; el && !groundError; el = el.parentElement) {
-    const op = getComputedStyle(el).opacity;
-    if (!(parseFloat(op) >= 1)) groundError = "an opacity of " + op + " on " + tagOf(el);
+    const st = getComputedStyle(el);
+    if (!(parseFloat(st.opacity) >= 1)) groundError = "an opacity of " + st.opacity + " on " + tagOf(el);
+    else if (st.filter !== "none") groundError = "a filter of " + st.filter + " on " + tagOf(el);
+    else if (st.mixBlendMode !== "normal") groundError = "a mix-blend-mode of " + st.mixBlendMode + " on " + tagOf(el);
   }
   return { text: n.textContent, hidden: n.hidden, color: getComputedStyle(n).color, ground, groundOf, groundError,
            light: document.body.classList.contains("theme-light"), settled, animations: mine.length };

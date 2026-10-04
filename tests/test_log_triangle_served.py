@@ -34,9 +34,10 @@ every step as the computed background of the first box from #merr up whose backg
 ratio is asserted at the steps where the triangle is marked and the Log closed (unread, unreadOtherTab, downUnread,
 lightUnread). Not at downOpen: the Log's dimmed overlay (#rerr-back) covers the bar there, so the bar's own background is
 not what sits behind the triangle on screen. A ground the walk cannot read (no opaque box, a translucent one, a background
-image) fails the leg at those steps; it never skips the ratio. So does an opacity under 1 on any box from #merr up to the
-document's root (the round-2 review, 2026-10-04): it dims the triangle, or the triangle and its ground together, so the
-two computed colours the ratio is taken from are not what the screen shows.
+image) fails the leg at those steps; it never skips the ratio. So does an opacity under 1, a computed filter other than
+none or a mix-blend-mode other than normal on any box from #merr up to the document's root (the round-2 review,
+2026-10-04): each changes how the triangle, or the triangle and its ground together, are drawn, so the two computed
+colours the ratio is taken from are not what the screen shows.
 
 Red at the base tree in every engine at the first unread step (the computed colour there is the action grey). A mutant
 that restores the old precedence (the selector back to `#merr.has`) turns the dark steps red; one without the light rule
@@ -45,8 +46,9 @@ turns the light step red; one that leaves an entry that arrives with the Log ope
 before 2026-10-04), or marks only the newest of them, turns the unmutedOpen step red; one that recolours the bar toward
 the red (either theme's #mtabs background) turns that theme's contrast assertion red; one that paints the push bell with
 the triangle's red (a sibling selector on the triangle's rule) turns the bell's colour assertion red; one that plants an
-opacity of 0.3 on the bar (#mtabs), on the triangle itself, on body or on html turns the ground assertion red at the
-first contrast step, through the groundError that names the box, not through the ratio.
+opacity of 0.3 on the bar (#mtabs), on the triangle itself, on body or on html, or `filter: opacity(.45)` or
+`mix-blend-mode: multiply` on the bar, on the triangle or on body, turns the ground assertion red at the first contrast
+step, through the groundError that names the box and the property, not through the ratio.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), its port and its wait from tests/lab_ports.py, a
