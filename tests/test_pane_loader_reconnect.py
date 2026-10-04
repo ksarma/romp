@@ -1378,7 +1378,7 @@ out({ atPaint, scrolled, reads: STYLE_READS - reads });""")
     # whole page while the badge was painted, one style read per element, and a chat changes the page at each second's tick and at
     # each keystroke. Now a change or a scroll asks for one placement at the next animation frame; the watch observes the list's own
     # children and attributes, each sticky or fixed element in it, and the page outside it, never the rest of the list's content;
-    # and only a change that can add a control scans again (an element added to an element the last scan did not hold, or an
+    # and only a change that can add a control scans again (an element added inside no control the last scan held, at any depth, or an
     # attribute changed on an element the last scan did not hold or that holds elements), every other one re-reads the boxes. A scan reads every element's style once and
     # the body's (since round 3, which compares the cursor of each of the body's own children with the body's), and the placement reads
     # the list's own once more, the scroll-area test, so a placement with no scan makes one read.
@@ -1528,6 +1528,27 @@ out({ cursors: [chip.cs.cursor, ico.cs.cursor], within, reaching, unheld });""")
         self.assertEqual(o["within"], {"reads": 1, "scanned": False}, "an icon written into the span inside the chip, within the chip's box: a re-read, no scan")
         self.assertIs(o["reaching"]["scanned"], True, "an element written into the span that reaches outside the chip: a scan")
         self.assertIs(o["unheld"]["scanned"], True, "the same write into a span of an element no scan holds: a scan")
+
+    # ...and no text states the rule as it stood before rheld (the round-3 closing check: a comment in this module still said an element
+    # added to an element the scan did not hold scans, which the case above contradicts: the span is such an element, and the write
+    # into it re-reads). The census covers the kernel's comment, the placement entry and this module's comments, in the scan's words and
+    # the entry's; the old wording is assembled here, so this check does not find itself
+    def test_no_text_states_the_added_element_rule_from_before_rheld(self):
+        root = os.path.dirname(HERE)
+        with open(os.path.join(root, "kernel", "kernel.py"), encoding="utf-8") as f:
+            src = f.read()
+        with open(os.path.join(root, "upstream", "2026-10-02-reconnect-badge-below-pane-header.md"), encoding="utf-8") as f:
+            entry = f.read()
+        with open(os.path.abspath(__file__), encoding="utf-8") as f:
+            mod = f.read()
+        texts = (("the kernel's comment", src[src.index("def _pane_spin"):src.index("def _chat_page")]), ("the placement entry", entry), ("this module", mod))
+        old = ["an element added to an element the last " + w + " did not hold" for w in ("scan", "search")]
+        for what, text in texts:
+            flat = re.sub(r"\s*\n\s*# ", " ", text)
+            for o in old:
+                with self.subTest(what=what, old=o):
+                    self.assertNotIn(o, flat, what + " states the rule before rheld: an element added inside a held control at any depth re-reads "
+                                                    "when it stays within that control's visible box")
 
     # Ruling 2 at 79dce614c (2026-10-04): an element added inside a held control re-reads only when every box of the added subtree lies
     # inside the part of that control a person can see (its box cut by the ancestors that clip it, rvis); one that reaches outside it,
