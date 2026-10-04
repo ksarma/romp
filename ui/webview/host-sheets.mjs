@@ -1,0 +1,326 @@
+// Every stylesheet a page of either host loads, DERIVED from the page assembly rather than typed as a pair or listed off a
+// directory: the population of the closed set over the figure control's sheet rules (ui/webview/file-figure-open.test.ts and
+// tools/markdown-viewer-plan-linknav.test.mjs) and of the Outline button's census (ui/webview/fileview-parity.test.ts,
+// ui/webview/file-view-outline.test.ts). The file review's round 10, correctness-1 with regression-5 and correctness-5: the set
+// was closed over styles.css and feed.css while the Files page loads ui/webview/files-pane.css third, after styles.css, so a
+// reveal planted there left every home green and the control painting in print; and a flat listing of ui/webview is a wider
+// typed bound, not the population, since the kernel inlines three blocks of its own that no listing of the directory reads: two
+// constants the pages name (THEME_CSS, into every page that takes no arguments, and the chat's _CHAT_MOBILE_CSS, string constants
+// of kernel/kernel.py) and the style block the pane spinner helper writes into the served HTML of the chat, feed, sessions and
+// waiting pages (_pane_spin, carrying _LOADER_CSS; the file review's round 11, kernel-1 with extra6-1, extra7-1 and tests-1:
+// the block had stood outside the read with every pin green, excused by this header as one a helper adds after the page is
+// served, which is false, since the kernel writes it into the response body).
+//
+// The derivation, each part read off the tree's own source so a change to the assembly moves the population:
+//   * the kernel's served pages are the `def _<name>_page(...)` functions of kernel/kernel.py whose `)` closes on `:` at the end
+//     of the def's line, whatever their parameters (a signature wrapped across lines included: the chat, the feed, the sessions
+//     pane, the waiting pane, the Files pane, the settings page and the timeline, and the chat's history page and the too-large
+//     notice, which take arguments and load no sheet today; a read keyed on an empty signature had left those two outside the
+//     derivation with no failure to name it), and a page def at column zero in any other shape (a return annotation, a `)`
+//     inside a default, a trailing comment after the colon, an async def) fails by name, since a page the read drops would take
+//     its sheets out of the population silently (the file review's round 11, correctness-1 with regression-1 and extra7-2: the
+//     annotated and the `)`-in-default shapes had left the read with no failure, and the header had said every page was read
+//     whatever its parameters); the head is matched wherever its line stands, so a def-shaped line at column zero inside a literal
+//     (a module-level docstring, a page's own template) is read as a page too, a phantom that can add sheets to the population
+//     and takes no page and no sheet out of it, a shape this reader discloses and does not refuse; each with the function's own
+//     text, the lines up to the first statement at column zero outside a
+//     triple-quoted literal (a column-zero line inside one is the template's own text, so a constant the page names after it is
+//     read; the body had ended at that line whether or not a literal was open), its comment lines dropped so a sheet a comment
+//     mentions is not read as one the page loads; from each: every `/dist/<name>.css` it
+//     links, a bundle vscode-extension/esbuild.js builds from ui/webview/<name>.css (the entry list is read and a link with no
+//     entry fails); every `(UI / "webview" / "<name>.css").read_text()` it writes into a `<style>`; and every module-level
+//     `<NAME>_CSS` constant it names, whose text is read from kernel.py by its assignment (a triple-quoted literal, or a
+//     parenthesised run of double-quoted literals with comment lines between them, decoded as Python decodes them);
+//   * the helpers a page body calls are followed one level: each `_<name>(` in the body whose `def _<name>(...)` text carries
+//     either tag, `<style` or `</style` in any letter case, is read or refused: the run of literals from `"<style>` to `</style>"`
+//     and every `<NAME>_CSS` constant it concatenates are read into
+//     the page's sheets under `kernel/kernel.py _<name>`, in served order, one run per helper, and a run this reader cannot
+//     decode fails by name (a closing tag with no opening literal this reader finds among them: an opening tag held in a module
+//     constant or split across two literals; the file review's round 14, extra6-2: the detection read the opening tag alone, so
+//     such a helper returned no entry and its block stood outside the population): a `<style` anywhere else in the helper's raw body, in any letter case (a second block in its own
+//     literal, single- or double-quoted, `<STYLE>` as much as `<style>`, before or after the run, or a mention in a docstring or a
+//     trailing comment, refused too, the module's over-refusal policy; the run itself is the lower-case `"<style>` literal kernel.py
+//     writes, so a helper whose only block is in another case fails by name too, in place of standing outside the population), a run formatted by a `%` or by ANY method call (`.format(`, `.format_map(`, `.__mod__(`, `.replace(`,
+//     `.substitute(`, whatever the whitespace or line break around the dot and the paren) standing anywhere after its closing
+//     literal in the helper's body outside a literal or a comment, and ANY `str.<method>(` standing before its opening literal
+//     (`str.format(`, `str.format_map(`, `str.__mod__(`, `str.replace(` or any other, the run passed as the call's first argument;
+//     a method called on some other value before the run, `"%d".__mod__(3)`, formats nothing of the run and decodes, and a
+//     `str.<method>(` on some other value there, `str.maketrans(...)`, is over-refused loudly; the file review's round 14,
+//     extra6-1: the arm had named three methods, so `str.replace(run, ...)` decoded to its placeholder text silently), the operator applied to the run's parenthesised
+//     expression being the kernel's house shape (the pane spinner's block, `_pane_spin` with _LOADER_CSS folded in, on the chat,
+//     feed, sessions and waiting pages; the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block was
+//     served with the page and outside the read, so a reveal planted in _LOADER_CSS or in the helper's own literal left every
+//     home green; round 13, correctness-1 with kernel-3 and extra8-1: the refusal had named two spellings, `%` and `.format(`,
+//     so a run formatted by format_map, by a spaced .format, by .replace or by str.format(run, ...) decoded to its placeholders
+//     silently; round 13, kernel-1 with extra8-2: a second block in its own literal had been dropped from the population
+//     silently while the docstring said it failed by name; the letter case and the anchor on `str` joined in the author's closing
+//     pass that followed the fixes for the file review's round 13, where an upper-case second block had passed both reads and a
+//     `.__mod__(` on another value before the run had been refused as the run's);
+//   * the VS Code host's webviews are built in vscode-extension/src/extension.ts, and every `Uri.joinPath(extUri, "dist",
+//     "<name>.css")` there is a link to the same bundle;
+//   * every other `.css` a page body or the extension names must be one of those (a link from anywhere else fails loudly rather
+//     than falling outside the read), and every `.css` under ui/webview must be loaded by some page (a sheet no page loads by a
+//     form this reader knows fails naming the sheet, so the listing, the wider bound, is covered and never silently exceeded).
+// Outside the read, a bound the homes state and do not read: katex's vendored sheet (`@import "katex/dist/katex.min.css"` in
+// styles.css and feed.css, inlined into the bundles by esbuild; third-party, under node_modules, outside the tree), the rules a
+// template writes into its own HTML (the settings page's transparent background, the too-large notice's body rule, the
+// extension's zoom rule), the style element a script creates after the page is served (palette.ts's and shortcuts-modal.ts's
+// elements, the timeline view's own, the shim's notices set through style.cssText), the landing shell (`_landing`, not a
+// page function: its boot splash and notice blocks inline _LOADER_CSS, _STALE_CSS, _UPD_CSS and _RDRIFT_CSS, and the panes it
+// frames are documents of their own), and what a page body does to a sheet's text before serving it: this reader holds every
+// sheet source as its source spells it (a helper's run, a live-read sheet's file, a constant's assignment) and reads nothing
+// the page body applies to that text at the call site (a `%` or `.format(` on a helper's return or on a constant, a `.replace(`
+// or any other call on it, a `.read_text()` result transformed in the page), an open class of Python expressions no regex
+// closes, so such a page would serve text the population does not hold with every pin green (the file review's round 13,
+// kernel-2; no page at this head does any of it). On the helper side, outside the read the same way and an open class too: any
+// callable other than a `str.<method>(` taking the run as an argument before or around it (a module function, `operator.mod`,
+// the builtin `format(run, ...)`, an alias of a str method, `f = str.format` then `f(run, ...)`, and `getattr(run, "format")(...)`),
+// and after the run a subscript or a repetition on it (`(run)[7:]`, `(run) * 2`), which the after-the-run class, a `%` or a
+// method call, does not cover (round 13, correctness-1 with kernel-3 and extra8-1, and the file review's round 14, extra6-1,
+// disclosed); and a helper whose opening and closing tags both come from module constants, or are both assembled by a call
+// (`_OPEN + css + _CLOSE`), whose text carries neither tag, so it returns no entry and its block stands outside the population
+// (the file review's round 14, extra6-2, the bound, pinned by a tree that returns nothing). None of these is in kernel.py.
+// A plain module with no dependency beyond node's fs and path, imported by the .ts tests through the webview test bundle
+// (ui/webview/host-sheets.d.mts types it) and by tools/*.test.mjs directly; it lives under ui/ for the reason
+// ui/webview/css-rules.mjs states in its header.
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+const fail = (why) => { throw new Error('host-sheets: ' + why); };
+
+/** A module-level string constant of kernel.py by name, as Python reads it: `NAME = """..."""` (taken raw, and a backslash in
+ *  it fails, since this reader decodes no escape in that form) or `NAME = (` followed by lines each holding one double-quoted
+ *  literal with an optional trailing comment, blank and comment lines between, closed by a `)` at column zero or by a `)` at the
+ *  end of the last literal's line (kernel.py closes _LOADER_CSS and the landing shell's _STALE_CSS, _UPD_CSS and _RDRIFT_CSS the
+ *  second way and _CHAT_MOBILE_CSS with the lone `)`, and the reader had failed on every run of the second form; the file review's
+ *  round 11, extra6-1 with extra7-1), any other line failing by name and a run that never closes failing too. */
+export function pyStringConstant(src, name) {
+  const at = src.indexOf('\n' + name + ' = ');
+  if (at < 0) fail(name + ' is not assigned at column zero of kernel.py');
+  const start = at + 1 + name.length + 3;
+  if (src.startsWith('"""', start)) {
+    const end = src.indexOf('"""', start + 3);
+    if (end < 0) fail(name + "'s triple-quoted literal never closes");
+    const text = src.slice(start + 3, end);
+    if (text.includes('\\')) fail(name + "'s triple-quoted literal carries a backslash escape this reader does not decode");
+    return text;
+  }
+  if (src[start] === '(') {
+    let out = '';
+    for (const line of src.slice(start + 1).split('\n')) {
+      const t = line.trim();
+      if (t === '' || t.startsWith('#')) continue;
+      if (/^\)\s*(?:#.*)?$/.test(line)) return out;                                   // a lone `)` at column zero
+      const lit = /^("(?:[^"\\]|\\.)*")\s*(\))?\s*(?:#.*)?$/.exec(t);
+      if (!lit) fail(name + ' holds a line this reader has no rule for: ' + JSON.stringify(t.slice(0, 60)));
+      out += JSON.parse(lit[1].replace(/\\'/g, "'"));
+      if (lit[2]) return out;                                                          // `)` on the last literal's line
+    }
+    fail(name + "'s parenthesised run never closes");
+  }
+  fail(name + ' is assigned in a form this reader has no rule for (a triple-quoted literal or a parenthesised run)');
+}
+
+/** The lines of a function's body after its def head, `from` the index of the first line after it: indented, blank and
+ *  column-zero comment lines, and any line while a triple-quoted literal is open (an odd count of `"""` or of `'''` so far, each
+ *  delimiter counted on its own over the lines that are not comments, so a `"""` inside a `'''` literal or inside a one-line
+ *  string would miscount, shapes no page body has), up to the first column-zero non-comment line outside a literal. Comment lines
+ *  are dropped, except inside a literal, where a line opening with `#` is the template's own text (the file review's round 11,
+ *  correctness-1: the body had ended at the first column-zero line whether or not a literal was open, so a constant a page named
+ *  after a column-zero template line was not read, with no failure). */
+function defBody(lines, from) {
+  const body = [];
+  let dq = 0, sq = 0;
+  for (let i = from; i < lines.length; i++) {
+    const l = lines[i], inside = dq % 2 === 1 || sq % 2 === 1;
+    if (!inside && l !== '' && !/^[ \t#]/.test(l)) break;
+    if (inside || !/^\s*#/.test(l)) {
+      body.push(l);
+      dq += (l.match(/"""/g) ?? []).length; sq += (l.match(/'''/g) ?? []).length;
+    }
+  }
+  return body.join('\n') + '\n';
+}
+
+/** The kernel's served pages: each `def _<name>_page(...)` whose `)` closes on `:` at the end of its line, whatever its
+ *  parameters (a signature wrapped across lines included, and the pages that take arguments, the chat's history page and the
+ *  too-large notice: a page read only when its signature is empty would leave a sheet inlined by a page with parameters outside
+ *  the population, silently), with the function's own text (defBody: the indented, blank and comment lines after the def, and
+ *  every line while a triple-quoted literal is open, up to the next statement at column zero outside one), its comment lines
+ *  dropped. After the read, every `def _<name>_page` at column zero, `async def` included, is counted against the pages read, and
+ *  a page def in any other shape (a return annotation, a `)` inside a default, a trailing comment after the colon, an async def)
+ *  fails by name, since a page the read drops would take its sheets out of the population silently (the file review's round 11,
+ *  correctness-1 with regression-1 and extra7-2). The head is matched wherever its line stands, so a def-shaped line at column
+ *  zero inside a literal is read as a page too, a phantom that can add to the population and takes nothing out of it (disclosed,
+ *  not refused). */
+export function kernelPages(kernel) {
+  const out = [];
+  const lines = kernel.split('\n');
+  const head = /^def (_\w+_page)\([^)]*\):\n/gm;
+  let m;
+  while ((m = head.exec(kernel))) {
+    const from = kernel.slice(0, m.index + m[0].length).split('\n').length - 1;
+    out.push({ name: m[1], body: defBody(lines, from) });
+  }
+  const loose = kernel.match(/^(?:async )?def (_\w+_page)\b[^\n]*/gm) ?? [];
+  const seen = new Set(out.map((p) => p.name));
+  const missed = loose.filter((l) => !seen.has(/^(?:async )?def (_\w+_page)\b/.exec(l)[1]));
+  if (missed.length || loose.length !== out.length) fail('a page function this reader has no rule for (its `)` does not close on `:` at the end of the def line, or it is an async def), so a sheet it loads would be outside the population: ' + (missed.length ? missed : loose).map((l) => JSON.stringify(l)).join(', '));
+  if (!out.length) fail('kernel.py declares no `def _<name>_page(...)` function');
+  return out;
+}
+
+const LINK = /\/dist\/([\w-]+)\.css\b/g;                                   // a linked bundle
+const LIVE = /\(UI \/ "webview" \/ "([\w-]+\.css)"\)\.read_text\(\)/g;    // a sheet read live into a <style>
+const INLINE = /\b(_?[A-Z][A-Z0-9_]*_CSS)\b/g;                            // a module-level constant inlined into a <style>
+const HELPER = /(?<![.\w])(_[a-z]\w*)\(/g;                                 // a module-level helper a page body calls
+const JOIN = /Uri\.joinPath\(extUri, "dist", "([\w-]+)\.css"\)/g;         // the extension's link to a bundle
+const ANY_CSS = /([\w-]+)\.css\b/g;                                        // every sheet a text names, by base name
+const all = (re, text) => { const out = []; let m; re.lastIndex = 0; while ((m = re.exec(text))) out.push(m[1]); return out; };
+
+/** The `<style>` block a helper writes into the HTML it returns, or null when its text carries neither tag, `<style` nor
+ *  `</style` in any letter case (a closing tag alone, its opening tag held in a module constant or split across two literals,
+ *  falls to the no-rule refusal below by name; the file review's round 14, extra6-2: the opening tag alone was read, so such a
+ *  helper returned null and its block stood outside the population): the run from the literal
+ *  opening `"<style>` to the literal closing `</style>"`, one run per helper, each double-quoted literal decoded and each
+ *  `<NAME>_CSS` constant it concatenates read by pyStringConstant, in the order the served HTML has them; a helper with no def in
+ *  the strict shape, a `<style` anywhere in the helper's RAW body outside that run, in any letter case (a second block in its own
+ *  literal, single- or double-quoted, `<STYLE>` as much as `<style>`, before or after the run, or a mention in a docstring or a
+ *  trailing comment: the raw text is read, not the blanked, since blanking would hide the literal, and a mention is over-refused
+ *  loudly, the module's policy; the run is the lower-case literal, so a helper whose only block is in another case fails by name), any other token
+ *  in the run, a run that does not decode to one block (a second `</style>` inside it), a prefix letter on the opening literal (an
+ *  f-, r- or b-string), a `%` or ANY method call (`.format(`, `.format_map(`, `.__mod__(`, `.replace(`, `.substitute(`, and a call
+ *  on some other value in the remainder, over-refused loudly, whatever the whitespace or line break around the dot and the paren)
+ *  standing anywhere after the closing literal in the helper's body outside a string literal or a comment, and ANY `str.<method>(`
+ *  standing before the opening literal (`str.format(`, `str.format_map(`, `str.__mod__(`, `str.replace(` or any other, and a
+ *  `str.<method>(` on some other value there, over-refused loudly), the run passed as the call's first argument (the text before
+ *  the run and the remainder after it each scanned with its string literals, the double- and single-quoted, the triple-quoted and
+ *  a literal continued over an escaped line end, and its `#` comments blanked, so the operator applied to the run's parenthesised
+ *  expression, the kernel's house shape, is refused wherever it stands, and a `%` in arithmetic after the run is refused too,
+ *  loudly; the bound is the helper's body, not the return statement, whose end in text would take a second reader to find) fail
+ *  by name, since each decodes to text the page does not serve (the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the pane spinner's block,
+ *  `_pane_spin`'s with _LOADER_CSS folded in, served with the chat, feed, sessions and waiting pages, had been outside the read
+ *  with every pin green; the three formatted shapes had decoded silently; and round 12, kernel-1 with extra8-1: the operator had
+ *  been refused only right after the literal, so the house shape decoded to its placeholders silently; the triple-quoted and
+ *  the continued form joined the blanking in the author's closing pass after those fixes, since read as two-quote pieces a
+ *  triple-quoted literal holding an odd number of its own quote kind, or a literal broken over an escaped line end, standing
+ *  before a later literal had paired its last quote with that literal's first, and the operator between them was blanked with
+ *  the run's text, so the run decoded silently; and the file review's round 13, correctness-1 with kernel-3 and extra8-1: the refusal had named
+ *  two spellings, `%` and `.format(`, so `.format_map(`, `.format (` and `. format(`, `.replace(`, `.__mod__(` and
+ *  `str.format(run, ...)` decoded to their placeholders silently, and the file review's round 13, kernel-1 with extra8-2: a second block in its own
+ *  literal was dropped from the population silently while this text said it failed by name; the letter case of that check and the
+ *  anchor of the before-the-run arm on `str` joined in the author's closing pass that followed the fixes for the file review's
+ *  round 13, where an upper-case second block had passed both reads and a `.__mod__(` on another value before the run had been
+ *  refused as the run's; and the file review's round 14, extra6-1: the before-the-run arm had named three methods, so
+ *  `str.replace(run, ...)` decoded to its placeholder text silently). Outside the read, disclosed and
+ *  not read: an f-string nesting its own quote kind inside its braces (Python 3.12's grammar), whose inner quotes pair the same
+ *  wrong way; any callable other than a `str.<method>(` taking the run as an argument before or around it (a module function,
+ *  `operator.mod`, the builtin `format(run, ...)`, an alias of a str method, `f = str.format` then `f(run, ...)`, and
+ *  `getattr(run, "format")(...)`), an open class the two scans do not name, and after the run a subscript or a repetition on it
+ *  (`(run)[7:]`, `(run) * 2`), which the after-the-run class does not cover; a helper whose opening and closing tags both come
+ *  from module constants, or are both assembled by a call (`_OPEN + css + _CLOSE`), whose text carries neither tag, so this
+ *  returns null for it (the file review's round 14, extra6-2, the bound, pinned by a tree that returns nothing); and what the CALLER does to the returned string (the page body applying `%`, `.format(`,
+ *  `.replace(` or any other call to the helper's return, a live-read sheet's `.read_text()` result or a constant at the call
+ *  site), an open class no regex over the page loop closes: this reader holds every sheet source as its source spells it and
+ *  reads nothing the page body does to that text before serving it (the file review's round 13, kernel-2). No helper or page at this head has any
+ *  of these shapes. */
+function helperStyle(kernel, lines, name) {
+  const head = new RegExp('^def ' + name + '\\([^)]*\\):\\n', 'm').exec(kernel);
+  if (!head) fail(name + ' is called by a page body and is no module-level def this reader has a rule for');
+  const text = defBody(lines, kernel.slice(0, head.index + head[0].length).split('\n').length - 1);
+  if (!/<\/?style/i.test(text)) return null;   // either tag, any letter case: a helper writing only `<STYLE>`, or a closing literal whose opening tag is held in a constant or split across two literals, fails by name below, in place of standing outside the population
+  const open = text.indexOf('"<style>'), close = text.indexOf('</style>"');
+  if (open < 0 || close < 0 || close < open) fail(name + ' writes a <style> in a form this reader has no rule for (not a run of literals from "<style> to </style>")');
+  if (open > 0 && /\w/.test(text[open - 1])) fail(name + "'s <style> literal carries a prefix letter (an f-, r- or b-string), whose text is not what Python serves");
+  // a `<style` in the RAW text outside the run (not the blanked text, whose blanking would hide a literal): a second block in its
+  // own literal, single- or double-quoted, before or after the run, or a mention in a docstring or a trailing comment (defBody
+  // drops comment-only lines and keeps the rest), refused loudly, the module's over-refusal policy; a block the page serves in a
+  // literal of its own would otherwise stand outside the population with every pin green (the file review's round 13, kernel-1
+  // with extra8-2: the three-literal and the two-literal shapes had decoded to the first block alone with no throw)
+  const after = close + '</style>"'.length;
+  if (/<style/i.test(text.slice(0, open)) || /<style/i.test(text.slice(after))) fail(name + " writes a <style outside the run this reader reads, in any letter case (a second block in its own literal, single- or double-quoted, upper- or lower-case, before or after the run, or a mention in a docstring or a trailing comment); this reader reads one run per helper and refuses a <style anywhere else in the body, since a block served in its own literal would stand outside the population");
+  // the text before the opening literal and the remainder after the closing literal (defBody's text, the bound: the return
+  // statement's end in text would take paren tracking, a second reader to get wrong, and over-refusal fails loudly, this module's
+  // policy), each with its string literals (the triple-quoted first, then the double- and single-quoted, an escaped character
+  // inside any of them a line end included, so a literal continued over a backslash is one piece) and its `#` comments blanked in
+  // one left-to-right pass, so a `'` inside a double-quoted JS literal is literal text and a `%` inside a literal or a comment is
+  // not read. Before the run, ANY `str.<method>(` is the run passed as the call's first argument, the class and not three
+  // spellings (anchored on `str`: a `.__mod__(` on some other value before the run, `"%d".__mod__(3)`, formats nothing of the run,
+  // and a `str.<method>(` on some other value there is over-refused loudly; the file review's round 14, extra6-1); after
+  // it, a `%` or ANY method call (`.` then a name then `(`, whitespace or a line break allowed around each) is the run formatted,
+  // the class and not two spellings: the operator applied to the run's parenthesised expression the kernel's house shape
+  // (`("..." "...") % (...)`, the `%` on its own line inside the parens, a trailing comment before the `)`), and the run decodes
+  // to its placeholders, not what the page serves (the file review's round 12, kernel-1 with extra8-1: the read had refused the
+  // operator only right after the literal; round 13, correctness-1 with kernel-3 and extra8-1: it had refused `%` and `.format(`
+  // alone, so format_map, a spaced or line-broken .format, .replace, .__mod__ and str.format(run, ...) decoded silently). A call
+  // on some other value in the remainder is over-refused loudly; the real tree's one helper concatenates a bare `_loader_inner()`.
+  const BLANK = /"""(?:\\[\s\S]|(?!""")[\s\S])*"""|'''(?:\\[\s\S]|(?!''')[\s\S])*'''|"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|#[^\n]*/g;
+  const before = text.slice(0, open).replace(BLANK, ' ');
+  if (/\bstr\s*\.\s*\w+\s*\(/.test(before)) fail(name + "'s <style> run is formatted by a call standing before its opening literal (any str.<method>( with the run as its first argument: str.format, str.format_map, str.__mod__, str.replace or any other), so its text is not what the page serves");
+  const rest = text.slice(after).replace(BLANK, ' ');
+  if (/%|\.\s*\w+\s*\(/.test(rest)) fail(name + "'s <style> run is formatted by a % or a method call on the run (.format, .format_map, .__mod__, .replace or any other call, whatever the whitespace around its dot and paren) standing after its closing literal (anywhere in the helper's body outside a literal or a comment), so its text is not what the page serves");
+  const run = text.slice(open, close + '</style>"'.length);
+  let out = '';
+  const tok = /\s+|("(?:[^"\\]|\\.)*")|\+|\b(_?[A-Z][A-Z0-9_]*_CSS)\b|#[^\n]*/y;
+  for (let i = 0; i < run.length;) {
+    tok.lastIndex = i;
+    const m = tok.exec(run);
+    if (!m) fail(name + "'s <style> run holds a token this reader has no rule for: " + JSON.stringify(run.slice(i, i + 40)));
+    if (m[1]) out += JSON.parse(m[1].replace(/\\'/g, "'"));
+    else if (m[2]) out += pyStringConstant(kernel, m[2]);
+    i = tok.lastIndex;
+  }
+  if (!out.startsWith('<style>') || !out.endsWith('</style>')) fail(name + "'s <style> run did not decode to one <style> block");
+  const block = out.slice('<style>'.length, -'</style>'.length);
+  if (block.includes('</style>')) fail(name + "'s <style> run holds a second block; this reader reads one run per helper and refuses a <style anywhere else in the body");
+  return block;
+}
+
+/** Every sheet a page of either host loads, sorted by name: `{ name, css, loadedBy }`, `name` the sheet's path in the tree
+ *  (`ui/webview/<file>.css`), `kernel/kernel.py <NAME>` for a kernel constant, or `kernel/kernel.py _<helper>` for the block a
+ *  helper the page calls writes into its HTML; `loadedBy` the pages that load it. */
+export function hostSheets(root) {
+  const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
+  const kernel = read('kernel', 'kernel.py');
+  const lines = kernel.split('\n');
+  const esbuild = read('vscode-extension', 'esbuild.js');
+  const extension = read('vscode-extension', 'src', 'extension.ts').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  const sheets = new Map();
+  const add = (name, css, page) => {
+    const s = sheets.get(name) ?? { name, css, loadedBy: [] };
+    s.loadedBy.push(page);
+    sheets.set(name, s);
+  };
+  const bundle = (name, page) => {
+    if (!esbuild.includes('"../ui/webview/' + name + '.css"')) fail(page + ' links /dist/' + name + '.css, which vscode-extension/esbuild.js builds from no sheet under ui/webview');
+    add('ui/webview/' + name + '.css', read('ui', 'webview', name + '.css'), page);
+  };
+  /** Every `.css` the text names is one the derivation read for that page, or the read has a hole to name. */
+  const complete = (text, page, names) => {
+    for (const base of new Set(all(ANY_CSS, text))) {
+      if (!names.has(base + '.css')) fail(page + ' names ' + base + '.css in a form this derivation does not read (a link outside /dist, a read outside ui/webview)');
+    }
+  };
+  const helperCss = new Map();
+  for (const { name: page, body } of kernelPages(kernel)) {
+    const names = new Set();
+    for (const n of all(LINK, body)) { bundle(n, page); names.add(n + '.css'); }
+    for (const f of all(LIVE, body)) { add('ui/webview/' + f, read('ui', 'webview', f), page); names.add(f); }
+    for (const c of all(INLINE, body)) add('kernel/kernel.py ' + c, pyStringConstant(kernel, c), page);
+    // the helpers the body calls, followed one level: a helper whose def writes a <style> is a sheet of every page that calls it
+    for (const h of new Set(all(HELPER, body))) {
+      if (/_page$/.test(h)) continue;
+      if (!helperCss.has(h)) helperCss.set(h, helperStyle(kernel, lines, h));
+      if (helperCss.get(h) !== null) add('kernel/kernel.py ' + h, helperCss.get(h), page);
+    }
+    complete(body, 'kernel/kernel.py ' + page, names);
+  }
+  const ext = 'vscode-extension/src/extension.ts';
+  const extNames = new Set();
+  for (const n of all(JOIN, extension)) { bundle(n, ext); extNames.add(n + '.css'); }
+  complete(extension, ext, extNames);
+  for (const f of fs.readdirSync(path.join(root, 'ui', 'webview')).filter((f) => f.endsWith('.css')).sort()) {
+    if (!sheets.has('ui/webview/' + f)) fail('ui/webview/' + f + ' is a sheet no page of either host loads by a form this derivation reads: a new host or a new way of loading a sheet, to be added here, or a sheet nothing loads');
+  }
+  return [...sheets.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).map((s) => ({ ...s, loadedBy: [...new Set(s.loadedBy)].sort() }));
+}

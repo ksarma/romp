@@ -33,7 +33,7 @@ const BLOCK_DISPLAYS = ["block", "list-item", "table", "table-caption", "table-c
 const NEVER_IN_A_FRAGMENT = ["html", "body"];
 /** The tags of MD_FORBID_TAGS the section lays out as blocks: dialog, form and legend (15.3.3 Flow content), fieldset (15.3.12
  *  The fieldset and legend elements), option and optgroup (15.5.16 The select element, a bare `option { display: block }` rule
- *  above optgroup's). The rest of the forbid list it renders inline-block (button, select), hides (style, datalist, area) or
+ *  above optgroup's). The rest of the forbid list it renders inline-block (button, select, marquee), hides (style, datalist, area) or
  *  gives no display rule (textarea, label, output, meter, progress, map), so none of those is a block by the section. */
 const STRIPPED_BLOCKS = ["dialog", "fieldset", "form", "legend", "optgroup", "option"];
 
@@ -95,7 +95,7 @@ test("BLOCK_BOXES equals the fixture's tags the sanitizer keeps, html and body l
   for (const t of ["form", "fieldset", "legend", "dialog", "optgroup", "option"]) assert.ok(!BLOCK_BOXES.has(t.toUpperCase()) && forbid.has(t), t + " is stripped by the sanitizer, so it is no neighbour a note can have and is not in the set");
   for (const t of ["listing", "plaintext", "xmp"]) assert.ok(!BLOCK_BOXES.has(t.toUpperCase()) && !allowed.includes(t), t + " is a block the allowlist lacks: not in the set");
   for (const t of NEVER_IN_A_FRAGMENT) assert.ok(allowed.includes(t) && t in FIXTURE.tags && !BLOCK_BOXES.has(t.toUpperCase()), t + " is allowed and a block, left out of the set by name");
-  for (const t of ["span", "a", "em", "strong", "b", "i", "code", "img", "br", "mark", "sup", "sub", "del", "ins", "kbd", "q", "time", "data", "abbr", "small", "u", "s", "wbr", "picture", "video", "audio", "canvas", "ruby", "rt", "rp", "marquee", "input", "template", "slot"]) {
+  for (const t of ["span", "a", "em", "strong", "b", "i", "code", "img", "br", "mark", "sup", "sub", "del", "ins", "kbd", "q", "time", "data", "abbr", "small", "u", "s", "wbr", "picture", "video", "audio", "canvas", "ruby", "rt", "rp", "input", "template", "slot"]) {
     assert.ok(allowed.includes(t), t + " is on the allowlist (the probe names a real tag)");
     assert.ok(!(t in FIXTURE.tags) && !BLOCK_BOXES.has(t.toUpperCase()), t + " is no block by the section and not in the set: a space beside it is the passage's own, painted");
   }
