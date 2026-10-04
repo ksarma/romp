@@ -519,11 +519,11 @@ export const SCENES: SceneDef[] = [
     },
   },
   {
-    name: "a chunk that stalls past the backstop (MATH_CHUNK_BACKSTOP_MS) leaves each waiting formula as its source, the backstop's reason in its title, said once on the console",
+    name: "a chunk that stalls past the backstop (MATH_CHUNK_BACKSTOP_MS) leaves each waiting formula as its source, the backstop's reason in its title, said once on the console; the held answer, a 404 at last, comes from an attempt that has already failed and is silent",
     timeout: 60000,
     run: async (browser) => {
-      const g = gate();   // never opened: the chunk's answer stays out for the page's life
-      await withPage(browser, { chunkGate: g, clock: true }, async (s) => {
+      const g = gate();   // held past the backstop, then answered with a 404: the attempt's second failure end
+      await withPage(browser, { chunk: "404", chunkGate: g, clock: true }, async (s) => {
         await show(s.page, "a $\\frac{1}{2}$ half\n\n$$e^{i\\pi}$$\n");
         await drain(s.page);
         let b = await box(s.page);
@@ -536,6 +536,20 @@ export const SCENES: SceneDef[] = [
         for (const x of b.src) assert.match(x.title, BACKSTOP_TITLE);
         assert.equal(said(s).length, 1, "said once: " + JSON.stringify(s.consoleErrors));
         assert.match(said(s)[0], /^math: the math renderer did not load within 60 seconds; /);
+        // the held answer now lands as a 404, the error end of an attempt its backstop already failed (math.ts attempt: a later failure
+        // end is silent). The scene's own error listener on the tag was added after math.ts set the tag's onerror, so it runs after
+        // that handler in the same dispatch: once it has counted the error, math.ts has handled it
+        await s.page.evaluate(() => {
+          const w = window as any; w.__lateErrors = 0;
+          document.querySelector('script[src*="math-chunk.js"]')!.addEventListener("error", () => { w.__lateErrors++; });
+        });
+        g.open();
+        await s.page.waitForFunction(() => (window as any).__lateErrors === 1, null, { timeout: 10000 });
+        await drain(s.page);
+        b = await box(s.page);
+        assert.equal(said(s).length, 1, "the late 404 says nothing: the backstop's line stays the attempt's one line: " + JSON.stringify(said(s)));
+        assert.equal(s.chunkRequests(), 1, "one request: no formula has met the retry the backstop armed");
+        assert.ok(b.src.length === 2 && b.src.every((x) => BACKSTOP_TITLE.test(x.title)), "each fallback keeps the backstop's title: " + JSON.stringify(b.src));
       });
     },
   },
