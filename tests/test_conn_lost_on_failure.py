@@ -14,13 +14,16 @@ here under node against the code as served:
   ShimFailureWord        kernel/kernel.py _shim: a dial that never opened posts {romp:'wsFail',app,cut} to the shell after
                          its down word, cut true when the watchdog's CONNECTING arm closed it and false for a refusal (at
                          the bound's edge: a close at 15000 ms is a refusal, at 15001 ms a cut); an opened socket's close,
-                         the return's abandon() and a park post none. Through tests/test_pane_shim_return.py's harness.
+                         the return's abandon() and a park post none, and the pane's frames reach no door of the shell's
+                         (the Log's leaving latch, below, clears on the shell link's frames, not a pane's). Through
+                         tests/test_pane_shim_return.py's harness.
   ShellLinkFailure       _LANDING_MOBILE_JS: the shell socket's close of a dial that never opened (refused, or its own
                          connect cut) calls window.__rompLinkFailed once, with true when its own cut timer or the tick's
                          backstop made the close (a close the browser made reads the clock: at 14999 ms a refusal, at
                          15000 ms a cut); an opened socket's close, the return's abandon and a superseded socket's late
-                         close call nothing. Each dial and each open calls window.__rompNotLeaving (the Log's leaving
-                         latch, below). Through tests/test_kernel_mobile.py's probe harness.
+                         close call nothing. Each dial, each open and each frame on the link calls
+                         window.__rompNotLeaving (the Log's leaving latch, below), a frame whatever it carries. Through
+                         tests/test_kernel_mobile.py's probe harness.
   LogWaitsForTheFailure  _LANDING_ERRS_JS: a drop alone writes nothing (the live red cue shows it); a failure word, or the
                          link's failure for every waiting pane, writes one entry per drop, and one pane's word that pane's
                          entry alone; an up drops the waiting entry; a pane not shown keeps waiting and is written once
@@ -32,8 +35,9 @@ here under node against the code as served:
                          stands; with nothing open (a parked pane holds no socket) the cut writes. The same DOM stub.
   AnUnloadsClosesFailNothing
                          _LANDING_ERRS_JS: from a beforeunload, neither the link's failure nor a failure word writes; the
-                         shell's next dial or open (window.__rompNotLeaving), a pane's or a column's open, and pageshow each
-                         clear the latch, so a navigation that did not unload hides no later outage. The same DOM stub.
+                         shell's next dial, open or frame on its link (window.__rompNotLeaving), a pane's or a column's
+                         open, and pageshow each clear the latch, so a navigation that did not unload hides no later
+                         outage. The same DOM stub.
 
 The composition in real engines (phone and desktop, healthy, slow and failing returns; reloads while a dial is connecting, and a
 204 followed by an outage) is tests/test_conn_lost_log_served.py.
@@ -123,6 +127,20 @@ out({words:words()});""" % ms)
 open();recv({type:"ka"});park();out({words:words()});""")
         self.assertEqual(r["words"], ["up", "parked"], "a park is its own state, never a failure")
 
+    def test_a_panes_frames_reach_no_door_of_the_shells(self):
+        # review round 1 of item 4b (2026-10-04, call 1): the Log's leaving latch clears on the shell link's next frame, and a
+        # pane's frames are not that event. Each pane's socket carries the link's keepalive and its own data besides, so a clear
+        # on them would widen the race the call accepted (a frame between an unload's beforeunload and its closes) by every
+        # pane's frames. The pane's open, its up word, is the one clear a pane makes; after it, frames call no
+        # window.__rompNotLeaving and post no word the Log reads
+        r = _shimret._run(WORDS + r"""
+open();var afterOpen=words();
+recv({type:"ka"});recv({type:"caps",caps:["tagEdit"],viewsSeq:null});recv({type:"ka"});sock().onmessage({data:"not json"});
+out({nl:NL,afterOpen:afterOpen,afterFrames:words()});""", app="feed", before="var NL=0;window.parent.__rompNotLeaving=function(){NL++;};")
+        self.assertEqual(r["afterOpen"], ["up"], "the open's up word, which clears the latch in the Log")
+        self.assertEqual(r["nl"], 0, "no frame of the pane's called the shell's door")
+        self.assertEqual(r["afterFrames"], ["up"], "and no frame posted a word the Log reads")
+
 
 # ---- the shell link's failure ----
 LINKFAIL = r"""var LF=0,LFC=[];window.__rompLinkFailed=function(c){LF++;LFC.push(c===true?"cut":c===false?"refused":"unmarked");};
@@ -194,12 +212,30 @@ shOut({own:own.length,cut:cut,how:LFC});""")
         r = _mob._run_probe(r"""
 var NL=[];window.__rompNotLeaving=function(){var s=shSock();NL.push(SHSOCKS.length+':'+(s?s.readyState:-1));};
 shOpen();var afterOpen=NL.slice();          // the boot dial opens
-shRecv({type:'ka'});var s=shSock();s.readyState=3;s.onclose({code:1006});var afterClose=NL.slice();
+var s=shSock();s.readyState=3;s.onclose({code:1006});var afterClose=NL.slice();   // no frame between: a frame calls it too (below)
 shFireDials();                               // its redial
 shOut({afterOpen:afterOpen,afterClose:afterClose,afterRedial:NL});""")
         self.assertEqual(r["afterOpen"], ["1:1"], "the open of the boot dial calls it, its socket OPEN")
         self.assertEqual(r["afterClose"], ["1:1"], "a close calls nothing")
         self.assertEqual(r["afterRedial"], ["1:1", "2:0"], "the redial calls it, its new socket CONNECTING")
+
+    def test_each_frame_on_the_link_clears_the_logs_leaving_latch(self):
+        # review round 1 of item 4b (2026-10-04, call 1): in Chromium and WebKit a beforeunload that did not unload (a 204, a
+        # download) closes no socket, so the link may neither dial nor open again for a whole outage of the panes alone; a frame
+        # on it shows the page is still here. Every frame calls window.__rompNotLeaving, before its type is read: the keepalive,
+        # any other frame, the announced restart, one that is not JSON
+        r = _mob._run_probe(r"""
+var NL=[];window.__rompNotLeaving=function(){NL.push(shSock().readyState);};
+shOpen();var atOpen=NL.length;
+shRecv({type:'ka'});var afterKa=NL.length;
+shRecv({type:'apiHealth'});var afterOther=NL.length;
+shSock().onmessage({data:'not json'});var afterRaw=NL.length;
+shRecv({type:'restarting'});var afterRestarting=NL.length;
+shOut({atOpen:atOpen,afterKa:afterKa,afterOther:afterOther,afterRaw:afterRaw,afterRestarting:afterRestarting,states:NL});""")
+        self.assertEqual(r["atOpen"], 1, "the open called it once")
+        self.assertEqual((r["afterKa"], r["afterOther"], r["afterRaw"], r["afterRestarting"]), (2, 3, 4, 5),
+                         "each frame on the link called it once, whatever it carried")
+        self.assertEqual(r["states"], [1, 1, 1, 1, 1], "on the OPEN socket")
 
     def test_a_superseded_sockets_late_close_calls_nothing(self):
         r = _mob._run_probe(LINKFAIL + r"""
@@ -486,7 +522,7 @@ out.linkWhileLeaving = snap();                             // the shell's dial t
 post({ romp: 'wsFail', app: 'feed', cut: false });
 postFrom({ col: '2' }, { romp: 'wsFail', app: 'chat', cut: false });
 out.wordWhileLeaving = snap();                             // a pane's and a column's, the same
-// clear 1: the shell's next dial (window.__rompNotLeaving, which the shell calls at each dial and at its open)
+// clear 1: the shell's next dial (window.__rompNotLeaving, which the shell calls at each dial, at its open and at each frame on its link)
 notLeaving();
 post({ romp: 'wsFail', app: 'feed', cut: false });
 out.afterTheShellsDial = snap();                           // the page stayed: the Feed's refused dial is a failure
@@ -522,8 +558,8 @@ class AnUnloadsClosesFailNothing(unittest.TestCase):
     pagehide and delivers their close events while the page still runs, so a reload during a return's redial or the boot dials
     wrote one unread entry per shown pane. The Log now holds a latch, `leaving`, set on beforeunload and read first by both
     failure doors (window.__rompLinkFailed and the wsFail listener), and cleared by the page's next real event, since
-    beforeunload also fires for a navigation that does not unload (a 204, a download): the shell's next dial or its open
-    (window.__rompNotLeaving), a pane's or a column's open, or pageshow. Each door and each clear is executed here; the real
+    beforeunload also fires for a navigation that does not unload (a 204, a download): the shell's next dial, its open or the
+    next frame on its link (window.__rompNotLeaving), a pane's or a column's open, or pageshow. Each door and each clear is executed here; the real
     engines are tests/test_conn_lost_log_served.py's unload legs. Through tests/test_error_center.py's DOM stub."""
 
     @classmethod

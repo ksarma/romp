@@ -50,14 +50,15 @@ on their no-entry check. Chromium and WebKit deliver no such close; their reload
 Each reload leg asserts that the old page's dials were CONNECTING when the reload began, and the Firefox legs that the old
 page received the failure after its beforeunload. A navigation to a 204 fires beforeunload and leaves the page in place, and
 an outage after it still writes one unread entry per shown pane: green at d8a1df87e, which has no latch, and red under a
-latch that never clears. The paneonly legs are a disclosed residual's witness, pinned as it executes while a design call on
-it is open. In Chromium and WebKit the 204 closes no socket, so the latch it set stays set, and an outage of the panes alone
-while the shell's link stands is written neither during it nor after it: no event of that outage clears the latch before a
-pane's open, which clears it and drops the waiting entry in the same step. Firefox closes every socket at the 204, the
-shell's redial about 2 s later clears the latch, and its paneonly leg writes an entry for every shown pane whose dial was
-refused. The Chromium and WebKit paneonly legs are red at d8a1df87e, which has no latch (the outage wrote one entry per shown
-pane at its first refusals), and under a wsFail listener that does not read the latch; the Firefox one is green at both. A
-clear that closes the road turns the Chromium and WebKit legs red.
+latch that never clears. The paneonly legs take the panes down alone after the 204, while the shell's link stands. In
+Chromium and WebKit the 204 closes no socket, so the latch it set stays set until the next frame on the shell's link clears
+it (review round 1 of item 4b, call 1, 2026-10-04); those legs wait for such a frame after the 204's beforeunload, then hold
+that the outage writes one unread entry per shown pane, with no dial of the shell's, no open of any socket and no pageshow
+between the 204 and the outage's end to clear the latch instead. Red at 3e9c560f5, before the frame cleared it, on that check: the latch held every refusal of
+the outage and the panes' opens dropped the waiting entries, so nothing was written. Firefox closes every socket at the 204,
+the shell's redial about 2 s later clears the latch, and its paneonly leg writes an entry for every shown pane whose dial was
+refused, green at 3e9c560f5 too. The reload legs are the other side of that clear: a frame on the link between an unload's
+beforeunload and the closes Firefox delivers would clear the latch, and they hold that a reload still writes nothing.
 
 Engines: Chromium runs every leg (CI's served-pages job); Firefox and WebKit run the healthy phone and desktop legs, the
 kernel-down phone leg, the pane-dials-refused leg, the unload legs and the paneonly legs, as optional legs that skip with
@@ -480,26 +481,28 @@ class ConnLostLog(unittest.TestCase):
         self._nav204("chromium")
 
     def _nav204_paneonly(self, engine, outage_ms=10000):
-        """A disclosed residual, pinned as it executes (review round 1 of item 4b, 2026-10-04; a fourth clear is a design call
-        still open). After a navigation that fires beforeunload and does not unload, an outage of the panes alone, while the
-        shell's link stands: every pane's socket dropped, every pane's dial refused, the shell's socket never touched. In
-        Chromium and WebKit the 204 closes nothing, so the leaving latch it set stays set; the panes' refusals post their
-        wsFail words, which the latch holds; nothing of the outage clears the latch (the shell never redials, no pageshow
-        fires), and the panes' opens at its end clear it and drop the waiting entries in the same step. So nothing is
-        written, during the outage or after it. Firefox closes every socket of the page at the 204, the shell's redial clears
-        the latch, and the outage writes an entry for every shown pane whose dial was refused. Firefox holds a host's
-        handshakes in one line and delays a dial after a failed one, so in 10 s only two or three dials reach the kernel; its
-        leg drops and refuses the shown panes alone, so every dial that reaches the kernel is one that owes an entry. Red at
-        d8a1df87e (no latch) and under a wsFail listener that ignores the latch, in Chromium and WebKit (Firefox's leg is
-        green at both). A clear that closes this road (candidates: a pane's dial start, the shell link's next frame) turns
-        the Chromium and WebKit legs red, and they become an outage-is-written leg."""
-        extra = {"outageApps": list(HELD_AT_BOOT)} if engine == "firefox" else {}
+        """After a navigation that fires beforeunload and does not unload, an outage of the panes alone, while the shell's link
+        stands: every pane's socket dropped, every pane's dial refused, the shell's socket never touched. In Chromium and
+        WebKit the 204 closes nothing, so the leaving latch it set stays set until the next frame on the shell's link (review
+        round 1 of item 4b, call 1, 2026-10-04). Their legs wait for that frame after the 204's beforeunload, and no other event
+        that clears the latch happens from the 204 to the outage's end (no dial of the shell's, no open of any socket, no
+        pageshow), so the frame is what lets the outage write one unread entry per shown pane. At 3e9c560f5, before the frame cleared the latch,
+        the latch held every refusal of the outage and the panes' opens at its end dropped the waiting entries: nothing was
+        written, during the outage or after it, and both legs are red on their written check. Firefox closes every socket of the
+        page at the 204, the shell's redial clears the latch, and the outage writes an entry for every shown pane whose dial was
+        refused. Firefox holds a host's handshakes in one line and delays a dial after a failed one, so in 10 s only two or
+        three dials reach the kernel; its leg drops and refuses the shown panes alone, so every dial that reaches the kernel is
+        one that owes an entry. It waits for no frame, and is green at 3e9c560f5 too."""
+        if engine == "firefox":
+            extra = {"outageApps": list(HELD_AT_BOOT)}
+        else:
+            extra = {"frameAfterNav": True}
         name, r = self._drive_real(engine, "nav204-paneonly", outageMs=outage_ms, readsMs=[3000, outage_ms - 500], **extra)
         rec, gen = r["rec"], r["oldGen"]
         t_nav, t_out, t_end = r["t"]["nav"], r["t"]["outage"], r["t"]["outageEnd"]
         self.assertEqual(r["genAfterNav"], gen, name + ": the 204 left the page in place")
-        self.assertTrue([e for e in rec["ev"] if e["gen"] == gen and e["ev"] == "beforeunload" and t_nav <= e["t"] < t_out],
-                        name + ": the navigation fired beforeunload, so the latch was set: %r" % rec["ev"])
+        before_unload = [e["t"] for e in rec["ev"] if e["gen"] == gen and e["ev"] == "beforeunload" and t_nav <= e["t"] < t_out]
+        self.assertTrue(before_unload, name + ": the navigation fired beforeunload, so the latch was set: %r" % rec["ev"])
         self.assertEqual([e for e in rec["ev"] if e["ev"] in ("pagehide", "pageshow") and e["t"] >= t_nav], [],
                          name + ": the page never unloaded and no pageshow fired, which would clear the latch")
         shell = [x for x in rec["sock"] if x["app"] == "shell" and x["top"] and t_out <= x["t"] <= t_end]
@@ -519,19 +522,36 @@ class ConnLostLog(unittest.TestCase):
             self.assertEqual(sorted(n["text"] for n in conn), want,
                              name + ": the 204's closes and redials cleared the latch, so every shown pane whose dial was refused was written")
             return name, r
+        # the event under test: a frame on the shell's link after the 204's beforeunload, before the outage
+        frames = [x["t"] for x in rec["frame"] if x["gen"] == gen and x["app"] == "shell" and before_unload[0] < x["t"] < t_out]
+        self.assertTrue(frames, name + ": a frame reached the shell's link after the 204's beforeunload and before the outage, "
+                        "the event that clears the latch: %r" % rec["frame"])
+        # and no other event that clears it from the 204 to the outage's end: no dial of the shell's, no open of any socket (in
+        # Chromium and WebKit the 204 closes none of them; the panes' own redials during the outage are refused), no pageshow
+        cleared = [x for x in rec["sock"] if t_nav <= x["t"] < t_end and (x["ev"] == "open" or (x["ev"] == "dial" and x["app"] == "shell"))]
+        self.assertEqual(cleared, [], name + ": nothing else cleared the latch: no dial of the shell's and no open of any socket "
+                         "from the 204 to the outage's end")
         self.assertEqual(failed, sorted(eager("desktop")), name + ": every pane's dial was refused and posted its failure word "
-                         "(cut false) during the outage, the event that writes the entry when the latch is clear")
-        self.assertEqual(conn, [], name + ": the residual: the latch the 204 set held every failure of the outage, and the panes' "
-                         "opens dropped the waiting entries, so nothing was written")
-        for x in r["reads"]:
-            self.assertEqual([e for e in x["log"]["entries"] if e["kind"] == "conn"], [], name + ": nothing written at +%d ms" % x["at"])
-        self.assertEqual([e for e in r["logAfter"]["entries"] if e["kind"] == "conn"], [], name + ": nothing written after it either")
+                         "(cut false) during the outage")
+        want = sorted("Kernel connection lost: %s pane (reconnecting)" % labels[a] for a in shown)
+        self.assertTrue(want, name + ": a shown pane exists to owe an entry: %r" % body)
+        self.assertEqual(sorted(n["text"] for n in conn), want,
+                         name + ": the frame cleared the latch the 204 set, so the outage wrote one entry per shown pane")
+        self.assertEqual([n for n in conn if n["t"] < t_out], [], name + ": nothing was written before the outage")
+        last = r["reads"][-1]["log"]
+        self.assertEqual(sorted(e["text"] for e in last["entries"] if e["kind"] == "conn" and not e["seen"]), want,
+                         name + ": during the outage the entries are unread")
+        after = r["logAfter"]
+        self.assertEqual(sorted(e["text"] for e in after["entries"] if e["kind"] == "conn" and not e["seen"]), want,
+                         name + ": still unread once the sockets are back")
+        self.assertEqual([e["n"] for e in after["entries"] if e["kind"] == "conn"], [1] * len(want),
+                         name + ": one entry per pane for the one outage")
         return name, r
 
-    def test_desktop_a_204_then_a_pane_only_outage_goes_unwritten_residual(self):
+    def test_desktop_a_204_then_a_pane_only_outage_is_written(self):
         self._nav204_paneonly("chromium")
 
-    def test_webkit_desktop_a_204_then_a_pane_only_outage_goes_unwritten_residual(self):
+    def test_webkit_desktop_a_204_then_a_pane_only_outage_is_written(self):
         self._nav204_paneonly("webkit")
 
     def test_firefox_desktop_a_204_then_a_pane_only_outage_is_written(self):

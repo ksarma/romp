@@ -30,12 +30,14 @@
 //                  closes every socket of the page, which redial), wait for every socket to be up again, then a real
 //                  outage (mode refuse, every socket dropped): the Log owes its entries.
 //   nav204-paneonly the same 204, then an outage of the panes alone: every pane's socket dropped and every pane's dial refused
-//                  (only cfg.outageApps' when it is set), while the shell's link stands and its socket is never touched. A
-//                  disclosed residual's witness (review round 1 of item 4b): in Chromium and WebKit the 204 closes nothing, so
-//                  the latch it set is still set, and no event of this outage clears it before a pane's open, which drops the
-//                  waiting entry.
-// The page's recorders write to localStorage (lab:ev, lab:notify, lab:sock), so what the OLD page did during its unload
-// survives the reload; every row carries its document's generation id (gen). Writes its result to cfg.resultPath and prints
+//                  (only cfg.outageApps' when it is set), while the shell's link stands and its socket is never touched. In
+//                  Chromium and WebKit the 204 closes nothing, so the latch it set is still set, and the event that clears it is
+//                  the next frame on the shell's link (review round 1 of item 4b, call 1, 2026-10-04). With cfg.frameAfterNav
+//                  the driver waits, before the outage, for a frame the link received after the 204's beforeunload (the
+//                  kernel's keepalive comes every 10 s), so the outage meets a latch that frame has cleared.
+// The page's recorders write to localStorage (lab:ev, lab:notify, lab:sock, and lab:frame for each frame the top document's
+// shell socket receives), so what the OLD page did during its unload survives the reload; every row carries its document's
+// generation id (gen). Writes its result to cfg.resultPath and prints
 // one short `RESULT:` line naming it; exits 3 when the browser does not launch (the Python side turns that into a skip).
 // Never touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. Synthetic sessions only.
 import { createRequire } from "node:module";
@@ -161,6 +163,7 @@ await page.addInitScript(() => {
       rec("lab:sock", { ev: "dial", app, top });
       s.addEventListener("open", () => rec("lab:sock", { ev: "open", app, top, age: Date.now() - t0 }));
       s.addEventListener("close", (e) => rec("lab:sock", { ev: "close", app, top, code: e.code, age: Date.now() - t0 }));
+      if (top && app === "shell") s.addEventListener("message", () => rec("lab:frame", { app, top }));   // the link's frames (call 1's clear)
       return s;
     };
     LabWS.prototype = RW.prototype; LabWS.CONNECTING = 0; LabWS.OPEN = 1; LabWS.CLOSING = 2; LabWS.CLOSED = 3;
@@ -191,7 +194,7 @@ const flip = (hidden) => page.evaluate((h) => {
 }, hidden);
 const store = () => page.evaluate(() => {
   const j = (k) => { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch (e) { return ["UNREADABLE"]; } };
-  return { ev: j("lab:ev"), notify: j("lab:notify"), sock: j("lab:sock"),
+  return { ev: j("lab:ev"), notify: j("lab:notify"), sock: j("lab:sock"), frame: j("lab:frame"),
            notes: j("romp:notices").map((x) => ({ kind: x.kind, text: x.text, seen: !!x.seen, n: x.n || 1 })),
            gen: window.__labGen, bodyClass: document.body.className };
 });
@@ -230,7 +233,13 @@ const connecting = (app) => page.evaluate((a) => {
 }, app);
 const waitFor = async (pred, ms) => { const dl = now() + ms; while (now() < dl) { try { if (await pred()) return true; } catch (e) { /* retry */ } await sleep(50); } return false; };
 const readOnce = async () => { await page.evaluate(() => { window.__rompOpenErrs(); window.__rompCloseErrs(); }); };
-const clearRecords = () => page.evaluate(() => { for (const k of ["lab:ev", "lab:notify", "lab:sock"]) localStorage.setItem(k, "[]"); });
+const clearRecords = () => page.evaluate(() => { for (const k of ["lab:ev", "lab:notify", "lab:sock", "lab:frame"]) localStorage.setItem(k, "[]"); });
+// a frame the top document's shell socket received after this generation's first beforeunload at or after sinceT
+const frameAfterUnload = (sinceT) => page.evaluate((t) => {
+  const j = (k) => { try { return JSON.parse(localStorage.getItem(k) || "[]"); } catch (e) { return []; } };
+  const bu = j("lab:ev").filter((x) => x.gen === window.__labGen && x.ev === "beforeunload" && x.t >= t).map((x) => x.t);
+  return bu.length > 0 && j("lab:frame").some((x) => x.gen === window.__labGen && x.app === "shell" && x.t > bu[0]);
+}, sinceT);
 
 try {
   const url = base + "/?token=" + encodeURIComponent(cfg.token);
@@ -285,6 +294,10 @@ try {
       out.navUp = await waitUp(0, cfg.upTimeoutMs || 25000);   // each socket's latest word: Firefox's redials, or Chromium's sockets that never closed
       if (!out.navUp) await result({ died: "after the 204: not every eager pane and the link said up again", rec: await store() });
       await sleep(cfg.settleMs || 1500);
+      if (cfg.frameAfterNav) {
+        out.frameAfterNav = await waitFor(() => frameAfterUnload(out.t.nav), cfg.frameTimeoutMs || 25000);
+        if (!out.frameAfterNav) await result({ died: "after the 204: no frame reached the shell's link", rec: await store() });
+      }
       const outApps = cfg.outageApps || EAGER;
       out.outApps = outApps;   // the panes the outage takes down: the ones whose up word ends it (another pane's socket never closed)
       if (panesOnly) PX.refuseApps = new Set(outApps); else PX.mode = "refuse";

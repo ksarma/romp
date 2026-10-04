@@ -70738,8 +70738,14 @@ var lost={};
 // the page still runs, so a reload while a dial was connecting (a return's redial, the boot dials) read each such close as a failed
 // reconnect and wrote one unread entry per shown pane, which the reloaded page showed. beforeunload also fires for a navigation that
 // does not unload (a 204, a download), and a latch that never cleared would leave every later outage unwritten, so the page's next
-// real event clears it: the shell's next dial or its open (window.__rompNotLeaving, from _LANDING_MOBILE_JS), a pane's or a
-// column's open (its up word, below), or pageshow. An unload makes none of them.
+// real event clears it: the shell's next dial, its open or the next frame on its link (window.__rompNotLeaving, from
+// _LANDING_MOBILE_JS), a pane's or a column's open (its up word, below), or pageshow. The frame (the round's call 1, 2026-10-04):
+// in Chromium and WebKit a 204 or a download closes no socket, so the link can stand through a whole outage of the panes alone,
+// and without the frame that outage went unwritten and its entries were dropped at its end. The link's next frame comes
+// within one keepalive (KEEPALIVE_S, 10 s by default), so a pane-only outage that ends before it still goes unwritten. An unload
+// makes none of these events but that frame: one landing in the 1 to 2 ms between beforeunload and the closes Firefox delivers
+// clears the latch, and that reload writes an entry for each shown pane whose dial the unload closed (a reload while the panes'
+// dials connect and the link is open, as at the boot; at a return's redial the link is not open and carries no frame).
 var leaving=false;
 window.addEventListener('beforeunload',function(){leaving=true;});
 window.addEventListener('pageshow',function(){leaving=false;});
@@ -73647,7 +73653,7 @@ shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
 var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid())+(window.__rompKeyQ?window.__rompKeyQ():''));   // +k=: the page key the socket class needs, added by the page-key script
 shWs=ws;var shOpened=false;   // [fork] D3: this dial's socket for the liveness machinery, and whether it ever opened (the return probe's attempt count keys on it)
-try{window.__rompNotLeaving&&window.__rompNotLeaving();}catch(e){}   // [fork] review round 1 of item 4b (2026-10-04): a dial of the page's link, so the page is not leaving: the Log's leaving latch (_LANDING_ERRS_JS), set by a beforeunload that did not unload, clears here and at the open below
+try{window.__rompNotLeaving&&window.__rompNotLeaving();}catch(e){}   // [fork] review round 1 of item 4b (2026-10-04): a dial of the page's link, so the page is not leaving: the Log's leaving latch (_LANDING_ERRS_JS), set by a beforeunload that did not unload, clears here, at the open and at each frame below
 var shCutHere=false;clearTimeout(shCutT);var shCutMe=shCutT=setTimeout(function shCut(){if(shCutT===shCutMe)shCutT=0;if(ws.readyState!==0)return;shCutHere=true;try{ws.close();}catch(e){}},SH_CONNECT_MS);   // [fork] iOS item 1a (2026-10-02): the connect cut on this dial's own timer, SH_CONNECT_MS after the dial (the watchdog tick cut it up to SH_TICK_MS later). The open, the close and the next dial clear it (an abandon is always followed by a dial); the open and the close clear it by this dial's own handle (shCutMe), so an older socket's late event never cancels a newer dial's cut; a callback that runs anyway finds its own socket no longer CONNECTING and closes nothing; all three reset shCutT only while shCutT is still their dial's. shCutHere: the close this timer made, which this dial's onclose reads as a hung attempt by the event, not by the clock
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
@@ -73657,7 +73663,7 @@ shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.s
 if(shReturnProbe){shReturnProbe.ms=Date.now()-shForegroundedAt;shReturnProbe.attempts=shFailed;shReturnProbe.firstFailMs=shFirstFailT?Date.now()-shFirstFailT:-1;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;shFailed=0;shFirstFailT=0;}   // [fork] D3: ONE shell row per return - the decision, the hidden/quiet gap, and the path's own recovery (attempts, firstFailMs, foreground->open ms)
 shTell();   // [fork] D3: link up - re-tell the panes
 if(shellOpened&&window.__rompReload)window.__rompReload.checkBoot();shellOpened=true;};
-ws.onmessage=function(ev){shLastRecv=Date.now();shResumeProvisional=0;var m;try{m=JSON.parse(ev.data);}catch(e){return;}
+ws.onmessage=function(ev){shLastRecv=Date.now();shResumeProvisional=0;try{window.__rompNotLeaving&&window.__rompNotLeaving();}catch(e){}var m;try{m=JSON.parse(ev.data);}catch(e){return;}   // [fork] review round 1 of item 4b (2026-10-04, call 1): a frame on the link shows the page is still here, so the Log's leaving latch clears: in Chromium and WebKit a beforeunload that did not unload (a 204, a download) closes no socket, and the link can stand through a whole outage of the panes alone. Every frame, before its type is read
 if(m&&m.type==='restarting'){shRestartAnnounced=Date.now();return;}   // [fork] D3: the kernel's announced death - the redial keeps its tight cadence
 if(m&&m.type==='ka'){if(m.dv&&window.__rompReload)window.__rompReload.noteDv(m.dv);}   // build drift on the shell's own keepalive (T265; an OFFER since 2026-09-16)
 else if(m&&m.type==='reloadRequired'){if(window.__rompReload)window.__rompReload.require(m.why);}   // the safety valve (2026-09-16): a kernel that must force a reload for correctness; nothing sends it today
