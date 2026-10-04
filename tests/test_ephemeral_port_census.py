@@ -22,142 +22,194 @@ macOS hands out, 49152-65535 (CI's macOS cells).
 THE FILES are derived by walking the checkout (files()): every regular file under tests/, fixtures included, and every
 file named *.test.* or under a directory named fixtures anywhere else, outside node_modules, dist, out, site, venv,
 __pycache__ and every hidden directory (.git; .claude, where a clone may keep worktrees of other commits; .venv). A
-symlink is skipped (its target is read where it lives). A file that is not UTF-8 text is skipped, and the census fails
-if the walk finds no files, no Python file with a number in the range, no product function to resolve a call against,
-or no module under tests/ that a read module imports, so it never passes on nothing. A file is read only when it holds a
-five-digit number in the range (digit separators allowed: 45_001), or, for Python, one of the computed forms below (a
-modulus by a constant of four or five digits, or a call to randint, randrange or randbelow); a port computed from
-smaller constants alone (30000 + 5000) is not read.
+symlink is skipped (its target is read where it lives, if that is in THE FILES). A file that is not UTF-8 text is
+skipped, and the census fails if the walk finds no files, no Python file with a number in the range, no product function
+to resolve a call against, or no module under tests/ that a read module imports, so it never passes on nothing. A file
+is opened only when its text, as written, holds anywhere (a comment included) a five-digit number in the range standing
+alone, with no dot, no underscore and no character str.isalnum() accepts against either end (digit separators allowed:
+45_001), or, for Python, one of the computed forms below as text: a % followed, after any spaces or tabs, by four or
+five digits (% 20000; not % 20_000 or % (20000)), or randint, randrange or randbelow with the parenthesis right after
+the name (randint( opens a file, randint ( does not). Every rule reads an open file, so a port computed from smaller
+constants alone (30000 + 5000) is read only in a file something else opens. A digit, here and in THE RULE, is any
+Unicode decimal digit (what Python's regular expressions match as a digit), so Arabic-Indic and fullwidth digits count
+as ASCII ones do.
 
-THE RULE. A number in the range counts when it is WRITTEN AS A PORT, in one of these positions.
-  In Python, read by AST (scan_python):
+THE RULE. A number in the range counts when it is WRITTEN AS A PORT: a value of one of the forms below, in one of the
+positions below. This section states what the census reads. A name is BOUND, here and below, by the bindings the census
+records: a constant or a list, tuple or set display given to the name anywhere in the module by =, an annotated = or :=,
+by a tuple or list assignment element by element, or by a for loop or a comprehension over a display. Any other binding
+of the name (a call's result, a parameter, an import, B = A) is not seen, adding no value and taking none away (HOST =
+"127.0.0.1", then HOST = os.environ["H"], leaves HOST a host).
+  In Python, read by AST (scan_python), the positions:
     a value under a dict key that names a port ({"port": N}, {"local_port": N}, {"busPort": N}; a key names a port when
-    one of its words, split at underscores, other punctuation and camelCase, is "port" or "ports": "report" does not);
+    one of its words, split at underscores, other punctuation and camelCase, is "port" or "ports": "report" does not;
+    the key is a string, or a bare name judged by the name itself, so {BUS_PORT: N} counts whatever BUS_PORT holds);
     a keyword argument that names a port (bus_port=N, ROMP_POSTAL_PORT="N");
-    an assignment to a target that names a port (PORT = N, km.BUS_PORT = N, os.environ["ROMP_POSTAL_PORT"] = "N"), a
-    tuple target read element by element against a tuple value of its length;
+    the value assigned to a target that names a port, by =, an annotated =, := or an augmented assignment (PORT = N,
+    km.BUS_PORT = N, os.environ["ROMP_POSTAL_PORT"] = "N", port += N); a tuple or list target is read element by
+    element against a tuple or list value of its length (h, port = "x", N);
     the default of a parameter that names a port (def _notify(self, host, up, port=N));
-    a positional argument whose parameter names a port, in the function the callee resolves to: a function the module
-    defines (code text included, below); else, for a name the module imports from a module under tests/ (from helpers
-    import dial, or import helpers and then helpers.dial; tests.helpers and a star import alike), that module's
-    function (HelperModules); else, a name such a module only re-exports included, one of kernel/, postal/ or cli/ by
-    name (km._notify_bus_peer("h", N, True)); a first parameter named self or cls is skipped; a *ports parameter takes
-    every extra argument;
-    an element of the sequence a for loop or a comprehension walks, under a target that names a port (for host, port in
-    (("h", N),): the element at the port's index);
+    a positional argument whose parameter names a port, in the functions the callee resolves to. An attribute call on a
+    tests/ module the module imports (import helpers, import tests.helpers as h, or from tests import helpers; then
+    helpers.dial or h.dial) resolves to that module's function (HelperModules). Any other callee resolves by its name
+    alone, whatever it is called on: to the module's own function of that name (code text included, below); else, for
+    a bare name the module imports from a tests/ module (from helpers import dial, from tests.helpers import dial, or a
+    star import), to that module's function; else to every function of that name in the .py files directly under
+    kernel/, postal/ or cli/ (not their subdirectories), a name a tests/ module only re-exports included
+    (km._notify_bus_peer("h", N, True); vendorlib.ring(N) resolves to every product function or method named ring).
+    import tests.helpers without as, then tests.helpers.dial, and a relative import, give no tests/ module, so their
+    callees resolve by name alone like any other. A first parameter named self or cls is skipped; a *ports parameter
+    takes every extra argument;
+    an element of a list, tuple or set display that a for loop or a comprehension walks, under a target that names a
+    port (for host, port in (("h", N),): the element at the port's index);
     the second argument of a call whose first argument is a string that names a port (os.environ.setdefault(
     "ROMP_POSTAL_PORT", "N"), monkeypatch.setenv);
-    the port of an address tuple whose first element is a HOST: a loopback or wildcard literal ("127.0.0.1",
-    "localhost", "0.0.0.0", "::1", "::" or ""), or a name the module binds only to such literals, the empty one aside
-    (HOST = "127.0.0.1"): ("127.0.0.1", N), (HOST, N);
+    the port of an address, a tuple or list whose first element is a HOST and whose second is the port, read in every
+    tuple or list the module writes, an unpacking target included (HOST, X = pair() counts X's values): a
+    loopback or wildcard literal ("127.0.0.1", "localhost", "0.0.0.0", "::1", "::" or ""), or a name the module binds
+    only to such literals, the empty one aside (HOST = "127.0.0.1"): ("127.0.0.1", N), (HOST, N);
     the positional argument right after a host in a call, the empty string aside (http.client.HTTPConnection(
     "127.0.0.1", N, timeout=30), asyncio.open_connection(HOST, N));
-    an operand formatted into an address (below), by %, by an f-string or by str.format, whose template (a literal; for
-    % and format, also a name bound to one literal) puts an address, then a colon before the operand
+    an operand formatted into an address (below), by %, by an f-string or by a .format() call on the template, whose
+    template (a str literal; for % and format, also a name bound to exactly one str literal; never bytes, and never
+    str.format(t, N)) puts an address, then a colon before the operand
     ("http://127.0.0.1:%d/" % N, "http://%s:%d/" % (h, N), f"http://127.0.0.1:{P}/", f"ws://{h}:{P}/",
-    "http://127.0.0.1:{}/".format(N)); for %, the port's placeholder is %d, %i or %s, and the whole right operand is
-    read, each element of a tuple;
+    "http://127.0.0.1:{}/".format(N)); for %, the template holds an address whose colon is followed at once by a plain
+    %d, %i or %s, and then the whole right operand is read, each element of a tuple, whatever placeholder it fills;
     a port concatenated onto an address: the right operand of a + whose left side, read as text (string literals, names
     bound to one, f-strings' literal parts) with every other operand as a placeholder, ends in an address, then a colon
     ("http://127.0.0.1:" + str(N), "http://" + host + ":" + P);
-    an element of a list or tuple display right after a string element that spells a --*port option whole (an argv:
-    ["romp", "serve", "--port", "N"], ("--bus-port", N));
-    and one hop through a name: a value written in one of those positions as a bare name counts the literals the module
-    binds that name to (P = N ... {"port": P}).
-  An address is a loopback or wildcard host (127.0.0.1, localhost or 0.0.0.0 with no letter, digit or underscore
-  against either end; [::1]; [::]) or // and a run of word characters, dots and dashes, standing right before the colon,
-  with spaces or tabs allowed on either side of the colon except in a %-template; in that run a %-template may also put
-  %s, and an f-string, a format template or a concatenation a placeholder (a field, or an operand not read as text).
-  An int counts (45_001 is 45001), and so does a string of the number's five digits, except as a positional argument
-  (by its parameter or after a host): a string handed to a function by position is that function's input text, not a
-  setting (km._notify_bus_peer("h", "N", True) is not counted, where km._notify_bus_peer("h", N, True) is).
-  An expression counts when it is bounded and can reach the range: interval() reads constants, + - * // and % over
-  them, an unknown operand of % by a constant as 0 to the constant less one, and a call to randint(a, b), randrange(stop),
-  randrange(start, stop[, step]) or randbelow(n) (random's and secrets', by the callee's name) as the values it can
-  return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does random.randint(40000, 50000). A sum or
-  difference with an unbounded operand counts when one of its constant operands alone is in the range: 40000 + i is
-  built on 40000 (offset_base()); one with no such operand (base + i) is not read.
+    an element of a list or tuple display right after a string element that is a --*port option whole: -- and a name
+    one of whose words is port or ports, so --port, --bus-port, --ports and --port-file alike (an argv: ["romp",
+    "serve", "--port", "N"], ("--bus-port", N)).
+  The values that count, in any of those positions, and no others:
+    an int in the range (45_001 is 45001);
+    a str (not bytes) that is five digits once str.strip() has taken off any leading and trailing whitespace ("N",
+    " N ", "45_001", in any decimal digits, THE FILES), except that such a str constant, written there or reached by
+    the hop, is not read as a positional argument (by its parameter or after a host) or as the port of an address: a
+    string handed to a function by position is that function's input text, not a setting (km._notify_bus_peer("h",
+    "N", True) is not counted, where km._notify_bus_peer("h", N, True) is), and a socket address takes its port as an
+    int. The exception is for the constant alone: str(N) there is an expression interval() bounds, and counts; and it
+    belongs to those positions, so ("127.0.0.1", "N") assigned to a port-named target is a display in the assignment's
+    position, and its digit string counts;
+    a list, tuple or set display, each element read by these same terms ({"ports": [N, 1]});
+    an expression interval() bounds that can reach the range, or a sum or difference offset_base() finds built on a
+    constant expression in the range (both below);
+    a bare name, by one hop, in every position but a loop's sequence: it counts each value it is bound to (BOUND,
+    above), each read by these same terms (P = N ... {"port": P}). So a name bound twice counts both values, a digit
+    string counts wherever a string does (P = "N", then ["romp", "--port", P]), and a name bound to a display counts its
+    elements, a name among them through interval() (two hops: A = N, L = [A], then {"ports": L}). The hop is taken
+    wherever the position's own value is the bare name, the positions that are themselves elements of a display
+    included: a tuple assignment's element (h, port = "x", P), the port of an address ((HOST, P)) and the element after
+    a --*port option. A name inside a display that is the position's value ({"ports": [P]}, the tuple a % formats), and
+    a name in a loop's sequence, counts only through interval(), which reads a name bound to exactly one value, an int
+    literal.
+  An address is a loopback or wildcard host (127.0.0.1, localhost or 0.0.0.0 with no underscore and no character
+  str.isalnum() accepts against either end; [::1]; [::]) or // and a run of word characters, dots and dashes, standing
+  right before the colon, with spaces or tabs allowed on either side of the colon except in a %-template; in that run a
+  %-template may also put %s, and an f-string, a format template or a concatenation a placeholder (a field, or an
+  operand not read as text).
+  For the f-string, format and concatenation rules the text must end at the colon and any spaces or tabs after it, so a
+  newline after the colon ends the address ("http://127.0.0.1:" and a newline, then + str(N), is not read), and a NUL
+  character the source writes is read as an ordinary character, never as a placeholder ("http://", a NUL and a colon,
+  then + str(N), is not read).
+  An expression counts when it is bounded and can reach the range: interval() bounds int constants, a name bound to
+  exactly one value, an int literal, and, over bounded operands, str() and int(), + - and *, and // and % by a positive
+  constant; it reads an unknown operand of % by a positive constant as 0 to the constant less one, and a call to
+  randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n) over bounded arguments (random's and
+  secrets', by the callee's name) as the values it can return, so 20000 + os.getpid() % 20000 is 20000-39999 and
+  counts, and so does random.randint(40000, 50000). A sum or difference with an unbounded operand counts when one of its
+  operands alone is a constant expression (one interval() bounds with no unknown in it) whose value is in the range,
+  found through str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so is
+  40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
-  docstring, each bytes literal, and the code of code text (below). A number there may carry digit separators (45_001),
-  and after a name and = or : it may open a shell arithmetic expansion ($((40000 + RANDOM % 1000)) reads as 40000):
+  docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
+  its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
+  neither as text nor as code text, so "port = 4000 * 10" in a string is not read where the same code in the module
+  is. A number there
+  may carry digit separators (45_001), and in the key, decl, env, flag and pair rules it may follow a quote and may open
+  a shell arithmetic expansion ($((40000 + RANDOM % 1000)) reads as 40000):
     key   a port-named key or name after a delimiter ({ , ( [ ;) or at a line's start, then : or = and the number
           ({ port: N }, "busPort": N, , port=N);
     decl  a port-named name declared and assigned (const port = N, local port=N, export ROMP_POSTAL_PORT=N);
     env   an upper-case port-named name, then : or = and the number, quoted or not (ROMP_POSTAL_PORT'] = 'N');
-    flag  a --*port option (--port N, --port=N), or one quoted in a list with the number as the next element
-          ('--port', 'N');
+    flag  a --*port option (above: --port N, --port=N, --no-port-check=N), or one quoted in a list with the number as
+          the next element ('--port', 'N');
     authority  host:N after an address (above) with no placeholder in its run (http://127.0.0.1:N, //TESTHOST:N), the
-               number after the colon or concatenated onto it ('http://127.0.0.1:' + N);
+               number right after the colon, or after a quote, a + and an optional quote ('http://127.0.0.1:' + N);
+               the rule does not check that the quote closes a string, so a quote that opens one reads the same way,
+               and an object literal's { localhost: '+N' } is read as a concatenation;
     address    a loopback or wildcard address tuple in text (("127.0.0.1", N));
     call  a number handed first to .listen(, .connect(, createConnection( or .bind(;
     pair  a port-named string and the number handed together ("ROMP_POSTAL_PORT", "N").
-  Code text in a Python string, one that parses as Python (a probe a test runs with python -c, a planted module), is
-  read both ways, whether or not anything runs it, since the census cannot tell a probe that runs from one that is only
-  parsed: by the Python rules, and by the text rules over its code with its comments and string literals blanked out
-  (code_text_tokens(); the whole text when the tokenizer refuses it). Each string literal inside it is read in its own
-  right, as here, so a comment or a docstring inside code text stays out as it does in a module. A short string can parse as code without being any: "localhost:N" is an annotation to the parser, and the
-  authority rule reads it. A hit inside a string literal is reported on the source line that writes the number.
+  Code text in a Python string, one that parses as Python into at least one statement (a probe a test runs with
+  python -c, a planted module), is read both ways, whether or not anything runs it, since the census cannot tell a
+  probe that runs from one that is only parsed: by the Python rules, and by the text rules over its code with its
+  comments and string literals blanked out (code_text_tokens(); the whole text when the tokenizer refuses it). Each
+  string literal inside it is read in its own right, as here, so a comment or a docstring inside code text stays out as
+  it does in a module. A string that parses to no statement, comments alone, is no code text: the text rules read it
+  whole, its comments included ("# PORT=N"). Code text is parsed three levels deep (code text inside code text inside
+  code text); a string inside the third level is read by the text rules alone. A short string can parse as code without
+  being any: "localhost:N" is an annotation to the parser, and the authority rule reads it. A hit inside a string
+  literal is reported on the source line that writes the number when the number is written there in plain ASCII
+  digits; otherwise on a line counted from the literal's newlines, which can be off by the newline escapes it holds.
 
-THE EXCLUDED CLASS, a stated predicate rather than a list: a number in the range written anywhere else is not read, and
-stays. That is prose, a comment and a docstring (in code text too); a log, error or ps line a test hands to a parser
-(the ssh errors of tests/test_tunnel_stale_and_logging.py, the ps lines of tests/test_kernel_tunnels.py, whose
--L 50512:127.0.0.1:29855 puts the number before the host); a string handed by position to a parser; an assertion's
-expected value (it follows the setting it checks, so the setting is what counts); an id, a size, a byte offset, a
-timeout and a duration. Not every place left unread is inert: the shapes below can dial or bind, and are not read.
+THE EXCLUDED CLASS, a stated predicate rather than a list: a number in the range that no rule above reads is not read,
+and stays. In Python that takes in prose in a comment or a docstring (in code text too). Elsewhere it takes in a number
+only where no rule's position or shape holds it: a log, error or ps line a test hands to a parser (the ssh errors of
+tests/test_tunnel_stale_and_logging.py, the ps lines of tests/test_kernel_tunnels.py, whose -L 50512:127.0.0.1:29855
+puts the number before the host), a digit string handed by position, an assertion's expected value (it follows the
+setting it checks, so the setting is what counts), an id, a size, a byte offset, a timeout and a duration. These are
+not exempt as kinds: a file read as text is read whole, its comments included (a shell comment holding localhost:N is
+read), and a line or a value that fits a rule is read where it is written (parse_line("... 127.0.0.1:N ..."),
+assertEqual(got, {"port": N}), f(port_timeout=N)). Not every place left unread is inert: WHAT IT CANNOT SEE gives
+known examples that can dial or bind.
 
-WHAT IT CANNOT SEE (stated, not closed; test_the_stated_blind_spots_stay_unread plants each one green, so closing one
-is a change to this list):
-  a port that is none of what reaches a position: a literal (an int, or a string of its five digits where THE RULE
-  counts one); a list, tuple or set display, each element read by these same terms; an expression interval() bounds
-  (int constants, names bound to one int literal, str() or int() around one of these, + - * // and % over them, an
-  unknown operand of % by a constant, and the random calls); a sum or difference offset_base() finds built on a
-  constant in the range; or a bare name the module binds to literals, standing alone in the position (inside a display
-  or a loop's sequence, a name counts only through interval()); anything else is unread there, though a rule of its own
-  may read the value where it is written: a name the module does not bind to a literal (a parameter, a name another
-  module binds, B after B = A), an attribute (cfg.p after cfg.p = N), a container's element (CFG["a"]), a call's result
-  other than those (pick(), random.choice((N, M))), a name inside a display bound to a digit string (P = "N", then
-  {"ports": [P]}), an f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a sum or
-  difference in the range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__
-  replaced at run time);
-  a host that is not one: neither a loopback or wildcard literal ("127.0.0.1", "localhost", "0.0.0.0", "::1", "::" or
-  "") nor a name the module binds only to such literals, none of them the empty one (("TESTHOST", N),
-  HTTPConnection(self.host, N)); a name bound to "" is no host even in a tuple (H = "", then (H, N)), and the empty
-  string itself is a host in a tuple only, not before a port in a call (serve("", N)); so the port beside it is read
-  only when another rule reads it;
-  a positional port handed to a function no index holds (one the standard library or a module outside tests/, kernel/,
-  postal/ and cli/ defines, or a tests/ helper the module does not import) with no host right before it;
+WHAT IT CANNOT SEE: known examples, each with a green plant in test_the_stated_blind_spots_stay_unread. This is not a
+closed list. THE RULE states what the census reads; a shape it leaves out is unread whether or not an example here
+names it, and rules read from a test's text cannot follow every way a test comes by a port. A change that reads one of
+these turns its plant red, and the example leaves this list.
+  a value in a position whose form THE RULE's values leave out: a name with no binding the census records (BOUND: a
+  parameter, a name another module binds, B after B = A), an attribute (cfg.p after cfg.p = N), a container's element
+  (CFG["a"]), a call's result other than str() or int() around a bounded value and the random calls (pick(),
+  random.choice((N, M))), a name bound to anything but one int literal inside a display that is the position's value
+  or in a loop's sequence (P = "N", then {"ports": [P]}; P bound to 1 and to N, then for host, port in (("h", P),)), an
+  f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a sum or difference in the
+  range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__ replaced at run time); a
+  rule of its own may still read such a value where it is written;
+  a host that THE RULE does not take for one (("TESTHOST", N), HTTPConnection(self.host, N)), a name bound to the
+  empty string, even in a tuple (H = "", then (H, N)), and the empty string itself before a port in a call (serve("",
+  N)); the port beside it is read only when another rule reads it;
+  a positional port handed to a function whose name no index holds (a name no function of the module, of a tests/
+  module it imports, or of kernel/, postal/ or cli/ carries: vendorlib.start_vendor_server(N), a tests/ helper the
+  module does not import, a helper reached through import tests.helpers used whole), with no host right before it;
   in a file read as text, a positional port beyond the call rule (nc -l 127.0.0.1 N, python3 -m http.server N,
   startServer(N)), and a port reached through a name that does not name a port (const P = N, then :${P});
-  a %-template in which no address's colon is followed at once by a plain %d, %i or %s, the only placeholders the rule
-  keys on (finding one, it reads the whole right operand): so a port's placeholder that is anything else is unread,
-  whatever makes it so, a mapping key, a flag, a width, a precision, a length modifier or another conversion
-  ("http://127.0.0.1:%(p)d/" % {"p": N}, "http://127.0.0.1:%-d/" % N, "http://127.0.0.1:%5d/" % N,
-  "http://127.0.0.1:%.5d/" % N, "http://127.0.0.1:%ld/" % N, "http://127.0.0.1:%u/" % N), unless another rule reads
-  the operand (a port-named key does);
+  a %-template whose port's placeholder is not a plain %d, %i or %s: one with a mapping key, a flag, a width, a
+  precision, a length modifier or another conversion ("http://127.0.0.1:%(p)d/" % {"p": N}, "http://127.0.0.1:%-d/" %
+  N, "http://127.0.0.1:%5d/" % N, "http://127.0.0.1:%.5d/" % N, "http://127.0.0.1:%ld/" % N, "http://127.0.0.1:%u/" %
+  N), unless another rule reads the operand (a port-named key does) or another address in the same template has a
+  plain one;
   a %-template or a format template that is neither a string literal nor a name the module binds to exactly one string
-  literal (a parameter, a call's result: t % N);
-  a port with no address (THE RULE) and colon right before it in the text the rule that would read it examines, so
-  that only a rule needing no host can read it ($BUS_PORT:N, by the env rule): of the rules that need one, the
-  authority rule alone reads a port written as digits, over one string or one file read as text (in Python, a string
-  literal or an f-string's literal piece), with no placeholder in the address; the %, format, f-string and
-  concatenation rules read an operand, over the template, the f-string, or the whole left side of the + (for %, one
-  address's colon followed at once by a plain %d, %i or %s anywhere in the template reads the whole right operand);
-  examples: a placeholder host before digits (f"http://{host}:N/x", f"{host}:N", "http://%s:N/x" % host,
-  "http://{}:N/x".format(host), `http://${host}:N/x`, curl http://$HOST:N/x), a host or a colon in an operand of its own
-  before digits ("http://" + host + ":N" and "http://127.0.0.1" + ":N", in Python and in JavaScript), a left side of a +
-  with no address written in it (base_url() + str(N)), the colon and the port in operands of their own in text the
-  text rules alone read ("http://" + host + ":" + N; Python's concatenation rule reads it), userinfo before a host that
-  is no loopback or wildcard literal ("http://u@TESTHOST:%d/x" % N), and an IPv6 literal other than [::1] or [::]
-  ("http://[2001:db8::1]:%d/x" % N);
-  an option the flag rules do not read: they read only an option spelled -- and a word that names a port, with the
-  number as its neighbour (in Python, the next element, not a starred one, of the list or tuple display that holds the
-  option as a whole string element; in text, after =, after spaces or tabs, or after the option's closing quote and a
-  comma); anything else is unread, in Python and in text: an option spelled with one dash (-p N), an option whose word
-  names no port (["romp", "serve", "--listen", "N"]), and an option and its number that are not neighbours
-  (["--port"] + [N], ['--port'].concat(['N']), a flag built at run time);
-  a value under a key spelled other than as a word (a computed key, {K: N});
+  literal (a parameter or a call's result: t % N, tmpl() % N, tmpl().format(N));
+  a port with no address and colon right before it in the text its rule examines, which only a rule that needs no host
+  can read ($BUS_PORT:N, by the env rule): a placeholder host before digits (f"http://{host}:N/x", f"{host}:N",
+  "http://%s:N/x" % host, "http://{}:N/x".format(host), `http://${host}:N/x`, curl http://$HOST:N/x), a host or a
+  colon in an operand of its own before digits ("http://" + host + ":N" and "http://127.0.0.1" + ":N", in Python and
+  in JavaScript), a left side of a + with no address written in it (base_url() + str(N)), the colon and the port in
+  operands of their own in JavaScript ("http://" + host + ":" + N; Python's concatenation rule reads it), userinfo
+  before a host that is no loopback or wildcard literal ("http://u@TESTHOST:%d/x" % N), and an IPv6 literal other
+  than [::1] or [::] ("http://[2001:db8::1]:%d/x" % N);
+  an option the flag rules do not read, in Python and in text: an option spelled with one dash (-p N), an option whose
+  name has no port word (["romp", "serve", "--listen", "N"]), and an option and its number that are not neighbours
+  (["--port"] + [N], ['--port'].concat(['N'])), and a flag built at run time (["romp", "--" + "port", "N"]);
+  a value under a key that names no port by THE RULE: a bare name with no port word, whatever it holds (K = "port",
+  then {K: N});
   code text that does not parse on its own (an indented fragment, a %-template), which the text rules read instead, so
   its positional ports are not resolved;
+  a file the census never opens, since its only number in the range does not stand alone in its text as written (THE
+  FILES): a digit string right after an escape sequence, such as a port key's value written as a backslash, a t and
+  then N (a tab, then the port);
   a file outside THE FILES (a support file such as ui/test-dom-shim.ts, a lab tool under tools/).
 Each planted shape below is red, with the rule it names among the rules that read it, and each excluded shape is green.
 
@@ -234,7 +286,8 @@ def names_a_port(name):
 
 
 def _digits(v):
-    """The number a string of exactly five digits spells (digit separators allowed), else None."""
+    """The number a str spells when, once str.strip() has taken off any leading and trailing whitespace, it is five
+    digits (any Unicode decimal digits, digit separators allowed: " 45_001 "), else None."""
     if isinstance(v, str) and re.fullmatch(_D5, v.strip()):
         return _num(v.strip())
     return None
@@ -255,10 +308,18 @@ TEXT_RULES = (
     ("pair", re.compile(r"\([ \t]*[\"'`](?P<name>[\w$.-]+)[\"'`][ \t]*,[ \t]*" + _NUM)),
 )
 _NAMED = frozenset({"key", "decl", "env", "flag", "pair"})   # the rules whose match carries a name that must name a port
-_ADDR_END = re.compile(r"(?:" + _HOST + r"|//[\w.\x00-]+)[ \t]*:[ \t]*$")   # a template's address up to the port's colon (\x00: a formatted host)
+# A template's address up to the port's colon (\x00: a formatted host). \Z and not $, which also matches before a final
+# newline, so "http://127.0.0.1:\n" is no address before a port.
+_ADDR_END = re.compile(r"(?:" + _HOST + r"|//[\w.\x00-]+)[ \t]*:[ \t]*\Z")
 _ADDR_PCT = re.compile(r"(?:" + _HOST + r"|//(?:[\w.-]|%s)+):%[dis]")   # a host after // may be a %s placeholder
 _BLANKED = frozenset([tokenize.COMMENT, tokenize.STRING] + [getattr(tokenize, t) for t in (
     "FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END", "TSTRING_START", "TSTRING_MIDDLE", "TSTRING_END") if hasattr(tokenize, t)])
+
+
+def _as_text(s):
+    """A literal's text as the address rule reads it: a NUL the source itself writes becomes U+FFFD, which no part of
+    the rule accepts, so the only \x00 in a rendered text is the placeholder for a piece the census cannot read."""
+    return s.replace("\x00", "\ufffd")
 
 
 def _line_in(first, last, after):
@@ -538,17 +599,19 @@ class _Scan:
     def _rendered(self, node):
         """The text a string expression renders, each piece the census cannot read standing as \x00: a string literal, a
         name the module binds to exactly one, an f-string's literal parts, and a sum (+) of them, walked without
-        recursion so a long chain of sums costs no stack."""
+        recursion so a long chain of sums costs no stack. A NUL the source writes is read through _as_text, so it is
+        never taken for the placeholder."""
         out, stack = [], [node]
         while stack:
             x = stack.pop()
             if isinstance(x, ast.BinOp) and isinstance(x.op, ast.Add):
                 stack.extend((x.right, x.left))
             elif isinstance(x, ast.JoinedStr):
-                out.extend(p.value if isinstance(p, ast.Constant) and isinstance(p.value, str) else "\x00" for p in x.values)
+                out.extend(_as_text(p.value) if isinstance(p, ast.Constant) and isinstance(p.value, str) else "\x00"
+                           for p in x.values)
             else:
                 t = self._template(x)
-                out.append("\x00" if t is None else t)
+                out.append("\x00" if t is None else _as_text(t))
         return "".join(out)
 
     def _formatted(self, tmpl, args, keywords):
@@ -559,7 +622,7 @@ class _Scan:
             return
         rendered, auto = "", 0
         for lit, field, _spec, _conv in fields:
-            rendered += lit
+            rendered += _as_text(lit)
             if field is None:
                 continue
             head = re.match(r"[^.\[]*", field).group(0)
@@ -700,7 +763,7 @@ class _Scan:
                             self._value(piece.value, "an operand formatted into an address")
                         rendered += "\x00"
                     elif isinstance(piece, ast.Constant) and isinstance(piece.value, str):
-                        rendered += piece.value
+                        rendered += _as_text(piece.value)
             if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)) and id(n) not in docs:
                 s = n.value if isinstance(n.value, str) else n.value.decode("latin-1")
                 if FIVE.search(s):
@@ -971,6 +1034,11 @@ def _sep(v):
     return "%d_%03d" % (v // 1000, v % 1000)
 
 
+def _arabic(v):
+    """`v` written in Arabic-Indic digits, decimal digits other than ASCII's."""
+    return "".join(chr(0x660 + int(d)) for d in str(v))
+
+
 class Plants(unittest.TestCase):
     """Each planted shape is one hit, read by the rule it names (among any others that read the same place), and each
     excluded shape is green."""
@@ -1069,6 +1137,42 @@ class Plants(unittest.TestCase):
                 ("str.format address by field name", 'u = "http://localhost:{p}/x".format(p=%d)\n' % n,
                  "formatted into an address"),
                 ("one hop", 'P = %d\nps.peer_update({"host": "h", "port": P})\n' % n, "through the name P"),
+                ("one hop, a name bound twice", 'P = 1\nP = %d\nrow = {"port": P}\n' % n, "key 'port', through the name P"),
+                ("one hop, a name bound to a display", 'L = [%d, 1]\nrow = {"ports": L}\n' % n, "key 'ports', through the name L"),
+                ("two hops through a display", 'A = %d\nL = [A]\nrow = {"ports": L}\n' % n,
+                 "key 'ports', through the name L, a constant expression"),
+                ("a tuple assignment's element, a name bound to a digit string", 'P = "%d"\nh, port = "x", P\n' % n,
+                 "assignment to port, through the name P"),
+                ("a tuple assignment's element, a name bound twice", 'P = 1\nP = %d\nh, port = "x", P\n' % n,
+                 "assignment to port, through the name P"),
+                ("an argv's element, a name bound to a digit string", 'P = "%d"\nsubprocess.run(["romp", "--port", P])\n' % n,
+                 "argument after the flag --port, through the name P"),
+                ("an argv's element, a name bound twice", 'P = "1"\nP = "%d"\nsubprocess.run(["romp", "--port", P])\n' % n,
+                 "argument after the flag --port, through the name P"),
+                ("an address's port, a name bound twice", 'P = 1\nP = %d\ns.connect(("127.0.0.1", P))\n' % n,
+                 "address ('127.0.0.1', ...), through the name P"),
+                ("an address written as a list", 'ADDR = ["127.0.0.1", %d]\n' % n, "address ('127.0.0.1'"),
+                ("an unpacking target read as an address", 'HOST = "127.0.0.1"\nX = %d\nHOST, X = pair()\n' % n,
+                 "address ('127.0.0.1', ...), through the name X"),
+                ("an augmented assignment", 'port += %d\n' % n, "assignment to port"),
+                ("a digit string padded with whitespace", 'env = {"ROMP_POSTAL_PORT": " %d "}\n' % n,
+                 "key 'ROMP_POSTAL_PORT'"),
+                ("a digit string with a digit separator", 'env = {"ROMP_POSTAL_PORT": "%s"}\n' % _sep(n), "key 'ROMP_POSTAL_PORT'"),
+                ("a digit string in other decimal digits", 'env = {"ROMP_POSTAL_PORT": "%s"}\n' % _arabic(n),
+                 "key 'ROMP_POSTAL_PORT'"),
+                ("str() of an int by position", 'km._notify_bus_peer("TESTHOST", str(%d), True)\n' % n,
+                 "argument port of _notify_bus_peer()"),
+                ("a digit string in an address assigned to a port-named target", 'LISTEN_PORT = ("127.0.0.1", "%d")\n' % n,
+                 "assignment to LISTEN_PORT"),
+                ("a host name rebound by a call is still a host", 'HOST = "127.0.0.1"\nHOST = os.environ["H"]\n'
+                 's.connect((HOST, %d))\n' % n, "address ('127.0.0.1'"),
+                ("a key that is a bare name with a port word", 'BUS_PORT = "x"\nrow = {BUS_PORT: %d}\n' % n, "key 'BUS_PORT'"),
+                ("an option whose name holds a port word", 'subprocess.run(["romp", "--port-file", "%d"])\n' % n,
+                 "after the flag --port-file"),
+                ("a callee resolved by its name on another object", 'import vendorlib\nvendorlib.ring(%d)\n' % n,
+                 "argument port of ring()"),
+                ("a sum built on a constant expression", 'port = %d * 1 + i\n' % n, "an offset from"),
+                ("code text of comments alone, read as text", 'CFG = "# PORT=%d"\n' % n, "text rule env"),
                 ("code text", 'subprocess.run([sys.executable, "-c", %r])\n' % ('bus.peer_update({"host": "h", "port": %d, "up": True})' % n),
                  "in code text"),
                 ("text rule in a string", 'JS = "await fetch(\\"http://127.0.0.1:%d/x\\")"\n' % n, "text rule authority"),
@@ -1091,6 +1195,8 @@ class Plants(unittest.TestCase):
                 ("module import", 'import plant_helpers\nplant_helpers.dial("TESTHOST", %d)\n' % n),
                 ("module import under another name", 'import plant_helpers as ph\nph.dial("TESTHOST", %d)\n' % n),
                 ("the module from the tests package", 'from tests import plant_helpers\nplant_helpers.dial("TESTHOST", %d)\n' % n),
+                ("the module from the tests package, imported dotted under another name",
+                 'import tests.plant_helpers as ph\nph.dial("TESTHOST", %d)\n' % n),
                 ("the function from the tests package's module", 'from tests.plant_helpers import dial\ndial("TESTHOST", %d)\n' % n),
                 ("the import's code text", 'import plant_helpers\nsubprocess.run([sys.executable, "-c", %r])\n'
                  % ('plant_helpers.dial("TESTHOST", %d)' % n)),
@@ -1141,7 +1247,13 @@ class Plants(unittest.TestCase):
                  "rule flag"),
                 ("address in shell python", "e.bats", "python3 -c \"s.bind(('127.0.0.1', %d))\"\n" % n, "rule address"),
                 ("listen", "f.test.js", "server.listen(%d, '127.0.0.1');\n" % n, "rule call"),
-                ("a name and its value handed together", "g.test.js", "setEnv('ROMP_POSTAL_PORT', '%d');\n" % n, "rule pair")):
+                ("a name and its value handed together", "g.test.js", "setEnv('ROMP_POSTAL_PORT', '%d');\n" % n, "rule pair"),
+                ("a quote that opens a string, then a +, after an address's colon", "o.test.mjs",
+                 "const o = { localhost: '+%d' };\n" % n, "rule authority"),
+                ("other decimal digits", "k.bats", "export ROMP_POSTAL_PORT=%s\n" % _arabic(n), "rule env"),
+                ("a comment in a file read as text", "m.bats", "# the old default: localhost:%d\n" % n, "rule authority"),
+                ("a shell arithmetic expansion after a flag", "n.bats", "run romp --port $((%d + RANDOM %% 100))\n" % n,
+                 "rule flag")):
             with self.subTest(label):
                 self.assertRed(name, src, why)
 
@@ -1161,6 +1273,7 @@ class Plants(unittest.TestCase):
                  'subprocess.run(["x", "--report", "%d"])\n' % n),
                 ("an id", "test_x.py", 'MID = "1700000001.%d_44444.TESTHOST"\n' % n),
                 ("an empty string before a number in a call", "test_x.py", 'row = make_row("id", "", %d)\n' % n),
+                ("a digit string as an address's port", "test_x.py", 's.connect(("127.0.0.1", "%d"))\n' % n),
                 ("a comment inside code text", "test_x.py", 'subprocess.run([sys.executable, "-c", "x = 1  # was {port: %d}"])\n' % n),
                 ("a docstring inside code text", "test_x.py", 'PROBE = "def f():\\n    \\"\\"\\"{port: %d}\\"\\"\\"\\n"\n' % n),
                 ("JS timeout", "g.test.ts", "await page.waitForSelector('#x', { timeout: %d });\n" % n),
@@ -1181,19 +1294,47 @@ class Plants(unittest.TestCase):
                 self.assertRed("test_plant.py", call % n, "argument port of")
                 self.assertGreen("test_x.py", call % ('"%d"' % n))
 
+    def test_an_address_ends_where_its_text_ends_and_a_nul_in_the_source_is_no_placeholder(self):
+        """THE RULE's address, for the f-string, format and concatenation rules. The text before the operand must end at the
+        colon and any spaces or tabs, so a newline after the colon ends the address (the end was matched with $, which
+        also matches before a final newline, and each newline form below was read). A NUL the source writes is an
+        ordinary character, never the placeholder a field or an unread operand leaves (each NUL form below was read).
+        Each green form has a red twin that differs only there, so the green is the rule's and not a file left unread."""
+        n = _n()
+        for label, green, red, why in (
+                ("a newline after the colon, concatenated", 'u = "http://127.0.0.1:\\n" + str(%d)\n' % n,
+                 'u = "http://127.0.0.1:" + str(%d)\n' % n, "concatenated onto an address"),
+                ("a newline after the colon, in an f-string", 'P = %d\nu = f"http://127.0.0.1:\\n{P}/x"\n' % n,
+                 'P = %d\nu = f"http://127.0.0.1:{P}/x"\n' % n, "formatted into an address"),
+                ("a newline after the colon, by str.format", 'u = "http://127.0.0.1:\\n{}/x".format(%d)\n' % n,
+                 'u = "http://127.0.0.1:{}/x".format(%d)\n' % n, "formatted into an address"),
+                ("a NUL for the host, concatenated", 'u = "http://\\x00:" + str(%d)\n' % n,
+                 'u = "http://" + h + ":" + str(%d)\n' % n, "concatenated onto an address"),
+                ("a NUL for the host, in an f-string", 'P = %d\nu = f"http://\\x00:{P}/x"\n' % n,
+                 'P = %d\nu = f"http://{h}:{P}/x"\n' % n, "formatted into an address"),
+                ("a NUL for the host, by str.format", 'u = "http://\\x00:{}/x".format(%d)\n' % n,
+                 'u = "http://{}:{}/x".format(h, %d)\n' % n, "formatted into an address")):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", green)
+                self.assertRed("test_plant.py", red, why)
+
     def test_the_stated_blind_spots_stay_unread(self):
-        """Each shape WHAT IT CANNOT SEE names, planted green: a change that reads one turns its subtest red, and the
-        docstring's list moves with it."""
+        """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
+        that reads one turns its subtest red, and the example leaves the docstring's list."""
         n = _n()
         self._write(os.path.join("tests", "plant_helpers.py"), "P = %d\n\n\ndef dial(host, port):\n    pass\n" % n)
         for label, name, src in (
                 ("a parameter", "test_x.py", 'def go(p):\n    return {"port": p}\n\n\ngo(%d)\n' % n),
                 ("a container", "test_x.py", 'CFG = {"a": %d}\nrow = {"port": CFG["a"]}\n' % n),
                 ("a call's result", "test_x.py", 'def pick():\n    return %d\n\n\nrow = {"port": pick()}\n' % n),
-                ("a name another module binds", "test_x.py", 'from plant_helpers import P\nrow = {"port": P}\n'),
-                ("two hops", "test_x.py", 'A = %d\nB = A\nrow = {"port": B}\n' % n),
+                ("a name another module binds", "test_x.py",
+                 'from plant_helpers import P\nrow = {"port": P}\nOTHER = %d                # opens the file\n' % (n + 1)),
+                ("a name bound to a name (B = A)", "test_x.py", 'A = %d\nB = A\nrow = {"port": B}\n' % n),
                 ("an attribute", "test_x.py", 'cfg.p = %d\nrow = {"port": cfg.p}\n' % n),
-                ("a name inside a display bound to a digit string", "test_x.py", 'P = "%d"\nrow = {"ports": [P]}\n' % n),
+                ("a name bound to a digit string, inside a display that is the position's value", "test_x.py",
+                 'P = "%d"\nrow = {"ports": [P]}\n' % n),
+                ("a name bound twice, in a loop's sequence", "test_x.py",
+                 'P = 1\nP = %d\nfor host, port in (("h", P),):\n    pass\n' % n),
                 ("a run-time substitution into code text", "test_x.py",
                  'PROBE = "bus.peer_update({\'port\': __VALUE__})"\n'
                  'subprocess.run([sys.executable, "-c", PROBE.replace("__VALUE__", "%d")])\n' % n),
@@ -1203,7 +1344,11 @@ class Plants(unittest.TestCase):
                 ("a host that is no loopback or wildcard literal", "test_x.py",
                  's.connect(("TESTHOST", %d))\nconn = HTTPConnection(self.host, %d)\n' % (n, n)),
                 ("a name bound only to the empty string, in a tuple", "test_x.py", 'H = ""\ns.bind((H, %d))\n' % n),
-                ("a function no index holds, no host before it", "test_x.py", 'import vendorlib\nvendorlib.serve(%d)\n' % n),
+                ("the empty string before a port in a call", "test_x.py", 'serve("", %d)\n' % n),
+                ("a function no index holds, no host before it", "test_x.py",
+                 'import vendorlib\nvendorlib.start_vendor_server(%d)\n' % n),
+                ("a helper reached through import tests.helpers used whole", "test_x.py",
+                 'import tests.plant_helpers\ntests.plant_helpers.dial("TESTHOST", %d)\n' % n),
                 ("a tests/ helper the module does not import", "test_x.py", 'dial("TESTHOST", %d)\n' % n),
                 ("a positional port in shell", "x.bats",
                  "    nc -l 127.0.0.1 %d &\n    python3 -m http.server %d --bind 127.0.0.1 &\n" % (n, n)),
@@ -1219,6 +1364,8 @@ class Plants(unittest.TestCase):
                 ("a %-template placeholder with another conversion", "test_x.py", 'v = "http://127.0.0.1:%%u/x" %% %d\n' % n),
                 ("a template or an address that is no literal", "test_x.py",
                  'def go(t, base):\n    return t %% %d, base + str(%d)\n' % (n, n)),
+                ("a template that is a call's result", "test_x.py", 'u = tmpl() %% %d\nv = tmpl().format(%d)\n' % (n, n)),
+                ("a left side of a + that is a call's result", "test_x.py", 'u = base_url() + str(%d)\n' % n),
                 ("digits after a placeholder host in an f-string", "test_x.py", 'u = f"http://{host}:%d/x"\n' % n),
                 ("digits after a placeholder host in a %-template", "test_x.py", 'u = "http://%%s:%d/x" %% host\n' % n),
                 ("digits after a placeholder host in a format template", "test_x.py",
@@ -1247,12 +1394,20 @@ class Plants(unittest.TestCase):
                  'subprocess.run(["romp", "--port"] + ["%d"])\nsubprocess.run(["romp", "-p", "%d"])\n' % (n, n)),
                 ("a short option in shell", "z.bats", "    romp serve -p %d\n" % n),
                 ("an option and its number apart in JavaScript", "w.test.mjs", "spawn(bin, ['--port'].concat(['%d']));\n" % n),
-                ("a computed key", "test_x.py", 'K = "port"\nrow = {K: %d}\n' % n),
-                ("code text that does not parse", "test_x.py", 'FRAG = "    km._notify_bus_peer(\'h\', %d, True)"\n' % n)):
+                ("a flag built at run time", "test_x.py", 'subprocess.run(["romp", "--" + "port", "%d"])\n' % n),
+                ("a key that is a bare name with no port word", "test_x.py", 'K = "port"\nrow = {K: %d}\n' % n),
+                ("code text that does not parse", "test_x.py", 'FRAG = "    km._notify_bus_peer(\'h\', %d, True)"\n' % n),
+                ("code text that does not parse, a %-template", "test_x.py",
+                 'TMPL = "km._notify_bus_peer(\'h\', %d, %%(up)s)"\n' % n)):
             with self.subTest(label):
                 self.assertGreen(name, src)
+        with self.subTest("a file whose only number in the range follows an escape sequence"):
+            self.assertGreen("test_x.py", 'env = {"ROMP_POSTAL_PORT": "\\t%d"}\n' % n)
+            self.assertRed("test_plant.py", 'env = {"ROMP_POSTAL_PORT": "\\t%d"}\nX = %d\n' % (n, n + 1),
+                           "key 'ROMP_POSTAL_PORT'")            # opened for another number, the census reads it
         with self.subTest("a file outside the walk"):
             self._write(os.path.join("ui", "test-dom-shim.ts"), "export const PORT = %d;\n" % n)
+            self._write(os.path.join("tools", "lab_x.py"), "PORT = %d\n" % n)
             self.assertEqual([h for h in census(self.d)["hits"] if not h[0].startswith("tests" + os.sep)], [])
             self.assertRed("y.test.ts", "export const PORT = %d;\n" % n, "rule decl")
 
