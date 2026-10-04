@@ -1390,12 +1390,14 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "a Content-Type write inside one that is no `_send` definition's own write, and a call whose definition binds the "
                 "parameter one of its own writes names other than as that parameter); a type holding a CR or LF is refused by name "
                 "before it is compared, even at a place SERVED_ALLOW names, where the census resolves the type there (its header "
-                "line ends there, and what follows is another header or the body, which the census does not read); so is a type "
+                "line ends there, and what follows is another header or the body, which the census does not read); at a place no "
+                "SERVED_ALLOW entry names, so is a type "
                 "that is not exactly one listed type, since a browser may run a page under any other (a list of types by its last "
                 "valid one, a type it sniffs where no nosniff header stands, a multipart's HTML part): one holding a character "
                 "past ASCII or a comma, or whose part before any `;`, stripped of spaces and tabs alone and lower-cased, is in "
-                "neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix (NO_SCRIPT_TYPES: the types the live tree "
-                "serves that run no script, application/json, application/manifest+json, application/octet-stream, image/png and "
+                "neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix (NO_SCRIPT_TYPES: the types that run no script "
+                "among those the census types at such places in the live tree, application/json, application/manifest+json, "
+                "application/octet-stream, image/png and "
                 "text/plain); the part before any `;`, stripped and lower-cased, is compared with the types a browser "
                 "runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a "
                 "`+xml` "
@@ -9242,8 +9244,9 @@ RD_CJ = tuple(("qj" + f, 'return self._send(200, "<meta http-equiv=\\"Content-Ty
                '"tch(\'https://example.invalid/%s\')</script>", "text/html")' % (_rd_cf_split(kw) + ("qj" + f,))) for f, kw in RD_CF_FORMS)
 # (ty) and (sn), item 2 of the reviewer's 02:3xZ ruling of 2026-10-04 (F3, N1 and N2 of the closing check, fix C): a content type the
 # census types only where it is exactly one listed type (one of SCRIPT_TYPES, a `+xml` type or one of NO_SCRIPT_TYPES), ASCII with no
-# comma, its essence stripped of spaces and tabs alone; any other refused by name, at a `_send` call and at a Content-Type write
-# outside `_send`. A list of types, which a browser reads by its last valid one (ycp `text/plain, text/html`, ych `text/html,`, ycj
+# comma, its essence stripped of spaces and tabs alone; any other refused by name, at a place no SERVED_ALLOW entry names, at a
+# `_send` call and at a Content-Type write outside `_send`. A list of types, which a browser reads by its last valid one (ycp
+# `text/plain, text/html`, ych `text/html,`, ycj
 # `application/json, text/html`, ycn `text/plain,text/html` and ycs `text/plain; a=b, text/html`, whose part before the `;` is one
 # listed type, so the comma alone refuses it), multipart/x-mixed-replace, whose HTML part WebKit runs under the kernel's nosniff header
 # (ymx), a type with a vertical tab after it, which Python's strip removes and a browser's MIME parsing does not (yvt), and one holding
@@ -15685,7 +15688,8 @@ class TheLandingRoundsClassesFailClosed(_Scope):
     argument or a `**` whatever its replacement, the subject still read. And the closing check (the reviewer's 02:3xZ ruling of
     2026-10-04): item 1, a declaration written with character references read both as spelled and with them decoded, in every arm (the
     (cf) and (cj) plants, and the file arm's fq files); item 2, a content type typed only where it is exactly one listed type, ASCII
-    with no comma, any other refused by name at a `_send` call and at a write outside it (the (ty) and (sn) plants); item 3, hmac's
+    with no comma, any other refused by name, at a place no SERVED_ALLOW entry names, at a `_send` call and at a write outside it
+    (the (ty) and (sn) plants); item 3, hmac's
     new refused with an attribute of a plainly imported module other than hashlib as its digestmod (hdb); and item 4, a header value a
     call hands its definition through a module name the census does not follow by binding refused by name (the (x2) plants). Each
     refusal is held at its line with its text and the count of its lines, each module's lines being its refused plants' and no other;
@@ -15870,20 +15874,25 @@ class TheAllowlistedContentTypeIsReadForACrOrLf(unittest.TestCase):
 
 
 class TheNoScriptTypesAreTheLiveTreesOwn(unittest.TestCase):
-    """NO_SCRIPT_TYPES is the list of the live tree's types that run no script (item 2 of the reviewer's 02:3xZ ruling of 2026-10-04,
-    fix C, which derives it from the live tree), and this case holds it to that: the essence of every content type judge typed in the
-    tree's run (Result.typed_ctypes, each value's _ctype_essence), less those that run script (_script_type), is the list's set. An
-    entry for a type the tree does not serve, or that the tree stops serving, fails here, so no entry types a value as running no script
-    unless the tree serves that type; before this case an entry added for a type the tree did not serve, one that runs script among
-    them, typed it as running none with nothing red. A type the tree serves that the list lacks is refused by the census itself (judge),
-    and the tree's run fails on it. The tree's one derivation (_tree), no run of its own."""
+    """NO_SCRIPT_TYPES is the list of the types that run no script among those the census types in the live tree (item 2 of the
+    reviewer's 02:3xZ ruling of 2026-10-04, fix C, which derives it from the live tree), and this case holds it to that: the essence of
+    every content type judge typed in the tree's run (Result.typed_ctypes, each value's _ctype_essence), less those that run script
+    (_script_type), is the list's set. judge types nothing at a place SERVED_ALLOW names: it reads that place's type for a CR or LF and
+    returns, so the list holds no type the tree serves only at such a place. An entry for a type the census types nowhere in the tree's
+    run, or stops typing, fails here, so no entry types a value as running no script unless the census types that type in the live
+    tree; before this case an entry for a type the census typed nowhere, one that runs script while being neither one of SCRIPT_TYPES
+    nor a `+xml` type, typed it as running none with nothing red (an entry for one of SCRIPT_TYPES or a `+xml` type changes no typing,
+    _script_type reading those whatever the list holds, and fails here by the set's equality alone). At a place no SERVED_ALLOW entry
+    names, a type the list lacks that is neither one of SCRIPT_TYPES nor a `+xml` type is refused by name (judge), and the tree's run
+    fails on it. The tree's one derivation (_tree), no run of its own."""
 
-    def test_the_list_is_the_essences_of_the_types_the_tree_serves_that_run_no_script(self):
+    def test_the_list_is_the_essences_of_the_types_the_census_types_that_run_no_script(self):
         mod, res = script_module(ROOT), _tree().res
         live = {e for e in res.typed_ctypes if not mod._script_type(e)}
         self.assertEqual(live, set(mod.NO_SCRIPT_TYPES),
-                         "NO_SCRIPT_TYPES holds the essences of the types the live tree serves that run no script, and no other: drop an "
-                         "entry the tree's run typed no response as, and add a type only once the tree serves it and it runs no script")
+                         "NO_SCRIPT_TYPES holds the essences of the types that run no script among those the census types in the live "
+                         "tree, and no other: drop an entry the tree's run typed no response as, and add a type only once the tree serves "
+                         "it at a place no SERVED_ALLOW entry names and it runs no script")
 
 
 class TheStampIsListedOnItsExactCall(unittest.TestCase):

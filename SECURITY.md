@@ -440,15 +440,16 @@ call whose definition binds the parameter one of its own writes names other than
 as that parameter); a type holding a CR or LF is refused by name before it is
 compared, even at a place SERVED_ALLOW names, where the census resolves the type
 there (its header line ends there, and what follows is another header or the
-body, which the census does not read); so is a type that is not exactly one
-listed type, since a browser may run a page under any other (a list of types by
-its last valid one, a type it sniffs where no nosniff header stands, a
-multipart's HTML part): one holding a character past ASCII or a comma, or whose
-part before any `;`, stripped of spaces and tabs alone and lower-cased, is in
-neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix
-(NO_SCRIPT_TYPES: the types the live tree serves that run no script,
-application/json, application/manifest+json, application/octet-stream, image/png
-and text/plain); the part before any `;`, stripped and lower-cased, is compared
+body, which the census does not read); at a place no SERVED_ALLOW entry names,
+so is a type that is not exactly one listed type, since a browser may run a page
+under any other (a list of types by its last valid one, a type it sniffs where
+no nosniff header stands, a multipart's HTML part): one holding a character past
+ASCII or a comma, or whose part before any `;`, stripped of spaces and tabs
+alone and lower-cased, is in neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no
+`+xml` suffix (NO_SCRIPT_TYPES: the types that run no script among those the
+census types at such places in the live tree, application/json,
+application/manifest+json, application/octet-stream, image/png and text/plain);
+the part before any `;`, stripped and lower-cased, is compared
 with the types a browser runs script from
 (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and

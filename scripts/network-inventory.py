@@ -268,12 +268,13 @@ read) and through a dict literal's values (refused before its type is read, belo
 write inside one that is no `_send` definition's own write, and a call whose definition binds the parameter one of its own writes
 names other than as that parameter); a type holding a CR or LF is refused by name before it is compared, even at a place
 SERVED_ALLOW names, where the census resolves the type there (its header line ends there, and what follows is another header or
-the body, which the census does not read); so is a type that is not exactly one listed type, since a browser may run a page under
-any other (a list of types by its last valid one, a type it sniffs where no nosniff header stands, a multipart's HTML part): one
-holding a character past ASCII or a comma, or whose part before any `;`, stripped of spaces and tabs alone and lower-cased, is in
-neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix (NO_SCRIPT_TYPES: the types the live tree serves that run no
-script, application/json, application/manifest+json, application/octet-stream, image/png and text/plain); the part before any `;`,
-stripped and lower-cased, is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
+the body, which the census does not read); at a place no SERVED_ALLOW entry names, so is a type that is not exactly one listed
+type, since a browser may run a page under any other (a list of types by its last valid one, a type it sniffs where no nosniff
+header stands, a multipart's HTML part): one holding a character past ASCII or a comma, or whose part before any `;`, stripped of
+spaces and tabs alone and lower-cased, is in neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix (NO_SCRIPT_TYPES:
+the types that run no script among those the census types at such places in the live tree, application/json,
+application/manifest+json, application/octet-stream, image/png and text/plain); the part before any `;`, stripped and lower-cased,
+is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml`
 suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
 application/javascript among them). A script-running route's page body is the call's second positional argument, read only when
@@ -1599,8 +1600,8 @@ def _runs_off(line, start, comma=True):
 
 
 _HELPER_CALL =re.compile(r"^(?:%s)\(" % "|".join(KERNEL_URL_HELPERS))   # a kernel-URL helper call as the fetch argument
-# The content types a browser runs script from, compared with a route's type the census types (_typed_ctype, any other refused by name)
-# cut at its first `;`, stripped and lower-cased
+# The content types a browser runs script from, compared with a route's type the census types (_typed_ctype, any other refused by name
+# at a place no SERVED_ALLOW entry names) cut at its first `;`, stripped and lower-cased
 # (_script_type): HTML; the XML types, whose XHTML-namespaced script runs (text/xml, application/xml, text/xsl and, by rule
 # in _script_type, any type with a `+xml` suffix, image/svg+xml and application/xhtml+xml among them); and JavaScript under
 # every name a browser takes for it. A route candidate of one of these types has its text read by the served pass.
@@ -1608,11 +1609,13 @@ SCRIPT_TYPES = ("text/html", "text/xml", "application/xml", "text/xsl", "applica
                 "text/javascript", "application/javascript", "application/ecmascript", "application/x-ecmascript", "application/x-javascript",
                 "text/ecmascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4",
                 "text/javascript1.5", "text/jscript", "text/livescript", "text/x-ecmascript", "text/x-javascript")
-# The content types the live tree serves that run no script, the only others the census types (_typed_ctype; item 2 of the
-# reviewer's 02:3xZ ruling of 2026-10-04, fix C): derived from the live tree, every value judge typed there being one of these or a
-# script-running type above. A content type the census does not type is refused by name (judge): a browser may run a page under it.
-# The census module holds the list equal to the essences of the types the tree's run typed that run no script (Result.typed_ctypes;
-# TheNoScriptTypesAreTheLiveTreesOwn), so an entry for a type the live tree does not serve fails there.
+# The content types that run no script among those the census types in the live tree, the only others it types (_typed_ctype; item 2
+# of the reviewer's 02:3xZ ruling of 2026-10-04, fix C): derived from the live tree, every value judge typed there being one of these
+# or a script-running type above. judge types nothing at a place SERVED_ALLOW names, reading that place's type for a CR or LF alone,
+# so the list holds no type the tree serves only at such a place; at any other place a content type the census does not type is
+# refused by name (judge): a browser may run a page under it. The census module holds the list equal to the essences of the types the
+# tree's run typed that run no script (Result.typed_ctypes; TheNoScriptTypesAreTheLiveTreesOwn), so an entry for a type the census
+# types nowhere in the live tree fails there.
 NO_SCRIPT_TYPES = ("application/json", "application/manifest+json", "application/octet-stream", "image/png", "text/plain")
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")                        # a URL scheme at the head of a literal
 _PY_SLOT = re.compile(r"%[sdr(]|\{[A-Za-z_0-9]*\}")                         # a Python format slot inside a served page's literal
@@ -4341,8 +4344,9 @@ def _ctype_values(e, scopes, consts, written, depth=0):
 
 def _typed_ctype(v):
     """Whether the census types a content type (item 2 of the reviewer's 02:3xZ ruling of 2026-10-04, fix C; judge refuses one it does
-    not): the value is ASCII and holds no comma, and its essence, the part before its first `;` stripped of spaces and tabs only and
-    lower-cased, is exactly one listed type: one of SCRIPT_TYPES, a type with a `+xml` suffix, or one of NO_SCRIPT_TYPES. A browser
+    not, save at a place SERVED_ALLOW names, where it asks this of no value): the value is ASCII and holds no comma, and its essence,
+    the part before its first `;` stripped of spaces and tabs only and lower-cased, is exactly one listed type: one of SCRIPT_TYPES, a
+    type with a `+xml` suffix, or one of NO_SCRIPT_TYPES. A browser
     reads a list of types by its last valid one (`text/plain, text/html` runs as HTML), sniffs a type it cannot use (an empty one,
     `*/*`, `unknown/unknown`, `application/unknown` or a malformed one, as `texthtml`) where no nosniff header stands, and runs a
     multipart's HTML part (`multipart/x-mixed-replace`), so any other value may serve a page the census would never read."""
@@ -5593,8 +5597,9 @@ def routes_of(rel, tree, sc, res):
 
     def judge(call, where, expr, defs, direct):
         """The script-running type of one candidate, or None: allowlisted, not script-running, or refused by name here. An allowlisted
-        place's content type is still read for a CR or LF where the census resolves it (the allow hit recorded all the same), and
-        a content type the census does not type (_typed_ctype) is refused by name before it is compared."""
+        place's content type is still read for a CR or LF where the census resolves it (the allow hit recorded all the same), and for
+        nothing else: it is neither typed nor refused for its type. At any other place a content type the census does not type
+        (_typed_ctype) is refused by name before it is compared."""
         if allowed(where, expr, call):   # the place's type read for a CR or LF all the same, where it resolves (NEW-3 of the closing
             # check, item 5 of the reviewer's 02:3xZ ruling of 2026-10-04): no allowlist entry excuses a header that ends early
             vals = _ctype_values(expr, scopes(defs), consts, written) if expr is not None else None
@@ -5622,7 +5627,8 @@ def routes_of(rel, tree, sc, res):
                                 "`+xml` type or one of NO_SCRIPT_TYPES" % (rel, call.lineno, untyped[0][:40], ast.unparse(expr)[:60], where))
             return None
         res.typed_ctypes.update(map(_ctype_essence, vals))   # each typed type's essence: the census module holds NO_SCRIPT_TYPES equal
-        # to those that run no script (TheNoScriptTypesAreTheLiveTreesOwn), so an entry for a type the live tree does not serve fails there
+        # to those that run no script (TheNoScriptTypesAreTheLiveTreesOwn), so an entry for a type the census types nowhere in the live
+        # tree fails there (an allowlisted place returned above, its type never recorded)
         if not _ctype_simple(expr, scopes(defs), consts, written):   # the content-type face of the frame-local limit refused where one
             # check does it at 0 live (the 00:28Z rule): a content type the census resolves through anything but a string constant or a
             # name bound once to one, which a frame may rewrite at run time, the census reading only what its text binds
