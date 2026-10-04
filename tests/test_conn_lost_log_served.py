@@ -34,16 +34,29 @@ counting them, and still unread after the sockets come back; in the hung leg not
 return: the page's own connect cut, a timer, closed a shown pane's dial while it waited in line and another socket of the
 page stood (in the `return-panes-first` leg the shell's own redial too, while a pane's socket stood), every other dial
 passed, and nothing was written: a close that cut made fails nothing while a socket of the page is open. Red at the fork's
-main 591436b2e on every leg, in each engine it runs in: each healthy and slow leg on its no-entry check (the transition wrote one
-entry per shown pane), each outage leg, the hung one included, on its written-after-a-failing-dial check (the entries were
-written at the drop, before any dial had failed). The slow legs are red too at ed1c13e73, this branch's head before the
+main 591436b2e on every return leg above, in each engine it runs in: each healthy and slow leg on its no-entry check (the
+transition wrote one entry per shown pane), each outage leg, the hung one included, on its written-after-a-failing-dial check
+(the entries were written at the drop, before any dial had failed). The slow legs are red too at ed1c13e73, this branch's head before the
 review's finding was fixed, on the same check: the cut of a pane's dial, or of the shell's, wrote the shown panes still
 waiting in line.
 
+The unload legs (review round 1 of item 4b, 2026-10-04) drive tests/conn_lost_reload_browser.mjs instead: real engine sockets
+through a TCP proxy the driver runs on a second reserved port, since a routed socket is a mock no engine closes on unload. A
+reload while the shell's return dial is CONNECTING (reload-return) or while the shown panes' boot dials are (reload-boot)
+writes nothing. Firefox closes such dials after beforeunload and before pagehide and delivers their closes to the unloading
+page: at d8a1df87e the old page then wrote one unread entry per shown pane, 3 on the desktop, through the shell's
+window.__rompLinkFailed in reload-return and through the panes' wsFail words in reload-boot, and both Firefox legs are red there
+on their no-entry check. Chromium and WebKit deliver no such close; their reload legs hold that a reload still writes nothing.
+Each reload leg asserts that the old page's dials were CONNECTING when the reload began, and the Firefox legs that the old
+page received the failure after its beforeunload. A navigation to a 204 fires beforeunload and leaves the page in place, and
+an outage after it still writes one unread entry per shown pane: green at d8a1df87e, which has no latch, and red under a latch
+that never clears.
+
 Engines: Chromium runs every leg (CI's served-pages job); Firefox and WebKit run the healthy phone and desktop legs, the
-kernel-down phone leg and the pane-dials-refused leg, as optional legs that skip with "optional:" where the runner does
-not declare the engine (ROMP_SERVED_TESTS_ENGINES). The slow legs run in Chromium alone: their line is the driver's, so
-another engine would run the same page code against the same line. Skips loudly without the extension deps or a browser.
+kernel-down phone leg, the pane-dials-refused leg and the unload legs, as optional legs that skip with "optional:" where the
+runner does not declare the engine (ROMP_SERVED_TESTS_ENGINES). The slow legs run in Chromium alone: their line is the
+driver's, so another engine would run the same page code against the same line. Skips loudly without the extension deps or a
+browser.
 CONN_LOG_OUT, when set, receives every leg's driver record. Synthetic throughout: no real session data.
 """
 import json
@@ -72,6 +85,7 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 
 DRIVER = os.path.join(HERE, "conn_lost_log_browser.mjs")
+RELOAD_DRIVER = os.path.join(HERE, "conn_lost_reload_browser.mjs")   # the unload legs' driver: real sockets through its own proxy
 OUT_DIR = os.environ.get("CONN_LOG_OUT", "")
 
 
@@ -88,6 +102,7 @@ def pane_labels():
 
 SLOW_MS = 5500   # the slow legs' handshake: the Feed, fourth of the panes in the desktop's line, opens 22 s after its dial, past the latest its connect cut can come (15 s and one 5 s watchdog tick)
 PHONE_EAGER = ("chat", "feed")   # the phone loads the chat (its src ships) and the Feed (exempt from the lazy boot) at boot; every other pane at its first tap (stage 0)
+HELD_AT_BOOT = ("chat", "feed", "timeline")   # the reload-boot legs hold the panes the desktop shows by default (the leg checks the body says so)
 
 
 def eager(shell):
@@ -127,6 +142,7 @@ class ConnLostLog(unittest.TestCase):
         claude = os.path.join(cls.lab, "claude")
         os.makedirs(claude, exist_ok=True)
         cls.port, cls.token = lab_ports.reserve(cls.lab), "testtok-connlog"
+        cls.pport = lab_ports.reserve(cls.lab)   # the unload legs' proxy (tests/conn_lost_reload_browser.mjs listens on it)
         cls.env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(cls.klog, "w"),
@@ -326,6 +342,123 @@ class ConnLostLog(unittest.TestCase):
 
     def test_webkit_phone_pane_dials_refused_while_the_link_stands(self):
         self._outage("webkit", "phone", "refused-panes", 5000, (1500, 4500))
+
+    # ---- the page's own unload, through real sockets (review round 1 of item 4b, 2026-10-04) ----
+    def _drive_real(self, engine, scenario, **extra):
+        """One run of tests/conn_lost_reload_browser.mjs on the desktop shell: real engine sockets through the driver's own
+        proxy on the reserved port, in front of the lab kernel."""
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        name = "%s-desktop-%s" % (engine, scenario)
+        cfg = {"engine": engine, "shell": "desktop", "scenario": scenario, "token": self.token, "kernelPort": self.port,
+               "proxyPort": self.pport, "healthz": "http://127.0.0.1:%d/healthz" % self.port, "eagerApps": list(eager("desktop")),
+               "hiddenDwellMs": 400, "settleMs": 1500, "afterMs": 2000}
+        cfg.update(extra)
+        path = os.path.join(self.lab, "cfg-%s.json" % name)
+        Path(path).write_text(json.dumps(cfg))
+        try:
+            p = subprocess.run(["node", RELOAD_DRIVER], capture_output=True, text=True, timeout=240,
+                               env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=path))
+        except subprocess.TimeoutExpired as e:
+            so = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode()
+            self.fail("driver timed out; partial output:\n%s" % so[-3000:])
+        if p.returncode == 3:
+            if engine == "chromium":
+                self.skipTest("no playwright chromium on this box: the served leg needs one (CI installs it)")
+            self.skipTest("optional: no playwright %s on this machine: %s" % (engine, p.stderr.strip()[-300:]))
+        self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
+        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
+        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:])
+        r = json.loads(line[len("RESULT:"):])
+        type(self).legs[name] = r
+        self.assertNotIn("died", r, "driver aborted: %r (kernel log tail: %s)" % (r.get("died"), Path(self.klog).read_text()[-800:]))
+        self.assertTrue(r["upAfter"], name + ": every eager pane and the shell's link said up at the end (kernel log tail: %s)"
+                        % Path(self.klog).read_text()[-1500:])
+        return name, r
+
+    def _reload(self, engine, scenario):
+        """A reload while a dial of the page is still CONNECTING writes nothing. Firefox closes the old page's never-opened
+        dials after beforeunload and before pagehide and delivers their close events while that page still runs: in
+        reload-return the shell's return dial (window.__rompLinkFailed), in reload-boot every boot dial (each pane's down
+        word and its wsFail word). Before the leaving latch each such close was read as a failed reconnect, and the old page
+        wrote one unread entry per shown pane, which the reloaded page showed. Chromium and WebKit deliver no close events to
+        an unloading page; their legs hold that the reload still writes nothing there."""
+        name, r = self._drive_real(engine, scenario, **({"holdApps": list(HELD_AT_BOOT)} if scenario == "reload-boot" else {}))
+        rec, old = r["rec"], r["oldGen"]
+        self.assertNotEqual(r["newGen"], old, name + ": the page reloaded")
+        before_unload = [e["t"] for e in rec["ev"] if e["gen"] == old and e["ev"] == "beforeunload"]
+        self.assertTrue(before_unload, name + ": the old page's beforeunload fired, the event the latch is set on")
+        # the dials in flight at the reload, read from the old page's own sockets (a dial Firefox or Chromium keeps waiting in
+        # its handshake line, or Firefox delays after a failure, never reaches the proxy, and is CONNECTING all the same)
+        held = ["shell"] if scenario == "reload-return" else list(HELD_AT_BOOT)
+        if scenario == "reload-boot":
+            self.assertEqual(sorted(held), sorted(a for a in eager("desktop") if "po-" + a in r["bodyClass"].split()),
+                             name + ": the dials held at the boot are the shown panes'")
+        for app in held:
+            last = [x["ev"] for x in rec["sock"] if x["gen"] == old and x["app"] == app and x["t"] < r["t"]["reload"]][-1:]
+            self.assertEqual(last, ["dial"], name + ": the old page's %s dial was CONNECTING when the reload began" % app)
+        road = "linkFailed" if scenario == "reload-return" else "wsFail"
+        during = [e for e in rec["ev"] if e["gen"] == old and e["ev"] == road and e["t"] >= before_unload[0]]
+        if engine == "firefox":
+            self.assertTrue(during, name + ": the old page received its never-opened dials' failure (%s) after its beforeunload, "
+                            "the road the leg is about: %r" % (road, rec["ev"]))
+        self.assertEqual([n for n in rec["notify"] if n["kind"] == "conn"], [],
+                         name + ": no connection-lost entry was written, by the unloading page or by the reloaded one")
+        self.assertEqual([e for e in r["logAfter"]["entries"] if e["kind"] == "conn"], [],
+                         name + ": the reloaded page's Log holds no connection-lost entry")
+        return name, r, during
+
+    def test_firefox_desktop_reload_during_the_returns_redial(self):
+        self._reload("firefox", "reload-return")
+
+    def test_firefox_desktop_reload_during_the_boot_dials(self):
+        self._reload("firefox", "reload-boot")
+
+    def test_desktop_reload_during_the_returns_redial(self):
+        self._reload("chromium", "reload-return")
+
+    def test_desktop_reload_during_the_boot_dials(self):
+        self._reload("chromium", "reload-boot")
+
+    def test_webkit_desktop_reload_during_the_returns_redial(self):
+        self._reload("webkit", "reload-return")
+
+    def test_webkit_desktop_reload_during_the_boot_dials(self):
+        self._reload("webkit", "reload-boot")
+
+    def _nav204(self, engine, outage_ms=5000):
+        """A navigation that fires beforeunload and does not unload (the top document sent to a 204; a download is the
+        other) sets the leaving latch, and the latch clears at the page's next real event, so a later outage is still
+        written. Firefox also closes every socket of the page at such a navigation, and they redial; Chromium closes none.
+        A latch that never cleared would leave the Log silent for every outage after it, for the page's life."""
+        name, r = self._drive_real(engine, "nav204-outage", outageMs=outage_ms, readsMs=[outage_ms - 500])
+        rec, gen = r["rec"], r["oldGen"]
+        t_nav, t_out = r["t"]["nav"], r["t"]["outage"]
+        self.assertEqual(r["genAfterNav"], gen, name + ": the 204 left the page in place")
+        self.assertTrue([e for e in rec["ev"] if e["gen"] == gen and e["ev"] == "beforeunload" and t_nav <= e["t"] < t_out],
+                        name + ": the navigation fired beforeunload, so the latch was set: %r" % rec["ev"])
+        self.assertEqual([e for e in rec["ev"] if e["ev"] == "pagehide"], [], name + ": the page never unloaded")
+        self.assertEqual([n for n in rec["notify"] if n["kind"] == "conn" and n["t"] < t_out], [],
+                         name + ": nothing failed before the outage")
+        want = self._expected({"bodyClass": r["bodyClass"]}, "desktop")
+        self.assertEqual(sorted(n["text"] for n in rec["notify"] if n["kind"] == "conn" and n["t"] >= t_out), want,
+                         name + ": the outage after the 204 wrote one entry per shown pane")
+        last = r["reads"][-1]["log"]
+        self.assertEqual(sorted(e["text"] for e in last["entries"] if e["kind"] == "conn" and not e["seen"]), want,
+                         name + ": during the outage the entries are unread")
+        return name, r
+
+    def test_firefox_desktop_a_204_then_an_outage_is_written(self):
+        # Firefox delays a dial after a failed one (seconds, growing), so within a 5 s outage only the first pane's redial
+        # reached the kernel; 18 s takes every dial past its refusal or its 15 s cut
+        self._nav204("firefox", 18000)
+
+    def test_webkit_desktop_a_204_then_an_outage_is_written(self):
+        self._nav204("webkit")
+
+    def test_desktop_a_204_then_an_outage_is_written(self):
+        self._nav204("chromium")
 
 
 if __name__ == "__main__":

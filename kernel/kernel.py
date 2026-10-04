@@ -70733,14 +70733,26 @@ function paneLabel(k){k=String(k||'');return PN[k]||(k?k.charAt(0).toUpperCase()
 // 3.5 s per handshake logged the Files pane at +22 s). A refused dial fails whatever stands; with nothing open, a hung outage, the
 // first cut writes, at 15 s.
 var lost={};
+// [fork] review round 1 of item 4b (2026-10-04): `leaving`, a latch set on beforeunload and read first by both failure doors below.
+// Firefox closes the page's dials that never opened after beforeunload and before pagehide, and delivers their close events while
+// the page still runs, so a reload while a dial was connecting (a return's redial, the boot dials) read each such close as a failed
+// reconnect and wrote one unread entry per shown pane, which the reloaded page showed. beforeunload also fires for a navigation that
+// does not unload (a 204, a download), and a latch that never cleared would leave every later outage unwritten, so the page's next
+// real event clears it: the shell's next dial or its open (window.__rompNotLeaving, from _LANDING_MOBILE_JS), a pane's or a
+// column's open (its up word, below), or pageshow. An unload makes none of them.
+var leaving=false;
+window.addEventListener('beforeunload',function(){leaving=true;});
+window.addEventListener('pageshow',function(){leaving=false;});
+window.__rompNotLeaving=function(){leaving=false;};
 function stands(){if(window.__rompLink&&window.__rompLink().up)return true;for(var k in st){if(st[k]==='up')return true;}for(var c in stc){if(stc[c]==='up')return true;}return false;}
 function lostFail(k){var x=lost[k];if(!x)return;if((x.col?stc[x.col]:st[x.app])!=='down'){delete lost[k];return;}
 if(!shown(x.app))return;delete lost[k];window.__rompNotify('conn',x.text);}
-window.__rompLinkFailed=function(cut){if(cut&&stands())return;for(var k in lost)lostFail(k);};
-window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsFail'||(m.cut&&stands()))return;
+window.__rompLinkFailed=function(cut){if(leaving)return;if(cut&&stands())return;for(var k in lost)lostFail(k);};
+window.addEventListener('message',function(e){if(leaving)return;var m=e&&e.data;if(!m||m.romp!=='wsFail'||(m.cut&&stands()))return;
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';lostFail(col?'col:'+col:m.app);});
 window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var col=(m.app==='chat'&&window.__rompColOf)?window.__rompColOf(e.source):'';   // a split column reports under its own key (the sender frame says which)
+if(m.state==='up')leaving=false;   // [fork] review round 1 of item 4b: a pane's or a column's socket opened, so the page is not leaving (the latch above)
 if(col){var sc=(m.state==='up')?'up':'down',pc=stc[col];stc[col]=sc;
 if(sc==='down'&&pc!=='down')lost['col:'+col]={app:'chat',col:col,text:'Kernel connection lost: chat split '+col+' (reconnecting)'};else if(sc==='up')delete lost['col:'+col];paint();return;}
 // A PARKED pane (2026-09-18: off screen on the phone, its redial waiting for its tab; the shim's netState("parked")) is its
@@ -73635,10 +73647,12 @@ shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
 var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid())+(window.__rompKeyQ?window.__rompKeyQ():''));   // +k=: the page key the socket class needs, added by the page-key script
 shWs=ws;var shOpened=false;   // [fork] D3: this dial's socket for the liveness machinery, and whether it ever opened (the return probe's attempt count keys on it)
+try{window.__rompNotLeaving&&window.__rompNotLeaving();}catch(e){}   // [fork] review round 1 of item 4b (2026-10-04): a dial of the page's link, so the page is not leaving: the Log's leaving latch (_LANDING_ERRS_JS), set by a beforeunload that did not unload, clears here and at the open below
 var shCutHere=false;clearTimeout(shCutT);var shCutMe=shCutT=setTimeout(function shCut(){if(shCutT===shCutMe)shCutT=0;if(ws.readyState!==0)return;shCutHere=true;try{ws.close();}catch(e){}},SH_CONNECT_MS);   // [fork] iOS item 1a (2026-10-02): the connect cut on this dial's own timer, SH_CONNECT_MS after the dial (the watchdog tick cut it up to SH_TICK_MS later). The open, the close and the next dial clear it (an abandon is always followed by a dial); the open and the close clear it by this dial's own handle (shCutMe), so an older socket's late event never cancels a newer dial's cut; a callback that runs anyway finds its own socket no longer CONNECTING and closes nothing; all three reset shCutT only while shCutT is still their dial's. shCutHere: the close this timer made, which this dial's onclose reads as a hung attempt by the event, not by the clock
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
 ws.onopen=function(){clearTimeout(shCutMe);if(shCutT===shCutMe)shCutT=0;shOpened=true;shLastRecv=Date.now();shResumeProvisional=0;shRung=0;try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}   // [fork] iOS item 1a: the open clears this dial's OWN connect cut (shCutMe) and resets shCutT only while it is still this dial's, so an older socket's open delivered after a newer dial leaves that dial's cut in force (review round 1, 2026-10-02)
+try{window.__rompNotLeaving&&window.__rompNotLeaving();}catch(e){}   // [fork] review round 1 of item 4b: the link opened, so the page is not leaving (the Log's leaving latch)
 shellSock=ws;var q=diagQ;diagQ=[];if(!diagMuted())q.forEach(function(m){try{ws.send(JSON.stringify(m));}catch(e){}});   // the rows that waited for this socket; the queue holds clientDiag rows alone, so one re-read of the kill switch at the open holds them all when a mute was flipped on while the socket was down, as the pane shim's flush does (review find, 2026-09-18)
 if(shReturnProbe){shReturnProbe.ms=Date.now()-shForegroundedAt;shReturnProbe.attempts=shFailed;shReturnProbe.firstFailMs=shFirstFailT?Date.now()-shFirstFailT:-1;shellDiag('return-probe',shReturnProbe);shReturnProbe=null;shFailed=0;shFirstFailT=0;}   // [fork] D3: ONE shell row per return - the decision, the hidden/quiet gap, and the path's own recovery (attempts, firstFailMs, foreground->open ms)
 shTell();   // [fork] D3: link up - re-tell the panes

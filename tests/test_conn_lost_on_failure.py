@@ -7,8 +7,9 @@ shim puts a stale socket down before it redials; a thawed page receives the FIN 
 waits in the Log's `lost` until the event that says the reconnect failed, a dial that closed without ever opening, and a
 socket that reopens first drops it unwritten. A close the connect cut made (a timer) fails nothing while another socket of the
 page is open (the review of item 4b, 2026-10-03: on a slow network the dials a return makes together wait in line for their
-handshakes, and the last of them reached the cut while every handshake was succeeding). Four pieces, each executed here under
-node against the code as served:
+handshakes, and the last of them reached the cut while every handshake was succeeding), and a close the page's own unload made
+fails nothing (review round 1, 2026-10-04: Firefox delivers those closes to the unloading page). Five pieces, each executed
+here under node against the code as served:
 
   ShimFailureWord        kernel/kernel.py _shim: a dial that never opened posts {romp:'wsFail',app,cut} to the shell after
                          its down word, cut true when the watchdog's CONNECTING arm closed it and false for a refusal; an
@@ -17,7 +18,8 @@ node against the code as served:
   ShellLinkFailure       _LANDING_MOBILE_JS: the shell socket's close of a dial that never opened (refused, or its own
                          connect cut) calls window.__rompLinkFailed once, with true when its own cut timer or the tick's
                          backstop made the close; an opened socket's close, the return's abandon and a superseded socket's
-                         late close call nothing. Through tests/test_kernel_mobile.py's probe harness.
+                         late close call nothing. Each dial and each open calls window.__rompNotLeaving (the Log's leaving
+                         latch, below). Through tests/test_kernel_mobile.py's probe harness.
   LogWaitsForTheFailure  _LANDING_ERRS_JS: a drop alone writes nothing (the live red cue shows it); a failure word, or the
                          link's failure for every waiting pane, writes one entry per drop; an up drops the waiting entry; a
                          pane not shown keeps waiting and is written once shown; a parked pane is dropped; a split column
@@ -26,8 +28,13 @@ node against the code as served:
                          _LANDING_ERRS_JS: a cut word, or the link's failure with true, writes nothing while the shell's link,
                          another pane's socket or a column's stands; a refusal writes whatever stands; with nothing open (a
                          parked pane holds no socket) the cut writes. The same DOM stub.
+  AnUnloadsClosesFailNothing
+                         _LANDING_ERRS_JS: from a beforeunload, neither the link's failure nor a failure word writes; the
+                         shell's next dial or open (window.__rompNotLeaving), a pane's or a column's open, and pageshow each
+                         clear the latch, so a navigation that did not unload hides no later outage. The same DOM stub.
 
-The composition in real engines (phone and desktop, healthy, slow and failing returns) is tests/test_conn_lost_log_served.py.
+The composition in real engines (phone and desktop, healthy, slow and failing returns; reloads while a dial is connecting, and a
+204 followed by an outage) is tests/test_conn_lost_log_served.py.
 Synthetic only: no network, no real DOM, no real session data.
 """
 import json
@@ -151,6 +158,19 @@ shOut({own:own.length,cut:cut,how:LFC});""")
         self.assertEqual(r["own"], 1, "the dial armed its own cut, which this case loses")
         self.assertEqual(r["cut"], 3, "the backstop closed the hung dial")
         self.assertEqual(r["how"], ["cut"], "a close the backstop made past SH_CONNECT_MS is a cut, the ladder's complement of a refusal")
+
+    def test_each_dial_and_each_open_of_the_link_clears_the_logs_leaving_latch(self):
+        # review round 1 of item 4b (2026-10-04): the shell's next dial and its open are two of the events that clear the Log's
+        # leaving latch (a beforeunload that did not unload): the shell calls window.__rompNotLeaving at both
+        r = _mob._run_probe(r"""
+var NL=[];window.__rompNotLeaving=function(){var s=shSock();NL.push(SHSOCKS.length+':'+(s?s.readyState:-1));};
+shOpen();var afterOpen=NL.slice();          // the boot dial opens
+shRecv({type:'ka'});var s=shSock();s.readyState=3;s.onclose({code:1006});var afterClose=NL.slice();
+shFireDials();                               // its redial
+shOut({afterOpen:afterOpen,afterClose:afterClose,afterRedial:NL});""")
+        self.assertEqual(r["afterOpen"], ["1:1"], "the open of the boot dial calls it, its socket OPEN")
+        self.assertEqual(r["afterClose"], ["1:1"], "a close calls nothing")
+        self.assertEqual(r["afterRedial"], ["1:1", "2:0"], "the redial calls it, its new socket CONNECTING")
 
     def test_a_superseded_sockets_late_close_calls_nothing(self):
         r = _mob._run_probe(LINKFAIL + r"""
@@ -361,6 +381,113 @@ class ACutFailsNothingWhileASocketStands(unittest.TestCase):
     def test_a_parked_pane_is_not_a_socket_that_stands(self):
         self.assertEqual(self.out["linkCutWithOnlyAParkedPane"]["conn"], [self.FEED, self.CHAT, self.SESSIONS, self.SPLIT, self.FEED],
                          "the column's and the Feed's new drops are written at the shell's cut: the parked Files pane holds no socket")
+
+
+# ---- a close the page's own unload makes fails nothing (review round 1 of item 4b, 2026-10-04) ----
+LEAVE_DRIVER = r"""
+const out = {};
+const realNotify = window.__rompNotify, CONN = [];
+window.__rompNotify = function (kind, text) { if (kind === 'conn') CONN.push(String(text)); return realNotify.apply(this, arguments); };
+window.__rompColOf = (src) => (src && src.col) || '';
+function postFrom(src, data) { (WL['message'] || []).forEach((f) => f({ data: data, source: src })); }
+function fire(k) { (WL[k] || []).forEach((f) => f({})); }
+const snap = () => CONN.slice();
+out.door = typeof window.__rompNotLeaving === 'function';
+// the unload: beforeunload, then the closes Firefox delivers to the page before its pagehide
+post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsState', app: 'feed', state: 'down' });
+postFrom({ col: '2' }, { romp: 'wsState', app: 'chat', state: 'down' });
+fire('beforeunload');
+window.__rompLinkFailed(false);
+out.linkWhileLeaving = snap();                             // the shell's dial that never opened, closed by the unload
+post({ romp: 'wsFail', app: 'feed', cut: false });
+postFrom({ col: '2' }, { romp: 'wsFail', app: 'chat', cut: false });
+out.wordWhileLeaving = snap();                             // a pane's and a column's, the same
+// clear 1: the shell's next dial (window.__rompNotLeaving, which the shell calls at each dial and at its open)
+window.__rompNotLeaving();
+post({ romp: 'wsFail', app: 'feed', cut: false });
+out.afterTheShellsDial = snap();                           // the page stayed: the Feed's refused dial is a failure
+// clear 2: a pane's socket open (its up word)
+fire('beforeunload');
+window.__rompLinkFailed(false);
+out.leavingAgain = snap();
+post({ romp: 'wsState', app: 'timeline', state: 'up' });
+window.__rompLinkFailed(false);
+out.afterAPanesOpen = snap();                              // the chat and the split column, still waiting, are written
+// clear 3: a column's socket open
+postFrom({ col: '3' }, { romp: 'wsState', app: 'chat', state: 'down' });
+fire('beforeunload');
+window.__rompLinkFailed(false);
+out.leavingThird = snap();
+postFrom({ col: '4' }, { romp: 'wsState', app: 'chat', state: 'up' });
+window.__rompLinkFailed(false);
+out.afterAColumnsOpen = snap();
+// clear 4: pageshow
+post({ romp: 'wsState', app: 'timeline', state: 'down' });
+fire('beforeunload');
+post({ romp: 'wsFail', app: 'timeline', cut: false });
+out.leavingFourth = snap();
+fire('pageshow');
+post({ romp: 'wsFail', app: 'timeline', cut: false });
+out.afterPageshow = snap();
+console.log(JSON.stringify(out));
+"""
+
+
+class AnUnloadsClosesFailNothing(unittest.TestCase):
+    """Review round 1 of item 4b (2026-10-04): Firefox closes the page's dials that never opened after beforeunload and before
+    pagehide and delivers their close events while the page still runs, so a reload during a return's redial or the boot dials
+    wrote one unread entry per shown pane. The Log now holds a latch, `leaving`, set on beforeunload and read first by both
+    failure doors (window.__rompLinkFailed and the wsFail listener), and cleared by the page's next real event, since
+    beforeunload also fires for a navigation that does not unload (a 204, a download): the shell's next dial or its open
+    (window.__rompNotLeaving), a pane's or a column's open, or pageshow. Each door and each clear is executed here; the real
+    engines are tests/test_conn_lost_log_served.py's unload legs. Through tests/test_error_center.py's DOM stub."""
+
+    @classmethod
+    def setUpClass(cls):
+        script = _errc.HARNESS + _errc.km._LANDING_ERRS_JS + LEAVE_DRIVER
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, "the Log's JS threw: " + r.stderr[:800]
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    CHAT = "Kernel connection lost: Chat pane (reconnecting)"
+    FEED = "Kernel connection lost: Feed pane (reconnecting)"
+    SESSIONS = "Kernel connection lost: Sessions pane (reconnecting)"
+    SPLIT2 = "Kernel connection lost: chat split 2 (reconnecting)"
+    SPLIT3 = "Kernel connection lost: chat split 3 (reconnecting)"
+
+    def test_the_shell_has_a_door_to_clear_the_latch(self):
+        self.assertIs(self.out["door"], True, "window.__rompNotLeaving is the Log's: the shell calls it at each dial and at its open")
+
+    def test_the_links_failure_while_leaving_writes_nothing(self):
+        self.assertEqual(self.out["linkWhileLeaving"], [], "the shell's close made by the unload: three drops waiting, none written")
+
+    def test_a_panes_failure_word_while_leaving_writes_nothing(self):
+        self.assertEqual(self.out["wordWhileLeaving"], [], "a pane's and a column's close made by the unload write nothing")
+
+    def test_the_shells_next_dial_clears_the_latch(self):
+        self.assertEqual(self.out["afterTheShellsDial"], [self.FEED], "the page stayed: the next failure is written")
+
+    def test_a_panes_open_clears_the_latch(self):
+        self.assertEqual(self.out["leavingAgain"], [self.FEED], "a second beforeunload sets it again")
+        self.assertEqual(self.out["afterAPanesOpen"], [self.FEED, self.CHAT, self.SPLIT2],
+                         "a pane's socket opened: the link's refusal writes the drops still waiting")
+
+    def test_a_columns_open_clears_the_latch(self):
+        self.assertEqual(self.out["leavingThird"], [self.FEED, self.CHAT, self.SPLIT2])
+        self.assertEqual(self.out["afterAColumnsOpen"], [self.FEED, self.CHAT, self.SPLIT2, self.SPLIT3],
+                         "a column's socket opened: the column still waiting is written")
+
+    def test_pageshow_clears_the_latch(self):
+        self.assertEqual(self.out["leavingFourth"], [self.FEED, self.CHAT, self.SPLIT2, self.SPLIT3])
+        self.assertEqual(self.out["afterPageshow"], [self.FEED, self.CHAT, self.SPLIT2, self.SPLIT3, self.SESSIONS],
+                         "the page is shown again (a back-forward restore): the Sessions pane's failure is written")
 
 
 if __name__ == "__main__":
