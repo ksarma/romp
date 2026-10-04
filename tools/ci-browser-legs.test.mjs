@@ -65,29 +65,31 @@
 //     over a synthetic leg that outlives a short bound set by the knobs (a SIGTERM handler, a process in a session of
 //     its own and one in the file's own process group, each with a child, and a grandchild left in the group of a
 //     process in a session of its own after its parent exited), every process of it read gone before the bound plus the
-//     grace has passed; so is a cut beside other legs, two legs at a time with a leg still running at the cut (watching
-//     the cut leg's process, so its green does not rest on timing) and a leg queued behind it, and one leg at a time
-//     with a leg queued behind the cut, the cut leg alone named and the others passing; and so is a TERM to the script
-//     with the bound and the grace unset, each leg's start line read printed while the legs run and their spec output
-//     held, and the leg's bound timer read up at the default bound, before it, after which no process of that leg (its
-//     node --test among them) and no timer of the run is left, the script's output closes within 10 s and the output
-//     the script held is printed, the hanging leg's after a line naming its node --test's exit on the kill, 137; so is
-//     a second TERM sent while the EXIT trap holds the leg's node --test stopped between its stop and its kill (read so
-//     by a poll after the first, the script read not yet exited), after which no process of the leg is left, running or
-//     stopped, that leg's output after the same line, and the run's TMPDIR empty; and so is a SIGKILL to the script,
-//     after which the leg's subshell and its timer, posting through the event pipe's descriptor they inherited, end
-//     once the leg and its bound have; and through the stub: a node --test that outlives the grace is killed and named,
-//     after a cut (the leg second in its roster, one leg at a time, the reds naming it and the leg queued behind it
-//     run) and with nothing cut (where the grace's red alone sets the status), a node --test that has exited and is not
-//     yet reaped at the grace's end is not held and its exit is the leg's status, a node --test that outlives the bound
-//     with no process under it, or with only a zombie (a child that has ended and is not yet reaped) under it, is not
-//     cut, the knobs' refusals, the refusal of a ps that cannot read the process table as the bound reads it (one that
-//     exits 127, one that refuses -p), the count of legs at once read with nproc's OpenMP variables set and unset, the
-//     status of legs that exit differently, and a roster longer than the legs run at once, the most calls running at
-//     once counted and the outputs printed in roster order although the legs finish in another, and, with the real
-//     node, two legs run one at a time under a short bound each get their bound from their own start. A roster line
-//     holding a backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run
-//     key's row, each read as the script's comment above seen_at or above its awk pass states;
+//     grace has passed, while three keepers whose launchers exited before the walk (the examples of the rule the
+//     script's header states for what the kill does not reach) are read still alive then; so is a cut beside other
+//     legs, two legs at a time with a leg still running at the cut (watching the cut leg's process, so its green does
+//     not rest on timing) and a leg queued behind it, and one leg at a time with a leg queued behind the cut, the cut
+//     leg alone named and the others passing; and so is a TERM to the script with the bound and the grace unset, each
+//     leg's start line read printed while the legs run and their spec output held, and the leg's bound timer read up at
+//     the default bound, before it, after which no process of that leg (its node --test among them) and no timer of the
+//     run is left, the script's output closes within 10 s and the output the script held is printed, the hanging leg's
+//     after a line naming its node --test's exit on the kill, 137; so is a second TERM sent while the EXIT trap holds
+//     the leg's node --test stopped between its stop and its kill (read so by a poll after the first, the script read
+//     not yet exited), after which no process of the leg is left, running or stopped, that leg's output after the same
+//     line, and the run's TMPDIR empty; and so is a SIGKILL to the script, after which the leg's subshell and its
+//     timer, posting through the event pipe's descriptor they inherited, end once the leg and its bound have; and
+//     through the stub: a node --test that outlives the grace is killed and named, after a cut (the leg second in its
+//     roster, one leg at a time, the reds naming it and the leg queued behind it run) and with nothing cut (where the
+//     grace's red alone sets the status), a node --test that has exited and is not yet reaped at the grace's end is not
+//     held and its exit is the leg's status, a node --test that outlives the bound with no process under it, or with
+//     only a zombie (a child that has ended and is not yet reaped) under it, is not cut, the knobs' refusals, the
+//     refusal of a ps that cannot read the process table as the bound reads it (one that exits 127, one that refuses
+//     -p), the count of legs at once read with nproc's OpenMP variables set and unset, the status of legs that exit
+//     differently, and a roster longer than the legs run at once, the most calls running at once counted and the
+//     outputs printed in roster order although the legs finish in another, and, with the real node, two legs run one at
+//     a time under a short bound each get their bound from their own start. A roster line holding a backslash is held
+//     by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's row, each read as the
+//     script's comment above seen_at or above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -1785,19 +1787,30 @@ function stateNow(pid) {
  *  parent links two levels below the file's process reaches its child, and one in a session of its own whose child
  *  ("mid") starts the keeper of depth 1 and exits at once, so that keeper is left in the session keeper's group with its
  *  parent gone, reparented out of the tree: no walk by parent links reaches it, and only the kill of the group the
- *  session keeper leads does (as a helper a browser starts by a double fork would be left). Returns the mark and the
- *  roles, each [the suffix of its pid file, what it is]. */
-function hangingLeg(ext, bundle) {
-  fs.writeFileSync(path.join(ext, 'out-tests', 'keeper.cjs'), 'const fs = require("node:fs"); const { spawn } = require("node:child_process");\nconst [mark, depth, how] = process.argv.slice(2);\nif (how === "mid") { spawn(process.execPath, [__filename, mark, "1"], { stdio: "ignore" }).unref(); process.exit(0); }\nfs.writeFileSync(mark + "." + depth, String(process.pid));\nif (Number(depth) > 1) spawn(process.execPath, [__filename, mark, String(Number(depth) - 1)].concat(how === "orphan" ? ["mid"] : []), { stdio: "ignore" });\nsetInterval(() => {}, 1000);\n');
+ *  session keeper leads does (as a helper a browser starts by a double fork would be left). With `escapes`, the leg also
+ *  starts three launchers, each of which starts a keeper of depth 1 and exits at once, so each keeper's parent has exited
+ *  long before the bound's walk: x1, a keeper in a session of its own (detached) from a launcher in the file's own group,
+ *  so it leads its own group; x2, a keeper in the group of a launcher that led a session of its own and exited, a group
+ *  whose leader has exited; and x3, a keeper in the file's own group, its launcher there too. The script's header states
+ *  the rule these witness: a process whose parent exited before the walk is reached only through the group of a process
+ *  the walk finds, and none of these groups is one. Returns the mark, the roles, each [the suffix of its pid file, what
+ *  it is], and the escapees, of the same shape (none without `escapes`). */
+function hangingLeg(ext, bundle, escapes = false) {
+  fs.writeFileSync(path.join(ext, 'out-tests', 'keeper.cjs'), 'const fs = require("node:fs"); const { spawn } = require("node:child_process");\nconst [mark, depth, how] = process.argv.slice(2);\nif (how === "mid") { spawn(process.execPath, [__filename, mark, "1"], { stdio: "ignore" }).unref(); process.exit(0); }\nif (how === "escape-s" || how === "escape-g") { spawn(process.execPath, [__filename, mark, "1"], { detached: how === "escape-s", stdio: "ignore" }).unref(); process.exit(0); }\nfs.writeFileSync(mark + "." + depth, String(process.pid));\nif (Number(depth) > 1) spawn(process.execPath, [__filename, mark, String(Number(depth) - 1)].concat(how === "orphan" ? ["mid"] : []), { stdio: "ignore" });\nsetInterval(() => {}, 1000);\n');
   const mark = path.join(ext, bundle + '.pid');
-  const keeper = (k, detached, how) => 'spawn(process.execPath, [path.join(__dirname, "..", "..", "keeper.cjs"), ' + JSON.stringify(mark + '.' + k) + ', "2"' + (how ? ', ' + JSON.stringify(how) : '') + '], { detached: ' + detached + ', stdio: "ignore" });\n';
+  const keeper = (k, detached, how, depth = '2') => 'spawn(process.execPath, [path.join(__dirname, "..", "..", "keeper.cjs"), ' + JSON.stringify(mark + '.' + k) + ', ' + JSON.stringify(depth) + (how ? ', ' + JSON.stringify(how) : '') + '], { detached: ' + detached + ', stdio: "ignore" });\n';
   fs.writeFileSync(path.join(ext, bundle), 'const { test } = require("node:test"); const fs = require("node:fs"); const path = require("node:path"); const { spawn } = require("node:child_process");\n'
     + 'fs.writeFileSync(' + JSON.stringify(mark) + ' + ".leg", String(process.pid));\n'
     + 'process.on("SIGTERM", () => {});\n'
     + keeper('s', true) + keeper('g', false) + keeper('o', true, 'orphan')
+    + (escapes ? keeper('x1', false, 'escape-s', '1') + keeper('x2', true, 'escape-g', '1') + keeper('x3', false, 'escape-g', '1') : '')
     + 'test("passes before the hang", () => {});\n'
     + 'test("hangs past the bound", async () => { await new Promise((resolve) => setTimeout(resolve, 120000)); });\n');
-  return { mark, roles: [['leg', 'the leg\'s own node process'], ['s.2', 'the process it started in a session of its own'], ['s.1', 'that process\'s child'], ['g.2', 'the process it started in the file\'s own process group'], ['g.1', 'that process\'s child, reached by parent links alone'], ['o.2', 'the process it started in a session of its own whose child exited'], ['o.1', 'the grandchild left in that process\'s group, reparented out of the tree, reached by the group kill alone']] };
+  return {
+    mark,
+    roles: [['leg', 'the leg\'s own node process'], ['s.2', 'the process it started in a session of its own'], ['s.1', 'that process\'s child'], ['g.2', 'the process it started in the file\'s own process group'], ['g.1', 'that process\'s child, reached by parent links alone'], ['o.2', 'the process it started in a session of its own whose child exited'], ['o.1', 'the grandchild left in that process\'s group, reparented out of the tree, reached by the group kill alone']],
+    escapees: escapes ? [['x1.1', 'x1, a keeper leading its own group, its launcher exited'], ['x2.1', 'x2, a keeper in a group whose leader exited'], ['x3.1', 'x3, a keeper in the file\'s own group, its launcher exited']] : [],
+  };
 }
 /** The hanging leg's processes once each has written its pid (asserted, within 30 s of t0), as [what it is, pid], pushed to
  *  `pids` as they are read; `ended()` says whether the run ended first. */
@@ -1809,22 +1822,23 @@ async function hangingPids(mark, roles, t0, ended, pids) {
   }
 }
 
-test('the per-file bound ends a leg that outlives it, with every process under it, executed with the real node and the real reporter: a synthetic leg that passes a test and then hangs, whose node process ignores SIGTERM (as a launched browser\'s handler kept a leg\'s process up past node\'s own cancel on node 22.23.2) and which starts a process in a session of its own with a child under it (as Playwright starts Chromium), a process in the file\'s own process group with a child under it, and a process in a session of its own whose child exits and leaves a grandchild in its group, is gone with all six of them before the bound plus the grace has passed, set short by the knobs; the run itself ends by the bound, the grace and a 2.5 s slack, reads the other leg\'s pass and the cut leg\'s pass before the hang, names the cut leg and its bound as red, and leaves none of its timers behind', async (t) => {
+test('the per-file bound ends a leg that outlives it, with every process under it, executed with the real node and the real reporter: a synthetic leg that passes a test and then hangs, whose node process ignores SIGTERM (as a launched browser\'s handler kept a leg\'s process up past node\'s own cancel on node 22.23.2) and which starts a process in a session of its own with a child under it (as Playwright starts Chromium), a process in the file\'s own process group with a child under it, and a process in a session of its own whose child exits and leaves a grandchild in its group, is gone with all six of them before the bound plus the grace has passed, set short by the knobs, while three keepers whose launchers exited before the bound, witnesses of the rule the script\'s header states for what neither the parent links nor the group kill reaches (one leading its own group, one in a group whose leader exited, one in the file\'s own group), are still alive then; the run itself ends by the bound, the grace and a 2.5 s slack, reads the other leg\'s pass and the cut leg\'s pass before the hang, names the cut leg and its bound as red, and leaves none of its timers behind', async (t) => {
   const { start, root, ext, A, B } = syntheticTree(t);
   // odd values, so the timers' sleeps are told apart from any other process's by their arguments
   const BOUND = 1513, GRACE = 1709, SLACK = 2500;
   const shared = 'import { inBrowser } from "./real-viewer-leg";\n';
   fs.writeFileSync(path.join(root, 'ui', 'webview', 'b-browser.test.ts'), shared + 'test("leg b passes", async (t) => { await inBrowser(t, async () => {}); });\n');
-  const { mark, roles } = hangingLeg(ext, A);
+  const { mark, roles, escapees } = hangingLeg(ext, A, true);
   fs.writeFileSync(path.join(ext, B), 'const { test } = require("node:test");\ntest("leg b passes", () => {});\n');
   const t0 = Date.now();
   const r = start(A + '\n' + B + '\n', { env: { ROMP_BROWSER_LEGS_FILE_MS: String(BOUND), ROMP_BROWSER_LEGS_GRACE_MS: String(GRACE) } });
-  const pids = [];
-  t.after(() => { for (const [, pid] of pids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } r.kill(); });
+  const pids = [], escaped = [];
+  t.after(() => { for (const [, pid] of [...pids, ...escaped]) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } r.kill(); });
   let ended = null;
   r.exited.then((status) => { ended = { status, ms: Date.now() - t0 }; });
-  // the leg and the processes under it are up (each wrote its pid), read before the bound
+  // the leg and the processes under it are up (each wrote its pid), and the escapees too, read before the bound
   await hangingPids(mark, roles, t0, () => ended !== null, pids);
+  await hangingPids(mark, escapees, t0, () => ended !== null, escaped);
   assert.ok(Date.now() - t0 < BOUND, 'the leg and the processes under it were up before the bound (' + BOUND + ' ms), so what is read below is the bound\'s doing: ' + (Date.now() - t0) + ' ms');
   // the control for the timers' read at the end, taken now while the cut leg's bound timer is up and asserted after the
   // processes' read, so a script with no timer of its own reads red on the processes first
@@ -1842,6 +1856,11 @@ test('the per-file bound ends a leg that outlives it, with every process under i
     await pause(25);
   }
   assert.ok(goneAt !== null, 'before the bound plus the grace had passed (' + (BOUND + GRACE) + ' ms after the run started), no process of the leg that outlived the bound (' + BOUND + ' ms) was alive: the bound ends the cut file\'s node process and every process under it, the one in a session of its own (outside the file\'s process group) and its child, the one in the file\'s own group and its child, and the grandchild left in a group outside the tree, included; alive at ' + (Date.now() - t0) + ' ms: ' + JSON.stringify(up.map(([role, pid]) => role + ' (pid ' + pid + ')')));
+  // the witnesses, read at the same moment: each escapee is alive after the cut, so the rule the script's header states
+  // for what neither the parent links nor the group kill reaches holds in its three examples; a change that reaches them
+  // (or one that stops them from escaping) is red here, and the header's rule is restated with it
+  const stillUp = escaped.filter(([, pid]) => alive(pid)).map(([role]) => role);
+  assert.deepEqual(stillUp, escaped.map(([role]) => role), 'the witnesses of the header\'s rule: each keeper whose launcher exited before the walk is still alive after the cut, reached by neither the parent links nor the group kill of a process the walk finds (gone: ' + JSON.stringify(escaped.filter(([, pid]) => !alive(pid)).map(([role]) => role)) + ')');
   assert.ok(liveTimers.length >= 1, 'control: the scoped read of the run\'s timers found this run\'s live bound timer (sleep 1.513) before the bound, so its empty read at the run\'s end is not blind');
   // the run's own exit: by the bound, the grace and a slack for a loaded runner, from the run's start
   let deadline;
