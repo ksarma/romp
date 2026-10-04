@@ -14,7 +14,9 @@
 //            apps in cfg.holdApps when it is set; any other app's dial passes)
 //   refuse   the connection is destroyed at once: the dial closes without ever opening (the kernel is down)
 // A held dial stays held when the mode changes, so a dial in flight at a reload is still CONNECTING when the page unloads.
-// drop() destroys every live socket pair: the OS dropping the sockets while the page slept. /__lab/nocontent answers 204.
+// PX.refuseApps, when set, refuses the dials of the apps it holds whatever the mode (the panes' kernel side down while the
+// shell's link passes). drop(keep) destroys every live socket pair but those of the apps in keep: the OS dropping the
+// sockets while the page slept, or only the panes'. /__lab/nocontent answers 204.
 //
 // cfg.scenario:
 //   reload-return  boot, read the Log, suspend (every document hidden, mode hold, every socket dropped), return 400 ms later:
@@ -27,6 +29,10 @@
 //   nav204-outage  boot, read the Log, navigate the top document to a 204 (beforeunload fires, the page stays; Firefox also
 //                  closes every socket of the page, which redial), wait for every socket to be up again, then a real
 //                  outage (mode refuse, every socket dropped): the Log owes its entries.
+//   nav204-paneonly the same 204, then an outage of the panes alone: every pane's socket dropped and every pane's dial
+//                  refused, while the shell's link stands and its socket is never touched. A disclosed residual's witness
+//                  (review round 1 of item 4b): in Chromium and WebKit the 204 closes nothing, so the latch it set is
+//                  still set, and no event of this outage clears it before a pane's open, which drops the waiting entry.
 // The page's recorders write to localStorage (lab:ev, lab:notify, lab:sock), so what the OLD page did during its unload
 // survives the reload; every row carries its document's generation id (gen). Prints one `RESULT:` JSON line; exits 3 when
 // the browser does not launch (the Python side turns that into a skip). Never touches a live kernel: cfg.healthz names the
@@ -54,7 +60,7 @@ const healthz = await new Promise((resolve) => {
 if (healthz.status !== 200) { console.error("lab kernel not healthy: " + JSON.stringify(healthz)); process.exit(4); }
 
 // --- the proxy ---
-const PX = { mode: "pass", live: new Set(), held: new Set(), conns: new Set() };
+const PX = { mode: "pass", live: new Set(), held: new Set(), conns: new Set(), refuseApps: null };
 const appOf = (path) => { const m = /[?&]app=([^&]*)/.exec(path); return m ? decodeURIComponent(m[1]) : "?"; };
 const proxy = net.createServer((c) => {
   PX.conns.add(c);
@@ -76,7 +82,7 @@ const proxy = net.createServer((c) => {
     if (ws) {
       const d = { app: appOf(path), t: now(), mode: PX.mode };
       out.dials.push(d);
-      if (PX.mode === "refuse") { d.verdict = "refused"; c.destroy(); return; }
+      if (PX.mode === "refuse" || (PX.refuseApps && PX.refuseApps.has(d.app))) { d.verdict = "refused"; c.destroy(); return; }
       if (PX.mode === "hold" && (!cfg.holdApps || cfg.holdApps.includes(d.app))) {
         d.verdict = "held";
         PX.held.add(c);
@@ -89,7 +95,7 @@ const proxy = net.createServer((c) => {
       first = Buffer.concat([Buffer.from(text.split("\r\n").filter((l) => !/^connection:/i.test(l)).join("\r\n") + "\r\nConnection: close\r\n\r\n", "latin1"), rest]);
     }
     const u = net.connect(cfg.kernelPort, "127.0.0.1", () => { u.write(first); c.pipe(u); u.pipe(c); c.resume(); });
-    const pair = { c, u };
+    const pair = { c, u, app: ws ? appOf(path) : "" };
     if (ws) PX.live.add(pair);
     const done = () => { PX.live.delete(pair); c.destroy(); u.destroy(); };
     u.on("error", done); u.on("close", done); c.on("close", done);
@@ -97,7 +103,7 @@ const proxy = net.createServer((c) => {
   c.on("data", onData);
 });
 await new Promise((resolve, reject) => { proxy.once("error", reject); proxy.listen(cfg.proxyPort, "127.0.0.1", resolve); });
-const drop = () => { const n = PX.live.size; for (const p of Array.from(PX.live)) { PX.live.delete(p); p.c.destroy(); p.u.destroy(); } return n; };
+const drop = (keep) => { let n = 0; for (const p of Array.from(PX.live)) { if (keep && keep.includes(p.app)) continue; n++; PX.live.delete(p); p.c.destroy(); p.u.destroy(); } return n; };
 const base = "http://127.0.0.1:" + cfg.proxyPort;
 
 let browser;
@@ -261,7 +267,8 @@ try {
       PX.mode = "pass";
       out.t.reload = now();
       await page.reload({ waitUntil: "load", timeout: 40000 });
-    } else if (cfg.scenario === "nav204-outage") {
+    } else if (cfg.scenario === "nav204-outage" || cfg.scenario === "nav204-paneonly") {
+      const panesOnly = cfg.scenario === "nav204-paneonly";
       out.t.nav = now();
       await page.evaluate(() => { setTimeout(() => { location.href = "/__lab/nocontent"; }, 0); });
       await sleep(cfg.navSettleMs || 1500);
@@ -269,20 +276,23 @@ try {
       out.navUp = await waitUp(0, cfg.upTimeoutMs || 25000);   // each socket's latest word: Firefox's redials, or Chromium's sockets that never closed
       if (!out.navUp) await result({ died: "after the 204: not every eager pane and the link said up again", rec: await store() });
       await sleep(cfg.settleMs || 1500);
-      PX.mode = "refuse";
+      if (panesOnly) PX.refuseApps = new Set(EAGER); else PX.mode = "refuse";
       out.t.outage = now();
-      out.dropped = drop();
+      out.dropped = drop(panesOnly ? ["shell"] : null);
       out.reads = [];
-      for (const at of cfg.readsMs || []) { await sleep(Math.max(0, out.t.outage + at - now())); out.reads.push({ at, log: await readLog() }); }
+      for (const at of cfg.readsMs || []) {
+        await sleep(Math.max(0, out.t.outage + at - now()));
+        out.reads.push({ at, log: await readLog(), link: await page.evaluate(() => !!(window.__rompLink && window.__rompLink().up)) });
+      }
       await sleep(Math.max(0, out.t.outage + (cfg.outageMs || 5000) - now()));
-      PX.mode = "pass";
+      PX.mode = "pass"; PX.refuseApps = null;
       out.t.outageEnd = now();
     } else {
       await result({ died: "unknown scenario " + cfg.scenario });
     }
   }
   out.newGen = await page.evaluate(() => window.__labGen);
-  out.upAfter = await waitUp(cfg.scenario === "nav204-outage" ? out.t.outageEnd : 0, cfg.upTimeoutMs || 25000);
+  out.upAfter = await waitUp(out.t.outageEnd || 0, cfg.upTimeoutMs || 25000);
   out.t.up = now();
   await sleep(cfg.afterMs || 2000);   // anything the page still had to say lands in this window
   out.logAfter = await readLog();
