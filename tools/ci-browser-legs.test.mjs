@@ -65,14 +65,15 @@
 //     a process in a session of its own and one in the file's own process group, each with a child, and a grandchild
 //     left in the group of a process in a session of its own after its parent exited), every process of it read gone
 //     before the bound plus the grace has passed, and so is a TERM to the script with the bound and the grace unset,
-//     the leg's bound timer read up at the default bound before it, after which no process of that leg is left and the
-//     output the script held is printed; and through the stub: a node --test that outlives the grace is killed and
-//     named, a node --test that outlives the bound with no process under it is not cut, the knobs' refusals, the count
-//     of legs at once read with nproc's OpenMP variables set and unset, the status of legs that exit differently, and a
-//     roster longer than the legs run at once, the most calls running at once counted and the outputs printed in roster
-//     order although the legs finish in another. A roster line holding a
-//     backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's row,
-//     each read as the script's comment above seen_at or above its awk pass states;
+//     the leg's bound timer read up at the default bound before it, after which no process of that leg and no timer of
+//     the run is left and the output the script held is printed; and through the stub: a node --test that outlives the
+//     grace is killed and named, a node --test that outlives the bound with no process under it, or with only a zombie
+//     (a child that has ended and is not yet reaped) under it, is not cut, the knobs' refusals, the count of legs at
+//     once read with nproc's OpenMP variables set and unset, the status of legs that exit differently, and a roster
+//     longer than the legs run at once, the most calls running at once counted and the outputs printed in roster order
+//     although the legs finish in another. A roster line holding a backslash is held by seen_at's rows, and a tree
+//     under a directory whose name holds one by the post-run key's row, each read as the script's comment above seen_at
+//     or above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -1182,15 +1183,18 @@ test('the script exists, is executable, runs one node --test per rostered leg (n
  *  what is under it is killed), or else, with CBL_STUB_HOLD set, marks itself running in running/, sleeps that many
  *  seconds, counts the calls marked running into peak/ (named by its pid), sleeps again and unmarks itself, and then
  *  writes CBL_STUB_REPORT (when set) to the reporter's destination, in the one call that takes the report-written/
- *  directory first, so the legs' records joined hold the report once; then a call whose bundle CBL_STUB_LINGER names
- *  (<bundle>=<seconds> pairs, space-separated) replaces itself with a sleep of those seconds and exits 0 (a node --test
- *  that outlives the bound with no process under it, or a leg that finishes later than the ones after it), and any other
+ *  directory first, so the legs' records joined hold the report once; then a call whose bundle CBL_STUB_ZOMBIE names
+ *  (<bundle>=<seconds> pairs, space-separated) starts a child that exits at once and replaces itself with a sleep of those
+ *  seconds, which never reaps that child, and exits 0 (a node --test whose one process under it at the bound has already
+ *  ended and is not yet reaped, a zombie); a call whose bundle CBL_STUB_LINGER names (pairs of the same shape) replaces
+ *  itself with a sleep of those seconds and exits 0 (a node --test that outlives the bound with no process under it, or a
+ *  leg that finishes later than the ones after it); and any other
  *  call exits the code CBL_STUB_EXITS names for its bundle (pairs of the same shape), else CBL_STUB_EXIT (0 unless set). Returns a
  *  runner over roster text (null removes the file) that runs the script with the switch set to 1 as the step does
  *  (stub.switch names another value; null runs it unset, as a local run may; stub.check runs --check as the first
  *  argument; stub.argv is a list of arguments passed after it; stub.report is the record the stub writes; stub.exit its
- *  exit; stub.exits the exits per bundle and stub.linger the lingers per bundle, each an object from bundle to value, as
- *  above; stub.wedge the bundle whose call stays up; stub.hold the seconds each call holds and the count it takes, as
+ *  exit; stub.exits the exits per bundle, stub.zombie the zombie's sleeps per bundle and stub.linger the lingers per
+ *  bundle, each an object from bundle to value, as above; stub.wedge the bundle whose call stays up; stub.hold the seconds each call holds and the count it takes, as
  *  above; stub.timeout a bound in ms on the script's run, past which the run is red rather than hung; stub.env more
  *  variables for the script, the per-file bound's knobs among them; stub.real runs the real node); `node` in its result is
  *  the list of the node --test calls, each its arguments without the reporter flags, in the roster order of the bundle
@@ -1246,6 +1250,7 @@ function syntheticTree(t, prefix = 'cbl-') {
     '  case "$a" in --test-reporter-destination=*) if [ "$prev" = "--test-reporter=./scripts/ci-browser-legs-reporter.mjs" ] && [ -n "${CBL_STUB_REPORT:-}" ] && mkdir "' + wrote + '" 2>/dev/null; then printf \'%s\\n\' "$CBL_STUB_REPORT" > "${a#--test-reporter-destination=}"; fi;; esac',
     '  prev="$a"',
     'done',
+    'for kv in ${CBL_STUB_ZOMBIE:-}; do case "$kv" in "$last="*) sh -c \'exit 0\' & exec sleep "${kv#"$last="}";; esac; done',
     'for kv in ${CBL_STUB_LINGER:-}; do case "$kv" in "$last="*) exec sleep "${kv#"$last="}";; esac; done',
     'code=${CBL_STUB_EXIT:-0}',
     'for kv in ${CBL_STUB_EXITS:-}; do case "$kv" in "$last="*) code=${kv#"$last="};; esac; done',
@@ -1257,7 +1262,7 @@ function syntheticTree(t, prefix = 'cbl-') {
   // otherwise, and the stub's variables as the stub argument names them
   const envFor = (tmp, stub) => {
     const env = { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH, TMPDIR: tmp, ...(stub.env || {}) };
-    delete env.CBL_STUB_REPORT; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_EXITS; delete env.CBL_STUB_LINGER; delete env.CBL_STUB_REAL_NODE; delete env.CBL_STUB_WEDGE; delete env.CBL_STUB_HOLD; delete env.NODE_TEST_CONTEXT;
+    delete env.CBL_STUB_REPORT; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_EXITS; delete env.CBL_STUB_LINGER; delete env.CBL_STUB_ZOMBIE; delete env.CBL_STUB_REAL_NODE; delete env.CBL_STUB_WEDGE; delete env.CBL_STUB_HOLD; delete env.NODE_TEST_CONTEXT;
     env[SWITCH] = '1';
     if (stub.switch === null) delete env[SWITCH]; else if (stub.switch !== undefined) env[SWITCH] = stub.switch;
     if (stub.report !== undefined) env.CBL_STUB_REPORT = stub.report;
@@ -1265,6 +1270,7 @@ function syntheticTree(t, prefix = 'cbl-') {
     const pairs = (o) => Object.entries(o).map(([bundle, v]) => bundle + '=' + v).join(' ');
     if (stub.exits !== undefined) env.CBL_STUB_EXITS = pairs(stub.exits);
     if (stub.linger !== undefined) env.CBL_STUB_LINGER = pairs(stub.linger);
+    if (stub.zombie !== undefined) env.CBL_STUB_ZOMBIE = pairs(stub.zombie);
     if (stub.wedge !== undefined) env.CBL_STUB_WEDGE = stub.wedge;
     if (stub.hold !== undefined) env.CBL_STUB_HOLD = stub.hold;
     if (stub.real) env.CBL_STUB_REAL_NODE = process.execPath;
@@ -1774,7 +1780,7 @@ test('the per-file bound ends a leg that outlives it, with every process under i
   assert.ok(ended.out.includes('passes before the hang') && ended.out.includes('leg b passes'), 'the spec output carries both legs\' passes:\n' + ended.out);
 });
 
-test('a TERM to the script ends each leg still running with every process under it (the hanging leg\'s node process, the processes it started in a session of its own and in the file\'s own group, their children, and the grandchild left in a group outside the tree), prints the output it held (the hanging leg\'s pass before the hang, and the whole output of a leg that finished behind it), and leaves its TMPDIR empty, executed with the real node and with the bound and the grace unset, as the step runs them, the hanging leg\'s bound timer read up at the default bound before the TERM', async (t) => {
+test('a TERM to the script ends each leg still running with every process under it (the hanging leg\'s node process, the processes it started in a session of its own and in the file\'s own group, their children, and the grandchild left in a group outside the tree), prints the output it held (the hanging leg\'s pass before the hang, and the whole output of a leg that finished behind it), and leaves its TMPDIR empty, executed with the real node and with the bound and the grace unset, as the step runs them, the hanging leg\'s bound timer read up at the default bound before the TERM and gone after it', async (t) => {
   const { start, root, ext, A, B } = syntheticTree(t);
   const { mark, roles } = hangingLeg(ext, A);
   fs.writeFileSync(path.join(ext, B), 'const { test } = require("node:test");\ntest("leg b passes behind the hang", () => {});\n');
@@ -1808,12 +1814,17 @@ test('a TERM to the script ends each leg still running with every process under 
   assert.deepEqual(up, [], 'after the TERM no process of the leg still running is alive; alive: ' + JSON.stringify(up));
   assert.equal(ended.status, 143, 'the script exits 143 on a TERM (its TERM trap), after its EXIT trap ends the legs');
   const closed = await r.closed;
+  // the hanging leg's bound timer, read up before the TERM (the control above), is gone after it: the EXIT trap kills each
+  // running leg's timer with its group (given up to 2 s to go)
+  let left = timersOf(root, /^sleep \d+\.\d{3}$/);
+  for (const until = Date.now() + 2000; left.length > 0 && Date.now() < until; left = timersOf(root, /^sleep \d+\.\d{3}$/)) await pause(25);
+  assert.deepEqual(left, [], 'no timer of the run is left after the TERM: the EXIT trap kills the hanging leg\'s bound timer, read up as sleep ' + secs + ' before the TERM');
   assert.ok(closed.out.includes('passes before the hang'), 'the EXIT trap prints the output it held for the leg it ended, its pass before the hang among it:\n' + closed.out);
   assert.ok(closed.out.includes('ci-browser-legs: ' + B + ' (node --test exited 0):') && closed.out.includes('leg b passes behind the hang'), 'the EXIT trap prints the whole output of the leg that finished behind the one still running, after the line naming it and its exit:\n' + closed.out);
   assert.deepEqual(fs.readdirSync(r.tmp), [], 'the run\'s TMPDIR is empty after the TERM, its directory removed by the EXIT trap: ' + JSON.stringify(fs.readdirSync(r.tmp)));
 });
 
-test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the other leg\'s record read and no timer left behind; a node --test that outlives the bound with no process under it is not cut, beside a control with a process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
+test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the other leg\'s record read and no timer left behind; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
   const { run, root, rec, A, B } = syntheticTree(t);
   fs.writeFileSync(path.join(root, 'vscode-extension', B), '');
   const C = 'out-tests/ui/webview/c-browser.test.js';
@@ -1847,9 +1858,19 @@ test('the per-file bound through the stub: a node --test that does not end after
   const cutControl = run(A + '\n', { report: pass(A), hold: '0.75', timeout: 30000, env: knobs });
   assert.equal(cutControl.status, 1, 'control: at the same bound, a call with a process under it (its sleep) is cut, red; stderr:\n' + cutControl.err);
   assert.ok(cutControl.err.includes('ci-browser-legs: ' + A + ' ran past the per-file bound (601 ms)'), 'control: the cut is named:\n' + cutControl.err);
+  // a node --test whose one process under it at the bound has already ended and is not yet reaped, a zombie, as a file's
+  // process that ended on its own just before the bound is until node --test reaps it: the stub writes A's pass, starts a
+  // child that exits at once and replaces itself with a 1.5 s sleep, which never reaps it. The walk finds the zombie and
+  // nothing alive, so the leg is not cut and reads green, node --test's exit 0 passed through; a walk that counted the
+  // zombie as a kill would cut it and print the cut's red. The control above is the same bound over a live process
+  const zombie = run(A + '\n', { report: pass(A), zombie: { [A]: '1.5' }, timeout: 30000, env: knobs });
+  assert.equal(zombie.status, 0, 'a node --test whose only process under it at the bound is a zombie is not cut: green, exit 0; stderr:\n' + zombie.err);
+  assert.equal(zombie.err, '', 'nothing on stderr: no cut red claims a kill of a process that had already ended');
+  assert.deepEqual(timersOf(root, /^sleep (0\.601|5\.003)\b/), [], 'no timer of the run is left behind');
   // the knobs' refusals: each value refused by name, exit 1, before any leg runs (an empty value is the default's, as for
-  // any ${VAR:-default}); 10 digits and more are refused, since a value past bash's integer range would break the timer's
-  // sleep and the bound would never fire, and 9 digits is accepted (the control row after the table)
+  // any ${VAR:-default}); 10 digits and more are refused, the script's cap far inside bash's integer range: a value of 2^63
+  // or more (the rows of 19 and 20 digits) wraps in the script's arithmetic, its timer's sleep then fails at once or sleeps
+  // for ages, and the bound would never fire; 9 digits is accepted (the control row after the table)
   const refusals = [];
   for (const [knob, value] of [['ROMP_BROWSER_LEGS_FILE_MS', 'abc'], ['ROMP_BROWSER_LEGS_FILE_MS', '0'], ['ROMP_BROWSER_LEGS_GRACE_MS', '-5'], ['ROMP_BROWSER_LEGS_GRACE_MS', '1.5'], ['ROMP_BROWSER_LEGS_JOBS', '012'], ['ROMP_BROWSER_LEGS_JOBS', '2 '], ['ROMP_BROWSER_LEGS_FILE_MS', '1000000000'], ['ROMP_BROWSER_LEGS_FILE_MS', '9223372036854775808'], ['ROMP_BROWSER_LEGS_GRACE_MS', '99999999999999999999']]) {
     const r = run(A + '\n', { report: pass(A), env: { [knob]: value } });
@@ -1857,7 +1878,7 @@ test('the per-file bound through the stub: a node --test that does not end after
   }
   assert.deepEqual(refusals, [], 'each knob refuses a value that is not a whole number above 0 of at most 9 digits, naming it, with no leg run; the rows read otherwise: ' + JSON.stringify(refusals));
   const nine = run(A + '\n', { report: pass(A), env: { ROMP_BROWSER_LEGS_FILE_MS: '999999999', ROMP_BROWSER_LEGS_GRACE_MS: '999999999' } });
-  assert.ok(nine.status === 0 && nine.err === '' && nine.out.includes('killed with every process under it 999999999 ms after it starts'), 'a knob of 9 digits is accepted and the run reads green: exit ' + nine.status + ', stderr ' + JSON.stringify(nine.err));
+  assert.ok(nine.status === 0 && nine.err === '' && nine.out.includes('cut with every process under it if still running 999999999 ms after it starts'), 'a knob of 9 digits is accepted and the run reads green: exit ' + nine.status + ', stderr ' + JSON.stringify(nine.err));
   // the count of legs at once: GNU nproc honours OMP_NUM_THREADS and OMP_THREAD_LIMIT and node's count does not, so the
   // script runs nproc without them. A stand-in nproc first on PATH honours them the same way (8 CPUs unless they say fewer,
   // its control below), so the count with them set is the count without them on any machine; and the machine's own nproc

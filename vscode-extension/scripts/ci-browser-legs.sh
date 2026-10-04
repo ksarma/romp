@@ -33,39 +33,42 @@
 # not check that the bundles are built, which the step's run does). The tree test's case "the script runs the rostered
 # legs" runs --check as the first argument, and as the second, where it is not read.
 # How the legs run. Each rostered leg runs as a node --test of its own over that one bundle, ROMP_BROWSER_LEGS_JOBS at a
-# time (by default one less than the CPUs that nproc, or getconf, counts, and at least one, as node's own
-# --test-concurrency defaults; nproc runs with OMP_NUM_THREADS and OMP_THREAD_LIMIT unset, since GNU nproc honours them
-# and node's count does not), started in roster order; each run's spec output and stderr are held and printed in roster
-# order, after a line naming the leg and its node --test's exit. The step's status is node's own: the first non-zero
-# exit among those runs, in roster order, a run the grace's end killed aside. On an INT or a TERM the script ends each
-# leg still running, as the grace's end below does, and then prints in roster order every leg's output it still holds,
-# the ended legs' partial output among it; a SIGKILL runs no trap, so the output still held then is lost. The per-file
-# bound: ROMP_BROWSER_LEGS_FILE_MS (default 240000) ms after a leg's node --test starts, the script stops and kills
-# every process under that node --test, found by parent links over the whole process table (the file's own node process,
-# and a browser Playwright launched, which runs in a session of its own and so outside the file's process group, among
-# them), with the process group each of them leads, which reaches a process left in such a group after its parent
-# exited, outside the parent links; the file's process shares this script's own process group, so no kill signals that
-# group. The walk stops each process it finds and reads the table again until a read finds no new one, a guard against a
-# process that forks during the walk, which no case executes. node --test then records the file as failed as a whole
-# (its process ended on a signal), beside the results the file recorded before the kill, and the cut's red after the run
-# names the leg and the bound. When the walk finds no process under the leg's node --test (its file's process had ended
-# and node --test was ending), nothing is killed and the leg is not cut. A node --test still running
-# ROMP_BROWSER_LEGS_GRACE_MS (default 10000) ms after the bound is killed too, with what is under it, and named. node's
-# own --test-timeout is not passed: on node 22.23.2 its cancel at the bound reports the file and sends the file's
-# process alone a SIGTERM, and node --test then waits for that process; the process of a leg that had launched a browser
-# outlived the signal (Playwright handles SIGTERM itself; recorded on a development box through the step's own command,
-# not executed here), and a file's process that does end on the signal leaves what is under it running, before any walk
-# reads the tree. The knobs are whole numbers above 0 of at most 9 digits (digits alone, no leading zero), refused by
-# name before any leg runs, and the step sets none of them. The tree test's case "the per-file bound ends a leg that
-# outlives it" runs, with the real node and a short bound, a synthetic leg whose node process ignores SIGTERM and starts
-# a process in a session of its own and one in the file's own process group, each with a child, and a process in a
-# session of its own whose child exits at once and leaves a grandchild in its group, reparented out of the tree, and
-# reads every one of those processes gone by the bound plus the grace; its case "a TERM to the script" reads them gone
-# after a TERM, and the held output printed; its case "the per-file bound through the stub" runs the grace's end, a node
-# --test that outlives the bound with nothing under it, the knobs' refusals, the status of legs that exit differently,
-# and a roster longer than the legs run at once. The timers and the event pipe use what bash 3.2 has (no wait -n), as
-# tests/shell-portability.bats holds for every shell script the repo ships. The legs' records are joined in roster order
-# into the one record the pass below reads.
+# time (by default one less than the CPUs that nproc, or getconf, counts, and at least one, which is node's own
+# --test-concurrency default where no cgroup CPU quota applies, as on CI's hosted runner: node counts the CPUs by
+# os.availableParallelism(), which honours such a quota and nproc does not, so under one the script runs more legs at
+# once than node would, and ROMP_BROWSER_LEGS_JOBS sets the count; nproc runs with OMP_NUM_THREADS and OMP_THREAD_LIMIT
+# unset, since GNU nproc honours them and node's count does not), started in roster order; each run's spec output and
+# stderr are held and printed in roster order, after a line naming the leg and its node --test's exit. The step's status
+# is node's own: the first non-zero exit among those runs, in roster order, a run the grace's end killed aside. On an
+# INT or a TERM the script ends each leg still running, as the grace's end below does, and then prints in roster order
+# every leg's output it still holds, the ended legs' partial output among it; a SIGKILL runs no trap, so the output
+# still held then is lost. The per-file bound: ROMP_BROWSER_LEGS_FILE_MS (default 240000) ms after a leg's node --test
+# starts, the script stops and kills every process under that node --test, found by parent links over the whole process
+# table (the file's own node process, and a browser Playwright launched, which runs in a session of its own and so
+# outside the file's process group, among them), with the process group each of them leads, which reaches a process left
+# in such a group after its parent exited, outside the parent links; the file's process shares this script's own process
+# group, so no kill signals that group. The walk stops each process it finds and reads the table again until a read
+# finds no new one, a guard against a process that forks during the walk, which no case executes. node --test then
+# records the file as failed as a whole (its process ended on a signal), beside the results the file recorded before the
+# kill, and the cut's red after the run names the leg and the bound. When the walk finds no live process under the leg's
+# node --test (none, or only processes that had already ended, a zombie not yet reaped among them: its file's process
+# had ended and node --test was ending), the leg is not cut. A node --test still running ROMP_BROWSER_LEGS_GRACE_MS
+# (default 10000) ms after the bound is killed too, with what is under it, and named. node's own --test-timeout is not
+# passed: on node 22.23.2 its cancel at the bound reports the file and sends the file's process alone a SIGTERM, and
+# node --test then waits for that process; the process of a leg that had launched a browser outlived the signal
+# (Playwright handles SIGTERM itself; recorded on a development box through the step's own command, not executed here),
+# and a file's process that does end on the signal leaves what is under it running, before any walk reads the tree. The
+# knobs are whole numbers above 0 of at most 9 digits (digits alone, no leading zero), refused by name before any leg
+# runs, and the step sets none of them. The tree test's case "the per-file bound ends a leg that outlives it" runs, with
+# the real node and a short bound, a synthetic leg whose node process ignores SIGTERM and starts a process in a session
+# of its own and one in the file's own process group, each with a child, and a process in a session of its own whose
+# child exits at once and leaves a grandchild in its group, reparented out of the tree, and reads every one of those
+# processes gone by the bound plus the grace; its case "a TERM to the script" reads them and the run's timers gone after
+# a TERM, and the held output printed; its case "the per-file bound through the stub" runs the grace's end, a node
+# --test that outlives the bound with nothing under it or with only a zombie under it, the knobs' refusals, the status
+# of legs that exit differently, and a roster longer than the legs run at once. The timers and the event pipe use what
+# bash 3.2 has (no wait -n), as tests/shell-portability.bats holds for every shell script the repo ships. The legs'
+# records are joined in roster order into the one record the pass below reads.
 # After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (the reporter's header states
 # what each line records) and derives, per rostered leg, that A TEST OF ITS BUNDLE PASSED: at least one result
 # attributed to it is a pass that carries no skip or todo, is a test and not a suite, and is not marked as node's
@@ -178,11 +181,13 @@ if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
 # its test.
 BOUND_MS=${ROMP_BROWSER_LEGS_FILE_MS:-240000}
 GRACE_MS=${ROMP_BROWSER_LEGS_GRACE_MS:-10000}
-# GNU nproc honours OMP_NUM_THREADS and OMP_THREAD_LIMIT, which node's count of the CPUs does not, so nproc runs without them
+# GNU nproc honours OMP_NUM_THREADS and OMP_THREAD_LIMIT, which node's count of the CPUs does not, so nproc runs without
+# them; node's count also honours a cgroup CPU quota, which nproc does not (the header's "How the legs run")
 cpus=$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 JOBS=${ROMP_BROWSER_LEGS_JOBS:-$(( cpus > 1 ? cpus - 1 : 1 ))}
-# At most 9 digits: a longer value runs past bash's integer range in secs() below, and the timer's sleep then fails at once
-# or sleeps for ages, so the bound would never fire, and nothing would say so.
+# At most 9 digits, a cap far inside bash's integer range: a value of 2^63 or more (19 digits and up) wraps in secs()
+# below, and the timer's sleep then fails at once or sleeps for ages, so the bound would never fire, and nothing would say
+# so.
 whole() { case "$2" in ''|*[!0-9]*|0*|??????????*) echo "ci-browser-legs: $1='$2' is not a whole number above 0 of at most 9 digits (digits alone, no leading zero): fix it or unset it; no leg ran" >&2; exit 1;; esac; }
 whole ROMP_BROWSER_LEGS_FILE_MS "$BOUND_MS"
 whole ROMP_BROWSER_LEGS_GRACE_MS "$GRACE_MS"
@@ -201,7 +206,9 @@ work=$(mktemp -d)
 # On any exit: each leg still running is ended (its timer's group killed, its node --test and every process under it
 # killed, as end_leg below does), then every started leg's output not yet printed is printed in roster order (on an INT
 # or a TERM: the ended legs' partial output, and the whole output of legs that finished behind one still running), then
-# the run's directory is removed.
+# the run's directory is removed. A leg counts as started before its launch begins, so a signal that lands during the
+# launch ends what the launch had started by then; a signal in the gap between a background start and the next command,
+# which keeps its pid (tmr[i] or job[i]), can leave that one process outside this reach.
 cleanup() {
   local i=0
   while [ "$i" -lt "$started" ]; do
@@ -221,16 +228,21 @@ rep="$work/record"
 events="$work/events"
 mkfifo "$events"
 exec 3<>"$events"
-# The pid kill_below starts from for leg $1: its node --test's, or, before that pid is written, the leg's subshell's.
-runner() { local p=""; [ ! -s "$work/$1.pid" ] || read -r p < "$work/$1.pid"; echo "${p:-${job[$1]}}"; }
+# The pid kill_below starts from for leg $1: its node --test's, or, before that pid is written, the leg's subshell's, or
+# none before the launch keeps that one (kill_below then starts nothing).
+runner() { local p=""; [ ! -s "$work/$1.pid" ] || read -r p < "$work/$1.pid"; echo "${p:-${job[$1]:-}}"; }
 # Every process under $1 (not $1 itself), found by parent links over the whole process table (ps -A): each one found is
 # stopped at once (SIGSTOP, so it forks nothing more), the table is read again until a read finds no new one, and then each
 # is killed (SIGKILL), the process group it leads first. A browser Playwright launched runs in a session of its own, outside
 # the file's process group, so a kill of the file's group alone would miss it; the group it leads is its own, and the group
 # kill also reaches a process left in that group after its parent exited, which the parent links no longer lead to. A pid
-# that is not a number above 1 starts nothing. Returns 1 when it found no process to kill, 0 when it killed one.
+# that is not a number above 1 starts nothing. After the stops, each process found is read again: one that is gone, or is
+# a zombie (it has ended and its parent has not reaped it), had ended on its own before its stop, and a stopped one cannot
+# end on its own. Returns 1 when it found no live process (none at all, or only ones that had ended, such as a file's
+# process that ended just before the walk and that node --test has not yet reaped), 0 when it killed one. Either way the
+# kills go to every process found, and so to the group each leads.
 kill_below() {
-  local all=" " found p
+  local all=" " found p live=""
   case "$1" in ''|*[!0-9]*|0|1) return 1;; esac
   while :; do
     found=$(ps -A -o pid= -o ppid= | awk -v r="$1" -v seen="$all" '{ kids[$2] = kids[$2] " " $1 } END { q[1] = r; n = 1; for (i = 1; i <= n; i++) { m = split(kids[q[i]], c, " "); for (j = 1; j <= m; j++) { q[++n] = c[j]; if (index(seen, " " c[j] " ") == 0) printf "%s ", c[j] } } }')
@@ -239,17 +251,20 @@ kill_below() {
     all="$all$found"
   done
   [ "$all" != " " ] || return 1
+  for p in $all; do case "$(ps -o stat= -p "$p" 2>/dev/null)" in ''|*Z*) ;; *) live=1; break;; esac; done
   for p in $all; do kill -KILL -- "-$p" 2>/dev/null || true; done
   kill -KILL $all 2>/dev/null || true
+  [ -n "$live" ]
 }
 # Ends leg $1's node --test with every process under it (at the grace's end, and on an exit before the legs ended): the
-# node --test is stopped first, so it starts nothing between the walk and its own kill. The leg's subshell is left to post
+# node --test is stopped first, so it starts nothing between the walk and its own kill (a guard, like the walk's own
+# stops, against a process that forks during the walk, which no case executes). The leg's subshell is left to post
 # its "done" (when the node --test never started, kill_below took what was under the subshell instead).
 end_leg() {
   local p; p=$(runner "$1")
-  [ "$p" = "${job[$1]}" ] || kill -STOP "$p" 2>/dev/null || true
+  [ "$p" = "${job[$1]:-}" ] || kill -STOP "$p" 2>/dev/null || true
   kill_below "$p" || true
-  [ "$p" = "${job[$1]}" ] || kill -KILL "$p" 2>/dev/null || true
+  [ "$p" = "${job[$1]:-}" ] || kill -KILL "$p" 2>/dev/null || true
 }
 # A timer for leg $1: $3 ms after it starts it posts "$2 $1". Its sleep runs in a process group of its own (set -m), whose
 # id is tmr[$1], so the leg's end kills the sleep with its group; it is started from a subshell that exits at once, so the
@@ -287,17 +302,17 @@ show() {
 }
 
 n=${#legs[@]}
-echo "ci-browser-legs: $n rostered legs, $JOBS at a time, each its own node --test, killed with every process under it $BOUND_MS ms after it starts"
+echo "ci-browser-legs: $n rostered legs, $JOBS at a time, each its own node --test, cut with every process under it if still running $BOUND_MS ms after it starts"
 finished=0
 shown=0
-while [ "$started" -lt "$n" ] && [ "$started" -lt "$JOBS" ]; do launch "$started"; started=$((started + 1)); done
+while [ "$started" -lt "$n" ] && [ "$started" -lt "$JOBS" ]; do started=$((started + 1)); launch $((started - 1)); done
 while [ "$finished" -lt "$n" ]; do
   read -r event i <&3
   [ -z "${fin[$i]:-}" ] || continue   # a timer that ran out as its leg ended
   case "$event" in
     bound)
-      # a cut only when the walk killed something: a node --test whose file's process had already ended, ending itself
-      # as the bound came, is not cut, and its exit is read as any other leg's
+      # a cut only when the walk found a live process to kill: a node --test whose file's process had already ended (gone,
+      # or a zombie not yet reaped), ending itself as the bound came, is not cut, and its exit is read as any other leg's
       tmr[$i]=""
       if kill_below "$(runner "$i")"; then : > "$work/$i.cut"; fi
       timer "$i" grace "$GRACE_MS";;
@@ -310,7 +325,7 @@ while [ "$finished" -lt "$n" ]; do
       finished=$((finished + 1))
       [ -z "${tmr[$i]:-}" ] || kill -TERM -- "-${tmr[$i]}" 2>/dev/null || true
       tmr[$i]=""
-      if [ "$started" -lt "$n" ]; then launch "$started"; started=$((started + 1)); fi
+      if [ "$started" -lt "$n" ]; then started=$((started + 1)); launch $((started - 1)); fi
       while [ "$shown" -lt "$n" ] && [ -n "${fin[$shown]:-}" ]; do show "$shown"; shown=$((shown + 1)); done;;
   esac
 done
