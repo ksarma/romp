@@ -1166,6 +1166,36 @@ out({ atPaint, placed: { place: at(), reads: STYLE_READS - reads, asks: ASKS - a
                 self.assertEqual(o["placed"], {"place": {"top": "91px", "right": "8px", "painted": True}, "reads": o["scan"], "asks": 1},
                                  order + " in one frame: one frame asked for, and it scans, so the badge goes below the notice (54 + 29 + 8)")
 
+    def test_a_resize_in_a_frame_the_watch_already_placed_the_badge_in_asks_for_its_scan_at_the_next_frame(self):
+        # the rehearsed check of round 2 (2026-10-04): the resize observer placed the painted badge at once, with a scan, after the
+        # frame's own placement, so a frame in which the container resized held two placements (in the lab chat each Shift+Enter
+        # that grew the composer gave a frame with a re-read and then a scan of every element). An engine runs a frame's animation
+        # frame callbacks, lays the page out, then runs its resize observer callbacks (engineFrame, below). The resize callback now
+        # places the painted badge at once only when the container's box or the view's size differs from what the last placement
+        # read; when the frame's own placement already read them, it asks for the scan at the next frame instead (a resize can show
+        # a control by a media query alone, which no change to the page reports, so the scan is kept). Each placement while
+        # painted reads the badge's box once (fits)
+        o = self._watch_fit(r"""
+fire('romp:wsdown'); after(RHOLD_T);
+let fits = 0; { const g = BADGE.getBoundingClientRect; BADGE.getBoundingClientRect = () => { fits++; return g(); }; }
+const engineFrame = (resized) => task(() => { FRAMES.splice(0).forEach((fn) => fn && fn(NOW)); if (resized) ROS.forEach((cb) => cb([])); });
+const step = (fn, resized) => { const reads = STYLE_READS, asks = ASKS; fits = 0; fn(); engineFrame(resized); return { fits, reads: STYLE_READS - reads, asks: ASKS - asks, place: at() }; };
+// the composer grows by a line (its style written) and the list's bottom rises with it: the change's frame, the list resized in it
+const grew = step(() => { field.box = [10, 744, 300, 80]; CONTENT.getBoundingClientRect = () => ({ top: CTOP, left: 0, right: 390, bottom: 660 }); attr(field, 'style'); }, true);
+const next = step(() => {}, false);
+// the view resized with no change the watch sees (a window resize, the pane shown): the resize callback's frame, nothing asked before it
+const resized = step(() => { document.documentElement.clientHeight = 800; }, true);
+const quiet = step(() => {}, false);
+out({ grew, next, resized, quiet, scan: scan() });""")
+        at52 = {"top": "52px", "right": "8px", "painted": True}
+        self.assertEqual(o["grew"], {"fits": 1, "reads": 1, "asks": 2, "place": at52},
+                         "the composer's growth: one placement in its frame, the watch's re-read (one read), and the resize callback, finding the box that "
+                         "placement read, asks for a frame (6904c6db4: two placements, the re-read and then a scan)")
+        self.assertEqual(o["next"], {"fits": 1, "reads": o["scan"], "asks": 0, "place": at52}, "the next frame places it once, with the resize's scan")
+        self.assertEqual(o["resized"], {"fits": 1, "reads": o["scan"], "asks": 0, "place": at52},
+                         "a resize no placement has read yet: the resize callback places it at once, in that frame, with a scan, and asks for no frame")
+        self.assertEqual(o["quiet"], {"fits": 0, "reads": 0, "asks": 0, "place": at52}, "and nothing is left asked for")
+
     def test_the_watch_observes_the_list_its_sticky_elements_and_the_page_outside_it_never_the_lists_other_content(self):
         o = self._watch_fit(r"""
 fire('romp:wsdown'); after(RHOLD_T);

@@ -70063,7 +70063,11 @@ def _pane_spin(cid, ignore_id=""):
             # paint. While it is painted it is watched (rwatch, rrec): a change to the page and a scroll each ask for one placement
             # at the next animation frame (rwant, rframe), so however many arrive in a frame the badge is placed once in it (round
             # 2, regression-1 and open call 10: each change ran a scan of the whole page, one style read per element, and a chat
-            # changes at each second's tick and each keystroke). The watch observes the container's own children and attributes,
+            # changes at each second's tick and each keystroke). A resize event while it is painted places it at once only when no
+            # placement has read the layout the resize reports; in a frame whose own placement already read it, the resize asks for
+            # a scan at the next frame instead (the rehearsed check of round 2: each line the composer grew gave its frame two
+            # placements, a re-read and then a scan). So a frame places it twice only when its layout changed after its own
+            # placement (a later frame callback resized the container). The watch observes the container's own children and attributes,
             # each sticky or fixed element in it (what it holds included), and the page outside it, never the container's other
             # content, where a session's messages and their clocks change. A change that can add a control (an element added to an
             # element the last scan did not hold, or a class, style or hidden change on an element the last scan did not hold or
@@ -70086,7 +70090,7 @@ def _pane_spin(cid, ignore_id=""):
             # picker, tag filter and + button. So the observer is made whenever the engine has one (Firefox's, made in the hidden
             # frame, reports at the frame's first show), and the badge is placed at the load, each resize event and its own paint.
             "function rscroll(){try{return /^(auto|scroll)$/.test(getComputedStyle(c).overflowY);}catch(e){return false;}}"
-            "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true]',rmo=null,rsc=false,rob=null,rhs=null,rpins=[],rfr=0,rfull=false;"
+            "var RCTL='a[href],button,input,select,textarea,summary,label,[role=button],[data-act],[tabindex],[draggable=true]',rmo=null,rsc=false,rob=null,rhs=null,rpins=[],rfr=0,rfull=false,rgeo=null;"
             "function rctl(e,s){return (e.matches&&e.matches(RCTL))||/^(pointer|grab|grabbing)$/.test(s.cursor);}"
             # what the badge must not cover: each shown control outside the container, and inside it each shown control that is
             # or sits in a sticky or fixed element, as [the control, the ancestors that clip it (rclip)]. Each element's style is
@@ -70139,9 +70143,12 @@ def _pane_spin(cid, ignore_id=""):
             "if(!n)return [y,x];var nx=Math.ceil(W-hl)+8,ny=Math.ceil(hb)+8;if(W-nx-w>=8&&(left||nx-x<=ny-y))x=nx;else y=ny;if(y+h>H-8)return null;}return null;}"
             # the area of those boxes a badge from l to r and from y to y+h would cover
             "function rcov(o,l,r,y,h){var a=0;for(var i=0;i<o.length;i++){var q=o[i],dx=Math.min(r,q.right)-Math.max(l,q.left),dy=Math.min(y+h,q.bottom)-Math.max(y,q.top);if(dx>0&&dy>0)a+=dx*dy;}return a;}"
-            "function rplace(again){if(!rb||!c||!rscroll())return;var t=Math.round(c.getBoundingClientRect().top),y=(t>0?t:0)+8,x=8;"
+            "function rplace(again){if(!rb||!c||!rscroll())return;var t=Math.round(c.getBoundingClientRect().top),y=(t>0?t:0)+8,x=8;rgeo=rkey();"
             "if(rb.classList.contains('on')){var f=rfit(y,again===true);y=f[0];x=f[1];}"
             "var ty=y+'px',tx=x===8?'':x+'px';if(rb.style.top!==ty)rb.style.top=ty;if(rb.style.right!==tx)rb.style.right=tx;}"
+            # what a placement reads of the page's layout: the container's top and bottom and the view's size, kept by each placement
+            # (rgeo) so the resize observer can tell a resize the frame's placement already read from one no placement has
+            "function rkey(){try{var q=c.getBoundingClientRect(),de=document.documentElement;return q.top+' '+q.bottom+' '+de.clientWidth+' '+de.clientHeight;}catch(e){return '';}}"
             # one placement at the next animation frame, a scan when any change since the last asked for one (rfull); with no
             # requestAnimationFrame, at once
             "function rwant(f){if(f)rfull=true;if(rfr)return;if(typeof requestAnimationFrame!=='function'){rframe();return;}rfr=requestAnimationFrame(rframe);}"
@@ -70163,7 +70170,12 @@ def _pane_spin(cid, ignore_id=""):
             "if(!rsc&&document.addEventListener){document.addEventListener('scroll',rnudge,true);document.addEventListener('transitionend',rnudge,true);rsc=true;}}"
             "else{rob=null;rhs=null;rpins=[];rfull=false;if(rfr){if(typeof cancelAnimationFrame==='function')cancelAnimationFrame(rfr);rfr=0;}if(rmo){rmo.disconnect();rmo=null;}"
             "if(rsc){document.removeEventListener('scroll',rnudge,true);document.removeEventListener('transitionend',rnudge,true);rsc=false;}}}catch(e){}}"
-            "if(rb&&c&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(function(){rplace();});rro.observe(c);rro.observe(document.documentElement);}catch(e){}}"
+            # a resize event places the badge at once, unless it is painted and the last placement already read the layout the
+            # resize reports: an engine runs the frame's animation frame callbacks (rframe) before its resize observer callbacks, so
+            # a change the watch saw and the resize it caused reach rframe first (the composer's text field growing a line), and the
+            # callback then asks for a scan at the next frame instead of placing twice in one (the rehearsed check of round 2): a
+            # resize can show or hide a control by a media query alone, which no change to the page reports
+            "if(rb&&c&&typeof ResizeObserver==='function'){try{var rro=new ResizeObserver(function(){if(rb.classList.contains('on')&&rgeo!==null&&rgeo===rkey()){rwant(true);return;}rplace();});rro.observe(c);rro.observe(document.documentElement);}catch(e){}}"
             "rplace();"
             # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
             # the opaque sheet; the sheet stays for a genuinely empty pane (cold load / never
