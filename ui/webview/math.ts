@@ -352,10 +352,12 @@ export const MATH_CALL_ATTR = "data-math-call";
 const PLACEHOLDER_SEL = "." + MATH_INLINE_CLASS + ", ." + MATH_DISPLAY_CLASS;
 
 /** How long the chunk may take to load, with the two common faces, before the load counts as failed: ui/CLAUDE.md's loading
- *  rule, a backstop so a wait can never trap the reader. The viewer holds its loader over a note with math until the engine
- *  arrives, and a chunk fetch that stalls without erroring fires no event at all, so this is the one end that has none. The
- *  size follows the PDF renderer's (file-view.ts PDF_RENDER_BACKSTOP_MS, twice the pane loader's 30 s that has never fired,
- *  because the wait includes a fetch), and it never fires in the load path: the chunk is about 86 KB served. */
+ *  rule's backstop. The viewer holds its loader over a note with math until the engine arrives (file-view.ts holdOverBody puts
+ *  it over what the body showed), and a chunk fetch that stalls without erroring fires no event at all, so this is the one end
+ *  that has none. It counts from the chunk's request, and the request waits for the page's load event (attempt): before that
+ *  event nothing bounds the wait, and the viewer's Raw view, or closing the viewer, is the way out. The size follows the PDF
+ *  renderer's (file-view.ts PDF_RENDER_BACKSTOP_MS, twice the pane loader's 30 s that has never fired, because the wait
+ *  includes a fetch), and it never fires in the load path: the chunk is about 86 KB served. */
 export const MATH_CHUNK_BACKSTOP_MS = 60_000;
 
 /** The attribute a source fallback carries when the load's failure made it, and not one of the fill's bounds: the formula's

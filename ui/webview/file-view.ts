@@ -2682,11 +2682,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // Chooses the body for the current prefs and syncs the buttons. The pressed state flips SYNCHRONOUSLY
   // in the click handler — the immediate acknowledgement ui/CLAUDE.md requires — and so does the content
   // swap, since the text is already in memory.
-  // A Rendered paint of a note with math made before the math renderer is in (math.ts: KaTeX is an on-demand chunk) is HELD:
-  // the body keeps what it shows (the romp loader on an open, the previous paint on a reload) and the renderer's arrival
-  // paints again, so a note's first paint is its final one. One paint, the hooks once, and the anchor map, the reader's place
-  // and the comment paint never meet a formula still waiting for its layout. A failed load paints the same way, each formula
-  // as its source; math.ts's backstop bounds the wait, so the loader cannot trap the reader. The open's target waits with the
+  // A Rendered paint of a note with math made before the math renderer is in (math.ts: KaTeX is an on-demand chunk) is HELD,
+  // and the renderer's arrival paints again, so a note's first paint is its final one. On an open the body keeps the romp
+  // loader; over anything else (a reload's previous paint, a Raw pick's rows) the loader goes up as an overlay with what the
+  // body showed hidden under it (holdOverBody). One paint, the hooks once, and the anchor map, the reader's place and the
+  // comment paint never meet a formula still waiting for its layout. A failed load paints the same way, each formula as its
+  // source. math.ts's backstop counts 60 s from the chunk's request, and the request waits for the page's load event: before
+  // that event nothing bounds the hold, and Raw, or closing the viewer, is the way out. The open's target waits with the
   // paint: landTarget stands down while a paint is held, its heading and offset kept pending, and the arrival lands them after
   // its paint (renderBody spends the heading at a paint that can land it; the offset and the keyboard are landTarget's alone),
   // as does a paint that ends the hold first (a Raw pick while the chunk loads: renderBody's `ends`).
