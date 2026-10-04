@@ -763,6 +763,27 @@ try {
     }).catch((e) => ({ err: String(e).slice(0, 120) })) : { err: "no-chat-frame" };
     await sleep(800);
   }
+  // A RESIZE HANDLE'S DRAG (round 3 of the review, 2026-10-04, correctness-1 and regression-1): cfg.handleDrag names the chat's
+  // handle a drag moves while the badge is painted, "composer" (#composer-resize) or "tabbar" (#tabbar-resize). Each drag is the
+  // page's own: the mouse pressed on the handle's middle, moved in steps, released, so the chat's handlers set and clear the body's
+  // class (composer-resizing or tabbar-resizing, cursor: ns-resize on the body). The composer's drag shrinks the composer, so it
+  // is grown here first by a drag up, before the suspend, and the transcript is scrolled to its top, so no scroll repaints the
+  // scroll marks during the drag (the review's case: the list grows past the marks painted for it before the shrink). handleOf
+  // reads the handle's box in the page's viewport (the chat's iframe offset included), and in the chat's document the class, the
+  // composer's height, the strip's cap (--tabbar-cap, which the strip's drag writes) and the scroll marks' box
+  const handleSel = cfg.handleDrag === "tabbar" ? "#tabbar-resize" : "#composer-resize";
+  const handleOf = async () => { const f = frameOf("chat"); const bb = f ? await f.locator(handleSel).boundingBox().catch(() => null) : null;
+    const inDoc = f ? await f.evaluate((k) => { const ta = document.getElementById("composer-input"), bar = document.getElementById("tabbar"), mk = document.querySelector(".scroll-marks"), c = document.getElementById("content");
+      const bx = (e) => { if (!e) return null; const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
+      return { cls: document.body.classList.contains(k === "tabbar" ? "tabbar-resizing" : "composer-resizing"), taH: ta ? Math.round(ta.getBoundingClientRect().height) : null,
+               cap: bar ? bar.style.getPropertyValue("--tabbar-cap") : null, marks: bx(mk), list: bx(c), scrollTop: c ? Math.round(c.scrollTop) : null }; }, cfg.handleDrag).catch((e) => ({ err: String(e).slice(0, 120) })) : { err: "no-chat-frame" };
+    return Object.assign({ box: bb ? [Math.round(bb.x), Math.round(bb.y), Math.round(bb.width), Math.round(bb.height)] : null }, inDoc); };
+  const dragBy = async (dys, mid) => { const h = await handleOf(); if (!h.box) return { err: "no-handle", h };
+    const x = h.box[0] + h.box[2] / 2; let y = h.box[1] + h.box[3] / 2; await page.mouse.move(x, y); await page.mouse.down(); const tDown = now(), down = await handleOf();
+    for (const dy of dys) { y += dy; await page.mouse.move(x, y, { steps: 2 }); await sleep(80); }
+    const m = await handleOf(); if (mid) await sleep(mid); const tUp = now(); await page.mouse.up(); await sleep(100); return { before: h, down, mid: m, after: await handleOf(), tDown, tUp }; };
+  if (cfg.handleDrag === "composer") { out.handleGrow = await dragBy([-40, -40, -40], 0).catch((e) => ({ err: String(e).slice(0, 160) })); await sleep(400);
+    await frameOf("chat").evaluate(() => { const c = document.getElementById("content"); if (c) c.scrollTop = 0; }).catch(() => {}); await sleep(600); }
   // THE OVERFLOWING STRIPS (round 2 of the review, 2026-10-03, correctness-1): cfg.overflowStrip fills one of the chat's two strips
   // that scroll what does not fit out of view until it hides about 150 px of rows, which then lie over the transcript's top, where
   // the badge's first place is: "tabs" adds synthetic tabs (the strip's own .tab class, whose cursor is a pointer; each grows to fill
@@ -882,6 +903,21 @@ try {
     out.notice = await frameOf("chat").evaluate(() => { if (typeof window.__rompLoadingPill !== "function") return { hook: false };
       window.__rompLoadingPill(true); const n = document.querySelector(".tx-landing-notice"); return { hook: true, shown: !!n && getComputedStyle(n).display !== "none" }; }).catch((e) => ({ err: String(e).slice(0, 120) }));
   })().catch((e) => { out.noticeError = String(e).slice(0, 200); });
+  // the drag while the badge is painted (cfg.handleDrag, above): started at the return's flip, it waits for the cue pane's badge to
+  // paint, then drags the handle in five steps (the composer's down, which shrinks it; the strip's down, which grows the strip),
+  // holds it 300 ms and releases it, all while the outage holds. Awaited after the fresh wait
+  const dragDone = !cfg.handleDrag ? null : (async () => {
+    const deadline = now() + (cfg.outageMs || 0);
+    while (now() < deadline) {
+      const on = await cueChat.evaluate(() => { const c = window.__labCue; return !!(c && c.badge.length && c.badge[c.badge.length - 1].on); }).catch(() => false);
+      if (on) break;
+      await sleep(50);
+    }
+    await sleep(300);
+    out.t.dragStart = now();
+    out.handleDragRec = await dragBy([18, 18, 18, 18, 18], 300);
+    out.t.dragEnd = now();
+  })().catch((e) => { out.handleDragError = String(e).slice(0, 200); });
   if (cfg.shots) page.screenshot({ path: cfg.shots + "-returned.png" }).catch(() => {});
   await sleep(Math.max(0, out.t.return + cfg.outageMs - now()));
   state.phase = "after";
@@ -909,6 +945,7 @@ try {
   out.t.fresh = now();
   if (postTapDone) await postTapDone;   // the tap after the return (below the return's flip) finishes before the settle
   if (noticeDone) await noticeDone;
+  if (dragDone) await dragDone;
   await sleep(cfg.settleMs || 1500);       // wsconnfail rides the next open; the perf minute rows flush on their own clock
   // the chain after the return (the owner's answer, 2026-09-19): the chat's background asks (needFull why=prefetch) on the dials
   // made from the return on. On the phone the redial reloads the visible tab alone; the desktop's chain runs as before.

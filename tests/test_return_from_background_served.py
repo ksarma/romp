@@ -518,13 +518,13 @@ class ReturnFromBackground(unittest.TestCase):
 
     # ---- the driver ----
     def _drive(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False, post_tap=None,
-               cue_app=None, sub_view=False, notice_after_paint=False, overflow_strip=None, landscape_keyboard=False):
+               cue_app=None, sub_view=False, notice_after_paint=False, overflow_strip=None, landscape_keyboard=False, handle_drag=None):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
-        name = "%s-%s-%s-%ds%s%s%s%s%s%s%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "", "-posttap-" + post_tap if post_tap else "",
+        name = "%s-%s-%s-%ds%s%s%s%s%s%s%s%s%s%s%s%s%s" % (engine, shell, regime, outage_s, "-tap-" + tap if tap else "", "-abort" if abort else "", "-denied" if denied else "", "-unmarked" if unmarked else "", "-boot-" + boot_tab if boot_tab else "", "-heldfull" if hold_active_full_ms else "", "-posttap-" + post_tap if post_tap else "",
                                                          "-cue-" + cue_app if cue_app else "", "-subview" if sub_view else "", "-notice" if notice_after_paint else "", "-strip-" + overflow_strip if overflow_strip else "",
-                                                         "-landkbd" if landscape_keyboard else "")
+                                                         "-landkbd" if landscape_keyboard else "", "-drag-" + handle_drag if handle_drag else "")
         eager = _eager(shell, None if unmarked else tap)   # a tapped pane's document is loaded before the suspend (on the re-tap, under abort or denied); an unmarked document runs no shim, so the tapped pane never joins the eager set (pass 5, the author's label, taking the reviewer's round-4 finding tests-1)
         # a derived set that came out empty would hand the driver a boot wait and a fresh wait that end at once with nothing witnessed
         # (review round 2, 2026-09-19: every derived expectation must fail when the derivation yields nothing)
@@ -548,6 +548,7 @@ class ReturnFromBackground(unittest.TestCase):
                "holdActiveFullMs": hold_active_full_ms,   # fresh-2 (review round 3): the driver's proxy holds the boot chat dial's frames naming the active tab for this long
                "postTap": post_tap or "", "postTapMs": 2000, "cueHoldMs": cue_hold_ms() if post_tap else 0,
                "cueApp": cue_app or "chat", "subView": bool(sub_view), "noticeAfterPaint": bool(notice_after_paint),
+               "handleDrag": handle_drag or "",   # round 3 of the review (2026-10-04): a resize handle dragged while the badge is painted ("composer" or "tabbar")
                "landscapeKeyboard": bool(landscape_keyboard), "pinnedNote": bool(landscape_keyboard),   # ruling 3 at 79dce614c (2026-10-04): the landscape phone with the keyboard up and a long pinned note
                "overflowStrip": overflow_strip or "",   # round 2 of the review (2026-10-03, correctness-1): the chat strip filled past its cap before the suspend ("tabs" or "notes")   # round 1 of the review (2026-10-03): the pane whose badge is read, the subagent viewer opened before the suspend, the landing notice shown over the painted badge   # iOS item 4: the tap after the return, 2 s on (inside the badge's 30 s failsafe, where the off-screen paint showed)
                "showFilesControl": tap == "files",   # extra9-2 (review round 3): the Files tab exists only with the gear's Files control on (romp:settings.showFilesControl, the literal true); the install seeds it before the shell parses
@@ -1424,6 +1425,88 @@ class ReturnFromBackground(unittest.TestCase):
 
     def test_phone_landscape_keyboard_hung_4s_the_composers_resize_handle_stays_clear_of_the_badge(self):
         self._composer_resize_surface("chromium")
+
+    # Round 3 of the review (2026-10-04, correctness-1 and regression-1): a cursor counts as a control only where the element sets it.
+    # During a drag of the composer's resize handle the chat puts composer-resizing on the body (cursor: ns-resize), and during the tab
+    # strip's, tabbar-resizing; every element that sets no cursor inherits it. At 94f85bca3 the loader's rctl and the recorder's chrome
+    # both read the computed cursor, so mid-drag the loader's full-view sheet (#pane-spin) and every element outside the list counted
+    # as controls, and the painted badge left its place for the drag. Each leg drags a handle while the badge is painted (the
+    # driver's cfg.handleDrag), on the desktop, where the chat paints its scroll marks. The composer's leg is the review's page: the
+    # composer grown and the transcript scrolled to its top before the suspend, then a drag that shrinks the composer, so the list
+    # grows below the scroll marks the chat painted for it before. The strip's leg opens the subagent viewer, so the badge paints off
+    # its first place, clear of the viewer's pin (left of it in Chromium and Firefox; WebKit's narrower badge went below the pin and
+    # left of a scroll mark), and fills the tab strip past its cap (the overflowing strip's tabs), so the strip stands at its cap and
+    # the drag down grows it, moving the list's top and the pin with it. The badge must hold its place through the drag: its right
+    # edge where it was, and its top as far below the list's top as before the drag. The dragged handle must be in the recorder's
+    # chrome in some record read between the press and the release, while the class is on the body: each handle's cursor equals its
+    # parent's then, so only its name in the recorder's CONTROL keeps it there (the loader's RCTL names it too, which the node cases
+    # pin). _cue's chrome check runs on every record, so a recorder that read the inherited cursor fails there.
+    def _handle_drag_surface(self, engine, shell, kind):
+        sub = kind == "tabbar"
+        name, r = self._drive(shell, "hung", 6, engine, active_sid=SUB_SID if sub else None, sub_view=sub, overflow_strip="tabs" if sub else None, handle_drag=kind)
+        where = name + ": "
+        if sub:
+            self.assertEqual(r.get("subView"), {"opened": True, "pin": True}, where + "the viewer opened and its header holds the pin: %r" % (r.get("subView"),))
+        self.assertNotIn("handleDragError", r, where + "the drag ran: %r" % (r.get("handleDragError"),))
+        d = r.get("handleDragRec") or {}
+        cls = "composer-resizing" if kind == "composer" else "tabbar-resizing"
+        self.assertTrue(d.get("before") and d["before"].get("box"), where + "the handle was found: %r" % (d,))
+        self.assertEqual((d["before"].get("cls"), (d.get("down") or {}).get("cls"), (d.get("mid") or {}).get("cls"), (d.get("after") or {}).get("cls")),
+                         (False, True, True, False), where + "the chat set %s on the body at the press, kept it through the moves and cleared it at the release: %r" % (cls, d))
+        if kind == "composer":
+            g = r.get("handleGrow") or {}
+            self.assertGreaterEqual((g.get("after") or {}).get("taH", 0) - (g.get("before") or {}).get("taH", 0), 60, where + "the composer was grown before the suspend: %r" % (g,))
+            self.assertGreaterEqual(d["before"]["taH"] - d["mid"]["taH"], 60, where + "the drag shrank the composer: %r" % (d,))
+            mk = d["before"].get("marks") or [0, 0, 0, 0]
+            self.assertTrue(mk[2] > 0 and mk[3] > 0 and d["mid"]["list"][1] + d["mid"]["list"][3] > d["mid"]["marks"][1] + d["mid"]["marks"][3],
+                            where + "the scroll marks stood over the list, and mid-drag the list reached below them (the marks painted before the shrink): %r" % (d,))
+        else:
+            self.assertNotEqual(d["mid"].get("cap"), d["before"].get("cap"), where + "the drag wrote the strip's cap: %r" % (d,))
+            self.assertGreaterEqual(d["mid"]["list"][1] - d["before"]["list"][1], 30, where + "the strip grew and the list's top moved down with it: %r" % (d,))
+        cue = r.get("cue") or {}
+        recs = sorted([b for b in (cue.get("badge") or []) if b["on"]] + list(cue.get("moves") or []), key=lambda b: b["t"])
+        t0, t1 = r["t"]["dragStart"], r["t"]["dragEnd"]
+        before = [b for b in recs if b["t"] < t0]
+        self.assertTrue(before, where + "the badge was painted before the drag: %r" % (recs[:3],))
+        bx = before[-1]["box"]
+        right0, down0 = before[-1]["vw"] - (bx[0] + bx[2]), bx[1] - max(before[-1]["ctop"], 0)
+        if sub:
+            self.assertGreater(right0, 8, where + "painted at a left step, left of the viewer's pin (its right edge %d px from the view's): %r" % (right0, before[-1]))
+        during = [b for b in recs if t0 <= b["t"] <= t1]
+        self.assertTrue(during, where + "the recorder read the painted badge during the drag (the handle moved, so the chrome changed): %r" % ([(b["t"], b["box"]) for b in recs],))
+        for b in during:
+            x, y, w, h = b["box"]
+            right, down = b["vw"] - (x + w), y - max(b["ctop"], 0)
+            self.assertTrue(abs(right - right0) <= 1 and abs(down - down0) <= 1,
+                            where + "the badge held its place through the drag: its right edge %d px from the view's and its top %d px below the list's top, as "
+                            "before the drag at %r (1 px for the rounding of a box), read %d and %d at %r (94f85bca3: the sheet counted mid-drag and the badge "
+                            "took the fallback's place)" % (right0, down0, bx, right, down, b))
+        handle = "div#composer-resize" if kind == "composer" else "div#tabbar-resize"
+        held = [b for b in during if d["tDown"] < b["t"] < d["tUp"]]
+        self.assertTrue([b for b in held if any(c["el"].startswith(handle) for c in b["chrome"])],
+                        where + "the dragged handle was in the recorder's chrome in a record read between the press and the release, while the class was on the "
+                        "body: %r" % ([(b["t"] - d["tDown"], [c["el"] for c in b["chrome"]]) for b in held][:3],))
+        self._cue(name, r, "hung", 6)
+        type(self).measurements.setdefault(name, {})["handleDrag"] = {"drag": d, "grow": r.get("handleGrow"), "before": bx, "during": [(b["t"] - t0, b["box"], b["ctop"]) for b in during][:12]}
+        self._surface(name, r)
+
+    def test_desktop_hung_6s_a_composer_drag_moves_the_painted_badge_nowhere_and_its_handle_stays_chrome(self):
+        self._handle_drag_surface("chromium", "desktop", "composer")
+
+    def test_desktop_hung_6s_a_tab_strip_drag_moves_the_painted_badge_nowhere_and_its_handle_stays_chrome(self):
+        self._handle_drag_surface("chromium", "desktop", "tabbar")
+
+    def test_webkit_desktop_hung_6s_a_composer_drag_moves_the_painted_badge_nowhere_and_its_handle_stays_chrome(self):
+        self._handle_drag_surface("webkit", "desktop", "composer")
+
+    def test_firefox_desktop_hung_6s_a_composer_drag_moves_the_painted_badge_nowhere_and_its_handle_stays_chrome(self):
+        self._handle_drag_surface("firefox", "desktop", "composer")
+
+    def test_webkit_desktop_hung_6s_a_tab_strip_drag_moves_the_painted_badge_nowhere_and_its_handle_stays_chrome(self):
+        self._handle_drag_surface("webkit", "desktop", "tabbar")
+
+    def test_firefox_desktop_hung_6s_a_tab_strip_drag_moves_the_painted_badge_nowhere_and_its_handle_stays_chrome(self):
+        self._handle_drag_surface("firefox", "desktop", "tabbar")
 
     def test_phone_hung_12s(self):
         self._leg("phone", "hung", 12)
