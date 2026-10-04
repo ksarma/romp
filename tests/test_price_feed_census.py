@@ -22,7 +22,8 @@ own one rebuild, so a load anywhere else (a boot caller, an alias) is red by nam
 moved count. The enclosing function is the path of nested defs and classes (the worker is `_refresh_remote_prices.work`); a
 call at module level is `<module>`.
 
-Text only: kernel/kernel.py is read as a file and parsed once per process (tests/parse_cache.py's source_and_tree: the
+Text only: kernel/kernel.py is read as a file and parsed once per process, on first use and never at import (kernel_source,
+through tests/parse_cache.py's source_and_tree: the
 parse this half, the switch case and the served pass below share, and in a serial cell the thread-stop census's parse of
 the same file is the same object); nothing loads romp code but tests/romp_load.py, imported above the preamble as every test
 module imports it, which execs kernel/loadsource.py (the suite's file-path importer) and gives a direct run of this module the
@@ -59,7 +60,7 @@ output byte for byte, so the entry's exit code, its --table road, the tree deriv
 against a real run. A run of the file thus covers the listing road over a full copy of the scanned scope and both roads
 over the tiny roots; no run of the file prints the full tree's table. The script loads no romp code and
 this module loads none beyond tests/romp_load.py's kernel/loadsource.py; the copy lives under the run's temp root (tests/__init__.py's hook removes it, and
-tearDownModule does too).
+tearDownModule does too, then calls release(), which drops what the module holds for the rest of the process).
 
 The third round of the review (2026-09-22) found the completeness claim holding for the Python half alone: the shell and
 browser scans were closed tool lists with no interpreter arm and no import gate, a program site in the browser or editor
@@ -271,10 +272,25 @@ def census(src, tree=None):
     return out
 
 
-# kernel/kernel.py's text and tree, parsed once per process (tests/parse_cache.py: the module's first half, the switch case and
-# the served pass read this one; in a serial cell the thread-stop census's parse of the same file is the same object)
-KERNEL, KERNEL_TREE = PC.source_and_tree(os.path.join(ROOT, KERNEL_PATH), KERNEL_PATH)
-CENSUS = census(KERNEL, KERNEL_TREE)
+def kernel_source():
+    """kernel/kernel.py's (text, tree), read and parsed on the first call in the process and the same two objects after
+    (tests/parse_cache.py's source_and_tree, which caches the parse per process: the module's first half, the switch case and the
+    served pass read this one; in a serial cell the thread-stop census's parse of the same file is the same object). Read on
+    first use, never at import, so collecting this module parses nothing: a pytest worker imports every module it collects, and
+    a worker that held the tree from collection on held it whether or not it ran a case that reads it (on 3.14t the import's
+    peak resident memory was 0.37 GiB with the parse at import and is 0.10 GiB without it, measured 2026-10-04)."""
+    return PC.source_and_tree(os.path.join(ROOT, KERNEL_PATH), KERNEL_PATH)
+
+
+_CENSUS = []   # the kernel's census, census() over kernel_source(), made on first use; release() empties it
+
+
+def kernel_census():
+    """census() over kernel/kernel.py's text and tree (kernel_source), made on the first call in the process and the same dict after,
+    until release() drops it."""
+    if not _CENSUS:
+        _CENSUS.append(census(*kernel_source()))
+    return _CENSUS[0]
 
 
 class _Pins(unittest.TestCase):
@@ -303,28 +319,28 @@ class _Pins(unittest.TestCase):
 class TheFeedHasOneFetchSite(_Pins):
     def test_the_census_finds_its_anchors(self):
         """An empty census is a moved anchor (the functions renamed, the constant renamed), never a pass."""
-        self.assertTrue(CENSUS["url"], "kernel/kernel.py calls something with PRICE_FEED_URL among its arguments")
-        self.assertTrue(CENSUS["refresh"], "kernel/kernel.py calls _refresh_remote_prices")
-        self.assertTrue(CENSUS["true"] and CENSUS["false"], "kernel/kernel.py calls _model_prices with and without refresh=False")
-        self.assertTrue(CENSUS["builds"], "kernel/kernel.py loads the name _token_analytics")
+        self.assertTrue(kernel_census()["url"], "kernel/kernel.py calls something with PRICE_FEED_URL among its arguments")
+        self.assertTrue(kernel_census()["refresh"], "kernel/kernel.py calls _refresh_remote_prices")
+        self.assertTrue(kernel_census()["true"] and kernel_census()["false"], "kernel/kernel.py calls _model_prices with and without refresh=False")
+        self.assertTrue(kernel_census()["builds"], "kernel/kernel.py loads the name _token_analytics")
 
     def test_the_url_is_read_at_the_workers_urlopen_alone(self):
-        self.assertClassified(CENSUS["url"], URL_SITES, "passes PRICE_FEED_URL to a call", RESOLVE)
-        self.assertClassified(CENSUS["url_reads"], URL_SITES, "reads PRICE_FEED_URL",
+        self.assertClassified(kernel_census()["url"], URL_SITES, "passes PRICE_FEED_URL to a call", RESOLVE)
+        self.assertClassified(kernel_census()["url_reads"], URL_SITES, "reads PRICE_FEED_URL",
                               "a read outside the worker's urlopen is a second road to the host, or an alias for one: " + RESOLVE)
-        self.assertEqual(sum(len(v) for v in CENSUS["url_reads"].values()), 1,
-                         "the constant is read exactly once outside its own assignment: %r" % CENSUS["url_reads"])
+        self.assertEqual(sum(len(v) for v in kernel_census()["url_reads"].values()), 1,
+                         "the constant is read exactly once outside its own assignment: %r" % kernel_census()["url_reads"])
 
     def test_the_refresh_is_entered_from_the_merge_alone(self):
-        self.assertClassified(CENSUS["refresh"], REFRESH_CALLERS, "calls _refresh_remote_prices",
+        self.assertClassified(kernel_census()["refresh"], REFRESH_CALLERS, "calls _refresh_remote_prices",
                               "a caller besides _model_prices is a road to a fetch that the T350 rule (refresh=False never "
                               "enters the refresh) does not cover: route it through _model_prices, or add it here with its reason")
 
     def test_the_merge_lets_a_fetch_start_from_the_cost_view_alone(self):
-        self.assertClassified(CENSUS["true"], REFRESH_TRUE_CALLERS, "calls _model_prices letting the refresh run",
+        self.assertClassified(kernel_census()["true"], REFRESH_TRUE_CALLERS, "calls _model_prices letting the refresh run",
                               "a second refresh=True caller is a second road to the feed's host (a boot warm-up, a route handler): "
                               "pass refresh=False if it must never fetch, or add it here with its reason and the switch it obeys")
-        self.assertClassified(CENSUS["false"], REFRESH_FALSE_CALLERS, "calls _model_prices with refresh=False",
+        self.assertClassified(kernel_census()["false"], REFRESH_FALSE_CALLERS, "calls _model_prices with refresh=False",
                               "a new refresh=False caller never fetches (T350); add it to the table with its reason")
 
     def test_the_build_is_reached_from_its_route_and_its_one_rebuild_alone(self):
@@ -332,11 +348,11 @@ class TheFeedHasOneFetchSite(_Pins):
         fetch are the roads to the build. Every load of the name _token_analytics in the kernel's tree, called, aliased or passed,
         is classified per function with its count (ANALYTICS_REFS: the route in do_GET and the build's own one rebuild), read from
         the tree this module already holds (no parse, no scan); a boot caller or an alias passed every price feed check before."""
-        self.assertBuildsClassified(CENSUS["builds"])
+        self.assertBuildsClassified(kernel_census()["builds"])
 
     def test_the_switch_is_the_first_statement_of_the_one_fetch_site(self):
         """Read as text here so the census and the gate are one module (tests/test_price_feed_off.py executes it)."""
-        fn = next(n for n in KERNEL_TREE.body if isinstance(n, ast.FunctionDef) and n.name == "_refresh_remote_prices")
+        fn = next(n for n in kernel_source()[1].body if isinstance(n, ast.FunctionDef) and n.name == "_refresh_remote_prices")
         body = fn.body[1:] if isinstance(fn.body[0], ast.Expr) and isinstance(fn.body[0].value, ast.Constant) else fn.body
         self.assertIsInstance(body[0], ast.If)
         self.assertEqual(ast.unparse(body[0].test), "_price_feed_off()", "the switch gates the one fetch site before anything else")
@@ -590,6 +606,9 @@ def _tree():
     return PC.derived(TREE_KEY, lambda: _collect_before_freeze(_run_of(script_module(ROOT), ROOT, script_module(ROOT).scan(ROOT))))
 
 
+_ROADS = {}   # tree_run's two roads, rendered once from the tree's derivation: flags -> (exit code, stdout, stderr); release() keeps them
+
+
 def tree_run(*flags):
     """The tree's own run, once per process and shared by the cases: (exit code, stdout, stderr) as
     `python3 scripts/network-inventory.py [--table] ROOT` prints them, from the one derivation (_tree): with no flag the
@@ -599,13 +618,19 @@ def tree_run(*flags):
     composition to a run of the file, through the served pass, which starts from it). Two roads and no other flag. With
     --table it composes the full tree's table in this process (render_table over the one derivation) and runs neither main
     nor the file: no run of the file prints the full tree's table, and the file's --table road is held to print
-    render_table's output, with the problem lines on stderr and exit 1, over the two tiny roots (the tiny roots' case)."""
+    render_table's output, with the problem lines on stderr and exit 1, over the two tiny roots (the tiny roots' case). Both
+    roads are rendered on the first call and kept in _ROADS, which release() keeps when it drops the derivation, so a reader
+    after this module's last case (tests/test_security_price_feed.py's table, in a serial run or on the same worker) reads this
+    module's run and builds no second derivation."""
     if flags not in ((), ("--table",)):
         raise ValueError("tree_run takes no flag or --table alone, the two roads main renders: %r" % (flags,))
-    run = _tree()
-    tail = ("\n".join(run.problems) + "\n") if run.problems else ""
-    rc = 1 if run.problems else 0
-    return (rc, run.table, tail) if flags else (rc, run.listing + tail, "")
+    if not _ROADS:
+        run = _tree()
+        tail = ("\n".join(run.problems) + "\n") if run.problems else ""
+        rc = 1 if run.problems else 0
+        _ROADS[()] = (rc, run.listing + tail, "")
+        _ROADS[("--table",)] = (rc, run.table, tail)
+    return _ROADS[flags]
 
 
 def summary(out):
@@ -645,10 +670,36 @@ def scope_copy():
     return _COPY[0]
 
 
+def release():
+    """Drop what this module holds for the rest of the process once its last case has run (tearDownModule; and
+    tests/test_security_price_feed.py's tearDownModule, for a process where that module made the derivation): the tree's
+    derivation and the served pass (parse_cache.clear of TREE_KEY and SERVED_KEY), the script modules loaded over the scope copy
+    (every _SCRIPTS entry but the tree's own script), the shared runs' outputs (_SHARED) and the kernel's census (_CENSUS), then
+    one full collection. Kept: tree_run's two rendered roads (_ROADS) and the tree's own script module, which the security
+    module's table and binding reads take after this module's last case. A derivation made in this process whose roads were
+    never rendered (a worker whose cases read _tree() and not tree_run) has them rendered first, so that reader still builds
+    none. What this frees: reference counting frees an object nothing refers to any more, frozen or not (parse_cache's derived
+    freezes every object tracked when a build returns), and the collection frees a dropped cycle no freeze has kept (each script
+    module is one, its functions referring to its namespace); a cycle a freeze kept stays for the process (the retention shape
+    in tests/parse_cache.py). The tree's own script module is such a cycle, loaded before the tree's build froze it: dropping it
+    would free nothing, and the security module's next binding read would load the script again (about 12 MB on 3.14t, measured
+    2026-10-04)."""
+    if not _ROADS and PC.builds_of(TREE_KEY):
+        tree_run()
+    PC.clear(TREE_KEY, SERVED_KEY)
+    tree_script = os.path.realpath(os.path.join(ROOT, INVENTORY))
+    for key in [k for k in _SCRIPTS if k[0] != tree_script]:
+        del _SCRIPTS[key]
+    _SHARED.clear()
+    del _CENSUS[:]
+    gc.collect()
+
+
 def tearDownModule():
     for root in _COPY:
         shutil.rmtree(root, ignore_errors=True)
     del _COPY[:]
+    release()
 
 
 def _plant(rel, text, cleanup):
@@ -10908,7 +10959,7 @@ def _served_build():
     if base.res.served != [KERNEL_PATH]:
         raise AssertionError("the served pass reads one file at this head, %s; the tree's run served %r, and the splice replaces that "
                              "file's contributions alone" % (KERNEL_PATH, base.res.served))
-    text = _served_text(KERNEL)
+    text = _served_text(kernel_source()[0])
     at = _plant_lines(text, SERVED_PLANT_LINES, KERNEL_PATH + " (planted)")
     # the probe modules (A_FILES, the seventh round), each a walked Python file the tree does not hold, in the walk's order: every
     # one sorts after kernel/kernel.py under kernel/, and the tree's files between them add no problem line (the tree runs clean)
@@ -14199,7 +14250,7 @@ class TheServedPagesAreScanned(_Scope):
         for needle in SERVED_COMPUTED:
             n = _line_of(path, needle)
             self.assertListed(out, r"kernel/kernel\.py:%d  fetch  .*  in -  -> \(browser-computed-url\)$" % n, "a route literal the caller passes: computed")
-        sheets = PANE_CSS.findall(KERNEL)
+        sheets = PANE_CSS.findall(kernel_source()[0])
         self.assertEqual(len(sheets), 4, "the pane stylesheets the pages read at run time, by content: %r" % sheets)
         for name in sheets:
             self.assertListed(out, r"kernel/kernel\.py:\d+  served-file  ui/webview/%s  -> \(a stylesheet a served page reads: named, not scanned\)$" % re.escape(name))
@@ -14227,7 +14278,7 @@ class TheServedPagesAreScanned(_Scope):
         against a real run: a scan() route filter, a scan() that drops a served file's sites, a Result field the splice does not
         carry, a splice line dropped and a lost exit code are each red here (M35 to M39 in the round's record). One full scan, in a
         child. A case of its own and not a shared run's member: its import plant would join the credentials run's IMPORT set."""
-        self.plant(KERNEL_PATH, _served_text(KERNEL))
+        self.plant(KERNEL_PATH, _served_text(kernel_source()[0]))
         for rel, text in A_FILES:   # the seventh round's probe modules, the files the pass scans beside kernel/kernel.py
             self.plant(rel, text)
         self.assertCommandLine(scope_copy(), self.rc, self.out, timeout=300)
@@ -15648,8 +15699,8 @@ class TheSendStatementsAreListedShapes(unittest.TestCase):
     past a shape's count, refused naming the shape and its count, are TheLandingRulingsPlantsAreScanned's (as) plants."""
 
     def test_each_statement_of_the_kernels_send_matches_its_listed_shape(self):
-        mod, res = script_module(ROOT), _tree().res
-        cls = next(n for n in KERNEL_TREE.body if isinstance(n, ast.ClassDef) and n.name == "Handler")
+        mod, res, tree = script_module(ROOT), _tree().res, kernel_source()[1]
+        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Handler")
         d = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_send")
         ns = res.ns.get(KERNEL_PATH) or mod._NS_NONE
         seen, real = [], mod._send_shape_name
@@ -15659,7 +15710,7 @@ class TheSendStatementsAreListedShapes(unittest.TestCase):
             return seen[-1]
         mod._send_shape_name = record
         try:
-            got = mod._body_param(d, [x.arg for x in d.args.args][1:], "self", KERNEL_TREE, res.rebinds.get(KERNEL_PATH, {}),
+            got = mod._body_param(d, [x.arg for x in d.args.args][1:], "self", tree, res.rebinds.get(KERNEL_PATH, {}),
                                   ns["computed"] or ns["builtins"] or ns["runtime"], [])
         finally:
             mod._send_shape_name = real
@@ -16047,6 +16098,111 @@ class TheBuildsCollectBeforeTheirFreeze(unittest.TestCase):
                 state.update(armed=False, done=False, full=0)
                 self.assertIs(build(), sentinel, "%s hands back what its build returned" % name)
                 self.assertEqual(state["full"], 1, "%s: full collections after the build's work returned and before derived() returned" % name)
+
+
+class TheKernelIsParsedOnFirstUse(unittest.TestCase):
+    """Collecting this module parses nothing (kernel_source). A child interpreter imports the module as pytest does, the tests
+    package's module with the one parse_cache module object, with ast.parse wrapped to count each parse of kernel/kernel.py's text:
+    after the import parse_cache has parsed no file and the wrapper has seen no parse of that text; the first kernel_source() call
+    then parses it once, through both counts, so the wrapper sees a parse when one happens. A module-level read of the tree (the
+    KERNEL and KERNEL_TREE this module bound at import before the free-threaded cell's memory pass) reds the first assertion."""
+
+    CHILD = "\n".join((
+        "import ast, json, os, sys",
+        "root = sys.argv[1]",
+        "sys.path.insert(0, root)",
+        "with open(os.path.join(root, 'kernel', 'kernel.py'), encoding='utf-8') as f:",
+        "    text = f.read()",
+        "seen = []",
+        "real = ast.parse",
+        "def counted(source, *a, **k):",
+        "    seen.append(source == text)",
+        "    return real(source, *a, **k)",
+        "ast.parse = counted",
+        "import tests.parse_cache as PC",
+        "import tests.test_price_feed_census as census",
+        "got = {'parses': PC.stats()['parses'], 'kernel': sum(seen)}",
+        "census.kernel_source()",
+        "got.update(first_use_parses=PC.stats()['parses'], first_use_kernel=sum(seen))",
+        "print(json.dumps(got))"))
+
+    def test_importing_the_module_parses_no_kernel_text(self):
+        p = subprocess.run([sys.executable, "-c", self.CHILD, ROOT], capture_output=True, timeout=300, cwd=ROOT)
+        self.assertEqual(p.returncode, 0, "the child imports the module: %s" % p.stderr.decode("utf-8", "replace")[-2000:])
+        got = json.loads(p.stdout.decode("utf-8").strip().splitlines()[-1])
+        self.assertEqual((got["parses"], got["kernel"]), (0, 0), "importing the module parses no file and not kernel/kernel.py's text: %r" % got)
+        self.assertEqual((got["first_use_parses"], got["first_use_kernel"]), (1, 1),
+                         "the first kernel_source() call parses kernel/kernel.py once, seen by both counts: %r" % got)
+
+
+class TheModuleReleasesWhatItHoldsAfterItsLastCase(unittest.TestCase):
+    """release() drops what its docstring lists and keeps what it keeps, and tearDownModule calls it. parse_cache and tree_run are
+    replaced by recorders, and _SCRIPTS, _SHARED, _CENSUS and _ROADS by containers of the test's own (every replacement restored by a
+    cleanup registered before it is made): parse_cache.clear is called once with TREE_KEY and SERVED_KEY; every _SCRIPTS entry but
+    the tree's own script goes; _SHARED and _CENSUS are emptied; _ROADS is the same mapping with the same roads; then one full
+    collection runs, after the clear (counted from the collector's generation-2 starts, the collector held off around the call so
+    no automatic collection is counted). Where the roads were never rendered and the derivation was built in this process
+    (builds_of), tree_run renders them before the clear; where it was not built, nothing renders. tearDownModule removes the
+    scope copy and then calls release() once."""
+
+    def _release(self, roads, built):
+        import types
+        g, calls = globals(), []
+        for name in ("PC", "_SCRIPTS", "_SHARED", "_CENSUS", "_ROADS", "tree_run"):
+            self.addCleanup(g.__setitem__, name, g[name])
+        tree_key = (os.path.realpath(os.path.join(ROOT, INVENTORY)), (1, 2, 3, 4))
+        copy_keys = [(os.path.join(tempfile.gettempdir(), "census-scope-x", INVENTORY), (n, 2, 3, 4)) for n in (5, 6)]
+        g["PC"] = types.SimpleNamespace(clear=lambda *keys: calls.append(("clear", keys)),
+                                        builds_of=lambda key: (built if key == TREE_KEY else 0))
+        g["_SCRIPTS"] = dict([(tree_key, "the tree's module")] + [(k, "a copy's module") for k in copy_keys])
+        g["_SHARED"] = {"walk": (0, "out")}
+        g["_CENSUS"] = [{"url": {}}]
+        g["_ROADS"] = held = dict(roads)
+        g["tree_run"] = lambda *flags: calls.append(("tree_run", flags))
+
+        def hook(phase, info):
+            if phase == "start" and info.get("generation", 0) >= 2:
+                calls.append(("collect",))
+        self.addCleanup(lambda: hook in gc.callbacks and gc.callbacks.remove(hook))
+        on = gc.isenabled()
+        self.addCleanup(lambda: on and gc.enable())
+        gc.disable()
+        gc.callbacks.append(hook)
+        release()
+        gc.callbacks.remove(hook)
+        if on:
+            gc.enable()
+        self.assertEqual(g["_SCRIPTS"], {tree_key: "the tree's module"}, "every entry but the tree's own script is dropped")
+        self.assertEqual((g["_SHARED"], g["_CENSUS"]), ({}, []), "the shared runs' outputs and the kernel's census are dropped")
+        self.assertIs(g["_ROADS"], held, "the roads stay the same mapping")
+        return calls, held
+
+    def test_release_drops_the_derivations_and_the_copies_modules_and_keeps_the_roads(self):
+        roads = {(): (0, "listing", ""), ("--table",): (0, "table", "")}
+        calls, held = self._release(roads, built=1)
+        self.assertEqual(held, roads, "the rendered roads are kept as they were")
+        self.assertEqual(calls, [("clear", (TREE_KEY, SERVED_KEY)), ("collect",)], "one clear of both keys, then one full collection")
+
+    def test_roads_never_rendered_are_rendered_before_the_clear_where_the_derivation_was_built(self):
+        calls, _ = self._release({}, built=1)
+        self.assertEqual(calls, [("tree_run", ()), ("clear", (TREE_KEY, SERVED_KEY)), ("collect",)],
+                         "the roads rendered from the derivation before it is dropped")
+
+    def test_roads_never_rendered_stay_unrendered_where_nothing_was_built(self):
+        calls, _ = self._release({}, built=0)
+        self.assertEqual(calls, [("clear", (TREE_KEY, SERVED_KEY)), ("collect",)], "no derivation built here, so nothing renders one")
+
+    def test_teardown_removes_the_copy_then_releases(self):
+        g, seen = globals(), []
+        for name in ("release", "_COPY"):
+            self.addCleanup(g.__setitem__, name, g[name])
+        d = tempfile.mkdtemp(prefix="census-scope-")
+        self.addCleanup(shutil.rmtree, d, True)
+        g["_COPY"] = held = [d]
+        g["release"] = lambda: seen.append(os.path.isdir(d))
+        tearDownModule()
+        self.assertEqual(seen, [False], "tearDownModule calls release() once, after it removed the copy")
+        self.assertEqual(held, [], "and forgets the copy")
 
 
 class TheKindTableIsHeldAgainstTheInterpretersKinds(unittest.TestCase):

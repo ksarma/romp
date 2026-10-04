@@ -627,6 +627,15 @@ def _table():
     return _TABLE[0]
 
 
+def tearDownModule():
+    """tests/test_price_feed_census.py's release(), once this module's last case has run. Where that module's cases ran first in
+    this process, its own release kept the two roads its tree run rendered, so the table read here took them and built nothing,
+    and this call drops nothing new; where they did not (a worker that ran this module and not that one's tree cases), the table
+    read made the census module's derivation through its tree_run, the same parse_cache key, and this drops it as that module
+    drops its own."""
+    census.release()
+
+
 def _row(rows, label):
     """The cells of the table row labelled `label`, or None."""
     for lab, _, cells in rows:
@@ -1848,6 +1857,33 @@ class TheNewProse(_Pins):
         self.assertNotIn(chr(0x2014), NETWORK, "the Network access section")   # em dash
         self.assertNotIn(chr(0x2013), NETWORK, "the Network access section")   # en dash
         self.assertNotIn("fleet", NETWORK.lower(), "the Network access section")
+
+
+class TheTableIsTheCensusModulesRun(_Pins):
+    """The table this module reads (_table) is tests/test_price_feed_census.py's tree run, whose two roads that module renders once
+    and keeps (tree_run's _ROADS, which its release() keeps when it drops the derivation), so a read after that module's last case
+    builds no second derivation: with the census module's _tree replaced by one that fails (restored by a cleanup registered first),
+    tree_run hands back both roads as before. This module's tearDownModule hands the census module's release() what a read here
+    built: with that release replaced by a recorder, tearDownModule calls it once. Each case asserts the section first, as every
+    case here does."""
+
+    def test_a_read_after_the_roads_are_rendered_builds_no_derivation(self):
+        self.assertNetwork()
+        want = (census.tree_run(), census.tree_run("--table"))
+
+        def no_derivation():
+            raise AssertionError("tree_run read the derivation again after its roads were rendered")
+        self.addCleanup(setattr, census, "_tree", census._tree)
+        census._tree = no_derivation
+        self.assertEqual((census.tree_run(), census.tree_run("--table")), want, "both roads, as rendered, with no derivation read")
+
+    def test_teardown_hands_the_census_module_its_release(self):
+        self.assertNetwork()
+        calls = []
+        self.addCleanup(setattr, census, "release", census.release)
+        census.release = lambda: calls.append("release")
+        tearDownModule()
+        self.assertEqual(calls, ["release"], "tearDownModule calls the census module's release() once")
 
 
 if __name__ == "__main__":
