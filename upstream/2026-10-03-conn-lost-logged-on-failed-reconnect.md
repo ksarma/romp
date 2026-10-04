@@ -3,7 +3,7 @@ title: A return whose sockets reopen at once logs no "Kernel connection lost": t
 status: candidate
 where: kernel/kernel.py (the shim's netFail, the wsFail word posted at the close of a dial that never opened, marked cut when the dial was still connecting past the watchdog's bound; _LANDING_ERRS_JS's lost, lostFail and stands, where the up-to-down transition records the drop, a failure writes it, and a cut fails nothing while another socket of the page is open; the shell socket's close in _LANDING_MOBILE_JS calling window.__rompLinkFailed for a dial that never opened, saying whether its connect cut made the close); tests/test_conn_lost_log_served.py and tests/conn_lost_log_browser.mjs (healthy and failing returns on the phone and the desktop in Chromium, WebKit and Firefox, and slow desktop returns whose handshakes open one at a time: every write to the Log, its entries and unread state, the control's digit and red cue); tests/test_conn_lost_on_failure.py (the shim's word, the shell link's failure and the Log's rule, executed under node); tests/test_error_center.py and tests/test_kernel_disconnect_banner.py (their drops now fail their reconnect before an entry is expected; the gate's pins follow it); upstream/2026-10-03-conn-lost-logged-on-failed-reconnect.md (this entry)
 added: 2026-10-03
-pr:
+pr: 968
 tier: fix
 offered:
 closed:
