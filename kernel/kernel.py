@@ -76704,11 +76704,19 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // documents, sockets and connect pushes nothing. The controller's boot promotion reads data-src, so before it parses (this
 // script runs first) the lazy panes' data-src is parked under data-lazy-src, an attribute the controller does not read, and
 // promote() reads either: the controller's own lines stay upstream's text, byte for byte. A layout flip to the desktop (a
-// rotation across the breakpoint) promotes every lazy hand pane the gear shows, since the grid shows them without a tap, and a
-// generic pane only when its rail flag puts it on screen (lazyFlip, 2026-10-03). A promoted pane's document hears the panes word
-// on its own load (the controller's load hook) and dials as any pane does; from its first show
+// rotation across the breakpoint) promotes every lazy pane the gear shows, since the grid shows them without a tap. A promoted pane's
+// document hears the panes word on its own load (the controller's load hook) and dials as any pane does; from its first show
 // on it is a pane like any other (a return while it is off screen parks it, the shim's D2 rule). The measure of the saving is
 // the pane's absence from the timing rows: a never-tapped pane files none.
+// [fork] THE LAZY PANES ARE THE SIX HAND PANES (2026-10-03, fold 4 slice 2's ruling B, where they meet upstream's generic panes, PRs
+// 1919, 1922 and 1952): F holds the registry panes' frames too since PR 1919, and every road below that parks, promotes, judges,
+// backstops or retries a frame acts on a hand pane alone, hand() (the kernel's _HAND_PANES, F's literal keys): promote() refuses any
+// other id, the boot's parking and both of lazyFlip's loops skip it, and failed(), loaded(), the backstop, the retry and lazyFlip's
+// DEAD and PEND branches act only on a pane promote() took. A generic pane (the registry's code, data and URL panes) loads exactly as
+// upstream ships it: on the phone by its tab (show()'s copy of data-src once the controller has parsed, and the controller's apply
+// for the current tab at boot and on a flip), on the desktop by its rail flag (apply). So it has no loader, no failed state and no
+// retry road of the fork's on either layout, the same as upstream today: a generic pane whose load fails shows what its frame got,
+// and a reload is its retry.
 // The loading state (ui/CLAUDE.md, loading states): from the promotion until the iframe's load event the pane's .pane div
 // carries the `loading` class, and while the SHOWN tab's div carries it the body carries `pane-loading`, which paints the
 // shell's #pane-load, the romp loader over the pane area (the .pane div is display:contents on the phone, so it can host no
@@ -76739,18 +76747,6 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // No answer files a row (the reviewer's round-7 ruling on regression-1): the pane-load-unmarked and pane-load-failed rows and their
 // keys were dropped, since no reader acted on them, so `doc` and `app` now leave the same page state and the rule that a `doc` is said
 // and never silent (review round 2's family two) is retired with them; the page's state is the whole of the outcome.
-// [fork] A FRAME WHOSE DOCUMENT CAN NEVER BE READ (2026-10-03, where these lazy panes meet upstream's URL panes, PRs 1919 and 1922): a
-// pane marked data-protocol=none (_data_pane_markup: every URL source, and any pane defined protocol none) is sandboxed without
-// allow-same-origin, so its documents have an opaque origin and contentDocument reads null from the frame's initial document on, its
-// page's included: docState answers `none` whether the page loaded or failed, and judging it by that answer removed every URL pane's src
-// on the phone and painted the failed state over it, on every retry. Such a frame (unreadable(), keyed on the frame's own mark, the one
-// the controller's tell and the pane protocol's source check read) is judged by its LOAD EVENT alone: a load while it holds a src is
-// its page's (loaded), never a failure for being unreadable, and a load with no src is dropped: failed() and the flip back remove the
-// src, and the about:blank navigation that starts fires load in Chromium and WebKit (executed 2026-10-03), which the same-origin
-// `blank` guard cannot see in an opaque frame; with no load event by the backstop it reads as `blank`, a navigation that never
-// committed (WebKit's road), so the phone shows the failed state with its retry roads and the desktop holds. The cost: Chromium commits
-// its own error page for a failed navigation and fires load (executed in Chromium, 2026-10-03), so a URL pane whose page failed shows
-// the browser's error page with no failed state, and a reload is its retry. A same-origin pane is judged exactly as before.
 // failed() reads the LAYOUT at fire time (review round 3, 2026-09-19, family one: a promotion armed on the phone keeps judging after a
 // flip to the desktop, where the failed state is not painted at all, and before this it re-parked under data-lazy-src whatever the
 // layout, leaving a desktop column with neither src nor data-src and no road to promote it again). On the phone it re-parks the pane
@@ -76783,16 +76779,17 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // Both layouts count the failure in the episode's count (EPI) and file no row. Every promotion mints the
 // token (TOK), the desktop's included, so a phone-armed listener or backstop is inert over the desktop's re-promotion (without that
 // the stale listener re-failed the desktop's load and the promote-fail cycle never ended). Not every promotion goes through promote():
-// on the desktop the controller's own loads (_LANDING_COLLAPSE_JS: reconcile for a hand optional pane, at boot and on a gear save; apply
-// for a generic pane, at boot and whenever a rail toggle or a gear save brings it on screen, a generic pane lazyFlip left unpromoted
-// with its rail off included) and _LANDING_DESKTOP_PANES_JS's boot load of the Waiting and Files panes set src from data-src with no
-// token, listener or backstop, as before this change, so a pane that fails after one of those loads and is then flipped to the phone
-// has no state and no retry road short of a reload (a residual, disclosed in the author's pass-4 verify; a fix changes the desktop's
-// boot and needs a ruling). One more face of it (2026-10-03, executed): a generic pane the phone had failed keeps its `failed` class
-// through such a load (promote() clears it, and loaded() when the phone promotion's listener, its token still current since the
-// controller's load mints none, hears that load land), so a flip back before that load lands shows the failed state over the load in
-// flight, with a Try again that does nothing (promote() refuses a src) until the load lands. The failed state is painted where the user
-// looks: body.pane-failed keeps #pane-load up with #pane-load-msg (role=alert, so it is announced) saying the pane did not load and the
+// on the desktop the controller's reconcile (_LANDING_COLLAPSE_JS, for a hand optional pane, at boot and on a gear save) and
+// _LANDING_DESKTOP_PANES_JS's boot load of the Waiting and Files panes set src from data-src with no token, listener or backstop, as
+// before this change, so a pane that fails after one of those loads and is then flipped to the phone has no state and no retry road
+// short of a reload (a residual, disclosed in the author's pass-4 verify; a fix changes the desktop's boot and needs a ruling). One
+// more face of it (executed 2026-10-03): a hand pane the phone had failed and the gear then turned off is not promoted by the flip to
+// the desktop (promote() refuses a pane the gear has off), so it keeps its `failed` class through the reconcile load a gear save there
+// starts (promote() clears it, and loaded() when the phone promotion's listener, its token still current since the controller's load
+// mints none, hears that load land), and a flip back before that load lands shows the failed state over the load in flight on its
+// tab, with a Try again that does nothing (promote() refuses a src) until the load lands. A generic pane is outside all of this
+// (ruling B, the header above): none of its loads is judged, on either layout. The failed state is painted where the user looks:
+// body.pane-failed keeps #pane-load up with #pane-load-msg (role=alert, so it is announced) saying the pane did not load and the
 // #pane-load-retry button, a real button shown in the failed state alone (review round 3, ui-1: focusable and named for the keyboard
 // and a screen reader, the way #rail-api's row is; a tap anywhere on #pane-load retries too); the second failure and later of an
 // EPISODE say so and offer the page reload (EPI counts the failures since the pane last loaded and loaded() resets it, review round 3,
@@ -76801,6 +76798,7 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // The copy names no input (ui-2: "Try again" sits on the control), since the phone layout also serves a narrowed mouse window.
 var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},EPI={},TOK={},PEND={},DEAD={};   // PEND: per pane, the token of the promotion still awaiting its verdict (the backstop's guard); DEAD: the token of a desktop promotion recorded for the flip back to the phone to park: the episode's bound, or a backstop over a fetch still in flight (pass 4, the table of pass 5; the author's labels)
 var MSG_FAILED="Couldn't load this pane.",MSG_FAILED_AGAIN="Still not loading. Try again, or reload the page.";
+var HAND=""" + json.dumps(list(_HAND_PANES)) + """;function hand(k){return HAND.indexOf(k)>=0;}   // [fork] ruling B (2026-10-03, the stage 0 header): the lazy panes' own set, the kernel's _HAND_PANES (F's literal keys); a registry pane's frame, in F since upstream PR 1919, is never parked, promoted, judged, backstopped or retried here
 var RFOC=false;   // the Try again button's click retried with the keyboard's focus on it (review round 4, 2026-09-19, ui-1): paintLoading hides the button while the retry loads, and hiding the focused control drops focus to the body in every engine with nothing bringing it back, so pass 3's keyboard road survived exactly one activation; the failed paint that shows the button again puts focus on it while this is set, and clears it. A load (loaded) and a tab switch (show) clear it too, so a later pane's first failure moves focus onto nothing the user did not ask for; the overlay tap sets nothing (a pointer gesture keeps its own focus)
 function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
 function paintLoading(){try{var k=document.body.getAttribute('data-tab'),d=paneDiv(F[k]);document.body.classList.toggle('pane-loading',!!(d&&d.classList.contains('loading')));
@@ -76809,7 +76807,6 @@ var msg=document.getElementById('pane-load-msg');if(msg)msg.textContent=bad?((EP
 var rb=document.getElementById('pane-load-retry');if(rb){rb.hidden=!bad;if(bad&&RFOC){RFOC=false;try{rb.focus();}catch(e){}}}}catch(e){}}   // the retry button exists for the failed state alone: a focusable control under the loader would be wrong; shown again after the keyboard's retry (RFOC), it takes the focus back, once
 function loaded(k){EPI[k]=0;PEND[k]=0;DEAD[k]=0;RFOC=false;try{var d=paneDiv(F[k]);if(d){d.classList.remove('loading');d.classList.remove('failed');}}catch(e){}paintLoading();}   // a load ends the episode: the next failure's copy is a first failure's; nothing is pending or dead; the keyboard's retry, if one was owed a focus, is answered by the load (RFOC)
 function docState(f){try{var d=f.contentDocument;if(!d)return 'none';var u=d.URL;if(!u||u==='about:blank')return 'blank';var w=f.contentWindow;if(w&&typeof w.__rompApp==='string')return 'app';var h=d.documentElement;return (h&&h.getAttribute&&h.getAttribute('data-romp-served')==='200')?'doc':'other';}catch(e){return 'none';}}   // the frame's document, classified (the comment above): none (a cross-origin error page), blank (the initial document, never committed), app (the pane's own, its shim run: window.__rompApp), doc (a 200 the kernel served, its stamp on the <html> tag, that this reader cannot classify: shown as served), other (a document at the url with neither: not a 200 of this kernel's, a failure)
-function unreadable(f){try{return f.getAttribute('data-protocol')==='none';}catch(e){return false;}}   // [fork] a frame whose document this shell can never read (the comment above): the markup's sandbox without allow-same-origin on a protocol-none pane, so docState's `none` says nothing about its load
 function failed(k,s){var f=F[k];if(!f)return;var mob=mobileOn();PEND[k]=0;EPI[k]=(EPI[k]||0)+1;   // the verdict is in, s docState's answer at it (pass 5, the author's label); EPI: this episode's count, for the copy and the desktop's bound
 var hold=!mob&&s==='blank',again=!mob&&!hold&&EPI[k]<2,bound=!mob&&!hold&&!again,keep=hold||(bound&&s!=='other');   // the desktop's table (pass 5, the author's label; the comment above): a fetch still in flight at the backstop is held (the src kept, nothing re-fetched); else the episode's first failure is re-parked and promoted again below, and the second is the bound, which drops a document the kernel sent (`other`) from the frame and keeps the browser's own error page (`none`); the hold and the bound record DEAD for the flip back
 var park=(mob||bound)?LAZY:'data-src';   // the attribute the url waits under: the phone's, and the desktop BOUND's too (the author's pass-5 verify: the controller's reconcile copies data-src to src on every gear save, so a bound pane parked there was re-fetched with no token and no backstop and judged by the bound promotion's stale listener, one re-fetch per save); the desktop's first failure keeps data-src, which the promotion below reads at once
@@ -76818,7 +76815,7 @@ DEAD[k]=(hold||bound)?TOK[k]:0;
 try{var d=paneDiv(f);if(d){d.classList.remove('loading');if(mob)d.classList.add('failed');else d.classList.remove('failed');}}catch(e){}   // the failed state is the phone's; the desktop path never leaves one for a later rotation to paint (the flip back paints it for a DEAD pane, lazyFlip)
 paintLoading();
 if(again)promote(k);}   // the desktop grid shows the pane with no tap: promoted again at once, once per episode (its own listener and backstop judge it; at the bound nothing promotes, DEAD above)
-function promote(k){var f=F[k];if(!f)return false;var u=null;
+function promote(k){var f=F[k];if(!f||!hand(k))return false;var u=null;   // [fork] ruling B: a hand pane alone (hand(), the stage 0 header); a generic pane's frame is upstream's to load
 try{if(f.getAttribute('src'))return false;u=f.getAttribute('data-src')||f.getAttribute(LAZY);}catch(e){return false;}   // loaded already (a src is never reassigned: no reload of a live pane), or an element without attributes: nothing to do
 if(!u)return false;
 if(window.__rompPaneEnabled&&!window.__rompPaneEnabled(k))return false;   // off in the gear's Panes section: not in this dashboard at all (the controller's rule, read through the head's one reader)
@@ -76826,9 +76823,8 @@ try{f.removeAttribute(LAZY);}catch(e){}
 URLS[k]=u;var tok=TOK[k]=(TOK[k]||0)+1;PEND[k]=tok;DEAD[k]=0;   // tok: this promotion's, minted on EVERY promotion (the desktop's too, review round 3): a listener or backstop of an earlier promotion (a retry after a failure; a phone-armed one over the desktop's re-promotion after a flip) is inert; PEND: its verdict is owed; a DEAD record is over
 try{var d0=paneDiv(f);if(d0)d0.classList.remove('failed');}catch(e){}   // any promotion clears a standing failed state (a flip to the desktop re-promotes a pane the phone failed; a stale `failed` would paint over it on the flip back)
 if(mobileOn()){try{var d=paneDiv(f);if(d)d.classList.add('loading');}catch(e){}}   // the loading state is the phone's paint (the grid paints no loader); the two detectors below are every layout's (review round 4, regression-1: the desktop's re-promotion had none)
-var op=unreadable(f);   // [fork] 2026-10-03: a frame whose document can never be read (a URL pane) is judged by its load event alone, below
-f.addEventListener('load',function(){if(TOK[k]!==tok)return;var s=docState(f);if(s==='blank')return;if(op&&!f.getAttribute('src'))return;if(op||s==='app'||s==='doc')loaded(k);else failed(k,s);});   // the initial about:blank's own load is not the page's (the gear opener's guard); the pane's own document loaded, and a stamped 200 with no shim is shown as served the same way; an unreadable frame's load is its page's while it holds a src (op; with none it is the about:blank load the src removal starts); an error page (no document), or a document the kernel did not serve as a 200, is a failure
-setTimeout(function(){if(TOK[k]!==tok||PEND[k]!==tok)return;var s=op?'blank':docState(f);if(s==='app'||s==='doc')loaded(k);else failed(k,s);},LOAD_MS);   // the verdict still owed at the backstop (PEND, the class being paint): the pane's own document is a slow load (the loader clears, as before), and a stamped 200 with no shim is shown as served the same way; no document, one never committed (WebKit's road), or one the kernel did not serve as a 200, is a failure; an unreadable frame with no load event by now reads as never committed (op)
+f.addEventListener('load',function(){if(TOK[k]!==tok)return;var s=docState(f);if(s==='blank')return;if(s==='app'||s==='doc')loaded(k);else failed(k,s);});   // the initial about:blank's own load is not the page's (the gear opener's guard); the pane's own document loaded, and a stamped 200 with no shim is shown as served the same way; an error page (no document), or a document the kernel did not serve as a 200, is a failure
+setTimeout(function(){if(TOK[k]!==tok||PEND[k]!==tok)return;var s=docState(f);if(s==='app'||s==='doc')loaded(k);else failed(k,s);},LOAD_MS);   // the verdict still owed at the backstop (PEND, the class being paint): the pane's own document is a slow load (the loader clears, as before), and a stamped 200 with no shim is shown as served the same way; no document, one never committed (WebKit's road), or one the kernel did not serve as a 200, is a failure
 f.setAttribute('src',u);paintLoading();return true;}
 try{var pl=document.getElementById('pane-load'),prb=document.getElementById('pane-load-retry');
 var retry=function(){try{var k=document.body.getAttribute('data-tab');if(k&&paneDiv(F[k])&&paneDiv(F[k]).classList.contains('failed'))show(k);}catch(e){}};   // the failed state's retry: the shown tab's pane again (show() promotes a re-parked pane as a first tap would)
@@ -76851,7 +76847,7 @@ RFOC=false;   // [fork] review round 4 (2026-09-19, ui-1): a tab switch retires 
 var sf=F[p];if(mobileOn()&&window.__rompPaneToggle&&sf&&sf.getAttribute&&!sf.getAttribute('src')&&sf.getAttribute('data-src'))sf.setAttribute('src',sf.getAttribute('data-src'));
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
 try{localStorage.setItem(KT,p);}catch(e){}
-try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}   // [fork] stage 0: a lazy pane loads on its first show, BEFORE the re-tell below (the pane hears the word on its own load; a word posted into a document not yet there is dropped); the loader paints for a tab whose pane is still loading, and clears for one that is not
+try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}   // [fork] stage 0: a lazy pane loads on its first show (a hand pane: promote() refuses a generic one, which the copy above or the controller's apply loads, ruling B), BEFORE the re-tell below (the pane hears the word on its own load; a word posted into a document not yet there is dropped); the loader paints for a tab whose pane is still loading, and clears for one that is not
 // a tab switch changes what is on screen: re-tell the panes (the collapse script's broadcast; absent only
 // before that script parses, and its boot apply then tells them)
 try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
@@ -76863,8 +76859,7 @@ window.__rompMobileTab=show;   // the shell's relays bring a pane's tab forward 
 var retell=function(){try{window.__rompPaneApply&&window.__rompPaneApply();}catch(e){}try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}};
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.addListener)MQ.addListener(retell);}
 // [fork] stage 0: the desktop grid shows every pane the rail has on without a tap, so a flip TO the desktop layout hands
-// every parked pane back to the controller's attribute (data-src) and promotes the ones the gear shows (a generic pane only when
-// its rail flag is on too: the 2026-10-03 lines above lazyFlip); a pane the gear has
+// every parked pane back to the controller's attribute (data-src) and promotes the ones the gear shows; a pane the gear has
 // off keeps its data-src for the controller's later enable (review round 1, 2026-09-19: parked with no data-src, a pane
 // turned on in the gear after a rotation showed an empty column until a reload). A flip BACK to the phone layout parks
 // every pane still unloaded (no src) but the chat and the feed again, as the boot does, so a later gear enable on the phone
@@ -76879,16 +76874,14 @@ if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.ad
 // document and the Feed tab tap did nothing for the page's life). A pane with a src whose desktop promotion is still awaiting its
 // verdict (PEND) gets the loading class the grid never painted, so a tap after the flip back meets the loader and not a blank pane
 // (the same verify). Its own listener on the same media query, beside the re-tell's.
-// [fork] 2026-10-03: a GENERIC pane (body[data-panes], in F since upstream PR 1919) is promoted on the flip only when its po-<id>
-// body class, the controller's rail flag, is on: upstream's rule that a generic pane loads when it comes on screen, never when
-// merely enabled (PR 1922, _data_pane_markup). The class is current whatever the listeners' order: the controller's apply sets it
-// from the flag in both layouts on every change of the flag, and the retell's apply, registered first (pinned), runs again on this
-// change event before lazyFlip. Through promote(), so a generic pane's flip load has the token, the load listener and the
-// backstop, and a failure there is recorded for the flip back (DEAD) like a hand pane's. A hand pane is promoted by the gear's
-// word alone, as before; an unpromoted generic pane keeps data-src for the controller.
-var lazyFlip=function(){try{if(!mobileOn()){var gen={};try{JSON.parse(document.body.getAttribute('data-panes')||'[]').forEach(function(p){gen[p.id]=1;});}catch(e){}for(var lk in F){var lf2=F[lk],lz=null;try{lz=lf2&&lf2.getAttribute(LAZY);}catch(e){}
-if(lz){try{lf2.setAttribute('data-src',lz);lf2.removeAttribute(LAZY);}catch(e){}}if(!gen[lk]||document.body.classList.contains('po-'+lk))promote(lk);}}
-else{for(var lk3 in F){var lf3=F[lk3];if(!lf3||lk3==='chat')continue;var lu3=null;try{lu3=lf3.getAttribute('data-src');if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){var du3=URLS[lk3]||lu3;lf3.removeAttribute('src');if(du3)lf3.setAttribute(LAZY,du3);lf3.removeAttribute('data-src');DEAD[lk3]=0;var dd3=paneDiv(lf3);if(dd3)dd3.classList.add('failed');}   // the DEAD pane, checked FIRST (pass 5, the author's label). The order is DEFENSIVE (pass 7, the author's label, taking the reviewer's round-5 findings correctness-7 and ui-1; the reason re-derived in pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding ui-1): DEAD is written truthy by failed() alone (DEAD[k]=(hold||bound)?TOK[k]:0), so three roads record a pane, all on the desktop: the HOLD at the backstop over a fetch still in flight (s 'blank': keep, so the src AND data-src stay), the BOUND over the browser's own error page (s 'none': keep, the src and data-src stay), and the BOUND over a document the kernel sent (s 'other': the src removed, the url parked under data-lazy-src, data-src removed). What is true of all three: none can reach the unloaded parking below, which takes a pane with data-src AND no src, because the first two keep their src and the third has no data-src; so this branch parks every recorded pane under data-lazy-src with the failed state whatever its road left, and the order guards a future writer whose park leaves data-src on a src-less recorded pane. Each road's flip back reads src and data-src in tests/test_pane_state_broadcast.py (the desktop-bound case: the other bound and the none bound; the hold-rotation case: the hold) and case D of tests/test_lazy_pane_layout_flip_served.py drives the other bound in Chromium. What the branch does: its src dropped if it still has one, the url parked for the tap, the failed state on (the phone's response to the failure the desktop recorded), painted if its tab is the shown one; the feed too (the author's pass-4 verify: its exemption is from the off-screen parking, not from a recorded failure; skipped, a feed recorded DEAD kept its src over the dead document and its tab tap did nothing)
+// [fork] 2026-10-03 (ruling B, the stage 0 header): both loops act on the hand panes alone (hand()). A generic pane is never
+// parked, so across a flip either way it keeps its data-src and the re-tell's apply loads it as upstream ships it: on the desktop by
+// its rail flag, on the phone the current tab's frame; it gets no token, listener, backstop or failed state here on either layout.
+// The two listeners touch disjoint frames (apply writes no hand pane's src, lazyFlip no generic pane's), so their order does not
+// matter.
+var lazyFlip=function(){try{if(!mobileOn()){for(var lk in F){if(!hand(lk))continue;var lf2=F[lk],lz=null;try{lz=lf2&&lf2.getAttribute(LAZY);}catch(e){}
+if(lz){try{lf2.setAttribute('data-src',lz);lf2.removeAttribute(LAZY);}catch(e){}}promote(lk);}}
+else{for(var lk3 in F){if(!hand(lk3))continue;var lf3=F[lk3];if(!lf3||lk3==='chat')continue;var lu3=null;try{lu3=lf3.getAttribute('data-src');if(DEAD[lk3]&&DEAD[lk3]===TOK[lk3]){var du3=URLS[lk3]||lu3;lf3.removeAttribute('src');if(du3)lf3.setAttribute(LAZY,du3);lf3.removeAttribute('data-src');DEAD[lk3]=0;var dd3=paneDiv(lf3);if(dd3)dd3.classList.add('failed');}   // the DEAD pane, checked FIRST (pass 5, the author's label). The order is DEFENSIVE (pass 7, the author's label, taking the reviewer's round-5 findings correctness-7 and ui-1; the reason re-derived in pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding ui-1): DEAD is written truthy by failed() alone (DEAD[k]=(hold||bound)?TOK[k]:0), so three roads record a pane, all on the desktop: the HOLD at the backstop over a fetch still in flight (s 'blank': keep, so the src AND data-src stay), the BOUND over the browser's own error page (s 'none': keep, the src and data-src stay), and the BOUND over a document the kernel sent (s 'other': the src removed, the url parked under data-lazy-src, data-src removed). What is true of all three: none can reach the unloaded parking below, which takes a pane with data-src AND no src, because the first two keep their src and the third has no data-src; so this branch parks every recorded pane under data-lazy-src with the failed state whatever its road left, and the order guards a future writer whose park leaves data-src on a src-less recorded pane. Each road's flip back reads src and data-src in tests/test_pane_state_broadcast.py (the desktop-bound case: the other bound and the none bound; the hold-rotation case: the hold) and case D of tests/test_lazy_pane_layout_flip_served.py drives the other bound in Chromium. What the branch does: its src dropped if it still has one, the url parked for the tap, the failed state on (the phone's response to the failure the desktop recorded), painted if its tab is the shown one; the feed too (the author's pass-4 verify: its exemption is from the off-screen parking, not from a recorded failure; skipped, a feed recorded DEAD kept its src over the dead document and its tab tap did nothing)
 else if(lk3!=='feed'&&lu3&&!lf3.getAttribute('src')){lf3.setAttribute(LAZY,lu3);lf3.removeAttribute('data-src');}
 else if(PEND[lk3]&&PEND[lk3]===TOK[lk3]&&lf3.getAttribute('src')){var pd3=paneDiv(lf3);if(pd3)pd3.classList.add('loading');}}catch(e){}}paintLoading();}}catch(e){}};   // a desktop promotion whose verdict is still owed (PEND, the token) wears the loading class the grid's promote() did not paint, keyed on the recorded promotion and never on a read of the document, so the shown tab's tap meets the loader and not a blank pane (the author's pass-4 verify: on WebKit up to 30 s of blank until the backstop's verdict); loaded() or failed() takes it off
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',lazyFlip);else if(MQ.addListener)MQ.addListener(lazyFlip);}
@@ -77030,13 +77023,14 @@ shReturnProbe={decision:(!shWs||shWs.readyState!==1)?'redial-closed':'redial-sta
 shFailed=0;shFirstFailT=0;
 shAbandon();shellWS();});
 shellWS();
-// [fork] stage 0: the lazy panes' boot. On the phone every pane's data-src but the chat's (it ships src) and the feed's (exempt)
-// is parked under data-lazy-src before the pane controller parses, so its boot promotion leaves them alone; the feed is
+// [fork] stage 0: the lazy panes' boot. On the phone every hand pane's data-src but the chat's (it ships src) and the feed's (exempt)
+// is parked under data-lazy-src before the pane controller parses, so its boot promotion leaves them alone (a generic pane's stays,
+// so the controller's boot apply loads the current tab's frame as upstream ships it: ruling B, the stage 0 header); the feed is
 // promoted here (the gear's word respected) and the stored tab by show(last) below, which reads the parked attribute too, so
 // an enabled stored tab boots as before while a stored tab the gear has off stays parked (review round 1, 2026-09-19: skipped
 // by the parking, it kept its data-src and a later gear enable loaded it off screen). On the desktop the controller's eager
 // boot stands, and the Waiting and Files panes, outside its list, are promoted by _LANDING_DESKTOP_PANES_JS (its own script).
-try{if(mobileOn()){for(var lk2 in F){var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed')continue;
+try{if(mobileOn()){for(var lk2 in F){if(!hand(lk2))continue;var lf=F[lk2];if(!lf||lk2==='chat'||lk2==='feed')continue;
 var lu=lf.getAttribute('data-src');if(lu&&!lf.getAttribute('src')){lf.setAttribute(LAZY,lu);lf.removeAttribute('data-src');}}
 promote('feed');}}catch(e){}
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);

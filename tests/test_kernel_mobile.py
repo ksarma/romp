@@ -3369,20 +3369,9 @@ console.log(JSON.stringify(out));
 """
 
 
-def _head_pane_enabled():
-    """The head script's reader of the gear's Panes setting (window.__rompPaneEnabled), lifted whole from the served landing. On the
-    page it is defined before either script runs, and the fork's lazy panes read it: their promote() refuses a pane the gear has off
-    (the stage 0 loader in _LANDING_MOBILE_JS), so a stub world without it would load a gear-disabled tab the page never loads.
-    Read in the head script's code (_live_scripts, _head_code), the parser road this module keeps: the census in
-    tests/test_served_pins_read_elements.py fails a slice of the raw page in a module that imports served_css."""
-    code = _head_code(_live_scripts(km._landing()))
-    i = code.index("window.__rompPaneEnabled=function(k){")
-    return code[i:code.index("};", i) + 2]
-
-
 def _run_two(rows, store, mobile):
     js = (_TWO_HARNESS.replace("__ATTR__", json.dumps(rows)).replace("__STORE__", json.dumps({k: json.dumps(v) if not isinstance(v, str) else v for k, v in store.items()}))
-          .replace("__MOBILE__", "true" if mobile else "false") + _head_pane_enabled() + "\n" + km._LANDING_MOBILE_JS + _TWO_MIDDLE + km._LANDING_COLLAPSE_JS + _TWO_DRIVER)
+          .replace("__MOBILE__", "true" if mobile else "false") + km._LANDING_MOBILE_JS + _TWO_MIDDLE + km._LANDING_COLLAPSE_JS + _TWO_DRIVER)
     with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
         f.write(js)
         path = f.name
@@ -3427,11 +3416,8 @@ class TheMobileSwitcherAndThePaneControllerBoot(unittest.TestCase):
     def test_on_a_phone_the_current_tab_loads_on_the_controllers_apply_and_the_flip_loads_the_rest(self):
         r = _run_two([_ART, _NOTES, _DOCS], {"romp-mobile-tab": "notes", "romp-panes": {"notes": False}}, mobile=True)
         m, b, f = r["afterMobile"], r["afterBoot"], r["afterFlip"]
-        # the fork's lazy panes (stage 0, _LANDING_MOBILE_JS): the boot's show(last) promotes the enabled stored tab at the restore, through
-        # promote() and the head's gear reader, with the loader and the load verdict; upstream's restore copies nothing and leaves the frame
-        # to the controller's boot apply. Either way the frame is set ONCE and only for a tab the gear shows (the case above)
-        self.assertEqual((m["tab"], m["src"]["notes"], m["sets"]), ("notes", "/notes", {"f-notes": 1}), "the restore: the tab, its frame promoted by the lazy panes: %r" % m)
-        self.assertEqual((b["tab"], b["src"]["notes"], b["sets"]), ("notes", "/notes", {"f-notes": 1}), "after the controller's boot apply the CURRENT tab's frame is loaded, once (its key is in the dashboard): %r" % b)
+        self.assertEqual((m["tab"], m["src"]["notes"]), ("notes", None), "the restore: the tab, no src yet")
+        self.assertEqual((b["tab"], b["src"]["notes"], b["sets"]), ("notes", "/notes", {"f-notes": 1}), "the controller's boot apply loads the CURRENT tab's frame, once (its key is in the dashboard): %r" % b)
         self.assertEqual(b["src"]["docs"], None, "the docs pane (flag on, not the current tab) is not loaded into a frame the phone never shows")
         self.assertEqual((f["src"]["docs"], f["sets"]), ("/docs", {"f-notes": 1, "f-docs": 1}), "the layout flipped to the desktop: the flag loads the docs pane; the notes frame is not re-assigned: %r" % f)
 

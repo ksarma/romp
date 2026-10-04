@@ -28,7 +28,7 @@ driver's close at the suspend misses; the records show none does, see the limits
 and a transcript-less `docs`; placeholder uuids, host TESTHOST). The driver (tests/return_from_background_browser.mjs) opens the served shell, waits for every pane socket's
 `wsState up` word, emulates the suspend (visibilityState hidden in every document, the held sockets closed with 1001),
 holds the outage on new dials for the interval after the return, then reads the rows. Two shells (a phone: an iPhone
-descriptor at 390 x 844, under _MOBILE_MQ, six pane iframes with one .m-on; a desktop window at 1600 x 760), two outage
+descriptor at 390 x 844, under _MOBILE_MQ, six pane iframes with one .m-on and an Artifacts frame that never loads; a desktop window at 1600 x 760), two outage
 regimes (REFUSED: every new dial is closed at once; HUNG: a new dial stays CONNECTING until the outage ends, the phone's
 case), at 12 s and 30 s (the 30 s desktop legs are opt-in: RETURN_HARNESS_FULL=1; the repo marks no test slow, so the slow
 legs carry `slow` in their names and the desktop's are behind the knob, which keeps the file under CI's budget).
@@ -40,7 +40,7 @@ the driver's own log, into `<lab>/return-harness-<shell>-<regime>-<s>s.json` and
 the shell's `return-probe` rows (none today), federation `hostconn` rows by ev and why (none without an attached host),
 the kernel's `wsopen` rows per app at boot and in the return window (the storm as the kernel saw it), the beacon's `perf`
 rows with `vis`, `wsBytes`, `free`, `rafGap`, `marks` when present (perfShare is on in the lab's romp:settings), the
-sockets dialed per return by verdict, and the order in which the eight documents' visibilitychange handlers ran (the shell, the settings frame at about:blank and the six panes).
+sockets dialed per return by verdict, and the order in which the nine documents' visibilitychange handlers ran (the shell, the settings and Artifacts frames at about:blank and the six panes).
 
 Emulation limits, stated so the baseline is read right: scripts keep running while the documents read hidden (a
 suspended phone's do not), so the hidden dwell is short and the closes land as the FIN a thawed tab receives; the
@@ -105,12 +105,17 @@ LAZY_PHONE = ("timeline", "fleet", "waiting", "files")
 
 
 def km_pane_order():
-    """kernel.py's _PANE_ORDER, read as text (this module loads no romp code in-process): the (key, label) pairs of the pane routes."""
+    """kernel.py's shipped panes, read as text (this module loads no romp code in-process): the (key, label) pairs of the pane routes,
+    read off _CODE_PANES's records. Since upstream PR 1919 _PANE_ORDER holds no literal pairs: it is derived from _CODE_PANES (asserted
+    below, so the reader follows the source the routes come from), and the lab defines no data pane, so _CODE_PANES is the whole set.
+    Every read fails loudly on an empty match: the block, the pairs in it, and the six pane documents among them."""
     src = Path(os.path.join(ROOT, "kernel", "kernel.py")).read_text()
-    m = re.search(r"^_PANE_ORDER = \((.*?)\)\n", src, re.S | re.M)
-    assert m, "kernel.py defines _PANE_ORDER"
-    pairs = re.findall(r'\("([a-z]+)", "([^"]+)"\)', m.group(1))
+    assert re.search(r"^_PANE_ORDER = .*\bfor p in _CODE_PANES\b", src, re.M), "kernel.py derives _PANE_ORDER from _CODE_PANES"
+    m = re.search(r"^_CODE_PANES = tuple\(.*?\n\)\)\n", src, re.S | re.M)
+    assert m, "kernel.py defines _CODE_PANES"
+    pairs = re.findall(r'\{"id": "([a-z]+)", "title": "([^"]+)"', m.group(0))
     assert len(pairs) >= 6, pairs
+    assert set(APPS) <= {k for k, _ in pairs}, "every pane document the shell serves is a _CODE_PANES record: %r" % (pairs,)
     return pairs
 
 
@@ -683,7 +688,11 @@ class ReturnFromBackground(unittest.TestCase):
         where = name + ": "
         shell = r.get("shell")
         src = r.get("srcAtBoot") or {}
-        self.assertEqual(sorted(src), sorted(APPS + ("settings",)), where + "every pane iframe is in the served page, lazy or not: %r" % (src,))
+        # the served page also carries the experimental Artifacts pane's frame (a _CODE_PANES record off by default, rendered by the
+        # generic build since upstream PR 1922): it is served with data-src and never loads in this lab (no leg turns it on or shows
+        # it), so it has no src on either shell
+        self.assertEqual(sorted(src), sorted(APPS + ("settings", "artifacts")), where + "every pane iframe is in the served page, lazy or not: %r" % (src,))
+        self.assertIsNone(src.get("artifacts"), where + "the experimental Artifacts frame never loads in this lab: %r" % (src,))
         if shell == "phone":
             for app in LAZY_PHONE:
                 self.assertIsNone(src.get(app), where + "a lazy pane has no src at boot on the phone: %r" % (src,))

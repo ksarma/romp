@@ -9,8 +9,8 @@ named for the reply (never the shell command the sandbox refuses), set_working l
 the sentences copied from the bus pinned against the bus module itself, loaded by path the way
 tests/test_postal_live_only.py loads it (the kernel never imports it: the bus is its own process). The bus's own half is
 here too: the push banner names the tool for a Codex recipient, and `romp mail send` from a Codex shell points at it.
-One class runs the whole road with no fake on it: a send over a real loopback socket into the bus's own server and
-handler, whose refusal reaches the Codex result word for word (ACodexSendRefusalIsTheBusText).
+One class runs the kernel's road to the bus with no fake on it: a send over a real loopback socket into the bus's own
+server and handler, whose refusal reaches the kernel's Codex result word for word (ACodexSendRefusalIsTheBusText).
 Synthetic ids and the notes-api demo's session names only; the fakes carry no token."""
 import contextlib
 import io
@@ -170,18 +170,19 @@ class ACodexSendRefusalIsTheBusText(unittest.TestCase):
     `host:name`, each with the start of its session id where two share one `host:name`, and that its own name is
     refused outright. The kernel spells none of that: _codex_postal_send posts the send to the bus's /send, and on
     any answer but a 200 returns _codex_postal_fault's text, the bus's own error verbatim, which the backend hands
-    the thread as the tool result unchanged (_postal_tool_call, pinned in tests/test_codex_backend.py). So the
-    paragraph holds for a Codex session only while the bus's text arrives whole. Run here with no fake on the road:
-    the kernel's real _codex_postal_call over a real loopback socket into the bus's own server class and handler
-    (pm._LoopbackServer with pm.Handler) on a port of its own, the kernel's bus port the one thing redirected; the
-    namesakes filed by the bus's own exchange recorder (peer_exchange_handle) from one far host's dial, as
-    tests/test_postal_remote_sids_mirror.py's _far_dials_us files them; the local listing, the Codex session api
-    alone, through the bus's sessions-file seam. Two pairs of namesakes named web under one host:name (ids that
-    differ in their first 8 characters, and ids alike there), then a send to the sender's own name: each Codex
-    result is the refusal the bus's resolve_recipient gives over the same state, word for word, and says what the
-    paragraph says. Red when _codex_postal_fault returns only its status sentence. The halves are pinned apart
-    too: test_a_bus_refusal_is_a_failed_result_carrying_its_text above (the pass-through, over a fake socket) and
-    the cost (i) tests of tests/test_postal_remote_sids_mirror.py (the bus's listing)."""
+    the thread as the tool result unchanged (_postal_tool_call returns answer(ok, text) for either outcome;
+    tests/test_codex_backend.py pins the success case). So the paragraph holds for a Codex session only while the
+    bus's text arrives whole. Run here with no fake on the road: the kernel's real _codex_postal_call over a real
+    loopback socket into the bus's own server class and handler (pm._LoopbackServer with pm.Handler) on a port of
+    its own, the kernel's bus port the one thing redirected; the namesakes filed by the bus's own exchange recorder
+    (peer_exchange_handle) from one far host's dial, as tests/test_postal_remote_sids_mirror.py's _far_dials_us
+    files them; the local listing, the Codex session api alone, through the bus's sessions-file seam. Two pairs of
+    namesakes named web under one host:name (ids that differ in their first 8 characters, and ids alike there),
+    then a send to the sender's own name: each Codex result is the refusal the bus's resolve_recipient gives over
+    the same state, word for word, and says what the paragraph says. Red when _codex_postal_fault returns only its
+    status sentence. The halves are pinned apart too: test_a_bus_refusal_is_a_failed_result_carrying_its_text above
+    (the pass-through, over a fake socket) and the cost (i) tests of tests/test_postal_remote_sids_mirror.py (the
+    bus's listing)."""
 
     FAR = "TESTHOST-far"                                 # the far host whose dial names both namesakes
     PAIRS = ((("b6b6b6b6-0001-4000-8000-000000000001", "c7c7c7c7-0002-4000-8000-000000000002"), 8),

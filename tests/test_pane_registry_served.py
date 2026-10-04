@@ -501,12 +501,11 @@ class ServedPaneRegistry(unittest.TestCase):
         self.assertTrue(pb["mobile"], "the phone layout: %r" % pb); self.assertEqual(pb["tab"], "chat")
         self.assertIsNone(pb["notesSrc"], "the pane's desktop flag is off in this browser: nothing loaded before the tap, the iframe waits for its tab")
         self.assertIn("notes", pb["tabs"]); self.assertNotIn("lab", pb["tabs"], "an experimental pane has no tab")
-        # (the tap's src and m-on read, phoneLoaded, is in the held test's restored branch: held, the fork's lazy-pane road unloads the refused frame, so it is a transient)
-        self.assertTrue(r["phoneNotesDocs"], "the tap requested the pane's page, whatever its auth class answers: %r" % r.get("phoneAfterTap"))
+        self.assertTrue(r["phoneLoaded"], "the tap loads the pane's page and shows it: %r" % r.get("phoneAfterTap"))
         self.assertEqual(r["phoneAfterTap"]["tab"], "notes"); self.assertTrue(r["phoneAfterTap"]["visible"], "the pane fills the phone's screen: %r" % r["phoneAfterTap"])
-        # (the page's own document on the phone, its title and shim, and the one request however many taps, are read with step 2's in the
-        # held test: on the phone a refused document is a failed pane to the fork's lazy-pane road, which clears the frame's src and parks
-        # its url for the next tap to fetch again)
+        # (the page's own document on the phone, its title and shim, is read with step 2's in the held test: the kernel refuses it until
+        # the owner rules on the route's auth class)
+        self.assertEqual(r["phoneRequests"], 1, "the page is requested once, however many times its tab is tapped: %r" % r["phoneRequests"])
         self.assertGreater((r["kitArtifacts"]["rect"] or {"w": 0})["w"], 60, "the Artifacts leaf has a rectangle: %r; after the drop: %r" % (r["kitArtifacts"], r["kitAfterDrop"]["rects"]))
 
     def test_a_state_root_pane_page_loads_only_once_its_auth_class_is_ruled(self):
@@ -535,10 +534,7 @@ class ServedPaneRegistry(unittest.TestCase):
         self.assertEqual(r["kitSpot"]["under"], "empty", "the press lands on the page's declared empty surface: %r" % r["kitSpot"])
         self.assertIn("pd-grab-hover", r["kitHover"]["cls"], "the open hand over the declared surface: %r" % r["kitHover"]); self.assertEqual(r["kitHover"]["cursor"], "grab")
         self.assertTrue(r["kitPressed"]["pressed"], "a press on the page's declared empty surface arms the shell's press (data-pane-empty honoured for any app): %r" % r["kitPressed"])
-        self.assertTrue(r["phoneLoaded"], "the tap loads the pane's page and shows it: %r" % r.get("phoneAfterTap"))
         self.assertEqual((r["phonePage"] or {}).get("title"), "Notes", "the page is up, its shim with it: %r" % r["phonePage"])
-        self.assertEqual(r["phoneRequests"], 1, "the page is requested once, however many times its tab is tapped: %r" % r["phoneRequests"])
-        self.assertEqual(r["phoneNotesTap"]["notesSrc"], "/pane/notes/", "the notes tab tapped loads its page")
 
     def test_a_hand_row_flipped_in_the_gear_keeps_the_registry_keys(self):
         r = self._result()
@@ -561,9 +557,8 @@ class ServedPaneRegistry(unittest.TestCase):
         self.assertEqual((pb2["artSrc"], pb2["notesSrc"], pb2["tab"], pb2["chatShown"]), (None, None, "chat", True), "a boot with both flags stored and artifacts remembered: nothing loaded, the chat shown: %r" % pb2)
         self.assertEqual(pb2["requests"], [], "no page requested at boot: %r" % pb2["requests"])
         self.assertEqual(pb2["remembered"], "chat", "the remembered tab is repaired to the chat")
+        self.assertEqual(r["phoneNotesTap"]["notesSrc"], "/pane/notes/", "the notes tab tapped loads its page")
         self.assertEqual(len(r["phoneNotesTap"]["requests"]), 1, "once: %r" % r["phoneNotesTap"]["requests"])
-        # (the src the tap leaves, the page's url, needs the page to load: read in the held test, since the fork's lazy-pane road unloads a
-        # refused document's frame)
 
 
 class TheBuiltBundles(unittest.TestCase):
