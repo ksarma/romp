@@ -70743,9 +70743,12 @@ var lost={};
 // in Chromium and WebKit a 204 or a download closes no socket, so the link can stand through a whole outage of the panes alone,
 // and without the frame that outage went unwritten and its entries were dropped at its end. The link's next frame comes
 // within one keepalive (KEEPALIVE_S, 10 s by default), so a pane-only outage that ends before it still goes unwritten. An unload
-// makes none of these events but that frame: one landing in the 1 to 2 ms between beforeunload and the closes Firefox delivers
-// clears the latch, and that reload writes an entry for each shown pane whose dial the unload closed (a reload while the panes'
-// dials connect and the link is open, as at the boot; at a return's redial the link is not open and carries no frame).
+// makes none of these events. One that lands in the 1 to 2 ms between beforeunload and the closes Firefox delivers clears the
+// latch, and that reload writes an entry for each shown pane whose dial the unload closed. The likeliest is a frame on the link,
+// so the reloads exposed are those while a pane's dial connects and the link is open: the boot dials, and a return's pane
+// redials, since the panes wait for the link and dial once it is up (and a burst of frames follows the link's open, the
+// kernel's answers to its ready). Only the shell's own return dial, which the panes wait behind, is not exposed: the link is
+// down then and carries no frame.
 var leaving=false;
 window.addEventListener('beforeunload',function(){leaving=true;});
 window.addEventListener('pageshow',function(){leaving=false;});

@@ -26,6 +26,14 @@
 //                  then reload. The road: each pane's close posts its down word and its wsFail word to the shell. Only the
 //                  shown panes are held: WebKit counts a socket's handshake against its six connections to a host, so
 //                  holding all seven dials starved the page's own loads until the 15 s cuts.
+//   reload-return-panes  the reload-return suspend and return, but the shell's return dial passes and only the shown panes'
+//                  dials (cfg.holdApps) are held: the link opens, the panes, which waited for it, dial, and the reload comes
+//                  while their dials are CONNECTING beside the OPEN link. The road: each pane's close, as in reload-boot.
+//   cfg.frameAtUnload, in any of the three reloads: the race call 1 accepted (review round 1 of item 4b, 2026-10-04). Just before the reload the driver adds a beforeunload listener, after the page's own (so
+//                  after the leaving latch is set), that delivers one keepalive frame on the top document's shell socket when
+//                  that socket is OPEN, as a frame landing between the unload's beforeunload and its closes would; it records
+//                  lab:ev frameAtUnload with the socket's state and whether it fired. out.atReload holds the link's word and
+//                  the shell socket's state at the reload.
 //   nav204-outage  boot, read the Log, navigate the top document to a 204 (beforeunload fires, the page stays; Firefox also
 //                  closes every socket of the page, which redial), wait for every socket to be up again, then a real
 //                  outage (mode refuse, every socket dropped): the Log owes its entries.
@@ -164,6 +172,7 @@ await page.addInitScript(() => {
       s.addEventListener("open", () => rec("lab:sock", { ev: "open", app, top, age: Date.now() - t0 }));
       s.addEventListener("close", (e) => rec("lab:sock", { ev: "close", app, top, code: e.code, age: Date.now() - t0 }));
       if (top && app === "shell") s.addEventListener("message", () => rec("lab:frame", { app, top }));   // the link's frames (call 1's clear)
+      if (top && app === "shell") w.__labShellSock = s;   // the top document's latest shell socket (cfg.frameAtUnload)
       return s;
     };
     LabWS.prototype = RW.prototype; LabWS.CONNECTING = 0; LabWS.OPEN = 1; LabWS.CLOSING = 2; LabWS.CLOSED = 3;
@@ -240,6 +249,19 @@ const frameAfterUnload = (sinceT) => page.evaluate((t) => {
   const bu = j("lab:ev").filter((x) => x.gen === window.__labGen && x.ev === "beforeunload" && x.t >= t).map((x) => x.t);
   return bu.length > 0 && j("lab:frame").some((x) => x.gen === window.__labGen && x.app === "shell" && x.t > bu[0]);
 }, sinceT);
+// just before a reload: the link's word and the shell socket's state, and with cfg.frameAtUnload the listener that delivers one
+// keepalive frame on the OPEN shell socket inside the unload's beforeunload (added now, so it runs after the page's own listener)
+const atReload = () => page.evaluate((frame) => {
+  const s = window.__labShellSock;
+  if (frame) {
+    window.addEventListener("beforeunload", () => {
+      const sk = window.__labShellSock, st = sk ? sk.readyState : -1, fired = st === 1;
+      if (fired) sk.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "ka" }) }));
+      try { const a = JSON.parse(localStorage.getItem("lab:ev") || "[]"); a.push({ gen: window.__labGen, t: Date.now(), ev: "frameAtUnload", st, fired }); localStorage.setItem("lab:ev", JSON.stringify(a)); } catch (e) { /* recording only */ }
+    });
+  }
+  return { link: !!(window.__rompLink && window.__rompLink().up), shellState: s ? s.readyState : -1, frameArmed: !!frame };
+}, !!cfg.frameAtUnload);
 
 try {
   const url = base + "/?token=" + encodeURIComponent(cfg.token);
@@ -257,6 +279,7 @@ try {
     if (!out.allConnecting) await result({ died: "boot: not every held dial was CONNECTING", rec: await store() });
     await sleep(cfg.connectingMs || 500);
     out.bodyClass = await page.evaluate(() => document.body.className);
+    out.atReload = await atReload();
     PX.mode = "pass";
     out.t.reload = now();
     await page.reload({ waitUntil: "load", timeout: 40000 });
@@ -282,6 +305,27 @@ try {
       out.shellConnecting = await waitFor(() => connecting("shell"), 15000);
       if (!out.shellConnecting) await result({ died: "return: the shell's dial was never CONNECTING", rec: await store() });
       await sleep(cfg.connectingMs || 300);
+      out.atReload = await atReload();
+      PX.mode = "pass";
+      out.t.reload = now();
+      await page.reload({ waitUntil: "load", timeout: 40000 });
+    } else if (cfg.scenario === "reload-return-panes") {
+      await clearRecords();
+      PX.mode = "hold";   // only cfg.holdApps' dials are held: the shell's return dial passes
+      out.t.suspend = now();
+      await flip(true);
+      out.dropped = drop();
+      await sleep(cfg.hiddenDwellMs || 400);
+      out.t.return = now();
+      await flip(false);
+      out.panesConnecting = await waitFor(async () => {
+        if (!(await page.evaluate(() => !!(window.__rompLink && window.__rompLink().up)))) return false;
+        for (const a of cfg.holdApps || EAGER) if (!(await connecting(a))) return false;
+        return true;
+      }, 20000);
+      if (!out.panesConnecting) await result({ died: "return: the link never opened with every held pane's dial CONNECTING", rec: await store() });
+      await sleep(cfg.connectingMs || 300);
+      out.atReload = await atReload();
       PX.mode = "pass";
       out.t.reload = now();
       await page.reload({ waitUntil: "load", timeout: 40000 });
