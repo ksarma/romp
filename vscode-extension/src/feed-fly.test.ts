@@ -14,12 +14,13 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 test("render() captures rects BEFORE the reconcile and flies changed cards AFTER", () => {
   // capture must precede the column reconciles… and happens only when a card CAN have moved, because the
   // capture and the fly each force a layout of the whole document on the main thread every pane shares
-  // (2026-09-04). The gate is per column: the columns whose planned key sequence differs from the DOM's
-  // (feed-card-gate.ts sameKeySeq); a column where nothing enters, leaves or changes place has nothing that
-  // can glide, so its rects go unread. The release paint after a hidden stretch snaps instead (skipFlipOnce,
-  // upstream #1016, 2026-09-07 fold): no column differs for that one paint, and the snap is spent before flipCols
-  assert.match(FEED, /const differing = skipFlipOnce \? \[\] : FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*skipFlipOnce = false;\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? FLY_COLS : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);[\s\S]*?reconcileCol\(cols\.asks/,
-    "…and in the stacked layout a move anywhere reads every column: the sections below the move all shift");
+  // (2026-09-04). The gate is per column of the active board (activeCols(), boards phase four): the columns
+  // whose planned key sequence differs from the DOM's (feed-card-gate.ts sameKeySeq); a column where nothing
+  // enters, leaves or changes place has nothing that can glide, so its rects go unread. The release paint after
+  // a hidden stretch snaps instead (skipFlipOnce, upstream #1016, 2026-09-07 fold): no column differs for that
+  // one paint, and the snap is spent before flipCols. The reconcile it precedes is the per-board loop
+  assert.match(FEED, /const differing = skipFlipOnce \? \[\] : activeCols\(\)\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\.lists\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\.lists\[k\]\)\)\)\);\n\s*skipFlipOnce = false;\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? activeCols\(\) : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);[\s\S]*?for \(const k of activeCols\(\)\) reconcileCol\(cols\.lists\[k\]/,
+    "…and in the stacked layout a move anywhere reads every column of the active board: the sections below the move all shift");
   // …and the fly runs after the DOM (and scroll) settle (the identity-alias step sits just before it)
   assert.match(FEED, /list\.scrollTop = prevScroll;[\s\S]*?\/\/ FLIP step 2[\s\S]*?flyColumnChanges\(flipFirst, cols, flipCols\);/);
 });

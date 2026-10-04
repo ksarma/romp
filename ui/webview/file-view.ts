@@ -2661,6 +2661,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // named with its state above), so the panes that the probes' own fetches paint share one budget.
   const armWayBack = () => { wayBack = true; wayBackSeq++; wayBackProbing = false; paneView = viewSeq; };
 
+  // The view group takes no gap when every control in it is hidden (edit mode hides the format pair too). Its
+  // state is derived from the controls' own hidden states, so it is read after the last of them is decided: at
+  // the top of the paint, and again inside the media branch, which decides the Source button after that first
+  // read. Over a picture the Source button is the group's one control (no format pair, the zoom glyph hidden),
+  // so an SVG's first paint would otherwise leave the shown button inside a hidden group and the Source view
+  // unreachable; a PNG or a PDF keeps every control hidden and the group hidden with them. A markdown file's
+  // Outline button rides the group too (T367's grouping), and a text paint decides it after this read, so
+  // syncOutline re-reads the group on the same rule once it has.
+  const syncViewGroup = () => {
+    viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);
+  };
   // Chooses the body for the current prefs and syncs the buttons. The pressed state flips SYNCHRONOUSLY
   // in the click handler — the immediate acknowledgement ui/CLAUDE.md requires — and so does the content
   // swap, since the text is already in memory.
@@ -2683,7 +2694,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // 523px low). So a text paint decides it inside the paint, after the swap and before the hooks measure and the seat
     // writes (syncOutline, below); only the paths that paint no text hide it here (the loader, the editor's entry).
     if (editing || text === null) outlineBtn.hidden = true;
-    viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);   // an all-hidden group takes no gap (edit mode hides the pair too); the Outline button is decided inside the paint, so syncOutline re-reads this
+    syncViewGroup();                          // the Outline button is decided inside the paint, so syncOutline re-reads the group
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
@@ -2697,7 +2708,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       srcBtn.hidden = !(isSvgImage && objUrl !== null);
       srcBtn.classList.toggle("on", svgSource);
       srcBtn.setAttribute("aria-pressed", String(svgSource));
-      viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);   // the media branch decides the Source button after the group's first sync above, so the group is re-read here: the SVG Source view is the one media control in the view group (T367's grouping)
+      syncViewGroup();                        // the Source button was decided after the group's read above: the group follows it
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
       viewError = null;                       // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3)
       // a target on a picture or a PDF (a heading, a line, an offset) is judged by the landing, not here: landMedia, over a body
@@ -5561,14 +5572,15 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
   "fv-cl", "fv-dead", "fv-figopen", "fv-wikilink", "fx-body", "glyph", "gone", "host-off", "host-prefix", "idle", "img-caption",
   "img-pending", "jl-sess", "jl-switch", "jl-text", "jl-unknown", "ledger-tnode", "loading", "locate-toast", "machine", "mcount",
   "mcp-act", "mention-more", "meta-caret", "meta-dots", "meta-item-sub", "meta-label", "mrow", "msg-del", "msg-edit", "msg-fork",
-  "msg-restorefiles", "nm", "none", "notice-act", "notice-caret", "notice-sub", "off", "on", "opening", "opening-line-dots",
+  "msg-restorefiles", "nm", "none", "notice-act", "notice-caret", "notice-sub", "ntc-back", "ntc-body", "ntc-btn", "off", "on",
+  "opening", "opening-line-dots",
   "pane-gone", "path-full-retry", "path-load-note", "pending", "ph", "picker-action", "picker-be-opt", "picker-browse",
   "picker-dir", "picker-lifted", "rail-day", "rail-sticky", "repeat", "resolved", "rewound", "rl-dots", "romp-acted",
   "romp-bubble", "romp-tl-tip", "rs-dragging", "rs-fastin", "rs-jrow", "rs-login-rm", "rs-off", "rs-pane-gone", "rs-row",
   "rs-stale-toast", "rs-widget", "rs-widget-demo", "scroll-mark", "sel", "send-held", "sending", "sess-exit", "slash-arg",
   "slash-key-hint", "sn-applying", "sn-known", "sn-trust", "snap-act", "snap-count", "snap-note", "snap-sess", "st-cleared",
   "tab", "tab-close", "tab-closed", "tab-compacting-fill", "tab-dot", "tab-group-count", "tab-group-head", "tab-label",
-  "tag-chip-off", "tg-child", "tg-last", "thinking", "tool-fold-toggle", "toolgroup-caret", "turn", "turn-elapsed",
+  "tab-ph-end", "tag-chip-off", "tg-child", "tg-last", "thinking", "tool-fold-toggle", "toolgroup-caret", "turn", "turn-elapsed",
   "turn-toolgroup", "tx-gap-glyph", "tx-starting-swirl", "typing", "undelivered-bubble", "undo-dots", "user-bubble",
   "user-img-path", "ut-file", "ut-link", "warn-toast", "wt-empty", "wt-file", "wt-link", "wt-notice", "wt-sess"
 ]);
@@ -7489,10 +7501,13 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
     } else if (m.type === "fileSaveFailed" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       h.failed(String(m.error || "the save failed"));
-    } else if (m.type === "warn" && editHooks) {
+    } else if (m.type === "warn" && typeof m.sid !== "string" && editHooks) {
       // A federation drop (the session's host unreachable) answers a saveFile with a warn instead
       // of a reply — the feed page renders no toasts, so without this the button spins forever
       // (the same hole the browse overlay closed for listDir).
+      // A warn carrying a session id answers a send INTO that session (the kernel's refusal of a slash command a
+      // Codex session cannot take, broadcast to every chat pane when no socket carried it; 2026-09-19), never this
+      // save: mid-save it read as the save failing. A save's own failure names no session.
       const h = editHooks; editHooks = null;
       h.failed(String(m.text || "the session's host is not answering — the save was not sent"));
     }

@@ -64,13 +64,13 @@ class OpeningChipDecidingEvent(unittest.TestCase):
             m.CAPDIR, m.ARCHDIR, m.GOALDIR = td / "captions", td / "archive", td / "goals"
             m.STATE = td
             m.SDKDIR = td / "sdk"
-        # The SDK registry DIRECTORY moves with the state and EXISTS, empty: the kernel's boot pass
-        # creates sdk/ (_death_boot_pass), so a running kernel never lacks it, and a MISSING sdk/ beside
+        # The SDK registry directory moves with the state and exists, empty: the kernel's boot pass
+        # creates sdk/ (_death_boot_pass), so a running kernel never lacks it, and a missing sdk/ beside
         # a names entry reads to _sdk_records_blind as blindness (a registry moved aside), on which
         # Sessions.live() serves its previous rows instead of the backend's. Left at the import-bound
         # root, the directory exists only when an earlier test in the same process created it, and the
-        # live-merge case below failed alone (the same fixture as tests/test_kernel_awaiting_stamp.py's
-        # dormant case, 2026-09-16).
+        # live-merge case below failed when run alone (the same fixture as the dormant case in
+        # tests/test_kernel_awaiting_stamp.py).
         (td / "sdk").mkdir()
         km.NAMES = names
         km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
@@ -139,3 +139,27 @@ class OpeningChipDecidingEvent(unittest.TestCase):
                          "stop_reason": "end_turn"}},
         ]) + "\n")
         self.assertEqual(self._state(), "ready")
+
+
+class FixtureRestore(unittest.TestCase):
+    """The fixture above rebinds seven directories on two judge module objects, and tearDown puts every
+    one back. km.jd is the kernel's own judge, loaded under the fixed name romp_judge and shared by
+    every kernel copy in the process, so a rebind that outlived tearDown would leave that directory
+    (the registry directory among them) under a removed temporary directory for every later test in
+    the same worker."""
+
+    def test_setup_and_teardown_leave_both_judge_modules_as_they_found_them(self):
+        keys = ("NAMES", "PROJECTS", "CAPDIR", "ARCHDIR", "GOALDIR", "STATE", "SDKDIR")
+        before = [(m.__name__, k, getattr(m, k)) for m in (jd, km.jd) for k in keys]
+        case = OpeningChipDecidingEvent("test_a_dormant_created_session_is_ready_not_opening")
+        case.setUp()
+        try:
+            root = Path(case.td.name)
+            self.assertEqual([m.SDKDIR for m in (jd, km.jd)], [root / "sdk"] * 2,
+                             "the registry directory moves with the state on both judge module objects")
+            self.assertTrue(km.jd.SDKDIR.is_dir(), "and exists, empty: the booted kernel's shape")
+            self.assertEqual(list(km.jd.SDKDIR.iterdir()), [])
+        finally:
+            case.tearDown()
+        self.assertEqual([(m.__name__, k, getattr(m, k)) for m in (jd, km.jd) for k in keys], before,
+                         "every rebound directory is back where the fixture found it")

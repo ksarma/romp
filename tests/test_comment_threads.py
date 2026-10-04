@@ -265,8 +265,9 @@ class ThreadForkInvisibility(unittest.TestCase):
         self.assertIn('self.fast_opt = bool(reg.get("fast"))', inspect.getsource(sb.SdkSession.__init__))
         # (one read of the ask under the hold lock since review round 6, handed on by name; the reconnect loop
         # snapshotted the flag from the session after this returned before, so a set_fast landing in between
-        # made a flagless connect read as flagged)
-        self.assertIn("fast_opt = sess.fast_opt", inspect.getsource(sb.SdkBackend._options))
+        # made a flagless connect read as flagged). That one read is the session's ask, or the machine's Always
+        # fast switch (upstream PR 1827, 2026-09-17), the switch file read just before the hold.
+        self.assertIn("fast_opt = sess.fast_effective(switch_on=always_fast)", inspect.getsource(sb.SdkBackend._options))
         self.assertIn("fast=fast_opt,", inspect.getsource(sb.SdkBackend._options))
         self.assertIn('keys["fastMode"] = True', inspect.getsource(sb.flag_settings_path))
         refusal = inspect.getsource(sb.SdkSession._adopt_fast_state)

@@ -112,7 +112,7 @@ IDENT = re.compile(r"^[A-Za-z0-9_.:-]{1,32}$")
 # against the live state directory, which the cli/ readers never do.
 HTTP_ROUTES = {
     "GET": (
-        "/", "/analytics", "/api-health", "/api-health/frame", "/busy", "/chat", "/classify",
+        "/", "/analytics", "/api-health", "/api-health/frame", "/boards", "/busy", "/chat", "/classify",
         "/commands", "/defaults", "/diag/sendvis", "/emoji", "/feed", "/feed.json", "/file", "/files",
         "/fleet", "/followup-preview", "/handoff", "/healthz", "/login", "/logins", "/manifest.webmanifest",
         "/mcp", "/models", "/notify-all", "/notify-turns", "/palette", "/perf", "/push/pending",
@@ -125,12 +125,12 @@ HTTP_ROUTES = {
         "/file",
     ),
     "POST": (
-        "/checkin", "/checkin/stop", "/color", "/compact", "/deliver", "/down", "/emoji", "/end",
+        "/board", "/checkin", "/checkin/stop", "/color", "/compact", "/deliver", "/down", "/emoji", "/end",
         "/flag", "/fleet-restart", "/fork", "/fork-comment", "/fork-promote", "/group", "/interrupt",
         "/judge-settings", "/logins", "/mesh-settings", "/move", "/new", "/notice", "/notify-all",
         "/notify-turns", "/order", "/perf", "/pinnote", "/postal-notice", "/push/ack", "/push/dropped",
         "/push/landed", "/push/relay", "/push/subscribe", "/push/superseded", "/push/test",
-        "/push/unsubscribe", "/redial", "/rename", "/restart", "/reveal", "/send", "/tag", "/tick",
+        "/push/unsubscribe", "/redial", "/rename", "/restart", "/reveal", "/send", "/setting-proposal", "/tag", "/tick",
         "/tunnels", "/tunnels/askpull", "/tunnels/autoupdate", "/tunnels/checkin", "/tunnels/detach",
         "/tunnels/forget", "/tunnels/pull", "/tunnels/start", "/tunnels/trust", "/tunnels/trust-mirror",
         "/tunnels/trust-remote", "/tunnels/update", "/unpinnote", "/update", "/update-dismiss",

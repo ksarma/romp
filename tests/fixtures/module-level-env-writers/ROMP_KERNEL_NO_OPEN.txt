@@ -13,13 +13,17 @@
 # (test_client_diag_capped_shape.py), the seventh the writer of one module that batch fork PR #938 carried, added by
 # fork PR #858 (test_served_pins_read_elements.py), the eighth the writer of one module that batch fork PR #941
 # carried, added by fork PR #882 (test_subagent_tree_stamps_per_cycle.py), and the ninth, batch fork PR #944's, took
-# in no writer.
+# in no writer. The first slice of fold 4 of the project's changes (2026-10-02) took in the writers of the seven modules
+# the project added in it (test_autocompact_status.py, test_chat_notices.py, test_codex_slash_guard.py,
+# test_drain_held_working.py, test_model_switches_kernel.py, test_needfull_no_dedup.py and
+# test_usage_by_account_served.py).
 # The census pin compares it with the census by equality (_writer_set_faults): a module that writes the name and is
 # not here faults as a new writer, and a module here that no longer writes it faults until its line is removed.
 # Lines leave as writers migrate; a new writer is not added (omit the write or move it to the conftest floor),
 # except as a rename of a line here; the first three landing merges' lines were added on the reviewer's rulings of
 # round 2 on fork PR #894, which had the file derived again at each merge, and the fifth's, the sixth's, the seventh's
-# and the eighth's by the same derivation, which at the fourth and the ninth took in none.
+# and the eighth's by the same derivation, which at the fourth and the ninth took in none; fold 4's first slice added
+# its lines by the same derivation, since the project's modules come in as it shipped them.
 bench_chatbuild.py
 permission_ask_feeder_drive.py
 test_anchor_mints.py
@@ -37,6 +41,7 @@ test_asm_checkpoint.py
 test_atomic_write.py
 test_auto_nudge_every_kernel.py
 test_auto_update_remotes.py
+test_autocompact_status.py
 test_awaiting_audit_classes.py
 test_awaiting_card.py
 test_awaiting_count.py
@@ -61,6 +66,7 @@ test_chat_build_sig_inputs.py
 test_chat_delta_resync.py
 test_chat_fixed_cost_memos.py
 test_chat_fold.py
+test_chat_notices.py
 test_chat_pages.py
 test_chat_payload_clock_invariant.py
 test_chat_skeleton_reconnect.py
@@ -85,6 +91,7 @@ test_codex_echo_merge.py
 test_codex_launch_error_card.py
 test_codex_models_frame.py
 test_codex_models_route.py
+test_codex_slash_guard.py
 test_cold_tab_gate.py
 test_color_route.py
 test_colormap_aurora.py
@@ -109,6 +116,7 @@ test_dissolution_distill.py
 test_dist_converge.py
 test_dist_etag_gzip.py
 test_distill_rearm.py
+test_drain_held_working.py
 test_drain_hoists.py
 test_drive_foreign_sid.py
 test_episode_boundary.py
@@ -375,7 +383,9 @@ test_model_catalog.py
 test_model_catalog_floor.py
 test_model_fallback_notice.py
 test_model_live_midturn.py
+test_model_switches_kernel.py
 test_model_versions.py
+test_needfull_no_dedup.py
 test_new_route_prefs.py
 test_new_session_dir.py
 test_node_override_ack.py
@@ -544,6 +554,7 @@ test_unread_store_save.py
 test_update_banner_confirm_served.py
 test_update_check_hermetic.py
 test_usage_acct_flip.py
+test_usage_by_account_served.py
 test_usage_limits_split.py
 test_usage_per_account.py
 test_usage_poll.py
