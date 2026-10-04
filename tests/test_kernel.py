@@ -7366,6 +7366,23 @@ class ServeSecurity(unittest.TestCase):
                 km._remotes.clear()
                 km._remotes.update(rows)
         self.addCleanup(_restore_rows)
+        # The rows go back only after the handler has asked the local leg, which is after it has read the
+        # registry. This kernel's handler reads the registry and runs the local leg before it acks, so the
+        # wait below returns at once here. A handler that acks first and reads the registry after would
+        # otherwise race the restore above: when the restore won, it read the restored rows and took the
+        # broad leg after all. The pass-through keeps the real local leg (no manager here, so it restarts
+        # nothing) and only marks that it was asked.
+        import threading
+        asked = threading.Event()
+        real_local = km._restart_this_kernel
+
+        def _local_seen(*a, **k):
+            try:
+                return real_local(*a, **k)
+            finally:
+                asked.set()
+        km._restart_this_kernel = _local_seen
+        self.addCleanup(setattr, km, "_restart_this_kernel", real_local)
         saved = os.environ.pop("ROMP_MANAGER_PORT", None)   # never trigger a real restart-all in a test
         try:
             req = urllib.request.Request("http://127.0.0.1:%d/restart?token=testtok" % self.port,
@@ -7377,6 +7394,7 @@ class ServeSecurity(unittest.TestCase):
                 # this covers the whole fleet, so the ack names it rather than leaving the caller guessing
                 self.assertEqual(_json.loads(r.read().decode()),
                                  {"ok": True, "restarting": True, "boot": km._BOOT_ID, "fleet": True})
+            self.assertTrue(asked.wait(5), "the standalone ack asked the local leg before the rows go back")
         finally:
             if saved is not None:
                 os.environ["ROMP_MANAGER_PORT"] = saved
