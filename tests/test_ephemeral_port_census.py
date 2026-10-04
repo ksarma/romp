@@ -1386,9 +1386,10 @@ class Plants(unittest.TestCase):
         """THE RULE's flag rule, for an option followed by a quote and then spaces or tabs before its number: a shell argv
         that quotes the option, and a JavaScript string that holds such a command. Each green twin is a near miss in a
         file the census opens (its number stands alone in the range), so the green is the rule's: a quoted option with no
-        port word, one with one dash, a word between the option and the quote, and a quoted option that ends its line,
-        so in shell the number belongs to the next command. That the quote need not close a string, nor one opened at
-        the option, is pinned in test_the_text_rules."""
+        port word, one with one dash, a word between the option and the quote, and a quoted option that ends its line
+        with the number alone at the start of the next, in shell (where the number is then the next command) and in a
+        JavaScript template literal: a newline is not a space or a tab. That the quote need not close a string, nor one
+        opened at the option, is pinned in test_the_text_rules."""
         n = _n()
         for label, name, src in (
                 ("a quoted option, then a space", "q1.bats", 'run romp serve "--port" %d\n' % n),
@@ -1400,7 +1401,10 @@ class Plants(unittest.TestCase):
                 ("a quoted option with no port word", "q4.bats", 'run romp serve "--report" %d\n' % n),
                 ("a quoted option with one dash", "q5.bats", 'run romp serve "-p" %d\n' % n),
                 ("a word between the option and the quote", "q6.bats", 'echo "--port is" %d\n' % n),
-                ("a quoted option that ends its line", "q7.bats", 'run romp serve "--port"\necho %d\n' % n)):
+                ("a quoted option that ends its line, the number alone on the next", "q7.bats",
+                 'run romp serve "--port"\n%d\n' % n),
+                ("a quoted option that ends a JavaScript template literal's line, the number alone on the next",
+                 "q8.test.mjs", "const cmd = `romp serve '--port'\n%d`;\n" % n)):
             with self.subTest(label):
                 self.assertGreen(name, src)
 
