@@ -15843,13 +15843,17 @@ class TheKindTableIsHeldAgainstTheInterpretersKinds(unittest.TestCase):
     """The _SEND_KINDS comment's claim, executed (tests-3 of the landing round's review): every statement kind the running
     interpreter's syntax tree holds outside the table has a (k) plant, and every such expression kind but the three argued there (a
     Slice, a FormattedValue and an Interpolation, each only inside another excluded kind) has an (at) plant. The kinds are derived
-    from the interpreter's ast (every direct subclass of ast.stmt and of ast.expr; the deprecated Constant aliases, Num, Str, Bytes,
-    NameConstant and Ellipsis, are subclasses of ast.Constant, not direct subclasses of ast.expr, so they never reach this set and need
-    no exclusion (and on 3.14 they do not exist), and the
-    plants' kinds are read by parsing each plant's module, the nodes of its `_send` definition, never from their labels: the (k)
-    plants' statement kinds against the derived statement kinds, the (at) plants' expression kinds against the derived expression
-    kinds, apart, each side less the table and the three argued kinds; a kind the interpreter adds with no plant and no argument reds
-    here, and so does a plant deleted."""
+    from the interpreter's ast by _kinds: every direct subclass of ast.stmt and of ast.expr that the ast module binds under the
+    class's own name. The deprecated Constant aliases, Num, Str, Bytes, NameConstant and Ellipsis, are subclasses of ast.Constant,
+    not direct subclasses of ast.expr, so they never reach this set and need no exclusion (and on 3.14 they do not exist). The
+    ast module's binding is part of the derivation because other tests define subclasses of ast's bases at run time, and
+    __subclasses__() returns every such class still alive: tests/test_nudge_walk_one_load_per_pass.py keeps classes named
+    Frobnicate, a statement and an expression among them, in a module-level table, so in a pytest worker that had run that module
+    first, the bare __subclasses__() read Frobnicate as a kind with no plant and no argument. The plants' kinds are read by parsing
+    each plant's module, the nodes of its `_send` definition, never from their labels: the (k) plants' statement kinds against the
+    derived statement kinds, the (at) plants' expression kinds against the derived expression kinds, apart, each side less the
+    table and the three argued kinds; a kind the interpreter adds with no plant and no argument reds here, and so does a plant
+    deleted. The second test checks _kinds against classes it defines itself."""
 
     ARGUED = ("Slice", "FormattedValue", "Interpolation")
 
@@ -15859,15 +15863,46 @@ class TheKindTableIsHeldAgainstTheInterpretersKinds(unittest.TestCase):
         d = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_send")
         return {type(n).__name__ for n in ast.walk(d) if isinstance(n, base)}
 
+    @staticmethod
+    def _kinds(base):
+        """The names of `base`'s kinds in the running interpreter: each direct subclass of `base` that the ast module binds under its
+        own name, the class itself and not a namesake. Other tests define subclasses of ast's bases at run time, and
+        base.__subclasses__() returns those too; the ast module binds none of them."""
+        return {c.__name__ for c in base.__subclasses__() if getattr(ast, c.__name__, None) is c}
+
     def test_each_kind_outside_the_table_has_a_plant_or_its_argument(self):
         table = set(script_module(ROOT)._SEND_KINDS) | set(self.ARGUED)
         for base, plants in ((ast.stmt, [_a_h_module(t, extra, head) for t, _l, extra, head, _w in B_ROADS if t.startswith("k")]),
                              (ast.expr, [text for _t, text in AT_FILES])):
             with self.subTest(kinds=base.__name__):
-                derived = {c.__name__ for c in base.__subclasses__()} - table
+                derived = self._kinds(base) - table
                 held = set().union(*(self._send_kinds(text, base) for text in plants)) - table
                 self.assertTrue(derived, "the interpreter's %s kinds outside the table, derived" % base.__name__)
                 self.assertEqual(held, derived, "the plants' %s kinds equal the interpreter's outside the table" % base.__name__)
+
+    def test_a_class_another_test_defines_on_an_ast_base_is_no_kind(self):
+        """_kinds leaves out classes defined at run time, as other tests define them: for ast.stmt and for ast.expr, a direct subclass
+        named Stray, a name the ast module does not bind, and one named Module, a name it binds to ast.mod's Module, so a check of the
+        name alone would count it. Each class is one of base.__subclasses__() while it lives (asserted first); _kinds counts neither
+        and derives the same kinds with them defined as before. __subclasses__() holds weak references, so the classes are kept in a
+        list until the assertions are done; the cleanups empty the list and run a collection, which frees them."""
+        strays = []
+        self.addCleanup(gc.collect)
+        self.addCleanup(strays.clear)
+        self.assertIsNone(getattr(ast, "Stray", None), "the ast module binds no Stray")
+        for base in (ast.stmt, ast.expr):
+            with self.subTest(kinds=base.__name__):
+                self.assertTrue(issubclass(ast.Module, ast.mod) and not issubclass(ast.Module, base),
+                                "the ast module binds Module to a class that is not a %s" % base.__name__)
+                before = self._kinds(base)
+                for name in ("Stray", "Module"):
+                    strays.append(type(name, (base,), {"_fields": ()}))
+                    self.assertIn(strays[-1], base.__subclasses__(),
+                                  "armed: the class %s is a direct subclass of %s" % (name, base.__name__))
+                got = self._kinds(base)
+                for name in ("Stray", "Module"):
+                    self.assertNotIn(name, got, "a class named %s defined on %s is no kind" % (name, base.__name__))
+                self.assertEqual(got, before, "the %s kinds derived are the same with the classes defined as before" % base.__name__)
 
 
 if __name__ == "__main__":
