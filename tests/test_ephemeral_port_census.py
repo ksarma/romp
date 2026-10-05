@@ -2784,12 +2784,13 @@ class Plants(unittest.TestCase):
         mangles it to there (THE RULE). Each red plant binds a mangled spelling at module level, which a census reading
         each spelling alone left __K in a method of C without: a display reads 45001, the hop reads 45001 (through the
         name __K, on the line that binds _C__K), and random.randrange(__S, 50000) with _C__S bound to 40000 reads
-        40000-49999; the class's leading underscores are stripped (class _C mangles to _C__K, class __D to _D__K); a
-        class nested in C reads the spelling of each class around it, the innermost one's (_D__K, which CPython reads)
-        among them; and with __K bound to 1 and _C__K to 45001, __K in C reads 1-45001. The census joins the spellings
-        wherever the module reads __K, so __K read outside C reads 45001 too, an over-read (red). A class named only
-        with underscores mangles nothing, and a name ending in two underscores is not private: each stays unread, green
-        (___K bound to 45001 and __K read in class __; _C__K__ bound to 45001 and __K__ read in C)."""
+        40000-49999; the class's leading underscores are stripped (class _C mangles to _C__K, class __D to _D__K) and no
+        other underscore is (class C_ mangles to _C___K, class C_x to _C_x__K); a class nested in C reads the spelling
+        of each class around it, the innermost one's (_D__K, which CPython reads) among them; and with __K bound to 1
+        and _C__K to 45001, __K in C reads 1-45001. The census joins the spellings wherever the module reads __K, so __K
+        read outside C reads 45001 too, an over-read (red). A class named only with underscores mangles nothing, and a
+        name ending in two underscores is not private: each stays unread, green (___K bound to 45001 and __K read in
+        class __; _C__K__ bound to 45001 and __K__ read in C)."""
         lo, hi, n = LOW + 7232, LOW + 17232, _n()                                  # 40000, 50000 and 45001, built at run time
         method = "    def m(self):\n        return {\"ports\": [__K]}\n"
         for label, src, why, first in (
@@ -2803,6 +2804,10 @@ class Plants(unittest.TestCase):
                 ("a class whose name has a leading underscore", "_C__K = %d\n\n\nclass _C:\n" % n + method,
                  "the key 'ports', a constant expression", n),
                 ("a class whose name has two leading underscores", "_D__K = %d\n\n\nclass __D:\n" % n + method,
+                 "the key 'ports', a constant expression", n),
+                ("a class whose name ends in an underscore", "_C___K = %d\n\n\nclass C_:\n" % n + method,
+                 "the key 'ports', a constant expression", n),
+                ("a class whose name holds an underscore inside it", "_C_x__K = %d\n\n\nclass C_x:\n" % n + method,
                  "the key 'ports', a constant expression", n),
                 ("a class nested in another", "_D__K = %d\n\n\nclass C:\n    class D:\n" % n
                  + "".join("    " + x + "\n" for x in method.splitlines()), "the key 'ports', a constant expression", n),
@@ -3200,8 +3205,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
         digit string, a float that int() truncates, a digit string with spaces, a bytes literal, an int, and two strings
         int() refuses, and half the time by a call too, taking CPython's int() of each value int() takes. Last, per
         relation, a start and a stop that a method of a class reads as a private name, bound at module level only under
-        the spelling the class mangles it to (the class's name drawn with no, one or two leading underscores), taking
-        each value bound there."""
+        the spelling the class mangles it to (the class's name drawn with no, one or two leading underscores, and by
+        turns with no other underscore, one at its end or one inside it), taking each value bound there."""
         rng, out = random.Random(self.SEED + 3), []
 
         def near():
@@ -3262,7 +3267,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
                 s, e = self._shape(relation, near(), rng)
                 iv, n = (s if role == "start" else e), len(out)
                 takes = sorted({iv[0], iv[1], rng.randint(*iv)})
-                cls = rng.choice(("", "_", "__")) + "CJ%d" % n
+                shape = ("CJ%d", "CJ%d_", "C_J%d")[n % 3]   # by turns: no other underscore, one at the end, one inside
+                cls = rng.choice(("", "_", "__")) + shape % n
                 out.append(("the %s, a private name read in a method, bound under its mangled spelling" % role,
                             takes if role == "start" else s, e if role == "start" else takes, rng.choice(self.STEP_SHAPES),
                             rng.choice(self.FORMS), {"pre": ["_%s__RJ%d = %d" % (cls.lstrip("_"), n, x) for x in takes]
