@@ -3786,10 +3786,10 @@ class RandrangeAgainstCPython(unittest.TestCase):
         bound to two positive ints, two negative ones and half the time 0 (for %, the interval's width and its negative
         too), and half the time by a call, taking CPython's quotient by each int but 0, or its remainder of seeded
         values by each; each such case also writes a dict whose port is a number // random.randint(1, 0), a reversed
-        divisor across 0, which the census must read without raising. Last, per relation, a start and a stop written
+        divisor across 0, which the census must read without raising. Then, per relation, a start and a stop written
         with each operator the census reads beyond + - * // and % and the unary minus and plus (**, <<, >>, &, |, ^, ~,
         not, a conditional expression and a :=), over an operand written as an interval's text, taking the value
-        Python's own operator gives at each end of that interval and at a seeded value between. Last, per relation, a
+        Python's own operator gives at each end of that interval and at a seeded value between. Then, per relation, a
         start and a stop written as int() of a constant (by turns a digit string, one with spaces, a float with a
         fraction, bytes, and a digit string with a separator), taking CPython's int() of it; and, per relation, in a
         call written as the right operand of 0 + random.randrange(...), in a form with no ** mapping, twice a step name
