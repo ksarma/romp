@@ -2494,6 +2494,7 @@ _ATTR_NAME = re.compile(r"\[\s*(?:(?:[\w-]*|\*)\|)?([\w-]+)")
 # @else). @import's supports() is refused with every @import by served_css, and @page's page selectors name pages, not elements.
 _AT_HOLDS_A_SELECTOR = re.compile(r"@(scope|custom-selector)(?![\w-])", re.I)
 _SELECTOR_TEST = re.compile(r"(?<![\w-])selector\s*\(", re.I)
+_QUOTED = re.compile(r"\"[^\"]*(?:\"|\Z)|'[^']*(?:'|\Z)")   # a quoted string, to its closing quote or the end, in text with no escape
 
 
 def _bell_rule_classes(html):
@@ -2508,12 +2509,16 @@ def _bell_rule_classes(html):
     The census reads the forms it models and refuses the ones it does not, each by its own assertion anywhere in the served CSS, so a
     rule spelled past the read fails the census instead of passing it unread (T10's fix pass, 2026-10-05: `[id=mbell].busy{opacity:.45}`
     planted in the phone block had passed; review round 1, the same day: `@scope (#mbell){:scope.busy{opacity:.45}}` and
-    `#mbell/**/.busy{opacity:.45}` had passed too). It models a style rule's own selector, a bell's id written there plainly as `#mbell`
-    or `#rail-bell`, and the attribute selectors whose name it can read. It refuses an id attribute selector in any compound, whatever
-    its case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`, `[ID$=bell i]`); a class attribute selector in a
-    compound that carries a bell's id; a `[` that starts no attribute name this read can parse; a CSS escape in a selector or an at-rule
-    prelude (`#\6d bell`, `.bu\73 y`, `@\73 cope`); a comment inside a selector; and an at-rule whose prelude can hold a selector:
-    @scope, whose prelude selects the elements its block styles, @custom-selector, and a selector() test (@supports, @when, @else).
+    `#mbell/**/.busy{opacity:.45}` had passed too, and so had, at that round's fix, `#mtabs #mbell{&.busy{opacity:.45}` left open at
+    the end of a style element and `#mtabs #mbell:not([title=")] "]).busy{opacity:.45}`). It models a style rule's own selector, a bell's id written there
+    plainly as `#mbell` or `#rail-bell`, and the attribute selectors whose name it can read. It refuses an id attribute selector in any
+    compound, whatever its case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`, `[ID$=bell i]`); a class attribute
+    selector in a compound that carries a bell's id; a `[` that starts no attribute name this read can parse; a CSS escape in a
+    selector or an at-rule prelude (`#\6d bell`, `.bu\73 y`, `@\73 cope`); a comment inside a selector; a quoted string in a selector
+    that holds a bracket or paren, which this read's compound split counts as nesting; a `{` inside a style rule's block, a nested
+    rule, which served_css reads as the outer rule's declarations when the outer brace is left off; and an at-rule whose prelude can
+    hold a selector: @scope, whose prelude selects the elements its block styles, @custom-selector, and a selector() test (@supports,
+    @when, @else).
     The comment is refused rather than read because served_css blanks a comment to spaces, which this read takes as a descendant
     combinator, while a browser drops it (`#mbell/**/.busy` is one compound to a browser); served_css's blanking stays as it is, since
     the other censuses read it. The preludes are read from each style element's text rather than from the rules' `at`, since a
@@ -2541,6 +2546,11 @@ def _bell_rule_classes(html):
         assert rule.selector == plain.selector, ("a rule's selector holds a comment (%r, read here as %r): served_css blanks it to spaces, "
                                                  "a descendant combinator, where a browser drops it" % (plain.selector, rule.selector))
         assert "\\" not in rule.selector, "a rule spells a selector with a CSS escape (%r); this census reads plain spellings only" % rule.selector
+        assert "{" not in rule.declarations, ("a rule's block holds a { (%r {%r}): a nested rule, which served_css reads as this rule's "
+                                              "declarations; this census reads rules' own selectors only" % (rule.selector, rule.declarations[:80]))
+        for q in _QUOTED.findall(rule.selector):
+            assert not re.search(r"[()\[\]]", q), ("a quoted string in a selector holds a bracket or paren (%r), which this census's "
+                                                   "compound split counts as nesting" % rule.selector)
         for member in served_css.members(rule.selector):
             for comp in served_css._split_top(re.sub(r"\s*([>+~])\s*", r"\1", member), " >+~"):
                 attrs = [_ATTR_NAME.match(comp, m.start()) for m in re.finditer(r"\[", comp)]
@@ -2697,7 +2707,8 @@ class BellRuleReader(unittest.TestCase):
     def test_a_plain_spelling_is_read_and_plain_attribute_selectors_pass(self):
         self.assertEqual(self._read("#mtabs #mbell.busy{opacity:.45}"
                                     ".rail-acts>#rail-bell:not(.on) svg{opacity:1}"
-                                    "#mtabs button[data-pane=feed][hidden],:lang(en) [lang|=en],[*|title]{display:none}"),
+                                    "#mtabs button[data-pane=feed][hidden],:lang(en) [lang|=en],[*|title]{display:none}"
+                                    "body.x #mtabs button[data-pane=\"chat\"],#mbell[title='a b']{display:none}"),
                          {"mbell": {"busy"}, "rail-bell": {"on"}})
 
     def test_each_spelling_past_the_plain_read_is_refused_by_its_own_assertion(self):
@@ -2737,6 +2748,27 @@ class BellRuleReader(unittest.TestCase):
             ("@supports selector(#mbell.busy){#mtabs .x{opacity:.45}}", "selector() test"),
             (r"@\73 cope (#mbell){:scope.busy{opacity:.45}}", "CSS escape"),
             ("#mtabs #mbell/* the dim */.busy,#rail-bell{opacity:.45}", "holds a comment"),
+        )
+        for css, why in cases:
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(css)
+
+    def test_a_nested_rule_and_a_quoted_bracket_or_paren_in_a_selector_are_refused_by_name(self):
+        # each passed this reader, neither read nor refused, at review round 1's fix (the round's check, 2026-10-05): a nested rule left
+        # open at the end of a style element, which served_css reads as the outer rule's declarations, and a quoted bracket or paren,
+        # which the compound split counts as nesting, so busy lands in a compound without the bell's id
+        cases = (
+            ("#mtabs #mbell{&.busy{opacity:.45}", "block holds a {"),
+            ("#mtabs #mbell{opacity:1;&.busy{opacity:.45}", "block holds a {"),
+            ("@media (max-width:640px){#mbell{&.busy{opacity:.45}}", "block holds a {"),
+            ("#mtabs{#mbell.busy{opacity:.45}", "block holds a {"),
+            ("#mtabs{& #mbell.busy{opacity:.45}", "block holds a {"),
+            ("#mbell{.wrap &.busy{opacity:.45}", "block holds a {"),
+            ('#mtabs #mbell:not([title=")] "]).busy{opacity:.45}', "bracket or paren"),
+            ('#mtabs #mbell[title="] "].busy{opacity:.45}', "bracket or paren"),
+            ('#mtabs #mbell[title=") "].busy{opacity:.45}', "bracket or paren"),
+            ('#mtabs #mbell[title*=")>"].busy{opacity:.45}', "bracket or paren"),
+            ("#mtabs #mbell[title='] '].busy{opacity:.45}", "bracket or paren"),
         )
         for css, why in cases:
             with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
