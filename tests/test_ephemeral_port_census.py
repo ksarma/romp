@@ -38,43 +38,47 @@ THE RULE. A number in the range counts when it is WRITTEN AS A PORT: a value of 
 positions below. This section states what the census reads. A name is BOUND, here and below, by the bindings the census
 records: a constant, a number written with a sign (-7, +7, -7.0, which Python parses as a unary minus or plus over a
 constant, recorded as the number Python computes), or a list, tuple or set display, given to the name anywhere in the
-module by =, an annotated = or :=, by a tuple or list assignment element by element, or by a for loop or a
-comprehension over a display. Any other binding of the name adds no value: every other place Python's grammar binds a
-name, read from the ast (a call's result, B = A, 0 - 7, an augmented assignment, a starred target, a for target over
-anything but a display, a with or except target, a parameter, an import, a function's or class's name, a del, a global
-or nonlocal statement, a match capture), and any binding form the census does not classify, which it counts among
-these (unrecorded_bindings()). Such a binding takes no value away from the hop, a host, a template or offset_base()
-(HOST = "127.0.0.1", then HOST = os.environ["H"], leaves HOST a host), nor, anywhere but at a randrange's step, from
-interval(), which reads every name by the ints the census records for it, whatever its other bindings (K bound to 7
-and to 9 reads 7-9, and so does K bound to 7, to 9 and by K = f()). At a step, and anywhere inside one, interval()
-bounds a name only when the census records every binding of it and each gives an int, so that K is unbounded there
-once K = f() binds it too. A star import, which binds names the module's text does not write, counts as such
-a binding of every name in its module. A position's value that reads a name with such a binding is read twice, by
-the name's recorded ints and with the name unbounded, and counts by either reading, their union: with K bound to 7 and
-by K = f(), 20000 + K % 20000 reads 20007 and, as an unknown operand of % by 20000, 20000-39999, and 40000 + K reads
+module by =, an annotated = or :=, by a tuple or list assignment element by element, or by a for loop or a comprehension
+over a display. An and or an or (BOOLEAN) gives the name each of its operands, each by these same terms, and a for loop
+or a comprehension over one walks each display among its operands: P = os.environ.get("P") or 45001 records 45001 for P,
+and its call is a binding the census does not record (below). Any other binding of the name adds no value: every other
+place Python's grammar binds a name, read from the ast (a call's result, B = A, 0 - 7, an augmented assignment, a
+starred target, a for target over anything but a display, a with or except target, a parameter, an import, a function's
+or class's name, a del, a global or nonlocal statement, a match capture), and any binding form the census does not
+classify, which it counts among these (unrecorded_bindings()). Such a binding takes no value away from the hop, a host,
+a template or offset_base() (HOST = "127.0.0.1", then HOST = os.environ["H"], leaves HOST a host), nor, anywhere but at
+a randrange's step, from interval(), which reads every name by the ints the census records for it, whatever its other
+bindings (K bound to 7 and to 9 reads 7-9, and so does K bound to 7, to 9 and by K = f()). At a step, and anywhere
+inside one, interval() bounds a name only when the census records every binding of it and each gives an int, so that K
+is unbounded there once K = f() binds it too. A star import, which binds names the module's text does not write, counts
+as such a binding of every name in its module. A position's value that reads a name with such a binding is read twice,
+by the name's recorded ints and with the name unbounded, and counts by either reading, their union: with K bound to 7
+and by K = f(), 20000 + K % 20000 reads 20007 and, as an unknown operand of % by 20000, 20000-39999, and 40000 + K reads
 40007 and is a sum built on 40000 (offset_base(), below); where the value gives no reading with the name unbounded (a
 bare name at a randrange's start or stop), the reading by its recorded ints stands alone. A value that reads several
 such names is read once for each mix of the two ways, each name by its ints or unbounded, 2**k readings for k names:
 with BASE bound to 20000 and by BASE = g(), and OFFSET bound to 7 and by OFFSET = f(), BASE + OFFSET % 20000 reads
 20000-39999, BASE by its int and OFFSET unbounded. A value that reads more than eight such names, more than 256 mixes
-(MIXES), is refused: the census counts it, naming the names, an over-refusal wherever no mix reaches the range, since
-reading it by spans or by fewer mixes could miss (a name read unbounded gives no interval at all, so a mix left out can
-be the one reading that counts). So interval(), anywhere but at a step, reads each int a binding the census records
-gives a name, and not a value a binding it does not record gives, unless the value bounds that name's every value as
-these do, nor a float or a string a binding it records gives, which it reads only inside int(), as CPython's int() of
-it, nor a None, which it reads only at a randrange's stop, as the stop left empty (both below; WHAT IT CANNOT SEE gives
-examples); the hop counts every value recorded, a string wherever a string counts. Inside a class Python reads a name
-written with two leading underscores and not two trailing ones as another (__K in class C is _C__K), so a binding of
-either spelling binds the name a read of the other sees: once such a name is written anywhere in a class statement, the
-census counts both spellings among the names with a binding it does not record, wherever the module reads them, unless
-the class's name is underscores alone, which mangles nothing. The spelling with the two underscores (__K) then reads,
-wherever the module reads it, in interval(), offset_base() and the hop (a host and a template read the spelling
-written), by the values the census records under it and under the spelling each class it is written in mangles it to
-(the class's name less its leading underscores): with _C__K bound to 45001, __K read in a method of C reads 45001, as
-CPython does. That is an over-read where the module reads __K outside C, or in a class nested in C, which CPython
-mangles by the innermost class alone; the spelled-out _C__K reads its own values only. A name a module sets with no
-binding form (globals()["K"] = f(), exec("K = f()"), setattr(sys.modules[__name__], "K", f()), or mod.K = f() in another
-module) has no binding here, and the census does not see the value such a setting gives it (WHAT IT CANNOT SEE).
+(MIXES), is refused: the census fails on it as a value it refuses to read, with no port, naming the names and what an
+author changes (bind fewer such names in the expression, or bind them only to values the census records; failure()), an
+over-refusal wherever no mix reaches the range, since reading it by spans or by fewer mixes could miss (a name read
+unbounded gives no interval at all, so a mix left out can be the one reading that counts). So interval(), anywhere but
+at a step, reads each int a binding the census records gives a name, and not a value a binding it does not record gives,
+unless the value bounds that name's every value as these do, nor a float or a string a binding it records gives, which
+it reads only inside int(), as CPython's int() of it, nor a None, which it reads only at a randrange's stop, as the stop
+left empty (both below; WHAT IT CANNOT SEE gives examples); the hop counts every value recorded, a string wherever a
+string counts. Inside a class Python reads a name written with two leading underscores and not two trailing ones as
+another (__K in class C is _C__K), so a binding of either spelling binds the name a read of the other sees: once such a
+name is written anywhere in a class statement, the census counts both spellings among the names with a binding it does
+not record, wherever the module reads them, unless the class's name is underscores alone, which mangles nothing. The
+spelling with the two underscores (__K) then reads, wherever the module reads it, in interval(), offset_base() and the
+hop (a host and a template read the spelling written), by the values the census records under it and under the spelling
+each class it is written in mangles it to (the class's name less its leading underscores): with _C__K bound to 45001,
+__K read in a method of C reads 45001, as CPython does. That is an over-read where the module reads __K outside C, or in
+a class nested in C, which CPython mangles by the innermost class alone; the spelled-out _C__K reads its own values
+only. A name a module sets with no binding form (globals()["K"] = f(), exec("K = f()"), setattr(sys.modules[__name__],
+"K", f()), or mod.K = f() in another module) has no binding here, and the census does not see the value such a setting
+gives it (WHAT IT CANNOT SEE).
   In Python, read by AST (scan_python), the positions:
     a value under a dict key that names a port ({"port": N}, {"local_port": N}, {"busPort": N}; a key names a port when
     one of its words, split at underscores, other punctuation and camelCase, is "port" or "ports": "report" does not;
@@ -142,6 +146,20 @@ module) has no binding here, and the census does not see the value such a settin
     belongs to those positions, so ("127.0.0.1", "N") assigned to a port-named target is a display in the assignment's
     position, and its digit string counts;
     a list, tuple or set display, each element read by these same terms ({"ports": [N, 1]});
+    an and or an or (BOOLEAN), which gives the value of one of its operands: each operand read by these same terms in
+    the same position, the union of their readings (os.environ.get("P") or N under a port-named key counts N, and so
+    does P there after P = os.environ.get("P") or N, BOUND). Inside a value interval() or offset_base() reads, the value
+    is read once for each way of replacing each and and or in it by one of its operands, every way, and counts by any of
+    them: int(x or N) is N, random.randrange(x or 40000, 50000) is 40000-49999 by its second operand, 20000 + (x or 7) %
+    20000 is 20000-39999 by its first, where 7 gives 20007, and random.randrange(40000, 1000, 7 or 9), which Python
+    refuses for both steps, is read by each step's sign and not counted. A for loop or a comprehension over an and or an
+    or walks each display among its operands (for port in ports or (N, 1)); a tuple target of an assignment takes each
+    display of its length among the operands of an and or an or (h, port = x or ("h", N)), and a tuple target of a loop
+    each tuple or list among the operands of an element of its sequence that is one (for h, port in (x or ("h", N),)).
+    A value whose and and or give more than 256 such expressions (MIXES) is refused, as a value that reads too many
+    names with a binding the census does not record is (BOUND). Where THE RULE reads something other than a value (a
+    host, a template, a key, an option, or a name handed with a value), an and or an or is not read (WHAT IT CANNOT
+    SEE);
     an expression interval() bounds that can reach the range, or a sum or difference offset_base() finds built on a
     constant expression in the range (both below);
     a bare name, by one hop, in every position but a loop's sequence: it counts each value it is bound to (BOUND,
@@ -360,6 +378,11 @@ these turns its plant red, and the example leaves this list.
   a host that THE RULE does not take for one (("TESTHOST", N), HTTPConnection(self.host, N)), a name bound to the
   empty string, even in a tuple (H = "", then (H, N)), and the empty string itself before a port in a call (serve("",
   N)); the port beside it is read only when another rule reads it;
+  an and or an or where THE RULE reads something other than a value: a host ((h or "127.0.0.1", N)), a template or the
+  text before a concatenated port ((t or "http://127.0.0.1:%d/") % N, (b or "http://127.0.0.1:") + str(N)), a dict key
+  ({k or "port": N}), a --*port option (["romp", x or "--port", "N"]), and a string handed first that names a port
+  (os.environ.setdefault(k or "ROMP_POSTAL_PORT", "N")); a name bound to one holds each operand (BOUND), so H = h or
+  "127.0.0.1", then (H, N), is read;
   a positional port handed to a function whose name no index holds (a name no function of the module, of a tests/
   module it imports, or of kernel/, postal/ or cli/ carries: vendorlib.start_vendor_server(N), a tests/ helper the
   module does not import, a helper reached through import tests.helpers used whole), with no host right before it;
@@ -755,7 +778,18 @@ def _divided(op, left, right):
 
 
 BIG = 4096                                          # bits: a ** or << whose value can pass 2**BIG is not read
-MIXES = 256                                         # the most ways literal() reads a value's names two ways each (BOUND)
+MIXES = 256                                         # the most ways literal() reads a value's names two ways each (BOUND),
+                                                    # 2 ** 8, so REFUSED_NAMES says eight; and the most ways _choices() gives
+# What literal() says of a value it refuses (THE RULE), with what an author changes, and no port: failure() lists each.
+REFUSED_NAMES = ("it reads more than eight names with a binding the census does not record in one expression (%s), and "
+                 "the census reads each such name both by the values it records and as unknown, every mix of the two, "
+                 "which past eight names it refuses rather than leave a mix out; bind fewer such names in the "
+                 "expression, or bind each of them only to values the census records (a constant, a number with a sign, "
+                 "or a list, tuple or set display, given by =)")
+REFUSED_CHOICES = ("its and and or give it more ways to read than the census reads one by one (each and or or read as "
+                   "each of its operands in turn, every way), which it refuses rather than leave a way out; write fewer "
+                   "of them in the expression, or bind each to a name of its own first, which then holds its operands' "
+                   "values")
 
 
 def _cornered(f, left, right):
@@ -810,8 +844,9 @@ def _bitwise(op, left, right):
 
 
 # The operators interval() reads (THE RULE), each by its class: BINARY's over two bounded operands (an unknown left
-# operand of % too), UNARY's over its operand's interval or None. OPERATOR_LIMITS names, with the reason, each operator
-# of Python's grammar interval() does not read; Operators checks that every one is in exactly one of the three.
+# operand of % too), UNARY's over its operand's interval or None. BOOLEAN, below, holds the boolean operators, which
+# the census reads by their operands (_either()). OPERATOR_LIMITS names, with the reason, each operator of Python's
+# grammar the census does not read; Operators checks that every one is in exactly one of the four.
 BINARY = {
     ast.Add: lambda _op, l, r: (l[0] + r[0], l[1] + r[1], l[2] or r[2]),
     ast.Sub: lambda _op, l, r: (l[0] - r[1], l[1] - r[0], l[2] or r[2]),
@@ -832,6 +867,68 @@ OPERATOR_LIMITS = {
 # reading past EACH gives none; Operators checks that every other operator holds over wider operands the reading it
 # gives over narrower ones, and that each of these can lose it.
 GATED = (ast.Pow, ast.LShift, ast.RShift, ast.BitAnd, ast.BitOr, ast.BitXor)
+# The boolean operators the census reads (THE RULE): each gives the value of one of its operands, so a position reads
+# such a value as each operand, the union of their readings (_either(), _choices()).
+BOOLEAN = {ast.And: "a and b gives a when a is false, else b", ast.Or: "a or b gives a when a is true, else b"}
+
+
+def _either(node):
+    """The operands of an and or an or (BOOLEAN), one of whose values it gives, else None."""
+    if isinstance(node, ast.BoolOp) and type(node.op) in BOOLEAN:
+        return node.values
+    return None
+
+
+def _displays(node):
+    """(the list, tuple and set displays among the values `node` gives, each operand of an and or an or in turn, and
+    True when it can give a value that is no display): ([node], False) for a display itself."""
+    ops = _either(node)
+    if ops is None:
+        return ([node], False) if isinstance(node, (ast.Tuple, ast.List, ast.Set)) else ([], True)
+    seqs, other = [], False
+    for o in ops:
+        s, x = _displays(o)
+        seqs, other = seqs + s, other or x
+    return seqs, other
+
+
+def _replaced(node, old, new):
+    """`node` with the node `old` in it replaced by `new`, copying only the nodes on the path to `old`, each with its
+    place in the source."""
+    if node is old:
+        return new
+    fields, changed = {}, False
+    for f, v in ast.iter_fields(node):
+        if isinstance(v, ast.AST):
+            nv = _replaced(v, old, new)
+            changed = changed or nv is not v
+        elif isinstance(v, list):
+            nv = [_replaced(x, old, new) if isinstance(x, ast.AST) else x for x in v]
+            changed = changed or any(a is not b for a, b in zip(nv, v))
+        else:
+            nv = v
+        fields[f] = nv
+    return ast.copy_location(type(node)(**fields), node) if changed else node
+
+
+def _choices(node):
+    """Each expression `node` gives by its and and or (BOOLEAN): `node` with each and or or in it replaced by one of its
+    operands, every way, so that reading each and taking the union reads every value Python can give; [node] when it
+    holds none, and None past MIXES ways (literal() refuses the value). An operand holding an and or an or is read
+    the same way in turn, and the rest of `node` is shared, so each name and line reads as written."""
+    if not any(_either(x) is not None for x in ast.walk(node)):
+        return [node]
+    out, todo = [], [node]
+    while todo:
+        expr = todo.pop()
+        first = next((x for x in ast.walk(expr) if _either(x) is not None), None)   # breadth first: an outermost one
+        if first is None:
+            out.append(expr)
+            if len(out) > MIXES:
+                return None
+        else:
+            todo.extend(_replaced(expr, first, o) for o in reversed(_either(first)))
+    return out
 
 
 def _random_span(name, ivs):
@@ -1063,7 +1160,8 @@ class _Scan:
         self.own, self.product, self.line_of, self.depth, self.src = own, product, line_of, depth, src
         self.helpers = helpers or _no_helpers
         self.inherited = ({}, {})                   # the imports of the module a code text sits in
-        self.hits = []
+        self.hits, self.refused = [], []            # refused: (line, why, what literal() says of it), THE RULE
+        self.readings = None                        # a list: every span literal() computes, (line, lo, hi), reported or not
 
     def _place(self, est, v, first, last):
         """The line among `first`-`last` of the module's source that writes the number `v`, nearest the estimate `est`
@@ -1195,9 +1293,17 @@ class _Scan:
 
     def literal(self, node, why, strings=True):
         """The numbers `node` writes as a port: an int constant, a five-digit string (when `strings`), each element of a
-        tuple, list or set display of them, a bounded expression that can reach the range, or a sum or difference built
-        on a constant in the range."""
-        if isinstance(node, ast.Constant):
+        tuple, list or set display of them, each operand of an and or an or (BOOLEAN), a bounded expression that can
+        reach the range, or a sum or difference built on a constant in the range. An expression is read once for each
+        expression its and and or give (_choices()), and in each once for each mix of reading each name with a binding
+        the census does not record by its ints or unbounded (BOUND). A value with more than eight such names, or more
+        than MIXES expressions by its and and or, is refused: it goes in self.refused with what to change, and no
+        number in self.hits."""
+        ops = _either(node)
+        if ops is not None:                         # it gives one of its operands: each, read by these same terms
+            for o in ops:
+                self.literal(o, why, strings)
+        elif isinstance(node, ast.Constant):
             v = node.value
             if in_range(v):
                 self._record(node, v, why)
@@ -1210,29 +1316,43 @@ class _Scan:
             loose = sorted({x.id for x in ast.walk(node) if isinstance(x, ast.Name) and x.id in self.reads
                             and x.id not in self.fixed})
             if 2 ** len(loose) > MIXES:
-                self._record(node, LOW, "%s, refused: it reads %d names with a binding the census does not record (%s), "
-                             "more ways to read them than %d" % (why, len(loose), ", ".join(loose), MIXES))
+                self.refused.append((self.line_of(node), why, REFUSED_NAMES % ", ".join(loose)))
                 return
-            got, based = [], False
-            for mix in itertools.product((False, True), repeat=len(loose)):   # True: that name read unbounded
-                unbounded = {k for k, u in zip(loose, mix) if u}
-                iv = interval(node, {k: v for k, v in self.reads.items() if k not in unbounded}, self.steps)
-                if iv and iv[2] and iv[0] <= HIGH and iv[1] >= LOW:
-                    got.append((max(iv[0], LOW), "%s, computed into %d-%d" % (why, iv[0], iv[1])))
-                elif iv and not iv[2] and in_range(iv[0]):
-                    got.append((iv[0], why + ", a constant expression"))
-                elif iv is None and not based:      # offset_base() reads each name by each value in every way alike
-                    based, base = True, offset_base(node, self.reads, self.each)
-                    if base is not None:
-                        got.append((base, "%s, an offset from %d" % (why, base)))
+            exprs = _choices(node)
+            if exprs is None:
+                self.refused.append((self.line_of(node), why, REFUSED_CHOICES))
+                return
+            got = []
+            for expr in exprs:                      # each expression the value's and and or give: the union of all
+                held = {x.id for x in ast.walk(expr) if isinstance(x, ast.Name)}
+                mine, based = [k for k in loose if k in held], False
+                for mix in itertools.product((False, True), repeat=len(mine)):   # True: that name read unbounded
+                    unbounded = {k for k, u in zip(mine, mix) if u}
+                    iv = interval(expr, {k: v for k, v in self.reads.items() if k not in unbounded}, self.steps)
+                    if iv is not None and self.readings is not None:   # RandrangeAgainstCPython checks each one
+                        self.readings.append((self.line_of(node), iv[0], iv[1]))
+                    if iv and iv[2] and iv[0] <= HIGH and iv[1] >= LOW:
+                        got.append((max(iv[0], LOW), "%s, computed into %d-%d" % (why, iv[0], iv[1])))
+                    elif iv and not iv[2] and in_range(iv[0]):
+                        got.append((iv[0], why + ", a constant expression"))
+                    elif iv is None and not based:  # offset_base() reads each name by each value in every way alike
+                        based, base = True, offset_base(expr, self.reads, self.each)
+                        if base is not None:
+                            got.append((base, "%s, an offset from %d" % (why, base)))
             for v, reading in dict.fromkeys(got):     # each reading once, the ways often agreeing
                 self._record(node, v, reading)
 
     def _bind(self, t, v):
         """Records the value `v` gives each name the target `t` binds (BOUND), and the id of each Name it records one
         for; a name the target gives any other value (K = f(), B = A, 0 - 7; a starred target; a tuple target over
-        anything but a display of its length) goes in self.loose, a binding the census does not record."""
-        if isinstance(t, ast.Name) and isinstance(v, (ast.Constant, ast.Tuple, ast.List, ast.Set)):
+        anything but a display of its length) goes in self.loose, a binding the census does not record. An and or an or
+        gives the target each of its operands, each bound by these same terms (P = os.environ.get("P") or 45001 records
+        45001 for P, and the call puts P in self.loose)."""
+        ops = _either(v)
+        if ops is not None:
+            for o in ops:
+                self._bind(t, o)
+        elif isinstance(t, ast.Name) and isinstance(v, (ast.Constant, ast.Tuple, ast.List, ast.Set)):
             self.bound.setdefault(t.id, []).append(v)
             self.recorded.add(id(t))
         elif isinstance(t, ast.Name) and _signed_number(v) is not None:   # -7 is a unary minus over 7: the number it computes
@@ -1245,7 +1365,13 @@ class _Scan:
             self.loose.update(x.id for x in _target_names(t))
 
     def _value(self, v, why, strings=True):
-        if isinstance(v, ast.Name) and v.id in self.reads:
+        """A position's value: an and or an or as each of its operands in the position (BOOLEAN), a bare name by the
+        hop, anything else by literal()."""
+        ops = _either(v)
+        if ops is not None:
+            for o in ops:
+                self._value(o, why, strings)
+        elif isinstance(v, ast.Name) and v.id in self.reads:
             self.uses.append((v.id, why, strings))
         else:
             self.literal(v, why, strings)
@@ -1258,9 +1384,13 @@ class _Scan:
             if isinstance(n, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and n.value is not None:
                 for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
                     self._bind(t, n.value)
-            elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)) and isinstance(n.iter, (ast.Tuple, ast.List, ast.Set)):
-                for e in n.iter.elts:
-                    self._bind(n.target, e)
+            elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)):
+                seqs, other = _displays(n.iter)     # a display, or each display an and or an or can give
+                for seq in seqs:
+                    for e in seq.elts:
+                        self._bind(n.target, e)
+                if seqs and other:                  # and an operand that is no display: a binding not recorded
+                    self.loose.update(x.id for x in _target_names(n.target))
         # What interval() reads a name by (BOUND). Anywhere but at a randrange's step: every name, by the ints the census
         # records for it, their union (self.reads, every value recorded, of which interval() reads the ints); and, for an
         # expression that reads names with a binding the census does not record (every name beside a star import; the
@@ -1313,10 +1443,11 @@ class _Scan:
             elif isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)) and n.value is not None:
                 for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
                     if isinstance(t, (ast.Tuple, ast.List)):
-                        if isinstance(n.value, (ast.Tuple, ast.List)) and len(t.elts) == len(n.value.elts):
-                            for te, ve in zip(t.elts, n.value.elts):
-                                if names_a_port(_target_name(te)):
-                                    self._value(ve, "an assignment to %s" % _target_name(te))
+                        for seq in _displays(n.value)[0]:   # the display, or each one an and or an or can give
+                            if isinstance(seq, (ast.Tuple, ast.List)) and len(t.elts) == len(seq.elts):
+                                for te, ve in zip(t.elts, seq.elts):
+                                    if names_a_port(_target_name(te)):
+                                        self._value(ve, "an assignment to %s" % _target_name(te))
                     elif names_a_port(_target_name(t)):
                         self._value(n.value, "an assignment to %s" % _target_name(t))
             elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -1325,16 +1456,16 @@ class _Scan:
                 for arg, d in list(zip(pos[len(pos) - len(a.defaults):], a.defaults)) + list(zip(a.kwonlyargs, a.kw_defaults)):
                     if d is not None and names_a_port(arg.arg):
                         self._value(d, "the default of %s" % arg.arg)
-            elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)) and isinstance(n.iter, (ast.Tuple, ast.List, ast.Set)):
-                t = n.target
+            elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)) and _displays(n.iter)[0]:
+                t, elts = n.target, [e for seq in _displays(n.iter)[0] for e in seq.elts]   # each display it can walk
                 if isinstance(t, (ast.Tuple, ast.List)):
                     for i, te in enumerate(t.elts):
                         if names_a_port(_target_name(te)):
-                            for e in n.iter.elts:
-                                if isinstance(e, (ast.Tuple, ast.List)) and i < len(e.elts):
-                                    self.literal(e.elts[i], "the loop target %s" % _target_name(te))
+                            for d in (d for e in elts for d in _displays(e)[0]):   # an element an and or an or gives too
+                                if isinstance(d, (ast.Tuple, ast.List)) and i < len(d.elts):
+                                    self.literal(d.elts[i], "the loop target %s" % _target_name(te))
                 elif names_a_port(_target_name(t)):
-                    for e in n.iter.elts:
+                    for e in elts:
                         self.literal(e, "the loop target %s" % _target_name(t))
             elif isinstance(n, (ast.Tuple, ast.List)) and len(n.elts) >= 2:
                 h = self._host(n.elts[0])
@@ -1388,19 +1519,21 @@ class _Scan:
             inner.scan(sub)
             found = inner.hits + text_hits(code_text_tokens(s), first, last)
             self.hits.extend((self._place(ln, v, first, last), v, "in code text, " + why) for ln, v, why in found)
+            self.refused.extend((ln, "in code text, " + why, said) for ln, why, said in inner.refused)
         else:
             self.hits.extend((self._place(ln, v, first, last), v, why) for ln, v, why in text_hits(s, first, last))
 
 
 def scan_python(tree, product, text=None, helpers=None):
-    """[(line, number, why)], sorted and one per (line, number), for a parsed module; `text`, the module's source, places a
+    """([(line, number, why)], sorted and one per (line, number), [(line, why, what literal() says of it)], sorted and
+    each once) for a parsed module: its hits and the values it refuses (THE RULE); `text`, the module's source, places a
     hit inside a string literal on the physical line that writes it; `helpers`, a HelperModules, resolves what the module
     imports from tests/."""
     def line_of(x, end=False):
         return getattr(x, "end_lineno" if end else "lineno", 1) or 1
     sc = _Scan(defs_of(tree), product, line_of, 0, text.split("\n") if text is not None else None, helpers)
     sc.scan(tree)
-    return _one_per_place(sc.hits)
+    return _one_per_place(sc.hits), sorted(set(sc.refused))
 
 
 def _one_per_place(hits):
@@ -1441,11 +1574,11 @@ def product_defs(root):
 
 
 def census(root):
-    """{"hits": [(path relative to root, line, number, why)], "files": n, "python_read": n, "product_defs": n,
-    "helper_modules": n}."""
+    """{"hits": [(path relative to root, line, number, why)], "refused": [(path relative to root, line, why, what
+    literal() says of it)], "files": n, "python_read": n, "product_defs": n, "helper_modules": n}."""
     product = product_defs(root)
     helpers = HelperModules(root)
-    hits, n_files, n_py = [], 0, 0
+    hits, refused, n_files, n_py = [], [], 0, 0
     for p in files(root):
         n_files += 1
         rel = os.path.relpath(p, root)
@@ -1456,18 +1589,37 @@ def census(root):
             continue
         if not any(in_range(_num(m.group(1))) for m in FIVE.finditer(text)) and not (p.endswith(".py") and COMPUTED.search(text)):
             continue
+        said = []
         if p.endswith(".py"):
             n_py += 1
-            found = scan_python(parse_cache.source_and_tree(p)[1], product, text, helpers)
+            found, said = scan_python(parse_cache.source_and_tree(p)[1], product, text, helpers)
         else:
             found = _one_per_place(text_hits(text))
         hits += [(rel, line, v, why) for line, v, why in found]
-    return {"hits": hits, "files": n_files, "python_read": n_py, "product_defs": len(product),
+        refused += [(rel, line, why, what) for line, why, what in said]
+    return {"hits": hits, "refused": refused, "files": n_files, "python_read": n_py, "product_defs": len(product),
             "helper_modules": len(helpers.resolved)}
 
 
 def render(hits):
     return "\n".join("  %s:%d: %d, %s" % h for h in hits)
+
+
+def failure(result):
+    """The census's failure for `result` (census()), or None when it finds nothing: each fixed port it counts, then each
+    value it refuses to read (THE RULE), named with the refusal and what an author changes, and with no port, since the
+    census does not know one."""
+    hits, refused, out = result["hits"], result["refused"], []
+    if hits:
+        out.append("%d fixed port(s) in %d-%d written as a port. Any process can hold a listener on such a port, so a "
+                   "dial to it can hang. Use port 1 for a dial that never lands (2, 3 and on for a row's other ports), "
+                   "and a bind to port 0 or tests/lab_ports.reserve for a listener; this module's docstring states the "
+                   "rule and what it excludes:\n%s" % (len(hits), LOW, HIGH, render(hits)))
+    if refused:
+        out.append("Values written as a port that the census refuses to read, so it cannot tell whether a test writes a "
+                   "fixed port there; this module's docstring states the rule (THE RULE):\n%s"
+                   % "\n".join("  %s:%d: %s: %s" % r for r in refused))
+    return "\n\n".join(out) or None
 
 
 # The sentinels and the bind bands (THE SENTINELS, in the docstring).
@@ -1608,12 +1760,9 @@ class NoFixedEphemeralPort(unittest.TestCase):
         cls.result = parse_cache.derived("ephemeral_port_census", lambda: census(ROOT))
 
     def test_no_test_writes_a_fixed_port_in_the_ephemeral_range(self):
-        hits = self.result["hits"]
-        if hits:
-            self.fail("%d fixed port(s) in %d-%d written as a port. Any process can hold a listener on such a port, so a "
-                      "dial to it can hang. Use port 1 for a dial that never lands (2, 3 and on for a row's other ports), "
-                      "and a bind to port 0 or tests/lab_ports.reserve for a listener; this module's docstring states the "
-                      "rule and what it excludes:\n%s" % (len(hits), LOW, HIGH, render(hits)))
+        said = failure(self.result)
+        if said:
+            self.fail(said)
 
     def test_the_population_is_not_empty(self):
         self.assertGreater(self.result["files"], 1000, "the walk read the tests and the node suites")
@@ -1812,11 +1961,17 @@ class Plants(unittest.TestCase):
             f.write(text)
         os.replace(p + ".new", p)
 
+    def _found(self, name, text):
+        """(hits, refused): the census's hits and the values it refuses in the planted file `name` (written fresh under
+        the scratch root's tests/; the root and every plant in it go with the test's cleanup)."""
+        rel = os.path.join("tests", name)
+        self._write(rel, text)
+        result = census(self.d)
+        return [h for h in result["hits"] if h[0] == rel], [r for r in result["refused"] if r[0] == rel]
+
     def _hits(self, name, text):
-        """The census's hits in the planted file `name` (written fresh under the scratch root's tests/; the root and every
-        plant in it go with the test's cleanup)."""
-        self._write(os.path.join("tests", name), text)
-        return [h for h in census(self.d)["hits"] if h[0] == os.path.join("tests", name)]
+        """The census's hits in the planted file `name`."""
+        return self._found(name, text)[0]
 
     def _whys(self, name, text):
         """Every reason the rules give for the plant, before the census keeps one per place (two rules can read one place,
@@ -1830,14 +1985,20 @@ class Plants(unittest.TestCase):
         return [w for _l, _v, w in sc.hits]
 
     def assertRed(self, name, text, why_part, n=None):
-        hits = self._hits(name, text)
-        self.assertEqual([h[2] for h in hits], [n or _n()], "%s: one hit, the planted number: %r\n%s" % (name, hits, text))
+        """One hit in the plant, the planted number, read by a rule whose reason holds `why_part`, and no value the
+        census refuses (a refusal fails the census too, so it is no reading of the plant)."""
+        hits, refused = self._found(name, text)
+        self.assertEqual(([h[2] for h in hits], refused), ([n or _n()], []),
+                         "%s: one hit, the planted number, and nothing refused: %r %r\n%s" % (name, hits, refused, text))
         whys = self._whys(name, text)
         self.assertTrue(any(why_part in w for w in whys), "%s: read by the rule %r: %r" % (name, why_part, whys))
 
     def assertGreen(self, name, text):
-        hits = self._hits(name, text)
-        self.assertEqual(hits, [], "%s: excluded, yet counted:\n%s\n%s" % (name, render(hits), text))
+        """Nothing counted in the plant and nothing refused: the census fails on a value it refuses as it does on a hit
+        (failure()), so a plant it refuses is not green."""
+        hits, refused = self._found(name, text)
+        self.assertEqual((hits, refused), ([], []), "%s: excluded, yet counted or refused:\n%s\n%s"
+                         % (name, failure({"hits": hits, "refused": refused}), text))
 
     def test_the_python_positions(self):
         n = _n()
@@ -2741,16 +2902,12 @@ class Plants(unittest.TestCase):
         BASE bound to 20000 and by BASE = g(), and OFFSET bound to 7 and by OFFSET = f(), BASE + OFFSET % 20000 reads
         20000-39999 (BASE by its int and OFFSET unbounded), and so do OFFSET % 20000 + BASE, the sum under a port-named
         key, and A + B + C % 20000 with A bound to 20000, B to 0 and C to 7, each by a call too, where reading every
-        name by its ints gives 20007 and reading every one unbounded gives nothing. A value with more such names than
-        eight, more than MIXES ways, is refused, counted with the names: B + Z1 + ... + Z7 + K % 20000, B bound to 20000,
-        each Z to 0 and K to 7, each by a call too, whose value, with B and each Z at its int and K any value, is 20000
-        to 39999; reading it by every name's ints, or by every name one way, gives nothing, a miss. Eight such names are read, not
-        refused: A + ... + H, each bound to 1 and by a call, is green."""
+        name by its ints gives 20007 and reading every one unbounded gives nothing. Eight such names are read, not
+        refused: A + ... + H, each bound to 1 and by a call, is green (more are refused, as the refusal's own test pins:
+        test_a_refused_value_fails_naming_the_refusal_and_what_to_change)."""
         lo = LOW + 7232                                                            # 40000, built at run time
         c = 20000                                   # the base and the modulus, written apart from the plants' text
         two = "BASE = %d\nBASE = g()\nOFFSET = 7\nOFFSET = f()\n" % c
-        nine = "B = %d\nB = g()\n" % c + "".join("Z%d = 0\nZ%d = f()\n" % (i, i) for i in range(1, 8)) + "K = 7\nK = f()\n"
-        names = "B, K, " + ", ".join("Z%d" % i for i in range(1, 8))
         for label, src, why in (
                 ("a sum, its base by its int and its other operand unbounded", two + "port = BASE + OFFSET %% %d\n" % c,
                  "an assignment to port, computed into 20000-39999"),
@@ -2759,14 +2916,57 @@ class Plants(unittest.TestCase):
                 ("under a port-named key", two + 'row = {"port": BASE + OFFSET %% %d}\n' % c,
                  "the key 'port', computed into 20000-39999"),
                 ("three names", "A = %d\nA = g()\nB = 0\nB = h()\nC = 7\nC = f()\nport = A + B + C %% %d\n" % (c, c),
-                 "an assignment to port, computed into 20000-39999"),
-                ("nine names, refused", nine + "port = B + %s + K %% %d\n" % (" + ".join("Z%d" % i for i in range(1, 8)), c),
-                 "an assignment to port, refused: it reads 9 names with a binding the census does not record (%s)" % names)):
+                 "an assignment to port, computed into 20000-39999")):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why, n=LOW)
         with self.subTest("eight names, read"):
             self.assertGreen("test_x.py", "".join("%s = 1\n%s = f()\n" % (k, k) for k in "ABCDEFGH")
                              + "port = A + B + C + D + E + F + G + H                # %d opens the file\n" % lo)
+
+    def test_a_refused_value_fails_naming_the_refusal_and_what_to_change(self):
+        """A value the census refuses (THE RULE) fails the census as refused, with no port: its failure names the
+        refusal and what an author changes, where a census that counted it reported a fixed port at 32768 (the owner's
+        call of 2026-10-05 on fork PR 973). B + Z1 + ... + Z7 + K % 20000, B bound to 20000, each Z to 0 and K to 7,
+        each by a call too, reads nine names with a binding the census does not record, more than eight, more than MIXES
+        mixes; its value, with B and each Z at its int and K any value, is 20000 to 39999, and reading it by every
+        name's ints, or by every name one way, gives nothing, a miss, so it is refused. The failure names it, the nine
+        names, and the remedy (bind fewer such names, or bind them only to values the census records), and holds no
+        figure but the plant's line. The plant also fails assertGreen, which reads the values the census refuses as well
+        as its hits, as a census that counted the plant made it do. A value whose and and or give more than MIXES
+        expressions is refused as well, with its remedy (write fewer of them, or bind each to a name first): (a0 or 1) +
+        ... + (a8 or 1) + os.getpid() % 20000 gives 512 expressions; eight such terms, 256, are read, and (a0 or
+        40000) + (a1 or 0) + ... + (a7 or 0) + worker counts 40000."""
+        c, rel = 20000, os.path.join("tests", "test_plant.py")   # the base and the modulus, written apart from the text
+        names = ["B", "K"] + ["Z%d" % i for i in range(1, 8)]
+        src = ("B = %d\nB = g()\n" % c + "".join("Z%d = 0\nZ%d = f()\n" % (i, i) for i in range(1, 8)) + "K = 7\nK = f()\n"
+               + "port = B + %s + K %% %d\n" % (" + ".join("Z%d" % i for i in range(1, 8)), c))
+        line = src.count("\n")
+        self._write(rel, src)
+        result = census(self.d)
+        said = failure(result) or ""
+        for part in ("refuses to read", "more than eight names with a binding the census does not record in one "
+                     "expression (%s)" % ", ".join(names), "bind fewer such names in the expression",
+                     "bind each of them only to values the census records"):
+            self.assertIn(part, said, "the failure names the refusal and what to change")
+        self.assertEqual(re.findall(r"(?<![\w.])\d+(?![\w.])", said), [str(line)],
+                         "no figure but the plant's line, so no port: %s" % said)
+        self.assertEqual((result["hits"], [r[:3] for r in result["refused"]]), ([], [(rel, line, "an assignment to port")]),
+                         "a refused value reports no port, and is refused once")
+        self.assertEqual(MIXES, 2 ** 8, "REFUSED_NAMES says eight names, 2 ** 8 mixes")
+        with self.assertRaises(AssertionError, msg="a plant the census refuses is not green"):
+            self.assertGreen("test_plant.py", src)
+        many = "port = " + " + ".join("(a%d or 1)" % i for i in range(9)) + " + os.getpid() %% %d\n" % c
+        self._write(rel, many)
+        result = census(self.d)
+        self.assertEqual((result["hits"], [r[:3] for r in result["refused"]]), ([], [(rel, 1, "an assignment to port")]))
+        said = failure(result)
+        for part in ("refuses to read", "its and and or give it more ways to read than the census reads one by one",
+                     "write fewer of them in the expression, or bind each to a name of its own first"):
+            self.assertIn(part, said)
+        self.assertEqual(re.findall(r"(?<![\w.])\d+(?![\w.])", said), ["1"], "no figure but the plant's line: %s" % said)
+        self.assertRed("test_plant.py", "srv.bind((\"127.0.0.1\", (a0 or %d) + %s + worker))\n"
+                       % (LOW + 7232, " + ".join("(a%d or 0)" % i for i in range(1, 8))), "an offset from %d" % (LOW + 7232),
+                       n=LOW + 7232)
 
     def test_offset_base_reads_an_operand_with_more_ways_than_each_by_its_spans(self):
         """offset_base() reads an operand value by value only while its names can take their values at most EACH ways;
@@ -3317,6 +3517,71 @@ class Plants(unittest.TestCase):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why, n=first)
 
+    def test_an_and_or_an_or_reads_each_of_its_operands(self):
+        """An and or an or gives the value of one of its operands, so wherever THE RULE reads a value it reads each
+        operand in that place, the union of their readings, and a default a test writes by or counts (the owner's call
+        of 2026-10-05 on fork PR 973: the most common way a test writes a default port). Each red plant was not counted
+        where the census read an and or an or as a value it cannot bound: under a port-named key,
+        os.environ.get("P") or 45001 and x and 45001 are 45001, and so are int(x or 45001), int(a and b or 45001),
+        (x or 45000) + 1, str(x or 45001) assigned to a port-named target, [x or 45001] under a ports key, a loop over
+        (x or 45001, 1) and over ports or (45001, 1), h, port = x or ("TESTHOST", 45001), a loop over
+        (x or ("TESTHOST", 45001),), P under a port-named key after P = os.environ.get("P") or 45001 (the hop), and the
+        address (H, 45001) after H = h or "127.0.0.1"; random.randrange(x or 40000, 50000) and random.randrange(40000,
+        x or 50000) are 40000-49999, random.randint(x or 40000, 50000) and random.randint(40000, x or 50000)
+        40000-50000, and secrets.randbelow(x or 50000) 0-49999; and (x or 40000) + worker as an address's port is a sum
+        built on 40000. The next plants pin that every operand is read, not the first alone or the last alone, and were
+        counted where the census read an and or an or as a value it cannot bound, by the unknown operand of % and by the
+        step of either sign: 20000 + (x or 7) % 20000 and 20000 + (7 or x) % 20000 are 20000-39999 by x unknown, where 7
+        gives 20007, and random.randrange(40000, 1000, 7 or -7) and random.randrange(40000, 1000, -7 or 7) are
+        1001-40000 by the step -7, where the step 7 counts nothing. A step whose every operand is bounded reads by each
+        operand's sign, so random.randrange(40000, 1000, 7 or 9), which Python refuses for both, is not counted (green),
+        where reading such a step as unbounded counted 1001-40000."""
+        n, lo, hi = _n(), LOW + 7232, LOW + 17232                                  # 45001, 40000 and 50000
+        key, ass, c = "the key 'port'", "an assignment to port, ", 20000   # c: the modulus, written apart from the text
+        for label, src, why, first in (
+                ("a default by or, under a port-named key", 'row = {"port": os.environ.get("P") or %d}\n' % n, key, n),
+                ("an and", 'row = {"port": x and %d}\n' % n, key, n),
+                ("int() of an or", 'row = {"port": int(x or %d)}\n' % n, key + ", a constant expression", n),
+                ("an and inside an or, inside int()", 'row = {"port": int(a and b or %d)}\n' % n,
+                 key + ", a constant expression", n),
+                ("a sum over an or", 'row = {"port": (x or %d) + 1}\n' % (n - 1), key + ", a constant expression", n),
+                ("str() of an or, assigned to a port-named target", 'os.environ["ROMP_POSTAL_PORT"] = str(x or %d)\n' % n,
+                 "an assignment to ROMP_POSTAL_PORT, a constant expression", n),
+                ("a display", 'row = {"ports": [x or %d]}\n' % n, "the key 'ports'", n),
+                ("an element of a loop's display", "for port in (x or %d, 1):\n    pass\n" % n, "the loop target port", n),
+                ("a loop's sequence", "for port in ports or (%d, 1):\n    pass\n" % n, "the loop target port", n),
+                ("a tuple assignment from an or", 'h, port = x or ("TESTHOST", %d)\n' % n, "an assignment to port", n),
+                ("a tuple target over an or in a loop's display",
+                 'for host, port in (x or ("TESTHOST", %d),):\n    pass\n' % n, "the loop target port", n),
+                ("the hop through a name bound by or", 'P = os.environ.get("P") or %d\nrow = {"port": P}\n' % n,
+                 "through the name P", n),
+                ("a host bound by or", 'H = h or "127.0.0.1"\ns.connect((H, %d))\n' % n,
+                 "the port of the address ('127.0.0.1', ...)", n),
+                ("a randrange's start", "port = random.randrange(x or %d, %d)\n" % (lo, hi),
+                 ass + "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a randrange's stop", "port = random.randrange(%d, x or %d)\n" % (lo, hi),
+                 ass + "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a randint's first bound", "port = random.randint(x or %d, %d)\n" % (lo, hi),
+                 ass + "computed into %d-%d" % (lo, hi), lo),
+                ("a randint's second bound", "port = random.randint(%d, x or %d)\n" % (lo, hi),
+                 ass + "computed into %d-%d" % (lo, hi), lo),
+                ("a randbelow's bound", "port = secrets.randbelow(x or %d)\n" % hi, ass + "computed into 0-%d" % (hi - 1),
+                 LOW),
+                ("a sum built on an operand", 'srv.bind(("127.0.0.1", (x or %d) + worker))\n' % lo,
+                 "an offset from %d" % lo, lo),
+                ("% over an or, the unknown first", "port = %d + (x or 7) %% %d\n" % (c, c),
+                 ass + "computed into 20000-39999", LOW),
+                ("% over an or, the unknown last", "port = %d + (7 or x) %% %d\n" % (c, c),
+                 ass + "computed into 20000-39999", LOW),
+                ("a step, the negative operand last", "port = random.randrange(%d, 1000, 7 or -7)\n" % lo,
+                 ass + "computed into 1001-%d" % lo, LOW),
+                ("a step, the negative operand first", "port = random.randrange(%d, 1000, -7 or 7)\n" % lo,
+                 ass + "computed into 1001-%d" % lo, LOW)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+        with self.subTest("a step whose every operand is positive, which Python refuses"):
+            self.assertGreen("test_x.py", "port = random.randrange(%d, 1000, 7 or 9)\n" % lo)
+
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
         that reads one turns its subtest red, and the example leaves the docstring's list."""
@@ -3373,6 +3638,11 @@ class Plants(unittest.TestCase):
                 ("a host that is no loopback or wildcard literal", "test_x.py",
                  's.connect(("TESTHOST", %d))\nconn = HTTPConnection(self.host, %d)\n' % (n, n)),
                 ("a name bound only to the empty string, in a tuple", "test_x.py", 'H = ""\ns.bind((H, %d))\n' % n),
+                ("an and or an or where THE RULE reads something other than a value", "test_x.py",
+                 's.connect((h or "127.0.0.1", %d))\nu = (t or "http://127.0.0.1:%%d/") %% %d\n'
+                 'v = (b or "http://127.0.0.1:") + str(%d)\nrow = {k or "port": %d}\n'
+                 'subprocess.run(["romp", x or "--port", "%d"])\nos.environ.setdefault(k or "ROMP_POSTAL_PORT", "%d")\n'
+                 % (n, n, n, n, n, n)),
                 ("the empty string before a port in a call", "test_x.py", 'serve("", %d)\n' % n),
                 ("a function no index holds, no host before it", "test_x.py",
                  'import vendorlib\nvendorlib.start_vendor_server(%d)\n' % n),
@@ -3517,7 +3787,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
     light check at the pushed head after them with a start or stop name bound to ints beside a string, a float or
     None, with a divisor bound to ints of both signs, with each operator the census reads, with int() of a constant,
     with a call that is a sum's right operand, its step a name with a binding the census does not record, and with two
-    such names in a start or stop)."""
+    such names in a start or stop; and the owner's calls after that check with a start, a stop or a step written with an
+    and or an or)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
@@ -3913,6 +4184,93 @@ class RandrangeAgainstCPython(unittest.TestCase):
                              role: "XB%d + XO%d %% %d" % (n, n, w)}))
         return out
 
+    def _boolean(self):
+        """The calls the owner's calls of 2026-10-05 after the light check at the pushed head added: a start, a stop or
+        a step written with an and or an or, which THE RULE reads by each operand in its place, from a generator seeded
+        apart from the grid's and the four above so their calls, samples and draws stay as they were. Per relation, for
+        the start and for the stop, twice each: an or or an and of two intervals' texts, taking each one's values; an
+        unknown (f()) and an interval's text joined by or or by and, either way round, taking the interval's values (an
+        unknown start or stop is not read: WHAT IT CANNOT SEE); the interval's lowest value plus an or of an unknown and
+        an int, % the interval's width, either way round, taking that int's remainder and those of 0, the width less one
+        and two seeded ints, which the unknown can give; int() of an or of an unknown and a digit string; an and inside
+        an or (f() and A or B), taking A's and B's values; a name bound twice, each time to an or of a call and an int,
+        taking both ints; and a name a for loop binds over an or of a call and a display of two ints, taking both. Then,
+        per relation, a step: an or or an and of two steps of STEP_SHAPES that interval() bounds, taking each one's
+        values; an unknown and such a step, taking STEPS and that step's values; and a step name bound to an or of a
+        call and an int, taking STEPS and the int."""
+        rng, out = random.Random(self.SEED + 5), []
+
+        def near():
+            return rng.choice((LOW + rng.randint(-60, 60), HIGH + rng.randint(-60, 60), rng.randint(LOW + 100, HIGH - 100),
+                               rng.randint(1024, LOW - 200)))
+
+        def ends(iv):
+            return sorted({iv[0], iv[1], rng.randint(*iv)})
+
+        def takes(kiv):
+            return {kiv[0], kiv[1], rng.randint(*kiv)} | {x for x in (-1, 0, 1) if kiv[0] <= x <= kiv[1]}
+        bounded = [(k, kiv) for k, kiv in self.STEP_SHAPES if k is not None and kiv is not None]
+        shapes = {"two intervals": "an and or an or of two intervals",
+                  "an unknown and an interval": "an and or an or of an unknown and an interval",
+                  "%": "% by its width of an or of an unknown and an int",
+                  "int()": "int() of an or of an unknown and a digit string",
+                  "an and inside an or": "an and inside an or",
+                  "a name bound twice": "a name bound twice by an or",
+                  "a loop's name": "a name a loop binds over an or"}
+        for relation in self.RELATIONS:
+            for role, shape in itertools.product(("start", "stop"), shapes):
+                for _ in range(2):
+                    s, e = self._shape(relation, near(), rng)
+                    iv, n = (s if role == "start" else e), len(out)
+                    c = near()
+                    other, op, first = (c, c + rng.randint(0, 40)), rng.choice(("or", "and")), rng.random() < 0.5
+                    how = {}
+                    if shape == "two intervals":
+                        a, b = (iv, other) if first else (other, iv)
+                        how[role], got = "(%s) %s (%s)" % (self._text(a), op, self._text(b)), set(ends(a)) | set(ends(b))
+                    elif shape == "an unknown and an interval":
+                        how[role] = ("f() %s (%s)" if first else "(%s) %s f()") % (
+                            (op, self._text(iv)) if first else (self._text(iv), op))
+                        got = set(ends(iv))
+                    elif shape == "%":
+                        lo, w, v = iv[0], iv[1] - iv[0] + 1, rng.randint(0, 5000)
+                        how[role] = ("%d + (f() or %d) %% %d" if first else "%d + (%d or f()) %% %d") % (lo, v, w)
+                        got = {lo + k % w for k in (v, 0, w - 1) + tuple(rng.randint(-10 ** 6, 10 ** 6) for _ in "ab")}
+                    elif shape == "int()":
+                        v = rng.randint(*iv)
+                        how[role], got = 'int(f() or "%d")' % v, {v}
+                    elif shape == "an and inside an or":
+                        how[role] = "f() and (%s) or (%s)" % (self._text(iv), self._text(other))
+                        got = set(ends(iv)) | set(ends(other))
+                    elif shape == "a name bound twice":
+                        name, got = "BN%d" % n, {rng.randint(*iv), rng.randint(*iv)}
+                        pre = ["%s = %s() or %d" % (name, f, v) for f, v in zip("fg", sorted(got) * 2)]
+                        how.update({role: name, "pre": pre})
+                    else:
+                        name, got = "BL%d" % n, {rng.randint(*iv), rng.randint(*iv)}
+                        vs = sorted(got) * 2
+                        how.update({role: name, "pre": ["for %s in f() or (%d, %d):" % (name, vs[0], vs[1])], "indent": 4})
+                    got = sorted(got)
+                    out.append(("the %s, %s" % (role, shapes[shape]), got if role == "start" else s,
+                                e if role == "start" else got, rng.choice(self.STEP_SHAPES), rng.choice(self.FORMS), how))
+            s, e = self._shape(relation, near(), rng)
+            (k1, kiv1), (k2, kiv2) = rng.sample(bounded, 2)
+            out.append(("the step, an and or an or of two steps", s, e,
+                        ("(%s) %s (%s)" % (k1, rng.choice(("or", "and")), k2), sorted(takes(kiv1) | takes(kiv2))),
+                        rng.choice(self.FORMS), {}))
+            s, e = self._shape(relation, near(), rng)
+            k1, kiv1 = rng.choice(bounded)
+            written = ("f() %s (%s)" if rng.random() < 0.5 else "(%s) %s f()")
+            op = rng.choice(("or", "and"))
+            out.append(("the step, an and or an or of an unknown and a step", s, e,
+                        (written % ((op, k1) if written.startswith("f()") else (k1, op)),
+                         sorted(set(self.STEPS) | takes(kiv1))), rng.choice(self.FORMS), {}))
+            s, e = self._shape(relation, near(), rng)
+            name, v = "BK%d" % len(out), rng.choice((7, -7, 1))
+            out.append(("the step, a name bound to an or of a call and an int", s, e, (name, sorted(set(self.STEPS) | {v})),
+                        rng.choice(self.FORMS), {"pre": ["%s = f() or %d" % (name, v)]}))
+        return out
+
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
         """A seeded generator writes randrange calls: start's interval below stop's, above it, touching it from either
         side, one value with it, and overlapping it four ways, crossed with STEP_SHAPES (steps known positive, known
@@ -3935,19 +4293,22 @@ class RandrangeAgainstCPython(unittest.TestCase):
         signs, a start or stop written with each operator the census reads beyond + - * // and % and the unary minus and
         plus, a start or stop that is int() of a constant, and a step name with a binding the census does not record, or
         bound to an int and to a float, in a call that is a sum's right operand, and a start or stop that sums two names
-        with such a binding. The census reads them as one module, each call on a line of its own after the lines that
-        bind its names (in the class's body or a method where the call reads the name there). For each call the test
-        samples start and stop at each end of their intervals and at a seeded value between (or each value they take),
-        and the step at each end, a seeded value between, and -1, 0 and 1 where the step can take them (an unbounded
-        step takes STEPS, a step name each value it is bound to), and runs CPython's Random.randrange, the function
-        random.randrange is bound to, three times: with its draw pinned to the lowest and to the highest
-        (_RandrangeEnds), and with a seeded draw. Every value returned must lie in a span the census reports (every
-        reading of the call, before the census keeps one per place: a call that reads names with a binding the census
-        does not record has one for each mix of reading each by its recorded ints or unbounded), and where the census
-        reports nothing no value may lie in the range. That holds for a start or stop name with a binding the census
-        does not record too: it takes the ints its recorded bindings give, and THE RULE reads them, and under % by a
-        constant it takes any value, which THE RULE reads with the name unbounded. The failure names the calls outside
-        by shape, with the first of each."""
+        with such a binding; and those _boolean() writes, a start, a stop or a step written with an and or an or. The
+        census reads them as one module, each call on a line of its own after the lines that bind its names (in the
+        class's body or a method where the call reads the name there). For each call the test samples start and stop at
+        each end of their intervals and at a seeded value between (or each value they take), and the step at each end, a
+        seeded value between, and -1, 0 and 1 where the step can take them (an unbounded step takes STEPS, a step name
+        each value it is bound to), and runs CPython's Random.randrange, the function random.randrange is bound to,
+        three times: with its draw pinned to the lowest and to the highest (_RandrangeEnds), and with a seeded draw.
+        Every value returned in the range must lie in a span the census reports (every reading of the call, before the
+        census keeps one per place: a call that reads names with a binding the census does not record has one for each
+        mix of reading each by its recorded ints or unbounded, and one with an and or an or one for each expression they
+        give), and, where the census reports a span, every value returned must lie in a span it computes
+        (_Scan.readings), since it reports only the spans that reach the range and an and or an or can give one that
+        does beside one that does not. That holds for a start or stop name with a binding the census does not record
+        too: it takes the ints its recorded bindings give, and THE RULE reads them, and under % by a constant it takes
+        any value, which THE RULE reads with the name unbounded. The failure names the calls outside by shape, with the
+        first of each."""
         rng = random.Random(self.SEED)
         cases = [("overlapping, start higher", (30000, 32999), (20000, 30999), ("0 - 7", (-7, -7)), (), {}),
                  ("start's lowest value stop's highest", (30000, 34999), (30000, 30000), ("0 - 7", (-7, -7)), (), {}),
@@ -3960,7 +4321,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
                         c = rng.choice((LOW + rng.randint(-60, 60), HIGH + rng.randint(-60, 60),
                                         rng.randint(LOW + 100, HIGH - 100), rng.randint(1024, LOW - 200)))
                         cases.append((relation,) + self._shape(relation, c, rng) + (step, form, {}))
-        cases += self._grown() + self._mixed() + self._recorded() + self._checked()
+        cases += self._grown() + self._mixed() + self._recorded() + self._checked() + self._boolean()
 
         def written(p, x):
             return "%s=%s" % (p, x) if p[0] != "*" else "**{%s}" % ("" if x is None else '"%s": %s' % (p[2:], x))
@@ -3975,12 +4336,16 @@ class RandrangeAgainstCPython(unittest.TestCase):
             line_of[n] = len(lines)
         case_at = {line: n for n, line in line_of.items()}
         reading = {}                                # every reading of a call, before the census keeps one per place
+        computed = {}                               # every span the census computes for a call, reported or not
         sc = _Scan({}, {}, lambda x, end=False: getattr(x, "end_lineno" if end else "lineno", 1) or 1, 0)
+        sc.readings = []
         sc.scan(ast.parse("".join(lines)))
         for line, _v, why in sc.hits:
             self.assertIn(line, case_at, "a hit on a line that writes no call: %s" % why)
             m = re.search(r"computed into (-?\d+)-(-?\d+)$", why)
             reading.setdefault(case_at[line], []).append((int(m.group(1)), int(m.group(2))) if m else why)
+        for line, lo, hi in sc.readings:
+            computed.setdefault(case_at.get(line), []).append((lo, hi))
 
         def between(iv):
             return sorted({iv[0], iv[1], rng.randint(*iv)})
@@ -4005,8 +4370,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
                             returned += 1
                             if LOW <= v <= HIGH:
                                 reached |= {label} | (set() if how else {k})
-                            if (got is None and LOW <= v <= HIGH) or (got is not None and not any(
-                                    isinstance(r, tuple) and r[0] <= v <= r[1] for r in got)):
+                            if (LOW <= v <= HIGH and not any(isinstance(r, tuple) and r[0] <= v <= r[1] for r in got or ()))\
+                                    or (got is not None and not any(r[0] <= v <= r[1] for r in computed.get(n, ()))):
                                 bad.add(n)
                                 failures.setdefault(label, []).append(
                                     "line %d, %s: start %s, stop %s, step %s returned %d; the census reads %s"
@@ -4063,26 +4428,29 @@ class Operators(unittest.TestCase):
     2026-10-05 on fork PR 973: interval() reads the operators as one closed class)."""
 
     def test_every_operator_is_read_or_named_as_one_not_read(self):
-        """Each operator class of the running interpreter's ast, binary (ast.operator's subclasses) and unary
-        (ast.unaryop's), is in exactly one of BINARY or UNARY, the operators interval() reads, and OPERATOR_LIMITS, the
-        ones it names as not read, with the reason; so an operator a later Python adds fails here until the census
-        reads it or names it. Each key of the three is such a class, so none is misspelled or stale."""
-        for base, read in ((ast.operator, BINARY), (ast.unaryop, UNARY)):
+        """Each operator class of the running interpreter's ast, binary (ast.operator's subclasses), unary
+        (ast.unaryop's) and boolean (ast.boolop's), is in exactly one of BINARY, UNARY or BOOLEAN, the operators the
+        census reads, and OPERATOR_LIMITS, the ones it names as not read, with the reason; so an operator a later Python
+        adds fails here until the census reads it or names it. Each key of the four is such a class, so none is
+        misspelled or stale."""
+        for base, read, least in ((ast.operator, BINARY, 4), (ast.unaryop, UNARY, 4), (ast.boolop, BOOLEAN, 2)):
             ops = set(_subclasses(base))
-            self.assertGreater(len(ops), 3, "the grammar's %s classes were found" % base.__name__)
+            self.assertGreaterEqual(len(ops), least, "the grammar's %s classes were found" % base.__name__)
             for op in sorted(ops, key=lambda c: c.__name__):
                 with self.subTest(op.__name__):
                     self.assertEqual((op in read) + (op in OPERATOR_LIMITS), 1,
-                                     "%s: read by interval() and named as not read, or neither" % op.__name__)
+                                     "%s: read by the census and named as not read, or neither" % op.__name__)
             self.assertEqual(sorted(c.__name__ for c in set(read) - ops), [], "a key that is no %s" % base.__name__)
         self.assertEqual(sorted(c.__name__ for c in set(OPERATOR_LIMITS) - set(_subclasses(ast.operator))
-                                - set(_subclasses(ast.unaryop))), [], "an OPERATOR_LIMITS key that is no operator")
+                                - set(_subclasses(ast.unaryop)) - set(_subclasses(ast.boolop))), [],
+                         "an OPERATOR_LIMITS key that is no operator")
 
     def test_each_operator_read_holds_every_value_python_computes(self):
         """For each operator of BINARY and UNARY, over operands drawn from a pool of intervals (one value or several;
         negative, with 0 at an end, across 0, positive, in the range), interval() reads names bound to each operand's
         ends, and every int Python's own operator computes over values at those ends, between them and at -1, 0 and 1
-        where the operand holds them, lies in its reading. Where it gives no reading, the operands are one THE RULE
+        where the operand holds them, lies in its reading; and for each of BOOLEAN, in the reading of one of the
+        expressions _choices() gives, the census's union. Where it gives no reading, the operands are one THE RULE
         leaves out: an operand that can be negative under **, <<, >>, &, | or ^, a divisor that is 0 alone, or a ** or
         << whose value can pass 2**BIG. not reads 0 to 1 over an operand interval() does not bound too."""
         rng = random.Random(973)
@@ -4130,6 +4498,17 @@ class Operators(unittest.TestCase):
                     v = eval(code, {"A": x})
                     if got is None or not got[0] <= v <= got[1]:
                         outside.append("%s %d is %d, outside %r" % (cls.__name__, x, v, got))
+        for cls in sorted(BOOLEAN, key=lambda c: c.__name__):  # each expression _choices() gives, the union of their readings
+            for left in pool:
+                for right in pool:
+                    node = ast.BoolOp(cls(), [ast.Name("A", ast.Load()), ast.Name("B", ast.Load())])
+                    got = [interval(x, bound(A=left, B=right)) for x in _choices(node)]
+                    code = compile(ast.fix_missing_locations(ast.Expression(node)), "<operator>", "eval")
+                    for x in values(left):
+                        for y in values(right):
+                            v = eval(code, {"A": x, "B": y})
+                            if not any(g and g[0] <= v <= g[1] for g in got):
+                                outside.append("%d %s %d is %d, outside %r" % (x, cls.__name__, y, v, got))
         self.assertEqual(outside, [], "a value Python computes outside interval()'s reading")
         self.assertEqual(unread, [], "operands THE RULE reads, not read")
         self.assertEqual(interval(ast.parse("not f()", mode="eval").body), (0, 1, True))
