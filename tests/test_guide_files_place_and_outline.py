@@ -254,7 +254,9 @@ class TheViewerDoesIt(unittest.TestCase):
         gate = self.viewer[self.viewer.index("const spendHeading = (): void => {"):]
         gate = gate[:gate.index("\n  };\n")]
         self.assertIn("const h = pendingHeading; pendingHeading = null;", gate, "spent once, on that paint")
-        self.assertIn("if (!wrap.isConnected || scrollToFragment(body, h)) return;", gate)
+        self.assertIn("if (!wrap.isConnected) return;\n      if (scrollToFragment(body, h)) { notePlace(); return; }", gate,
+                      "landed: the frame notes the place it lands on, so the width hook's repaint keeps it (the check of PR 961's round-2 pass; "
+                      "file-view-math-hold-browser.test.ts's heading scenes with classic scrollbars execute it)")
         self.assertIn("noteBar('No section named", gate, "the notice is the same frame's other branch")
         # a frame over a body with no box (the pane hidden at the paint) parks the target again for the show's repaint, which
         # spends it through landTarget (the review's round 5: a hidden paint had spent it over the zero layout, no notice)
