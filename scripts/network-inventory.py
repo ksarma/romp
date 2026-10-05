@@ -267,7 +267,8 @@ read) and through a dict literal's values (refused before its type is read, belo
 write inside one that is no `_send` definition's own write, and a call whose definition binds the parameter one of its own writes
 names other than as that parameter); a type holding a CR or LF is refused by name before it is compared, even at a place
 SERVED_ALLOW names, where the census resolves the type there (its header line ends there, and what follows is another header or
-the body, which the census does not read); at a place no SERVED_ALLOW entry names, so is a type that is not exactly one listed
+the body, which the census does not read), and no allowlist entry excuses a Content-Type write with no nosniff header beside it,
+whatever its type; at a place no SERVED_ALLOW entry names, so is a type that is not exactly one listed
 type, since a browser may run a page under any other (a list of types by its last valid one, a type it sniffs where no nosniff
 header stands, a multipart's HTML part): one holding a character past ASCII or a comma, or whose part before any `;`, stripped of
 spaces and tabs alone and lower-cased, is in neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix (NO_SCRIPT_TYPES:
@@ -285,7 +286,11 @@ write that writes the header from a branch exclusive with the write's, a callabl
 name, a function that reaches the handler through a global, a closure or a frame, and a name computed before the write), at a
 `_send` call and at a write outside
 it alike, since without that header a browser runs such a response as a classic script when a page loads it by <script src>, and
-the census reads no body of a type it types as running none; the part before any `;`, stripped and lower-cased,
+the census reads no body of a type it types as running none; and the header must reach the browser, so a type that runs no script
+is refused by name, at a place SERVED_ALLOW names too, where a header call in the write's home (the definition, or the function
+around a direct write) holds a CR or LF the census reads, before or after the Content-Type, read as a `_send` call's header
+arguments are (a header line holding one ends the header block early, and the Content-Type and the nosniff header after it reach
+the body); the part before any `;`, stripped and lower-cased,
 is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml`
 suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
@@ -1639,7 +1644,8 @@ SCRIPT_TYPES = ("text/html", "text/xml", "application/xml", "text/xsl", "applica
 # The content types that run no script, all but image/png only where a nosniff header comes with them (SNIFF_SCRIPT_TYPES, below),
 # among those the census types in the live tree, the only others it types (_typed_ctype; item 2
 # of the reviewer's 02:3xZ ruling of 2026-10-04, fix C): derived from the live tree, every value judge typed there being one of these
-# or a script-running type above. judge types nothing at a place SERVED_ALLOW names, reading that place's type for a CR or LF alone,
+# or a script-running type above. judge types nothing at a place SERVED_ALLOW names, reading there the type for a CR or LF, the write
+# for a nosniff header beside it and the write's home for a header call holding a CR or LF,
 # so the list holds no type the tree serves only at such a place; at any other place a content type the census does not type is
 # refused by name (judge): a browser may run a page under it. The census module holds the list equal to the essences of the types the
 # tree's run typed that run no script (Result.typed_ctypes; TheNoScriptTypesAreTheLiveTreesOwn), so an entry for a type the census
@@ -1648,7 +1654,9 @@ NO_SCRIPT_TYPES = ("application/json", "application/manifest+json", "application
 # The types of NO_SCRIPT_TYPES a browser runs as a classic script when a page loads them by <script src> and the response carries no
 # X-Content-Type-Options: nosniff header (every one but image/png, which no engine runs as a script, with the header or without it;
 # NEW-i2-1 of the second closing check, item A of the reviewer's ruling on it): judge types one of these as running no script only
-# where a nosniff header is written beside its Content-Type (_nosniff_beside), and refuses it by name anywhere else
+# where a nosniff header is written beside its Content-Type (_nosniff_beside), and refuses it by name anywhere else; and no allowlist
+# entry excuses a Content-Type write with no nosniff header beside it, whatever its type (A1 (a) of the reviewer's 05:2xZ ruling of
+# 2026-10-05)
 SNIFF_SCRIPT_TYPES = ("application/json", "application/manifest+json", "application/octet-stream", "text/plain")
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")                        # a URL scheme at the head of a literal
 _PY_SLOT = re.compile(r"%[sdr(]|\{[A-Za-z_0-9]*\}")                         # a Python format slot inside a served page's literal
@@ -3612,7 +3620,10 @@ def _unbound_text_call(e):
 # the pass does not read, a name the page function's scope binds in a form the pass refuses, and a file a page reads that the walk
 # does not scan are each a SERVED line unless named here. An entry on a `_send` call's content type excuses that call at each write
 # whose place it names, its page unread in any form there; any other Content-Type write of the definition is still typed
-# (TheAllowlistExcusesEachWriteItNames); no entry is keyed on the unread-body refusal itself, so any other script-running route
+# (TheAllowlistExcusesEachWriteItNames). No allowlist entry excuses a Content-Type write with no nosniff header beside it, whatever
+# its type, or a header call in its home holding a CR or LF the census reads (TheAllowlistedWriteIsReadForANosniffHeader,
+# TheHeaderBlockIsReadForACrOrLf: the reviewer's 05:2xZ ruling of 2026-10-05); no entry is keyed on the unread-body refusal itself,
+# so any other script-running route
 # passes its body
 # as the call's second positional argument or is refused. No entry is keyed on `_send` itself, a call's function or a reference to
 # it (`self._send`, `_send`, the string `_send` or a getattr naming it; the census module's pin,
@@ -3765,6 +3776,8 @@ _FILE_BOUND = "__file__, which a statement of the file binds"
 _SHADOWED = "a builtin in a file that may rewrite the builtins"
 _ENCLOSED = "a definition inside a function, whose scope the census does not read"
 _LAMBDA = "a lambda around the call, whose scope the census does not read"   # routes_of: a `_send` call, or a Content-Type write outside `_send`, inside a lambda
+_HEADER_ENDED = ("SERVED %s:%d serves a response whose header block a header call in %s ends early (%s at line %d, %s): a Content-Type or "
+                 "nosniff header after it reaches the body, which the census does not read")   # judge's refusal (_header_block_crlf, B9)
 _TYPE_REBOUND = ("a definition that binds %s, the parameter its own Content-Type write names, other than as that parameter (%s), so the "
                  "type it writes need not be the call's")   # routes_of: a `_send` call refused before any typing (_type_rebinding)
 _NOT_SELF = "a receiver the census does not prove self by binding (%s)"   # routes_of: a `<name>._send(...)` call in a class body whose receiver fails the proof (_self_receiver; layer iii of the eleventh round's rulings)
@@ -4828,6 +4841,70 @@ def _import_names(tree, rebinds):
     return frozenset(k for k in imported if k not in rebinds and bound.get(k) == imported[k])
 
 
+def _crlf_read(x, theirs, consts, rebinds, unfollowed, imports):
+    """Why a header value `x` holds a CR or LF where the census reads it, or None: the reader _header_crlf applies to each header
+    argument of a `_send` call and _header_block_crlf to each argument of a header call in a Content-Type write's home. A string or
+    bytes constant holding a CR or LF, anywhere in `x`; and each name `theirs` reads as the module's (no scope the value stands in
+    binds it): one in `unfollowed` (_unfollowed, with the names some code writes after binding them), refused by name, save a call's
+    callee by its name alone, whose return the census does not read, and a top-level import's name as an attribute's base (`imports`,
+    _import_names: the attribute limit); and a module constant whose bound value _header_const, with `strict` false, refuses."""
+    callee = {id(c.func) for c in ast.walk(x) if isinstance(c, ast.Call)}   # a call's callee, read for a name alone: `f` in `f(...)`
+    bases = {id(a.value) for a in ast.walk(x) if isinstance(a, ast.Attribute)}   # an attribute's base: a top-level import's name read there
+    for n in ast.walk(x):
+        if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)):
+            if any(c in n.value for c in ((b"\r", b"\n") if isinstance(n.value, bytes) else ("\r", "\n"))):
+                return "a constant holding a CR or LF"
+        elif isinstance(n, ast.Name) and theirs(n):
+            if n.id in unfollowed and id(n) not in callee and not (n.id in imports and id(n) in bases):
+                return (("the module name %s, a top-level import's name, whose value the census does not read" if n.id in imports
+                         else "the module name %s, no module constant the census follows by binding") % n.id)
+            if n.id in consts:
+                why = _header_const(consts, rebinds, n.id, strict=False, unfollowed=unfollowed, imports=imports)
+                if why is not None: return "the module constant %s, %s" % (n.id, why)
+    return None
+
+
+_HEADER_CALLS = ("send_header", "send_response", "send_response_only")   # the calls that put a line into the header block
+
+
+def _header_block_crlf(home, module, consts, rebinds, unfollowed, imports):
+    """(the call, why) for the first header call by line in `home` (the `_send` definition, or the function around a Content-Type
+    write outside `_send`, or the module, where only its header calls outside any def or lambda count) whose argument holds a CR or LF
+    where the census reads it, or None (B9 of the owner's check of the second closing check's pass, the reviewer's 05:2xZ ruling of
+    2026-10-05: every header a route writes is held to the CR or LF rule, since a header line holding one ends the header block early
+    and pushes the Content-Type and the nosniff header after it into the body). A header call is a send_header, send_response or
+    send_response_only call on any receiver but a Content-Type write (judge reads that one for a CR or LF before it is typed); each of
+    its arguments is read as _header_crlf reads a `_send` call's (_crlf_read), a name `home` binds (a parameter, a store or delete
+    target, a nested def's or class's name, an import, an except clause's name or a match capture) local to it unless `home` declares
+    it `global`. A header value held anywhere else (a local, an attribute, a call's return, an item) is the stated limit, its witness
+    dwl."""
+    local = set()
+    if not module:
+        declared = {k for n in ast.walk(home) if isinstance(n, ast.Global) for k in n.names}
+        for n in ast.walk(home):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)): local.add(n.id)
+            elif isinstance(n, ast.arg): local.add(n.arg)
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n is not home: local.add(n.name)
+            elif isinstance(n, (ast.Import, ast.ImportFrom)): local.update(a.asname or a.name.split(".")[0] for a in n.names)
+            elif isinstance(n, ast.ExceptHandler) and n.name: local.add(n.name)
+            elif isinstance(n, ast.MatchAs) and n.name: local.add(n.name)
+            elif isinstance(n, ast.MatchStar) and n.name: local.add(n.name)
+            elif isinstance(n, ast.MatchMapping) and n.rest: local.add(n.rest)
+        local -= declared
+    todo, calls = list(home.body), []
+    while todo:
+        n = todo.pop()
+        if module and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)): continue
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _HEADER_CALLS
+                and not _is_ctype_write(n)): calls.append(n)
+        todo.extend(ast.iter_child_nodes(n))
+    for c in sorted(calls, key=lambda c: (c.lineno, c.col_offset)):
+        for x in list(c.args) + [k.value for k in c.keywords]:
+            why = _crlf_read(x, lambda n: n.id not in local, consts, rebinds, unfollowed, imports)
+            if why is not None: return c, why
+    return None
+
+
 def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed, declared=frozenset(), imports=frozenset()):
     """(the argument, why) for the first header value a `_send` call hands the definition it reaches that holds a CR or LF, or None
     (item 2 of the reviewer's 13:2xZ ruling of 2026-10-03; routes_of refuses the call by name before any typing). Read: every
@@ -4860,21 +4937,13 @@ def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed,
     params = pos + [x.arg for x in kwonly]
     skip = {id(x) for x in [arg(n) for n in pos[1:2]] + [arg(w.args[1].id) for w in writes
                                                           if isinstance(w.args[1], ast.Name) and w.args[1].id in params] if x is not None}
+    def theirs(n):   # a name no function scope around the call binds, or one a function there declares `global`: the module's
+        return n.id in declared or not any(n.id in p or n.id in s or n.id in o for p, s, o in scopes)
+
     for x in list(call.args) + [k.value for k in call.keywords]:
         if id(x) in skip: continue
-        callee = {id(c.func) for c in ast.walk(x) if isinstance(c, ast.Call)}   # a call's callee, read for a name alone: `f` in `f(...)`
-        bases = {id(a.value) for a in ast.walk(x) if isinstance(a, ast.Attribute)}   # an attribute's base: a top-level import's name read there
-        for n in ast.walk(x):
-            if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)):
-                if any(c in n.value for c in ((b"\r", b"\n") if isinstance(n.value, bytes) else ("\r", "\n"))):
-                    return x, "a constant holding a CR or LF"
-            elif isinstance(n, ast.Name) and (n.id in declared or not any(n.id in p or n.id in s or n.id in o for p, s, o in scopes)):
-                if n.id in unfollowed and id(n) not in callee and not (n.id in imports and id(n) in bases):
-                    return x, (("the module name %s, a top-level import's name, whose value the census does not read" if n.id in imports
-                                else "the module name %s, no module constant the census follows by binding") % n.id)
-                if n.id in consts:
-                    why = _header_const(consts, rebinds, n.id, strict=False, unfollowed=unfollowed, imports=imports)
-                    if why is not None: return x, "the module constant %s, %s" % (n.id, why)
+        why = _crlf_read(x, theirs, consts, rebinds, unfollowed, imports)
+        if why is not None: return x, why
     return None
 
 
@@ -5682,7 +5751,9 @@ def routes_of(rel, tree, sc, res):
     route whose text the served pass reads; an unresolved type is a SERVED line, and so is a type holding a CR or LF, before it is
     compared, a type that is not exactly one listed type (_typed_ctype, NO_SCRIPT_TYPES; item 2 of the reviewer's 02:3xZ ruling of
     2026-10-04), a type of SNIFF_SCRIPT_TYPES where no nosniff header is written beside its Content-Type (_nosniff_beside; item A
-    of the reviewer's ruling on the second closing check), and a script-running type whose parameters name a charset other than
+    of the reviewer's ruling on the second closing check), a type that runs no script where a header call in the write's home
+    holds a CR or LF the census reads (_header_block_crlf; B9, the reviewer's 05:2xZ ruling of 2026-10-05), and a script-running
+    type whose parameters name a charset other than
     utf-8 (_ctype_charset; the reviewer's 13:2xZ
     ruling of 2026-10-03, items 2 and 1); and before any typing, a call that hands its definition a header value holding a CR or LF
     in any argument but its page body and its content type, a constant, a module constant it names or a module name the census does
@@ -5743,7 +5814,9 @@ def routes_of(rel, tree, sc, res):
     it. SERVED_ALLOW excuses a place by its function and expression: a `_send` call's place is the function and the call's
     content-type expression, and a definition's own write's the definition and the value it writes; an entry so keyed excuses each
     of the definition's Content-Type writes whose place it names (two writes of the same parameter are one place), an unread body
-    included, save a content type holding a CR or LF where the census resolves it (the allow hit recorded all the same). Each
+    included, save a content type holding a CR or LF where the census resolves it and a header call in the write's home holding
+    one, each refused by name, the allow hit recorded all the same; and no allowlist entry excuses a Content-Type write with no
+    nosniff header beside it, whatever its type (_nosniff_beside; A1 (a) of the reviewer's 05:2xZ ruling of 2026-10-05). Each
     write is judged on its own, so a write the entry does not name is typed and refused as at any other place, and the call is
     excused whole only where every write's place is named (TheAllowlistExcusesEachWriteItNames); every live definition writes one.
     No entry is keyed on `_send` itself, a call's function or a reference to it (`self._send`, `_send`, the string `_send` or a
@@ -5756,7 +5829,7 @@ def routes_of(rel, tree, sc, res):
     consts = {} if ns["computed"] or ns["runtime"] else _module_consts(tree)   # time, reads no module constant
     written = {x for x in res.writes.get(rel, {}) if x in consts}   # the module names some code writes after binding them
     funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    routes, cache, typed = [], {}, {}
+    routes, cache, typed, ended = [], {}, {}, {}   # ended: per home, the header call that ends its header block early (_header_block_crlf)
     facts = {"ns": ns, "rebinds": res.rebinds.get(rel, {})}   # the receiver proof's per-file cache (_self_receiver)
 
     def scopes(defs):
@@ -5770,18 +5843,30 @@ def routes_of(rel, tree, sc, res):
         res.allow_hits.setdefault(key, set()).add((call.lineno, call.col_offset)); return True
 
     def judge(call, where, expr, defs, direct, write, home):
-        """The script-running type of one candidate, or None: allowlisted, not script-running, or refused by name here. An allowlisted
-        place's content type is still read for a CR or LF where the census resolves it (the allow hit recorded all the same), and for
-        nothing else: it is neither typed nor refused for its type. At any other place a content type the census does not type
+        """The script-running type of one candidate, or None: allowlisted, not script-running, or refused by name here. An
+        allowlisted place's content type is still read for a CR or LF where the census resolves it, its write for a nosniff header
+        beside it (no allowlist entry excuses a Content-Type write with no nosniff header beside it, whatever its type: A1 (a) of
+        the reviewer's 05:2xZ ruling of 2026-10-05) and its home for a header call holding a CR or LF (`hb`, _header_block_crlf:
+        B9), each refused by name, the allow hit recorded all the same, and for nothing else: it is neither typed nor refused for
+        its type. At any other place a content type the census does not type
         (_typed_ctype) is refused by name before it is compared, and so is one of SNIFF_SCRIPT_TYPES where no nosniff header is
         written beside its Content-Type (_nosniff_beside, handed `write`, that Content-Type write, and `home`, the definition or
-        module around it), a type a browser runs as a script a page loads by <script src>."""
+        module around it), a type a browser runs as a script a page loads by <script src>; and before that, a type that runs no
+        script where a header call in `home` holds a CR or LF the census reads (B9: the header must reach the browser)."""
         if allowed(where, expr, call):   # the place's type read for a CR or LF all the same, where it resolves (NEW-3 of the closing
             # check, item 5 of the reviewer's 02:3xZ ruling of 2026-10-04): no allowlist entry excuses a header that ends early
             vals = _ctype_values(expr, scopes(defs), consts, written) if expr is not None else None
             if vals is not None and any("\r" in v or "\n" in v for v in vals):
                 res.problems.append("SERVED %s:%d serves a response whose content type holds a CR or LF (%s in %s), which ends the header there: "
                                     "what follows is another header or the body, which the census does not read" % (rel, call.lineno, ast.unparse(expr)[:60], where))
+            if not _nosniff_beside(write, home):   # A1 (a) of the reviewer's 05:2xZ ruling of 2026-10-05: no allowlist entry excuses a
+                # Content-Type write with no nosniff header beside it, whatever its type (the census types nothing at such a place)
+                res.problems.append("SERVED %s:%d writes Content-Type %s in %s with no X-Content-Type-Options: nosniff header beside it: no "
+                                    "allowlist entry excuses that, since a browser runs a response of a type it sniffs as a script a page loads "
+                                    "by <script src>" % (rel, call.lineno, ast.unparse(expr)[:60] if expr is not None else "no value", where))
+            hb = header_block(home)
+            if hb is not None:   # B9: nor a header call in its home that ends the header block early
+                res.problems.append(_HEADER_ENDED % (rel, call.lineno, getattr(home, "name", "the module"), ast.unparse(hb[0])[:60], hb[0].lineno, hb[1]))
             return None
         vals = _ctype_values(expr, scopes(defs), consts, written) if expr is not None else None
         if vals is None:
@@ -5817,6 +5902,14 @@ def routes_of(rel, tree, sc, res):
             res.problems.append("SERVED %s:%d writes Content-Type %s outside _send (%s): the census follows a page's text only through _send; "
                                 "serve it there, or name it in SERVED_ALLOW with its reason" % (rel, call.lineno, script[0], where))
             return None
+        hb = header_block(home) if not script else None
+        if hb is not None:   # a type that runs no script typed so only where its header block reaches the browser
+            # whole (B9 of the owner's check of the second closing check's pass, the reviewer's 05:2xZ ruling of 2026-10-05): a header
+            # call in the write's home holding a CR or LF ends the block early, the Content-Type and the nosniff header after it in the
+            # body. A script-running type is refused already where such a call stands (_send_gate's constant guard, or outright outside
+            # `_send`)
+            res.problems.append(_HEADER_ENDED % (rel, call.lineno, getattr(home, "name", "the module"), ast.unparse(hb[0])[:60], hb[0].lineno, hb[1]))
+            return None
         sniffed = sorted(v for v in vals if _ctype_essence(v) in SNIFF_SCRIPT_TYPES)
         if sniffed and not _nosniff_beside(write, home):   # a type a browser runs as a script a page loads by <script src> where no
             # nosniff header stands beside its Content-Type (NEW-i2-1 of the second closing check, item A of the reviewer's ruling on
@@ -5845,6 +5938,12 @@ def routes_of(rel, tree, sc, res):
             names["unfollowed"] = _unfollowed(tree, consts, res.rebinds.get(rel, {})) | written
             names["imports"] = _import_names(tree, res.rebinds.get(rel, {}))
         return names["unfollowed"], names["imports"]
+
+    def header_block(home):   # the header call in a write's home that holds a CR or LF the census reads (B9), read once per home and
+        # only where judge asks: at a place SERVED_ALLOW names, and for a type that runs no script
+        if id(home) not in ended:
+            ended[id(home)] = _header_block_crlf(home, home is tree, consts, res.rebinds.get(rel, {}), *header_names())
+        return ended[id(home)]
 
     for call, defs, where in sc.sends:
         fn = next((x for x in reversed(defs) if not isinstance(x, ast.ClassDef)), None)

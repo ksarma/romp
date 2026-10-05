@@ -1449,7 +1449,8 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "a Content-Type write inside one that is no `_send` definition's own write, and a call whose definition binds the "
                 "parameter one of its own writes names other than as that parameter); a type holding a CR or LF is refused by name "
                 "before it is compared, even at a place SERVED_ALLOW names, where the census resolves the type there (its header "
-                "line ends there, and what follows is another header or the body, which the census does not read); at a place no "
+                "line ends there, and what follows is another header or the body, which the census does not read), and no "
+                "allowlist entry excuses a Content-Type write with no nosniff header beside it, whatever its type; at a place no "
                 "SERVED_ALLOW entry names, so is a type "
                 "that is not exactly one listed type, since a browser may run a page under any other (a list of types by its last "
                 "valid one, a type it sniffs where no nosniff header stands, a multipart's HTML part): one holding a character "
@@ -1471,7 +1472,11 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "closure or a frame, and a name computed before the write), at a "
                 "`_send` call and at a write outside it alike, since without that header a browser runs such a response as a "
                 "classic script when a page loads it by <script src>, and the census reads no body of a type it types as running "
-                "none; the part before any `;`, stripped and lower-cased, is compared with the types a browser "
+                "none; and the header must reach the browser, so a type that runs no script is refused by name, at a place "
+                "SERVED_ALLOW names too, where a header call in the write's home (the definition, or the function around a direct "
+                "write) holds a CR or LF the census reads, before or after the Content-Type, read as a `_send` call's header "
+                "arguments are (a header line holding one ends the header block early, and the Content-Type and the nosniff header "
+                "after it reach the body); the part before any `;`, stripped and lower-cased, is compared with the types a browser "
                 "runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a "
                 "`+xml` "
                 "suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript, "
@@ -9490,7 +9495,9 @@ _RD_IMPORT = "the module name %s, a top-level import's name, whose value the cen
 # (nd) and (ns), item A of the reviewer's ruling on the second closing check (NEW-i2-1): a type of SNIFF_SCRIPT_TYPES (text/plain,
 # application/json, application/octet-stream and application/manifest+json), which a browser runs as a classic script when a page
 # loads it by <script src> and no nosniff header comes with it, is typed as running no script only where an X-Content-Type-Options:
-# nosniff header is written beside its Content-Type (_nosniff_beside), and is refused by name anywhere else. Refused at the
+# nosniff header is written beside its Content-Type (_nosniff_beside), and is refused by name anywhere else; and no allowlist entry
+# excuses a Content-Type write with no nosniff header beside it, whatever its type (A1 (a) of the reviewer's 05:2xZ ruling of
+# 2026-10-05: the served pass's 206 plant, REMOTE_206_ANCHOR, and TheAllowlistedWriteIsReadForANosniffHeader). Refused at the
 # Content-Type's line: each of the four written outside `_send` with no nosniff header (ndp, ndj, ndo, ndm) and each served through a
 # `_send` that writes none (A_SEND: nsp, nsj, nso, nsm, at the call); and a nosniff header after the end_headers (nda), after a
 # statement holding an end_headers (ndie) or a flush_headers (ndfl), under an if (ndi), on another receiver (ndr), as an assignment
@@ -11201,24 +11208,34 @@ def _plant_lines(text, specs, where):
 
 
 SERVED_KEY = ("tests/test_price_feed_census.py", "the served pass over the planted kernel.py")   # parse_cache.derived's key
+# A1 (a) of the reviewer's 05:2xZ ruling of 2026-10-05: no allowlist entry excuses a Content-Type write with no nosniff header beside
+# it, whatever its type. The plant deletes the nosniff line of _remote_file's 206 arm, a direct write of `ctype` at a place SERVED_ALLOW
+# names ("kernel/kernel.py:Handler._remote_file", "ctype"), so the planted run refuses that write by name; at the head that ruling
+# read the run was silent there. The write's line is located by the Content-Range line two below it (REMOTE_206_RANGE)
+REMOTE_206_ANCHOR = '            self.send_header("Content-Range", crange)\n            self.send_header("X-Content-Type-Options", "nosniff")\n'
+REMOTE_206_PLANT = '            self.send_header("Content-Range", crange)\n'
+REMOTE_206_RANGE = 'self.send_header("Content-Range", crange)'
 SERVED_PLANT_LINES = ((("fetch", 'fetch("https://example.invalid/probe");'), ("alert", "}else{alert('Pull from '+h+' failed');}"),
                        ("import", "import x from 'example-pkg';"), ("split_import", "} from 'example-split-pkg';"),
                        ("alert_after_export", "}else{alert('Pulled from '+q+' ok');}"), ("served_name_led", "  z2 } from 'example-name-pkg';"),
                        ("served_comment", "import w from /* c */ 'example-comment-pkg';"), ("settings_def", "def _settings_page():"),
                        ("settings_anchor", SETTINGS_ANCHOR.strip()), ("probe_read", '    return (UI / "probe.html").read_text()'),
                        ("fstring", 'fetch(\'https://example.invalid/f\')'), ("slot", '"<script>fetch(\'%s\')</script>" % p'),
-                       ("body_param", 'return self._send(200, body, "text/html")'))
+                       ("body_param", 'return self._send(200, body, "text/html")'), ("remote_206_range", REMOTE_206_RANGE))
                       + FGH_PLANT_LINES + BC_PLANT_LINES + A_KERNEL_LINES)   # the plants' lines, located by content once all have landed; a tuple of names, one per occurrence
 SERVED_PLANTS = ((BOOT_ANCHOR, BOOT_ANCHOR + BOOT_PLANTS), (SETTINGS_ANCHOR, SETTINGS_PLANT + SETTINGS_ANCHOR),
                  (PAGE_DISPATCH, ROUTE_PLANTS + PAGE_DISPATCH), (SEND_ANCHOR, SEND_PLANT + SEND_ANCHOR),
                  (PAGE_DISPATCH, FGH_ROUTES + PAGE_DISPATCH), (SEND_ANCHOR, FGH_HANDLER + SEND_ANCHOR),
                  (DRIFT_JS_ANCHOR, H1_PLANT + DRIFT_JS_ANCHOR), (DRIFT_CSS_ANCHOR, DRIFT_CSS_ANCHOR + H2_PLANT),
-                 (SLICE_SEND, SLICE_LITERAL), (PAGE_DISPATCH, BC_ROUTES + PAGE_DISPATCH), (PAGE_DISPATCH, A_ROUTES + PAGE_DISPATCH))   # (anchor, text), in the order they land
+                 (SLICE_SEND, SLICE_LITERAL), (PAGE_DISPATCH, BC_ROUTES + PAGE_DISPATCH), (PAGE_DISPATCH, A_ROUTES + PAGE_DISPATCH),
+                 (REMOTE_206_ANCHOR, REMOTE_206_PLANT))   # (anchor, text), in the order they land
 
 
 def _served_text(text):
     """kernel/kernel.py's text with TheServedPagesAreScanned's plants applied: SERVED_PLANTS in order (_replace_text, so an anchor
-    that is absent or repeated is a broken mutation), then PROBE_PAGE_DEF, FGH_DEFS and BC_DEFS appended as _append lands a block. The
+    that is absent or repeated is a broken mutation), then PROBE_PAGE_DEF, FGH_DEFS and BC_DEFS appended as _append lands a block (the
+    last of SERVED_PLANTS, since the reviewer's 05:2xZ ruling of 2026-10-05, deletes the nosniff line of _remote_file's 206 arm:
+    REMOTE_206_ANCHOR). The
     plants: the boot's fetch, socket, opener, alert and import (since the seventh round's review with two of the shapes of served
     text's gate residual), the settings page's beacon, the probe, f-string and
     format-slot routes and the method serving a parameter, and, since the fifth round, F, G and H's: the F1 to F10 and F12
@@ -11444,7 +11461,9 @@ class TheServedPagesAreScanned(_Scope):
     sockets, the boot's dead opener and the worker's clients.openWindow list on local-kernel, the four fetches whose route
     literal a caller passes list as computed, and the four pane stylesheets are named, not scanned. The pass is the class's
     alone: its import plant would join the credentials run's IMPORT set, which that run's case holds equal to its own lines;
-    the served-pass mutation (M21) is a run of its own over the copy, as every script mutation is."""
+    the served-pass mutation (M21) is a run of its own over the copy, as every script mutation is. Since the reviewer's 05:2xZ ruling
+    of 2026-10-05 (A1 (a)), the planted text deletes the nosniff header of _remote_file's 206 arm, a place SERVED_ALLOW names, and the
+    run refuses that write by name: no allowlist entry excuses a Content-Type write with no nosniff header beside it."""
 
     def setUp(self):
         """The pass, built on the first case's setUp in the process and parse_cache's memo after (served_pass): the plants' lines
@@ -11466,6 +11485,14 @@ class TheServedPagesAreScanned(_Scope):
         n = int(m.group(1))
         self.assertTrue(self.at["settings_def"] < n <= self.at["settings_anchor"], "listed at the template's own lines (%d, def %d, anchor %d)" % (n, self.at["settings_def"], self.at["settings_anchor"]))
         self.assertIn("kernel/kernel.py:%d" % n, unclassified(out))
+
+    def test_an_allowlisted_write_with_no_nosniff_header_beside_it_is_refused_by_name(self):
+        """A1 (a) of the reviewer's 05:2xZ ruling of 2026-10-05: the planted text deletes the nosniff line of _remote_file's 206 arm, a
+        place SERVED_ALLOW names, and the run refuses that Content-Type write by name; no allowlist entry excuses a Content-Type write
+        with no nosniff header beside it, whatever its type. Silent at the head that ruling read."""
+        self.assertRefused(self.rc, self.out, "SERVED kernel/kernel.py:%d writes Content-Type ctype in Handler._remote_file with no "
+                           "X-Content-Type-Options: nosniff header beside it: no allowlist entry excuses that, since a browser runs a "
+                           "response of a type it sniffs as a script a page loads by <script src>" % (self.at["remote_206_range"] - 2))
 
     def test_a_route_the_extraction_cannot_read_is_refused_by_name(self):
         self.assertRefused(self.rc, self.out, "SERVED kernel/kernel.py:%d reads ui/probe.html for a served page, a file the walk does not scan" % self.at["probe_read"],
@@ -16060,9 +16087,11 @@ class TheLandingRoundsClassesFailClosed(_Scope):
     `global` and binds there among them (the (x3) plants), a builtin's name and a route's own local still read, and since the owner's
     check of that pass a module container some code writes after binding it and a top-level import's name anywhere but as an
     attribute's base, site.py's six names among the refused (the (wr) and (im) plants), an imported module's attribute and the stated
-    limits' witnesses still read; and item A: a type of
-    SNIFF_SCRIPT_TYPES typed as running no script only where a nosniff header is written beside its Content-Type, refused by name
-    anywhere else, written outside `_send` and through a `_send` that writes none (the (nd) and (ns) plants, each of the conditions on
+    limits' witnesses still read; and item A: a type of SNIFF_SCRIPT_TYPES typed as running no script only where a nosniff header is
+    written beside its Content-Type, refused by name anywhere else (and since the reviewer's 05:2xZ ruling of 2026-10-05 no allowlist
+    entry excuses a Content-Type write with no nosniff header beside it, whatever its type,
+    TheAllowlistedWriteIsReadForANosniffHeader, nor a header call in its home holding a CR or LF, TheHeaderBlockIsReadForACrOrLf),
+    written outside `_send` and through a `_send` that writes none (the (nd) and (ns) plants, each of the conditions on
     that header held by a plant of its own, and since the owner's check of that pass each step of the type's normalisation, another
     value of the header's name before it and the headers ended before it by an alias, getattr, a method of the receiver's or a call
     handed it, rdnh's headers loop among them), image/png and the written header still typed, the stated limits' witnesses silent.
@@ -16300,6 +16329,188 @@ class TheAllowlistExcusesEachWriteItNames(unittest.TestCase):
                     self.assertEqual(hits.get(k), {(line, 15)}, "the entry's hit is recorded at the call")
 
 
+class TheAllowlistedWriteIsReadForANosniffHeader(unittest.TestCase):
+    """A1 (a) of the reviewer's 05:2xZ ruling of 2026-10-05: no allowlist entry excuses a Content-Type write with no nosniff header
+    beside it, whatever its type; judge's allowlisted branch refuses it by name, the allow hit recorded all the same. Two tiny roots of
+    their own (the A1 refuter's shape), each a kernel/kernel.py beside the script's copy. In the first, a Handler with the kernel's
+    `_send` shape (B_KERNEL_SEND) and three allowlisted places: _remote_file, a direct 206 write of `ctype` with no nosniff header,
+    refused; _file_preview, the same write of `mime` with the header beside it, and _file_slice, a call of the kernel's `_send`, which
+    writes it, each read as before. In the second, a `_send` that writes no nosniff header (A_SEND) and an allowlisted call of it in
+    _file_slice, refused at the call. Each place's hit is recorded. At the head that ruling read, both roots were silent. The served
+    pass carries the live shape of the first refusal, the 206 arm's nosniff line deleted in the planted kernel text."""
+
+    def _scan(self, kernel):
+        tiny = tempfile.mkdtemp(prefix="census-rdan-")
+        self.addCleanup(shutil.rmtree, tiny, True)
+        for d in SCOPE_DIRS:
+            os.makedirs(os.path.join(tiny, d), exist_ok=True)
+        os.makedirs(os.path.join(tiny, "scripts"), exist_ok=True)
+        shutil.copy2(os.path.join(ROOT, INVENTORY), os.path.join(tiny, INVENTORY))
+        with open(os.path.join(tiny, KERNEL_PATH), "w", encoding="utf-8") as f:
+            f.write(kernel)
+        res = script_module(tiny).scan(tiny)
+        return [p for p in res.problems if p.startswith("SERVED %s:" % KERNEL_PATH)], res.allow_hits
+
+    @staticmethod
+    def _want(line, expr, where):
+        return ("SERVED %s:%d writes Content-Type %s in %s with no X-Content-Type-Options: nosniff header beside it: no allowlist entry "
+                "excuses that, since a browser runs a response of a type it sniffs as a script a page loads by <script src>"
+                % (KERNEL_PATH, line, expr, where))
+
+    def test_an_allowlisted_write_with_no_nosniff_header_beside_it_is_refused_and_its_hit_recorded(self):
+        write = '        self.send_response(206)\n        self.send_header("Content-Type", %s)\n%s        self.end_headers()\n        self.wfile.write(b"%s")\n'
+        kernel = ("class Handler(object):\n" + B_KERNEL_SEND + "\n"
+                  '    def _remote_file(self):\n        ctype = "text/plain"\n' + write % ("ctype", "", FGH_PAGE % "anr") + "\n"
+                  '    def _file_preview(self):\n        mime = "text/plain"\n' + write % ("mime", A_NOSNIFF, FGH_PAGE % "anp") + "\n"
+                  '    def _file_slice(self):\n        ctype = "text/plain"\n        return self._send(200, "%s", ctype)\n' % (FGH_PAGE % "ans"))
+        got, hits = self._scan(kernel)
+        r, pv = _a_line(kernel, FGH_PAGE % "anr") - 2, _a_line(kernel, FGH_PAGE % "anp") - 3
+        self.assertEqual(got, [self._want(r, "ctype", "Handler._remote_file")], "the write with no nosniff header beside it, and no other")
+        for key, at in ((("%s:Handler._remote_file" % KERNEL_PATH, "ctype"), (r, 8)), (("%s:Handler._file_preview" % KERNEL_PATH, "mime"), (pv, 8)),
+                        (("%s:Handler._file_slice" % KERNEL_PATH, "ctype"), (_a_line(kernel, FGH_PAGE % "ans"), 15))):
+            with self.subTest(place=key[0]):
+                self.assertEqual(hits.get(key), {at}, "the allow hit is recorded at the place, refused or read")
+
+    def test_an_allowlisted_call_of_a_send_that_writes_no_nosniff_header_is_refused(self):
+        kernel = ("class Handler(object):\n" + A_SEND % "" + "\n"
+                  '    def _file_slice(self):\n        ctype = "text/plain"\n        return self._send(200, "%s", ctype)\n' % (FGH_PAGE % "anq"))
+        got, hits = self._scan(kernel)
+        line = _a_line(kernel, FGH_PAGE % "anq")
+        self.assertEqual(got, [self._want(line, "ctype", "Handler._file_slice")], "the call is refused by name at its line")
+        self.assertEqual(hits.get(("%s:Handler._file_slice" % KERNEL_PATH, "ctype")), {(line, 15)}, "the allow hit is recorded")
+
+
+class TheHeaderBlockIsReadForACrOrLf(unittest.TestCase):
+    """B9 of the owner's check of the second closing check's pass, ruled at 05:2xZ on 2026-10-05: every header a route writes is held
+    to the CR or LF rule, since a header line holding one ends the header block early and puts the Content-Type and the nosniff header
+    after it in the body, where the browser takes the response untyped and sniffs it. Before a Content-Type write is typed as running
+    no script, and at a place SERVED_ALLOW names, judge refuses it by name where its home (the `_send` definition, or the function
+    around a direct write, or the module) holds a header call (send_header, send_response or send_response_only, a Content-Type write
+    aside) with a CR or LF the census reads, read as a `_send` call's header arguments are (_header_block_crlf, _crlf_read). A tiny root
+    of its own, one probe module per plant (the B9 refuter's files, each page a fetch), and a kernel/kernel.py for the allowlisted
+    place. Refused at the Content-Type write's line, or at the call for a `_send`: a CR LF header before an application/json type and
+    its nosniff header written directly (dw1) and inside a `_send` that writes the type itself (dw2), before image/png (dw3), in a
+    response line's message (dw4) or a response line alone (dw9), through a module constant (dw5), after the type, adding a second
+    Content-Type (dw6), in the kernel's `_send` shape (dw7), through `__doc__` (dw8), a name a function declares `global` and binds to
+    a CR LF (dwg), a module name bound twice in a module-level write's header (dwmm), and at the allowlisted _file_preview (dwa). Each
+    was typed as running no script, its body unread and nothing printed,
+    at the head that ruling read and at the head before it. Read as before, no line: the kernel's shape with a plain constant header
+    (dwk), a plain header before the type (dwn), a local holding the header value (dwl, the stated limit), a module-level write while a
+    function of the module holds a CR LF header (dwm), a function with a second Content-Type write holding a CR LF, refused as that
+    write's own type (dwt), and a header value each binding form of the home makes local (dwloc: a parameter, a delete target, a nested
+    class, an import, an except clause's name and the three match captures)."""
+
+    PAGE = FGH_PAGE
+    JSON = ('            self.send_header("Content-Type", "application/json")\n            self.send_header("X-Content-Type-Options", "nosniff")\n'
+            '            self.end_headers()\n            return self.wfile.write(b"%s")\n')
+    HDR = '"a\\r\\n\\r\\n%s"'
+
+    def _direct(self, tag, pre, post=""):
+        return ('class Handler(object):\n    def do_GET(self):\n        p = self.path\n        if p == "/probe-%s":\n            self.send_response(200)\n'
+                '%s' % (tag, pre) + self.JSON.replace("            self.end_headers()\n", post + "            self.end_headers()\n") % (self.PAGE % tag)
+                + "        return None\n")
+
+    def _files(self):
+        h = lambda t: self.HDR % (self.PAGE % (t + "x"))
+        f = {}
+        f["dw1"] = self._direct("dw1", '            self.send_header("X-Probe", %s)\n' % h("dw1"))
+        f["dw2"] = ('class Handler(object):\n    def _send(self, code, body):\n        self.send_response(code)\n        self.send_header("X-Probe", %s)\n'
+                    '        self.send_header("Content-Type", "application/json")\n        self.send_header("X-Content-Type-Options", "nosniff")\n'
+                    '        self.end_headers()\n        self.wfile.write(body)\n\n    def do_GET(self):\n        p = self.path\n        if p == "/probe-dw2":\n'
+                    '            return self._send(200, b"%s")\n        return None\n' % (h("dw2"), self.PAGE % "dw2"))
+        f["dw3"] = ('class Handler(object):\n    def do_GET(self):\n        p = self.path\n        if p == "/probe-dw3":\n            self.send_response(200)\n'
+                    '            self.send_header("X-Probe", %s)\n            self.send_header("Content-Type", "image/png")\n            self.end_headers()\n'
+                    '            return self.wfile.write(b"%s")\n        return None\n' % (h("dw3"), self.PAGE % "dw3"))
+        f["dw4"] = self._direct("dw4", "").replace("            self.send_response(200)\n", "            self.send_response(200, %s)\n" % h("dw4"))
+        f["dw9"] = self._direct("dw9", "            self.send_response_only(200, %s)\n" % h("dw9"))
+        f["dw5"] = "_PROBE_DW5 = %s\n\n\n" % h("dw5") + self._direct("dw5", '            self.send_header("X-Probe", _PROBE_DW5)\n')
+        f["dw6"] = self._direct("dw6", "", '            self.send_header("X-Probe", "a\\r\\nContent-Type: text/html")\n')
+        f["dw7"] = ("class Handler(object):\n" + B_KERNEL_SEND.replace('self.send_header("X-Probe-Tag", "1")', 'self.send_header("X-Probe-Tag", "1\\r\\n\\r\\n%s")'
+                                                                    % (self.PAGE % "dw7x"))
+                    + '\n    def do_GET(self):\n        p = self.path\n        if p == "/probe-dw7":\n            return self._send(200, "%s", "application/json")\n'
+                    '        return None\n' % (self.PAGE % "dw7"))
+        f["dw8"] = '"""%s"""\n\n\n' % ("a\\r\\n\\r\\n" + self.PAGE % "dw8x") + self._direct("dw8", '            self.send_header("X-Probe", __doc__)\n')
+        f["dwg"] = ('_PROBE_DWG = "no-cache"\n\n\n' + self._direct("dwg", '            global _PROBE_DWG\n            _PROBE_DWG = %s\n'
+                                                                  '            self.send_header("X-Probe", _PROBE_DWG)\n' % h("dwg")))
+        f["dwk"] = ("class Handler(object):\n" + B_KERNEL_SEND + '\n    def do_GET(self):\n        p = self.path\n        if p == "/probe-dwk":\n'
+                    '            return self._send(200, "%s", "application/json")\n        return None\n' % (self.PAGE % "dwk"))
+        f["dwn"] = self._direct("dwn", '            self.send_header("X-Probe", "no-store")\n')
+        f["dwl"] = self._direct("dwl", '            v = self.headers.get("X-In", "")\n            self.send_header("X-Probe", v)\n')
+        f["dwm"] = ('class Handler(object):\n    def do_POST(self):\n        self.send_header("X-Probe", %s)\n\n\n_H = Handler()\n_H.send_response(200)\n'
+                    '_H.send_header("Content-Type", "application/json")\n_H.send_header("X-Content-Type-Options", "nosniff")\n_H.end_headers()\n'
+                    '_H.wfile.write(b"%s")\n' % (h("dwm"), self.PAGE % "dwm"))
+        f["dwmm"] = ('_PROBE_DWMM = "no-cache"\n_PROBE_DWMM = %s\n_H = object()\n_H.send_response(200)\n_H.send_header("X-Probe", _PROBE_DWMM)\n'
+                     '_H.send_header("Content-Type", "application/json")\n_H.send_header("X-Content-Type-Options", "nosniff")\n_H.end_headers()\n'
+                     '_H.wfile.write(b"%s")\n' % (h("dwmm"), self.PAGE % "dwmm"))
+        f["dwt"] = ('class Handler(object):\n    def do_GET(self):\n        p = self.path\n        if p == "/probe-dwt":\n            self.send_response(200)\n'
+                    + self.JSON % (self.PAGE % "dwt") + '        self.send_response(200)\n        self.send_header("Content-Type", "text/plain\\r\\n\\r\\n%s")\n'
+                    '        self.send_header("X-Content-Type-Options", "nosniff")\n        self.end_headers()\n        return self.wfile.write(b"{}")\n' % (self.PAGE % "dwtx"))
+        forms = (("arg", "_probe_hv", "", "_probe_hv"), ("del", "", "            if p is None:\n                del _probe_hv\n", "_probe_hv"),
+                 ("cls", "", "            class _ProbeHc(object):\n                pass\n", "str(_ProbeHc)"),
+                 ("imp", "", "            import os as _probe_ho\n", "_probe_ho.sep"),
+                 ("exc", "", "            try:\n                pass\n            except ValueError as _probe_he:\n                p = str(_probe_he)\n", "p"),
+                 ("mas", "", "            match p:\n                case _probe_hm:\n                    pass\n", "str(_probe_hm)"),
+                 ("mst", "", "            match p:\n                case [*_probe_hs]:\n                    pass\n", "str(_probe_hs)"),
+                 ("mmp", "", "            match p:\n                case {**_probe_hr}:\n                    pass\n", "str(_probe_hr)"))
+        f["dwloc"] = "class Handler(object):\n" + "\n".join(
+            '    def _probe_%s(self, p%s):\n        if p == "/probe-dwloc%s":\n%s            self.send_response(200)\n            self.send_header("X-Probe", %s)\n'
+            % (k, ", " + arg if arg else "", k, pre, val) + self.JSON % (self.PAGE % ("dwloc" + k)) + "        return None\n"
+            for k, arg, pre, val in forms)
+        return f
+
+    def test_a_header_call_in_the_writes_home_holding_a_cr_or_lf_refuses_the_write_by_name(self):
+        tiny = tempfile.mkdtemp(prefix="census-rddw-")
+        self.addCleanup(shutil.rmtree, tiny, True)
+        for d in SCOPE_DIRS:
+            os.makedirs(os.path.join(tiny, d), exist_ok=True)
+        os.makedirs(os.path.join(tiny, "scripts"), exist_ok=True)
+        shutil.copy2(os.path.join(ROOT, INVENTORY), os.path.join(tiny, INVENTORY))
+        files = self._files()
+        for tag, text in files.items():
+            with open(os.path.join(tiny, _a_rel(tag)), "w", encoding="utf-8") as f:
+                f.write(text)
+        kernel = ("class Handler(object):\n" + B_KERNEL_SEND + '\n    def _file_preview(self):\n        mime = "text/plain"\n'
+                  '        self.send_response(200)\n        self.send_header("X-Probe", %s)\n        self.send_header("Content-Type", mime)\n'
+                  % (self.HDR % (self.PAGE % "dwax")) + A_NOSNIFF + '        self.end_headers()\n        self.wfile.write(b"%s")\n' % (self.PAGE % "dwa"))
+        with open(os.path.join(tiny, KERNEL_PATH), "w", encoding="utf-8") as f:
+            f.write(kernel)
+        res = script_module(tiny).scan(tiny)
+        crlf, ended = "a constant holding a CR or LF", "serves a response whose header block a header call in %s ends early ("
+        # each refused plant: (its file's text, the line the SERVED line names by the needle on it, the home, the header call's line by
+        # its needle, why)
+        refused = {"dw1": ("dw1", '"Content-Type"', "do_GET", '"X-Probe"', crlf), "dw2": ("dw2", "return self._send(", "_send", '"X-Probe"', crlf),
+                   "dw3": ("dw3", '"Content-Type"', "do_GET", '"X-Probe"', crlf), "dw4": ("dw4", '"Content-Type"', "do_GET", "send_response(", crlf),
+                   "dw9": ("dw9", '"Content-Type"', "do_GET", "send_response_only(", crlf),
+                   "dw5": ("dw5", '"Content-Type"', "do_GET", '"X-Probe"', "the module constant _PROBE_DW5, whose bound text holds a CR or LF"),
+                   "dw6": ("dw6", '"Content-Type"', "do_GET", '"X-Probe"', crlf), "dw7": ("dw7", "return self._send(", "_send", '"X-Probe-Tag"', crlf),
+                   "dw8": ("dw8", '"Content-Type"', "do_GET", '"X-Probe"', "the module name __doc__, no module constant the census follows by binding"),
+                   "dwg": ("dwg", '"Content-Type"', "do_GET", '"X-Probe"', "the module name _PROBE_DWG, no module constant the census follows by binding"),
+                   "dwmm": ("dwmm", '"Content-Type"', "the module", '"X-Probe"',
+                            "the module name _PROBE_DWMM, no module constant the census follows by binding")}
+        for tag, (ft, at, home, call, why) in sorted(refused.items()):
+            with self.subTest(plant=tag):
+                text = files[ft]
+                got = [p for p in res.problems if p.startswith("SERVED %s:" % _a_rel(tag))]
+                self.assertEqual(len(got), 1, "one line names %s: %r" % (tag, got))
+                self.assertTrue(got[0].startswith("SERVED %s:%d %s" % (_a_rel(tag), _a_line(text, at), ended % home)), got[0])
+                self.assertIn(" at line %d, %s): a Content-Type or nosniff header after it reaches the body, which the census does not read"
+                              % (_a_line(text, call), why), got[0])
+        with self.subTest(plant="dwa"):
+            got = [p for p in res.problems if p.startswith("SERVED %s:" % KERNEL_PATH)]
+            self.assertEqual(len(got), 1, "one line names the allowlisted place: %r" % got)
+            self.assertTrue(got[0].startswith("SERVED %s:%d %s" % (KERNEL_PATH, _a_line(kernel, '"Content-Type", mime'), ended % "_file_preview")), got[0])
+            self.assertIn(" at line %d, %s)" % (_a_line(kernel, '"X-Probe"'), crlf), got[0])
+            self.assertEqual(res.allow_hits.get(("%s:Handler._file_preview" % KERNEL_PATH, "mime")), {(_a_line(kernel, '"Content-Type", mime'), 8)},
+                             "the allow hit is recorded all the same")
+        with self.subTest(plant="dwt"):
+            got = [p for p in res.problems if p.startswith("SERVED %s:" % _a_rel("dwt"))]
+            self.assertEqual(len(got), 1, "the second write's own type alone: %r" % got)
+            self.assertIn("serves a response whose content type holds a CR or LF (", got[0])
+        for tag in ("dwk", "dwn", "dwl", "dwm", "dwloc"):
+            with self.subTest(read=tag):
+                self.assertEqual([p for p in res.problems if p.startswith("SERVED %s:" % _a_rel(tag))], [], "%s is read as before" % tag)
+
+
 class NoAllowlistEntryIsKeyedOnSendItself(unittest.TestCase):
     """Item B of the reviewer's ruling on the second closing check, rule 1: no SERVED_ALLOW entry is keyed on `_send` itself, by a
     `_send` call's function or by a reference to `_send` (`self._send`, `_send`, `<x>._send`, the string `'_send'`, or a getattr
@@ -16340,8 +16551,9 @@ class TheNoScriptTypesAreTheLiveTreesOwn(unittest.TestCase):
     the
     reviewer's 02:3xZ ruling of 2026-10-04, fix C, which derives it from the live tree), and this case holds it to that: the essence of
     every content type judge typed in the tree's run (Result.typed_ctypes, each value's _ctype_essence), less those that run script
-    (_script_type), is the list's set. judge types nothing at a place SERVED_ALLOW names: it reads that place's type for a CR or LF and
-    returns, so the list holds no type the tree serves only at such a place. An entry for a type the census types nowhere in the tree's
+    (_script_type), is the list's set. judge types nothing at a place SERVED_ALLOW names: it reads that place's type for a CR or LF,
+    its write for a nosniff header beside it and its home for a header call holding a CR or LF, and returns, so the list holds no type
+    the tree serves only at such a place. An entry for a type the census types nowhere in the tree's
     run, or stops typing, fails here, so no entry types a value as running no script unless the census types that type in the live
     tree; before this case an entry for a type the census typed nowhere, one that runs script while being neither one of SCRIPT_TYPES
     nor a `+xml` type, typed it as running none with nothing red (an entry for one of SCRIPT_TYPES or a `+xml` type changes no typing,

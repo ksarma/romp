@@ -440,8 +440,10 @@ call whose definition binds the parameter one of its own writes names other than
 as that parameter); a type holding a CR or LF is refused by name before it is
 compared, even at a place SERVED_ALLOW names, where the census resolves the type
 there (its header line ends there, and what follows is another header or the
-body, which the census does not read); at a place no SERVED_ALLOW entry names,
-so is a type that is not exactly one listed type, since a browser may run a page
+body, which the census does not read), and no allowlist entry excuses a
+Content-Type write with no nosniff header beside it, whatever its type; at a
+place no SERVED_ALLOW entry names, so is a type that is not exactly one listed
+type, since a browser may run a page
 under any other (a list of types by its last valid one, a type it sniffs where
 no nosniff header stands, a multipart's HTML part): one holding a character past
 ASCII or a comma, or whose part before any `;`, stripped of spaces and tabs
@@ -470,7 +472,13 @@ before the write), at a `_send` call and at a write outside it alike, since
 without
 that header a browser runs such a response as a classic script when a page loads
 it by <script src>, and the census reads no body of a type it types as running
-none; the part before any `;`, stripped and lower-cased, is compared
+none; and the header must reach the browser, so a type that runs no script is
+refused by name, at a place SERVED_ALLOW names too, where a header call in the
+write's home (the definition, or the function around a direct write) holds a CR
+or LF the census reads, before or after the Content-Type, read as a `_send`
+call's header arguments are (a header line holding one ends the header block
+early, and the Content-Type and the nosniff header after it reach the body); the
+part before any `;`, stripped and lower-cased, is compared
 with the types a browser runs script from
 (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and
