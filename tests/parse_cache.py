@@ -28,7 +28,10 @@ own cache: two censuses that land on different workers each parse and derive on 
 The saving is the SERIAL run (CI's Python cells ran pytest serially until 2026-09-25; since then its Linux cells run two
 workers under --dist load and its macOS cells stay serial) and a module's own tests when pytest keeps them in one worker
 (--dist loadfile or loadscope); under --dist load a class splits across workers and each derives once, a second
-derivation in another process, which that process's counters do not see and no pin reads as red.
+derivation in another process, which that process's counters do not see and no pin reads as red. The thread-stop census
+reads its derivation from ONE pytest item for that reason (tests/test_thread_stop_census.py's _TreeChecks): when xdist
+split its class across the two workers of CI's 3.14t cell, both built the derivation at once, 2.1 to 2.5 GiB each before
+its cut, and CI's 3.14t command was killed by a 16.5 GiB cap with no swap (2026-10-04).
 
 ONE LOCK. A module-level threading.RLock is held across the whole body of source_and_tree, derived and clear: two threads
 asking for one path or one key get one parse or one build and the same object. Without it (the ninth pass's helper) two
@@ -54,7 +57,10 @@ THE RETENTION SHAPE is part of the contract (the fourteenth pass, 2026-09-22, fr
 Python 3.10, which romp-manager ruled the shape must come from; its ruling named two admissible shapes, gc.freeze() once
 after the derivation or releasing the trees once every consumer has derived, and a bounded gc.disable() inside the cache's
 build only if collections during the build measured a material share, never in a test body). The trees a derivation reads
-stay alive for the rest of the process, held here, and the measurement put two costs on that. Inside the census's build the
+stay alive for the rest of the process, held here, unless the build forgets one it no longer needs before it returns
+(clear(path), and reference counting frees the tree then, before any freeze: the thread-stop census's build drops the
+tree of each module that no result of it holds, at that module's turn, with the exceptions its _Tree names, 2026-10-05),
+and the measurement put two costs on that. Inside the census's build the
 collector ran five full collections that took near half of the derivation, each walking every tracked object, the trees
 under construction among them; after the census not one full collection ran for the rest of that run, so the retained
 trees cost the test phase nothing in that order. And after pytest's clock had stopped, the interpreter's finalization,
@@ -97,14 +103,18 @@ as the run's peak anonymous memory, 16.8 to 18.6 GiB without a collection before
 at this pull request's head of 2026-10-03; at its head of 2026-10-04, where the census module's builds already collect
 before their freeze and the module releases its derivations after its last case, memory.peak under a 16.5 GiB cap with
 no swap was 16.30 GiB without this collection and 15.64 GiB with it (16.22 and 15.78 GiB with no cap; four runs at
-once). Across the capped runs with this collection, memory.peak ranged 15.36 to 16.10 GiB from run to run (0.40 to 1.14
-GiB under the cap), and the peak anonymous memory, which leaves page cache out, was 15.10 to 15.66 GiB, against 15.81 to
-16.08 GiB in the capped runs without this collection. An interpreter without that function (3.10
+once). Across the capped runs with this collection at the heads of 2026-10-04, memory.peak ranged 15.36 to 16.10 GiB
+from run to run (0.40 to 1.14 GiB under the cap), and the peak anonymous memory, which leaves page cache out, was 15.10
+to 15.66 GiB, against 15.81 to 16.08 GiB in the capped runs without this collection. A run in which xdist split the
+thread-stop census's class across the two workers had both build that census's derivation at once, and the cap killed it
+(2026-10-04, reproduced with the split forced on 2026-10-05); the census's cut and one item address that
+(tests/test_thread_stop_census.py's _Tree and _TreeChecks, 2026-10-05). An interpreter without that function (3.10
 to 3.12) is read as having its GIL, so nothing changes on 3.10 or 3.12, nor on a GIL build of 3.13 or later (it reports
 true); a free-threaded build run with its GIL on keeps that collector and is not collected here, since the test is the
 GIL. The count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen object dies
 by reference count, and reading it WALKS the permanent generation's list: a tenth of a second per read over the eight
-million objects the census freezes, up to a second once a collection has scattered the heap, so nothing in this module
+million objects the census froze before its cut (about six million since, 2026-10-05), up to a second once a collection
+has scattered the heap, so nothing in this module
 reads it and a pin reads it at most twice.
 EVERY READER PAYS THAT after a derivation, not this module's pins
 alone: kernel/kernel.py's perf snapshot (_PerfStats.snapshot) reads gc.get_freeze_count() on every call, so a test that
@@ -118,7 +128,8 @@ ends with it: an object alive at a freeze that later falls into an unreachable c
 over a frozen heap costs microseconds on the interpreters with a GIL; the free-threaded build's collector, which has one
 generation and reports every automatic collection as generation 0, freezes the same objects (the count grows, a later
 collection leaves them) but still visits its heaps to skip them, about half the cost rather than none. A consumer that
-needs the trees walked again, or reclaimed, has no road here: the shape is the freeze, not the release.
+needs the trees walked again, or reclaimed after its build has returned, has no road here beyond clear(), which frees by
+reference count only what no frozen cycle holds: the shape is the freeze, not the release.
 
 THE SINGLETON PIN (the thread-stop census's twelfth pass, 2026-09-22; the mechanism read back by CI's diagnostic run
 35740276523). The parser hands out ONE instance of each expression context (ast.Load, ast.Store, ast.Del) and of each
