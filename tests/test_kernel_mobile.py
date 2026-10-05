@@ -2510,23 +2510,28 @@ def _bell_rule_classes(html):
     The census reads the forms it models and refuses the ones it does not, each by its own assertion anywhere in the served CSS, so a
     rule spelled past the read fails the census instead of passing it unread (T10's fix pass, 2026-10-05: `[id=mbell].busy{opacity:.45}`
     planted in the phone block had passed; review round 1, the same day: `@scope (#mbell){:scope.busy{opacity:.45}}` and
-    `#mbell/**/.busy{opacity:.45}` had passed too, and so had, at that round's fix, `#mtabs #mbell{&.busy{opacity:.45}` left open at
-    the end of a style element, `#mtabs #mbell:not([title=")] "]).busy{opacity:.45}` and
-    `@font-face{font-family:"{"}#mtabs #mbell.busy{opacity:.45}}`). It models a style rule's own selector, a bell's id written there
+    `#mbell/**/.busy{opacity:.45}` had passed too, and so had, at that round's fix, `#mtabs #mbell{&.busy{opacity:.45}` left open at the
+    end of a style element, `#mtabs #mbell:not([title=")] "]).busy{opacity:.45}` and
+    `@font-face{font-family:"{"}#mtabs #mbell.busy{opacity:.45}}`, and at its closing check
+    `@media (x:;@font-face ), all{#mtabs #mbell.busy{opacity:.45}}`). It models a style rule's own selector, a bell's id written there
     plainly as `#mbell` or `#rail-bell`, and the attribute selectors whose name it can read, over served_css's parse, which reads every
-    brace as a block's edge and every `/*` as a comment's start. It refuses an id attribute selector in any compound, whatever its
-    case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`, `[ID$=bell i]`); a class attribute selector in a compound
-    that carries a bell's id; a `[` that starts no attribute name this read can parse; a comment inside a selector; a quoted string in
-    a selector that holds a bracket or paren, which this read's compound split counts as nesting; a selector whose parentheses or
-    brackets do not balance, which served_css leaves when it cuts a rule at a brace a browser keeps inside them
-    (`#mbell:is([x={}],*).busy`); a selector character outside printable ASCII, which can continue a class or id name past this read
-    (a class `on` followed by a middle dot is not `on` to a browser); a `{` inside a style rule's block, a nested rule, which
-    served_css reads as the outer rule's declarations when the outer brace is left off; anywhere in a style element, a CSS escape
-    (`#\6d bell`, `.bu\73 y`, `@\73 cope`), a quoted string that holds a brace or a newline, and an unquoted url() that holds a
-    brace, a quote or a comment marker, since a browser reads a brace or a comment marker inside an escape, a string or a url() as
-    text, and ends a string at a newline, where served_css reads structure and reads on to the closing quote; and an at-rule whose
+    brace as a block's edge, every `;` outside a declaration block as a statement's end, and every `/*` as a comment's start. It refuses
+    an id attribute selector in any compound, whatever its case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`,
+    `[ID$=bell i]`); a class attribute selector in a compound that carries a bell's id; a `[` that starts no attribute name this read
+    can parse; a comment inside a selector; a quoted string in a selector that holds a bracket or paren, which this read's compound
+    split counts as nesting; a selector whose parentheses or brackets do not balance, which served_css leaves when it cuts a rule at a
+    brace a browser keeps inside them (`#mbell:is([x={}],*).busy`); a selector character outside printable ASCII, which can continue a
+    class or id name past this read (a class `on` followed by a middle dot is not `on` to a browser); a `{` inside a style rule's block,
+    a nested rule, which served_css reads as the outer rule's declarations when the outer brace is left off; anywhere in a style
+    element, a CSS escape (`#\6d bell`, `.bu\73 y`, `@\73 cope`), a quoted string that holds a brace or a newline, and an unquoted url()
+    that holds a brace, a quote or a comment marker, since a browser reads a brace or a comment marker inside an escape, a string or a
+    url() as text, and ends a string at a newline, where served_css reads structure and reads on to the closing quote; an at-rule whose
     prelude can hold a selector: @scope, whose prelude selects the elements its block styles, @custom-selector, and a selector() test
-    (@supports, @when, @else).
+    (@supports, @when, @else); and an at-rule prelude that holds a quote, or parentheses or brackets that do not balance (a close before
+    its open included), since served_css ends a prelude at a `;` or a brace a browser keeps inside a string, parentheses or brackets and
+    can then record no rule for the block a browser applies (in `@media (x:;@font-face ), all{...}` it skips that block as
+    @font-face's), and a `}` inside a selector's parentheses under an at-rule leaves the at-rule name after it a prelude that closes a
+    paren it never opened (`#mbell:is(.x}@font-face ,*).busy`).
     The comment is refused rather than read because served_css blanks a comment to spaces, which this read takes as a descendant
     combinator, while a browser drops it (`#mbell/**/.busy` is one compound to a browser); served_css's blanking stays as it is, since
     the other censuses read it. The preludes are read from each style element's text rather than from the rules' `at`, since a
@@ -2542,6 +2547,15 @@ def _bell_rule_classes(html):
             assert not name, ("an @%s rule (%r) holds a selector in its prelude, which can reach a bell past this census; it reads "
                               "rules' own selectors only" % (name.group(1).lower(), prelude))
             assert not _SELECTOR_TEST.search(prelude), "an at-rule prelude holds a selector() test (%r); this census reads rules' own selectors only" % prelude
+            # served_css ends a prelude at the first ; or brace, inside a string, parentheses or brackets too, where a browser reads on,
+            # and the text after the break can leave it no rule for a block a browser applies (review round 1's closing check, 2026-10-05)
+            depth = low = 0
+            for c in prelude:
+                depth += (c in "([") - (c in ")]")
+                low = min(low, depth)
+            assert depth == low == 0 and not re.search(r"[\"']", prelude), (
+                "an at-rule prelude holds a quote or unbalanced parentheses or brackets (%r): served_css ends a prelude at a ; or a brace a "
+                "browser keeps inside a string, parentheses or brackets, and can then record no rule for a block a browser applies" % prelude)
         # served_css reads every brace as a block's edge and every /* as a comment's start, and runs a string to its closing quote; a
         # browser reads a brace or a comment marker inside an escape, a url() or a string as text, and ends a string at a newline
         k = css.find("\\")
@@ -2819,6 +2833,38 @@ class BellRuleReader(unittest.TestCase):
         )
         for css, why in cases:
             with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(css)
+
+    def test_an_at_rule_prelude_holding_a_quote_or_unbalanced_parentheses_or_brackets_is_refused_by_name(self):
+        # Each passed this reader, neither read nor refused, at review round 1's closing check (2026-10-05), and Chromium dims a busy
+        # bell under each: served_css ends the prelude at a ; or brace kept inside a string, parentheses or brackets, then skips the
+        # next block as a declaration at-rule's (@font-face, @page, @counter-style, @property) or reads it as an at-rule's block. A }
+        # inside a selector's parentheses under an at-rule leaves the at-rule name after it a prelude that closes a paren it never
+        # opened. The last four hold, inside the skipped block, a form refused on its own: the skip had bypassed those refusals too.
+        cases = (
+            "@media (x:;@font-face ), all{#mtabs #mbell.busy{opacity:.45}}",
+            '@media (x:"; @font-face "), all{#mtabs #mbell.busy{opacity:.45}}',
+            "@media (x:{}@font-face ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@supports (x:;@page ) or (display:block){#mtabs #mbell.busy{opacity:.45}}",
+            "@media [;@font-face ], all{#mtabs #mbell.busy{opacity:.45}}",
+            '@media "a;@font-face ", all{#mtabs #mbell.busy{opacity:.45}}',              # a quote and no parentheses: the quote clause alone
+            "@media url(;@font-face ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media (x:;@counter-style ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media (x:;@property ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media (x:;@page ), all{.rail-acts #rail-bell.busy{opacity:.45}}",
+            "@media (max-width:640px){#mtabs #mbell:is(.x}@font-face ,*).busy{opacity:.45}",   # a } kept in :is(), then a close before its open
+            "@media (max-width:640px){#mtabs #mbell:is(.x}@page ,*).busy{opacity:.45}",
+            "@media (max-width:640px){#mtabs #mbell:is(.x}@media ,*).busy{opacity:.45}",
+            "@media (max-width:640px){#mtabs #mbell:is(.x}@layer ,*).busy{opacity:.45}",
+            "@media all{#mtabs #mbell:is(.x}@foo ,*).busy{opacity:.45}",
+            "@media (x:;@font-face ), all{[id=mbell].busy{opacity:.45}}",
+            "@media (x:;@font-face ), all{#mtabs #mbell/**/.busy{opacity:.45}}",
+            "@media (x:;@font-face ), all{#mtabs #mbell{&.busy{opacity:.45}}}",
+            "@media (x:;@font-face ), all{#mbell[class~=busy]{opacity:.45}}",
+        )
+        # then each half of the count alone, on sheets that name no bell: a prelude left open, and one that closes before it opens
+        for css in cases + ("@font-face (;#x{color:red}", "@font-face ) (;#x{color:red}"):
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape("an at-rule prelude holds a quote or unbalanced")):
                 self._read(css)
 
 
