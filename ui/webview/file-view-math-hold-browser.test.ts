@@ -35,7 +35,10 @@
 // viewer closed while its repaint is parked paints nothing at the release (the run re-checks that the viewer is up); and a paint since
 // the settle stands (the run re-checks that too: a reload answered 404 under the same press, its pane parked and painted first at the
 // release, over a held open with the chunk served and over a failed load's sources with the retry served, keeps the pane and error()'s
-// sentence; in the URL viewer a press on Raw across the retry's success keeps the Raw pick's rows, the one paint after the release).
+// sentence, and the pane is the only root put into the body across the release, so the repaint never ran before it, the order the
+// re-check rests on: the landing's hold is built before mathHold, so its release runs first (the review's round 3, tests-1: the end
+// state alone passed with mathHold built first, the note painted and then covered); in the URL viewer a press on Raw across the
+// retry's success keeps the Raw pick's rows, the one paint after the release).
 // Nothing in the body moves under the press either: the arrival leaves a failed load's sources in both viewers' bodies to the held repaint (math.ts
 // MATH_REPAINT_ATTR), so a press on a link below two display formulas, held across the retry's success, clicks the link, still in
 // the page, and its fragment lands, in both viewers (before, the in-place re-fill grew the formulas and the release met another
@@ -677,6 +680,14 @@ const paneNow = (page: any): Promise<{ pane: string | null; error: string | null
   return { pane: e ? e.textContent : null, error: (window as any).__seam.error(), md: !!b.querySelector(".fileview-md"), loader: !!b.querySelector(".fileview-load"),
     katex: b.querySelectorAll(".katex").length, src: b.querySelectorAll("code.md-math-src").length };
 });
+/** Records each root put into the body from now on, by its class, in order: installed under the press, before the release, so a scene
+ *  reads which paints ran across the release (the failure pane's root, a Rendered root) and in what order. */
+const watchBodyRoots = (page: any): Promise<void> => page.evaluate(() => {
+  const w = window as any;
+  w.__added = [];
+  new MutationObserver((recs) => { for (const r of recs) r.addedNodes.forEach((n) => { if (n instanceof HTMLElement) w.__added.push(n.className); }); })
+    .observe(document.querySelector(".fileview-body")!, { childList: true });
+});
 /** A reload of the note answered 404 (the file gone) while a press holds the card: its landing, the failure pane, parks. */
 async function reload404UnderPress(page: any): Promise<void> {
   const fetched = await page.evaluate(() => (window as any).__fetches);
@@ -700,11 +711,14 @@ test("chromium: the Files pane's viewer: a held open, under one press a reload a
     g.open();
     await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
     await frames(page, 6);
+    await watchBodyRoots(page);
     await page.mouse.up();
     await frames(page, 10);
     const after = await paneNow(page);
     assert.ok(after.error && after.pane !== null && after.pane.includes(after.error) && !after.md && !after.loader && after.katex === 0,
       "the reload's pane stands with its sentence, no note painted over it: " + JSON.stringify(after));
+    const added = await page.evaluate(() => (window as any).__added);
+    assert.deepEqual(added, ["fileview-err"], "across the release the pane is the only root put into the body: the arrival's parked repaint stood down and painted no note before the pane: " + JSON.stringify(added));
     assert.equal(requests.length, 1);
     assert.deepEqual(errors, []);
   });
@@ -721,11 +735,14 @@ test("chromium: the Files pane's viewer: a failed load's sources shown, under on
     await page.mouse.down();
     await reload404UnderPress(page);
     await retryLandsNow(page, retry);
+    await watchBodyRoots(page);
     await page.mouse.up();
     await frames(page, 10);
     const after = await paneNow(page);
     assert.ok(after.error && after.pane !== null && after.pane.includes(after.error) && !after.md && after.katex === 0 && after.src === 0,
       "the reload's pane stands with its sentence, no note painted over it: " + JSON.stringify(after));
+    const added = await page.evaluate(() => (window as any).__added);
+    assert.deepEqual(added, ["fileview-err"], "across the release the pane is the only root put into the body: the arrival's parked repaint stood down and painted no note before the pane: " + JSON.stringify(added));
     assert.equal(requests.length, 2);
     assert.deepEqual(errors, []);
   });
