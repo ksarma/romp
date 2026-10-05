@@ -2545,7 +2545,19 @@ def _bell_rule_classes(html):
     names insertRule, deleteRule, replaceSync, adoptedStyleSheets, CSSStyleSheet, styleSheets, cssRules or `.sheet`, and each of their 7
     `.replace(` calls passes two arguments, a string's replace); of the 4 that load a bundle by src, palette-main.js writes two, the
     command palette's and the shortcuts card's, each when it first opens (ui/webview/palette.ts and shortcuts-modal.ts: a style element
-    whose textContent is a constant naming neither bell), and a grep of the four built bundles finds no other such write."""
+    whose textContent is a constant naming neither bell), and a grep of the four built bundles finds no other such write.
+
+    Some refusals read more than a browser does, the safe side; the served CSS trips none of them, and BellRuleReader pins each beside
+    what an author writes instead. The escape refusal reads every backslash in a style element, so an escape inside a string
+    (`content:"\2022"`) or a backslash in a comment is refused: write the character itself, and word the comment without one. The url()
+    refusal reads the element's raw text, so `url(` written in a comment or a string reads as an unquoted url() running to the next `)`,
+    refused when that text holds a brace, a quote or a comment marker: `/* see url(it's) */`, `content:"url(a/*b)"`, and a `url(` a
+    comment leaves unclosed, which runs on past the comment's end (`/* a url( note */`); quote a real url (`url("it's.png")`), and close
+    or reword a `url(` in a comment or a string. The at-rule refusals read every `@`, strings and url()s included, so
+    `content:"mail@scope.example"` is refused as an @scope rule, and `content:"a@b"` and `url(mailto:a@b)` as preludes that hold a quote
+    or close a paren they never opened: write `%40` in a url, and put text that holds an `@` in the markup (`content:attr(data-mail)`).
+    And a prelude that quotes a value is refused (`@namespace svg "http://www.w3.org/2000/svg"`, `@charset "utf-8"`): write a namespace
+    as a url() (`@namespace svg url(http://www.w3.org/2000/svg)`), and leave out @charset, which a style element ignores."""
     blocks = served_css.style_blocks(html)
     for _, css in blocks:
         code = served_css.css_code(css)   # the element's text, its comments blanked
@@ -2874,6 +2886,30 @@ class BellRuleReader(unittest.TestCase):
         for css in cases + ("@font-face (;#x{color:red}", "@font-face ) (;#x{color:red}"):
             with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape("an at-rule prelude holds a quote or unbalanced")):
                 self._read(css)
+
+    def test_each_stated_over_refusal_is_refused_and_what_an_author_writes_instead_is_read(self):
+        # the over-refusals _bell_rule_classes states, the safe side (the coordinator's call 2 at review round 1's head and that round's
+        # closing check, 2026-10-05), on sheets that name no bell, then each alternative the docstring gives, read clean
+        refused = (
+            (r'#x{content:"\2022"}', "CSS escape"),
+            (r"/* C:\path */#x{color:red}", "CSS escape"),
+            ("/* see url(it's) */#x{color:red}", "an unquoted url()"),
+            ('#x{content:"url(a/*b)"}', "an unquoted url()"),
+            ("/* a url( note */#y{color:red}", "an unquoted url()"),
+            ('#x{content:"mail@scope.example"}', "an @scope rule"),
+            ('#x{content:"a@b"}', "an at-rule prelude holds a quote"),
+            ("#x{background:url(mailto:a@b)}", "an at-rule prelude holds a quote"),
+            ('@namespace svg "http://www.w3.org/2000/svg";#x{color:red}', "an at-rule prelude holds a quote"),
+            ('@charset "utf-8";#x{color:red}', "an at-rule prelude holds a quote"),
+        )
+        for css, why in refused:
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(css)
+        for css in ('#x{content:"\u2022"}', "/* C:/path */#x{color:red}", "#x{background:url(\"it's.png\")}", "/* see it's */#x{color:red}",
+                    "/* a url(x) note */#y{color:red}", "#x{background:url(mailto:a%40b)}", "#x::after{content:attr(data-mail)}",
+                    "@namespace svg url(http://www.w3.org/2000/svg);#x{color:red}"):
+            with self.subTest(css=css):
+                self.assertEqual(self._read(css), {"mbell": set(), "rail-bell": set()})
 
 
 # A node stand-in for the phone with the shell socket in view: the fit harness's window plus a mutable copy of the
