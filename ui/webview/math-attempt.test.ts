@@ -11,7 +11,9 @@
 //   - a page that is leaving is no failed load (the review's round 2, extra5-1): the reload core's persist step, the shell's own
 //     hook before location.reload (here the page's __rompShimPersist, called as the core calls it), latches the page, and a script
 //     tag's error then fails nothing: no console line, the formula still waiting; the attempt's backstop stays its end. pageshow
-//     clears the latch, and desktop's beforeunload, heard while an attempt is out, latches it too.
+//     clears the latch. A beforeunload alone latches nothing (the review's round 3, extra5-1: one that no unload follows, a
+//     navigation from the browser's own controls that never commits, left the latch set for the page life, so a real load failure
+//     showed only at the backstop): a script tag's error after it is a failed load, at once.
 // Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -201,16 +203,16 @@ test("executed: pageshow clears the latch, so a script tag's error after it fail
   assert.equal(h.timers.size, 0, "the failure cleared the backstop");
 });
 
-test("executed: desktop's beforeunload, heard while an attempt is out, latches the page too: the tag's error fails nothing and the backstop stays its end", async () => {
+test("executed: a beforeunload alone does not latch the page: a script tag's error after it fails the attempt at once, one line, the formula its marked source", async () => {
   const h = page();
   const t1 = h.turn("x^2");
-  assert.equal((h.win.listeners.get("beforeunload") || []).length, 1, "the attempt listens to beforeunload while it is out");
-  h.win.dispatch("beforeunload");
-  h.tags()[0].onerror!();
+  assert.equal(h.tags().length, 1, "the first formula asked for the chunk");
+  h.win.dispatch("beforeunload");                                        // a navigation the browser started, which may never commit (a download, a 204)
+  h.tags()[0].onerror!();                                                // a real load failure while the page stays
   await h.flush();
-  assert.deepEqual(h.lines, [], "no line");
-  assert.equal(t1.querySelectorAll("." + h.M.MATH_INLINE_CLASS).length, 1, "the formula still waits");
-  backstopRunsOut(h);
-  assert.equal(h.lines.length, 1);
-  assert.equal((h.win.listeners.get("beforeunload") || []).length, 0, "the attempt's end stopped listening");
+  assert.equal(h.lines.length, 1, "the error is a failed load: one line, at once, not the backstop's");
+  assert.match(h.lines[0], /^math: the math renderer failed to load;/);
+  assert.equal(t1.querySelectorAll("[" + h.M.MATH_FAILED_ATTR + "]").length, 1, "the formula is its marked source at once");
+  assert.equal(h.timers.size, 0, "the failure cleared the backstop");
+  assert.equal((h.win.listeners.get("beforeunload") || []).length, 0, "nothing listens to beforeunload");
 });

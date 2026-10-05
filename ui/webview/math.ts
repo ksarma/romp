@@ -389,7 +389,7 @@ let failures = 0;                                         // attempts that have 
 let retryArmed = false;                                   // one retry, armed by an event, used by the next fill that meets a formula
 let retryable = true;                                     // false once the page proved to have no bundle tag to derive the URL from
 let settling = 0;                                         // inside engineSettled, or a viewer's parked repaint it decided on (asSettleFill): its fills use no retry
-let leaving = false;                                      // the page is going: a reload through the reload core (latchOnLeave), or a desktop unload
+let leaving = false;                                      // the page is going: a reload through the reload core (latchOnLeave)
 let leaveHooked = false;                                  // latchOnLeave's hooks are on (once per page life)
 const settleHandlers: Array<() => (() => void) | void> = [];
 
@@ -411,15 +411,18 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
  *  formula into its source for the whole provisional load). The latch is set by a reload through the reload core: its fire step
  *  (kernel.py _RELOAD_CORE_JS fire) runs persist, which calls each window's __rompShimPersist, then location.reload, and the pane shim
  *  defines that hook on every kernel page that loads this module (the chat, the feed, the Files pane, Waiting); this chains onto it.
- *  iOS Safari fires no beforeunload, so that event is only a further belt, for desktop WebKit, and it is listened to only while an
- *  attempt is out (attempt). While the latch is set a tag's error fails nothing and the attempt's backstop stays its end, in case the
- *  page does not unload after all; pageshow, the page shown again from the back-forward cache, clears it. Hooked when the first
- *  attempt sends its request, after the page's load event, so the shim's hook exists by then; a page without the shim (the VS Code
- *  webview) has no reload core to latch on. What stays, on iOS: a reload that does not go through the fire step still logs one false
- *  line on the dying page, the browser's own reload control and romp's direct location.reload() calls alike (kernel.py: the pane
- *  shim's Reload on its connection and build bars, the shell's stale-connection Reload with no offer standing, the update wait's and
- *  the boot poll's reloads; render.ts: the chat's federation-failure Reload); and a reload through the fire step that the browser
- *  refuses leaves the latch set (no pageshow follows), so a later attempt's tag error in that page life waits for its backstop. */
+ *  That hook is the one sign of a reload romp started. A beforeunload sets nothing (the review's round 3, extra5-1): iOS Safari does not
+ *  fire it, and in Chromium one that no unload follows (a navigation started from the browser's own controls that never commits: a
+ *  download, a 204, a cancelled one) left the latch set for the rest of the page life, so a real load failure showed only at the
+ *  backstop, under the backstop's reason. While the latch is set a tag's error fails nothing and the attempt's backstop stays its end,
+ *  in case the page does not unload after all; pageshow, the page shown again from the back-forward cache, clears it. Hooked when the
+ *  first attempt sends its request, after the page's load event, so the shim's hook exists by then; a page without the shim (the VS
+ *  Code webview) has no reload core to latch on. What stays, in WebKit on iOS and on the desktop alike: a reload that does not go
+ *  through the fire step still logs one false line on the dying page, the browser's own reload control and romp's direct
+ *  location.reload() calls alike (kernel.py: the pane shim's Reload on its connection and build bars, the shell's stale-connection
+ *  Reload with no offer standing, the update wait's and the boot poll's reloads; render.ts: the chat's federation-failure Reload); and
+ *  a reload through the fire step that the browser refuses leaves the latch set (no pageshow follows), so a later attempt's tag error
+ *  in that page life waits for its backstop. */
 function latchOnLeave(): void {
   if (leaveHooked || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
   leaveHooked = true;
@@ -501,23 +504,20 @@ function attempt(): void {
   }
   let failed = false, done = false;
   let backstop: ReturnType<typeof setTimeout> | undefined;
-  const unloads = (): void => { leaving = true; };          // desktop WebKit's unload, heard while this attempt is out (latchOnLeave)
-  const ended = (): void => { clearTimeout(backstop); window.removeEventListener("beforeunload", unloads); };
   const fail = (why: string): void => {
     if (failed || done) return;
     failed = true;
-    ended();
+    clearTimeout(backstop);
     attemptFailed(why);
   };
   const succeed = (): void => {
     if (done) return;
     done = true;
-    ended();
+    clearTimeout(backstop);
     if (engineLoad !== "ready") engineSettled(null);      // the first success runs the arrival; a second is a no-op
   };
   const request = (): void => {
     latchOnLeave();
-    window.addEventListener("beforeunload", unloads);
     const faces = katexFaces();
     backstop = setTimeout(() => fail("the math renderer did not load within " + MATH_CHUNK_BACKSTOP_MS / 1000 + " seconds"), MATH_CHUNK_BACKSTOP_MS);
     const sc = document.createElement("script");
