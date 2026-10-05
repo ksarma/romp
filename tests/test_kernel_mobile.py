@@ -2520,12 +2520,13 @@ def _bell_rule_classes(html):
     a selector that holds a bracket or paren, which this read's compound split counts as nesting; a selector whose parentheses or
     brackets do not balance, which served_css leaves when it cuts a rule at a brace a browser keeps inside them
     (`#mbell:is([x={}],*).busy`); a selector character outside printable ASCII, which can continue a class or id name past this read
-    (a class `on` followed by a middle dot is not `on` to a browser); a `{` inside a style rule's block, a nested rule, which served_css reads as the outer rule's declarations when the outer
-    brace is left off; anywhere in a style element, a CSS escape (`#\6d bell`, `.bu\73 y`, `@\73 cope`), a quoted string that holds a
-    brace or a newline, and an unquoted url() that holds a brace, a quote or a comment marker, since a browser reads a brace or a
-    comment marker inside an escape, a string or a url() as text, and ends a string at a newline, where served_css reads structure and
-    reads on to the closing quote; and an at-rule whose prelude can hold a selector: @scope, whose prelude selects the elements its
-    block styles, @custom-selector, and a selector() test (@supports, @when, @else).
+    (a class `on` followed by a middle dot is not `on` to a browser); a `{` inside a style rule's block, a nested rule, which
+    served_css reads as the outer rule's declarations when the outer brace is left off; anywhere in a style element, a CSS escape
+    (`#\6d bell`, `.bu\73 y`, `@\73 cope`), a quoted string that holds a brace or a newline, and an unquoted url() that holds a
+    brace, a quote or a comment marker, since a browser reads a brace or a comment marker inside an escape, a string or a url() as
+    text, and ends a string at a newline, where served_css reads structure and reads on to the closing quote; and an at-rule whose
+    prelude can hold a selector: @scope, whose prelude selects the elements its block styles, @custom-selector, and a selector() test
+    (@supports, @when, @else).
     The comment is refused rather than read because served_css blanks a comment to spaces, which this read takes as a descendant
     combinator, while a browser drops it (`#mbell/**/.busy` is one compound to a browser); served_css's blanking stays as it is, since
     the other censuses read it. The preludes are read from each style element's text rather than from the rules' `at`, since a
