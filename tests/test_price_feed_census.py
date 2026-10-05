@@ -16332,7 +16332,7 @@ class TheAllowlistExcusesEachWriteItNames(unittest.TestCase):
 class TheAllowlistedWriteIsReadForANosniffHeader(unittest.TestCase):
     """A1 (a) of the reviewer's 05:2xZ ruling of 2026-10-05: no allowlist entry excuses a Content-Type write with no nosniff header
     beside it, whatever its type; judge's allowlisted branch refuses it by name, the allow hit recorded all the same. Two tiny roots of
-    their own (the A1 refuter's shape), each a kernel/kernel.py beside the script's copy. In the first, a Handler with the kernel's
+    their own, each a kernel/kernel.py beside the script's copy. In the first, a Handler with the kernel's
     `_send` shape (B_KERNEL_SEND) and three allowlisted places: _remote_file, a direct 206 write of `ctype` with no nosniff header,
     refused; _file_preview, the same write of `mime` with the header beside it, and _file_slice, a call of the kernel's `_send`, which
     writes it, each read as before. In the second, a `_send` that writes no nosniff header (A_SEND) and an allowlisted call of it in
@@ -16387,7 +16387,7 @@ class TheHeaderBlockIsReadForACrOrLf(unittest.TestCase):
     no script, and at a place SERVED_ALLOW names, judge refuses it by name where its home (the `_send` definition, or the function
     around a direct write, or the module) holds a header call (send_header, send_response or send_response_only, a Content-Type write
     aside) with a CR or LF the census reads, read as a `_send` call's header arguments are (_header_block_crlf, _crlf_read). A tiny root
-    of its own, one probe module per plant (the B9 refuter's files, each page a fetch), and a kernel/kernel.py for the allowlisted
+    of its own, one probe module per plant (each page a fetch), and a kernel/kernel.py for the allowlisted
     place. Refused at the Content-Type write's line, or at the call for a `_send`: a CR LF header before an application/json type and
     its nosniff header written directly (dw1) and inside a `_send` that writes the type itself (dw2), before image/png (dw3), in a
     response line's message (dw4) or a response line alone (dw9), through a module constant (dw5), after the type, adding a second
