@@ -76577,13 +76577,13 @@ def _landing():
             # The bar WRAPS when the tabs and the action buttons do not fit one row (iOS item 4g, 2026-10-04). In one row the
             # default tabs and the six actions need about 413 to 418px (more with the Files tab on), and nothing in the row
             # shrinks, so on a narrower phone the actions ran past the screen's right edge, where the overflow:hidden body
-            # leaves them unreachable (at 320px Restart, the Log's triangle, the bell and Settings). The actions are one
-            # element (.mtabs-acts, the markup below), so a wrap moves them whole: the tabs keep the first row (flex:1, they
-            # fill it) and the actions take a second row, at the right edge by their auto margin, where they sat. Where
-            # everything fits, the row is the one it was: the tabs take all the free space, so the auto margin is 0 and the tabs
-            # do not move; the actions do not move in Chromium or Firefox, and in WebKit by at most 0.03px. barfit() reads the
-            # taller bar's height, and an observer on the bar re-reads it when the wrap changes with no resize
-            # (_LANDING_MOBILE_JS). tests/test_mtabs_fit_served.py measures the bar in three engines.
+            # leaves them unreachable (at 320px the Log's triangle, the bell and Settings, with Restart cut by the edge but its
+            # centre still on screen). The actions are one element (.mtabs-acts, the markup below), so a wrap moves them whole:
+            # the tabs keep the first row (flex:1, they fill it) and the actions take a second row, at the right edge by their
+            # auto margin, where they sat. Where everything fits, the row is the one it was: the tabs take all the free space,
+            # so the auto margin is 0 and the tabs do not move; the actions do not move in Chromium or Firefox, and in WebKit by
+            # at most 0.03px. barfit() reads the taller bar's height, and an observer on the bar re-reads it when the wrap
+            # changes with no resize (_LANDING_MOBILE_JS). tests/test_mtabs_fit_served.py measures the bar in three engines.
             "#mtabs{flex-wrap:wrap}"
             "#mtabs .mtabs-acts{display:flex;flex:0 0 auto;margin-left:auto}"
             # the divider's 1px as its width too, not only its flex-basis: WebKit and Firefox size .mtabs-acts by its children's
