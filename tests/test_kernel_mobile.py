@@ -2513,7 +2513,8 @@ def _bell_rule_classes(html):
     `#mbell/**/.busy{opacity:.45}` had passed too, and so had, at that round's fix, `#mtabs #mbell{&.busy{opacity:.45}` left open at the
     end of a style element, `#mtabs #mbell:not([title=")] "]).busy{opacity:.45}` and
     `@font-face{font-family:"{"}#mtabs #mbell.busy{opacity:.45}}`, and at its closing check
-    `@media (x:;@font-face ), all{#mtabs #mbell.busy{opacity:.45}}`). It models a style rule's own selector, a bell's id written there
+    `@media (x:;@font-face ), all{#mtabs #mbell.busy{opacity:.45}}` and, with that refused,
+    `@media (x:url(]);@font-face url([) ), all{...}`). It models a style rule's own selector, a bell's id written there
     plainly as `#mbell` or `#rail-bell`, and the attribute selectors whose name it can read, over served_css's parse, which reads every
     brace as a block's edge, every `;` outside a declaration block as a statement's end, and every `/*` outside a quoted string as a
     comment's start. It refuses an id attribute selector in any compound, whatever its case, spacing, namespace prefix, operator,
@@ -2524,9 +2525,12 @@ def _bell_rule_classes(html):
     ASCII, which can continue a class or id name past this read (a class `on` followed by a middle dot is not `on` to a browser); a `{`
     inside a style rule's block, a nested rule, which served_css reads as the outer rule's declarations when the outer brace is left
     off; anywhere in a style element, a CSS escape (`#\6d bell`, `.bu\73 y`, `@\73 cope`), a quoted string that holds a brace or a
-    newline, and an unquoted url() that holds a brace, a quote or a comment marker, since a browser reads a brace inside an escape, a
-    string or a url(), and a comment marker inside an escape or a url(), as text, and ends a string at a newline, where served_css reads
-    structure and reads on to the closing quote; an at-rule whose prelude can hold a selector: @scope, whose prelude selects the
+    newline, and an unquoted url() that holds a brace, a quote, a comment marker, a paren or a bracket, since a browser reads a brace
+    inside an escape, a string or a url(), and a comment marker inside an escape or a url(), as text, and ends a string at a newline,
+    where served_css reads structure and reads on to the closing quote, and a browser reads a url() as one token, where this read's
+    prelude and selector counts read each paren and bracket in its body (a url() holding an opener a browser does not push can balance
+    the text served_css leaves when it cuts at a `;` or brace a browser keeps inside a url(), parentheses or brackets, as in
+    `#mbell:is(.x}@font-face url([) ,*).busy`); an at-rule whose prelude can hold a selector: @scope, whose prelude selects the
     elements its block styles, @custom-selector, and a selector() test (@supports, @when, @else); and an at-rule prelude that holds a
     quote, or parentheses or brackets that do not balance (a close before its open included), since served_css ends a prelude at a `;`
     or a brace a browser keeps inside a string, parentheses or brackets and can then record no rule for the block a browser applies (in
@@ -2551,9 +2555,10 @@ def _bell_rule_classes(html):
     what an author writes instead. The escape refusal reads every backslash in a style element, so an escape inside a string
     (`content:"\2022"`) or a backslash in a comment is refused: write the character itself, and word the comment without one. The url()
     refusal reads the element's raw text, so `url(` written in a comment or a string reads as an unquoted url() running to the next `)`,
-    refused when that text holds a brace, a quote or a comment marker: `/* see url(it's) */`, `content:"url(a/*b)"`, and a `url(` a
-    comment leaves unclosed, which runs on past the comment's end (`/* a url( note */`); quote a real url (`url("it's.png")`), and close
-    or reword a `url(` in a comment or a string. The at-rule refusals read every `@`, strings and url()s included, so
+    refused when that text holds a brace, a quote, a comment marker, a paren or a bracket: `/* see url(it's) */`, `/* see url([x]) */`,
+    `content:"url(a/*b)"`, `content:"url(a(b)"`, and a `url(` a comment leaves unclosed, which runs on past the comment's end
+    (`/* a url( note */`); quote a real url (`url("it's.png")`, `url("a[1](2).png")`), and close or reword a `url(` in a comment or a
+    string. The at-rule refusals read every `@`, strings and url()s included, so
     `content:"mail@scope.example"` is refused as an @scope rule, and `content:"a@b"` and `url(mailto:a@b)` as preludes that hold a quote
     or close a paren they never opened: write `%40` in a url, and put text that holds an `@` in the markup (`content:attr(data-mail)`).
     And a prelude that quotes a value is refused (`@namespace svg "http://www.w3.org/2000/svg"`, `@charset "utf-8"`): write a namespace
@@ -2578,12 +2583,15 @@ def _bell_rule_classes(html):
                 "browser keeps inside a string, parentheses or brackets, and can then record no rule for a block a browser applies" % prelude)
         # served_css reads every brace as a block's edge and every /* outside a quoted string as a comment's start, and runs a string to
         # its closing quote; a browser reads a brace inside an escape, a url() or a string, and a comment marker inside an escape or a
-        # url(), as text, and ends a string at a newline
+        # url(), as text, and ends a string at a newline. And a browser reads a url() as one token, to its ), where the prelude count
+        # above and the selector count below read each paren and bracket in its body (the check of review round 1's closing check
+        # fixes, 2026-10-05); the body ends at the first ), so a ) is never in it
         k = css.find("\\")
         assert k < 0, "a style element holds a CSS escape (%r); this census reads plain spellings only" % css[max(0, k - 40):k + 40]
         for url in _URL.finditer(css):
-            assert not re.search(r"[{}\"']|/\*", url.group(1)), ("an unquoted url() holds a brace, a quote or a comment marker (%r), which a "
-                                                                 "browser reads as part of the url" % url.group(0)[:80])
+            assert not re.search(r"[{}\"'(\[\]]|/\*", url.group(1)), (
+                "an unquoted url() holds a brace, a quote, a comment marker, a paren or a bracket (%r), which a browser reads as part of "
+                "the url" % url.group(0)[:80])
         for q in _QUOTED.findall(code):
             assert not re.search(r"[\n\r\f]", q), "a quoted string holds a newline (%r), where a browser ends the string" % q[:80]
             assert not re.search(r"[{}]", q), "a quoted string holds a brace (%r), which served_css reads as a block's edge" % q[:80]
@@ -2888,6 +2896,34 @@ class BellRuleReader(unittest.TestCase):
             with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape("an at-rule prelude holds a quote or unbalanced")):
                 self._read(css)
 
+    def test_a_paren_or_bracket_inside_an_unquoted_url_is_refused_by_name(self):
+        # Each passed this reader, neither read nor refused, with the prelude refusal above in place (the check of review round 1's
+        # closing check fixes, 2026-10-05), and Chromium and WebKit dim a busy bell under each. A browser reads an unquoted url() as
+        # one token, to its ), while the prelude and selector counts read each paren and bracket in its body, so a url() holding an
+        # opener a browser does not push can balance the text served_css leaves when it cuts at a ; or brace a browser keeps inside a
+        # url(), parentheses or brackets. The first five are the prelude shape, and the next six the selector shape (a } inside a
+        # selector's parentheses), two of them with no at-rule after the }, where the url() balances the selector count alone; the
+        # last two are the nested shape, whose outer rule served_css ends at the } inside :is().
+        cases = (
+            "@media (x:url(]);@font-face url([) ), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media (x:url(]);@page url([) ), all{.rail-acts #rail-bell.busy{opacity:.45}}",
+            "@media [url(]);@font-face url([) ], all{#mtabs #mbell.busy{opacity:.45}}",
+            "@supports (x:url(]);@page url([) ) or (display:block){#mtabs #mbell.busy{opacity:.45}}",
+            "@media url(];@font-face [), all{#mtabs #mbell.busy{opacity:.45}}",
+            "@media all{#mtabs #mbell:is(.x}@font-face url([) ,*).busy{opacity:.45}",
+            "@media all{#mtabs #mbell:is(.x}@foo url([) ,*).busy{opacity:.45}",
+            "@media all{#mtabs #mbell:is(.x}@font-face url(() ,*).busy{opacity:.45}",
+            "@supports (display:block){@media all{#mtabs #mbell:is(.x}@font-face url([) ,*).busy{opacity:.45}}",
+            "@media all{#mtabs #mbell:is(.x} url([x) ,*).busy{opacity:.45}",
+            "@media all{#mtabs #mbell:is(.x} url(() ,*).busy{opacity:.45}",
+            "html{& :is(#mtabs #mbell.busy, .x}url([x) ){opacity:.45}",
+            "html{& :is(#mtabs #mbell.busy, .x}url(() ){opacity:.45}",
+        )
+        # then each character alone, on sheets that name no bell
+        for css in cases + ("#x{background:url(a(b)}", "#x{background:url(a[b)}", "#x{background:url(a]b)}"):
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape("an unquoted url() holds")):
+                self._read(css)
+
     def test_each_stated_over_refusal_is_refused_and_what_an_author_writes_instead_is_read(self):
         # the over-refusals _bell_rule_classes states, the safe side (the coordinator's call 2 at review round 1's head and that round's
         # closing check, 2026-10-05), on sheets that name no bell, then each alternative the docstring gives, read clean
@@ -2895,7 +2931,9 @@ class BellRuleReader(unittest.TestCase):
             (r'#x{content:"\2022"}', "CSS escape"),
             (r"/* C:\path */#x{color:red}", "CSS escape"),
             ("/* see url(it's) */#x{color:red}", "an unquoted url()"),
+            ("/* see url([x]) */#x{color:red}", "an unquoted url()"),
             ('#x{content:"url(a/*b)"}', "an unquoted url()"),
+            ('#x{content:"url(a(b)"}', "an unquoted url()"),
             ("/* a url( note */#y{color:red}", "an unquoted url()"),
             ('#x{content:"mail@scope.example"}', "an @scope rule"),
             ('#x{content:"a@b"}', "an at-rule prelude holds a quote"),
@@ -2907,8 +2945,8 @@ class BellRuleReader(unittest.TestCase):
             with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
                 self._read(css)
         for css in ('#x{content:"\u2022"}', "/* C:/path */#x{color:red}", "#x{background:url(\"it's.png\")}", "/* see it's */#x{color:red}",
-                    "/* a url(x) note */#y{color:red}", "#x{background:url(mailto:a%40b)}", "#x::after{content:attr(data-mail)}",
-                    "@namespace svg url(http://www.w3.org/2000/svg);#x{color:red}"):
+                    '#x{background:url("a[1](2).png")}', "/* a url(x) note */#y{color:red}", "#x{background:url(mailto:a%40b)}",
+                    "#x::after{content:attr(data-mail)}", "@namespace svg url(http://www.w3.org/2000/svg);#x{color:red}"):
             with self.subTest(css=css):
                 self.assertEqual(self._read(css), {"mbell": set(), "rail-bell": set()})
 
