@@ -126,20 +126,61 @@ outside_refused() {  # <the listed line>
     set_mode_refuses "$NL    $1" || return 1
 }
 
+# An empty url or push url value of any remote's, or an insteadOf or pushInsteadOf rule whose base is
+# empty, fails closed, the same under every git: --check lists every one, as the arguments spell them
+# (each the key and, for a rule, its value, or the legacy line, and where it lives), in the order git
+# reads them, and nothing else, then either the commands or the closing line; it gives no rerun line and
+# the same answer twice. Set mode refuses, listing them and nothing else, and changes nothing. The last
+# `run` is the second --check.
+empty_refused() {  # <listed line>...
+    local l list="" first h
+    for l in "$@"; do list="$list$NL    $l"; done
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 1 ] || return 1
+    h="fork-remotes: checking$NL  ✗ each of these is an empty url or push url value, or an insteadOf or pushInsteadOf rule whose base is empty, which rewrites a url it matches to an empty one: a newer git (2.55, say) reads an empty url value, and some of the urls such a rule rewrites to nothing, as clearing the urls read before it, and an older one (2.43, say) reads each as an empty url, so such a config can name different urls to different gits, and --check reads nothing further while one stands. Remove each one where it lives, $AGAIN$list$NL"
+    [[ "$output" == "$h""These commands, "* ]] || [ "$output" = "$h""Fix what the notes above name, $AGAIN." ] || return 1
+    [[ "$output" == *"$NL""Fix what the notes above name, $AGAIN." ]] || return 1
+    [[ "$output" != *"fork-remotes.sh to fix."* ]] || return 1
+    first="$output"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$output" = "$first" ] || return 1
+    set_mode_refuses "  Each of these is an empty url or push url value, or an insteadOf or pushInsteadOf rule whose base is empty, which rewrites a url it matches to an empty one: a newer git (2.55, say) reads an empty url value, and some of the urls such a rule rewrites to nothing, as clearing the urls read before it, and an older one (2.43, say) reads each as an empty url, so set mode cannot tell which urls git uses:$list$NL""Run " || return 1
+}
+
+# The last `run` printed, after the listing, the commands that remove what the clone's own config file
+# holds under each key named (its empty values, or every value of a rule's key), each key quoted as the
+# shell reads it, and nothing between them and the closing line.
+empty_commands() {  # <key>...
+    local k cmds=""
+    for k in "$@"; do
+        case "$k" in
+            url..*) cmds="$cmds$NL    git -C $QREPO config --unset-all $k" ;;
+            *) cmds="$cmds$NL    git -C $QREPO config --unset-all $(printf '%q' "$k") '^\$'" ;;
+        esac
+    done
+    [[ "$output" == *"$NL""These commands, which act on this clone from any directory, remove each empty value and each rule above that the clone's own config file holds, there, and leave its other values:$cmds$NL""Fix what the notes above name, $AGAIN." ]] || return 1
+}
+
+# The last `run` printed no such commands: none of the entries listed is in the clone's own config file.
+no_empty_commands() {
+    [[ "$output" != *"These commands"* ]] || return 1
+    [[ "$output" != *"    git "* ]] || return 1
+}
+
 # The last `run` lists $1 (a rule's key, its value and where it lives) first under the information
 # beside its notes: a rule held outside the clone's own config file that fails nothing by itself.
 rule_listed() {  # <the listed line>
     [[ "$output" == *"  For information: these rules, held outside the clone's own config file, match a url of origin's, and neither set mode nor a command printed here can change them. An insteadOf rule rewrites the urls it matches for fetches and pushes alike, and --check reads urls as rewritten; a pushInsteadOf rule rewrites nothing while origin has a push url:$NL    $1"* ]] || return 1
 }
 
-# An includeIf "onbranch:" entry that may change where a push goes on a branch it matches fails closed:
-# --check fails and names it, as $1 spells it (the entry, its path, where it lives, the file it names
-# and what that file sets or git's error), with no rerun line, and set mode refuses, naming it and
-# changing nothing.
-onbranch_refused() {  # <the listed line>
+# An includeIf "onbranch:" or "hasconfig:remote.*.url:" entry that may change where a push goes once a
+# branch switch or a remote write makes its condition hold fails closed: --check fails and names it, as
+# $1 spells it (the entry, its path, where it lives, the file it names and what that file sets or git's
+# error), with no rerun line, and set mode refuses, naming it and changing nothing.
+cond_include_refused() {  # <the listed line>
     run "$REPO/scripts/fork-remotes.sh" --check
     [ "$status" -ne 0 ] || return 1
-    [[ "$output" == *"these includeIf \"onbranch:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full."* ]] || return 1
+    [[ "$output" == *"these includeIf \"onbranch:\" and \"hasconfig:remote.*.url:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full."* ]] || return 1
     [[ "$output" == *"$NL    $1"* ]] || return 1
     [[ "$output" != *"fork-remotes.sh to fix."* ]] || return 1
     set_mode_refuses "$NL    $1" || return 1
@@ -417,7 +458,7 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [ "$status" -eq 0 ]
     [[ "$output" != *"✗"* ]] || false
     # the all-clear names what --check verified and nothing more: the third remote stays pushable
-    [[ "$output" == *"✓ upstream fetches from the project, as git resolves both urls, and is fetch-only; origin's urls, and any pushInsteadOf rule that matches one while origin has no push url, are in the clone's own config file, and no includeIf \"onbranch:\" entry names a file that sets a remote.*, url.* or branch.*.pushRemote key or that --check cannot read in full; every push to origin goes to the repository it fetches from, and origin shares no repository with another remote; the remote.pushDefault git uses is origin, and no branch's pushRemote that git uses names another remote; origin is gh's only default repository"* ]]
+    [[ "$output" == *"✓ upstream fetches from the project, as git resolves both urls, and is fetch-only; origin's urls, and any pushInsteadOf rule that matches one while origin has no push url, are in the clone's own config file, no remote's url or push url value is empty and no insteadOf or pushInsteadOf rule has an empty base, and no includeIf \"onbranch:\" or \"hasconfig:remote.*.url:\" entry names a file that sets a remote.*, url.* or branch.*.pushRemote key or that --check cannot read in full; every push to origin goes to the repository it fetches from, and origin shares no repository with another remote; the remote.pushDefault git uses is origin, and no branch's pushRemote that git uses names another remote; origin is gh's only default repository"* ]]
 }
 
 @test "--check counts origin with a slash after .git as the same repository as a remote without one" {
@@ -941,27 +982,31 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     push_lands_on_fork_only "$TEST_DIR/elsewhere.git" "$UP"
 }
 
-@test "the push note attributes no url to where it lives when origin's push url values do not line up with its push urls, and lists each value instead" {
-    # git prints an empty push url as an empty line, so the values cannot be lined up with the urls.
-    # First an empty push url in global config beside one to another repository in the clone's own: the
-    # offending url is the clone's own, which set mode would replace. Then the fork's url as a push url in
-    # global config, and an empty one and the other repository's in the clone's own.
+@test "an empty push url value of origin's fails closed with where it lives, in global config or in the clone's own, where the command removes it" {
+    # git 2.55 reads an empty push url as clearing the push urls read before it, and git 2.43 reads it as
+    # an empty url, so the two gits push to different places from one config; both get this note, and set
+    # mode refuses. First an empty push url in global config beside one to another repository in the
+    # clone's own: no command, since none acts there. Then the fork's url as a push url in global config,
+    # and an empty one and the other repository's in the clone's own: the command removes the empty one
+    # there, and the global value then fails closed as a value of origin's held outside.
     "$REPO/scripts/fork-remotes.sh"
     bare "$TEST_DIR/elsewhere.git"
     git config --global remote.origin.pushurl ""
     git -C "$REPO" config --replace-all remote.origin.pushurl "$TEST_DIR/elsewhere.git"
-    outside_refused "remote.origin.pushurl  (in file:$GIT_CONFIG_GLOBAL)"
-    [[ "$output" == *"origin PUSHES to $TEST_DIR/elsewhere.git, not the repository it fetches from ($FORK); a push to origin goes to $TEST_DIR/elsewhere.git. origin's push url values do not line up one for one with those urls, so each is listed here with where it lives:$NL    remote.origin.pushurl  (in file:$GIT_CONFIG_GLOBAL)$NL    remote.origin.pushurl $TEST_DIR/elsewhere.git (in file:$PREPO/.git/config)$NL"* ]] || false
-    [[ "$output" != *"Set mode cannot remove"* ]] || false
+    empty_refused "remote.origin.pushurl, an empty value (in file:$GIT_CONFIG_GLOBAL)"
+    no_empty_commands
     git config --global remote.origin.pushurl "$FORK"
     git -C "$REPO" config --replace-all remote.origin.pushurl ""
     git -C "$REPO" config --add remote.origin.pushurl "$TEST_DIR/elsewhere.git"
+    empty_refused "remote.origin.pushurl, an empty value (in file:$PREPO/.git/config)"
+    empty_commands remote.origin.pushurl
+    follow_steps
+    [ "$(git -C "$REPO" config --local --get-all remote.origin.pushurl)" = "$TEST_DIR/elsewhere.git" ]
     outside_refused "remote.origin.pushurl $FORK (in file:$GIT_CONFIG_GLOBAL)"
-    [[ "$output" == *"so each is listed here with where it lives:$NL    remote.origin.pushurl $FORK (in file:$GIT_CONFIG_GLOBAL)$NL    remote.origin.pushurl  (in file:$PREPO/.git/config)$NL    remote.origin.pushurl $TEST_DIR/elsewhere.git (in file:$PREPO/.git/config)$NL"* ]] || false
-    [[ "$output" != *"Set mode cannot remove"* ]] || false
     git config --global --unset-all remote.origin.pushurl
     run "$REPO/scripts/fork-remotes.sh" --check
     [ "$status" -ne 0 ]
+    [[ "$output" == *"✗ origin PUSHES to $TEST_DIR/elsewhere.git, not the repository it fetches from ($FORK); a push to origin goes to $TEST_DIR/elsewhere.git$NL"* ]] || false
     [[ "$output" == *"$RERUN"* ]] || false
     "$REPO/scripts/fork-remotes.sh"
     run "$REPO/scripts/fork-remotes.sh" --check
@@ -1124,12 +1169,14 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [ "$status" -eq 0 ]
 }
 
-# An includeIf "onbranch:" entry has git read the file it names only on a branch the entry matches, so
-# from any other branch no other check sees what that file sets. An entry whose file sets a remote.*,
-# url.* or branch.*.pushRemote key, includes another file (which --check does not follow), or exists but
-# cannot be read fails closed, in whatever config the entry lives: --check names the entry, where it
-# lives, the file it names and what that file sets or git's error, and gives no rerun line, and set mode
-# refuses, writing nothing. An entry whose file sets none of those passes.
+# An includeIf "onbranch:" entry has git read the file it names only on a branch the entry matches, and
+# a "hasconfig:remote.*.url:" entry only while a remote has a url it matches, so a branch switch or a
+# remote write (set mode's own among them) can bring in what that file sets, which no other check saw.
+# An entry whose file sets a remote.*, url.* or branch.*.pushRemote key, includes another file (which
+# --check does not follow), or exists but cannot be read fails closed, in whatever config the entry
+# lives: --check names the entry, where it lives, the file it names and what that file sets or git's
+# error, and gives no rerun line, and set mode refuses, writing nothing. An entry whose file sets none
+# of those passes. The two conditions share one reader, so the rows on onbranch entries pin both.
 
 @test "an onbranch include in the clone's own config file, by a relative path, whose file sets a push url of origin's fails from another branch" {
     # Never configured, so --check also names what set mode sets; set mode refuses while the entry
@@ -1142,11 +1189,11 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     git -C "$REPO" checkout -q -b release
     [ "$(git -C "$REPO" remote get-url --push --all origin)" = "$TEST_DIR/mirror.git" ]
     git -C "$REPO" checkout -q main
-    onbranch_refused "includeif.onbranch:release.path release.inc (in file:$PREPO/.git/config) names $PREPO/.git/release.inc, which sets remote.origin.pushurl"
-    [[ "$output" == *"✗ these includeIf \"onbranch:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full. git reads it only on a branch the entry matches, where a file that sets one of those keys can change where a push goes and one git cannot read stops git; --check run on any other branch cannot see that, and set mode cannot change it: remove each entry where it lives, or change its file so that it sets none of those keys and --check can read it in full, $AGAIN$NL    includeif.onbranch:release.path"* ]] || false
+    cond_include_refused "includeif.onbranch:release.path release.inc (in file:$PREPO/.git/config) names $PREPO/.git/release.inc, which sets remote.origin.pushurl"
+    [[ "$output" == *"✗ these includeIf \"onbranch:\" and \"hasconfig:remote.*.url:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full. git reads it only while the entry's condition holds (a branch it matches is checked out, or a remote has a url it matches), which a branch switch or a remote write, set mode's own among them, can change; there a file that sets one of those keys can change where a push goes, and one git cannot read stops git. --check reads config only as it stands and cannot see that, and set mode cannot change it: remove each entry where it lives, or change its file so that it sets none of those keys and --check can read it in full, $AGAIN$NL    includeif.onbranch:release.path"* ]] || false
     [[ "$output" == *"no 'upstream' remote"* ]] || false
     no_commands_no_rerun
-    set_mode_refuses "These includeIf \"onbranch:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full. git reads it only on a branch the entry matches, where a file that sets one of those keys can change where a push goes and one git cannot read stops git; set mode can neither see that from here nor change it:$NL    includeif.onbranch:release.path release.inc"
+    set_mode_refuses "These includeIf \"onbranch:\" and \"hasconfig:remote.*.url:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full. git reads it only while the entry's condition holds (a branch it matches is checked out, or a remote has a url it matches), which a branch switch or a remote write, set mode's own among them, can change; there a file that sets one of those keys can change where a push goes, and one git cannot read stops git. Set mode can neither see that from here nor change it:$NL    includeif.onbranch:release.path release.inc"
     git -C "$REPO" config --unset "includeIf.onbranch:release.path"
     run "$REPO/scripts/fork-remotes.sh" --check
     [ "$status" -ne 0 ]
@@ -1163,7 +1210,7 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     local gdir="${GIT_CONFIG_GLOBAL%/*}"
     printf '[branch "release"]\n\tpushRemote = mirror\n\tpushRemote = mirror\n[url "%s/"]\n\tinsteadOf = rel:\n[user]\n\tname = x\n' "$TEST_DIR" > "$gdir/rel.inc"
     git config --global "includeIf.onbranch:rel*.path" rel.inc
-    onbranch_refused "includeif.onbranch:rel*.path rel.inc (in file:$GIT_CONFIG_GLOBAL) names $gdir/rel.inc, which sets branch.release.pushremote, url.$TEST_DIR/.insteadof"
+    cond_include_refused "includeif.onbranch:rel*.path rel.inc (in file:$GIT_CONFIG_GLOBAL) names $gdir/rel.inc, which sets branch.release.pushremote, url.$TEST_DIR/.insteadof"
     [[ "$output" == *", url.$TEST_DIR/.insteadof$NL"* ]] || false
     no_commands_no_rerun
     git config --global --unset "includeIf.onbranch:rel*.path"
@@ -1191,7 +1238,7 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     export HOME="$TEST_DIR/home"
     mkdir -p "$HOME"
     git -C "$REPO" config "includeIf.onbranch:h.path" "~"
-    onbranch_refused "includeif.onbranch:a.path $TEST_DIR/locked.inc (in file:$PREPO/.git/config) names $TEST_DIR/locked.inc, which git cannot read: "
+    cond_include_refused "includeif.onbranch:a.path $TEST_DIR/locked.inc (in file:$PREPO/.git/config) names $TEST_DIR/locked.inc, which git cannot read: "
     [[ "$output" == *"names $TEST_DIR/locked.inc, which git cannot read: "*"Permission denied"* ]] || false
     [[ "$output" != *"onbranch:b.path"* ]] || false
     [[ "$output" == *"$NL    includeif.onbranch:c.path $TEST_DIR/outer.inc (in file:$PREPO/.git/config) names $TEST_DIR/outer.inc, which sets include.path$NL"* ]] || false
@@ -1215,10 +1262,10 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
 
 @test "an onbranch include whose file sets none of those keys passes, wherever it lives, and set mode configures beside it" {
     # One in the clone's own config file by a relative path, one in global config by a path under the
-    # home directory; the first file sets a branch key other than pushRemote. An includeIf on another
-    # condition is no onbranch entry, whatever its file sets. A file that does not exist sets nothing
-    # (git skips it on a matching branch, as the probe on the release branch shows): a missing file, a
-    # path through a file, a missing file under ~/.
+    # home directory; the first file sets a branch key other than pushRemote. An includeIf on a gitdir:
+    # condition is read as git reads it now, whatever its file sets: here it does not hold. A file that
+    # does not exist sets nothing (git skips it on a matching branch, as the probe on the release branch
+    # shows): a missing file, a path through a file, a missing file under ~/.
     export HOME="$TEST_DIR/home"
     mkdir -p "$HOME"
     printf '[user]\n\tname = x\n[branch "release"]\n\tmerge = refs/heads/release\n' > "$REPO/.git/plain.inc"
@@ -1238,6 +1285,52 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [[ "$output" == *"fork-remotes: configured"* ]] || false
     run "$REPO/scripts/fork-remotes.sh" --check
     [ "$status" -eq 0 ]
+}
+
+@test "a hasconfig include matching the project's url, whose file sets a url rule, fails closed before set mode's write of upstream's url makes git read it" {
+    # The entry's condition holds once a remote has the project's url, which set mode writes; the rule
+    # in its file would then move every push to origin onto another repository after set mode printed
+    # configured. --check names the entry, and set mode refuses, writing nothing.
+    bare "$TEST_DIR/mirror.git"
+    printf '[url "%s"]\n\tinsteadOf = %s\n' "$TEST_DIR/mirror.git" "$FORK" > "$TEST_DIR/hc.inc"
+    git config --global "includeIf.hasconfig:remote.*.url:$UP.path" "$TEST_DIR/hc.inc"
+    [ "$(git -C "$REPO" remote get-url origin)" = "$FORK" ]
+    cond_include_refused "includeif.hasconfig:remote.*.url:$UP.path $TEST_DIR/hc.inc (in file:$GIT_CONFIG_GLOBAL) names $TEST_DIR/hc.inc, which sets url.$TEST_DIR/mirror.git.insteadof"
+    [[ "$output" == *"no 'upstream' remote"* ]] || false
+    no_commands_no_rerun
+    run git -C "$REPO" remote get-url upstream
+    [ "$status" -ne 0 ]
+    # git reads the file once a remote has the project's url
+    git -C "$REPO" remote add probe "$UP"
+    [ "$(git -C "$REPO" remote get-url origin)" = "$TEST_DIR/mirror.git" ]
+    git -C "$REPO" remote remove probe
+    git config --global --unset "includeIf.hasconfig:remote.*.url:$UP.path"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$RERUN"* ]] || false
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    push_lands_on_fork_only "$TEST_DIR/mirror.git" "$UP"
+}
+
+@test "a hasconfig include matching the project's url whose file sets none of those keys passes, and so does one spelled in other case, which git never reads" {
+    # git matches the condition's prefix, hasconfig:remote.*.url:, as spelled, so an entry spelled
+    # hasConfig: or with .URL: is a condition git never takes as holding, whatever its file sets.
+    bare "$TEST_DIR/mirror.git"
+    printf '[core]\n\tabbrev = 12\n' > "$TEST_DIR/hc.inc"
+    printf '[url "%s"]\n\tinsteadOf = %s\n' "$TEST_DIR/mirror.git" "$FORK" > "$TEST_DIR/never.inc"
+    git config --global "includeIf.hasconfig:remote.*.url:$UP.path" "$TEST_DIR/hc.inc"
+    git config --global "includeIf.hasConfig:remote.*.url:$UP.path" "$TEST_DIR/never.inc"
+    git config --global "includeIf.hasconfig:remote.*.URL:$UP.path" "$TEST_DIR/never.inc"
+    run "$REPO/scripts/fork-remotes.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"fork-remotes: configured"* ]] || false
+    [ "$(git -C "$REPO" config --get core.abbrev)" = 12 ]
+    [ "$(git -C "$REPO" remote get-url origin)" = "$FORK" ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    push_lands_on_fork_only "$TEST_DIR/mirror.git" "$UP"
 }
 
 # remote.pushDefault, a branch's pushRemote and gh-resolved decide where a bare push and a bare gh PR
@@ -1372,6 +1465,24 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     bare_push_lands_on_fork_only "$TEST_DIR/mirror.git" "$UP"
 }
 
+@test "remote.pushDefault and origin's gh-resolved in config.worktree fail closed, as git reads that file after the clone's own" {
+    "$REPO/scripts/fork-remotes.sh"
+    bare "$TEST_DIR/mirror.git"
+    git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
+    git -C "$REPO" config extensions.worktreeConfig true
+    git -C "$REPO" config --worktree remote.pushDefault mirror
+    outside_refused "remote.pushdefault mirror (in file:$PREPO/.git/config.worktree)"
+    [[ "$output" == *"remote.pushDefault is 'mirror' (in file:$PREPO/.git/config.worktree): a bare 'git push' would not go to your fork"* ]] || false
+    git -C "$REPO" config --worktree --unset-all remote.pushDefault
+    git -C "$REPO" config --worktree remote.origin.gh-resolved someone/other
+    outside_refused "remote.origin.gh-resolved someone/other (in file:$PREPO/.git/config.worktree)"
+    [[ "$output" == *"remote.origin.gh-resolved is 'someone/other' (in file:$PREPO/.git/config.worktree), not 'base'"* ]] || false
+    git -C "$REPO" config --worktree --unset-all remote.origin.gh-resolved
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    bare_push_lands_on_fork_only "$TEST_DIR/mirror.git" "$UP"
+}
+
 @test "a branch pushRemote in global config that the clone's own names origin over passes, and set mode leaves the clone's own in place" {
     "$REPO/scripts/fork-remotes.sh"
     bare "$TEST_DIR/mirror.git"
@@ -1411,6 +1522,31 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [ "$status" -ne 0 ]
     [[ "$output" == *"branch.main.pushremote is 'mirror': a bare push"* ]] || false
     [[ "$output" == *"For information: these settings"*"$NL    branch.main.pushremote mirror (in file:$TEST_DIR/system.gitconfig)$NL"* ]] || false
+    [[ "$output" == *"$RERUN"* ]] || false
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    bare_push_lands_on_fork_only "$TEST_DIR/mirror.git" "$UP"
+}
+
+@test "the pushRemote git falls back to is the last one held outside the clone's own config file, never another of its own: two there over one in global config naming another remote fail closed" {
+    # Set mode removes every value of the key from the clone's own config file, so its first value here,
+    # origin, is not what git falls back to; the global value is.
+    "$REPO/scripts/fork-remotes.sh"
+    bare "$TEST_DIR/mirror.git"
+    git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
+    git config --global branch.main.pushRemote mirror
+    git -C "$REPO" config branch.main.pushRemote origin
+    git -C "$REPO" config --add branch.main.pushRemote mirror
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"branch.main.pushremote is 'mirror': a bare push from that branch would not go to your fork"* ]] || false
+    [[ "$output" == *"where set mode cannot change them: remove each one where it lives, $AGAIN$NL    branch.main.pushremote mirror (in file:$GIT_CONFIG_GLOBAL), which git uses once set mode removes the clone's own value$NL"* ]] || false
+    no_commands_no_rerun
+    set_mode_refuses "branch.main.pushremote mirror (in file:$GIT_CONFIG_GLOBAL), which git uses once set mode removes the clone's own value"
+    git config --global --unset-all branch.main.pushRemote
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
     [[ "$output" == *"$RERUN"* ]] || false
     "$REPO/scripts/fork-remotes.sh"
     run "$REPO/scripts/fork-remotes.sh" --check
@@ -1832,23 +1968,20 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [ "$status" -eq 0 ]
 }
 
-@test "an upstream whose url is empty is named as such, not as missing, and the rerun line, run as printed, configures it" {
-    # git remote get-url succeeds and prints an empty line, and git remote add refuses, as upstream
-    # exists; set mode decides by get-url's exit status, so it writes the url. (A git that reads an empty
-    # url as clearing the list prints the remote's name instead, and the note names that url.)
+@test "an upstream whose only url is empty fails closed the same under every git, and once the command removes it the rerun line configures upstream" {
+    # git 2.43 reads an empty url and git 2.55 reads none, taking the name upstream as its url, so the two
+    # gave different notes; both now get this one, and set mode refuses. With the empty value removed,
+    # upstream, which still has a push url, has no url on either git, which reads its name as one.
     other_clone
     git -C "$REPO" config remote.upstream.url ""
     git -C "$REPO" config remote.upstream.pushurl "$UP"
-    local got; got="$(git -C "$REPO" remote get-url upstream)"
+    empty_refused "remote.upstream.url, an empty value (in file:$PREPO/.git/config)"
+    empty_commands remote.upstream.url
+    follow_steps
     run "$REPO/scripts/fork-remotes.sh" --check
     [ "$status" -ne 0 ]
-    [[ "$output" != *"no 'upstream' remote"* ]] || false
+    [[ "$output" == *"✗ upstream fetches from upstream, expected $UP$NL"* ]] || false
     [[ "$output" == *"✗ upstream is PUSHABLE ($UP): a stray push to upstream goes there instead of failing$NL"* ]] || false
-    if [ -z "$got" ]; then
-        [[ "$output" == *"✗ upstream's first url is empty, expected $UP$NL"* ]] || false
-    else
-        [[ "$output" == *"✗ upstream fetches from $got, expected $UP$NL"* ]] || false
-    fi
     [[ "$output" == *"$RERUN"* ]] || false
     run_from_other "$output" "Run " " to fix."
     [ "$status" -eq 0 ]
@@ -1983,33 +2116,285 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [ "$(git -C "$UP" rev-list --count main)" = "1" ]
 }
 
-@test "an empty upstream push url in global config, which set mode refuses on, is named by --check with where it lives and no rerun line, the same each time" {
-    # A push to an empty url fails, so git pushes upstream nowhere new and --check passed, while set mode
-    # refused on the value: the rerun line beside another note sent the reader round the same answer.
+@test "an empty upstream push url, in global config or in the clone's own after the project's, fails closed the same under every git" {
+    # git 2.55 reads an empty push url as clearing the push urls read before it: in global config that
+    # leaves the clone's own sentinel, and in the clone's own after the project's url it leaves none, so
+    # a push to upstream goes to its url, the project's. git 2.43 reads an empty push url in both places:
+    # from global config a push fails, and after the project's url in the clone's own a push lands on the
+    # project and then fails on the empty one. Both gits get this note, which stops --check before the
+    # note on remote.pushDefault, and set mode refuses.
     "$REPO/scripts/fork-remotes.sh"
     git config --global remote.upstream.pushurl ""
     git -C "$REPO" config --unset remote.pushDefault
-    run "$REPO/scripts/fork-remotes.sh" --check
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"remote.pushDefault is unset"* ]] || false
-    [[ "$output" == *"✗ these push urls of upstream's are held outside the clone's own config file, where set mode cannot remove them, and the sentinel it writes would join them rather than replace them, so it refuses to run: remove each one where it lives, $AGAIN$NL    remote.upstream.pushurl  (in file:$GIT_CONFIG_GLOBAL)$NL"* ]] || false
-    [[ "$output" != *"PUSHABLE"* ]] || false
-    no_commands_no_rerun
-    local first="$output"
-    run "$REPO/scripts/fork-remotes.sh" --check
-    [ "$output" = "$first" ]
-    set_mode_refuses "These push urls of upstream's are held outside the clone's own config file, where set mode cannot remove them, and the sentinel it writes would join them rather than replace them:$NL    remote.upstream.pushurl  (in file:$GIT_CONFIG_GLOBAL)"
+    empty_refused "remote.upstream.pushurl, an empty value (in file:$GIT_CONFIG_GLOBAL)"
+    [[ "$output" != *"remote.pushDefault is unset"* ]] || false
+    no_empty_commands
     git config --global --unset-all remote.upstream.pushurl
-    # in the clone's own config file, a push url to the project and then an empty one: the note lists the
-    # project's url alone (a git that reads an empty value as clearing the list pushes to upstream's url,
-    # the project's too), and a rerun clears both
     git -C "$REPO" config --replace-all remote.upstream.pushurl "$UP"
     git -C "$REPO" config --add remote.upstream.pushurl ""
+    empty_refused "remote.upstream.pushurl, an empty value (in file:$PREPO/.git/config)"
+    empty_commands remote.upstream.pushurl
+    follow_steps
     run "$REPO/scripts/fork-remotes.sh" --check
     [ "$status" -ne 0 ]
     [[ "$output" == *"✗ upstream is PUSHABLE ($UP): a stray push to upstream goes there instead of failing$NL"* ]] || false
+    [[ "$output" == *"remote.pushDefault is unset"* ]] || false
     [[ "$output" == *"$RERUN"* ]] || false
     "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    run git -C "$REPO" push upstream main
+    [ "$status" -ne 0 ]
+    [ "$(git -C "$UP" rev-list --count main)" = "1" ]
+}
+
+# An empty url or push url value names different urls to different gits: git 2.55 reads it as clearing
+# the values read before it, as its documentation says, and git 2.43 reads it as an empty url. So can an
+# insteadOf or pushInsteadOf rule whose base is empty, which rewrites a url it matches to an empty one.
+# Whatever a check here read past either would be one git's reading, so on every git each fails closed
+# first, on any remote and wherever it is held: --check lists each with where it lives and stops, set
+# mode refuses and writes nothing, and the same rows pass under both gits.
+
+@test "an empty url value of origin's after the fork's, or ahead of it, fails closed the same under every git, and the command clears it" {
+    # git 2.55 reads the fork's url and then an empty one as no url, and uses the name origin; with the
+    # empty one first, it reads the fork's url alone. git 2.43 reads an empty url in either place.
+    git -C "$REPO" config --add remote.origin.url ""
+    empty_refused "remote.origin.url, an empty value (in file:$PREPO/.git/config)"
+    empty_commands remote.origin.url
+    git -C "$REPO" config --unset-all remote.origin.url
+    git -C "$REPO" config remote.origin.url ""
+    git -C "$REPO" config --add remote.origin.url "$FORK"
+    empty_refused "remote.origin.url, an empty value (in file:$PREPO/.git/config)"
+    empty_commands remote.origin.url
+    follow_steps
+    [ "$(git -C "$REPO" config --get-all remote.origin.url)" = "$FORK" ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$RERUN"* ]] || false
+    "$REPO/scripts/fork-remotes.sh"
+    [ "$(git -C "$REPO" config --get-all remote.origin.pushurl)" = "$FORK" ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    push_lands_on_fork_only "$UP"
+}
+
+@test "origin with the project's url, an empty value and then the fork's fails closed, so set mode cannot copy the project's url onto the push url" {
+    # git 2.55 reads the fork's url alone here, and set mode copied the first value as config holds it,
+    # the project's, onto the push url; a push to origin then landed on the project. git 2.43 reads all
+    # three. Both now stop on the empty value, and with it removed the project refusal stands.
+    git -C "$REPO" config --replace-all remote.origin.url "$UP"
+    git -C "$REPO" config --add remote.origin.url ""
+    git -C "$REPO" config --add remote.origin.url "$FORK"
+    empty_refused "remote.origin.url, an empty value (in file:$PREPO/.git/config)"
+    run git -C "$REPO" config --get-all remote.origin.pushurl
+    [ "$status" -ne 0 ]
+    run git -C "$REPO" remote get-url upstream
+    [ "$status" -ne 0 ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    empty_commands remote.origin.url
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin points at the upstream project, not at your fork.$NL  origin = $UP$NL"* ]] || false
+}
+
+@test "an empty upstream url in the clone's own config file over a global one fails closed the same under every git, and set mode leaves it in place" {
+    # git 2.55 reads the clone's empty value as clearing the global url, so upstream fetches from the
+    # project's url after it; git 2.43 fetches from the global url. Set mode's write of upstream's url
+    # would remove the empty value and bring the global url back for git 2.55, so it refuses, and with
+    # the empty value removed the global url is read ahead of the clone's own and fails closed.
+    "$REPO/scripts/fork-remotes.sh"
+    bare "$TEST_DIR/mirror.git"
+    git config --global remote.upstream.url "$TEST_DIR/mirror.git"
+    git -C "$REPO" config --replace-all remote.upstream.url ""
+    git -C "$REPO" config --add remote.upstream.url "$UP"
+    empty_refused "remote.upstream.url, an empty value (in file:$PREPO/.git/config)"
+    empty_commands remote.upstream.url
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"✗ upstream fetches from $TEST_DIR/mirror.git, expected $UP. These urls of upstream's, held outside the clone's own config file, are read ahead of where set mode writes, so after a rerun git would fetch from the first of them: remove each one where it lives, $AGAIN$NL    remote.upstream.url $TEST_DIR/mirror.git (in file:$GIT_CONFIG_GLOBAL)$NL"* ]] || false
+    no_commands_no_rerun
+    git config --global --unset-all remote.upstream.url
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "every empty value is listed with where it lives, in the order git reads them, and only the clone's own get a command" {
+    # Two in the clone's own config file under one key, one in a file it includes after them, one in the
+    # environment, which git reads last: one command removes the clone's own two, and each of the others
+    # is removed where it lives.
+    "$REPO/scripts/fork-remotes.sh"
+    printf '[remote "upstream"]\n\turl = \n' > "$TEST_DIR/up.inc"
+    git -C "$REPO" config include.path "$TEST_DIR/up.inc"
+    git -C "$REPO" config --add remote.origin.pushurl ""
+    git -C "$REPO" config --add remote.origin.pushurl ""
+    # the floor's five pairs stay exported, and this adds a sixth
+    export GIT_CONFIG_COUNT=6 GIT_CONFIG_KEY_5=remote.origin.url GIT_CONFIG_VALUE_5=
+    empty_refused "remote.origin.pushurl, an empty value (in file:$PREPO/.git/config)" \
+        "remote.origin.pushurl, an empty value (in file:$PREPO/.git/config)" \
+        "remote.upstream.url, an empty value (in file:$TEST_DIR/up.inc)" \
+        "remote.origin.url, an empty value (set in the environment by GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS)"
+    empty_commands remote.origin.pushurl
+    follow_steps
+    [ "$(git -C "$REPO" config --local --get-all remote.origin.pushurl)" = "$FORK" ]
+    empty_refused "remote.upstream.url, an empty value (in file:$TEST_DIR/up.inc)" \
+        "remote.origin.url, an empty value (set in the environment by GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS)"
+    no_empty_commands
+    export GIT_CONFIG_COUNT=5
+    unset GIT_CONFIG_KEY_5 GIT_CONFIG_VALUE_5
+    git config --file "$TEST_DIR/up.inc" --unset-all remote.upstream.url
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "a legacy file that defines origin or upstream with an empty url fails closed with where it lives, the same under every git, and is not read where config gives a url" {
+    # git reads a legacy file only for a remote that config gives no url, and reads an empty url there as
+    # it reads an empty config value: git 2.43 as an empty url, git 2.55 as clearing the urls read before
+    # it. With the empty URL: line first, origin's first url was empty for git 2.43 and the script
+    # stopped with status 2, while git 2.55 read the fork's url.
+    git -C "$REPO" config --unset-all remote.origin.url
+    mkdir -p "$REPO/.git/remotes" "$REPO/.git/branches"
+    printf 'URL:  \nURL: %s\n' "$FORK" > "$REPO/.git/remotes/origin"
+    printf '  #main\n' > "$REPO/.git/branches/upstream"
+    empty_refused "a URL: line, an empty value (in the legacy file $PREPO/.git/remotes/origin)" \
+        "the url on its first line, ahead of the '#', an empty value (in the legacy file $PREPO/.git/branches/upstream)"
+    no_empty_commands
+    # the empty URL: line last, with no newline after it, which git reads as a line too
+    printf 'URL: %s\nURL:' "$FORK" > "$REPO/.git/remotes/origin"
+    empty_refused "a URL: line, an empty value (in the legacy file $PREPO/.git/remotes/origin)" \
+        "the url on its first line, ahead of the '#', an empty value (in the legacy file $PREPO/.git/branches/upstream)"
+    # repaired, each is read as before: origin's url is in no config, and a blank line in a remotes
+    # file is no URL: line; git ignores a branches file whose first line is blank, so there is no upstream
+    printf 'URL: %s\n\nPull: refs/heads/main:refs/heads/origin\n' "$FORK" > "$REPO/.git/remotes/origin"
+    printf '  \n' > "$REPO/.git/branches/upstream"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"an empty value"* ]] || false
+    [[ "$output" == *"origin's url is not in git config (the legacy file $PREPO/.git/remotes/origin defines it)"* ]] || false
+    [[ "$output" == *"no 'upstream' remote"* ]] || false
+    # with origin's url in config, git reads no legacy file for it, and an empty URL: line there is no url
+    git -C "$REPO" config remote.origin.url "$FORK"
+    printf 'URL:\n' > "$REPO/.git/remotes/origin"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"an empty value"* ]] || false
+    [[ "$output" == *"$RERUN"* ]] || false
+}
+
+@test "an insteadOf or pushInsteadOf rule whose base is empty, in the clone's own config file, fails closed like an empty value, the same under every git, and its command clears it" {
+    # A pushInsteadOf rule whose base is empty, on origin's second url while origin has no push url:
+    # git 2.43 pushed to an empty url, so a push to origin failed while --check passed, and git 2.55 pushed
+    # to both urls. Both gits now get the empty-value note, with the command that removes the rule.
+    bare "$TEST_DIR/px.git"
+    git -C "$REPO" config --add remote.origin.url "$TEST_DIR/px.git"
+    git -C "$REPO" config url."".pushInsteadOf "$TEST_DIR/px.git"
+    git -C "$REPO" remote add upstream "$UP"
+    git -C "$REPO" config remote.upstream.pushurl no-push://upstream-is-fetch-only
+    git -C "$REPO" config remote.pushDefault origin
+    git -C "$REPO" config remote.origin.gh-resolved base
+    empty_refused "url..pushinsteadof $TEST_DIR/px.git, a rule whose base is empty (in file:$PREPO/.git/config)"
+    empty_commands url..pushinsteadof
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"✗ origin PUSHES to $TEST_DIR/px.git, not the repository it fetches from ($FORK); a push to origin goes to $FORK, $TEST_DIR/px.git$NL"* ]] || false
+    [[ "$output" == *"$RERUN"* ]] || false
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    push_lands_on_fork_only "$TEST_DIR/px.git" "$UP"
+    # An insteadOf rule whose base is empty, on origin's url, which every git rewrites to nothing.
+    printf '[url ""]\n\tinsteadOf = %s\n' "$FORK" >> "$REPO/.git/config"
+    [ -z "$(git -C "$REPO" remote get-url origin)" ]
+    empty_refused "url..insteadof $FORK, a rule whose base is empty (in file:$PREPO/.git/config)"
+    empty_commands url..insteadof
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "an insteadOf rule whose base is empty, held outside the clone's own config file, fails closed with no command, on the url of a legacy file, a remote's name, or origin's name" {
+    # git 2.55 rewrites a url that a legacy file gives, or a remote's name read as its url, as it reads
+    # it, and reads the empty result as clearing; git 2.43 reads an empty url. They split: origin only a
+    # legacy file defines stopped 2.43 with status 2 and gave 2.55 the legacy note, and an upstream with a
+    # fetch refspec alone got a rerun line on 2.43 and the aliased note on 2.55. With origin's own name
+    # rewritten, 2.43 read an empty url and 2.55 no remote: the rule now fails closed before git reads
+    # origin's url, so both name it.
+    git -C "$REPO" config --unset-all remote.origin.url
+    mkdir -p "$REPO/.git/remotes"
+    printf 'URL: %s\n' "$TEST_DIR/legacyx" > "$REPO/.git/remotes/origin"
+    git config --global url."".insteadOf "$TEST_DIR/legacyx"
+    empty_refused "url..insteadof $TEST_DIR/legacyx, a rule whose base is empty (in file:$GIT_CONFIG_GLOBAL)"
+    no_empty_commands
+    rm "$REPO/.git/remotes/origin"
+    git config --global --unset-all url."".insteadOf
+    git -C "$REPO" config remote.origin.url "$FORK"
+    git -C "$REPO" config remote.upstream.fetch '+refs/heads/*:refs/remotes/upstream/*'
+    git config --global url."".insteadOf upstream
+    empty_refused "url..insteadof upstream, a rule whose base is empty (in file:$GIT_CONFIG_GLOBAL)"
+    no_empty_commands
+    git -C "$REPO" config --remove-section remote.upstream
+    git -C "$REPO" config --unset-all remote.origin.url
+    git config --global --replace-all url."".insteadOf origin
+    empty_refused "url..insteadof origin, a rule whose base is empty (in file:$GIT_CONFIG_GLOBAL)"
+    no_empty_commands
+    git config --global --unset-all url."".insteadOf
+    git -C "$REPO" config remote.origin.url "$FORK"
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "the note on empty values comes before git reads origin's url, so a clone with no origin gets it the same under every git" {
+    # Both gits stop on a clone with no origin when they read its url; the empty value is named first.
+    git -C "$REPO" config --remove-section remote.origin
+    git -C "$REPO" config remote.upstream.url ""
+    empty_refused "remote.upstream.url, an empty value (in file:$PREPO/.git/config)"
+    empty_commands remote.upstream.url
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 2 ]
+    [[ "$output" == "fork-remotes: git cannot read origin's url: "* ]] || false
+}
+
+@test "an empty url or push url value of any other remote fails closed the same under every git, and its command, quoted for a name that holds a space, clears it" {
+    # A remote 'mirror' with the fork's url, an empty one and another repository's: git 2.43 read all
+    # three and refused origin as sharing the fork's repository with it, and git 2.55 read the last alone
+    # and passed. Both now stop on the empty value; with it removed, the shared-repository note stands.
+    "$REPO/scripts/fork-remotes.sh"
+    bare "$TEST_DIR/other.git"
+    git -C "$REPO" remote add mirror "$FORK"
+    git -C "$REPO" config --add remote.mirror.url ""
+    git -C "$REPO" config --add remote.mirror.url "$TEST_DIR/other.git"
+    empty_refused "remote.mirror.url, an empty value (in file:$PREPO/.git/config)"
+    empty_commands remote.mirror.url
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"✗ origin's fetch url $FORK is the same repository as remote 'mirror' (fetch url $FORK)"* ]] || false
+    git -C "$REPO" remote remove mirror
+    # an empty push url on a remote whose name holds a space
+    git -C "$REPO" config "remote.my mirror.url" "$TEST_DIR/other.git"
+    git -C "$REPO" config "remote.my mirror.pushurl" ""
+    empty_refused "remote.my mirror.pushurl, an empty value (in file:$PREPO/.git/config)"
+    empty_commands "remote.my mirror.pushurl"
+    follow_steps
+    run git -C "$REPO" config --get-all "remote.my mirror.pushurl"
+    [ "$status" -ne 0 ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    # an empty URL: line in a legacy file that alone defines another remote, whatever the remote's name
+    # starts with
+    mkdir -p "$REPO/.git/remotes"
+    printf 'URL: %s\nURL:\n' "$FORK" > "$REPO/.git/remotes/mirror2"
+    printf 'URL:\n' > "$REPO/.git/remotes/.mirror3"
+    printf 'URL:\n' > "$REPO/.git/remotes/..mirror4"
+    empty_refused "a URL: line, an empty value (in the legacy file $PREPO/.git/remotes/mirror2)" \
+        "a URL: line, an empty value (in the legacy file $PREPO/.git/remotes/.mirror3)" \
+        "a URL: line, an empty value (in the legacy file $PREPO/.git/remotes/..mirror4)"
+    no_empty_commands
+    rm "$REPO/.git/remotes/mirror2" "$REPO/.git/remotes/.mirror3" "$REPO/.git/remotes/..mirror4"
     run "$REPO/scripts/fork-remotes.sh" --check
     [ "$status" -eq 0 ]
 }
@@ -2129,9 +2514,10 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     same_repository "$TEST_DIR/a:b.git" "file://$TEST_DIR/a:b.git"
 }
 
-@test "where a match passes, case counts: a push url or an upstream url that differs only in case is a note a rerun fixes" {
+@test "where a match passes, case counts: a push url or an upstream url that differs only in case, or ends in .GIT, is a note a rerun fixes" {
     # The push check and the upstream check compare ids exactly (see repo_id's comment), so a spelling
     # that may name another repository on a case-sensitive host is never taken for the expected one.
+    # Their reading strips only a lowercase .git, as a forge does, so X.GIT keeps its suffix.
     export ROMP_UPSTREAM_URL="https://example.invalid/proj/romp.git"
     git -C "$REPO" remote set-url origin "https://example.invalid/someone/romp.git"
     "$REPO/scripts/fork-remotes.sh"
@@ -2142,6 +2528,16 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [[ "$output" == *"origin PUSHES to https://example.invalid/Someone/romp.git, not the repository it fetches from (https://example.invalid/someone/romp.git)"* ]] || false
     [[ "$output" == *"upstream fetches from https://EXAMPLE.invalid/proj/romp.git, expected https://example.invalid/proj/romp.git$NL"* ]] || false
     [[ "$output" != *"is the same repository as"* ]] || false
+    [[ "$output" == *"$RERUN"* ]] || false
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    git -C "$REPO" config --replace-all remote.origin.pushurl "https://example.invalid/someone/romp.GIT"
+    git -C "$REPO" config --replace-all remote.upstream.url "https://example.invalid/proj/romp.GIT"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"✗ origin PUSHES to https://example.invalid/someone/romp.GIT, not the repository it fetches from (https://example.invalid/someone/romp.git)"* ]] || false
+    [[ "$output" == *"✗ upstream fetches from https://example.invalid/proj/romp.GIT, expected https://example.invalid/proj/romp.git$NL"* ]] || false
     [[ "$output" == *"$RERUN"* ]] || false
     "$REPO/scripts/fork-remotes.sh"
     run "$REPO/scripts/fork-remotes.sh" --check
@@ -2234,6 +2630,28 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     run "$REPO/scripts/fork-remotes.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"fork-remotes: configured"* ]] || false
+}
+
+@test "where a match refuses, local paths that differ only in case read as one repository: a second remote and the project spelled in other case are refused" {
+    # A case-insensitive file system (macOS's default) reads two such spellings as one directory, so a
+    # match refuses on them, at the cost of refusing two repositories a case-sensitive one keeps apart.
+    # Neither spelling in other case exists here; nothing reads it.
+    git -C "$REPO" remote add mirror "$TEST_DIR/Fork.git"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin's fetch url $FORK is the same repository as remote 'mirror' (fetch url $TEST_DIR/Fork.git)"* ]] || false
+    set_mode_refuses "remote 'mirror'"
+    git -C "$REPO" remote remove mirror
+    export ROMP_UPSTREAM_URL="$TEST_DIR/PROJECT.git"
+    git -C "$REPO" remote set-url origin "$UP"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"fork-remotes: origin points at the upstream project, not at your fork.$NL  origin = $UP$NL  project = $TEST_DIR/PROJECT.git$NL  origin's fetch url $UP is the project's repository$NL  origin's push url $UP is the project's repository$NL""Point origin at your fork first;"* ]] || false
+    run "$REPO/scripts/fork-remotes.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"fork-remotes: origin points at the upstream project, not at your fork."* ]] || false
+    run git -C "$REPO" remote get-url upstream
+    [ "$status" -ne 0 ]
 }
 
 @test "--check resolves a relative local url against the clone's physical top level when reached through a symlink" {
@@ -2673,6 +3091,123 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [[ "$output" == *"$NL  project = $UP, which git rewrites to $TEST_DIR/w/$NL  origin's fetch url file://$UP is the project's repository$NL"* ]] || false
 }
 
+@test "an origin whose own url or push url value names the project's repository gets the refusal with its commands, though a rule rewrites that value" {
+    # A global rule rewrites the project's host to an ssh alias, so git reads origin's value and the
+    # project's url alike as the alias. The value as configured is the project's url, so this is origin
+    # set to the project, not a match only the rule makes: the refusal prints the commands, which clear
+    # it while the rule stays. Then the same with the fork's url as origin's url and the project's url as
+    # its push url value, and last a rule that rewrites origin's value but not the project's url.
+    export ROMP_UPSTREAM_URL="https://example.invalid/someone/romp.git"
+    git config --global "url.ex-alias:.insteadOf" "https://example.invalid/"
+    git -C "$REPO" remote set-url origin "https://example.invalid/someone/romp.git"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"fork-remotes: origin points at the upstream project, not at your fork.$NL  origin = ex-alias:someone/romp.git$NL  project = https://example.invalid/someone/romp.git, which git rewrites to ex-alias:someone/romp.git$NL  origin's fetch url ex-alias:someone/romp.git is the project's repository$NL  origin's push url ex-alias:someone/romp.git is the project's repository$NL  origin's url value https://example.invalid/someone/romp.git, as git config holds it, names the project's repository$NL"* ]] || false
+    [[ "$output" == *"then set your fork's url as its url and its push url:$NL    git -C $QREPO config --unset-all remote.origin.url$NL    git -C $QREPO config remote.origin.url <your-fork-url>$NL    git -C $QREPO config remote.origin.pushurl <your-fork-url>$NL"* ]] || false
+    [[ "$output" != *"If origin is your fork"* ]] || false
+    rule_listed "url.ex-alias:.insteadof https://example.invalid/ (in file:$GIT_CONFIG_GLOBAL)"
+    local before; before="$(cat "$REPO/.git/config")"
+    run "$REPO/scripts/fork-remotes.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin points at the upstream project, not at your fork."* ]] || false
+    [ "$(cat "$REPO/.git/config")" = "$before" ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$RERUN"* ]] || false
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    push_lands_on_fork_only "$UP"
+    git -C "$REPO" config remote.origin.pushurl "https://example.invalid/someone/romp.git"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"fork-remotes: origin points at the upstream project, not at your fork.$NL  origin = $FORK$NL  project = https://example.invalid/someone/romp.git, which git rewrites to ex-alias:someone/romp.git$NL  origin's push url ex-alias:someone/romp.git is the project's repository$NL  origin's push url value https://example.invalid/someone/romp.git, as git config holds it, names the project's repository$NL"* ]] || false
+    [[ "$output" == *"$NL    git -C $QREPO config --unset-all remote.origin.pushurl$NL"* ]] || false
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    # a rule that matches origin's spelling of the project's url, in other case, but not the project's
+    # url as written: git reads origin as the alias and the project as itself, and only the value as
+    # configured matches the project
+    git config --global --unset-all "url.ex-alias:.insteadOf"
+    git config --global "url.ex-alias:.insteadOf" "https://EXAMPLE.invalid/"
+    git -C "$REPO" config remote.origin.pushurl "https://EXAMPLE.invalid/Someone/romp.git"
+    [ "$(git -C "$REPO" remote get-url --push origin)" = "ex-alias:Someone/romp.git" ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"fork-remotes: origin points at the upstream project, not at your fork.$NL  origin = $FORK$NL  project = https://example.invalid/someone/romp.git$NL  origin's push url value https://EXAMPLE.invalid/Someone/romp.git, as git config holds it, names the project's repository$NL"* ]] || false
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "an origin that only a legacy file defines, with the project's url there, gets the refusal with its commands though a rule rewrites that url, and they clear it" {
+    # A global rule rewrites the project's url, so git reads origin's url from its .git/remotes file and
+    # the project's url alike as the rule's target. The url as the file holds it, trimmed as git trims
+    # it, is the project's, so this is origin set to the project: the refusal prints the commands, which
+    # set origin's url in the clone's own config file, where git then reads it in place of the file.
+    git -C "$REPO" config --unset-all remote.origin.url
+    mkdir -p "$REPO/.git/remotes" "$REPO/.git/branches"
+    printf 'URL:  %s  \n' "$UP" > "$REPO/.git/remotes/origin"
+    git config --global "url.$TEST_DIR/alias/project.git.insteadOf" "$UP"
+    [ "$(git -C "$REPO" remote get-url origin)" = "$TEST_DIR/alias/project.git" ]
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 1 ]
+    [[ "$output" == "fork-remotes: origin points at the upstream project, not at your fork.$NL  origin = $TEST_DIR/alias/project.git$NL  project = $UP, which git rewrites to $TEST_DIR/alias/project.git$NL  origin's fetch url $TEST_DIR/alias/project.git is the project's repository$NL  origin's push url $TEST_DIR/alias/project.git is the project's repository$NL  origin's url value $UP, as the legacy file $PREPO/.git/remotes/origin holds it, names the project's repository$NL""Point origin at your fork first; these commands remove every url and push url origin has in the clone's own config file, then set your fork's url as its url and its push url:$NL    git -C $QREPO config remote.origin.url <your-fork-url>$NL    git -C $QREPO config remote.origin.pushurl <your-fork-url>" ]] || false
+    local before; before="$(cat "$REPO/.git/config")"
+    run "$REPO/scripts/fork-remotes.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"origin points at the upstream project, not at your fork."* ]] || false
+    [ "$(cat "$REPO/.git/config")" = "$before" ]
+    # the same from a .git/branches file, whose first line git trims, and reads up to any '#'
+    rm "$REPO/.git/remotes/origin"
+    printf '  %s  \n' "$UP" > "$REPO/.git/branches/origin"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$NL  origin's url value $UP, as the legacy file $PREPO/.git/branches/origin holds it, names the project's repository$NL""Point origin at your fork first;"* ]] || false
+    # and beside a remotes file that gives no url, which git reads first
+    printf '%s#main\n' "$UP" > "$REPO/.git/branches/origin"
+    printf 'Pull: refs/heads/main:refs/heads/origin\n' > "$REPO/.git/remotes/origin"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$NL  origin's url value $UP, as the legacy file $PREPO/.git/branches/origin holds it, names the project's repository$NL""Point origin at your fork first;"* ]] || false
+    # git skips a legacy file it cannot read, and so does the comparison: with the remotes file unreadable
+    # git reads the branches file, and with both unreadable it reads the name origin as origin's url
+    chmod 000 "$REPO/.git/remotes/origin"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"$NL  origin's url value $UP, as the legacy file $PREPO/.git/branches/origin holds it, names the project's repository$NL""Point origin at your fork first;"* ]] || false
+    chmod 000 "$REPO/.git/branches/origin"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"names the project's repository"* ]] || false
+    [[ "$output" != *"Permission denied"* ]] || false
+    chmod 644 "$REPO/.git/remotes/origin" "$REPO/.git/branches/origin"
+    # git reads the branches file only where the remotes file gives no url, so the project's url there
+    # is not origin's
+    printf 'URL: %s\n' "$FORK" > "$REPO/.git/remotes/origin"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"origin's url is not in git config (the legacy files $PREPO/.git/remotes/origin and $PREPO/.git/branches/origin define it)"* ]] || false
+    [[ "$output" != *"the upstream project"* ]] || false
+    [[ "$output" != *"names the project's repository"* ]] || false
+    # the URL: line last, with no newline after it, which git reads as a line too
+    rm "$REPO/.git/branches/origin"
+    printf 'URL:  %s  ' "$UP" > "$REPO/.git/remotes/origin"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [[ "$output" == *"$NL  origin's url value $UP, as the legacy file $PREPO/.git/remotes/origin holds it, names the project's repository$NL"* ]] || false
+    follow_steps
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$RERUN"* ]] || false
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    push_lands_on_fork_only "$UP"
+}
+
 @test "a project url spelled as the name of a remote here stops the script, which would otherwise compare with that remote" {
     # git ls-remote --get-url reads a remote's name as that remote's url
     git -C "$REPO" remote add mirror "$TEST_DIR/mirror.git"
@@ -2769,7 +3304,7 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [ "$status" -ne 0 ]
     [[ "$output" == *"origin's url is not in git config (the legacy file $PREPO/.git/branches/origin defines it), and set mode, which copies origin's url onto its push url, refuses to run: set origin's url in the clone's own config file with the commands below"* ]] || false
     [[ "$output" != *"fork-remotes.sh to fix."* ]] || false
-    [[ "$output" == *"Fix what the notes above name, $AGAIN; set mode refuses to run while origin shares a repository with another remote, git cannot read a remote's urls, git config holds no url for origin, an includeIf \"onbranch:\" entry names a file that sets a remote.*, url.* or branch.*.pushRemote key or that --check cannot read in full, upstream does not fetch from the project while a url of upstream's held outside the clone's own config file is read ahead of the last one that file holds or that file holds none, upstream has a push url other than the sentinel held outside that file, a url rule rewrites the sentinel, or one of these is held anywhere but the clone's own config file, where it wins over anything set mode writes: a url of origin's, a pushInsteadOf rule that matches one while origin has no push url, or a setting that aims a bare push or a bare gh PR number away from origin."* ]] || false
+    [[ "$output" == *"Fix what the notes above name, $AGAIN; set mode refuses to run while a remote's url or push url value is empty, an insteadOf or pushInsteadOf rule has an empty base, origin shares a repository with another remote, git cannot read a remote's urls, git config holds no url for origin, an includeIf \"onbranch:\" or \"hasconfig:remote.*.url:\" entry names a file that sets a remote.*, url.* or branch.*.pushRemote key or that --check cannot read in full, upstream does not fetch from the project while a url of upstream's held outside the clone's own config file is read ahead of the last one that file holds or that file holds none, upstream has a push url other than the sentinel held outside that file, a url rule rewrites the sentinel, or one of these is held anywhere but the clone's own config file, where it wins over anything set mode writes: a url of origin's, a pushInsteadOf rule that matches one while origin has no push url, or a setting that aims a bare push or a bare gh PR number away from origin."* ]] || false
     set_mode_refuses "origin's url is not in git config"
     follow_steps
     run "$REPO/scripts/fork-remotes.sh" --check
@@ -2790,12 +3325,20 @@ run_from_other() {  # <printed text> <text before the command> <text after it>
     [[ "$output" != *"not a git clone"* ]] || false
 }
 
-@test "--check fails with git's own error on a remote url key written with no value" {
+@test "--check fails with git's own error on a remote url key, or a rule whose base is empty, written with no value" {
+    # The empty-value check reads neither as an empty value: git stops on each when it reads origin's url.
     printf '[remote "mirror"]\n\turl\n' >> "$REPO/.git/config"
     run "$REPO/scripts/fork-remotes.sh" --check
     [ "$status" -eq 2 ]
     [[ "$output" == *"fork-remotes: git cannot read origin's url: "*"remote.mirror.url"* ]] || false
     [[ "$output" != *"has no 'origin' remote"* ]] || false
+    [[ "$output" != *"an empty value"* ]] || false
+    git -C "$REPO" config --remove-section remote.mirror
+    printf '[url ""]\n\tinsteadOf\n' >> "$REPO/.git/config"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"fork-remotes: git cannot read origin's url: "*"url..insteadof"* ]] || false
+    [[ "$output" != *"a rule whose base is empty"* ]] || false
 }
 
 @test "a git without config --show-scope fails --check closed with a note naming its version, and set mode refuses" {

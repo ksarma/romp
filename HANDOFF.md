@@ -24,9 +24,21 @@ Three things this repo needs are not files, so cloning does not bring them: remo
 
 ```bash
 scripts/fork-remotes.sh                   # adds upstream as FETCH-ONLY with a dead push URL
-scripts/fork-remotes.sh --check           # confirm: upstream is fetch-only; origin is set in .git/config alone, pushes only where it fetches, shares no repository with another remote, gets every bare push, and is gh's default
+scripts/fork-remotes.sh --check           # confirm, changing nothing; what it verifies is listed below
 npm install --prefix vscode-extension     # else its suite dies on "Cannot find module 'esbuild'"
 ```
+
+`--check` passes only when upstream fetches from the project, as git resolves both urls, and is
+fetch-only; no remote's url or push url value is empty, and no insteadOf or pushInsteadOf rule has an
+empty base; no url of origin's names the project's repository, as git reads it or as git config or a
+legacy file holds it; origin's urls, and any pushInsteadOf rule that applies while origin has no push
+url, are in `.git/config`; no includeIf `onbranch:` or `hasconfig:remote.*.url:` entry names a file
+that sets a `remote.*`, `url.*` or `branch.*.pushRemote` key, or one it cannot read in full (one that
+includes another file counts); and origin pushes only where it fetches, shares no repository with
+another remote, gets every bare push, and is gh's default. An insteadOf rule held outside
+`.git/config` can still rewrite origin's urls: `--check` compares the urls as rewritten, and lists such
+a rule, for information, beside a note that fails (the note on empty values and on rules whose base is
+empty stops `--check` before that listing).
 
 And if you will push: `.githooks/pre-push` is armed only once `install.sh` symlinks it into
 `.git/hooks/`, and its credential half needs gitleaks on PATH. Skipping that is survivable — CI

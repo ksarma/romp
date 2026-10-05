@@ -35,19 +35,21 @@
 # Idempotent: run it whenever, including on a fresh clone. `--check` verifies
 # without changing anything and exits non-zero if the clone is unsafe, which is
 # what a test (or a paranoid moment) wants. Set mode refuses, and changes
-# nothing, while origin shares a repository with another remote, git cannot read
-# a remote's urls, git config holds no url for origin, an includeIf "onbranch:"
-# entry names a file that sets a remote.*, url.* or branch.*.pushRemote key or
-# that --check cannot read in full, upstream does not fetch from the project
-# while a url of upstream's held outside the clone's own config file is read
-# ahead of the last one that file holds or that file holds none, upstream has a
-# push url other than the sentinel held outside that file, a url rule rewrites
-# the sentinel, or one of these is held anywhere but the clone's own config
-# file, where it wins over anything set mode writes: a url of origin's, a
-# pushInsteadOf rule that matches one while origin has no push url, or a setting
-# that aims a bare push or a bare gh PR number away from origin (see the checks
-# below). It needs git 2.26 or later (git config --show-scope); with an older
-# git, --check says so and set mode refuses.
+# nothing, while a remote's url or push url value is empty, an insteadOf or
+# pushInsteadOf rule has an empty base, origin shares a repository with another
+# remote, git cannot read a remote's urls, git config holds no url for origin,
+# an includeIf "onbranch:" or "hasconfig:remote.*.url:" entry names a file that
+# sets a remote.*, url.* or branch.*.pushRemote key or that --check cannot read
+# in full, upstream does not fetch from the project while a url of upstream's
+# held outside the clone's own config file is read ahead of the last one that
+# file holds or that file holds none, upstream has a push url other than the
+# sentinel held outside that file, a url rule rewrites the sentinel, or one of
+# these is held anywhere but the clone's own config file, where it wins over
+# anything set mode writes: a url of origin's, a pushInsteadOf rule that matches
+# one while origin has no push url, or a setting that aims a bare push or a bare
+# gh PR number away from origin (see the checks below). It needs git 2.26 or
+# later (git config --show-scope); with an older git, --check says so and set
+# mode refuses.
 #
 # "The clone's own config file" means one file throughout: the one
 # `git config --local` reads and writes (.git/config, or the main clone's in a
@@ -232,14 +234,6 @@ read_urls() {
     return 1
 }
 
-# origin's first url, as git resolves it, or git's own error.
-if ! origin_url="$(git remote get-url origin 2>/dev/null)"; then
-    _err="$(git remote get-url origin 2>&1 >/dev/null || true)"
-    echo "fork-remotes: git cannot read origin's url: ${_err//$NL/ }" >&2
-    exit 2
-fi
-[ -n "$origin_url" ] || { echo "fork-remotes: origin's first url is empty" >&2; exit 2; }
-
 # Where a config value lives, from git config --show-origin: its file, or the environment, which
 # --show-origin calls "command line:". git spells some files by a path relative to the top level, where
 # this script runs (.git/config.worktree, an include with a relative path); those get the top level in
@@ -253,14 +247,116 @@ where_from() {
     esac
 }
 
-# origin's url and push url values as git config holds them, read exactly (-z): origin_raw, its first
-# url value, which set mode copies onto its push url; how many of them the clone's own config file
+# The clone's own config file, as --show-origin spells it: the one --local reads (it reads no include).
+local_cfg=""
+IFS= read -r -d '' local_cfg < <(git config --local --show-origin -z --list 2>/dev/null) || true
+# The legacy directories, where a .git/remotes or .git/branches file can define a remote.
+remotes_dir="$(git rev-parse --git-path remotes)"; branches_dir="$(git rev-parse --git-path branches)"
+case "$remotes_dir" in /*) ;; *) remotes_dir="$toplevel/$remotes_dir" ;; esac
+case "$branches_dir" in /*) ;; *) branches_dir="$toplevel/$branches_dir" ;; esac
+
+# Empty urls. git 2.55 reads an empty url value as clearing the values it read before it, as its
+# documentation of remote.<name>.url says; git 2.43 reads it as a url, empty. An insteadOf or
+# pushInsteadOf rule whose base is empty (git config spells its key url..insteadof or
+# url..pushinsteadof) rewrites a url it matches to an empty one, and git 2.55 reads that as clearing
+# too wherever it rewrites a url as it reads it (a pushInsteadOf rule's result, a legacy file's url, a
+# remote's name read as its url), though not where it rewrites a url value of config, which it does
+# once the values are read. So one config can name different urls to different gits: a value this
+# script reads as config holds it may be one the running git no longer uses (set mode copies origin's
+# first url value onto its push url), and what git resolves for origin, for upstream, or for any remote
+# the shared-repository check compares with origin differs from one git to the next. So, on every git,
+# each empty url or push url value of any remote's, and each rule whose base is empty, wherever it is
+# held, fails closed before origin's url or anything after it is read: --check names it with where it
+# lives, prints the commands that remove what the clone's own config file holds of it (a key's empty
+# values, or every value of a rule's key), and stops there, with no rerun line; set mode refuses,
+# writing nothing. A legacy file that defines a remote is read the same way, where git reads it
+# (config gives that remote no url): a URL: line of a .git/remotes file with nothing after it, or a
+# .git/branches file whose first line has nothing before its '#'. A key written with no value is left
+# to git, which stops on it when it reads origin's url below, and a file that cannot be read to the
+# checks below, which fail closed on it.
+empty_out=""; empty_cmds=(); _seen="$NL"
+# For a listed entry that the clone's own config file holds ($1 is where it lives, $2 its key): the
+# command that removes what that file holds under the key, with the value pattern $3, once per key.
+empty_cmd() {  # <where it lives> <key> <value pattern>
+    [ "$1" = "$local_cfg" ] || return 0
+    case "$_seen" in *"$NL$2$NL"*) return 0 ;; esac
+    _seen="$_seen$2$NL"
+    empty_cmds+=("git -C $qtop config --unset-all $(printf '%q' "$2")$3")
+}
+while IFS= read -r -d '' _src && IFS= read -r -d '' _ent; do
+    pr_split "$_ent"
+    [ "$_ent" = "$_pr_key$NL" ] || continue   # a value that is not empty, or a key written with none
+    empty_out="$empty_out$NL    $_pr_key, an empty value ($(where_from "$_src"))"
+    empty_cmd "$_src" "$_pr_key" " '^\$'"
+done < <(git config -z --show-origin --get-regexp '^remote\..*\.(url|pushurl)$' 2>/dev/null || true)
+for _d in "$remotes_dir" "$branches_dir"; do
+    for _f in "$_d"/* "$_d"/.[!.]* "$_d"/..?*; do
+        if [ ! -f "$_f" ] || [ ! -r "$_f" ]; then continue; fi
+        if git config --get-all "remote.${_f##*/}.url" >/dev/null 2>&1; then continue; fi
+        if [ "$_d" = "$remotes_dir" ]; then
+            while IFS= read -r _line || [ -n "$_line" ]; do
+                case "$_line" in URL:*) ;; *) continue ;; esac
+                _v="${_line#URL:}"
+                if [ -z "${_v//[[:space:]]/}" ]; then empty_out="$empty_out$NL    a URL: line, an empty value (in the legacy file $_f)"; fi
+            done < "$_f"
+        else
+            _line=""; IFS= read -r _line < "$_f" || true
+            _v="${_line%%#*}"
+            if [ -n "${_line//[[:space:]]/}" ] && [ -z "${_v//[[:space:]]/}" ]; then
+                empty_out="$empty_out$NL    the url on its first line, ahead of the '#', an empty value (in the legacy file $_f)"
+            fi
+        fi
+    done
+done
+while IFS= read -r -d '' _src && IFS= read -r -d '' _ent; do
+    pr_split "$_ent"
+    case "$_ent" in *"$NL"*) ;; *) continue ;; esac   # a rule written with no value
+    empty_out="$empty_out$NL    $_pr_key $_pr_val, a rule whose base is empty ($(where_from "$_src"))"
+    empty_cmd "$_src" "$_pr_key" ""
+done < <(git config -z --show-origin --get-regexp '^url\.\.(insteadof|pushinsteadof)$' 2>/dev/null || true)
+empty_out="${empty_out#"$NL"}"
+if [ -n "$empty_out" ]; then
+    _what="an empty url or push url value, or an insteadOf or pushInsteadOf rule whose base is empty, which rewrites a url it matches to an empty one: a newer git (2.55, say) reads an empty url value, and some of the urls such a rule rewrites to nothing, as clearing the urls read before it, and an older one (2.43, say) reads each as an empty url"
+    if [ $check_only -eq 1 ]; then
+        echo "fork-remotes: checking"
+        echo "  ✗ each of these is $_what, so such a config can name different urls to different gits, and --check reads nothing further while one stands. Remove each one where it lives, then run $qscript --check again$NL$empty_out"
+        if [ ${#empty_cmds[@]} -gt 0 ]; then
+            {
+                echo "These commands, which act on this clone from any directory, remove each empty value and each rule above that the clone's own config file holds, there, and leave its other values:"
+                for _c in "${empty_cmds[@]}"; do echo "    $_c"; done
+            } >&2
+        fi
+        echo "Fix what the notes above name, then run $qscript --check again." >&2
+    else
+        {
+            echo "fork-remotes: not configuring this clone; nothing was changed."
+            echo "  Each of these is $_what, so set mode cannot tell which urls git uses:"
+            printf '%s\n' "$empty_out"
+            echo "Run $qscript --check for what to change."
+        } >&2
+    fi
+    exit 1
+fi
+
+# origin's first url, as git resolves it, or git's own error (a url key written with no value, on any
+# remote, is one).
+if ! origin_url="$(git remote get-url origin 2>/dev/null)"; then
+    _err="$(git remote get-url origin 2>&1 >/dev/null || true)"
+    echo "fork-remotes: git cannot read origin's url: ${_err//$NL/ }" >&2
+    exit 2
+fi
+# No url value is empty by here and no rule's base is, so origin's first url is not empty either; this
+# stops the script on an empty one that comes some way this script does not know of.
+[ -n "$origin_url" ] || { echo "fork-remotes: origin's first url is empty" >&2; exit 2; }
+
+# origin's url and push url values as git config holds them, read exactly (-z), none of them empty (the
+# check above stops on one), so every git reads them alike: origin_raw, its first url value, which set
+# mode copies onto its push url; each url value (uv_val); how many of them the clone's own config file
 # holds (n_local_url, n_local_push); each push url value and its source, in the order git reads them
-# (pv_val and pv_src, which line up one for one with get-url --push --all when origin has push urls,
-# none of them empty); and, in outside, one line per value held anywhere else (an included file,
-# config.worktree, global or system config, the environment), each with where it lives. Nothing printed
-# here can change those, and set mode cannot either, so they fail closed. The clone's own config file
-# is the one --local reads (it reads no include), as --show-origin spells it.
+# (pv_val and pv_src, which line up one for one with get-url --push --all when origin has push urls);
+# and, in outside, one line per value held anywhere else (an included file, config.worktree, global or
+# system config, the environment), each with where it lives. Nothing printed here can change those, and
+# set mode cannot either, so they fail closed.
 # A rule held anywhere else whose value starts one of origin's values goes by what it can do to a push
 # to origin. A pushInsteadOf rule while origin has no push url decides where that push goes (git
 # pushes to the urls it rewrites, and to those alone), so it joins outside and fails closed. An
@@ -272,16 +368,15 @@ where_from() {
 origin_values() {
     local key src val ent v line vals=()
     origin_raw=""; n_local_url=0; n_local_push=0; outside=""; outside_rules=""; outside_pi=0
-    pv_src=(); pv_val=(); pv_empty=0; local_cfg=""
-    IFS= read -r -d '' local_cfg < <(git config --local --show-origin -z --list 2>/dev/null) || true
+    uv_val=(); pv_src=(); pv_val=()
     for key in remote.origin.url remote.origin.pushurl; do
         while IFS= read -r -d '' src && IFS= read -r -d '' val; do
             vals+=("$val")
             if [ $key = remote.origin.url ]; then
                 [ ${#vals[@]} -ne 1 ] || origin_raw="$val"
+                uv_val+=("$val")
             else
                 pv_src+=("$src"); pv_val+=("$val")
-                [ -n "$val" ] || pv_empty=1
             fi
             if [ "$src" = "$local_cfg" ]; then
                 if [ $key = remote.origin.url ]; then n_local_url=$((n_local_url + 1)); else n_local_push=$((n_local_push + 1)); fi
@@ -398,30 +493,37 @@ aim_values() {
 }
 aim_values
 
-# includeIf "onbranch:<pattern>" entries in any config git reads. git reads the file such an entry
-# names only while the branch checked out matches the pattern, so from any other branch no check here
-# sees what that file sets. A file that sets a remote.* key (remote.pushDefault among them), a url.* key
-# or a branch's pushRemote can, on a matching branch, give origin another url or push url, rewrite one,
-# add a remote that shares its repository, or aim a bare push at another remote. So can a file that
-# includes another file, which git config -f does not follow, and nothing can say what a file git
-# cannot read sets. Each such entry fails closed: onbranch_out gets one line per entry, with where it
-# lives, the file it names, and the keys that file sets or git's error. git reads a relative path
-# against the directory of the file that holds the entry, and ~ or ~/ as the home directory; an entry
-# set in the environment with a relative path is read here against the top level (git refuses it on a
-# matching branch). A path git expands by a user's name (~name/) or its own prefix (%(prefix)/) is not
-# expanded here, so nothing can say which file it names, and it fails closed too. An entry whose file
-# sets none of those keys is left out, and so is one whose file does not exist (git skips an include
-# whose file is missing, so it sets nothing); git stops on one whose file exists but cannot be read.
-onbranch_values() {
+# includeIf entries, in any config git reads, whose condition a branch switch or a remote write can
+# change: "onbranch:<pattern>", which holds while the branch checked out matches the pattern, and
+# "hasconfig:remote.*.url:<pattern>", which holds while some remote has a url the pattern matches (set
+# mode's own write of upstream's url can make one hold). git reads the file such an entry names only
+# while its condition holds, so while it does not, no check here sees what that file sets, and while it
+# does, a branch switch or a remote write can take it away. A file that sets a remote.* key
+# (remote.pushDefault among them), a url.* key or a branch's pushRemote can then give origin another
+# url or push url, rewrite one, add a remote that shares its repository, or aim a bare push at another
+# remote. So can a file that includes another file, which git config -f does not follow, and nothing
+# can say what a file git cannot read sets. Each such entry fails closed: condinc_out gets one line per
+# entry, with where it lives, the file it names, and the keys that file sets or git's error. git reads
+# a relative path against the directory of the file that holds the entry, and ~ or ~/ as the home
+# directory; an entry set in the environment with a relative path is read here against the top level
+# (git refuses it where its condition holds). A path git expands by a user's name (~name/) or its own
+# prefix (%(prefix)/) is not expanded here, so nothing can say which file it names, and it fails closed
+# too. An entry whose file sets none of those keys is left out, and so is one whose file does not exist
+# (git skips an include whose file is missing, so it sets nothing); git stops on one whose file exists
+# but cannot be read. An includeIf on any other condition is read as git reads it now, as any other
+# config is: a gitdir: or gitdir/i: condition holds or not by where the repository is, which neither a
+# branch switch nor a remote write changes, and git takes no other condition as holding. git matches
+# both prefixes as spelled here, case and all.
+condinc_values() {
     local src ent key path target dir err keys seen
-    onbranch_out=""
+    condinc_out=""
     while IFS= read -r -d '' src && IFS= read -r -d '' ent; do
         pr_split "$ent"; key="$_pr_key"; path="$_pr_val"; target="$path"
         case "$target" in
             /*) ;;
             \~|\~/*) target="${HOME:-}${target:1}" ;;
             \~*|"%(prefix)/"*)
-                onbranch_out="$onbranch_out$NL$key $path ($(where_from "$src")) names its file by ~name/ or %(prefix)/, which git expands and --check does not, so --check cannot read it"
+                condinc_out="$condinc_out$NL$key $path ($(where_from "$src")) names its file by ~name/ or %(prefix)/, which git expands and --check does not, so --check cannot read it"
                 continue
                 ;;
             *)
@@ -437,7 +539,7 @@ onbranch_values() {
         # git's error read in the C locale, where it names a missing file as the C library does
         if ! err="$(LC_ALL=C git config -f "$target" --list 2>&1 >/dev/null)"; then
             case "$err" in *": No such file or directory"|*": Not a directory") continue ;; esac
-            onbranch_out="$onbranch_out$NL$key $path ($(where_from "$src")) names $target, which git cannot read: ${err//$NL/ }"
+            condinc_out="$condinc_out$NL$key $path ($(where_from "$src")) names $target, which git cannot read: ${err//$NL/ }"
             continue
         fi
         keys=""; seen="$NL"
@@ -451,21 +553,18 @@ onbranch_values() {
             seen="$seen$_pr_key$NL"; keys="${keys:+$keys, }$_pr_key"
         done < <(git config -f "$target" -z --list 2>/dev/null || true)
         if [ -n "$keys" ]; then
-            onbranch_out="$onbranch_out$NL$key $path ($(where_from "$src")) names $target, which sets $keys"
+            condinc_out="$condinc_out$NL$key $path ($(where_from "$src")) names $target, which sets $keys"
         fi
-    done < <(git config -z --show-origin --get-regexp '^includeif\.onbranch:.*\.path$' 2>/dev/null || true)
-    onbranch_out="${onbranch_out#"$NL"}"
+    done < <(git config -z --show-origin --get-regexp '^includeif\.(onbranch|hasconfig:remote\.\*\.url):.*\.path$' 2>/dev/null || true)
+    condinc_out="${condinc_out#"$NL"}"
 }
-onbranch_values
+condinc_values
 
 # An origin whose url is in no config: a legacy .git/remotes or .git/branches file defines it (git reads
 # one only for a remote that config gives no url), or, with neither, git reads the name origin as its
-# url. legacy_origin says which, and is empty when config holds origin's url.
-remotes_dir="$(git rev-parse --git-path remotes)"; branches_dir="$(git rev-parse --git-path branches)"
-case "$remotes_dir" in /*) ;; *) remotes_dir="$toplevel/$remotes_dir" ;; esac
-case "$branches_dir" in /*) ;; *) branches_dir="$toplevel/$branches_dir" ;; esac
+# url. legacy_origin says which, and is empty when config holds a url value of origin's.
 legacy_origin=""
-if [ -z "$origin_raw" ]; then
+if [ ${#uv_val[@]} -eq 0 ]; then
     for _f in "$remotes_dir/origin" "$branches_dir/origin"; do
         if [ -f "$_f" ]; then legacy_origin="${legacy_origin:+$legacy_origin and }$_f"; fi
     done
@@ -499,7 +598,7 @@ pi_fix=""
 [ $outside_pi -eq 0 ] || pi_fix=" (or, for a pushInsteadOf rule listed here, give origin a push url in the clone's own config file with git -C $qtop config remote.origin.pushurl <your-fork-url>: git applies no pushInsteadOf rule to a push url, so the rule then rewrites nothing)"
 aim_list() { printf '%s\n' "$aim_out" | sed 's/^/    /'; }
 outside_list() { printf '%s\n' "$outside" | sed 's/^/    /'; }
-onbranch_list() { printf '%s\n' "$onbranch_out" | sed 's/^/    /'; }
+condinc_list() { printf '%s\n' "$condinc_out" | sed 's/^/    /'; }
 # The rules held anywhere but the clone's own config file that fail nothing by themselves (see
 # origin_values), listed as information beside a failing note, each with where it lives.
 rules_info() {
@@ -675,12 +774,13 @@ origin_id="$(repo_id "$origin_url" pass)"
 # such url on upstream. That check compares origin with the remotes as they
 # stand before set mode writes.
 # Where no url of origin's matches the project's url as written, only as git
-# rewrites it, the rules that rewrite it are why: origin may be your fork, which
-# they make the project read as, and then no command that points origin at
-# your fork can clear the refusal; or origin may be the project under a name
-# they give it (an ssh alias, say). Nothing here can tell which, so the refusal
-# lists those rules with where each lives, prints no commands, and says what to
-# do in each case.
+# rewrites it, and no url or push url value of origin's, as git config or a
+# legacy file holds it, names the project's repository, the rules that rewrite
+# the project's url are why: origin may be your fork, which they make the
+# project read as, and then no command that points origin at your fork can
+# clear the refusal; or origin may be the project under a name they give it (an
+# ssh alias, say). Nothing here can tell which, so the refusal lists those rules
+# with where each lives, prints no commands, and says what to do in each case.
 proj_hits=""; proj_raw=0
 for ((_i = 0; _i < ${#o_url[@]}; _i++)); do
     [ "${o_url[$_i]}" != "$NOPUSH" ] || continue
@@ -689,6 +789,44 @@ for ((_i = 0; _i < ${#o_url[@]}; _i++)); do
         if [ "${o_fid[$_i]}" = "$up_raw_fid" ]; then proj_raw=1; fi
     fi
 done
+# origin's own url and push url values, as git config holds them, are compared with the project's url
+# as written too, ids folded, and so are its urls as a legacy file holds them where git reads one
+# (config holds no url value of origin's): each URL: line of its .git/remotes file, trimmed as git
+# trims it, or, where that file gives none, the first line of its .git/branches file, trimmed, up to
+# any '#'. A value that names the project's repository is origin set to the project, whatever a rule
+# makes git read it as: git reads the project's url through the same rules, so the urls above may match
+# the project only as rewritten, or not at all where a rule matches origin's spelling of it alone. Such
+# a value gets the refusal with the commands, and a line of its own where git rewrites it.
+raw_hit() {  # <kind> <value> <what holds it>
+    local u
+    [ "$(fold_id "$(repo_id "$2")")" = "$up_raw_fid" ] || return 0
+    proj_raw=1
+    for u in ${o_url[@]+"${o_url[@]}"}; do [ "$u" != "$2" ] || return 0; done
+    proj_hits="$proj_hits$NL  origin's $1 value $2, as $3 holds it, names the project's repository"
+}
+for _v in ${uv_val[@]+"${uv_val[@]}"}; do raw_hit url "$_v" "git config"; done
+for _v in ${pv_val[@]+"${pv_val[@]}"}; do raw_hit "push url" "$_v" "git config"; done
+if [ ${#uv_val[@]} -eq 0 ]; then
+    _lg=0
+    _f="$remotes_dir/origin"
+    if [ -f "$_f" ] && [ -r "$_f" ]; then
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            while [[ $_line == *[[:space:]] ]]; do _line="${_line%[[:space:]]}"; done
+            case "$_line" in URL:*) ;; *) continue ;; esac
+            _v="${_line#URL:}"
+            while [[ $_v == [[:space:]]* ]]; do _v="${_v#[[:space:]]}"; done
+            _lg=1
+            raw_hit url "$_v" "the legacy file $_f"
+        done < "$_f"
+    fi
+    _f="$branches_dir/origin"
+    if [ $_lg -eq 0 ] && [ -f "$_f" ] && [ -r "$_f" ]; then
+        _line=""; IFS= read -r _line < "$_f" || true
+        while [[ $_line == *[[:space:]] ]]; do _line="${_line%[[:space:]]}"; done
+        while [[ $_line == [[:space:]]* ]]; do _line="${_line#[[:space:]]}"; done
+        if [ -n "$_line" ]; then raw_hit url "${_line%%#*}" "the legacy file $_f"; fi
+    fi
+fi
 if [ -n "$proj_hits" ] && [ $proj_raw -eq 0 ]; then
     {
         echo "fork-remotes: origin is the project's repository as git reads the project's url, which a rule rewrites."
@@ -861,9 +999,10 @@ fi
 # Set mode refuses, writing nothing, on any finding above; on a url of origin's, or a pushInsteadOf rule
 # that matches one while origin has no push url, held outside the clone's own config file; on a setting
 # that aims a bare push or a bare gh PR number away from origin and that aim_values fails closed; on an
-# includeIf "onbranch:" entry that onbranch_values lists; on an origin whose url is in no config; and
-# on what keeps it from fixing upstream (see upstream_values).
-if [ $check_only -eq 0 ] && { [ ${#f_kind[@]} -gt 0 ] || [ -n "$outside" ] || [ -n "$aim_out" ] || [ -n "$onbranch_out" ] || [ -n "$legacy_origin" ] \
+# includeIf entry that condinc_values lists; on an origin whose url is in no config; and on what keeps
+# it from fixing upstream (see upstream_values). It has already refused on an empty value and on a rule
+# whose base is empty.
+if [ $check_only -eq 0 ] && { [ ${#f_kind[@]} -gt 0 ] || [ -n "$outside" ] || [ -n "$aim_out" ] || [ -n "$condinc_out" ] || [ -n "$legacy_origin" ] \
     || { [ $up_wrong -eq 1 ] && [ -n "$up_url_out" ]; } || [ -n "$up_push_out" ] || [ -n "$nopush_rules" ]; }; then
     {
         echo "fork-remotes: not configuring this clone; nothing was changed."
@@ -879,9 +1018,9 @@ if [ $check_only -eq 0 ] && { [ ${#f_kind[@]} -gt 0 ] || [ -n "$outside" ] || [ 
             echo "These settings, which aim a bare push or a bare gh PR number away from origin, are held outside the clone's own config file, where set mode cannot change them:"
             aim_list
         fi
-        if [ -n "$onbranch_out" ]; then
-            echo "These includeIf \"onbranch:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full. git reads it only on a branch the entry matches, where a file that sets one of those keys can change where a push goes and one git cannot read stops git; set mode can neither see that from here nor change it:"
-            onbranch_list
+        if [ -n "$condinc_out" ]; then
+            echo "These includeIf \"onbranch:\" and \"hasconfig:remote.*.url:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full. git reads it only while the entry's condition holds (a branch it matches is checked out, or a remote has a url it matches), which a branch switch or a remote write, set mode's own among them, can change; there a file that sets one of those keys can change where a push goes, and one git cannot read stops git. Set mode can neither see that from here nor change it:"
+            condinc_list
         fi
         if [ -n "$legacy_origin" ]; then
             echo "origin's url is not in git config ($legacy_origin), so set mode has no url to copy onto its push url."
@@ -921,7 +1060,8 @@ if [ $check_only -eq 1 ]; then
     # mode refuses. An upstream that config defines, or whose name a rule rewrites, but whose urls git
     # cannot read has its own note below, which says so, and is not called missing; one that only an
     # unreadable legacy file names keeps the missing note, since git reads no url from that file and a
-    # push to it fails. An upstream whose first url is empty exists, and its note says so.
+    # push to it fails. An upstream whose first url is empty, which nothing reaching here has (no value
+    # is empty and no rule's base is), would still exist, and its note would say so.
     if [ $up_unreadable -eq 1 ]; then
         :
     elif [ $up_exists -eq 0 ]; then
@@ -985,14 +1125,15 @@ if [ $check_only -eq 1 ]; then
     # compared with the repository origin fetches from (ids compared exactly: a match passes). Set mode
     # fixes this (it replaces every push url in the clone's own config file with origin's first url),
     # except for a push url held outside that file, which it cannot remove. Which offending url is held
-    # where comes from lining origin's push url values up with the urls get-url prints, one for one,
-    # which holds when origin has push url values, none of them empty, as many as those urls; then the
-    # note names each offending url held outside with where it lives. Where they do not line up (git
-    # prints an empty value as an empty line, which is skipped here), no url is attributed, and the note
-    # lists each push url value with where it lives instead. With no push url values, set mode's write
-    # replaces the urls a push goes to.
+    # where comes from lining origin's push url values up with the urls get-url prints, one for one: git
+    # prints one url for each push url value, and none is empty here (the check above stops on an empty
+    # value and on a rule whose base is empty, the one way git rewrites a url to nothing), so the counts
+    # agree. They are compared all the same before a value is looked up, so that where they differ in a
+    # way this script does not foresee no url is attributed, rather than the wrong place named. The note
+    # names each offending url held outside with where it lives. With no push url values, set mode's
+    # write replaces the urls a push goes to.
     _aligned=0
-    if [ ${#pv_src[@]} -gt 0 ] && [ $pv_empty -eq 0 ] && [ ${#pv_src[@]} -eq $n_push ]; then _aligned=1; fi
+    if [ ${#pv_src[@]} -gt 0 ] && [ ${#pv_src[@]} -eq $n_push ]; then _aligned=1; fi
     _off=""; _off_out=""; _k=0
     for ((_i = 0; _i < ${#o_url[@]}; _i++)); do
         [ "${o_kind[$_i]}" = push ] || continue
@@ -1005,17 +1146,10 @@ if [ $check_only -eq 1 ]; then
         _k=$((_k + 1))
     done
     if [ -n "$_off" ]; then
-        _pv=""
-        if [ $_aligned -eq 0 ] && [ ${#pv_src[@]} -gt 0 ]; then
-            _pv=". origin's push url values do not line up one for one with those urls, so each is listed here with where it lives:"
-            for ((_k = 0; _k < ${#pv_src[@]}; _k++)); do
-                _pv="$_pv$NL    remote.origin.pushurl ${pv_val[$_k]} ($(where_from "${pv_src[$_k]}"))"
-            done
-        fi
         if [ -n "$_off_out" ]; then
             note "origin PUSHES to $_off, not the repository it fetches from ($origin_url); a push to origin goes to $origin_pushes. Set mode cannot remove $_off_out, held outside the clone's own config file"
         else
-            note "origin PUSHES to $_off, not the repository it fetches from ($origin_url); a push to origin goes to $origin_pushes$_pv"
+            note "origin PUSHES to $_off, not the repository it fetches from ($origin_url); a push to origin goes to $origin_pushes"
             rerun_fixes=$((rerun_fixes + 1))
         fi
     fi
@@ -1132,16 +1266,17 @@ if [ $check_only -eq 1 ]; then
         note "these settings, which aim a bare push or a bare gh PR number away from origin, are held outside the clone's own config file (the one git config --local writes), where set mode cannot change them: remove each one where it lives, then run $qscript --check again$NL$(aim_list)"
         blocked=$((blocked + 1))
     fi
-    # includeIf "onbranch:" entries whose file can change, on a matching branch, where a push goes (see
-    # onbranch_values): --check names each, set mode refuses while one stands, so no rerun line.
-    if [ -n "$onbranch_out" ]; then
-        note "these includeIf \"onbranch:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full. git reads it only on a branch the entry matches, where a file that sets one of those keys can change where a push goes and one git cannot read stops git; --check run on any other branch cannot see that, and set mode cannot change it: remove each entry where it lives, or change its file so that it sets none of those keys and --check can read it in full, then run $qscript --check again$NL$(onbranch_list)"
+    # includeIf entries whose file can change where a push goes once a branch switch or a remote write
+    # makes their condition hold (see condinc_values): --check names each, set mode refuses while one
+    # stands, so no rerun line.
+    if [ -n "$condinc_out" ]; then
+        note "these includeIf \"onbranch:\" and \"hasconfig:remote.*.url:\" entries name a file that sets a remote.*, url.* or branch.*.pushRemote key, or that --check cannot read in full. git reads it only while the entry's condition holds (a branch it matches is checked out, or a remote has a url it matches), which a branch switch or a remote write, set mode's own among them, can change; there a file that sets one of those keys can change where a push goes, and one git cannot read stops git. --check reads config only as it stands and cannot see that, and set mode cannot change it: remove each entry where it lives, or change its file so that it sets none of those keys and --check can read it in full, then run $qscript --check again$NL$(condinc_list)"
         blocked=$((blocked + 1))
     fi
     if [ $problems -eq 0 ]; then
         # what the checks above verified, and nothing more: none of them requires a third remote to be
         # fetch-only, so one that shares no repository with origin may push anywhere
-        echo "  ✓ upstream fetches from the project, as git resolves both urls, and is fetch-only; origin's urls, and any pushInsteadOf rule that matches one while origin has no push url, are in the clone's own config file, and no includeIf \"onbranch:\" entry names a file that sets a remote.*, url.* or branch.*.pushRemote key or that --check cannot read in full; every push to origin goes to the repository it fetches from, and origin shares no repository with another remote; the remote.pushDefault git uses is origin, and no branch's pushRemote that git uses names another remote; origin is gh's only default repository"
+        echo "  ✓ upstream fetches from the project, as git resolves both urls, and is fetch-only; origin's urls, and any pushInsteadOf rule that matches one while origin has no push url, are in the clone's own config file, no remote's url or push url value is empty and no insteadOf or pushInsteadOf rule has an empty base, and no includeIf \"onbranch:\" or \"hasconfig:remote.*.url:\" entry names a file that sets a remote.*, url.* or branch.*.pushRemote key or that --check cannot read in full; every push to origin goes to the repository it fetches from, and origin shares no repository with another remote; the remote.pushDefault git uses is origin, and no branch's pushRemote that git uses names another remote; origin is gh's only default repository"
         exit 0
     fi
     rules_info
@@ -1159,7 +1294,7 @@ if [ $check_only -eq 1 ]; then
         fi
     fi
     if [ $blocked -gt 0 ]; then
-        echo "Fix what the notes above name, then run $qscript --check again; set mode refuses to run while origin shares a repository with another remote, git cannot read a remote's urls, git config holds no url for origin, an includeIf \"onbranch:\" entry names a file that sets a remote.*, url.* or branch.*.pushRemote key or that --check cannot read in full, upstream does not fetch from the project while a url of upstream's held outside the clone's own config file is read ahead of the last one that file holds or that file holds none, upstream has a push url other than the sentinel held outside that file, a url rule rewrites the sentinel, or one of these is held anywhere but the clone's own config file, where it wins over anything set mode writes: a url of origin's, a pushInsteadOf rule that matches one while origin has no push url, or a setting that aims a bare push or a bare gh PR number away from origin." >&2
+        echo "Fix what the notes above name, then run $qscript --check again; set mode refuses to run while a remote's url or push url value is empty, an insteadOf or pushInsteadOf rule has an empty base, origin shares a repository with another remote, git cannot read a remote's urls, git config holds no url for origin, an includeIf \"onbranch:\" or \"hasconfig:remote.*.url:\" entry names a file that sets a remote.*, url.* or branch.*.pushRemote key or that --check cannot read in full, upstream does not fetch from the project while a url of upstream's held outside the clone's own config file is read ahead of the last one that file holds or that file holds none, upstream has a push url other than the sentinel held outside that file, a url rule rewrites the sentinel, or one of these is held anywhere but the clone's own config file, where it wins over anything set mode writes: a url of origin's, a pushInsteadOf rule that matches one while origin has no push url, or a setting that aims a bare push or a bare gh PR number away from origin." >&2
     elif [ $rerun_fixes -gt 0 ]; then
         echo "Run $qscript to fix." >&2
     else
@@ -1172,8 +1307,8 @@ fi
 # origin with two push urls, or a doubled pushDefault) makes a plain set, or git remote set-url, refuse,
 # which would stop set mode part way through. Whether upstream exists is up_exists, git remote get-url's
 # exit status, which is the test git remote add makes before it refuses ("remote upstream already
-# exists"): a key of upstream's in the repository's config, or a legacy file. Its output would not do:
-# an upstream whose url is empty prints an empty line.
+# exists"): a key of upstream's in the repository's config, or a legacy file. Its output would not do as
+# the test: it is an empty line for an upstream whose url is empty, which set mode has refused on above.
 if [ $up_exists -eq 1 ]; then
     git config --replace-all remote.upstream.url "$UPSTREAM_URL"
 else
@@ -1187,11 +1322,12 @@ git config --replace-all remote.pushDefault origin
 # resolves it: git applies insteadOf to a push url as it does to a fetch url, so the raw value pushes
 # where origin fetches, while a resolved value would be rewritten again by an insteadOf rule that
 # matches it (chained rules) and push somewhere else. Every url of origin's is in the clone's own
-# config file here (set mode refuses otherwise), so the value copied is one this clone holds. Keys and
-# values are read with -z, as --check reads them. Each pushRemote git uses that names another remote is
-# held in the clone's own config file here (set mode refuses otherwise), and removing it there leaves
-# git a value that aims at origin, or none (see aim_values); a pushRemote git uses that names origin is
-# left alone, wherever a value overridden by it is held.
+# config file here and none is empty (set mode refuses otherwise), so the value copied is one this
+# clone holds and the first url every git reads, whichever way it reads an empty value. Keys and values
+# are read with -z, as --check reads them. Each pushRemote git uses that names another remote is held
+# in the clone's own config file here (set mode refuses otherwise), and removing it there leaves git a
+# value that aims at origin, or none (see aim_values); a pushRemote git uses that names origin is left
+# alone, wherever a value overridden by it is held.
 git config --replace-all remote.origin.pushurl "$origin_raw"
 for ((_i = 0; _i < ${#pr_key[@]}; _i++)); do
     git config --unset-all "${pr_key[$_i]}" || true
