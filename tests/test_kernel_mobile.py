@@ -2486,8 +2486,8 @@ _NAMES_A_BELL = re.compile(r"(?<![\w-])(?:mbell|rail-bell)(?![\w-])")
 
 
 # The attribute name an attribute selector starts with, past any whitespace and a namespace prefix (`*|`, `|`); the caller compares
-# it case-insensitively, as a browser matches attribute names in an HTML page. In `[lang|=en]` the | belongs to the |= operator.
-_ATTR_NAME = re.compile(r"\[\s*(?:(?:[\w-]*|\*)\|(?!=))?([\w-]+)")
+# it case-insensitively, as a browser matches attribute names in an HTML page. `[lang|=en]` reads as `lang`: no name follows its |.
+_ATTR_NAME = re.compile(r"\[\s*(?:(?:[\w-]*|\*)\|)?([\w-]+)")
 
 
 def _bell_rule_classes(html):
