@@ -2536,8 +2536,16 @@ def _bell_rule_classes(html):
     combinator, while a browser drops it (`#mbell/**/.busy` is one compound to a browser); served_css's blanking stays as it is, since
     the other censuses read it. The preludes are read from each style element's text rather than from the rules' `at`, since a
     @custom-selector statement, or an @scope block holding only declarations, leaves served_css no rule to carry one. BellRuleReader
-    pins each refusal. A rule that reaches a bell with no id at all (through a tag, a markup class such as `.mact`, or another
-    attribute) is not read here, a stated limit."""
+    pins each refusal. A class a rule tests on a bell through a compound that does not carry the bell's id is not read here, a stated
+    limit: a rule that reaches a bell with no id at all (through a tag, a markup class such as `.mact`, or another attribute), or a
+    class tested on the bell from inside another compound's :has() (`#mtabs:has(> .busy) > #mbell`). A stylesheet a served script writes
+    at run time (a style element's textContent, insertRule, replace or replaceSync, adoptedStyleSheets) is a second stated limit, since
+    this read sees only the style elements the page is served with. Measured over the shell's 26 script elements (2026-10-05): the 22
+    that hold code write none (a grep of it: none creates or selects a style or link element, writes `<style` or `<link` into markup, or
+    names insertRule, deleteRule, replaceSync, adoptedStyleSheets, CSSStyleSheet, styleSheets, cssRules or `.sheet`, and each of their 7
+    `.replace(` calls passes two arguments, a string's replace); of the 4 that load a bundle by src, palette-main.js writes two, the
+    command palette's and the shortcuts card's, each when it first opens (ui/webview/palette.ts and shortcuts-modal.ts: a style element
+    whose textContent is a constant naming neither bell), and a grep of the four built bundles finds no other such write."""
     blocks = served_css.style_blocks(html)
     for _, css in blocks:
         code = served_css.css_code(css)   # the element's text, its comments blanked
