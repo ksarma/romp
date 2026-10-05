@@ -176,8 +176,17 @@ no binding here, and the census does not see the value such a setting gives it (
   the remainder where the left operand and the part are one value each, and otherwise 0 to the part's highest value
   less one for a positive part and the part's lowest value plus one to 0 for a negative one, as Python's remainder
   takes the divisor's sign (50000 % K, with K bound to 60000, to 70000 and by K = f(), is 0-69999, and
-  80000 + os.getpid() % -40000 is 40001-80000). It reads an unknown operand of % by a divisor so too, by each part as
-  for a left operand of several values, and a call to randint(a, b), randrange(stop), randrange(start, stop[, step])
+  80000 + os.getpid() % -40000 is 40001-80000). Over operands never negative it reads ** and << and >> as the span
+  from the least to the greatest value of the operator over their ends (2 ** 15 + 1000 is 33768, and
+  random.randint(2 ** 15, 2 ** 16 - 1) is 32768-65535), unless a ** or a << can pass 2**4096 (BIG), and &, | and ^ as
+  Python's own value where each operand is one value (40000 | 1 is 40001) and otherwise as 0 up to the lesser of the
+  operands' highest values for &, and up to 2**n - 1 for | and ^, n the bit length of the greater; over any bounded
+  operand, ~ as -x - 1 (~-45002 is 45001); not as 0 to 1, whatever its operand, and as its one value where the
+  operand has one; a conditional expression as the span holding its two branches (45001 if x else 45002 is
+  45001-45002); and a := as its value. True division, which gives a float, is not read, nor are **, <<, >>, &, | and
+  ^ over an operand that can be negative (WHAT IT CANNOT SEE), and Operators checks that each operator of Python's
+  grammar is read here or named as not read (OPERATOR_LIMITS). It reads an unknown operand of % by a divisor so too,
+  by each part as for a left operand of several values, and a call to randint(a, b), randrange(stop), randrange(start, stop[, step])
   or randbelow(n) over bounded arguments (random's and secrets', by the callee's name; a randrange's step may be
   unbounded, below) as the values it can return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does
   random.randint(40000, 50000). A call Python always refuses can give a span whose ends are reversed
@@ -331,6 +340,9 @@ these turns its plant red, and the example leaves this list.
   random.randrange(45001, E) reads E as 1000 and is not counted, though on 3.10 and 3.11 CPython returns values from
   45001 to 45009 for E = 45010.0 (int(E) reads it: THE RULE);
   int() of a digit string written in place, which no binding gives a name (int("45001"));
+  an operator interval() does not read over the operands it is given (THE RULE): true division, which gives a float
+  (int(90002 / 2)), **, <<, >>, &, | or ^ over an operand that can be negative (-(-45001 | 0)), and a ** or a <<
+  whose value can pass 2**4096 ((2 ** 5000 + 45001) % 2 ** 5000);
   a random call with an argument passed through a * sequence (random.randrange(*(N, M)), random.randint(*[N, M]));
   a randrange with its stop left empty and a step that is 1 only at run time, which Python takes (ONE = 1, then
   random.randrange(start=50000, step=ONE); random.randrange(50000, step=+1); E = None, then random.randrange(50000,
@@ -632,7 +644,9 @@ def interval(node, bound=None, steps=None):
     """(lo, hi, computed) for an int expression the census can bound, else None: constants, a unary minus or plus, + -
     and * over them, // and % by a divisor read by its positive and its negative part, 0 in neither (_divided(): so
     90002 // K, with K bound to 2, to 3 and by K = f(), is 30000-45001, and with K bound to -1 and to 2 it is
-    -90002-90002), a name (below), str() or int() around one (int() of a name as CPython's int() of each of its values
+    -90002-90002), every other integer operator over the operands THE RULE gives it (BINARY and UNARY: ** << >> & |
+    ^ over operands never negative, ~ and not), a conditional expression as the span holding its two branches, a :=
+    as its value, a name (below), str() or int() around one (int() of a name as CPython's int() of each of its values
     in `bound`, a float or a string included and a value int() refuses passed over), an unknown operand of % by such a
     divisor read by its parts too, and randint(a, b), randrange(stop),
     randrange(start, stop[, step]) and randbelow(n) over bounded arguments read as the values each can return, each
@@ -677,26 +691,22 @@ def interval(node, bound=None, steps=None):
         got = [r for r in (_random_span(name, [interval(a, steps if name == "randrange" and i == 2 else bound, steps)
                                                for i, a in enumerate(c)]) for c in calls) if r]   # a step reads by `steps`
         return (min(r[0] for r in got), max(r[1] for r in got), True) if got else None
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd):
-        return interval(node.operand, bound, steps)   # +7 is 7
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-        operand = interval(node.operand, bound, steps)
-        return (-operand[1], -operand[0], operand[2]) if operand else None
-    if isinstance(node, ast.BinOp):
+    if isinstance(node, ast.UnaryOp) and type(node.op) in UNARY:
+        return UNARY[type(node.op)](interval(node.operand, bound, steps))
+    if isinstance(node, ast.BinOp) and type(node.op) in BINARY:
         right = interval(node.right, bound, steps)
         left = interval(node.left, bound, steps)
-        if isinstance(node.op, (ast.FloorDiv, ast.Mod)) and right:
-            return _divided(node.op, left, right)   # an unknown left operand too, for %
-        if left is None or right is None:
+        if right is None or (left is None and not isinstance(node.op, ast.Mod)):
+            return None                             # an unknown left operand is read only by %
+        return BINARY[type(node.op)](node.op, left, right)
+    if isinstance(node, ast.IfExp):                 # either branch: the span holding both
+        body, orelse = interval(node.body, bound, steps), interval(node.orelse, bound, steps)
+        if body is None or orelse is None:
             return None
-        (a, b, ca), (c, d, cb) = left, right
-        if isinstance(node.op, ast.Add):
-            return a + c, b + d, ca or cb
-        if isinstance(node.op, ast.Sub):
-            return a - d, b - c, ca or cb
-        if isinstance(node.op, ast.Mult):
-            ends = (a * c, a * d, b * c, b * d)
-            return min(ends), max(ends), ca or cb
+        lo, hi = min(body[0], orelse[0]), max(body[1], orelse[1])
+        return lo, hi, body[2] or orelse[2] or lo != hi
+    if isinstance(node, ast.NamedExpr):             # a := is its value
+        return interval(node.value, bound, steps)
     return None
 
 
@@ -728,6 +738,79 @@ def _divided(op, left, right):
         return None
     lo, hi = min(r[0] for r in reads), max(r[1] for r in reads)
     return lo, hi, (True if left is None else left[2]) or cb or lo != hi
+
+
+BIG = 4096                                          # bits: a ** or << whose value can pass 2**BIG is not read
+
+
+def _cornered(f, left, right):
+    """(lo, hi, computed) for an operator monotonic in each operand: the least and greatest of `f` over their ends."""
+    ends = [f(x, y) for x in left[:2] for y in right[:2]]
+    lo, hi = min(ends), max(ends)
+    return lo, hi, left[2] or right[2] or lo != hi
+
+
+def _never_negative(*ivs):
+    return all(min(iv[:2]) >= 0 for iv in ivs)
+
+
+def _power(_op, left, right):
+    """** over operands never negative, by its ends (x ** y never falls as x grows, and as y grows falls only for x = 0,
+    from 0 ** 0 = 1 to 0, so the ends hold it), unless its value can pass 2**BIG; None otherwise (a negative exponent
+    gives a float, a negative base a possibly negative value)."""
+    if not _never_negative(left, right):
+        return None
+    b, d = max(left[:2]), max(right[:2])
+    if b >= 2 and (d * (b.bit_length() - 1) > BIG or b ** d > 2 ** BIG):   # the first test bounds the second's cost
+        return None
+    return _cornered(lambda x, y: x ** y, left, right)
+
+
+def _shifted(op, left, right):
+    """<< and >> over operands never negative, by their ends (x << y grows in both, x >> y grows in x and falls in y),
+    unless a << can pass 2**BIG; None otherwise (a negative shift count raises)."""
+    if not _never_negative(left, right):
+        return None
+    if isinstance(op, ast.LShift):
+        b, d = max(left[:2]), max(right[:2])
+        if b and (b.bit_length() + d > BIG + 1 or b << d > 2 ** BIG):   # the first test bounds the second's cost
+            return None
+        return _cornered(lambda x, y: x << y, left, right)
+    return _cornered(lambda x, y: x >> min(y, x.bit_length()), left, right)
+
+
+def _bitwise(op, left, right):
+    """&, | and ^ over operands never negative: Python's own value where each operand is one value, else 0 up to the
+    lesser of their highest values for & (x & y is at most each), and 0 up to 2**n - 1 for | and ^, n the bit length
+    of the greater of their highest values (neither sets a bit above both); None over an operand that can be
+    negative."""
+    if not _never_negative(left, right):
+        return None
+    if left[0] == left[1] and right[0] == right[1]:
+        v = {ast.BitAnd: int.__and__, ast.BitOr: int.__or__, ast.BitXor: int.__xor__}[type(op)](left[0], right[0])
+        return v, v, left[2] or right[2]
+    top = min(max(left[:2]), max(right[:2])) if isinstance(op, ast.BitAnd) else \
+        2 ** max(max(left[:2]), max(right[:2])).bit_length() - 1
+    return 0, top, True
+
+
+# The operators interval() reads (THE RULE), each by its class: BINARY's over two bounded operands (an unknown left
+# operand of % too), UNARY's over its operand's interval or None. OPERATOR_LIMITS names, with the reason, each operator
+# of Python's grammar interval() does not read; Operators checks that every one is in exactly one of the three.
+BINARY = {
+    ast.Add: lambda _op, l, r: (l[0] + r[0], l[1] + r[1], l[2] or r[2]),
+    ast.Sub: lambda _op, l, r: (l[0] - r[1], l[1] - r[0], l[2] or r[2]),
+    ast.Mult: lambda _op, l, r: _cornered(lambda x, y: x * y, l, r),
+    ast.FloorDiv: _divided, ast.Mod: _divided, ast.Pow: _power, ast.LShift: _shifted, ast.RShift: _shifted,
+    ast.BitAnd: _bitwise, ast.BitOr: _bitwise, ast.BitXor: _bitwise}
+UNARY = {
+    ast.UAdd: lambda o: o,                                              # +7 is 7
+    ast.USub: lambda o: o and (-o[1], -o[0], o[2]),
+    ast.Invert: lambda o: o and (-o[1] - 1, -o[0] - 1, o[2]),           # ~x is -x - 1
+    ast.Not: lambda o: (int(not o[0]),) * 2 + (o[2],) if o and o[0] == o[1] else (0, 1, True)}   # a bool, whatever o is
+OPERATOR_LIMITS = {
+    ast.Div: "true division gives a float, which no port is, and int() of one is not read (int(90002 / 2))",
+    ast.MatMult: "Python raises for @ over ints"}
 
 
 def _random_span(name, ivs):
@@ -2949,6 +3032,55 @@ class Plants(unittest.TestCase):
                     with self.subTest("no division by 0", expression=text):
                         interval(ast.parse(text, mode="eval").body)
 
+    def test_each_integer_operator_reads_over_bounded_operands(self):
+        """interval() reads every integer operator over bounded operands (THE RULE; Operators checks the class against
+        the grammar and Python's arithmetic): ** and << and >> over operands never negative by their ends, &, | and ^
+        over operands never negative by Python's own value where each is one value and by a span holding every value
+        otherwise, ~ as -x - 1, not as 0 to 1, a conditional expression as the span holding its branches, and a := as
+        its value. Each red plant reported nothing where interval() read + - * // % and the unary minus and plus
+        alone: fixed ports (2 ** 15 + 1000 is 33768, 1 << 15 is 32768, 90002 >> 1, 45000 | 1, 45001 & 65535, 45000 ^ 1
+        and ~-45002 are 45001, 45001 if x else 45002 is 45001-45002, (P := 45001) is 45001), spans ((1 + os.getpid() %
+        2) ** 16 is 1-65536, (45000 + os.getpid() % 2) & 65535 is 0-45001, (45000 + os.getpid() % 2) | 1 is 0-65535),
+        random calls (random.randint(2 ** 15, 2 ** 16 - 1) and random.randrange(1 << 15, 1 << 16) are 32768-65535,
+        random.randint(40000 | 1, 50000) is 40001-50000, random.randrange(40000 if x else 41000, 50000) and
+        random.randrange((S := 40000), 50000) are 40000-49999, and random.randrange(not x, 50000) is 0-49999), and a sum
+        built on (40000 | 1), which reads as the one value 40001 and so as a sum's constant operand."""
+        n, lo, hi = _n(), LOW + 7232, LOW + 17232                                  # 45001, 40000 and 50000
+        opens, key, ass = "                # %d opens the file" % _n(1), "the key 'port', ", "an assignment to PORT, "
+        for label, src, why, first in (
+                ("** over constants", 'row = {"port": 2 ** 15 + 1000}%s\n' % opens, key + "a constant expression", LOW + 1000),
+                ("<< over constants", "PORT = 1 << 15%s\n" % opens, ass + "a constant expression", LOW),
+                (">> over constants", "PORT = %d >> 1%s\n" % (2 * n, opens), ass + "a constant expression", n),
+                ("| over constants", "PORT = %d | 1\n" % (n - 1), ass + "a constant expression", n),
+                ("& over constants", "PORT = %d & 65535\n" % n, ass + "a constant expression", n),
+                ("^ over constants", "PORT = %d ^ 1\n" % (n - 1), ass + "a constant expression", n),
+                ("~ over a constant", "PORT = ~-%d\n" % (n + 1), ass + "a constant expression", n),
+                ("a conditional expression", "PORT = %d if x else %d\n" % (n, n + 1), ass + "computed into %d-%d" % (n, n + 1),
+                 n),
+                ("a :=", 'row = {"port": (P := %d)}\n' % n, key + "a constant expression", n),
+                ("** over a span", 'row = {"port": (1 + os.getpid() %% 2) ** 16}%s\n' % opens, key + "computed into 1-65536",
+                 LOW),
+                ("& over a span", 'row = {"port": (%d + os.getpid() %% 2) & 65535}\n' % (n - 1), key + "computed into 0-%d" % n,
+                 LOW),
+                ("| over a span", 'row = {"port": (%d + os.getpid() %% 2) | 1}\n' % (n - 1), key + "computed into 0-65535",
+                 LOW),
+                ("** as a random call's arguments", "port = random.randint(2 ** 15, 2 ** 16 - 1)\n", "computed into 32768-65535",
+                 LOW),
+                ("<< as a random call's arguments", "port = random.randrange(1 << 15, 1 << 16)\n", "computed into 32768-65535",
+                 LOW),
+                ("| as a random call's argument", "port = random.randint(%d | 1, %d)\n" % (lo, hi),
+                 "computed into %d-%d" % (lo + 1, hi), lo + 1),
+                ("a conditional expression as a random call's argument",
+                 "port = random.randrange(%d if x else %d, %d)\n" % (lo, lo + 1000, hi), "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a := as a random call's argument", "port = random.randrange((S := %d), %d)\n" % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("not as a random call's argument", "port = random.randrange(not x, %d)\n" % hi,
+                 "computed into 0-%d" % (hi - 1), LOW),
+                ("a sum built on | over constants", 'srv.bind(("127.0.0.1", (%d | 1) + worker))\n' % lo,
+                 "an offset from %d" % (lo + 1), lo + 1)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
         that reads one turns its subtest red, and the example leaves the docstring's list."""
@@ -2975,6 +3107,9 @@ class Plants(unittest.TestCase):
                 ("a float bound to a name beside an int and a binding the census does not record", "test_x.py",
                  'E = 1000\nE = %d.0\nE = f()\nport = random.randrange(%d, E)\n' % (n + 9, n)),
                 ("int() of a digit string written in place", "test_x.py", 'row = {"port": int("%d")}\n' % n),
+                ("an operator interval() does not read over the operands it is given", "test_x.py",
+                 'row = {"port": int(%d / 2)}\nrow = {"port": -(-%d | 0)}\nrow = {"port": (2 ** 5000 + %d) %% 2 ** 5000}\n'
+                 % (2 * n, n, n)),
                 ("a random call with an argument passed through a * sequence", "test_x.py",
                  'port = random.randrange(*(%d, %d))\nport = random.randrange(%d, *[%d])\nport = random.randint(*[%d, %d])\n'
                  % (n, n + 9, n, n + 9, n, n + 9)),
@@ -3145,7 +3280,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
     to several ints, a name with a binding it does not record under % by a constant, a stop name bound to None, int() of
     a name bound to strings and floats, and a private name read in a method, bound under its mangled spelling; and the
     light check at the pushed head after them with a start or stop name bound to ints beside a string, a float or
-    None, and with a divisor bound to ints of both signs)."""
+    None, with a divisor bound to ints of both signs, and with each operator the census reads)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
@@ -3414,7 +3549,10 @@ class RandrangeAgainstCPython(unittest.TestCase):
         bound to two positive ints, two negative ones and half the time 0 (for %, the interval's width and its negative
         too), and half the time by a call, taking CPython's quotient by each int but 0, or its remainder of seeded
         values by each; each such case also writes a dict whose port is a number // random.randint(1, 0), a reversed
-        divisor across 0, which the census must read without raising."""
+        divisor across 0, which the census must read without raising. Last, per relation, a start and a stop written
+        with each operator the census reads beyond + - * // and % and the unary minus and plus (**, <<, >>, &, |, ^, ~,
+        not, a conditional expression and a :=), over an operand written as an interval's text, taking the value
+        Python's own operator gives at each end of that interval and at a seeded value between."""
         rng, out = random.Random(self.SEED + 4), []
 
         def near():
@@ -3458,6 +3596,42 @@ class RandrangeAgainstCPython(unittest.TestCase):
                 out.append(("the %s, %s by a divisor name bound to ints of both signs" % (role, kind),
                             takes if role == "start" else s, e if role == "start" else takes, rng.choice(self.STEP_SHAPES),
                             rng.choice(self.FORMS), {"pre": pre, role: written}))
+
+        def ends(iv):
+            return sorted({iv[0], iv[1], rng.randint(*iv)})
+        for relation in self.RELATIONS:
+            for role in ("start", "stop"):
+                for op in ("**", "<<", ">>", "&", "|", "^", "~", "not", "if", ":="):
+                    s, e = self._shape(relation, near(), rng)
+                    (lo, hi), n = (s if role == "start" else e), len(out)
+                    if op == "**":
+                        base = (int(lo ** 0.5), int(hi ** 0.5) + 1)
+                        written = "(%s) ** (%s)" % (self._text(base), self._text((1, 2)))
+                        takes = {x ** y for x in ends(base) for y in (1, 2)}
+                    elif op in ("<<", ">>"):
+                        k = rng.randint(1, 3)
+                        operand = (lo >> k, (hi >> k) + 1) if op == "<<" else (lo << k, (hi << k) + rng.randint(0, 3))
+                        written = "(%s) %s %d" % (self._text(operand), op, k)
+                        takes = {x << k if op == "<<" else x >> k for x in ends(operand)}
+                    elif op in ("&", "|", "^"):
+                        m = rng.choice((rng.randint(0, 7), rng.randint(hi, 2 * hi), 2 ** 16 - 1))
+                        written = "(%s) %s %d" % (self._text((lo, hi)), op, m)
+                        takes = {{"&": x & m, "|": x | m, "^": x ^ m}[op] for x in ends((lo, hi))}
+                    elif op == "~":
+                        operand = (-hi - 1, -lo - 1)
+                        written, takes = "~(%s)" % self._text(operand), {~x for x in ends(operand)}
+                    elif op == "not":
+                        written = "%s + (not XN%d)" % (self._text((lo, hi)), n)
+                        takes = {x + b for x in ends((lo, hi)) for b in (0, 1)}
+                    elif op == "if":
+                        other = rng.randint(lo, hi)
+                        written = "(%d if XC%d else %s)" % (other, n, self._text((lo, hi)))
+                        takes = {other} | set(ends((lo, hi)))
+                    else:
+                        written, takes = "(XW%d := %s)" % (n, self._text((lo, hi))), set(ends((lo, hi)))
+                    out.append(("the %s, written with %s" % (role, op), sorted(takes) if role == "start" else s,
+                                e if role == "start" else sorted(takes), rng.choice(self.STEP_SHAPES),
+                                rng.choice(self.FORMS), {role: written}))
         return out
 
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
@@ -3478,8 +3652,9 @@ class RandrangeAgainstCPython(unittest.TestCase):
         a stop name bound to None, a start or stop that is int() of a name bound to strings and floats, and a private
         name read in a method, bound under the spelling its class mangles it to; and last those _checked() writes: a
         start or stop name every binding of which the census records, bound to several ints and to a string, a float
-        or None, and a start or stop that is a number // a divisor name, or a sum on an unknown % one, the name bound to
-        ints of both signs. The census reads them as one module,
+        or None, a start or stop that is a number // a divisor name, or a sum on an unknown % one, the name bound to
+        ints of both signs, and a start or stop written with each operator the census reads beyond + - * // and % and
+        the unary minus and plus. The census reads them as one module,
         each call on a line of its own after the lines that bind its names (in the class's body or a method where the
         call reads the name there). For each call the test
         samples start and stop at each end of their intervals and at a seeded value between (or each value they take),
@@ -3595,6 +3770,89 @@ class BindingForms(unittest.TestCase):
         for cls, field in BINDING_FIELDS:
             if cls in by_name:
                 self.assertIn(field, by_name[cls]._fields, "BINDING_FIELDS names %s.%s" % (cls, field))
+
+
+def _subclasses(c):
+    for s in c.__subclasses__():
+        yield s
+        yield from _subclasses(s)
+
+
+class Operators(unittest.TestCase):
+    """THE RULE's operators against the running interpreter's grammar and its own arithmetic (the owner's call of
+    2026-10-05 on fork PR 973: interval() reads the operators as one closed class)."""
+
+    def test_every_operator_is_read_or_named_as_one_not_read(self):
+        """Each operator class of the running interpreter's ast, binary (ast.operator's subclasses) and unary
+        (ast.unaryop's), is in exactly one of BINARY or UNARY, the operators interval() reads, and OPERATOR_LIMITS, the
+        ones it names as not read, with the reason; so an operator a later Python adds fails here until the census
+        reads it or names it. Each key of the three is such a class, so none is misspelled or stale."""
+        for base, read in ((ast.operator, BINARY), (ast.unaryop, UNARY)):
+            ops = set(_subclasses(base))
+            self.assertGreater(len(ops), 3, "the grammar's %s classes were found" % base.__name__)
+            for op in sorted(ops, key=lambda c: c.__name__):
+                with self.subTest(op.__name__):
+                    self.assertEqual((op in read) + (op in OPERATOR_LIMITS), 1,
+                                     "%s: read by interval() and named as not read, or neither" % op.__name__)
+            self.assertEqual(sorted(c.__name__ for c in set(read) - ops), [], "a key that is no %s" % base.__name__)
+        self.assertEqual(sorted(c.__name__ for c in set(OPERATOR_LIMITS) - set(_subclasses(ast.operator))
+                                - set(_subclasses(ast.unaryop))), [], "an OPERATOR_LIMITS key that is no operator")
+
+    def test_each_operator_read_holds_every_value_python_computes(self):
+        """For each operator of BINARY and UNARY, over operands drawn from a pool of intervals (one value or several;
+        negative, with 0 at an end, across 0, positive, in the range), interval() reads names bound to each operand's
+        ends, and every int Python's own operator computes over values at those ends, between them and at -1, 0 and 1
+        where the operand holds them, lies in its reading. Where it gives no reading, the operands are one THE RULE
+        leaves out: an operand that can be negative under **, <<, >>, &, | or ^, a divisor that is 0 alone, or a ** or
+        << whose value can pass 2**BIG. not reads 0 to 1 over an operand interval() does not bound too."""
+        rng = random.Random(973)
+        pool = ((0, 0), (1, 1), (7, 7), (-7, -7), (0, 1), (0, 5), (-5, 0), (-3, 4), (2, 9), (-9, -2), (15, 17),
+                (40000, 40100), (65530, 65540), (-65540, -65530))
+
+        def values(iv):
+            return sorted({iv[0], iv[1], rng.randint(*iv)} | {x for x in (-1, 0, 1) if iv[0] <= x <= iv[1]})
+
+        def bound(**ivs):
+            return {k: [ast.Constant(iv[0]), ast.Constant(iv[1])] for k, iv in ivs.items()}
+
+        def too_big(op, b, d):
+            if isinstance(op, ast.Pow):
+                return b >= 2 and (d * (b.bit_length() - 1) > BIG or b ** d > 2 ** BIG)
+            return isinstance(op, ast.LShift) and b > 0 and (b.bit_length() + d > BIG + 1 or b << d > 2 ** BIG)
+        outside, unread = [], []
+        for cls in sorted(BINARY, key=lambda c: c.__name__):
+            for left in pool:
+                for right in pool:
+                    node = ast.BinOp(ast.Name("A", ast.Load()), cls(), ast.Name("B", ast.Load()))
+                    got = interval(node, bound(A=left, B=right))
+                    if got is None:
+                        limit = right == (0, 0) if cls in (ast.FloorDiv, ast.Mod) else \
+                            cls not in (ast.Add, ast.Sub, ast.Mult) and (min(left + right) < 0
+                                                                        or too_big(cls(), left[1], right[1]))
+                        if not limit:
+                            unread.append("%s %s %s" % (left, cls.__name__, right))
+                        continue
+                    code = compile(ast.fix_missing_locations(ast.Expression(node)), "<operator>", "eval")
+                    for x in values(left):
+                        for y in values(right):
+                            try:
+                                v = eval(code, {"A": x, "B": y})
+                            except (ZeroDivisionError, ValueError):
+                                continue
+                            if isinstance(v, int) and not got[0] <= v <= got[1]:
+                                outside.append("%d %s %d is %d, outside %d-%d" % (x, cls.__name__, y, v, got[0], got[1]))
+        for cls in sorted(UNARY, key=lambda c: c.__name__):
+            for operand in pool:
+                node = ast.UnaryOp(cls(), ast.Name("A", ast.Load()))
+                got = interval(node, bound(A=operand))
+                code = compile(ast.fix_missing_locations(ast.Expression(node)), "<operator>", "eval")
+                for x in values(operand):
+                    v = eval(code, {"A": x})
+                    if got is None or not got[0] <= v <= got[1]:
+                        outside.append("%s %d is %d, outside %r" % (cls.__name__, x, v, got))
+        self.assertEqual(outside, [], "a value Python computes outside interval()'s reading")
+        self.assertEqual(unread, [], "operands THE RULE reads, not read")
+        self.assertEqual(interval(ast.parse("not f()", mode="eval").body), (0, 1, True))
 
 
 class SentinelPorts(unittest.TestCase):
