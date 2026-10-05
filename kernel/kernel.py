@@ -76620,7 +76620,8 @@ def _landing():
             # The chip column's width, declared once for two rules (2026-10-04): the entry rows' chip column just below and the
             # floor of the filter grid's columns (#rerr-fgrid). Both sit inside the panel, and both read this one property, so a
             # chip label too wide for it is fixed here once and the two widths cannot drift apart. 96px holds the widest chip,
-            # "follow-up failed". tests/test_error_center.py pins that both rules read it and that nothing else declares it.
+            # "follow-up failed", in Inter, the panel's font (the #rerr-fgrid comment below gives the fallback font's width).
+            # tests/test_error_center.py pins that both rules read it and that nothing else declares it.
             "#rerr-panel{--rerr-chip-col:96px}"
             # grid rows (the user 2026-07-28): a fixed chip column, wider than the widest chip ("follow-up failed"), so every
             # message starts at the SAME x, left-aligned past the chips.
