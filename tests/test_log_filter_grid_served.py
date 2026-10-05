@@ -12,10 +12,10 @@ Firefox) to 43 px (Chromium) past the bar's content edge and 10 to 31 px past th
 screen, so part of each was cut off; at 320 px three to six toggles were cut off by the screen and three could not be tapped
 at all. The page itself never scrolled sideways (the panel is in a fixed backdrop), so nothing brought them back.
 
-The columns are now `repeat(auto-fill,minmax(max(96px,20% - 5px),1fr))`: as many equal columns as fit at 96 px or more
-(the entry rows' chip column, wider than the widest chip), and never more than five, since five tracks of a fifth less one
-gap always fit and a sixth never does. The desktop's 700 px panel keeps its five equal columns; a phone gets three columns
-from about 370 px and two below.
+The columns are now `repeat(auto-fill,minmax(max(var(--rerr-chip-col),20% - 5px),1fr))`: as many equal columns as fit at
+96 px or more, and never more than five, since five tracks of a fifth less one gap always fit and a sixth never does.
+`--rerr-chip-col` is 96 px, declared once on #rerr-panel: it is also the entry rows' chip column, which is wider than the
+widest chip. The desktop's 700 px panel keeps its five equal columns; a phone gets three from about 370 px and two below.
 
 The leg drives the served shell in a real engine (Chromium; WebKit and Firefox where the runner declares them) through
 tests/log_filter_grid_browser.mjs: the phone (the iPhone 14 descriptor), the Log opened at 390 px by a click on the phone
