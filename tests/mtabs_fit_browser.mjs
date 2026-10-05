@@ -203,7 +203,16 @@ try {
         return { cls: n.getAttribute("class"), color: getComputedStyle(n).color,
                  nodes: ["rn-me", "rn-a", "rn-b"].map((k) => { const e = n.querySelector("." + k); return { cls: e.getAttribute("class"), fill: getComputedStyle(e).fill }; }) }; });
       const btn = run.card.buttons.find((b) => b.act === act);
-      if (!btn) { run.clicked = false; acts.runs[act] = run; await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings()); continue; }
+      if (!btn) {
+        // no button to click (a tree without the move): the card closed by its own opener (which toggles), and its close
+        // awaited, so the next click lands on the bar and not on the lifted card still closing
+        run.clicked = false;
+        acts.runs[act] = run;
+        await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+        await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+        await frames(page);
+        continue;
+      }
       await clickCentre(btn);
       run.clicked = true;
       const seen = act === "usage"
