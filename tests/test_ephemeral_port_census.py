@@ -165,8 +165,9 @@ no binding here, and the census does not see the value such a setting gives it (
   census records, each to an int, as the same span; int() of a name, as the span of CPython's int() of each value the
   census records for it, a float or a string included and a value int() refuses passed over (with P bound to "45001",
   or to 45001.0, or to "x" and to "45001", int(P) is 45001), except at a step, where a name with a value other than
-  an int is unbounded, int() around it too; in offset_base(), below, a name by each value the census records for it in
-  turn; and, over bounded operands, str() and int(), a unary minus or plus (-7, +7), + - and *, and // and % by a
+  an int is unbounded, int() around it too; int() of a constant, as CPython's int() of it, a constant int() refuses
+  not read (int("45001"), int(" 45_001 "), int(45001.0) and int(b"45001") are 45001, and int("45001.0") is not
+  read); in offset_base(), below, a name by each value the census records for it in turn; and, over bounded operands, str() and int(), a unary minus or plus (-7, +7), + - and *, and // and % by a
   divisor read by its positive part, from the greater of its lowest value and 1 up to its highest, and its negative
   part, from its lowest value up to the lesser of its highest and -1, each a part only where it holds a value, as the
   span holding both parts' readings. 0, for which Python raises, is in neither part, so no reading divides by it, and a
@@ -255,7 +256,7 @@ no binding here, and the census does not see the value such a setting gives it (
   and to "50000", int(BASE) + i. A name with a binding the census does not record is also read unbounded (BOUND), so
   with K bound to 30000 and by K = f(), 40000 + K, which reads 70000 by K's int, is built on 40000, and so are 40000 - K
   and 40000 + 90002 // K. interval() reads a bool as the int it is, True as 1 and False as 0
-  (random.randrange(True, 50000) is 1-49999), and a float only through int() of a name bound to it (above).
+  (random.randrange(True, 50000) is 1-49999), and a float only through int() of it or of a name bound to it (above).
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -334,12 +335,11 @@ these turns its plant red, and the example leaves this list.
   gives no reading with the name unbounded and the name reads by its recorded ints alone (BOUND): with E bound to 1000
   and by E = f(), random.randrange(30000, E) reads E as 1000 and is not counted, though CPython returns values from
   30000 to 49999 when f() returns 50000;
-  a float where the census reads an int, which a random call takes on 3.10 and 3.11 (random.randrange(40000.0, 50000))
-  and int() takes everywhere (int(45001.0)), a float bound to a name beside an int and a binding the census does not
-  record included, where the name reads by its ints alone: with E bound to 1000, to 45010.0 and by E = f(),
+  a float where the census reads an int outside int(), which a random call takes on 3.10 and 3.11
+  (random.randrange(40000.0, 50000)), a float bound to a name beside an int and a binding the census does not record
+  included, where the name reads by its ints alone: with E bound to 1000, to 45010.0 and by E = f(),
   random.randrange(45001, E) reads E as 1000 and is not counted, though on 3.10 and 3.11 CPython returns values from
-  45001 to 45009 for E = 45010.0 (int(E) reads it: THE RULE);
-  int() of a digit string written in place, which no binding gives a name (int("45001"));
+  45001 to 45009 for E = 45010.0 (int(E) reads it, and int(45001.0) is 45001: THE RULE);
   an operator interval() does not read over the operands it is given (THE RULE): true division, which gives a float
   (int(90002 / 2)), **, <<, >>, &, | or ^ over an operand that can be negative (-(-45001 | 0)), and a ** or a <<
   whose value can pass 2**4096 ((2 ** 5000 + 45001) % 2 ** 5000);
@@ -647,7 +647,8 @@ def interval(node, bound=None, steps=None):
     -90002-90002), every other integer operator over the operands THE RULE gives it (BINARY and UNARY: ** << >> & |
     ^ over operands never negative, ~ and not), a conditional expression as the span holding its two branches, a :=
     as its value, a name (below), str() or int() around one (int() of a name as CPython's int() of each of its values
-    in `bound`, a float or a string included and a value int() refuses passed over), an unknown operand of % by such a
+    in `bound`, a float or a string included and a value int() refuses passed over, and int() of a constant as
+    CPython's int() of it), an unknown operand of % by such a
     divisor read by its parts too, and randint(a, b), randrange(stop),
     randrange(start, stop[, step]) and randbelow(n) over bounded arguments read as the values each can return, each
     argument given by position or by its parameter's name (_random_args()). randrange(start, stop[, step]) is read by
@@ -681,6 +682,9 @@ def interval(node, bound=None, steps=None):
         if _callee(node.func) == "int" and isinstance(arg, ast.Name) and bound.get(arg.id):
             ints = [v for v in map(_int_of, bound[arg.id]) if v is not None]   # CPython's int() of each value it takes
             return (min(ints), max(ints), min(ints) != max(ints)) if ints else None
+        if _callee(node.func) == "int" and isinstance(arg, ast.Constant):
+            v = _int_of(arg)                        # CPython's int() of the constant, as of a name's each value
+            return None if v is None else (v, v, False)
         return interval(arg, bound, steps)
     if isinstance(node, ast.Call) and _callee(node.func) in RANDOM_CALLS:
         name, args = _callee(node.func), _random_args(node) or []
@@ -2928,6 +2932,34 @@ class Plants(unittest.TestCase):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
 
+    def test_int_of_a_constant_reads_cpython_s_int_of_it(self):
+        """int() of a constant reads as CPython's int() of it, a constant int() refuses not read, as int() of a name
+        reads each value the census records (THE RULE). Each red plant reported nothing where interval() passed int()'s
+        argument through and bounded int constants alone: PORT = int("45001"), and int("45001") under a port-named key,
+        int(" 45_001 "), int(45001.0), int(b"45001") and int() of 45001 in Arabic-Indic digits are 45001;
+        random.randrange(int("40000"), 50000) is 40000-49999; and int("40000") + worker is a sum built on 40000. A
+        constant each value of which int() refuses stays unread, green: int("x") and int("45001.0")."""
+        lo, hi, n = LOW + 7232, LOW + 17232, _n()                                  # 40000, 50000 and 45001, built at run time
+        key, opens = "the key 'port', a constant expression", "                # %d opens the file" % (n + 1)
+        for label, src, why, first in (
+                ("a digit string, assigned to a port-named target", 'PORT = int("%d")\n' % n,
+                 "an assignment to PORT, a constant expression", n),
+                ("a digit string", 'row = {"port": int("%d")}\n' % n, key, n),
+                ("a digit string with spaces and a separator", 'row = {"port": int(" %s ")}\n' % _sep(n), key, n),
+                ("a float", 'row = {"port": int(%d.0)}%s\n' % (n, opens), key, n),
+                ("bytes", 'row = {"port": int(b"%d")}\n' % n, key, n),
+                ("Arabic-Indic digits", 'row = {"port": int("%s")}\n' % _arabic(n), key, n),
+                ("a random call's argument", 'port = random.randrange(int("%d"), %d)\n' % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a sum built on it", 'srv.bind(("127.0.0.1", int("%d") + worker))\n' % lo, "an offset from %d" % lo, lo)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+        for label, src in (
+                ("a string int() refuses", 'row = {"port": int("x")}%s\n' % opens),
+                ("a decimal string int() refuses", 'row = {"port": int("%d.0")}%s\n' % (n, opens))):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", src)
+
     def test_a_private_name_in_a_class_reads_the_values_of_the_spelling_it_mangles_to(self):
         """Inside class C, __K reads the values the census records under __K and under _C__K, the spelling CPython
         mangles it to there (THE RULE). Each red plant binds a mangled spelling at module level, which a census reading
@@ -3102,11 +3134,10 @@ class Plants(unittest.TestCase):
                 ("a name a module sets with no binding form beside a binding the census records", "test_x.py",
                  'K = 7\nglobals()["K"] = -7\nexec("K = -7")\nsetattr(sys.modules[__name__], "K", -7)\n'
                  'port = random.randrange(%d, 1000, K)\n' % n),
-                ("a float where the census reads an int", "test_x.py",
-                 'port = random.randrange(%d.0, %d)\nrow = {"port": int(%d.0)}\n' % (n, n + 9, n)),
+                ("a float where the census reads an int outside int()", "test_x.py",
+                 'port = random.randrange(%d.0, %d)\n' % (n, n + 9)),
                 ("a float bound to a name beside an int and a binding the census does not record", "test_x.py",
                  'E = 1000\nE = %d.0\nE = f()\nport = random.randrange(%d, E)\n' % (n + 9, n)),
-                ("int() of a digit string written in place", "test_x.py", 'row = {"port": int("%d")}\n' % n),
                 ("an operator interval() does not read over the operands it is given", "test_x.py",
                  'row = {"port": int(%d / 2)}\nrow = {"port": -(-%d | 0)}\nrow = {"port": (2 ** 5000 + %d) %% 2 ** 5000}\n'
                  % (2 * n, n, n)),
@@ -3280,7 +3311,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
     to several ints, a name with a binding it does not record under % by a constant, a stop name bound to None, int() of
     a name bound to strings and floats, and a private name read in a method, bound under its mangled spelling; and the
     light check at the pushed head after them with a start or stop name bound to ints beside a string, a float or
-    None, with a divisor bound to ints of both signs, and with each operator the census reads)."""
+    None, with a divisor bound to ints of both signs, with each operator the census reads, and with int() of a
+    constant)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
@@ -3552,7 +3584,9 @@ class RandrangeAgainstCPython(unittest.TestCase):
         divisor across 0, which the census must read without raising. Last, per relation, a start and a stop written
         with each operator the census reads beyond + - * // and % and the unary minus and plus (**, <<, >>, &, |, ^, ~,
         not, a conditional expression and a :=), over an operand written as an interval's text, taking the value
-        Python's own operator gives at each end of that interval and at a seeded value between."""
+        Python's own operator gives at each end of that interval and at a seeded value between. Last, per relation, a
+        start and a stop written as int() of a constant (by turns a digit string, one with spaces, a float with a
+        fraction, bytes, and a digit string with a separator), taking CPython's int() of it."""
         rng, out = random.Random(self.SEED + 4), []
 
         def near():
@@ -3632,6 +3666,14 @@ class RandrangeAgainstCPython(unittest.TestCase):
                     out.append(("the %s, written with %s" % (role, op), sorted(takes) if role == "start" else s,
                                 e if role == "start" else sorted(takes), rng.choice(self.STEP_SHAPES),
                                 rng.choice(self.FORMS), {role: written}))
+        for relation in self.RELATIONS:
+            for role in ("start", "stop"):
+                s, e = self._shape(relation, near(), rng)
+                v = rng.randint(*(s if role == "start" else e))
+                text = ('"%d"' % v, '" %d "' % v, "%d.5" % v, 'b"%d"' % v, '"%s"' % _sep(v))[len(out) % 5]
+                out.append(("the %s, int() of a constant" % role, [int(ast.literal_eval(text))] if role == "start" else s,
+                            e if role == "start" else [int(ast.literal_eval(text))], rng.choice(self.STEP_SHAPES),
+                            rng.choice(self.FORMS), {role: "int(%s)" % text}))
         return out
 
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
@@ -3653,8 +3695,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
         name read in a method, bound under the spelling its class mangles it to; and last those _checked() writes: a
         start or stop name every binding of which the census records, bound to several ints and to a string, a float
         or None, a start or stop that is a number // a divisor name, or a sum on an unknown % one, the name bound to
-        ints of both signs, and a start or stop written with each operator the census reads beyond + - * // and % and
-        the unary minus and plus. The census reads them as one module,
+        ints of both signs, a start or stop written with each operator the census reads beyond + - * // and % and the
+        unary minus and plus, and a start or stop that is int() of a constant. The census reads them as one module,
         each call on a line of its own after the lines that bind its names (in the class's body or a method where the
         call reads the name there). For each call the test
         samples start and stop at each end of their intervals and at a seeded value between (or each value they take),
