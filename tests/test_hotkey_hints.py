@@ -22,10 +22,16 @@ class HotkeyHints(unittest.TestCase):
                              "%s advertises %s on hover" % (el_id, cmd))
 
     def test_the_mobile_bar_mirrors_the_rail(self):
-        for act, cmd in [("usage", "usage.open"), ("net", "net.open"), ("restart", "kernel.restart"),
-                         ("errs", "log.open"), ("settings", "settings.open")]:
+        for act, cmd in [("restart", "kernel.restart"), ("errs", "log.open"), ("settings", "settings.open")]:
             self.assertRegex(SRC, "data-act=%s[^>]* data-keycmd=%s|data-act=%s data-keycmd=%s"
                              % (act, cmd, act, cmd), "mobile %s advertises %s" % (act, cmd))
+        # Usage and Remote kernels left the bar for the settings card in iOS item 4g (2026-10-05): gear.js's #rs-pacts row,
+        # pinned by tests/test_kernel_mobile.py test_rail_actions_reachable_on_mobile and clicked in three engines by
+        # tests/test_mtabs_fit_served.py. The card's buttons carry no data-keycmd: palette-main's sweep reads the shell
+        # document, not the settings frame's. So no control on the bar advertises either command any more.
+        for act, cmd in [("usage", "usage.open"), ("net", "net.open")]:
+            self.assertNotRegex(SRC, "data-act=%s[^>]* data-keycmd=%s|data-act=%s data-keycmd=%s"
+                                % (act, cmd, act, cmd), "no mobile %s button advertises %s: it moved into the settings card" % (act, cmd))
 
     def test_pane_toggles_append_the_live_hint_and_refresh_on_rebinds(self):
         self.assertIn("window.__rompKeyHint&&window.__rompKeyHint('pane.'+(k==='fleet'?'outline':k))", SRC,
