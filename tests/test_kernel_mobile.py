@@ -2619,8 +2619,8 @@ class BellStateClassCensus(unittest.TestCase):
     """Every state class the served CSS names on a bell is one a served script sets on that bell (T10, 2026-10-05). The shell kept
     `#mtabs #mbell.busy{opacity:.45}` and `.rail-acts #rail-bell.busy{opacity:.45}`, under a comment calling the dim the tap's
     acknowledgement while the subscribe request ran, after the popover took over the tap (2026-09-05). Before it, a bell tap
-    subscribed this device and the script put `busy` on both bells until the request answered; since then a tap only opens the
-    popover, `setBusy` dims the popover's rows, and no script puts `busy` on a bell, so the rules described a state the page never
+    subscribed this device and the script put `busy` on both bells until the request answered; since then a tap only opens or closes
+    the popover, `setBusy` dims the popover's rows, and no script puts `busy` on a bell, so the rules described a state the page never
     shows. Both halves come from the served shell (km._landing()). The rule half is _bell_rule_classes. The script half runs the
     served scripts that name a bell, with the phone bar's own script before them in the page's order (its pane switcher once wrote
     the bell's class through every bar button, MobileBellExecutes above), on _BELL_HARNESS's stub shell, and records every class a

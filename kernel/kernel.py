@@ -76571,7 +76571,7 @@ def _landing():
             "#mtabs button.mact svg{display:block}"
             # the push bell's state: on = the romp accent (a selected toggle, not a status), lit when the
             # master switch is on and, where the Push API exists, this browser is subscribed. A tap only
-            # opens the popover, whose rows show their own busy state while their requests run. The
+            # opens or closes the popover, whose rows show their own busy state while their requests run. The
             # [hidden] rule matters: the #mtabs button display:flex above outspecifies the UA's
             # [hidden]{display:none}, so without it a pane tab the gear turned off, or the bell before the
             # push script reveals it, would show.
