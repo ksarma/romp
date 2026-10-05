@@ -2028,7 +2028,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
         ("os.getpid() % 6 - 5", (-5, 0)), ("os.getpid() % 6", (0, 5)), ("0", (0, 0)),         # 0 at an end, or alone
         ("k", None), ("-k", None),                                                            # unbounded
         (None, (1, 1)))                                                                       # left out: 1
-    FORMS = ((), ("step",), ("stop", "step"), ("step", "start", "stop"))   # the parameters given by keyword, in order
+    FORMS = ((), ("step",), ("stop", "step"), ("step", "start", "stop"),   # the parameters given by keyword, in order,
+             ("**step",), ("start", "**step", "stop"))                    # **step: the step in a ** mapping
     RELATIONS = ("start below stop", "start above stop", "start's highest value stop's lowest",
                  "start's lowest value stop's highest", "start and stop one value", "overlapping, start lower",
                  "overlapping, start higher", "start inside stop", "stop inside start")
@@ -2049,26 +2050,31 @@ class RandrangeAgainstCPython(unittest.TestCase):
 
     @staticmethod
     def _call(form, args):
-        """randrange's arguments as (positional, keyword), the parameters `form` names given by keyword in its order;
-        `args` maps each parameter the call gives to its value or its text."""
-        return ([args[p] for p in ("start", "stop", "step") if p in args and p not in form],
-                [(p, args[p]) for p in form if p in args])
+        """randrange's arguments as (positional, keyword), the parameters `form` names given by keyword in its order, a
+        name **p giving p in a ** mapping, whose value is None when the call gives no p (an empty mapping); `args` maps
+        each parameter the call gives to its value or its text."""
+        return ([args[p] for p in ("start", "stop", "step") if p in args and p not in form and "**" + p not in form],
+                [(p, args.get(p.lstrip("*"))) for p in form if p.lstrip("*") in args or p.startswith("**")])
 
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
         """A seeded generator writes randrange calls: start's interval below stop's, above it, touching it from either
         side, one value with it, and overlapping it four ways, crossed with STEP_SHAPES (steps known positive, known
         negative, of either sign, from -5 to 0 and from 0 to 5, of 0, unbounded, a unary minus among them, and a step
-        left out) and with FORMS (every argument by position, the step by keyword, the stop and the step, and all
-        three in another order), each twice about a value drawn near 32768, near 65535, inside the range or below it;
-        and the two calls CPython showed 1e04b89f8 missed. The census reads them as one module, a call to a line. For
-        each call the test samples start and stop at each end of their intervals and at a seeded value between, and the
-        step at each end, a seeded value between, and -1, 0 and 1 where the step can take them (an unbounded step takes
-        STEPS), and runs CPython's Random.randrange, the function random.randrange is bound to, three times: with its
-        draw pinned to the lowest and to the highest (_RandrangeEnds), and with a seeded draw. Every value returned
-        must lie in the span the census reports, and where the census reports nothing no value may lie in the range."""
+        left out) and with FORMS (every argument by position, the step by keyword, the stop and the step, all three in
+        another order, and the step in a ** mapping after start and stop by position or between them by keyword, a
+        mapping that is empty when the step is left out; no call gives a mapping beside an empty stop, which THE RULE
+        does not read), each twice about a value drawn near 32768, near 65535, inside the range or below it; and the
+        two calls CPython showed 1e04b89f8 missed, and the one with a mapping that 7d1bdcda6 missed. The census reads
+        them as one module, a call to a line. For each call the test samples start and stop at each end of their
+        intervals and at a seeded value between, and the step at each end, a seeded value between, and -1, 0 and 1
+        where the step can take them (an unbounded step takes STEPS), and runs CPython's Random.randrange, the function
+        random.randrange is bound to, three times: with its draw pinned to the lowest and to the highest
+        (_RandrangeEnds), and with a seeded draw. Every value returned must lie in the span the census reports, and
+        where the census reports nothing no value may lie in the range."""
         rng = random.Random(self.SEED)
         cases = [("overlapping, start higher", (30000, 32999), (20000, 30999), ("0 - 7", (-7, -7)), ()),
-                 ("start's lowest value stop's highest", (30000, 34999), (30000, 30000), ("0 - 7", (-7, -7)), ())]
+                 ("start's lowest value stop's highest", (30000, 34999), (30000, 30000), ("0 - 7", (-7, -7)), ()),
+                 ("start's lowest value stop's highest", (30000, 34999), (30000, 30000), ("0 - 7", (-7, -7)), ("**step",))]
         for relation in self.RELATIONS:
             for step in self.STEP_SHAPES:
                 for form in self.FORMS:
@@ -2079,11 +2085,14 @@ class RandrangeAgainstCPython(unittest.TestCase):
 
         def text(iv):
             return "%d" % iv[0] if iv[0] == iv[1] else "%d + os.getpid() %% %d" % (iv[0], iv[1] - iv[0] + 1)
+
+        def written(p, x):
+            return "%s=%s" % (p, x) if p[0] != "*" else "**{%s}" % ("" if x is None else '"%s": %s' % (p[2:], x))
         lines = []
         for _relation, s, e, (k, _kiv), form in cases:
             args = dict(start=text(s), stop=text(e), **({"step": k} if k is not None else {}))
             pos, kw = self._call(form, args)
-            lines.append("port = random.randrange(%s)\n" % ", ".join(pos + ["%s=%s" % pv for pv in kw]))
+            lines.append("port = random.randrange(%s)\n" % ", ".join(pos + [written(p, x) for p, x in kw]))
         reading = {}
         for line, _v, why in scan_python(ast.parse("".join(lines)), {}):
             m = re.search(r"computed into (-?\d+)-(-?\d+)$", why)
@@ -2104,7 +2113,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
                         pos, kw = self._call(form, dict(start=a, stop=b, **({"step": step} if k is not None else {})))
                         for draw in (low, high, seeded):
                             try:
-                                v = draw.randrange(*pos, **dict(kw))
+                                v = draw.randrange(*pos, **{p.lstrip("*"): x for p, x in kw if x is not None})
                             except ValueError:
                                 continue
                             returned += 1
