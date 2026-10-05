@@ -61,7 +61,12 @@ the stop left empty (both below; WHAT IT CANNOT SEE gives examples). Inside a cl
 name written with two leading underscores and not two trailing ones as another (__K in class C is _C__K), so a binding
 of either spelling binds the name a read of the other sees: once such a name is written anywhere in a class statement,
 the census counts both spellings among the names with a binding it does not record, wherever the module reads them,
-unless the class's name is underscores alone, which mangles nothing. A name a module sets with no binding form
+unless the class's name is underscores alone, which mangles nothing. The spelling with the two underscores (__K) then
+reads, wherever the module reads it, by the values the census records under it and under the spelling each class it is
+written in mangles it to (the class's name less its leading underscores): with _C__K bound to 45001, __K read in a
+method of C reads 45001, as CPython does. That is an over-read where the module reads __K outside C, or in a class
+nested in C, which CPython mangles by the innermost class alone; the spelled-out _C__K reads its own values only. A
+name a module sets with no binding form
 (globals()["K"] = f(), exec("K = f()"), setattr(sys.modules[__name__], "K", f()), or mod.K = f() in another module) has
 no binding here, and the census does not see the value such a setting gives it (WHAT IT CANNOT SEE).
   In Python, read by AST (scan_python), the positions:
@@ -861,27 +866,37 @@ def _names_held(n):
     return out
 
 
-def unrecorded_bindings(tree, recorded):
+def mangled_names(tree):
+    """{name: spellings}: each name Python mangles that `tree` writes anywhere in a class statement, a read included,
+    with the spelling it mangles to for each class it is written in (an outer one too). Inside a class Python mangles a
+    name written with two leading underscores and not two trailing ones: __K there is _C__K, C the class's name less
+    its leading underscores, and a class whose name is underscores alone mangles nothing."""
+    out = {}
+    for n in ast.walk(tree):
+        cls = n.name.lstrip("_") if isinstance(n, ast.ClassDef) else ""
+        if cls:
+            for x in ast.walk(n):
+                for name in _names_held(x):
+                    if name.startswith("__") and not name.endswith("__"):
+                        out.setdefault(name, set()).add("_" + cls + name)
+    return out
+
+
+def unrecorded_bindings(tree, recorded, mangled=None):
     """(names, star): the names `tree` binds anywhere by a binding the census does not record (BOUND), and True when it
     holds a star import, which binds names its text does not write. A binding is a Name in a Store or Del context not
     in `recorded` (the ids of the Names _bind recorded a value for), an import's alias (import a.b binds a), and the
-    name held in a field BINDING_FIELDS says binds it, or does not classify. Inside a class Python mangles a name
-    written with two leading underscores and not two trailing ones: __K there is _C__K, C the class's name less its
-    leading underscores (none when that leaves nothing), so a binding written one way binds the name read the other.
-    The census keys a name by its spelling, so each such name written anywhere in a class statement, a read included,
-    and the spelling it mangles to for that class (for each class it is written in, so an outer one too), count here."""
+    name held in a field BINDING_FIELDS says binds it, or does not classify. A binding of a name Python mangles in a
+    class, written one way, binds the name read the other, so each name of `mangled` (mangled_names() of the tree when
+    not given) and each spelling it mangles to count here."""
     names, star = set(), False
     for n in ast.walk(tree):
         if isinstance(n, ast.alias) and n.name == "*":
             star = True
         elif not (isinstance(n, ast.Name) and (isinstance(n.ctx, ast.Load) or id(n) in recorded)):
             names.update(_names_held(n))
-        cls = n.name.lstrip("_") if isinstance(n, ast.ClassDef) else ""
-        if cls:
-            for x in ast.walk(n):
-                for name in _names_held(x):
-                    if name.startswith("__") and not name.endswith("__"):
-                        names.update((name, "_" + cls + name))
+    for name, spellings in (mangled_names(tree) if mangled is None else mangled).items():
+        names.update({name} | spellings)
     return names, star
 
 
@@ -1069,7 +1084,7 @@ class _Scan:
             self.loose.update(x.id for x in _target_names(t))
 
     def _value(self, v, why, strings=True):
-        if isinstance(v, ast.Name) and v.id in self.bound:
+        if isinstance(v, ast.Name) and v.id in self.reads:
             self.uses.append((v.id, why, strings))
         else:
             self.literal(v, why, strings)
@@ -1091,15 +1106,22 @@ class _Scan:
         # also with each such name unbounded, the two readings' union (self.halves: interval()'s table and
         # offset_base()'s for each reading, the first reading's and then the second's). At a step, and anywhere inside
         # one: a name every binding of which the census records, when each gives an int (self.steps), so a name with
-        # such a binding is unbounded there in both. The hop, a host and a template read self.bound, every value
-        # recorded, and offset_base, in both readings, reads each name by each of its values in turn (each), of which
-        # interval() reads the ints, and int() of the name any value int() takes.
-        loose, star = unrecorded_bindings(tree, self.recorded)
+        # such a binding is unbounded there in both. The hop reads self.reads too, and a host and a template read
+        # self.bound, every value recorded under the spelling written; offset_base, in both readings, reads each name by
+        # each of its values in turn (each), of which interval() reads the ints, and int() of the name any value int()
+        # takes. A name Python mangles in a class reads, under the spelling written in the class, the values of both
+        # spellings, the one each class it is written in mangles it to too (self.reads).
+        mangled = mangled_names(tree)
+        loose, star = unrecorded_bindings(tree, self.recorded, mangled)
         loose |= self.loose
-        self.reads = self.bound
-        fixed = {k: v for k, v in self.bound.items() if not star and k not in loose}
+        self.reads = dict(self.bound)
+        for name, spellings in mangled.items():
+            joined = self.bound.get(name, []) + [x for s in sorted(spellings) for x in self.bound.get(s, ())]
+            if joined:
+                self.reads[name] = joined
+        fixed = {k: v for k, v in self.reads.items() if not star and k not in loose}
         self.steps = {k: v for k, v in fixed.items() if all(isinstance(x, ast.Constant) and isinstance(x.value, int) for x in v)}
-        each = {k: [x.value for x in v if isinstance(x, ast.Constant)] for k, v in self.bound.items()}
+        each = {k: [x.value for x in v if isinstance(x, ast.Constant)] for k, v in self.reads.items()}
         self.halves = ((self.reads, each), (fixed, each))
         for n in ast.walk(tree):
             if isinstance(n, ast.Dict):
@@ -1182,7 +1204,7 @@ class _Scan:
                 if FIVE.search(s):
                     self._string(n, s, code=isinstance(n.value, str))
         for name, why, strings in self.uses:
-            for lit in self.bound.get(name, ()):
+            for lit in self.reads.get(name, ()):
                 self.literal(lit, "%s, through the name %s" % (why, name), strings)
 
     def _string(self, n, s, code=True):
@@ -1504,12 +1526,15 @@ UNRECORDED_FORMS_312 = (
 # Each way a name Python mangles in a class gives the name a read sees a binding the census files under the other
 # spelling (unrecorded_bindings()), as (label, the lines before the call, the call's indent, the name as the call
 # writes it): {k} the name as the class writes it, two leading underscores first, {c} the class, and {v} the int the
-# census records under the spelling the call writes.
+# census records under the spelling the call writes, or, in the last, under the mangled spelling, which the name the
+# call writes in a method reads (mangled_names()).
 MANGLED_FORMS = (
     ("a name read in a class body, its mangled spelling bound by a call", ("{k} = {v}", "_{c}{k} = f()", "class {c}:"),
      4, "{k}"),
     ("a mangled spelling read outside its class, bound in it under a global statement by a call",
-     ("_{c}{k} = {v}", "class {c}:", "    def g(self):", "        global {k}", "        {k} = f()"), 0, "_{c}{k}"))
+     ("_{c}{k} = {v}", "class {c}:", "    def g(self):", "        global {k}", "        {k} = f()"), 0, "_{c}{k}"),
+    ("a name read in a method, its mangled spelling bound in the module", ("_{c}{k} = {v}", "class {c}:",
+                                                                          "    def m(self):"), 8, "{k}"))
 
 
 def _unbounded_readings():
@@ -2531,9 +2556,11 @@ class Plants(unittest.TestCase):
         the call reads is negative: each of MANGLED_FORMS; __K bound to 7 and _C__K to -7, every binding recorded; __K
         bound to 7 in the class body and read in a method, which reads the module's _C__K; and _C__K bound to 7, read
         outside the class, with a match in a method capturing __K under a global statement, a binding no Name node
-        writes. As a start or a stop it reads by the ints the census records under the spelling the call writes, as a
-        name with a binding the census does not record does anywhere but at a step: each of MANGLED_FORMS so reads
-        40000-49999 (red), where 6766e22fe reported nothing. The census being module-wide, such a name is unbounded at a
+        writes. As a start or a stop it reads by the ints the census records under the spelling the call writes, and,
+        for the spelling with the two underscores, under the spelling it mangles to (THE RULE), as a name with a binding
+        the census does not record does anywhere but at a step: each of MANGLED_FORMS so reads 40000-49999 (red), where
+        6766e22fe reported nothing for the first two, and the census before the spellings were joined for the last. The
+        census being module-wide, such a name is unbounded at a
         step wherever the module reads it: __K bound to 7 and read outside the class reads 1001-40000 too, an over-read,
         since CPython refuses that call for every value (red). A name with one leading underscore (_S) or two trailing
         ones (__S__) is not mangled, nor is any name in a class whose name is underscores alone (class __:), and each is
@@ -2727,6 +2754,47 @@ class Plants(unittest.TestCase):
         for label, src in (
                 ("a string int() refuses", 'P = "x"\nrow = {"port": int(P)}%s\n' % opens),
                 ("a decimal string int() refuses", 'P = "%d.0"\nrow = {"port": int(P)}%s\n' % (n, opens))):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", src)
+
+    def test_a_private_name_in_a_class_reads_the_values_of_the_spelling_it_mangles_to(self):
+        """Inside class C, __K reads the values the census records under __K and under _C__K, the spelling CPython
+        mangles it to there (THE RULE). Each red plant binds a mangled spelling at module level, which a census reading
+        each spelling alone left __K in a method of C without: a display reads 45001, the hop reads 45001 (through the
+        name __K, on the line that binds _C__K), and random.randrange(__S, 50000) with _C__S bound to 40000 reads
+        40000-49999; the class's leading underscores are stripped (class _C mangles to _C__K, class __D to _D__K); a
+        class nested in C reads the spelling of each class around it, the innermost one's (_D__K, which CPython reads)
+        among them; and with __K bound to 1 and _C__K to 45001, __K in C reads 1-45001. The census joins the spellings
+        wherever the module reads __K, so __K read outside C reads 45001 too, an over-read (red). A class named only
+        with underscores mangles nothing, and a name ending in two underscores is not private: each stays unread, green
+        (___K bound to 45001 and __K read in class __; _C__K__ bound to 45001 and __K__ read in C)."""
+        lo, hi, n = LOW + 7232, LOW + 17232, _n()                                  # 40000, 50000 and 45001, built at run time
+        method = "    def m(self):\n        return {\"ports\": [__K]}\n"
+        for label, src, why, first in (
+                ("a display in a method", "class C:\n" + method + "\n\n_C__K = %d\n" % n,
+                 "the key 'ports', a constant expression", n),
+                ("the hop in a method", 'class C:\n    def m(self):\n        return {"port": __K}\n\n\n_C__K = %d\n' % n,
+                 "the key 'port', through the name __K", n),
+                ("a randrange's start in a method",
+                 "_C__S = %d\n\n\nclass C:\n    def m(self):\n        port = random.randrange(__S, %d)\n" % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a class whose name has a leading underscore", "_C__K = %d\n\n\nclass _C:\n" % n + method,
+                 "the key 'ports', a constant expression", n),
+                ("a class whose name has two leading underscores", "_D__K = %d\n\n\nclass __D:\n" % n + method,
+                 "the key 'ports', a constant expression", n),
+                ("a class nested in another", "_D__K = %d\n\n\nclass C:\n    class D:\n" % n
+                 + "".join("    " + x + "\n" for x in method.splitlines()), "the key 'ports', a constant expression", n),
+                ("both spellings bound", "__K = 1\n_C__K = %d\n\n\nclass C:\n" % n + method,
+                 "the key 'ports', computed into 1-%d" % n, LOW),
+                ("the name read outside the class too, an over-read",
+                 "_C__K = %d\n\n\nclass C:\n    def m(self):\n        return __K\n\n\nrow = {\"ports\": [__K]}\n" % n,
+                 "the key 'ports', a constant expression", n)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+        for label, src in (
+                ("a class whose name is underscores alone", "___K = %d\n\n\nclass __:\n" % n + method),
+                ("a name ending in two underscores",
+                 '_C__K__ = %d\n\n\nclass C:\n    def m(self):\n        return {"ports": [__K__]}\n' % n)):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
 
@@ -3106,7 +3174,10 @@ class RandrangeAgainstCPython(unittest.TestCase):
         beside an int, and beside an int and by a call, taking None and the int, with the exceptions a stop left empty
         beside a step other than 1 raises. Then, per relation, a start and a stop written as int() of a name bound to a
         digit string, a float that int() truncates, a digit string with spaces, a bytes literal, an int, and two strings
-        int() refuses, and half the time by a call too, taking CPython's int() of each value int() takes."""
+        int() refuses, and half the time by a call too, taking CPython's int() of each value int() takes. Last, per
+        relation, a start and a stop that a method of a class reads as a private name, bound at module level only under
+        the spelling the class mangles it to (the class's name drawn with no, one or two leading underscores), taking
+        each value bound there."""
         rng, out = random.Random(self.SEED + 3), []
 
         def near():
@@ -3162,6 +3233,17 @@ class RandrangeAgainstCPython(unittest.TestCase):
                 out.append(("the %s, int() of a name bound to strings and floats" % role, sorted(set(takes)) if role == "start"
                             else s, e if role == "start" else sorted(set(takes)), rng.choice(self.STEP_SHAPES),
                             rng.choice(self.FORMS), {"pre": pre, role: "int(%s)" % name}))
+        for relation in self.RELATIONS:
+            for role in ("start", "stop"):
+                s, e = self._shape(relation, near(), rng)
+                iv, n = (s if role == "start" else e), len(out)
+                takes = sorted({iv[0], iv[1], rng.randint(*iv)})
+                cls = rng.choice(("", "_", "__")) + "CJ%d" % n
+                out.append(("the %s, a private name read in a method, bound under its mangled spelling" % role,
+                            takes if role == "start" else s, e if role == "start" else takes, rng.choice(self.STEP_SHAPES),
+                            rng.choice(self.FORMS), {"pre": ["_%s__RJ%d = %d" % (cls.lstrip("_"), n, x) for x in takes]
+                                                     + ["class %s:" % cls, "    def m(self):"], "indent": 8,
+                                                     role: "__RJ%d" % n}))
         return out
 
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
@@ -3179,9 +3261,10 @@ class RandrangeAgainstCPython(unittest.TestCase):
         it does not record, and a name Python mangles in a class, as the step, the start or the stop; and last those
         _recorded() writes: a name every binding of which the census records, bound to several ints, as the step, the
         start or the stop, a start or stop under % by a constant of a name with a binding the census does not record,
-        a stop name bound to None, and a start or stop that is int() of a name bound to strings and floats. The census
-        reads them as one module, each call on a line of its own after the lines that bind its names (in the class's
-        body where the call reads the name there). For each call the test
+        a stop name bound to None, a start or stop that is int() of a name bound to strings and floats, and a private
+        name read in a method, bound under the spelling its class mangles it to. The census reads them as one module,
+        each call on a line of its own after the lines that bind its names (in the class's body or a method where the
+        call reads the name there). For each call the test
         samples start and stop at each end of their intervals and at a seeded value between (or each value they take),
         and the step at each end, a
         seeded value between, and -1, 0 and 1 where the step can take them (an unbounded step takes STEPS, a step name
