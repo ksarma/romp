@@ -151,19 +151,29 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   up to start (random.randrange(50000, 40000, 0 - 7) and random.randrange(50000, 40000, k) are 40001-50000). Each of
   the two readings takes in a step Python always refuses there, an over-read: random.randrange(40000, 50000, 0) and
   random.randrange(40000, 50000, -1) (interval() does not bound a unary minus) are read as 40000-49999, and
-  random.randrange(50000, 40000, 7) as 40001-50000, and Python raises for all three. Any other randrange with an
-  unbounded step is not read: start's interval and stop's then share a value, so start can equal stop, and start can
-  lie below stop, where a positive step returns values from start up to stop less one, or above it, where a negative
-  step returns values from stop plus one up to start, so neither span need hold every value a call returns (a start
-  of 40000 to 42999 with a stop of 41000 to 41999 can return 40000, below stop plus one, and 42999, above stop less
-  one). Some sound readings of those calls are not made: some return only values in start to stop less one (a start
-  of 40000 to 40999 with a stop of 40500 to 41499, or with a stop of 40999 to 41998, where start's highest value is
-  stop's lowest and start never lies above stop), and where start's lowest value is stop's highest, every value a
-  call returns is from stop plus one to start; the census reads only a start below its stop for every value, or above
-  it for every value. A sum or difference with an unbounded operand counts when one of its operands alone is a
-  constant expression (one interval() bounds with no unknown in it) whose value is in the range, found through str()
-  and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so is 40000 * 1 + i
-  (offset_base()); one with no such operand (base + i) is not read.
+  random.randrange(50000, 40000, 7) as 40001-50000, and Python raises for all three. Any other randrange(start, stop,
+  step) whose start and stop are bounded has start's interval and stop's sharing a value, so start can equal stop, and
+  start can lie below stop, where a positive step returns values from start up to stop less one, or above it, where a
+  negative step returns values from stop plus one up to start. With a step interval() bounds, the step's sign decides
+  the reading: a step of 0 or more is read as start to stop less one, a negative step as stop plus one to start, and a
+  step that can be negative and can be 0 or more as the span holding both, from the lower of start's lowest value and
+  stop's lowest plus one to the higher of stop's highest less one and start's highest (random.randrange(40000 +
+  os.getpid() % 61, 40020 + os.getpid() % 21, 0 - 7) is 40021-40060, and with a step of os.getpid() % 3 - 1 it is
+  40000-40060). That reading takes in two kinds of step Python always refuses, an over-read: a step of 0, read with
+  the positive steps (random.randrange(40000 + os.getpid() % 1000, 40500 + os.getpid() % 1000, 0) is 40000-41498), and
+  a step of one sign that Python refuses for every value start and stop can take (a positive step from a start never
+  below its stop, or a negative one from a start never above it), read as a span with its ends reversed
+  (random.randrange(40000 + os.getpid() % 100, 40000, 7) is 40000-39999). With an unbounded step such a call is not
+  read, since neither span need hold every value it returns (a start of 40000 to 42999 with a stop of 41000 to 41999
+  can return 40000, below stop plus one, and 42999, above stop less one). Some sound readings of those calls are not
+  made: some return only values in start to stop less one (a start of 40000 to 40999 with a stop of 40500 to 41499, or
+  with a stop of 40999 to 41998, where start's highest value is stop's lowest and start never lies above stop), and
+  where start's lowest value is stop's highest, every value a call returns is from stop plus one to start; with an
+  unbounded step the census reads only a start below its stop for every value, or above it for every value. A sum or
+  difference with an unbounded operand counts when one of its operands alone is a constant expression (one interval()
+  bounds with no unknown in it) whose value is in the range, found through str() and int() and down a chain of sums
+  and differences: 40000 + i is built on 40000, and so is 40000 * 1 + i (offset_base()); one with no such operand
+  (base + i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -516,7 +526,9 @@ def interval(node, bound=None):
     name (_random_args()); randrange(start, stop, step) whose start's interval lies wholly below stop's is read as start
     to stop less one whatever its step, bounded or not, since only a positive step then does not raise, and one whose
     start's interval lies wholly above stop's as stop plus one to start, since only a negative step then does not
-    raise. computed is True when an unknown took part."""
+    raise; one whose intervals share a value is read by its bounded step's sign: start to stop less one for a step of 0
+    or more, stop plus one to start for a negative step, and the span holding both for a step that can be either.
+    computed is True when an unknown took part."""
     bound = bound or {}
     if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
         return node.value, node.value, False
@@ -539,8 +551,15 @@ def interval(node, bound=None):
                 return ivs[0][0], ivs[1][1], True
             if name in ("randrange", "randbelow") and k == 1:
                 return 0, ivs[0][1] - 1, True
-            if name == "randrange" and k in (2, 3):
+            if name == "randrange" and k == 2:
                 return ivs[0][0], ivs[1][1] - 1, True
+            if name == "randrange" and k == 3:      # start and stop share a value, so the step's sign decides
+                (a, b, _), (c, d, _), (klo, khi, _) = ivs
+                if khi < 0:                         # a negative step returns from stop plus one up to start
+                    return c + 1, b, True
+                if klo < 0:                         # a step that can be negative or not: anywhere in both spans
+                    return min(a, c + 1), max(d - 1, b), True
+                return a, d - 1, True               # a positive step returns from start to stop less one (0 raises)
         return None
     if isinstance(node, ast.BinOp):
         right = interval(node.right, bound)
@@ -1701,6 +1720,55 @@ class Plants(unittest.TestCase):
                  lo + 1)):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, "computed into %d-%d" % span, n=first)
+
+    def test_a_randrange_whose_start_and_stop_share_a_value_is_read_by_its_bounded_steps_sign(self):
+        """randrange(start, stop, step) whose start's interval and stop's share a value, with a step interval() bounds: a
+        positive step returns values from start to stop less one and a negative step values from stop plus one up to
+        start, so a step of 0 or more is read as the first span, a negative step as the second, and a step that can be
+        either (os.getpid() % 3 - 1, from -1 to 1) as the span holding both. Each red plant asserts the span the census
+        reports. The census read every such call as start to stop less one before, which with a negative step was
+        wrong: it reported 40000-40039 for the first plant, from which CPython returns values from 40021 to 40060; it
+        did not count the plants across 32768 or the ones whose stop is 32760, from which CPython returns values up to
+        32800; and it reported the backward span 40000-39999 where start's lowest value is stop's highest. The step of
+        0 and the positive step from a start never below its stop are THE RULE's over-reads: Python refuses both. The
+        green twins: a positive step across 32768, whose values stay from 32750 to 32759, and a negative step from a
+        start of 32700 to 32760 to a stop of 32750 to 32800, whose values stay from 32751 to 32760, where start to stop
+        less one would reach 32799."""
+        lo = LOW + 7232                                                            # 40000, built at run time
+        s, e = LOW - 18, LOW - 68                                                  # 32750 and 32700, built at run time
+        across = 'port = random.randrange(%d + os.getpid() %% 51, %s%d + os.getpid() %% 61, %s)\n'
+        inside = 'port = random.randrange(%d + os.getpid() %% 61, %d + os.getpid() %% 21, %s)\n'
+        for label, src, span, first in (
+                ("a negative step, start running past stop on both sides", inside % (lo, lo + 20, "0 - 7"),
+                 (lo + 21, lo + 60), lo + 21),
+                ("the same with the step by keyword", inside % (lo, lo + 20, "step=0 - 7"), (lo + 21, lo + 60), lo + 21),
+                ("a negative step, start and stop across 32768", across % (s, "", e, "0 - 7"), (e + 1, s + 50), LOW),
+                ("the same with the stop and the step by keyword", across % (s, "stop=", e, "step=0 - 7"), (e + 1, s + 50),
+                 LOW),
+                ("a negative step, start's lowest value a constant stop",
+                 'port = random.randrange(%d + os.getpid() %% 41, %d, 0 - 7)\n' % (s + 10, s + 10), (s + 11, s + 50), LOW),
+                ("the same with the stop and the step by keyword",
+                 'port = random.randrange(%d + os.getpid() %% 41, stop=%d, step=0 - 7)\n' % (s + 10, s + 10),
+                 (s + 11, s + 50), LOW),
+                ("a negative step, start's lowest value stop's highest, in the range",
+                 'port = random.randrange(%d + os.getpid() %% 31, %d + os.getpid() %% 31, 0 - 7)\n' % (lo, lo - 30),
+                 (lo - 29, lo + 30), lo - 29),
+                ("a step that can be negative or positive, start and stop across 32768",
+                 across % (s, "", e, "os.getpid() % 3 - 1"), (e + 1, s + 50), LOW),
+                ("a step that can be negative or positive, by keyword", inside % (lo, lo + 20, "step=os.getpid() % 3 - 1"),
+                 (lo, lo + 60), lo),
+                ("a step of 0, which Python refuses",
+                 'port = random.randrange(%d + os.getpid() %% 1000, %d + os.getpid() %% 1000, 0)\n' % (lo, lo + 500),
+                 (lo, lo + 1498), lo),
+                ("a positive step from a start never below its stop, which Python refuses",
+                 'port = random.randrange(%d + os.getpid() %% 100, %d, 7)\n' % (lo, lo), (lo, lo - 1), lo)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, "computed into %d-%d" % span, n=first)
+        with self.subTest("a positive step, start and stop across 32768"):
+            self.assertGreen("test_x.py", across % (s, "", e, "7"))
+        with self.subTest("a negative step, start's interval sharing a value with stop's from below"):
+            self.assertGreen("test_x.py", 'port = random.randrange(%d + os.getpid() %% 61, %d + os.getpid() %% 51, 0 - 7)\n'
+                             % (e, s))
 
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
