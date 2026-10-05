@@ -19,7 +19,7 @@ import hljs from "highlight.js/lib/core";
 import { marked, type Token, type Tokens } from "marked";
 import { sanitizeMd, revealFragmentTarget } from "./md-sanitize";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration (md-config.ts)
-import { onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR } from "./math";   // a paint of a note with math waits for the math renderer's arrival (the hold in renderBody); both bodies are repainted by their own settle handlers (MATH_REPAINT_ATTR)
+import { onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR, asSettleFill } from "./math";   // a paint of a note with math waits for the math renderer's arrival (the hold in renderBody); both bodies are repainted by their own settle handlers (MATH_REPAINT_ATTR), a parked repaint as if inside the settle (asSettleFill)
 import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start tag with no end tag in its block renders as literal text, on this parse's tokens (plans/file-review.md, decision 52)
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
@@ -2719,6 +2719,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // math.ts lays out anything in the document: a held paint (mathHeld), or the paint whose root shows a failed load's sources. The
   // run re-checks when it fires: the viewer still up (wrap.isConnected), and no paint since the settle (a Raw pick, a takeover, or a
   // landing parked under the same press, which runs first, its release listener installed first, and paints with the renderer in).
+  // Its fill runs as one inside the settle (math.ts asSettleFill), so a failure's repaint parked under a press uses no retry at the
+  // release, as it uses none with no press (the check of round 2's pass: the release sent a second request and logged a second line).
   const mathHold = pressHold(box);
   closeHooks.push(onMathSettled(() => {
     const held = mathHeld;
@@ -2727,8 +2729,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     void mathHold.defer(() => {   // a throw from the run (renderBody catches its build and swap; one past them is a bug) rejects: a page error
       if (!wrap.isConnected) return;
       if (held ? !mathHeld : !shown || shown.parentNode !== body) return;   // a paint since the settle: what it painted stands
-      if (held) { mathHeld = false; renderBody(); landTarget(); }
-      else renderBody();
+      asSettleFill(() => {
+        if (held) { mathHeld = false; renderBody(); landTarget(); }
+        else renderBody();
+      });
     });
   }));
   const renderBody = () => {
@@ -5231,8 +5235,7 @@ export function openUrlView(href: string): void {
     void mathHold.defer(() => {   // a throw from the run rejects: a page error (the local viewer's)
       if (!wrap.isConnected) return;
       if (held ? !mathHeld : !shown || shown.parentNode !== body) return;   // a paint since the settle: what it painted stands
-      mathHeld = false;
-      renderBody();
+      asSettleFill(() => { mathHeld = false; renderBody(); });   // as inside the settle: no retry (the local viewer's)
     });
   }));
   const renderBody = () => {

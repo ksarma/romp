@@ -345,9 +345,10 @@ test("the math fill is registered as a sanitizeMd post-pass by the module that i
   assert.doesNotMatch(read("file-view.ts"), /renderMathPlaceholders|from "\.\/chat-md"/, "the viewer imports no grammar of its own: md-config.ts, which it applies, carries the grammar and its fill into every bundle that hosts it (Slice 4 of plans/markdown-viewer.md)");
   // what each renderer does take from math.ts since KaTeX became an on-demand chunk (iOS item 6): the arrival's hook, the
   // pending test and the failed-source test (a later success lays those out: round 1 of the PR's review), and the viewer the
-  // attribute its bodies wear for its own repaint at the arrival (round 2), and nothing else (render-math.test.ts pins the one
+  // attribute its bodies wear for its own repaint at the arrival and the door its parked repaint fills through as if inside the
+  // settle (round 2), and nothing else (render-math.test.ts pins the one
   // import line in each)
-  for (const [f, names] of [["render.ts", "onMathSettled, mathPendingIn, mathFailedIn"], ["file-view.ts", "onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR"]]) {
+  for (const [f, names] of [["render.ts", "onMathSettled, mathPendingIn, mathFailedIn"], ["file-view.ts", "onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR, asSettleFill"]]) {
     assert.deepEqual(read(f).match(/^import [^\n]* from "\.\/math";/gm), ['import { ' + names + ' } from "./math";'], f + " takes the arrival's hook from math.ts, no grammar and no fill");
   }
 });

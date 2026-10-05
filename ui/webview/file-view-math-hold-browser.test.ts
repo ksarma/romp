@@ -4,7 +4,9 @@
 // KaTeX in place, and the anchor map, the reader's place and the comment paint never meet a waiting formula. A note with no
 // math fetches no chunk and paints at once; a chunk that fails to load paints the note with each formula as its source, and
 // after it the next Rendered paint asks again, paints at once while the retry is out, and the served retry repaints the note
-// once with the reader's place kept (math.ts: a failed load is retried, the review's round 1). The
+// once with the reader's place kept (math.ts: a failed load is retried, the review's round 1). A failure met while a press holds the
+// card repaints at the release, each formula as its source, and asks for nothing more: one request, one console line, in both viewers
+// (the check of round 2's pass; math.ts asSettleFill). The
 // real viewer in Chromium through the shared harness (real-viewer-leg.ts), its bundle built WITHOUT KaTeX (bundleViewer(false))
 // and loaded by src as the kernel's pages load theirs, so the chunk's URL derives from that tag as on a page (chunk-url.ts);
 // the chunk is the shipped build of math-chunk.ts (math-chunk-leg.ts chunkBundle), held until the leg lets it go.
@@ -167,6 +169,44 @@ test("chromium: a chunk that fails to load paints the note once, each formula as
     assert.deepEqual(errors, []);
   });
 });
+
+// A failure met while a press holds the card (the check of round 2's pass): the failure's repaint of the held paint waits for the
+// release, and runs there as a fill inside the settle (math.ts asSettleFill), so it asks for nothing more: one request and one
+// console line, as with no press (before, the release's fill spent the retry the failure armed: a second request, a second line).
+for (const viewer of ["file", "url"] as const) {
+  test(`chromium: ${viewer === "file" ? "the Files pane's viewer" : "the URL viewer"}: a held open whose chunk fails while a press holds the card paints the note at the release, each formula as its source, and asks for nothing more: one request, one console line`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const g = gate(); const requests: string[] = []; const lines: string[] = [];
+      const { page, errors } = await open(browser, { [REPORT]: NOTE }, "404", g, requests, null, {
+        ...(viewer === "url" ? { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: NOTE } } : {}),
+        before: async (pg: any) => {
+          pg.on("console", (m: any) => { if (m.type() === "error" && String(m.text()).startsWith("math:")) lines.push(String(m.text())); });
+          // the chunk's script error, heard in the capture phase before math.ts's own onerror runs in the same dispatch: the 404's arrival
+          await pg.evaluate(() => { document.addEventListener("error", (e) => { const s = e.target as HTMLScriptElement; if (s && s.src && s.src.includes("math-chunk.js")) (window as any).__chunkErrs = ((window as any).__chunkErrs || 0) + 1; }, true); });
+        },
+      });
+      await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+      await frames(page, 4);
+      const box = await page.locator(".fileview-body > .fileview-load").boundingBox();
+      assert.ok(box, "the held open's loader to press on");
+      await page.mouse.move(box.x + 10, box.y + box.height / 2);
+      await page.mouse.down();
+      g.open();
+      await page.waitForFunction(() => (window as any).__chunkErrs === 1, null, { timeout: 10000 });
+      await frames(page, 6);
+      const under = await overNow(page);
+      await page.mouse.up();
+      await frames(page, 8);
+      await page.evaluate(() => fetch("/version").then(() => null, () => null));   // a round trip, so a request the release sent has reached the route
+      await frames(page, 8);
+      const after = await overNow(page);
+      assert.deepEqual([requests.length, lines.length], [1, 1], "the release's repaint asked for nothing more: one request, one console line: " + JSON.stringify({ requests, lines }));
+      assert.deepEqual([after.md, after.loader, after.katex, after.src], [true, false, 0, 2], "the note painted at the release, each formula as its source: " + JSON.stringify(after));
+      assert.deepEqual([under.loader, under.md], [true, false], "under the press the held loader stood: " + JSON.stringify(under));
+      assert.deepEqual(errors, []);
+    });
+  });
+}
 
 // A note long enough that its target sits screens below the top, one inline formula at its head: the hold's case for a target.
 const FILLER = Array.from({ length: 40 }, (_, i) => PARA(i + 1)).join("\n\n");

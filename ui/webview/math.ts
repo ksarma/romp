@@ -52,7 +52,8 @@
 // a retry, since renders repeat on every streaming delta and kernel push and must not be what asks: the page
 // life's first failure, the shim's reconnect (romp:wsup) and the window's `online` each set one flag (it does
 // not stack), and the next fill that meets a formula uses it up (not the failure's own fill, the arrival's
-// fill over the document or the viewer's repaint at the settle, which run inside the settle). So a chunk that
+// fill over the document or the viewer's repaint the settle decided on, which run inside the settle, the
+// repaint as if inside it when a press on the card parks it until the release: asSettleFill). So a chunk that
 // 404s for good costs at most two requests per page life, plus one per reconnect or online event, at any render rate (the
 // review of iOS item 6, round 1; the editor and PDF loaders retry the same way since 2026-09-06, on a gesture). A page
 // with no bundle tag to derive the URL from fails the same way every time and arms nothing. Whichever attempt
@@ -387,7 +388,7 @@ let engineFailure = "";                                   // what went wrong las
 let failures = 0;                                         // attempts that have failed in this page life: the first arms a retry
 let retryArmed = false;                                   // one retry, armed by an event, used by the next fill that meets a formula
 let retryable = true;                                     // false once the page proved to have no bundle tag to derive the URL from
-let settling = 0;                                         // inside engineSettled: its fills (the document's, a viewer's repaint) use no retry
+let settling = 0;                                         // inside engineSettled, or a viewer's parked repaint it decided on (asSettleFill): its fills use no retry
 let leaving = false;                                      // the page is going: a reload through the reload core (latchOnLeave), or a desktop unload
 let leaveHooked = false;                                  // latchOnLeave's hooks are on (once per page life)
 const settleHandlers: Array<() => (() => void) | void> = [];
@@ -449,6 +450,16 @@ export function onMathSettled(handler: () => (() => void) | void): () => void {
   return () => { const i = settleHandlers.indexOf(handler); if (i >= 0) settleHandlers.splice(i, 1); };
 }
 
+/** Run a repaint a settle handler decided on, later, as a fill inside that settle: it uses no retry (settling, requestEngine). The
+ *  viewers park the repaint their settle handler decides on while a press holds the card (file-view.ts mathHold) and run it at the
+ *  release, outside engineSettled, so a failure met under a press spent the retry the failure armed at the release: a second
+ *  request and a second console line, where the same failure with no press asks for nothing (the check of the round-2 pass of the
+ *  review of iOS item 6). A retry an event arms meanwhile stays armed for the next fill after it. */
+export function asSettleFill(run: () => void): void {
+  settling++;
+  try { run(); } finally { settling--; }
+}
+
 /** The two faces nearly every formula uses, loaded beside the chunk: katex.min.css declares every KaTeX face
  *  font-display: block, so a formula laid out before its face arrives is blank for the font's block period (a few seconds)
  *  and then drawn in a fallback face until its own lands. Settled either way, never thrown. */
@@ -460,7 +471,8 @@ function katexFaces(): Promise<unknown> {
 
 /** Ask for the chunk when the fill meets a formula it cannot lay out: the page life's first attempt (idle), or a retry while the
  *  load is failed and a retry is armed, which this uses up. A fill inside the settle (the failure's own fill over the document,
- *  the arrival's, a viewer's repaint in a settle handler) uses none, so a failure cannot re-arm itself through its own render,
+ *  the arrival's, a viewer's repaint in a settle handler, or that repaint parked under a press and run at the release through
+ *  asSettleFill) uses none, so a failure cannot re-arm itself through its own render,
  *  and a persistent 404 costs the first request, the one retry the failure arms, and one per later event, at any render rate. */
 function requestEngine(): void {
   if (typeof document === "undefined") return;

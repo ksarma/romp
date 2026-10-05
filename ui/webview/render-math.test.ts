@@ -199,8 +199,9 @@ test("KaTeX renders AFTER the sanitizer, as a post-pass sanitizeMd runs: md-conf
   const view = UI("file-view.ts");
   assert.doesNotMatch(view, /from "katex"|renderMathPlaceholders/, "the viewer imports no KaTeX and no fill of its own: the grammar module (md-config.ts) carries the fill into every bundle the viewer lands in, and the sanitize runs it (Slice 4)");
   // the viewer also takes the attribute its two bodies wear, so the arrival leaves a failed load's sources in them to its own repaint,
-  // which waits out a press on the card (the PR's review, round 2, ui-1)
-  assert.deepEqual(view.match(/^import [^\n]* from "\.\/math";/gm), ['import { onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR } from "./math";'], "file-view.ts imports the arrival's hook, the two tests and the repaint attribute from math.ts and nothing else");
+  // which waits out a press on the card (the PR's review, round 2, ui-1), and the door that repaint fills through at the release as
+  // if inside the settle, so it uses no retry (asSettleFill; the check of round 2's pass)
+  assert.deepEqual(view.match(/^import [^\n]* from "\.\/math";/gm), ['import { onMathSettled, mathPendingIn, mathFailedIn, MATH_REPAINT_ATTR, asSettleFill } from "./math";'], "file-view.ts imports the arrival's hook, the two tests, the repaint attribute and the settle's fill door from math.ts and nothing else");
   // match on the two function bodies, not the file, so a failure prints the function and not render.ts
   const mdFn = render.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() must exist");
