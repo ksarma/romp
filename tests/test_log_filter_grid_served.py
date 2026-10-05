@@ -76,11 +76,15 @@ PHONE_WIDTHS = [320, 360, 368, 375, 390, 414, 430, 475, 583]
 PHONE_COLS = {320: 2, 360: 2, 368: 3, 375: 3, 390: 3, 414: 3, 430: 3, 475: 4, 583: 5}   # the columns at each phone width
 CHIP_COL = 96   # px: --rerr-chip-col, the columns' floor; no width narrows a column below it, so every label must fit in it
 PHONE_HEIGHTS = [844, 568]   # the iPhone 14's height, then the shortest phone in use (320 by 568): every width at each
-# px of list kept under the grid at every size: room for three one-line entries (the list's 4 px padding above and below,
-# three 27.95 px rows of 11 px text at line-height 1.45 with 6 px of padding above and below, and the 1 px rules between
-# them). The tallest grid a phone gets, 2 columns in 8 rows at 320 by 568, leaves the list 112.7 px in all three engines; a
-# grid that took more rows would leave less (a 125 px floor gives one column of 15 rows at 320 px, and the list about 8 px)
-LIST_FLOOR = 94
+# px of list kept under the grid at every size: room for three one-line entries, as they measure. The list has 4 px of
+# padding above and below. A one-line entry is 28.59 px tall in Chromium and 28.77 px in WebKit and Firefox, and each later
+# one is 1 px taller for the rule above it. Inside the row's 6 px of padding above and below sits its chip, 16.6 px tall
+# (9 px text at line-height 1.4, 1 px of padding and a 1 px border above and below), which is taller than the message's
+# 15.95 px line (11 px text at line-height 1.45); aligning the row's items on their baselines adds 0.17 px in WebKit and
+# Firefox. Three entries need 95.78 px in Chromium and 96.30 px in WebKit and Firefox, so the floor is 97. The tallest grid
+# a phone gets, 2 columns in 8 rows at 320 by 568, leaves the list 112.66 px (112.60 in Firefox); a grid that took more
+# rows would leave less (a 125 px floor gives one column of 15 rows at 320 px, and the list 8 px)
+LIST_FLOOR = 97
 OPEN_W = 390   # the Log is opened by its triangle at 390 px, then the page resized: the phone bar is 413 to 418 px wide in this
 #                lab, so on a narrower screen its last buttons are past the right edge, the triangle among them below about 355 px
 #                (a separate defect: at 320 px a click cannot reach it)
