@@ -253,8 +253,9 @@ CLASSIFIED = {
                                             "the calls a stubbed Popen records while the kernel signs a session whose "
                                             "directory the test builds; a docstring"),
     "tests/test_ci_sdk_pin.py": ((NOT_A_READ,), "a workflow text the test parses, github.ref in an if: key"),
-    "tests/test_ci_workflow_concurrency.py": ((NOT_A_READ,), "evaluates ci.yml's concurrency expression over github.ref "
-                                                             "values it gives; reads no repository"),
+    "tests/test_ci_workflow_concurrency.py": ((NOT_A_READ,), "evaluates ci.yml's expressions (the concurrency stanza's, "
+                                                             "the matrices' os) over github.ref values it gives; reads no "
+                                                             "repository"),
     "tests/test_converge_main_branch.py": ((SYNTHETIC, NOT_A_READ), "symbolic-ref --short HEAD of the checkout setUp "
                                                                     "builds (self.checkout); a comment"),
     "tests/test_env_value_redaction.py": ((NOT_A_READ,), "GitHub's variables set to values the test gives, in an "

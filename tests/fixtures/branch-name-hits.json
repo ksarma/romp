@@ -201,9 +201,9 @@
  ],
  "tests/test_ci_workflow_concurrency.py": [
   "\"\"\"GitHub's value semantics for the subset the stanza uses: string literals, github.event_name, github.ref and",
+  "ctx = {\"github.event_name\": event, \"github.ref\": ref, \"github.sha\": sha}",
   "evaluate(\"contains(github.ref, 'main')\", ctx)",
   "evaluate(\"github.head_ref\", ctx)",
-  "return {\"github.event_name\": event, \"github.ref\": ref, \"github.sha\": sha}",
   "self.assertEqual(evaluate(\"github.event_name == 'PUSH' && github.sha || github.ref\", ctx), SHA_A)",
   "self.assertEqual(evaluate(\"github.event_name == 'pull_request' && github.sha || github.ref\", ctx), MAIN)",
   "self.assertIs(evaluate(\"startsWith(github.ref, 'refs/heads/')\", ctx), True)"
