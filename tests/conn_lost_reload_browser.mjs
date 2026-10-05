@@ -4,7 +4,8 @@
 //
 // Why real sockets: tests/conn_lost_log_browser.mjs routes every /ws through page.routeWebSocket, a mock no engine closes on
 // unload. Firefox closes the old page's never-opened dials after beforeunload and before pagehide and delivers their close
-// events while the page still runs (the review measured 1 to 2 ms after beforeunload, about 10 ms before pagehide), and only
+// events while the page still runs (mostly 1 to 2 ms after beforeunload, 453 of 462 within 13 ms and the latest at 21 ms,
+// about 10 ms before pagehide), and only
 // a real socket shows it. So this driver serves the dashboard through a TCP proxy of its own on cfg.proxyPort (a port the
 // Python side reserved through tests/lab_ports.py), in front of the lab kernel on cfg.kernelPort. The proxy forwards every
 // request; a plain HTTP request has its Connection header set to close, so each request arrives on a connection of its own
