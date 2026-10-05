@@ -113,10 +113,10 @@ cap killed it. A run of CI's 3.14t pytest command as written, tests/test_cut_tur
 split the thread-stop census's class across the two workers had both build that census's derivation at once, and the cap
 killed it (2026-10-04; reproduced less that file, with the split forced, on 2026-10-05); the census's cut and one item
 address that
-(tests/test_thread_stop_census.py's _Tree and _TreeChecks, 2026-10-05). With both, ten capped runs that completed at
-this pull request's heads of 2026-10-05, each writing bytecode as CI does, six of them with that census's module forced
-to split across the two workers, reached memory.peak 14.89 to 15.39 GiB (1.11 to 1.61 GiB under the cap) and peak
-anonymous memory 14.55 to 14.93 GiB. An interpreter without that function (3.10
+(tests/test_thread_stop_census.py's _Tree and _TreeChecks, 2026-10-05). With both, eleven capped runs that completed at
+this pull request's heads of 2026-10-05, each writing bytecode as CI does, seven of them with that census's module
+forced to split across the two workers, reached memory.peak 14.89 to 15.42 GiB (1.08 to 1.61 GiB under the cap) and peak
+anonymous memory 14.55 to 14.98 GiB. An interpreter without that function (3.10
 to 3.12) is read as having its GIL, so nothing changes on 3.10 or 3.12, nor on a GIL build of 3.13 or later (it reports
 true); a free-threaded build run with its GIL on keeps that collector and is not collected here, since the test is the
 GIL. The count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen object dies
