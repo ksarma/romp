@@ -16,23 +16,28 @@ THE FIX (kernel/kernel.py, the shell's markup and its phone media block; ui/webv
 card). Two parts, as romp-manager ruled before round 1 (2026-10-05): keep ONE ROW where it can fit by moving actions, and
 wrap only where it still cannot.
 - The move. Usage, Remote kernels and Restart kernel left the bar. Usage and Remote kernels are its two panels about the
-  machinery (spend and limits, other machines' kernels), not about the sessions; moving those two is the smallest move
-  that gives one row from 375 to 430px in all three engines (measured at the wrap-only head by hiding each set of
-  actions in the served bar: either one alone leaves 386px in Chromium; the two leave 354px in Chromium and 349 to 350px
-  in WebKit and Firefox, and 390 and 384 to 385px with the Files tab on). Restart followed them (romp-manager's call 3,
-  2026-10-05): the kernel's restart is machinery too, rarely used and costly to hit by accident, and with it gone the
-  default row needs 322px in Chromium and 318px in WebKit and Firefox (358 and 353px with the Files tab on), so the bar
-  is one row at every phone width from 360px with the Files tab on or off. The bell stays on the bar. The three now sit
-  in the settings card, a row of buttons under its title, above the tabs (so whichever tab the card opens at shows
-  them), shown only on the phone layout. One click on the bar's Settings opens the card, one click on the button closes
-  the card and runs the handler the bar's button ran (the shell's A-map, reached by a phoneAct message from the settings
-  document, whose accepted acts are exactly the three), so Usage opens its modal, Remote kernels its panel and Restart
-  kernel the kernel's restart (POST /restart), as before. They are buttons in a card, so they wear the card's button
-  vocabulary, the dress of its other word buttons (Customize shortcuts' rules, copied), not the menu vocabulary of a
-  dropdown's rows. The Remote kernels glyph keeps its live state there: the shell's /tunnels poll paints the card's copy
-  as it painted the bar's (connected, attaching, each node's colour, the drop flash), and the card's opening paints it
-  from the last poll. The drop flash plays only where the card is open at the drop: a closed card runs no animation, so
-  the class a drop left on its copy is cleared when the card opens, where it would otherwise play the flash late.
+  machinery (spend and limits, other machines' kernels), not about the sessions; moving those two is the smallest move that
+  gives one row from 375 to 430px in all three engines (measured at the wrap-only head by hiding each set of actions in the
+  served bar: either one alone leaves 386px in Chromium; the two leave 354px in Chromium and 349 to 350px in WebKit and
+  Firefox, and 390 and 384 to 385px with the Files tab on). Restart followed them (romp-manager's call 3, 2026-10-05): the
+  kernel's restart is machinery too, rarely used and costly to hit by accident, and with it gone the default row needs 322px
+  in Chromium and 318px in WebKit and Firefox (358 and 353px with the Files tab on), so the bar is one row at every phone
+  width from 360px with the Files tab on or off. The bell stays on the bar. The three now sit in the settings card, a row of
+  buttons under its title, above the tabs (so whichever tab the card opens at shows them), shown only on the phone layout.
+  One click on the bar's Settings opens the card, one click on the button closes the card and runs the handler the bar's
+  button ran (the shell's A-map, reached by a phoneAct message from the settings document, whose accepted acts are exactly
+  the three), so Usage opens its modal, Remote kernels its panel and Restart kernel the kernel's restart (POST /restart), as
+  before. They are buttons in a card, so they wear the card's button vocabulary, the dress of its other word buttons
+  (Customize shortcuts' rules, copied), not the menu vocabulary of a dropdown's rows. The Remote kernels glyph keeps its
+  live state there: the shell's /tunnels poll paints the card's copy as it painted the bar's (connected, attaching, each
+  node's colour, the drop flash), and the card's opening paints it from the last poll. The drop flash plays only where the
+  card is open at the drop: a closed card runs no animation, so the class a drop left on its copy is cleared when the card
+  opens, where it would otherwise play the flash late. Usage explains rather than hides when it has nothing to show
+  (romp-manager's call 6): the shell's usage panel opens only over a reading, so with none the card shows Usage disabled
+  with the line "No reading yet" under its name, and a tap on it leaves the card open; with a reading, Usage is enabled and
+  opens the panel. The card asks the shell at each opening, through the usage script's own test over its readings
+  (window.__rompUsageReading, the check the panel's opener makes), so a reading that arrives between two openings shows at
+  the second.
 - The fallback. The action cluster is one element (.mtabs-acts) and the bar may wrap: where the tabs and the three actions
   left do not fit one row (below 322px in Chromium and 318px in WebKit and Firefox, so at 320px in Chromium and not in the
   other two; below 358px in Chromium and 353px in WebKit and Firefox with the Files tab on, so at 320px in all three), the
@@ -42,52 +47,58 @@ wrap only where it still cannot.
   whenever the bar's box changes (a ResizeObserver on the bar, beside the resize events that already re-measure it).
 The desktop is untouched: the bar is display:none outside the phone media block, and the rail keeps its actions.
 
-WHAT IS MEASURED, in the pages the kernel serves, in a real engine (tests/mtabs_fit_browser.mjs): the iPhone 14
-descriptor (Firefox without isMobile, which Playwright does not support there) at 320, 360, 375, 390, 414 and 430px wide
-in portrait and the same phones in landscape, on the default tab set and with the Files tab on. Wherever the phone
-layout applies, for every control the bar shows: its box wholly inside the window, the element at its centre is that
-control, no two controls overlap, a tab's label fits inside it, every control keeps at least its natural width (its
-width in the unsqueezed row) and the single row's height, the bar spans the window at its bottom edge and nothing in it
-overflows, and the strip the panes leave (--mtabs-h) equals the bar's height with the shown pane ending above it. The
-bar shows three action buttons (the Log's triangle, the bell, Settings) and no Usage, Remote kernels or Restart kernel.
-In portrait the bar IS one row on the default set at 360, 375, 390, 414 and 430px and on the Files set at 375 to 430px
-(ONE_ROW: its natural width fits, every control on it, the bar one control tall, so the panes keep all but that one
-row), and IS the fallback on the Files set at 320px (FALLBACK: the natural row does not fit, the tabs fill the first row
-and the cluster sits together on the second at the right edge). Elsewhere the bar is one row exactly where its natural
-one-row width (the bar laid out at max-content without wrapping) fits. Then the Files tab turned on with no resize, at
-340px where the default set fits one row and the Files set does not: the bar wraps and the strip follows it. Then the
-moved actions, at 390px: the bar's Settings clicked at its centre opens the card; its row of three buttons shows, each
-wholly in the window and the card and hit at its centre, and each wearing Customize shortcuts' dress at rest (its
-computed fill, hairline, radius, text colour, padding, font and press transition equal #rs-keys-btn's, the colour aside
-on the Remote kernels button while the poll lights it, read once the glyph's colour transitions end); the Remote kernels
-glyph wears the state the shell's poll painted on the rail's glyph (the shell's own GET /tunnels answers two synthetic
-hosts, one connected and one with no kernel: the glyph on, its nodes needs you and connected, the same classes, colours
-and fills as the rail's); the shell's next poll is held until after the first opening, so the card's paint is the
-opening's own, and when it is released with both hosts connected the card's copy follows it; then one click on Usage
-closes the card and opens the Usage modal (the lab's usage.json makes it a spend reading, so the panel has something to
-show), and after the bar's Settings again, one click on Remote kernels closes the card and opens the Remote kernels
-panel, and after it again, one click on Restart kernel closes the card and makes the shell's one POST /restart (the
-driver answers it with a refusal in the manager's shape, RESTART_REFUSAL, so the lab kernel stays up, and the shell's
-handler takes it: its splash down, the refusal's words on the rail's restart button); no click but that one makes a POST
-/restart. Then the drop cue (TUNNELS_DROP, a host that was up answering with no kernel): with the card closed the poll
-drops the host, and at the card's next opening its glyph carries no flash; then the host comes back and drops again with
-the card open, and the glyph's flash runs. Then a desktop window, where the bar is hidden, and the desktop rail at 821
-and 1100px, whose actions (restart, Remote kernels, the bell, the gear) and their boxes equal af7d18250's (RAIL_AF7
-below). MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
+WHAT IS MEASURED, in the pages the kernel serves, in a real engine (tests/mtabs_fit_browser.mjs): the iPhone 14 descriptor
+(Firefox without isMobile, which Playwright does not support there) at 320, 360, 375, 390, 414 and 430px wide in portrait
+and the same phones in landscape, on the default tab set and with the Files tab on. Wherever the phone layout applies, for
+every control the bar shows: its box wholly inside the window, the element at its centre is that control, no two controls
+overlap, a tab's label fits inside it, every control keeps at least its natural width (its width in the unsqueezed row) and
+the single row's height, the bar spans the window at its bottom edge and nothing in it overflows, and the strip the panes
+leave (--mtabs-h) equals the bar's height with the shown pane ending above it. The bar shows three action buttons (the Log's
+triangle, the bell, Settings) and no Usage, Remote kernels or Restart kernel. In portrait the bar IS one row on the default
+set at 360, 375, 390, 414 and 430px and on the Files set at 375 to 430px (ONE_ROW: its natural width fits, every control on
+it, the bar one control tall, so the panes keep all but that one row), and IS the fallback on the Files set at 320px
+(FALLBACK: the natural row does not fit, the tabs fill the first row and the cluster sits together on the second at the
+right edge). Elsewhere the bar is one row exactly where its natural one-row width (the bar laid out at max-content without
+wrapping) fits. Then the Files tab turned on with no resize, at 340px where the default set fits one row and the Files set
+does not: the bar wraps and the strip follows it. Then the moved actions, at 390px: the bar's Settings clicked at its centre
+opens the card; its row of three buttons shows, each wholly in the window and the card and hit at its centre, and each
+wearing Customize shortcuts' dress at rest (its computed fill, hairline, radius, text colour, padding, font and press
+transition equal #rs-keys-btn's, the colour aside on the Remote kernels button while the poll lights it, read once the
+glyph's colour transitions end), Usage enabled with its line hidden (the lab's reading); the Remote kernels glyph wears the
+state the shell's poll painted on the rail's glyph (the shell's own GET /tunnels answers two synthetic hosts, one connected
+and one with no kernel: the glyph on, its nodes needs you and connected, the same classes, colours and fills as the rail's);
+the shell's next poll is held until after the first opening, so the card's paint is the opening's own, and when it is
+released with both hosts connected the card's copy follows it; then one click on Usage closes the card and opens the Usage
+modal (the lab's usage.json makes it a spend reading, so the panel has something to show), and after the bar's Settings
+again, one click on Remote kernels closes the card and opens the Remote kernels panel, and after it again, one click on
+Restart kernel closes the card and makes the shell's one POST /restart (the driver answers it with a refusal in the
+manager's shape, RESTART_REFUSAL, so the lab kernel stays up, and the shell's handler takes it: its splash down, the
+refusal's words on the rail's restart button); no click but that one makes a POST /restart. Then the drop cue (TUNNELS_DROP,
+a host that was up answering with no kernel): with the card closed the poll drops the host, and at the card's next opening
+its glyph carries no flash; then the host comes back and drops again with the card open, and the glyph's flash runs. Then
+Usage with no reading, on a page whose shell's GET /usage/fleet answers no rows (the rail's readout, which renders over the
+readings, read empty as the leg's premise): the card opened from the bar's Settings shows Usage disabled with the line
+USAGE_NONE; a click at its centre leaves the card open, opens no Usage modal and posts no phoneAct (read after a settle: an
+absence has no event to wait on), and the line still shows; then a reading arrives (the lab's own GET /usage payload posted
+to the shell as the timeline posts it, the shell's later pulls let through), and at the card's next opening Usage is enabled
+with no line, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then a desktop window, where
+the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell, the gear) and
+their boxes equal af7d18250's (RAIL_AF7 below). MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
 
 Red at the wrap-only head, in all three engines: its bar shows six actions, it wraps where one row is owed (at 375 and
 390px, and at 414 in Chromium; its row fits 414 in WebKit and Firefox and 430 in all three), and its card has no row of
-moved actions. Red at the two-action move (Usage and Remote kernels moved, Restart still on the bar), in all three
-engines: its bar shows Restart, its Files set wraps at 375px, and its card has no Restart kernel button. The phoneAct
-pin is red under the listener's old accepted set (net and usage alone): the card's Restart kernel closes the card and no
-POST /restart follows. The button dress's pin is red at the menu dress the row wore before (the menu card's fill, a 6px
-radius, 5px 10px of padding, 12px text). The fallback's pin is red under the old rule restored (no wrap), and the rail's
-under the move applied to the rail as well. The drop cue's pin is red at the commit before its fix, where a drop that
-came while the card was closed flashed the glyph at the card's next opening. Runs in the "Browser-backed served-page
-tests (pytest)" step of the served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml,
-ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in Chromium; the WebKit and Firefox legs are `optional:` skips
-where that engine is absent or not declared in ROMP_SERVED_TESTS_ENGINES (CI declares chromium; a developer's box runs
-all three).
+moved actions. Red at the two-action move (Usage and Remote kernels moved, Restart still on the bar), in all three engines:
+its bar shows Restart, its Files set wraps at 375px, and its card has no Restart kernel button. The phoneAct pin is red
+under the listener's old accepted set (net and usage alone): the card's Restart kernel closes the card and no POST /restart
+follows. The button dress's pin is red at the menu dress the row wore before (the menu card's fill, a 6px radius, 5px 10px
+of padding, 12px text). The no-reading pins are red at the card without that state (Usage enabled with no reading, and its
+tap closing the card to open nothing) and under a mutant that reads the state once, at the card's first opening, where the
+reading that arrived later never enables Usage. The fallback's pin is red under the old rule restored (no wrap), and the
+rail's under the move applied to the rail as well. The drop cue's pin is red at the commit before its fix, where a drop that
+came while the card was closed flashed the glyph at the card's next opening. Runs in the "Browser-backed served-page tests
+(pytest)" step of the served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip
+here is a failure), in Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not
+declared in ROMP_SERVED_TESTS_ENGINES (CI declares chromium; a developer's box runs all three).
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), its port from tests/lab_ports.py and proved its own
@@ -136,6 +147,7 @@ BAR_ACTS = ("merr", "mbell", "settings")   # the three left on it, in their orde
 # the lab's answer to the shell's POST /restart in the moved-actions leg (the driver answers it; the kernel never sees it): the
 # manager's refusal shape, so the shell's restart handler runs to its end (splash down, these words on the rail's button)
 RESTART_REFUSAL = "synthetic refusal: the lab kernel stays up"
+USAGE_NONE = "No reading yet"   # the card's line under a disabled Usage (gear.js), the words a person reads
 DESKTOP = (1280, 800)
 RAIL = ((821, 800), (1100, 800))   # the desktop rail: just past the phone query's 820px, and a laptop
 # the shell's own /tunnels poll in the moved-actions leg: two synthetic hosts, one connected and one with no kernel (the glyph
@@ -305,6 +317,11 @@ def _acts_problems(engine, acts):
             if off:
                 out.append("%s: the %s button does not wear the card's button dress: %s" % (
                     where, act, ", ".join("%s %r, not %r" % (k, b["dress"].get(k), ref[k]) for k in off)))
+    # Usage with a reading (the lab's usage.json): enabled at the opening, its no-reading line not shown (and the click above
+    # opened the Usage modal)
+    u = ((acts["runs"].get("usage") or {}).get("card") or {}).get("usage")
+    if not u or u.get("disabled") is not False or not u.get("line") or u["line"].get("shown") is not False:
+        out.append("%s: with a reading, Usage is not enabled with its no-reading line hidden: %r" % (where, u))
     # the Remote kernels glyph in the card: at the first opening the state the shell's first poll painted on the rail (the
     # next poll held, so the card's paint is the opening's own); after the release the state of the second answer
     first, rel = (acts["runs"].get("usage") or {}).get("card", {}).get("glyph"), acts.get("released") or {}
@@ -342,6 +359,38 @@ def _acts_problems(engine, acts):
     live = drop.get("openDrop")
     if not live or "rs-pact-drop:running" not in (live["anims"] or []):
         out.append("%s: a host dropping while the card is open does not flash the card's glyph: %r" % (where, live))
+    return out
+
+
+def _no_reading_problems(engine, nr):
+    """Usage with no reading: disabled with its line, a tap leaving the card open and posting nothing; after a reading arrives,
+    the card's next opening shows Usage enabled, and one click opens the Usage modal (the card asks the shell at each open)."""
+    out = []
+    where = "%s Usage with no reading at %dx%d" % (engine, nr["vp"][0], nr["vp"][1])
+    pre = nr.get("premise") or {}
+    if pre.get("fleet", 0) < 1 or pre.get("readout") != "":
+        out.append("%s: the shell holds a reading before the card opens (the leg's premise): %r" % (where, pre))
+    first = nr.get("first")
+    if not first or first.get("disabled") is not True or not first.get("line") or first["line"].get("shown") is not True \
+            or first["line"].get("text") != USAGE_NONE:
+        out.append("%s: Usage is not disabled with the line %r: %r" % (where, USAGE_NONE, first))
+    tap = nr.get("tapped") or {}
+    if not tap.get("settingsOpen") or tap.get("cardHidden") is not False:
+        out.append("%s: a tap on Usage closed the card: %r" % (where, tap))
+    if tap.get("usage") or tap.get("acts") != []:
+        out.append("%s: a tap on Usage reached the shell (the Usage modal %r, phoneAct %r)" % (where, tap.get("usage"), tap.get("acts")))
+    after = nr.get("afterTap")
+    if not after or not after.get("line") or after["line"].get("shown") is not True:
+        out.append("%s: after the tap the line saying there is no reading yet is not shown: %r" % (where, after))
+    if not nr.get("arrived"):
+        out.append("%s: the reading never reached the shell's readout (the second half's premise)" % where)
+    second = nr.get("second")
+    if not second or second.get("disabled") is not False or not second.get("line") or second["line"].get("shown") is not False:
+        out.append("%s: once a reading has arrived, the card's next opening does not show Usage enabled without its line: %r" % (where, second))
+    clicked = nr.get("clicked") or {}
+    if not nr.get("opened") or clicked.get("settingsOpen") or clicked.get("cardHidden") is not True or clicked.get("acts") != ["usage"]:
+        out.append("%s: with the reading, one click on Usage did not close the card and open the Usage modal: opened %r, %r" % (
+            where, nr.get("opened"), clicked))
     return out
 
 
@@ -480,6 +529,7 @@ class MtabsFit(unittest.TestCase):
         problems += _problems(where + " (before)", d["before"])
         problems += _problems(where, d["after"])
         problems += _acts_problems(engine, r["acts"])
+        problems += _no_reading_problems(engine, r.get("noReading") or {"vp": list(ACTS)})
         self.assertEqual([tuple(x["vp"]) for x in r["rail"]], list(RAIL), engine + ": every rail width was read")
         problems += _rail_problems(engine, r["rail"])
         self.assertEqual(r["desktop"]["display"], "none", engine + ": the desktop shows no phone bar: %r" % (r["desktop"],))

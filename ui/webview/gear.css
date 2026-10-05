@@ -53,10 +53,17 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-pact { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; background: var(--btn-bg, #2a2a2a); color: var(--fg, #ccc);
   border: 1px solid var(--hairline, #3a3a3a); border-radius: 5px; padding: 3px 8px; font: inherit;
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
-#rsettings .rs-pact:active { transform: scale(0.96); }
-#rsettings .rs-pact:hover { border-color: var(--accent, #9cd2ff); color: var(--accent, #9cd2ff);
+#rsettings .rs-pact:active:not(:disabled) { transform: scale(0.96); }
+#rsettings .rs-pact:hover:not(:disabled) { border-color: var(--accent, #9cd2ff); color: var(--accent, #9cd2ff);
   background: var(--accent-wash, rgba(156, 210, 255, 0.12)); }
 #rsettings .rs-pact svg { display: block; flex: none; }
+/* Usage with no reading yet (gear.js usageAct): disabled, greyed by token as the card's other inert controls are (the Fast mode
+   box's dress: the word in --text-faint, the glyph faded), with no hover and no press (the two rules above skip a disabled
+   button), and its sub-line under the name in the card's 11px note size and muted text, left unfaded so the reason reads */
+#rsettings .rs-pact:disabled { cursor: default; color: var(--text-faint, #6e7681); }
+#rsettings .rs-pact:disabled svg { opacity: .4; }
+#rsettings .rs-pact-txt { display: flex; flex-direction: column; align-items: flex-start; }
+#rsettings .rs-pact-none { font-size: 11px; line-height: 1.35; color: var(--text-muted, #9aa0a6); }
 /* the Remote kernels glyph's live state, painted here by the shell's poll as it painted the bar's button (kernel
    _LANDING_REMOTES_JS paintIcon through mnet): the accent when a host is connected and while one attaches, the connector
    dashes marching while it attaches, each node's colour (connected, dialing, needs you) and the red flash when a host drops

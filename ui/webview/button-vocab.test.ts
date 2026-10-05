@@ -63,7 +63,7 @@ test("migrated families hover in pattern A — the one accent triple", () => {
   assert.match(GEAR, new RegExp("\\.ra-openbtn:hover \\{ " + TRIPLE_FB));
   assert.match(GEAR, new RegExp("\\.ra-periods button:hover, \\.ra-group button:hover, \\.ra-metric button:hover \\{ " + TRIPLE_FB));
   // the phone's moved actions in the settings card (iOS item 4g): buttons in a card, so this vocabulary, not the menu's
-  assert.match(GEAR, new RegExp("#rsettings \\.rs-pact:hover \\{ " + TRIPLE_FB));
+  assert.match(GEAR, new RegExp("#rsettings \\.rs-pact:hover:not\\(:disabled\\) \\{ " + TRIPLE_FB));   // Usage disabled with no reading takes no hover
   // …and the analytics toggles' SELECTED state keeps the VS Code blue, declared AFTER the hover so
   // equal specificity resolves to .on under the cursor too
   const hoverAt = GEAR.indexOf(".ra-periods button:hover");
@@ -111,6 +111,6 @@ test("ONE transition string + the :active press cue on every touched family", ()
   }
   assert.ok(GEAR.includes("#rs-keys-btn:active { transform: scale(0.96); }"));
   assert.ok(GEAR.includes(".ra-openbtn:active { transform: scale(0.96); }"));
-  assert.ok(GEAR.includes("#rsettings .rs-pact:active { transform: scale(0.96); }"));
+  assert.ok(GEAR.includes("#rsettings .rs-pact:active:not(:disabled) { transform: scale(0.96); }"));
   assert.ok(GEAR.includes(".ra-periods button:active, .ra-group button:active, .ra-metric button:active { transform: scale(0.96); }"));
 });

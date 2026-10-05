@@ -71634,6 +71634,11 @@ var bs=document.getElementById('ru-bysession');if(bs)bs.onclick=function(e){e.st
 window.__rompUsageClose=off;
 back.onclick=off;}
 pullFleet().then(openIt,openIt);};
+// whether the panel above has anything to open (iOS item 4g, 2026-10-05): openIt's own test, a non-empty tipHTML over the readings
+// in LAST, for the phone's Usage button in the settings card (gear.js usageAct). That button lives in the #f-settings document,
+// out of this script's reach, so the card asks this each time it opens: Usage enabled where a tap opens the panel, disabled with
+// a line saying there is no reading yet where it would open nothing
+window.__rompUsageReading=function(){return !!tipHTML();};
 // the API-health dot sits inside this cell (T301): a pointer arriving on the DOT gets the dot's own tip, not this one
 el.addEventListener('mouseenter',function(ev){var c=document.getElementById('rail-api');
 if(c&&ev&&typeof ev.clientX==='number'){var at=document.elementFromPoint(ev.clientX,ev.clientY);if(at&&(at===c||c.contains(at)))return;}showTip(ev);});

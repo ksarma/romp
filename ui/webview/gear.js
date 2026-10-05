@@ -132,7 +132,9 @@ var GEAR_HTML =
   // shown only on the web shell's phone layout (openSettings reads the shell's layout at each open; the desktop has all
   // three on its rail). A tap closes this card and asks the shell to run the bar button's own handler ({romp:'phoneAct', act}).
   '<div class=rs-pacts id=rs-pacts hidden>' +
-  '<button type=button class=rs-pact data-pact=usage title=Usage>' + PACT_USAGE_SVG + '<span>Usage</span></button>' +
+  // Usage carries its sub-line for the state with no reading yet (usageAct below shows it and disables the button)
+  '<button type=button class=rs-pact id=rs-pact-usage data-pact=usage title=Usage>' + PACT_USAGE_SVG +
+  '<span class=rs-pact-txt><span>Usage</span><span class=rs-pact-none id=rs-pact-usage-none hidden>No reading yet</span></span></button>' +
   '<button type=button class=rs-pact id=rs-pact-net data-pact=net title="Remote kernels">' + PACT_NET_SVG + '<span>Remote kernels</span></button>' +
   '<button type=button class=rs-pact data-pact=restart title="Restart kernel">' + PACT_RESTART_SVG + '<span>Restart kernel</span></button>' +
   '</div>' +
@@ -2143,6 +2145,18 @@ function initGear(post, opts) {
   // the web shell's phone layout, read from the shell's own predicate (kernel _LANDING_MOBILE_JS __rompMobileOn, the media
   // query the shell lays its bottom bar out by); false in VS Code (a cross-origin parent) and on a page of its own
   function phoneShell() { try { var w = window.parent; return w !== window && typeof w.__rompMobileOn === 'function' && !!w.__rompMobileOn(); } catch (e) { return false; } }
+  // Usage with no reading (iOS item 4g; romp-manager's call, explain rather than hide). The shell's usage panel opens only over a
+  // reading (kernel _LANDING_USAGE_JS: __rompUsagePanel's openIt returns on an empty tipHTML), so a tap on Usage before the
+  // first reading closed this card and opened nothing. The readings sit in the shell's usage script (its LAST), which this
+  // document cannot read; that script answers through __rompUsageReading, its own test over them, and the card asks at each
+  // open (as phoneShell asks for the layout): Usage enabled where the panel has something to open, disabled with its sub-line
+  // (No reading yet) where it has not. A disabled button takes no tap, so the card stays open and the line says why.
+  function usageAct() {
+    var b = document.getElementById('rs-pact-usage'), none = document.getElementById('rs-pact-usage-none'), has = false;
+    try { var w = window.parent; has = w !== window && typeof w.__rompUsageReading === 'function' && !!w.__rompUsageReading(); } catch (e) { has = false; }
+    if (b) b.disabled = !has;
+    if (none) none.hidden = has;
+  }
   function openSettings(tab, section) {
     if (raBack && !raBack.hidden) raHide();   // the Token usage panel up: down first, so the card is what this open shows, never the card under the layer (the read of the panel's close fix)
     if (tab === 'appearance' && !section) section = 'appearance';   // the former Appearance tab is General's section (T404)
@@ -2150,6 +2164,7 @@ function initGear(post, opts) {
     selectTab(tab);
     var pacts = document.getElementById('rs-pacts');
     if (pacts) pacts.hidden = !phoneShell();   // the phone's moved actions (iOS item 4g): the layout is read at each open, so a rotation across the breakpoint between opens is followed
+    if (pacts && !pacts.hidden) usageAct();   // ...and whether Usage has a reading to open, at each open too
     // Signal the SHELL first, then measure (the picker's order, adopted 2026-08-09): feedFull posts
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
@@ -2183,7 +2198,7 @@ function initGear(post, opts) {
     // shell opens (or the restart's splash) is never stacked under it, and the shell runs the handler the bottom bar's button
     // ran (kernel _LANDING_MOBILE_JS, the phoneAct message). Delegated to the row, which this card never rebuilds.
     var pacts = document.getElementById('rs-pacts');
-    if (pacts) pacts.addEventListener('click', function (e) { var b = e.target && e.target.closest ? e.target.closest('.rs-pact') : null; if (!b || !pacts.contains(b)) return; closeSettings(); try { window.parent.postMessage({ romp: 'phoneAct', act: b.getAttribute('data-pact') }, '*'); } catch (err) { /* no shell to ask */ } });
+    if (pacts) pacts.addEventListener('click', function (e) { var b = e.target && e.target.closest ? e.target.closest('.rs-pact') : null; if (!b || b.disabled || !pacts.contains(b)) return; closeSettings(); try { window.parent.postMessage({ romp: 'phoneAct', act: b.getAttribute('data-pact') }, '*'); } catch (err) { /* no shell to ask */ } });
     // the unread count the bar's opener used to draw (T290): the shell posts {romp:'logUnseen', n} on every
     // repaint of its Log and answers {romp:'logUnseenQuery'}; the label reads "Open log · N" (9+ past nine)
     var lgn = lg ? lg.querySelector('.rs-log-n') : null;

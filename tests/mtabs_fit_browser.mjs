@@ -22,6 +22,12 @@
 // handles by bringing its splash down and wearing the refusal's words on the rail's restart button, so the lab lives on.
 // Then the drop cue on the card's glyph (cfg.tunnelsDrop, a host that was up answering down): a drop with the card closed,
 // the glyph read at the card's next opening, and a drop with the card open, the glyph read while its flash runs.
+// Then Usage with no reading, on a page of its own at cfg.actsViewport: the shell's GET /usage/fleet (the main frame's) answers
+// no rows, so the shell holds no reading (the rail's readout, which renders over the readings, read empty as the premise); the
+// card opened from the bar's Settings, its Usage button read (disabled, its sub-line), a click at its centre, and after a
+// settle (an absence has no event to wait on) the card, the Usage modal and the phoneAct messages the shell heard read; then a
+// reading arrives (the lab's own GET /usage payload posted to the shell as the timeline posts it, the shell's later pulls let
+// through), the card closed and opened again, Usage read again, and one click on it, its effect read.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit.
 // Writes the readings as JSON to cfg.result and prints one `RESULT-FILE:` line naming it; exits 3 when the browser does not
@@ -100,6 +106,7 @@ const READ = () => {
   };
 };
 const read = (page) => page.evaluate("(" + READ.toString() + ")()");
+const settingsFrameOf = (page) => page.frames().find((f) => f !== page.mainFrame() && /\/settings(\?|$)/.test(f.url()));
 const frames = (page) => page.evaluate(() => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => res()))));
 
 // a phone page on one tab set, booted: the bar laid out, the boot splash gone (the panes' first ready, or its backstop), the webfont in
@@ -218,10 +225,12 @@ try {
         const dressOf = (el) => { const c = getComputedStyle(el), o = {}; DRESS.forEach((k) => { o[k] = c[k]; }); return o; };
         const ref = document.getElementById("rs-keys-btn");
         const dress = { ref: ref ? dressOf(ref) : null, acts: row ? Array.from(row.querySelectorAll("button")).map((b) => ({ act: b.getAttribute("data-pact"), cls: b.getAttribute("class"), dress: dressOf(b) })) : [] };
+        const ub = document.getElementById("rs-pact-usage"), un = document.getElementById("rs-pact-usage-none");
+        const usage = ub ? { disabled: ub.disabled, line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none", text: un.textContent.trim() } : null } : null;
         const net = document.getElementById("rs-pact-net");
         const glyph = net ? { cls: net.getAttribute("class"), color: getComputedStyle(net).color,
           nodes: ["rn-me", "rn-a", "rn-b"].map((k) => { const e = net.querySelector("." + k); return e ? { cls: e.getAttribute("class"), fill: getComputedStyle(e).fill } : null; }) } : null;
-        return { rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none", buttons, glyph, dress,
+        return { rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none", buttons, glyph, dress, usage,
                  card: cr ? { left: r(cr.left + ctx.left), right: r(cr.right + ctx.left), top: r(cr.top + ctx.top), bottom: r(cr.bottom + ctx.top) } : null,
                  tab: (document.querySelector("#rs-tabs .rs-tab.on") || {}).textContent || "" };
       }, lift);
@@ -305,6 +314,87 @@ try {
       acts.drop = drop;
     }
     out.acts = acts;
+    await context.close();
+  }
+  // Usage with no reading, then with one: the card asks the shell at each opening
+  {
+    let empty = true, fleet = 0;
+    const { context, page } = await boot(false, (pg) => pg.route("**/usage/fleet", (route) => {
+      if (route.request().frame() !== pg.mainFrame() || !empty) return route.continue();
+      fleet++;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) });
+    }));
+    const [w, h] = cfg.actsViewport;
+    await page.setViewportSize({ width: w, height: h });
+    await frames(page);
+    await sleep(cfg.settleMs || 100);
+    await frames(page);
+    const nr = { vp: [w, h] };
+    // the premise: the shell's boot pull got the empty answer, and its readout holds nothing
+    for (let i = 0; i < 150 && fleet < 1; i++) await sleep(100);
+    await frames(page);
+    nr.premise = { fleet, readout: await page.evaluate(() => { const r = document.getElementById("rail-usage"); return r ? r.innerHTML : null; }) };
+    await page.evaluate(() => { window.__mtabsActs = []; window.addEventListener("message", (e) => { if (e.data && e.data.romp === "phoneAct") window.__mtabsActs.push(e.data.act); }); });
+    const gear = (await read(page)).controls.find((c) => c.key === "settings");
+    if (!gear) throw new Error("no Settings on the bar (the no-reading leg)");
+    const openCard = async () => {
+      await page.mouse.click(gear.left + gear.w / 2, gear.top + gear.h / 2);
+      await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+      const sf = settingsFrameOf(page);
+      if (!sf) throw new Error("no settings frame after the click (the no-reading leg)");
+      await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+      await frames(page);
+      return sf;
+    };
+    const closeCard = async () => {
+      if (await page.evaluate(() => document.body.classList.contains("settings-open"))) {
+        await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+        await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+      }
+      await frames(page);
+    };
+    // the Usage button (by its act, so a tree without its state still yields a box to click), in the shell's coordinates
+    const usageNow = async (sf) => {
+      const lift = await page.evaluate(() => { const r = document.getElementById("f-settings").getBoundingClientRect(); return { left: r.left, top: r.top }; });
+      return sf.evaluate((ctx) => {
+        const r = (x) => Math.round(x * 100) / 100;
+        const b = document.querySelector("#rs-pacts [data-pact=usage]"), un = document.getElementById("rs-pact-usage-none");
+        if (!b) return null;
+        const c = b.getBoundingClientRect();
+        return { disabled: b.disabled, left: r(c.left + ctx.left), top: r(c.top + ctx.top), w: r(c.width), h: r(c.height),
+                 line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none", text: un.textContent.trim() } : null };
+      }, lift);
+    };
+    const shellNow = async (sf) => ({ settingsOpen: await page.evaluate(() => document.body.classList.contains("settings-open")),
+      cardHidden: await sf.evaluate(() => { const p = document.getElementById("rsettings"); return !p || p.hidden; }),
+      usage: await page.evaluate(() => { const b = document.getElementById("ru-back"); return !!b && b.classList.contains("on"); }),
+      acts: await page.evaluate(() => window.__mtabsActs.slice()) });
+    let sf = await openCard();
+    nr.first = await usageNow(sf);
+    if (nr.first) {
+      await page.mouse.click(nr.first.left + nr.first.w / 2, nr.first.top + nr.first.h / 2);
+      await frames(page);
+      await sleep(3 * (cfg.settleMs || 100));
+      await frames(page);
+      nr.tapped = await shellNow(sf);
+      nr.afterTap = await usageNow(sf);
+    }
+    await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) {} });
+    await closeCard();
+    // a reading arrives: the lab's own payload, posted as the timeline posts it; the shell's pulls go to the lab from here
+    empty = false;
+    await page.evaluate(async () => { const u = await (await fetch("/usage", { cache: "no-store" })).json(); window.postMessage({ romp: "usage", usage: u }, "*"); });
+    nr.arrived = await page.waitForFunction(() => { const r = document.getElementById("rail-usage"); return !!r && r.innerHTML !== ""; }, null, { timeout: 10000 }).then(() => true, () => false);
+    await frames(page);
+    sf = await openCard();
+    nr.second = await usageNow(sf);
+    if (nr.second) {
+      await page.mouse.click(nr.second.left + nr.second.w / 2, nr.second.top + nr.second.h / 2);
+      nr.opened = await page.waitForFunction(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip"); return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }, null, { timeout: 10000 }).then(() => true, () => false);
+      await frames(page);
+      nr.clicked = await shellNow(sf);
+    }
+    out.noReading = nr;
     await context.close();
   }
   // the desktop rail at each width: the actions pinned at its right end, shown ones only (the bell once the push script reveals it)
