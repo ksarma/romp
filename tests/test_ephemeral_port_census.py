@@ -48,8 +48,9 @@ these (unrecorded_bindings()). Such a binding takes no value away from the hop, 
 interval(), which reads a name with such a binding by the ints the census records for it (K bound to 7 and by K = f()
 reads 7). At a step, and anywhere inside one, interval() bounds a name only when the census records every binding of
 it, so that K is unbounded there. A star import, which binds names the module's text does not write, counts as such
-a binding of every name in its module. So anywhere but at a step the census reads the values the bindings it records
-give a name, and not a value a binding it does not record gives (WHAT IT CANNOT SEE). Inside a class Python reads a
+a binding of every name in its module. So anywhere but at a step the census reads each int a binding it records gives
+such a name, and not a value a binding it does not record gives, nor a None, a float or a string a binding it records
+gives, none of which interval() reads (WHAT IT CANNOT SEE gives examples). Inside a class Python reads a
 name written with two leading underscores and not two trailing ones as another (__K in class C is _C__K), so a binding
 of either spelling binds the name a read of the other sees: once such a name is written anywhere in a class statement,
 the census counts both spellings among the names with a binding it does not record, wherever the module reads them,
@@ -148,9 +149,14 @@ no binding here, and the census does not see the value such a setting gives it (
   one binding, to an int, signed or not; anywhere but at a randrange's step, a name with a binding the census does not
   record, as the span from the lowest int the census records for it to the highest, which holds each one's reading
   (with P bound to 1 and to 45001 and by P = f(), P is 1-45001 and P + 1 is 2-45002; an over-read where those ints lie
-  on both sides of the range and none in it); in offset_base(), below, a name the census records one int for, whatever
-  its other bindings; and, over bounded operands, str() and int(), a unary minus or plus (-7, +7), + - and *, and // and
-  % by a positive constant. It reads an unknown operand of % by a positive constant as 0 to the constant less one, and
+  on both sides of the range and none in it); in offset_base(), below, such a name by each int the census records for it
+  in turn, and a name every binding of which it records when they give one int; and, over bounded operands, str() and
+  int(), a unary minus or plus (-7, +7), + - and *, and // and % by a divisor whose every value is positive, of one
+  value or of several: // as the span from the least to the greatest quotient of an end of its left operand by an end of
+  its divisor (90002 // K, with K bound to 2, to 3 and by K = f(), is 30000-45001), % by one value as the remainder
+  where the left operand is one value and as 0 to the divisor less one otherwise, and % by a divisor of several values
+  as 0 to its highest value less one (50000 % K, with K bound to 60000, to 70000 and by K = f(), is 0-69999). It reads
+  an unknown operand of % by such a divisor as 0 to the divisor's highest value less one, and
   a call to randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n) over bounded arguments
   (random's and secrets', by the callee's name; a randrange's step may be unbounded, below) as the values it can
   return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does random.randint(40000,
@@ -192,9 +198,11 @@ no binding here, and the census does not see the value such a setting gives it (
   holds, by keyword too (random.randrange(start=30000 + os.getpid() % 5000, stop=30000, **kw)). Each reading holds
   every value random's randrange can return for the call, except where a name it takes a value for is also set with no
   binding form, or a name called Random or SystemRandom holds an instance (both in WHAT IT CANNOT SEE), or a binding
-  the census does not record gives a name in its start or stop a value it does not read (BOUND), and can hold values
-  it never returns (a step of 7 returns values 7 apart); at a step it takes a value for a name only when the census
-  records every binding of it.
+  the census does not record gives a name in its start or stop a value it does not read (BOUND), or a binding the
+  census records gives such a name a value interval() does not read and the call takes: a None, which randrange takes
+  as a stop left empty, a float, which randrange takes on 3.10 and 3.11 and int() takes everywhere, or a digit string,
+  which int() takes (each in WHAT IT CANNOT SEE); and it can hold values it never returns (a step of 7 returns values 7
+  apart). At a step it takes a value for a name only when the census records every binding of it.
   Where Python refuses a call for every value its start, stop and step can take, the reading still stands, an over-read:
   a step of 0 is read with the steps that are never negative (random.randrange(40000, 50000, 0) is 40000-49999); a
   positive step from a start never below its stop, or a negative one from a start never above it, is read as a span with
@@ -205,10 +213,12 @@ no binding here, and the census does not see the value such a setting gives it (
   over generated calls. A sum or difference with an unbounded operand counts when one of its operands alone is a
   constant expression (one interval() bounds with no unknown in it) whose value is in the range, found through str(),
   int() and a unary plus and down a chain of sums and differences: 40000 + i is built on 40000, and so is 40000 * 1 + i
-  (offset_base()); one with no such operand (base + i) is not read. A name in that operand counts when the census
-  records one value for it, an int, whatever bindings it does not record (BASE + i, with BASE bound to 40000 and by
-  BASE = f(), is built on 40000). interval() reads a bool as the int it is, True as 1 and False as 0
-  (random.randrange(True, 50000) is 1-49999), and a float not at all.
+  (offset_base()); one with no such operand (base + i) is not read. A name in that operand with a binding the census
+  does not record is read by each int the census records for it in turn, a value of another kind adding nothing:
+  BASE + i, with BASE bound to 40000 and by BASE = f(), or to 40000, to 50000 and by BASE = f(), or to 40000, to "x"
+  and by BASE = f(), is built on 40000, and so is BASE * 1 + i. A name every binding of which the census records
+  counts when those bindings give one int (BASE bound to 40000, or twice to 40000). interval() reads a bool as the int
+  it is, True as 1 and False as 0 (random.randrange(True, 50000) is 1-49999), and a float not at all.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -272,8 +282,9 @@ these turns its plant red, and the example leaves this list.
   inside a display that is the position's value or in a loop's sequence (P = "N", then {"ports": [P]}, the census
   recording no int for P; P bound to 1 and to N, every binding recorded, then for host, port in (("h", P),)), an
   f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a sum or difference in the
-  range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__ replaced at run time); a
-  rule of its own may still read such a value where it is written;
+  range (base + i, N * k; BASE + i with BASE bound to N and to M, every binding recorded), and a run-time substitution
+  into code text (a template's __VALUE__ replaced at run time); a rule of its own may still read such a value where it
+  is written;
   an unbound random method spelled on anything but a name or attribute called Random or SystemRandom, whose instance
   then fills start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
   a name or attribute called Random or SystemRandom that holds an instance (Random = random.Random(), then
@@ -289,7 +300,18 @@ these turns its plant red, and the example leaves this list.
   f() returns 50000; and with K bound to 7 and by K = f(), 20000 + K % 20000 reads 20007, though K % 20000 can be any
   value from 0 to 19999;
   a float where the census reads an int, which a random call takes on 3.10 and 3.11 (random.randrange(40000.0, 50000))
-  and int() takes everywhere (int(45001.0));
+  and int() takes everywhere (int(45001.0)), a float bound to a name beside an int and a binding the census does not
+  record included, where the name reads by its ints alone: with E bound to 1000, to 45010.0 and by E = f(),
+  random.randrange(45001, E) reads E as 1000 and is not counted, though on 3.10 and 3.11 CPython returns values from
+  45001 to 45009 for E = 45010.0, and with P bound to 7, to 45001.0 and by P = f(), int(P) reads 7;
+  a digit string bound to a name beside an int and a binding the census does not record, which int() takes, where the
+  name reads by its ints alone: with E bound to 1000, to "45010" and by E = f(), random.randrange(45001, int(E)) reads
+  E as 1000 and is not counted, though CPython returns values from 45001 to 45009 for E = "45010";
+  a name bound to None at a randrange's stop, which Python takes as a stop left empty, alone, which interval() does not
+  read (E = None, then random.randrange(45001, E), which CPython reads as random.randrange(45001)), or beside an int
+  and a binding the census does not record, where the name reads by its ints alone (with F bound to 1000, to None and
+  by F = f(), random.randrange(45001, F) reads F as 1000 and is not counted, though CPython returns values from 0 to
+  45000 for F = None);
   a random call with an argument passed through a * sequence (random.randrange(*(N, M)), random.randint(*[N, M]));
   a randrange with its stop left empty and a step that is 1 only at run time, which Python takes (ONE = 1, then
   random.randrange(start=50000, step=ONE); random.randrange(50000, step=+1));
@@ -367,6 +389,7 @@ Synthetic: reads the tree only; no socket, no kernel, no subprocess.
 """
 import ast
 import io
+import itertools
 import os
 import random
 import re
@@ -587,8 +610,10 @@ def _signed_number(v):
 
 def interval(node, bound=None, steps=None):
     """(lo, hi, computed) for an int expression the census can bound, else None: constants, a unary minus or plus,
-    + - * // and % over them, a name (below), str() or int() around one, an unknown operand of % by a positive constant
-    read as 0 to the constant less one, and randint(a, b), randrange(stop), randrange(start, stop[, step]) and
+    + - and * over them, // and % by a divisor whose every value is positive (// by the least and greatest quotient of
+    their ends, so 90002 // K, with K bound to 2, to 3 and by K = f(), is 30000-45001; % by a divisor of several values
+    as 0 to its highest value less one), a name (below), str() or int() around one, an unknown operand of % by such a
+    divisor read as 0 to its highest less one, and randint(a, b), randrange(stop), randrange(start, stop[, step]) and
     randbelow(n) over bounded arguments read as the values each can return, each argument given by position or by its
     parameter's name (_random_args()). randrange(start, stop[, step]) is read by its step's sign, the step bounded or
     not (a step left out is 1, and one a ** mapping can give is unbounded): start's lowest value to stop's highest less
@@ -599,8 +624,9 @@ def interval(node, bound=None, steps=None):
     anywhere inside one (`bound` when not given): the span from the lowest of them to the highest when each is an int,
     and no reading otherwise. literal() hands it as `steps` the one value of each name every binding of which the census
     records, so at a step a name bound to 7 and by K = f() is one it does not bound, and as `bound` those values and,
-    for each name with a binding the census does not record, the ints the census records for it (BOUND), so elsewhere
-    that name reads 7. offset_base() hands it every value the census records."""
+    for each name with a binding the census does not record, the ints the census records for it, a None, a float or
+    a string among its values adding nothing (BOUND), so elsewhere that name reads 7. offset_base() hands it every value
+    the census records, each name with a binding the census does not record holding one of its ints at a time."""
     bound = bound or {}
     steps = bound if steps is None else steps
     if isinstance(node, ast.Constant) and isinstance(node.value, int):
@@ -640,8 +666,8 @@ def interval(node, bound=None, steps=None):
     if isinstance(node, ast.BinOp):
         right = interval(node.right, bound, steps)
         left = interval(node.left, bound, steps)
-        if isinstance(node.op, ast.Mod) and right and right[0] == right[1] and right[0] > 0 and left is None:
-            return 0, right[0] - 1, True
+        if isinstance(node.op, ast.Mod) and right and right[0] > 0 and left is None:
+            return 0, right[1] - 1, True            # an unknown % a positive divisor: 0 to its highest less one
         if left is None or right is None:
             return None
         (a, b, ca), (c, d, cb) = left, right
@@ -652,9 +678,12 @@ def interval(node, bound=None, steps=None):
         if isinstance(node.op, ast.Mult):
             ends = (a * c, a * d, b * c, b * d)
             return min(ends), max(ends), ca or cb
-        if isinstance(node.op, (ast.FloorDiv, ast.Mod)) and c == d and c > 0:
+        if isinstance(node.op, (ast.FloorDiv, ast.Mod)) and c > 0:   # a divisor never below 1, one value or several
             if isinstance(node.op, ast.FloorDiv):
-                return a // c, b // c, ca or cb
+                ends = (a // c, a // d, b // c, b // d)   # monotonic in a and in x, so its ends are at the corners
+                return min(ends), max(ends), ca or cb
+            if c != d:
+                return 0, d - 1, ca or cb
             return (a % c, b % c, ca or cb) if a == b else (0, c - 1, ca or cb)
     return None
 
@@ -707,22 +736,34 @@ def _random_args(call):
     return out
 
 
-def offset_base(node, bound=None):
+def _each_value(node, bound, each):
+    """`bound` once for every way the names of `each` that `node` reads can each take one of their values there (just
+    `bound` when it reads none), each such name holding that one value."""
+    names = sorted({n.id for n in ast.walk(node) if isinstance(n, ast.Name) and each.get(n.id)})
+    for vals in itertools.product(*(sorted(set(each[k])) for k in names)):
+        yield {**bound, **{k: [ast.Constant(v)] for k, v in zip(names, vals)}}
+
+
+def offset_base(node, bound=None, each=None):
     """The constant in the range that a sum or difference with an unbounded operand is built on (40000 + i: 40000), read
     through str(), int() and a unary plus and down a chain of sums and differences; None when no constant operand alone
-    is in the range. literal() hands it every value the census records for each name (BOUND), so a name it records one
-    int for counts here whatever its other bindings: BASE + i, with BASE bound to 40000 and by BASE = f(), is built on
-    40000."""
+    is in the range. literal() hands it as `bound` every value the census records for each name (BOUND), so a name
+    every binding of which it records counts when those values are one int (BASE bound to 40000, or twice to 40000);
+    and as `each` the ints it records for each name with a binding it does not record, each of which the operand is
+    read with in turn, a value of another kind adding nothing: BASE + i, with BASE bound to 40000 and by BASE = f(), or
+    to 40000, to 50000 and by BASE = f(), or to 40000, to "x" and by BASE = f(), is built on 40000."""
+    bound, each = bound or {}, each or {}
     if isinstance(node, ast.Call) and _callee(node.func) in ("str", "int") and len(node.args) == 1 and not node.keywords:
-        return offset_base(node.args[0], bound)
+        return offset_base(node.args[0], bound, each)
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd):
-        return offset_base(node.operand, bound)
+        return offset_base(node.operand, bound, each)
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
         for side in (node.left, node.right):
-            iv = interval(side, bound)
-            if iv and not iv[2] and in_range(iv[0]):
-                return iv[0]
-            got = offset_base(side, bound)
+            for table in _each_value(side, bound, each):
+                iv = interval(side, table)
+                if iv and not iv[2] and in_range(iv[0]):
+                    return iv[0]
+            got = offset_base(side, bound, each)
             if got is not None:
                 return got
     return None
@@ -954,7 +995,7 @@ class _Scan:
             elif iv and not iv[2] and in_range(iv[0]):
                 self._record(node, iv[0], why + ", a constant expression")
             elif iv is None:
-                base = offset_base(node, self.bound)
+                base = offset_base(node, self.bound, self.each)
                 if base is not None:
                     self._record(node, base, "%s, an offset from %d" % (why, base))
 
@@ -995,15 +1036,16 @@ class _Scan:
         # of which the census records, by its one value, and no name beside a star import, which binds names unseen.
         # Anywhere else: such a name too, and each name with a binding the census does not record (every name beside a
         # star import) by the ints the census records for it, their union. The hop, a host, a template and
-        # offset_base read self.bound, every value recorded.
+        # offset_base read self.bound, every value recorded, and offset_base reads such a name by each of those ints in
+        # turn (self.each).
         loose, star = unrecorded_bindings(tree, self.recorded)
         loose |= self.loose
         self.steps = {k: v for k, v in self.bound.items() if not star and k not in loose and len(v) == 1}
-        self.reads = dict(self.steps)
+        self.reads, self.each = dict(self.steps), {}
         for k, v in self.bound.items():
             ints = [x for x in v if isinstance(x, ast.Constant) and isinstance(x.value, int)]
             if (star or k in loose) and ints:
-                self.reads[k] = ints
+                self.reads[k], self.each[k] = ints, [x.value for x in ints]
         for n in ast.walk(tree):
             if isinstance(n, ast.Dict):
                 for k, v in zip(n.keys, n.values):
@@ -1606,7 +1648,15 @@ class Plants(unittest.TestCase):
                  % (lo - 8000, 9000), "computed into %d-%d" % (lo - 8000, lo + 999), LOW),
                 ("a sum built on a constant in the range", 'for i in range(3):\n    port = %d + i\n' % lo, "an offset from %d" % lo, lo),
                 ("a sum built on a name bound to one", 'BASE = %d\nsrv.bind(("127.0.0.1", BASE + worker))\n' % lo,
-                 "an offset from %d" % lo, lo)):
+                 "an offset from %d" % lo, lo),
+                ("// by a divisor of several values",
+                 'port = %d // (2 + os.getpid() %% 2)                # %d opens the file\n' % (2 * _n(), _n()),
+                 "computed into %d-%d" % (2 * _n() // 3, _n()), LOW),
+                ("% by a divisor of several values", 'port = %d %% (%d + os.getpid() %% 5)\n' % (hi, hi + 10000),
+                 "computed into 0-%d" % (hi + 10003), LOW),
+                ("an unknown % a divisor of several values",
+                 'port = 20000 + os.getpid() %% (20000 + os.getpid() %% 2)                # %d opens the file\n' % _n(),
+                 "computed into 20000-40000", LOW)):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why, n=first)
         self.assertGreen("test_plant.py", 'port = random.randint(1, 6)\n')
@@ -2243,10 +2293,19 @@ class Plants(unittest.TestCase):
         bound to 45001, to "x" and by P = f() reads 45001 inside a display. The two examples WHAT IT CANNOT SEE gave at
         3d5b30b85 (K = 7, then K = f() or K *= -1) are red, and so is a step beside a star import. Anywhere inside a
         step the name is unbounded too: random.randrange(1000, 40000, -K) reads 1000-39999, the span holding both signs,
-        and random.randrange(40000, 1000, K) + 0, a randrange inside arithmetic, reads 1001-40000. offset_base() reads
-        every value the census records, as it did: BASE + worker, with BASE bound to 40000 and by BASE = f(), or beside
-        a star import, is an offset from 40000. The values a binding the census does not record gives are not read (WHAT
-        IT CANNOT SEE, with green plants)."""
+        and a randrange whose step is K reads 1001-40000 inside arithmetic (+ 0), under a unary plus, in int() and in
+        str(), 1000-39999 under a unary minus (-random.randrange(-1000, -40000, K)), and 0-39999 as randbelow's bound,
+        where a reading that gave the nested call's step the ints the census records reports nothing. As the divisor of
+        // or % such a name bound to two ints reads by the span between them, each value positive: 90002 // K, with
+        K bound to 2, to 3 and by K = f(), reads 30000-45001, random.randrange(40000, 100000 // K) reads 40000-49999,
+        50000 % K, with K bound to 60000, to 70000 and by K = f(), reads 0-69999, and 20000 + os.getpid() % K, with K
+        bound to 20000, to 30000 and by K = f(), reads 20000-49999, each red, where 3cdcef0ae read // and % only by a
+        divisor of one value and reported nothing. offset_base() reads such a name by each int the census records for
+        it, in turn: BASE + worker, with BASE bound to 40000 and by BASE = f(), or beside a star import, or to 40000, to
+        50000 and by BASE = f(), or to 1000, to 40000 and by BASE = f(), or to 40000, to "x" and by BASE = f(), is an
+        offset from 40000, and so is BASE * 1 + worker with BASE bound to 40000, to 50000 and by BASE = f(); 3cdcef0ae
+        counted only the first two. The values a binding the census does not record gives are not read, nor a None, a
+        float or a string a binding it records gives such a name (WHAT IT CANNOT SEE, with green plants)."""
         lo, hi, n = LOW + 7232, LOW + 17232, _n()                                  # 40000, 50000 and 45001, built at run time
         forms = UNRECORDED_FORMS + (UNRECORDED_FORMS_312 if sys.version_info >= (3, 12) else ())
         for label, lines in forms:
@@ -2297,10 +2356,46 @@ class Plants(unittest.TestCase):
                  "computed into 1000-%d" % (lo - 1), LOW),
                 ("a randrange in arithmetic, its step the name",
                  'K = 7\nK = f()\nport = random.randrange(%d, 1000, K) + 0\n' % lo, "computed into 1001-%d" % lo, LOW),
+                ("a randrange under a unary minus, its step the name",
+                 'K = 7\nK = f()\nport = -random.randrange(-1000, -%d, K)\n' % lo, "computed into 1000-%d" % (lo - 1),
+                 LOW),
+                ("a randrange under a unary plus, its step the name",
+                 'K = 7\nK = f()\nport = +random.randrange(%d, 1000, K)\n' % lo, "computed into 1001-%d" % lo, LOW),
+                ("a randrange in int(), its step the name",
+                 'K = 7\nK = f()\nport = int(random.randrange(%d, 1000, K))\n' % lo, "computed into 1001-%d" % lo, LOW),
+                ("a randrange in str(), its step the name",
+                 'K = 7\nK = f()\nport = str(random.randrange(%d, 1000, K))\n' % lo, "computed into 1001-%d" % lo, LOW),
+                ("a randrange as randbelow's bound, its step the name",
+                 'K = 7\nK = f()\nport = secrets.randbelow(random.randrange(%d, 1000, K))\n' % lo,
+                 "computed into 0-%d" % (lo - 1), LOW),
+                ("the divisor of // bound to two ints",
+                 'K = 2\nK = 3\nK = f()\nrow = {"port": %d // K}                # %d opens the file\n' % (2 * n, n),
+                 "the key 'port', computed into %d-%d" % (2 * n // 3, n), LOW),
+                ("the divisor of // bound to two ints, in a randrange's stop",
+                 'K = 2\nK = 3\nK = f()\nport = random.randrange(%d, %d // K)\n' % (lo, 2 * hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("the divisor of % bound to two ints",
+                 'K = %d\nK = %d\nK = f()\nrow = {"port": %d %% K}\n' % (hi + 10000, hi + 20000, hi),
+                 "the key 'port', computed into 0-%d" % (hi + 20000 - 1), LOW),
+                ("the divisor of % bound to two ints, its other operand unknown",
+                 'K = 20000\nK = 30000\nK = f()\nport = 20000 + os.getpid() %% K          # %d opens the file\n' % n,
+                 "computed into 20000-49999", LOW),
                 ("a sum built on a name with another binding",
                  'BASE = %d\nBASE = f()\nsrv.bind(("127.0.0.1", BASE + worker))\n' % lo, "an offset from %d" % lo, lo),
                 ("a sum built on a name beside a star import",
-                 'from m import *\nBASE = %d\nsrv.bind(("127.0.0.1", BASE + worker))\n' % lo, "an offset from %d" % lo, lo)):
+                 'from m import *\nBASE = %d\nsrv.bind(("127.0.0.1", BASE + worker))\n' % lo, "an offset from %d" % lo, lo),
+                ("a sum built on a name bound to two ints",
+                 'BASE = %d\nBASE = %d\nBASE = f()\nsrv.bind(("127.0.0.1", BASE + worker))\n' % (lo, hi),
+                 "an offset from %d" % lo, lo),
+                ("a sum built on a name bound to an int below the range and to one in it",
+                 'BASE = 1000\nBASE = %d\nBASE = f()\nsrv.bind(("127.0.0.1", BASE + worker))\n' % lo,
+                 "an offset from %d" % lo, lo),
+                ("a sum built on a name bound to an int and to a string",
+                 'BASE = %d\nBASE = "x"\nBASE = f()\nsrv.bind(("127.0.0.1", BASE + worker))\n' % lo,
+                 "an offset from %d" % lo, lo),
+                ("a sum built on a product of a name bound to two ints",
+                 'BASE = %d\nBASE = %d\nBASE = f()\nsrv.bind(("127.0.0.1", BASE * 1 + worker))\n' % (lo, hi),
+                 "an offset from %d" % lo, lo)):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why, n=first)
 
@@ -2402,6 +2497,14 @@ class Plants(unittest.TestCase):
                  'port = random.randrange(%d, 1000, K)\n' % n),
                 ("a float where the census reads an int", "test_x.py",
                  'port = random.randrange(%d.0, %d)\nrow = {"port": int(%d.0)}\n' % (n, n + 9, n)),
+                ("a float bound to a name beside an int and a binding the census does not record", "test_x.py",
+                 'E = 1000\nE = %d.0\nE = f()\nport = random.randrange(%d, E)\nP = 7\nP = %d.0\nP = f()\n'
+                 'row = {"port": int(P)}\n' % (n + 9, n, n)),
+                ("a digit string bound to a name beside an int and a binding the census does not record", "test_x.py",
+                 'E = 1000\nE = "%d"\nE = f()\nport = random.randrange(%d, int(E))\n' % (n + 9, n)),
+                ("a name bound to None at a randrange's stop, alone or beside an int and a binding it does not record",
+                 "test_x.py", 'E = None\nport = random.randrange(%d, E)\nF = 1000\nF = None\nF = f()\n'
+                 'port = random.randrange(%d, F)\n' % (n, n)),
                 ("a random call with an argument passed through a * sequence", "test_x.py",
                  'port = random.randrange(*(%d, %d))\nport = random.randrange(%d, *[%d])\nport = random.randint(*[%d, %d])\n'
                  % (n, n + 9, n, n + 9, n, n + 9)),
@@ -2427,6 +2530,8 @@ class Plants(unittest.TestCase):
                  'port = random.randrange(%d, **kw)\n' % (LOW - 2768)),
                 ("an unbounded computed port with no constant of a sum in the range", "test_x.py",
                  'port = base + i\nother_port = %d * k\n' % n),
+                ("a sum on a name bound to two ints, every binding recorded", "test_x.py",
+                 'BASE = %d\nBASE = %d\nsrv.bind(("127.0.0.1", BASE + worker))\n' % (n, n + 9)),
                 ("a host that is no loopback or wildcard literal", "test_x.py",
                  's.connect(("TESTHOST", %d))\nconn = HTTPConnection(self.host, %d)\n' % (n, n)),
                 ("a name bound only to the empty string, in a tuple", "test_x.py", 'H = ""\ns.bind((H, %d))\n' % n),
@@ -2697,7 +2802,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
         were. A step name is bound to one int and takes STEPS, its int among them (1 or 7, -1 or -7): at a step THE RULE
         reads such a name as unbounded, so it takes any value. A start or stop name is bound to several ints: one drawn
         from an interval in the relation, that int less 1000 and plus 1000, and the interval's ends and a seeded value
-        inside it. It takes those values alone, since THE RULE reads a start or stop by the values its recorded bindings
+        inside it. It takes those values alone, since THE RULE reads a start or stop by the ints its recorded bindings
         give, and not a value a binding the census does not record gives (WHAT IT CANNOT SEE). The step of a start or
         stop case is drawn from STEP_SHAPES, and each case's form from FORMS. After them, the same four cases per
         relation for a name Python mangles in a class, written each way MANGLED_FORMS writes it, drawn on after the
@@ -2758,7 +2863,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
         three times: with its draw pinned to the lowest and to the highest (_RandrangeEnds), and with a seeded draw.
         Every value returned must lie in the span the census reports, and where the census reports nothing no value
         may lie in the range. That holds for a start or stop name with a binding the census does not record too: it
-        takes the values its recorded bindings give, and THE RULE reads them. The failure names the calls outside by
+        takes the ints its recorded bindings give, and THE RULE reads them. The failure names the calls outside by
         shape, with the first of each."""
         rng = random.Random(self.SEED)
         cases = [("overlapping, start higher", (30000, 32999), (20000, 30999), ("0 - 7", (-7, -7)), (), {}),
