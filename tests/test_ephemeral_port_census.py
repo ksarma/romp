@@ -2572,8 +2572,9 @@ class Plants(unittest.TestCase):
         bound to 45001, to "x" and by P = f() reads 45001 inside a display. The two examples WHAT IT CANNOT SEE gave at
         3d5b30b85 (K = 7, then K = f() or K *= -1) are red, and so is a step beside a star import. Anywhere inside a
         step the name is unbounded too: random.randrange(1000, 40000, -K) reads 1000-39999, the span holding both signs,
-        and a randrange whose step is K reads 1001-40000 inside arithmetic (+ 0), under a unary plus, in int() and in
-        str(), 1000-39999 under a unary minus (-random.randrange(-1000, -40000, K)), and 0-39999 as randbelow's bound,
+        and a randrange whose step is K reads 1001-40000 inside arithmetic as either operand (+ 0, and 0 +), under a
+        unary plus, in int() and in str(), 40000-78999 subtracted from 80000, 1000-39999 under a unary minus
+        (-random.randrange(-1000, -40000, K)), and 0-39999 as randbelow's bound,
         where a reading that gave the nested call's step the ints the census records reports nothing. As the divisor of
         // or % such a name bound to two ints reads by the span between them, each value positive: 90002 // K, with
         K bound to 2, to 3 and by K = f(), reads 30000-45001, random.randrange(40000, 100000 // K) reads 40000-49999,
@@ -2637,6 +2638,11 @@ class Plants(unittest.TestCase):
                  "computed into 1000-%d" % (lo - 1), LOW),
                 ("a randrange in arithmetic, its step the name",
                  'K = 7\nK = f()\nport = random.randrange(%d, 1000, K) + 0\n' % lo, "computed into 1001-%d" % lo, LOW),
+                ("a randrange as arithmetic's right operand, its step the name",
+                 'K = 7\nK = f()\nport = 0 + random.randrange(%d, 1000, K)\n' % lo, "computed into 1001-%d" % lo, LOW),
+                ("a randrange subtracted, its step the name",
+                 'K = 7\nK = f()\nport = %d - random.randrange(%d, 1000, K)\n' % (2 * lo, lo),
+                 "computed into %d-%d" % (lo, 2 * lo - 1001), lo),
                 ("a randrange under a unary minus, its step the name",
                  'K = 7\nK = f()\nport = -random.randrange(-1000, -%d, K)\n' % lo, "computed into 1000-%d" % (lo - 1),
                  LOW),
@@ -2679,6 +2685,33 @@ class Plants(unittest.TestCase):
                  "an offset from %d" % lo, lo)):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why, n=first)
+
+    def test_the_step_table_reaches_a_randrange_nested_anywhere(self):
+        """interval() reads a name at a randrange's step, and anywhere inside one, by `steps`, which holds a name only
+        when the census records every binding of it, each to an int, and every place interval() reads a nested
+        expression hands `steps` on. Here K is bound to 7 and to -7.0, every binding recorded (CPython 3.10 and 3.11
+        take -7.0 as a step, so random.randrange(40000, 1000, K) returns values from 1001 to 40000 there), so `steps`
+        leaves K unbounded while the census's other table reads it as 7. Each red plant nests the call in one such place:
+        as a sum's right operand (0 + the call) and its left one (the call + 0), in int() and in str(), as randbelow's
+        bound, under a unary plus and a unary minus, in a conditional expression, and under a :=. Each is red under a
+        mutant that hands the other table on at its place, which reads the call as 40000-999 and reports nothing. A
+        step name with a binding the census does not record cannot pin these places, since the census also reads a
+        value that reads such a name with the name left out of both tables (BOUND), which leaves it unbounded at the
+        step whichever table reaches it."""
+        lo = LOW + 7232                                                            # 40000, built at run time
+        call, k = "random.randrange(%d, 1000, K)" % lo, "K = 7\nK = -7.0\n"
+        for label, written, why in (
+                ("a sum's right operand", "0 + " + call, "computed into 1001-%d" % lo),
+                ("a sum's left operand", call + " + 0", "computed into 1001-%d" % lo),
+                ("int()", "int(%s)" % call, "computed into 1001-%d" % lo),
+                ("str()", "str(%s)" % call, "computed into 1001-%d" % lo),
+                ("randbelow's bound", "secrets.randbelow(%s)" % call, "computed into 0-%d" % (lo - 1)),
+                ("a unary plus", "+" + call, "computed into 1001-%d" % lo),
+                ("a unary minus", "-random.randrange(-1000, -%d, K)" % lo, "computed into 1000-%d" % (lo - 1)),
+                ("a conditional expression", call + " if x else 0", "computed into 0-%d" % lo),
+                ("a :=", "(P := %s)" % call, "computed into 1001-%d" % lo)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", k + "port = %s\n" % written, why, n=LOW)
 
     def test_a_binding_form_the_census_does_not_classify_counts_as_one_it_does_not_record(self):
         """unrecorded_bindings() counts a field that holds a string, in a node type or field BINDING_FIELDS does not
@@ -3311,8 +3344,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
     to several ints, a name with a binding it does not record under % by a constant, a stop name bound to None, int() of
     a name bound to strings and floats, and a private name read in a method, bound under its mangled spelling; and the
     light check at the pushed head after them with a start or stop name bound to ints beside a string, a float or
-    None, with a divisor bound to ints of both signs, with each operator the census reads, and with int() of a
-    constant)."""
+    None, with a divisor bound to ints of both signs, with each operator the census reads, with int() of a constant,
+    and with a call that is a sum's right operand, its step a name with a binding the census does not record)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
@@ -3586,7 +3619,11 @@ class RandrangeAgainstCPython(unittest.TestCase):
         not, a conditional expression and a :=), over an operand written as an interval's text, taking the value
         Python's own operator gives at each end of that interval and at a seeded value between. Last, per relation, a
         start and a stop written as int() of a constant (by turns a digit string, one with spaces, a float with a
-        fraction, bytes, and a digit string with a separator), taking CPython's int() of it."""
+        fraction, bytes, and a digit string with a separator), taking CPython's int() of it; and, per relation, in a
+        call written as the right operand of 0 + random.randrange(...), in a form with no ** mapping, twice a step name
+        bound to an int (positive, then negative) and by a call, taking STEPS as _mixed()'s step names do, and once a
+        step name bound to an int and to it negated as a float, every binding recorded, taking both (CPython 3.10 and
+        3.11 take the float as a step; later ones raise TypeError)."""
         rng, out = random.Random(self.SEED + 4), []
 
         def near():
@@ -3674,6 +3711,20 @@ class RandrangeAgainstCPython(unittest.TestCase):
                 out.append(("the %s, int() of a constant" % role, [int(ast.literal_eval(text))] if role == "start" else s,
                             e if role == "start" else [int(ast.literal_eval(text))], rng.choice(self.STEP_SHAPES),
                             rng.choice(self.FORMS), {role: "int(%s)" % text}))
+        unmapped = tuple(f for f in self.FORMS if not any(p.startswith("**") for p in f))
+        for relation in self.RELATIONS:
+            for sign in (1, -1):
+                s, e = self._shape(relation, near(), rng)
+                name, v = "XK%d" % len(out), sign * rng.choice((1, 7))
+                out.append(("a step name with a binding the census does not record, the call the right operand of a sum",
+                            s, e, (name, sorted(set(self.STEPS) | {v})), rng.choice(unmapped),
+                            {"pre": ["%s = %d" % (name, v), "%s = f()" % name], "callee": "0 + random.randrange("}))
+            s, e = self._shape(relation, near(), rng)
+            name, v = "XF%d" % len(out), rng.choice((1, 7))
+            out.append(("a step name bound to an int and to it negated as a float, the call the right operand of a sum",
+                        s, e, (name, [v, -float(v)]), rng.choice(unmapped),
+                        {"pre": ["%s = %d" % (name, v), "%s = -%d.0" % (name, v)], "callee": "0 + random.randrange(",
+                         "raises": (ValueError, TypeError)}))
         return out
 
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
@@ -3696,7 +3747,9 @@ class RandrangeAgainstCPython(unittest.TestCase):
         start or stop name every binding of which the census records, bound to several ints and to a string, a float
         or None, a start or stop that is a number // a divisor name, or a sum on an unknown % one, the name bound to
         ints of both signs, a start or stop written with each operator the census reads beyond + - * // and % and the
-        unary minus and plus, and a start or stop that is int() of a constant. The census reads them as one module,
+        unary minus and plus, a start or stop that is int() of a constant, and a step name with a binding the census
+        does not record, or bound to an int and to a float, in a call that is a sum's right operand. The census reads
+        them as one module,
         each call on a line of its own after the lines that bind its names (in the class's body or a method where the
         call reads the name there). For each call the test
         samples start and stop at each end of their intervals and at a seeded value between (or each value they take),
