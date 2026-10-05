@@ -76651,7 +76651,10 @@ def _landing():
             # phone, in WebKit and Firefox, they ran past the filter bar's content edge below 414px of viewport, past the panel
             # below 401px and off the screen below 388 to 389px; in Chromium below 435, 422 and 409px. A phone now gets three
             # columns from about 370px and two below it (tests/test_log_filter_grid_served.py measures them, and that every chip
-            # still holds its label).
+            # still holds its label). The 96px holds the widest chip in Inter, the panel's font. In the system fallback font
+            # (before Inter loads, or where web fonts are blocked) "follow-up failed" needs about 99px: the label still stays
+            # inside its pill and its cell, and eats up to about 3px of the right padding. Raising the two widths to fit it would
+            # move the phone's step from two columns to three from about 370px to about 382px, so they stay at 96px.
             "#rerr-fgrid{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(max(var(--rerr-chip-col),20% - 5px),1fr));gap:5px}"
             ".rerr-fbtn{cursor:pointer;user-select:none;text-align:center}"
             ".rerr-fbtn.off{opacity:0.35;border-style:dashed}"
