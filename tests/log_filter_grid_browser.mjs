@@ -15,10 +15,11 @@
 //
 // At each size it reads: the viewport's width and height and the document's scroll width (a page that scrolls sideways),
 // the panel's box and its inner top and bottom (its border stripped: the toggles must end above that bottom, since the
-// filter bar grows with the grid and so bounds nothing vertically), the list's box (the entries left under the grid), the
-// filter bar's boxes (the bar's content box: its padding stripped), the grid's box and its computed column tracks, and for
-// every toggle its box, the width its label needs (the text's own width plus the chip's padding and border), its font size,
-// its display and visibility, and whether a point at its centre hits it (reachable by a tap).
+// filter bar grows with the grid and so bounds nothing vertically), the panel's computed --rerr-chip-col (the columns'
+// floor), the list's box (the entries left under the grid), the filter bar's boxes (the bar's content box: its padding
+// stripped), the grid's box and its computed column tracks, and for every toggle its box, the width its label needs (the
+// text's own width plus the chip's padding and border), its font size, its display and visibility, and whether a point at
+// its centre hits it (reachable by a tap).
 // Prints one `RESULT:` JSON line, written whole however long it is (writeAll below); exits 3 when the browser does not
 // launch (the Python side turns that into a skip).
 // Never touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. Synthetic entries only.
@@ -80,7 +81,7 @@ const measure = (page) => page.evaluate(() => {
   const x0 = window.scrollX; window.scrollTo(100000, window.scrollY); const scrollX = window.scrollX; window.scrollTo(x0, window.scrollY);
   return { vw: window.innerWidth, vh: window.innerHeight, docSW: de.scrollWidth, docCW: de.clientWidth, scrollX,
     mobile: !!(window.__rompMobileOn && window.__rompMobileOn()), logOpen: !document.getElementById("rerr-back").hidden,
-    panel: box(panel), bar: box(bar), list: box(document.getElementById("rerr-list")),
+    panel: box(panel), bar: box(bar), list: box(document.getElementById("rerr-list")), chipCol: pcs.getPropertyValue("--rerr-chip-col").trim(),
     panelInner: { t: pr.top + parseFloat(pcs.borderTopWidth), b: pr.bottom - parseFloat(pcs.borderBottomWidth) },
     barContent: { l: br.left + parseFloat(bcs.borderLeftWidth) + parseFloat(bcs.paddingLeft), r: br.right - parseFloat(bcs.borderRightWidth) - parseFloat(bcs.paddingRight) },
     grid: box(grid), cols: getComputedStyle(grid).gridTemplateColumns, btns };

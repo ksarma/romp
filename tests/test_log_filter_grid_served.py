@@ -15,21 +15,25 @@ at all. The page itself never scrolled sideways (the panel is in a fixed backdro
 The columns are now `repeat(auto-fill,minmax(max(var(--rerr-chip-col),20% - 5px),1fr))`: as many equal columns as fit at
 96 px or more, and never more than five, since five tracks of a fifth less one gap always fit and a sixth never does.
 `--rerr-chip-col` is 96 px, declared once on #rerr-panel: it is also the entry rows' chip column, which is wider than the
-widest chip. The desktop's 700 px panel keeps its five equal columns; a phone gets three from about 370 px and two below.
+widest chip. The desktop's 700 px panel keeps its five equal columns; a phone gets two columns below 368 px, three from
+368, four from 475 and five from 583.
 
 The leg drives the served shell in a real engine (Chromium; WebKit and Firefox where the runner declares them) through
 tests/log_filter_grid_browser.mjs: the phone (the iPhone 14 descriptor), the Log opened at 390 px by a click on the phone
-bar's triangle with one synthetic entry of every kind logged, then the page resized to 320, 360, 375, 390, 414 and 430 px
-wide, first at 844 px high (the iPhone 14's height) and then at 568 px (the shortest phone in use, 320 by 568); OPEN_W
-says why it opens at 390. Then the desktop at 821 px (the narrowest width the desktop layout takes, one past _MOBILE_MQ's
-820) and at 1100 px. At each phone size: the page does not scroll sideways; every toggle sits inside the filter bar's
-content box across, inside the panel down (above its inner bottom: the bar grows with the grid, so it bounds nothing
-vertically) and on the screen both ways, holds its whole label, overlaps no other toggle and is the element a tap at its
-centre reaches; every toggle keeps the desktop's font size and height; all share one width; and the list under the grid
-keeps at least LIST_FLOOR px (its comment says why). At each desktop width the grid is five equal columns filling the
-bar, as before, within the same bounds. A fourth test, in Chromium, runs the phone pass at 40 widths (one height) and
-checks that the driver's RESULT line, well over 64 KiB, arrives whole (the driver writes it in a loop; one write to the
-pipe used to deliver 64 KiB and drop the rest).
+bar's triangle with one synthetic entry of every kind logged, then the page resized to 320, 360, 368, 375, 390, 414, 430,
+475 and 583 px wide (368, 475 and 583 are where a third, fourth and fifth column first fit, so each gives that count's
+narrowest cell), first at 844 px high (the iPhone 14's height) and then at 568 px (the shortest phone in use, 320 by 568);
+OPEN_W says why it opens at 390. Then the desktop at 821 px (the narrowest width the desktop layout takes, one past
+_MOBILE_MQ's 820) and at 1100 px. At each phone size: the grid has the columns PHONE_COLS names for that width (2 at 320
+and 360 px, 3 from 368 to 430, 4 at 475, 5 at 583); the page does not scroll sideways; every toggle sits inside the
+filter bar's content box across, inside the panel down (above its inner bottom: the bar grows with the grid, so it bounds
+nothing vertically) and on the screen both ways, holds its whole label, needs no more than the 96 px floor (the page's
+--rerr-chip-col, which no width can narrow a column below, so a label that fits it fits at every width), overlaps no
+other toggle and is the element a tap at its centre reaches; every toggle keeps the desktop's font size and height; all
+share one width; and the list under the grid keeps at least LIST_FLOOR px (its comment says why). At each desktop width
+the grid is five equal columns filling the bar, as before, within the same bounds. A fourth test, in Chromium, runs the
+phone pass at 40 widths (one height) and checks that the driver's RESULT line, well over 64 KiB, arrives whole (the driver
+writes it in a loop; one write to the pipe used to deliver 64 KiB and drop the rest).
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), a private dist (lab_dist.copy_dist), no sessions
@@ -66,7 +70,11 @@ os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"), exist_ok=True)
 Path(os.environ["XDG_STATE_HOME"], "romp", "session-hosts").write_text("off\n")
 
 DRIVER = os.path.join(HERE, "log_filter_grid_browser.mjs")
-PHONE_WIDTHS = [320, 360, 375, 390, 414, 430]   # the phone widths in use, 320 the narrowest the Log must still serve
+# the phone widths in use, 320 the narrowest the Log must still serve, and 368, 475 and 583: the first width of three, four
+# and five columns, so the narrowest cell of each
+PHONE_WIDTHS = [320, 360, 368, 375, 390, 414, 430, 475, 583]
+PHONE_COLS = {320: 2, 360: 2, 368: 3, 375: 3, 390: 3, 414: 3, 430: 3, 475: 4, 583: 5}   # the columns at each phone width
+CHIP_COL = 96   # px: --rerr-chip-col, the columns' floor; no width narrows a column below it, so every label must fit in it
 PHONE_HEIGHTS = [844, 568]   # the iPhone 14's height, then the shortest phone in use (320 by 568): every width at each
 # px of list kept under the grid at every size: room for three one-line entries (the list's 4 px padding above and below,
 # three 27.95 px rows of 11 px text at line-height 1.45 with 6 px of padding above and below, and the 1 px rules between
@@ -187,6 +195,8 @@ class LogFilterGrid(unittest.TestCase):
                 self.assertTrue(m["mobile"], where + "the phone layout: %r" % ({k: m[k] for k in ("vw", "mobile")},))
                 self.assertTrue(m["logOpen"], where + "the Log is open")
                 self.assertEqual((m["vw"], m["vh"]), (ph["w"], ph["h"]), where + "the viewport took the size")
+                self.assertEqual(len(m["cols"].split()), PHONE_COLS[ph["w"]],
+                                 where + "%d columns at this width: %s (grid %.2f px wide)" % (PHONE_COLS[ph["w"]], m["cols"], m["grid"]["w"]))
                 self._fits(m, kinds, where)
                 for b in m["btns"]:
                     # the control keeps its size: the desktop's font size and height (the tap area's height; its width is the cell's)
@@ -218,6 +228,7 @@ class LogFilterGrid(unittest.TestCase):
             self.assertGreaterEqual(b["t"], -SLACK, what + " starts on screen")
             self.assertLessEqual(b["b"], m["vh"] + SLACK, what + " ends on screen (viewport height %d)" % m["vh"])
             self.assertLessEqual(b["need"], b["w"] + SLACK, what + " holds its whole label")
+            self.assertLessEqual(b["need"], CHIP_COL, what + " needs no more than the %d px floor, the narrowest a column gets" % CHIP_COL)
             self.assertTrue(b["hit"], what + " is what a tap at its centre reaches")
         for i, a in enumerate(btns):
             for b in btns[i + 1:]:
@@ -225,6 +236,9 @@ class LogFilterGrid(unittest.TestCase):
                 self.assertTrue(apart, where + "%s and %s overlap: %r %r" % (a["text"], b["text"], a, b))
         self.assertGreaterEqual(m["list"]["h"], LIST_FLOOR, where + "the list keeps %d px under the grid: list %r, panel %r, grid %r"
                                 % (LIST_FLOOR, m["list"], m["panel"], m["grid"]))
+        # last, so a run against a tree without the property reports the geometry first: the label bound above is CHIP_COL,
+        # and this says the page's floor is that same width
+        self.assertEqual(m["chipCol"], "%dpx" % CHIP_COL, where + "the page's --rerr-chip-col is the floor the labels are checked against")
 
     def test_chromium_the_filter_grid_fits_the_phone_and_keeps_the_desktop(self):
         self._leg("chromium")
