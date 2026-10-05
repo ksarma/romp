@@ -16,7 +16,8 @@
 // filter bar's boxes (the bar's content box: its padding stripped), the grid's box and its computed column tracks, and for
 // every toggle its box, the width its label needs (the text's own width plus the chip's padding and border), its font size,
 // its display and visibility, and whether a point at its centre hits it (reachable by a tap).
-// Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip).
+// Prints one `RESULT:` JSON line, written whole however long it is (writeAll below); exits 3 when the browser does not
+// launch (the Python side turns that into a skip).
 // Never touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. Synthetic entries only.
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -39,9 +40,20 @@ let browser;
 try { browser = await playwright[engine].launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 
+// The whole RESULT line reaches stdout before the exit. Requiring playwright leaves fd 1 non-blocking, and one writeSync to
+// a pipe then writes only what the pipe has room for (64 KiB) and drops the rest, so the line is written from a Buffer in a
+// loop, advancing by the bytes each call reports and retrying after EAGAIN (the pipe full until the test reads it). It
+// stays synchronous: the "died" paths below await result() and rely on it never returning, which process.exit keeps true.
+const writeAll = (text) => {
+  const buf = Buffer.from(text, "utf8"), nap = new Int32Array(new SharedArrayBuffer(4));
+  for (let off = 0; off < buf.length;) {
+    try { off += fs.writeSync(1, buf, off, buf.length - off); }
+    catch (e) { if (e.code !== "EAGAIN") throw e; Atomics.wait(nap, 0, 0, 5); }
+  }
+};
 const result = async (extra) => {
   Object.assign(out, extra || {});
-  fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+  writeAll("RESULT:" + JSON.stringify(out) + "\n");
   try { await browser.close(); } catch (e) { /* closing */ }
   process.exit(0);
 };

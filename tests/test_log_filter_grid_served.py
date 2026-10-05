@@ -24,7 +24,9 @@ bar's triangle with one synthetic entry of every kind logged, then the page resi
 (the narrowest width the desktop layout takes, one past _MOBILE_MQ's 820) and at 1100 px. At each phone width: the page
 does not scroll sideways; every toggle sits inside the filter bar's content box and the screen, holds its whole label,
 overlaps no other toggle and is the element a tap at its centre reaches; every toggle keeps the desktop's font size and
-height; all share one width. At each desktop width the grid is five equal columns filling the bar, as before.
+height; all share one width. At each desktop width the grid is five equal columns filling the bar, as before. A fourth
+test, in Chromium, runs the phone pass at 40 widths and checks that the driver's RESULT line, well over 64 KiB, arrives
+whole (the driver writes it in a loop; one write to the pipe used to deliver 64 KiB and drop the rest).
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), a private dist (lab_dist.copy_dist), no sessions
@@ -68,6 +70,7 @@ OPEN_W = 390   # the Log is opened by its triangle at 390 px, then the page resi
 #                (a separate defect: at 320 px a click cannot reach it)
 DESKTOP_WIDTHS = [821, 1100]   # 821: the narrowest desktop layout (_MOBILE_MQ's max-width is 820px)
 DESKTOP_H = 800
+LONG_WIDTHS = list(range(320, 400, 2))   # 40 phone widths: the delivery pin's measures, a RESULT line well over 64 KiB
 SLACK = 0.5   # subpixel layout: a box edge may land half a pixel either side
 
 
@@ -114,7 +117,7 @@ class LogFilterGrid(unittest.TestCase):
             lab_ports.release(cls.lab)
             shutil.rmtree(cls.lab, ignore_errors=True)
 
-    def _drive(self, engine):
+    def _drive(self, engine, **over):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
         if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
@@ -122,6 +125,7 @@ class LogFilterGrid(unittest.TestCase):
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "bootTimeoutMs": 30000,
                "openWidth": OPEN_W, "phoneWidths": PHONE_WIDTHS, "phoneHeight": PHONE_H,
                "desktopWidths": DESKTOP_WIDTHS, "desktopHeight": DESKTOP_H}
+        cfg.update(over)
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
@@ -137,7 +141,12 @@ class LogFilterGrid(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        self._line_bytes = len(line.encode())
+        try:
+            r = json.loads(line[len("RESULT:"):])
+        except ValueError as e:
+            self.fail("the RESULT line (%d bytes) does not parse, cut short on its way through the pipe? %s; its tail: %r"
+                      % (len(line.encode()), e, line[-200:]))
         self.assertNotIn("died", r, "driver aborted early: %r (kernel log tail: %s)" % (r.get("died"), Path(self.klog).read_text()[-800:]))
         self.assertEqual(r.get("errors"), [], "page errors")
         return r
@@ -208,6 +217,16 @@ class LogFilterGrid(unittest.TestCase):
 
     def test_firefox_the_filter_grid_fits_the_phone_and_keeps_the_desktop(self):
         self._leg("firefox")
+
+    def test_chromium_the_driver_delivers_a_result_line_over_64_kib_whole(self):
+        """The driver's RESULT line arrives whole however long it is (2026-10-05). The driver runs
+        under playwright, which leaves its stdout non-blocking, and one writeSync to this pipe wrote 64 KiB and dropped the
+        rest, so a longer line (more widths, more kinds, a page error per toggle) failed every leg with a parse error that
+        named neither the width nor the property. Here the phone pass alone runs at LONG_WIDTHS, enough measures for a line
+        well over 64 KiB, and every width must come back. Chromium only: the write is node's, the same in every engine."""
+        r, size = self._drive("chromium", phoneWidths=LONG_WIDTHS, desktopWidths=[]), self._line_bytes
+        self.assertGreater(size, 65536, "the premise: this line is longer than one pipe write delivered (%d bytes)" % size)
+        self.assertEqual([x["w"] for x in r["phone"]], LONG_WIDTHS, "every width's measure arrived")
 
 
 if __name__ == "__main__":
