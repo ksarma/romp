@@ -131,18 +131,29 @@ class LandingShell(unittest.TestCase):
 
     def test_rail_actions_reachable_on_mobile(self):
         # the user 2026-07-11: settings / the network panel / usage stats were rail-only (the rail is
-        # hidden on mobile). data-act buttons on the bar; each routes to the existing machinery.
+        # hidden on mobile). data-act buttons on the bar; each routes to the existing machinery. Since iOS item 4g
+        # (2026-10-05) net and usage are not on the bar: the settings card shows them on the phone (gear.js #rs-pacts) and
+        # posts phoneAct, which runs the same A-map handlers (tests/test_mtabs_fit_served.py clicks them in three engines).
         html = km._landing()
-        for act in ("data-act=settings", "data-act=net", "data-act=usage", "data-act=restart"):
-            self.assertIn(act, html)
+        bar = html[html.index("<nav id=mtabs>"):html.index("</nav>", html.index("<nav id=mtabs>"))]
+        for act in ("data-act=settings", "data-act=restart"):
+            self.assertIn(act, bar)
+        for act in ("data-act=net", "data-act=usage"):
+            self.assertNotIn(act, bar)
         # ICONS, not words (the user 2026-07-11): settings wears the desktop rail's own gear glyph, net its
         # network-tree SVG; usage gets the theme's own motif — two stacked fill bars at different levels
         # the settings icon is the SAME gear the desktop rail uses (U+26ED ⛭), not the outlined star it had
         self.assertIn("data-act=settings data-keycmd=settings.open aria-label=Settings title=Settings>⛭</button>", html)
         self.assertIn("id=rail-gear data-keycmd=settings.open title=Settings aria-label=Settings>⛭</div>", html)  # matches the rail
         self.assertNotIn("&#9885;", html)                               # the old outlined-star glyph is gone
-        self.assertIn("data-act=net data-keycmd=net.open aria-label='Remote kernels'", html)
-        self.assertIn("<rect x='1' y='3' width='9' height='4' rx='1' fill='currentColor'/>", html)   # the used-bar fill
+        with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, "ui", "webview", "gear.js"), encoding="utf-8") as fh:
+            gear = fh.read()
+        self.assertIn("id=rs-pact-net data-pact=net title=\"Remote kernels\">' + PACT_NET_SVG", gear)
+        self.assertIn("data-pact=usage title=Usage>' + PACT_USAGE_SVG", gear)
+        self.assertIn("<rect x='1' y='3' width='9' height='4' rx='1' fill='currentColor'/>", gear)   # the used-bar fill
+        self.assertIn("window.parent.postMessage({ romp: 'phoneAct', act: b.getAttribute('data-pact') }, '*')", gear)
+        self.assertIn("if(!m||m.romp!=='phoneAct'||(m.act!=='net'&&m.act!=='usage')||!sf||e.source!==sf.contentWindow)return;A[m.act]();",
+                      km._LANDING_MOBILE_JS)
         self.assertNotIn(">Gear</button>", html)
         self.assertIn("window.__rompOpenSettings&&window.__rompOpenSettings();", km._LANDING_MOBILE_JS)   # same path as the desktop gear: the settings iframe
         self.assertIn("__rompOpenNet", km._LANDING_MOBILE_JS)           # opens the shell's remotes panel

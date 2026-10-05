@@ -233,9 +233,10 @@ const { chromium } = require('playwright');
     finally { window.fetch = f; document.body.classList.remove('theme-light'); }
   });
   await pg.keyboard.press('Escape');
-  // the phone: no rail; the Usage panel's button is the door
+  // the phone: no rail; the Usage panel's button is the door, in the settings card since iOS item 4g (it runs this same
+  // __rompUsagePanel, tests/test_mtabs_fit_served.py clicks it), so the wait is for the bar, by its Settings
   await pg.setViewportSize({ width: 390, height: 844 });
-  await pg.reload(); await pg.waitForSelector('#mtabs [data-act="usage"]', { timeout: 20000 });
+  await pg.reload(); await pg.waitForSelector('#mtabs [data-act="settings"]', { timeout: 20000 });
   await pg.evaluate(() => { const bt = document.getElementById('romp-boot'); if (bt) bt.remove(); });
   const railHidden = await pg.evaluate(() => getComputedStyle(document.querySelector('.pane-rail')).display === 'none');
   await pg.evaluate(() => window.__rompUsagePanel());

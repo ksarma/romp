@@ -42,6 +42,29 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 .rs-card { width: min(560px, 94%); max-height: 88vh; overflow: auto; background: var(--surface-raised, #252526); border: 1px solid var(--hairline, #3a3a3a);
   border-radius: 10px; padding: 16px 20px; font: 13px/1.6 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; color: var(--fg, #ccc); box-shadow: var(--shadow-modal, 0 12px 36px #000000aa); }
 #rsettings .rs-h { font-size: 14px; font-weight: 600; margin-bottom: 6px; color: var(--text-bright, #e8eaed); }
+/* the phone's panel buttons (iOS item 4g, 2026-10-05; gear.js #rs-pacts): Usage and Remote kernels, moved here from the phone's
+   bottom bar, a row under the title on the phone layout only. The menu vocabulary (ui/CLAUDE.md): the menu card, hairline,
+   radius and text, the row wash on hover, 12px romp sans (the tabs' size below); each is its glyph and its name */
+#rsettings .rs-pacts { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+#rsettings .rs-pacts[hidden] { display: none; }
+#rsettings .rs-pact { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; line-height: 1; padding: 5px 10px;
+  border: 1px solid var(--menu-border, rgba(255, 255, 255, 0.12)); border-radius: var(--radius-menu, 6px);
+  background: var(--menu-bg, #252526); color: var(--menu-fg, #cccccc); cursor: pointer; }
+#rsettings .rs-pact:hover { background: var(--menu-hover, rgba(255, 255, 255, 0.09)); }
+#rsettings .rs-pact svg { display: block; flex: none; }
+/* the Remote kernels glyph's live state, painted here by the shell's poll as it painted the bar's button (kernel
+   _LANDING_REMOTES_JS paintIcon through mnet): the accent when a host is connected and while one attaches, the connector
+   dashes marching while it attaches, each node's colour (connected, dialing, needs you) and the red flash when a host drops.
+   The values are the kernel's own rules for that glyph (.rn-ok, .rn-wait and .rn-warn, #mtabs .mact.on and .busy, the
+   rnet-drop and rnet-march keyframes), restated because this page loads none of the shell's stylesheet */
+#rs-pact-net.on, #rs-pact-net.busy { color: var(--accent, #9cd2ff); }
+#rs-pact-net.busy svg path { stroke-dasharray: 3 3; animation: rs-pact-march 0.9s linear infinite; }
+@keyframes rs-pact-march { to { stroke-dashoffset: -6; } }
+#rs-pact-net .rn-ok { fill: var(--accent, #9cd2ff); }
+#rs-pact-net .rn-wait { fill: #8a8a8a; }
+#rs-pact-net .rn-warn { fill: #e5484d; }
+#rs-pact-net.rn-drop { animation: rs-pact-drop 0.42s ease-in-out 3; }
+@keyframes rs-pact-drop { 0%, 100% { box-shadow: none; } 50% { background: rgba(229, 72, 77, 0.45); box-shadow: 0 0 0 2px rgba(229, 72, 77, 0.9); } }
 #rsver { white-space: pre-line; }
 /* subsection headers (Chat / Feed / Sessions / Debug) so the settings group by surface. Sentence case in the accent blue,
    no uppercase and no letter-spacing (the user 2026-09-18: the all-caps dress read as shouting; a delineator is told apart

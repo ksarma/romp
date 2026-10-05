@@ -100,12 +100,36 @@ function judgeFastSubRefused(word, r) {
     + "); the judges run at normal speed. The setting is kept.";
 }
 
+// The phone's two panel buttons (iOS item 4g, 2026-10-05): Usage and Remote kernels sat on the phone's bottom bar (the
+// kernel's #mtabs) until its row ran past a phone's right edge. They are the bar's two panels about the machinery (spend and
+// limits, other machines' kernels), not about the sessions, so they moved into this card, one tap from the bar's Settings.
+// Each wears the glyph its bar button wore, copied from the kernel's markup (SVG attributes quoted, the kernel's rule); the
+// Remote kernels glyph keeps its rn-me, rn-a and rn-b squares because the shell's poll paints them here as it painted the
+// bar's (kernel _LANDING_REMOTES_JS paintIcon, through mnet, which finds #rs-pact-net in this document).
+var PACT_USAGE_SVG = "<svg viewBox='0 0 16 16' width='18' height='18' aria-hidden='true'>"
+  + "<rect x='1' y='3' width='14' height='4' rx='1' fill='none' stroke='currentColor' stroke-width='1'/>"
+  + "<rect x='1' y='3' width='9' height='4' rx='1' fill='currentColor'/>"
+  + "<rect x='1' y='9' width='14' height='4' rx='1' fill='none' stroke='currentColor' stroke-width='1'/>"
+  + "<rect x='1' y='9' width='6' height='4' rx='1' fill='currentColor'/></svg>";
+var PACT_NET_SVG = "<svg viewBox='0 0 16 16' width='18' height='18' aria-hidden='true'>"
+  + "<path d='M8 5 L8 8 M3 11 L3 8 L13 8 L13 11' fill='none' stroke='currentColor' stroke-width='1' stroke-linejoin='round'/>"
+  + "<rect class=rn-me x='6' y='1' width='4' height='4' rx='0.6' fill='currentColor'/>"
+  + "<rect class=rn-a x='1' y='11' width='4' height='4' rx='0.6' fill='currentColor'/>"
+  + "<rect class=rn-b x='11' y='11' width='4' height='4' rx='0.6' fill='currentColor'/></svg>";
+
 // The modal markup — ported verbatim from the kernel's _gear_html; the model/
 // effort selects start empty and are filled from /models (see fill()).
 var GEAR_HTML =
   '<button id=rgear hidden aria-hidden=true></button>' +
   '<div id=rsettings hidden><div class=rs-card>' +
   '<div class=rs-h>Settings</div>' +
+  // THE PHONE'S PANEL BUTTONS (iOS item 4g, the glyphs above): a row under the title, above the tabs so every tab shows it,
+  // shown only on the web shell's phone layout (openSettings reads the shell's layout at each open; the desktop has both on
+  // its rail). A tap closes this card and asks the shell to run the bar button's own handler ({romp:'phoneAct', act}).
+  '<div class=rs-pacts id=rs-pacts hidden>' +
+  '<button type=button class=rs-pact data-pact=usage title=Usage>' + PACT_USAGE_SVG + '<span>Usage</span></button>' +
+  '<button type=button class=rs-pact id=rs-pact-net data-pact=net title="Remote kernels">' + PACT_NET_SVG + '<span>Remote kernels</span></button>' +
+  '</div>' +
   // THE TABS (T379, the user 2026-09-12; re-cut T400 into General, Chat, Feed, Sessions, Task tracking, Appearance, Debug): the
   // settings grouped by the surface they belong to, seven pills under the
   // title in the menu vocabulary; every row keeps its id and its key. The tab-widgets gear on the chat strip opens the
@@ -2110,11 +2134,16 @@ function initGear(post, opts) {
     pcard.addEventListener('focusout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) placeRowHosts(host); });
   }
   function closeSettings() { endDrags(); if (raBack && !raBack.hidden) raHide(); clearSectionScroll(); p.hidden = true; setModalCls(false); feedFull(false); }   // the reset FIRST, while the card still has a layout: a hidden card ignores a scroll write and keeps its old offset for the next open (measured); a pending section ask dies with the panel (round two, LOW 2 and 7)
+  // the web shell's phone layout, read from the shell's own predicate (kernel _LANDING_MOBILE_JS __rompMobileOn, the media
+  // query the shell lays its bottom bar out by); false in VS Code (a cross-origin parent) and on a page of its own
+  function phoneShell() { try { var w = window.parent; return w !== window && typeof w.__rompMobileOn === 'function' && !!w.__rompMobileOn(); } catch (e) { return false; } }
   function openSettings(tab, section) {
     if (raBack && !raBack.hidden) raHide();   // the Token usage panel up: down first, so the card is what this open shows, never the card under the layer (the read of the panel's close fix)
     if (tab === 'appearance' && !section) section = 'appearance';   // the former Appearance tab is General's section (T404)
     if (!p.hidden) { if (knownTab(tab)) { selectTab(tab); if (section) showSection(section); else clearSectionScroll(); return; } closeSettings(); return; }   // the opener toggles the modal; a named tab on an open panel switches to it, and to its section (T379)
     selectTab(tab);
+    var pacts = document.getElementById('rs-pacts');
+    if (pacts) pacts.hidden = !phoneShell();   // the phone's panel buttons (iOS item 4g): the layout is read at each open, so a rotation across the breakpoint between opens is followed
     // Signal the SHELL first, then measure (the picker's order, adopted 2026-08-09): feedFull posts
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
@@ -2144,6 +2173,11 @@ function initGear(post, opts) {
     // closes first so the two never stack. Web shell only: VS Code's cross-origin parent has no Log panel.
     var lg = document.getElementById('rs-log-open');
     if (lg) { lg.hidden = !web; lg.onclick = function () { closeSettings(); try { window.parent.postMessage({ romp: 'openLog' }, '*'); } catch (e) { /* no shell to ask */ } }; }
+    // the phone's panel buttons (iOS item 4g, GEAR_HTML's #rs-pacts): the card closes first, as for Open log, so the panel the
+    // shell opens is never stacked under it, and the shell runs the handler the bottom bar's button ran (kernel
+    // _LANDING_MOBILE_JS, the phoneAct message). Delegated to the row, which this card never rebuilds.
+    var pacts = document.getElementById('rs-pacts');
+    if (pacts) pacts.addEventListener('click', function (e) { var b = e.target && e.target.closest ? e.target.closest('.rs-pact') : null; if (!b || !pacts.contains(b)) return; closeSettings(); try { window.parent.postMessage({ romp: 'phoneAct', act: b.getAttribute('data-pact') }, '*'); } catch (err) { /* no shell to ask */ } });
     // the unread count the bar's opener used to draw (T290): the shell posts {romp:'logUnseen', n} on every
     // repaint of its Log and answers {romp:'logUnseenQuery'}; the label reads "Open log · N" (9+ past nine)
     var lgn = lg ? lg.querySelector('.rs-log-n') : null;

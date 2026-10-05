@@ -11,7 +11,14 @@
 // Then the change the boot read cannot see: on the default set at cfg.dynamicViewport, the Files tab turned on the way
 // the gear turns it on (a write of the settings key from a same-origin pane document, so this window hears the storage
 // event the shell's pane controller acts on), with no resize, and the same reading after two frames.
-// And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden.
+// Then the two actions that left the bar for the settings card (iOS item 4g's move: Usage and Remote kernels), on a phone at
+// cfg.actsViewport: the bar's Settings clicked at its centre, the card's row of panel buttons read (each button's box, the
+// element at its centre, and the Remote kernels glyph's classes and colours beside the rail glyph's, which the same poll
+// paints), then each button clicked once at its centre and its effect read in the shell (the Usage modal on #ru-back, the
+// Remote kernels panel #rnet-back) with the card closed. The shell's own GET /tunnels (the main frame's, not the panes')
+// answers cfg.tunnels, synthetic hosts, so the glyph has a state to show; the panes read the lab's real answer (no hosts).
+// And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
+// and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit.
 // Writes the readings as JSON to cfg.result and prints one `RESULT-FILE:` line naming it; exits 3 when the browser does not
 // launch (the Python side turns that into a skip).
 // Never touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. No sessions.
@@ -24,7 +31,7 @@ const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 const engine = cfg.engine || "chromium";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const out = { engine, errors: [], sets: {}, dynamic: null, desktop: null };
+const out = { engine, errors: [], sets: {}, dynamic: null, acts: null, desktop: null, rail: [] };
 
 const healthz = await new Promise((resolve) => {
   const req = http.get(cfg.healthz, (res) => { res.resume(); resolve({ status: res.statusCode }); });
@@ -91,11 +98,12 @@ const read = (page) => page.evaluate("(" + READ.toString() + ")()");
 const frames = (page) => page.evaluate(() => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => res()))));
 
 // a phone page on one tab set, booted: the bar laid out, the boot splash gone (the panes' first ready, or its backstop), the webfont in
-async function boot(files) {
+async function boot(files, before) {
   const context = await browser.newContext({ ...phone, viewport: { width: 390, height: 844 } });
   if (files) await context.addInitScript(() => { try { localStorage.setItem("romp:settings", JSON.stringify({ showFilesControl: true })); } catch (e) { /* no store */ } });
   const page = await context.newPage();
   page.on("pageerror", (e) => { if (out.errors.length < 40) out.errors.push(String(e).slice(0, 300)); });
+  if (before) await before(page);
   await page.goto(cfg.url, { waitUntil: "load", timeout: 40000 });
   await page.waitForSelector("#mtabs", { timeout: 20000 });
   await page.waitForFunction(() => { const b = document.getElementById("romp-boot"); return !b || b.classList.contains("gone"); }, null, { timeout: 30000 });
@@ -134,6 +142,117 @@ try {
     await sleep(cfg.settleMs || 100);
     await frames(page);
     out.dynamic = { vp: [w, h], before, after: await read(page) };
+    await context.close();
+  }
+  // the moved actions: one click on the bar's Settings, one on the card's button, and the effect in the shell
+  {
+    // the shell's first poll gets cfg.tunnels; every later one is held until the first opening has been read (so the card's
+    // paint there is the opening's own, not a poll's), then answered, with every one after it, by cfg.tunnels2
+    let polls = 0, answer = null;
+    const held = [];
+    const fulfil = (route, body) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    const { context, page } = await boot(false, (pg) => pg.route("**/tunnels", (route) => {
+      const q = route.request();
+      if (q.method() !== "GET" || q.frame() !== pg.mainFrame()) return route.continue();
+      polls++;
+      if (polls === 1) return fulfil(route, cfg.tunnels);
+      if (answer) return fulfil(route, answer);
+      held.push(route);
+      return undefined;
+    }));
+    const [w, h] = cfg.actsViewport;
+    await page.setViewportSize({ width: w, height: h });
+    await frames(page);
+    await sleep(cfg.settleMs || 100);
+    await frames(page);
+    // the shell's first poll has painted the rail glyph from the synthetic hosts (the card's copy is painted from it on open)
+    await page.waitForFunction(() => { const r = document.getElementById("rail-net"); return !!r && r.classList.contains("on"); }, null, { timeout: 15000 });
+    const acts = { vp: [w, h], bar: await read(page), runs: {} };
+    const settingsFrame = () => page.frames().find((f) => f !== page.mainFrame() && /\/settings(\?|$)/.test(f.url()));
+    const clickCentre = async (box) => { await page.mouse.click(box.left + box.w / 2, box.top + box.h / 2); };
+    for (const act of ["usage", "net"]) {
+      const run = {};
+      const gear = acts.bar.controls.find((c) => c.key === "settings");
+      if (!gear) throw new Error("no Settings on the bar");
+      await clickCentre(gear);
+      await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+      const sf = settingsFrame();
+      if (!sf) throw new Error("no settings frame after the click");
+      await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+      await frames(page);
+      const lift = await page.evaluate(() => { const r = document.getElementById("f-settings").getBoundingClientRect(); return { left: r.left, top: r.top }; });
+      run.card = await sf.evaluate((ctx) => {
+        const r = (x) => Math.round(x * 100) / 100;
+        const row = document.getElementById("rs-pacts"), card = document.querySelector("#rsettings .rs-card");
+        const cr = card ? card.getBoundingClientRect() : null;
+        const buttons = row ? Array.from(row.querySelectorAll("button")).map((b) => {
+          const c = b.getBoundingClientRect();
+          const at = c.width > 0 && c.height > 0 ? document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2) : null;
+          return { act: b.getAttribute("data-pact"), text: b.textContent.trim(), left: r(c.left + ctx.left), right: r(c.right + ctx.left),
+                   top: r(c.top + ctx.top), bottom: r(c.bottom + ctx.top), w: r(c.width), h: r(c.height), hit: !!at && (at === b || b.contains(at)) };
+        }) : [];
+        const net = document.getElementById("rs-pact-net");
+        const glyph = net ? { cls: net.getAttribute("class"), color: getComputedStyle(net).color,
+          nodes: ["rn-me", "rn-a", "rn-b"].map((k) => { const e = net.querySelector("." + k); return e ? { cls: e.getAttribute("class"), fill: getComputedStyle(e).fill } : null; }) } : null;
+        return { rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none", buttons, glyph,
+                 card: cr ? { left: r(cr.left + ctx.left), right: r(cr.right + ctx.left), top: r(cr.top + ctx.top), bottom: r(cr.bottom + ctx.top) } : null,
+                 tab: (document.querySelector("#rs-tabs .rs-tab.on") || {}).textContent || "" };
+      }, lift);
+      // the rail's own glyph, painted by the same poll (display:none on the phone, its computed colours still resolve)
+      run.rail = await page.evaluate(() => { const n = document.getElementById("rail-net");
+        return { cls: n.getAttribute("class"), color: getComputedStyle(n).color,
+                 nodes: ["rn-me", "rn-a", "rn-b"].map((k) => { const e = n.querySelector("." + k); return { cls: e.getAttribute("class"), fill: getComputedStyle(e).fill }; }) }; });
+      const btn = run.card.buttons.find((b) => b.act === act);
+      if (!btn) { run.clicked = false; acts.runs[act] = run; await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings()); continue; }
+      await clickCentre(btn);
+      run.clicked = true;
+      const seen = act === "usage"
+        ? () => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip"); return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }
+        : () => { const b = document.getElementById("rnet-back"); return !!b && !b.hidden; };
+      try { await page.waitForFunction(seen, null, { timeout: 10000 }); run.opened = true; } catch (e) { run.opened = false; }
+      await frames(page);
+      run.after = await page.evaluate(() => ({ settingsOpen: document.body.classList.contains("settings-open"),
+        usage: (() => { const b = document.getElementById("ru-back"); return !!b && b.classList.contains("on"); })(),
+        net: (() => { const b = document.getElementById("rnet-back"); return !!b && !b.hidden; })(),
+        netTitle: ((document.querySelector("#rnet-panel .rnet-top span") || {}).textContent || "") }));
+      run.cardHidden = await sf.evaluate(() => { const p = document.getElementById("rsettings"); return !p || p.hidden; });
+      await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) {} try { window.__rompCloseNet && window.__rompCloseNet(); } catch (e) {} });
+      await frames(page);
+      acts.runs[act] = run;
+      if (act === "usage") {
+        // release the held polls with both hosts connected: the rail turns, and the card's copy (its page loaded, the card
+        // closed) turns with it, painted by the poll itself
+        answer = cfg.tunnels2;
+        for (const route of held.splice(0)) await fulfil(route, answer);
+        await page.waitForFunction(() => { const a = document.querySelector("#rail-net .rn-a"); return !!a && a.getAttribute("class") === "rn-a rn-ok"; }, null, { timeout: 15000 });
+        await frames(page);
+        acts.released = { polls, card: await sf.evaluate(() => { const n = document.getElementById("rs-pact-net");
+          return n ? ["rn-me", "rn-a", "rn-b"].map((k) => { const e = n.querySelector("." + k); return e ? e.getAttribute("class") : null; }) : null; }) };
+      }
+    }
+    out.acts = acts;
+    await context.close();
+  }
+  // the desktop rail at each width: the actions pinned at its right end, shown ones only (the bell once the push script reveals it)
+  for (const [w, h] of cfg.railViewports || []) {
+    const context = await browser.newContext({ viewport: { width: w, height: h } });
+    const page = await context.newPage();
+    page.on("pageerror", (e) => { if (out.errors.length < 40) out.errors.push(String(e).slice(0, 300)); });
+    await page.goto(cfg.url, { waitUntil: "load", timeout: 40000 });
+    await page.waitForFunction(() => { const b = document.getElementById("rail-bell"); return !!b && !b.hidden; }, null, { timeout: 20000 });
+    await page.waitForFunction(() => { const b = document.getElementById("romp-boot"); return !b || b.classList.contains("gone"); }, null, { timeout: 30000 });
+    await page.evaluate(() => (document.fonts ? document.fonts.ready.then(() => true) : true));
+    await frames(page);
+    await sleep(cfg.settleMs || 100);
+    await frames(page);
+    out.rail.push({ vp: [w, h], ...(await page.evaluate(() => {
+      const r = (x) => Math.round(x * 100) / 100;
+      const acts = Array.from(document.querySelectorAll(".rail-acts .rail-act")).filter((a) => getComputedStyle(a).display !== "none");
+      return { vw: window.innerWidth, mobile: window.__rompMobileOn ? window.__rompMobileOn() : null,
+        acts: acts.map((a) => { const c = a.getBoundingClientRect();
+          const at = c.width > 0 && c.height > 0 ? document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2) : null;
+          return { id: a.id, left: r(c.left), right: r(c.right), top: r(c.top), bottom: r(c.bottom), w: r(c.width), h: r(c.height), hit: !!at && (at === a || a.contains(at)) }; }) };
+    })) });
     await context.close();
   }
   // the desktop: a fine pointer at a desktop size, where the phone bar is not shown at all

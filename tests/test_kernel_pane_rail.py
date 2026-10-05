@@ -246,7 +246,9 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("paintIcon(ts.some(function(t){return t.status==='up';}),busy||!!pushing.length,fleetNodes(ts))",
                       self.html)
         self.assertIn("icon.classList.add('busy')", self.html, "Attach click arms the motion before the poll")
-        self.assertIn("#mtabs .mact[data-act=net]", self.html, "the mobile Net button mirrors on/busy")
+        # the phone's Remote kernels button mirrors on/busy: in the settings card since iOS item 4g (gear.js #rs-pact-net), so
+        # mnet() finds it in the settings document; tests/test_mtabs_fit_served.py reads the painted state in three engines
+        self.assertIn("d?d.getElementById('rs-pact-net'):null", self.html, "the phone's Remote kernels button mirrors on/busy")
 
     def test_keyboard_shortcuts_live_in_the_settings_modal(self):
         # folded into settings (the user 2026-06-30): no standalone ? modal in the shell anymore

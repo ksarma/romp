@@ -71615,7 +71615,8 @@ var x=(ev&&typeof ev.clientX==='number')?ev.clientX:(r.left+r.width/2);
 tip.style.left=Math.max(6,Math.min(window.innerWidth-tip.offsetWidth-6,x-tip.offsetWidth/2))+'px';
 tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
 // Mobile usage PANEL (the user 2026-07-11): the same window bars the desktop tooltip shows, opened as a
-// centered modal from the bottom bar's Usage button (the rail — and its hover — don't exist on mobile).
+// centered modal from the phone's Usage button (the rail — and its hover — don't exist on mobile): on the
+// bottom bar until iOS item 4g, in the settings card since (the A-map's usage, by phoneAct).
 // Pulls fresh first so the numbers aren't a stale boot snapshot; any tap or Escape dismisses.
 window.__rompUsagePanel=function(){
 function openIt(){var h=tipHTML();if(!h)return;
@@ -72792,7 +72793,7 @@ if(plus)plus.onclick=function(){showAdd(true);};
 if(more)more.onclick=function(){var on=sub.hidden;sub.hidden=!on;more.setAttribute('aria-expanded',on?'true':'false');
 more.textContent=on?'Hide':'How it works';};
 icon.onclick=function(e){e.stopPropagation();if(back.hidden)open();else close();};
-window.__rompOpenNet=open;   // the mobile bottom bar's Net button (the rail is hidden there)
+window.__rompOpenNet=open;   // the phone's Remote kernels button (the rail is hidden there): on the bottom bar until iOS item 4g, in the settings card since (the A-map's net, by phoneAct)
 window.__rompCloseNet=close;   // Escape routes here (_LANDING_ESC_JS — shell AND pane documents; the
                                // shell-only keydown this panel used to hold was deaf with focus in an iframe)
 back.onclick=function(e){if(e.target===back)close();};
@@ -72906,8 +72907,13 @@ function spin(){return '<img class=rnet-spin src=/media/romp-swirl-glyph.svg alt
 // Which auto-sync phases are still RUNNING. 'waiting' counts: the remote is restarting into the build we
 // just handed it, and what ends that phase is it coming back — work in flight, not a resting state.
 function apBusy(p){return p==='pushing'||p==='pulling'||p==='asking'||p==='waiting';}
-// the mobile bottom bar's Net button mirrors the rail icon's connected/busy classes (it shows the same glyph)
-function mnet(){return document.querySelector('#mtabs .mact[data-act=net]');}
+// the phone's Remote kernels button mirrors the rail icon's connected/busy classes and its node colours (it shows the same
+// glyph). It sat on the phone's bottom bar until iOS item 4g (2026-10-05) moved it into the settings card (gear.js
+// #rs-pact-net, in the row of buttons under the card's title that the card shows on the phone layout), so it lives in the
+// #f-settings document: null until that page has loaded (its opener fetches it on the first open), painted by every poll
+// after that and, from the last poll, each time the card opens (the settings message below paintIcon). gear.css carries
+// the glyph's colours there, since that page loads none of the shell's rules.
+function mnet(){try{var f=document.getElementById('f-settings'),d=f&&f.contentDocument;return d?d.getElementById('rs-pact-net'):null;}catch(e){return null;}}
 // One host's contribution to the glyph (the user 2026-07-29): 'ok' connected and on this build, 'warn'
 // it needs you (drifted, no kernel answering, errored, or down long enough that romp's backoff has
 // stopped treating it as a blip), 'wait' a fresh drop romp is actively re-dialing. Severity order
@@ -72930,9 +72936,14 @@ a.setAttribute('class','rn-a'+(nodes?' rn-'+nodes[0]:''));
 b.setAttribute('class','rn-b'+(nodes?' rn-'+nodes[1]:''));
 // this machine is by definition reachable — if you can read this, its kernel answered
 if(me)me.setAttribute('class','rn-me'+(nodes?' rn-ok':''));}
-function paintIcon(up,busy,nodes){icon.classList.toggle('on',up);icon.classList.toggle('busy',busy);
+var lastPaint=null;   // the last poll's paint, for the settings card's copy of the glyph when the card opens
+function paintIcon(up,busy,nodes){lastPaint=[up,busy,nodes];icon.classList.toggle('on',up);icon.classList.toggle('busy',busy);
 paintNodes(icon,nodes);
 var m=mnet();if(m){m.classList.toggle('on',up);m.classList.toggle('busy',busy);paintNodes(m,nodes);}}
+// the settings card opening ({romp:'settings',on:true}, gear.js feedFull) shows the phone's Remote kernels button: paint it
+// from the last poll then, so the card never shows the glyph's default between polls (its page loads on the first open,
+// after polls that found no button to paint). Nothing before the first poll: the default glyph is what the rail shows too.
+window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='settings'&&m.on&&lastPaint)paintIcon(lastPaint[0],lastPaint[1],lastPaint[2]);});
 // A host DROPPING is an EVENT, and it gets an event's cue: the rail's network glyph flashes red three
 // times and stops (the user 2026-07-29). This replaces a banner that dropped across the top of the pane
 // and covered the session tabs — the one strip you are actually reading — to announce a machine going
@@ -74002,6 +74013,11 @@ restart:function(){try{window.__rompRestart&&window.__rompRestart();}catch(e){}}
 errs:function(){try{window.__rompOpenErrs&&window.__rompOpenErrs();}catch(e){}}};
 Array.prototype.forEach.call(bar.querySelectorAll('button[data-act]'),function(b){
 b.addEventListener('click',function(){var f=A[b.getAttribute('data-act')];if(f)f();});});
+// net and usage have no button on this bar since iOS item 4g (2026-10-05): the settings card shows them on the phone (gear.js,
+// the row under the card's title), closes itself and posts {romp:'phoneAct',act}, and the handler here is the one their bar
+// buttons ran. Only those two acts, and only from the settings document: the others keep their buttons on the bar.
+window.addEventListener('message',function(e){var m=e.data,sf=document.getElementById('f-settings');
+if(!m||m.romp!=='phoneAct'||(m.act!=='net'&&m.act!=='usage')||!sf||e.source!==sf.contentWindow)return;A[m.act]();});
 window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
 if(m.romp==='toggleFleet')userSwitch(m.to==='chat'?'chat':'fleet');});
 var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart signal — the shell asks /version whose kernel answered
@@ -75985,18 +76001,22 @@ def _landing():
             # replaces a banner that covered the session tabs to say the same thing. The flash rides
             # background + ring, NOT color, so it composes with whatever fleet colour the glyph is
             # already wearing instead of fighting it.
-            ".rail-act.rn-drop,#mtabs .mact.rn-drop{animation:rnet-drop 0.42s ease-in-out 3}"
+            # (the phone's copy of the glyph flashed by `#mtabs .mact.rn-drop` until iOS item 4g moved it into the settings
+            # card, where gear.css restates this rule for #rs-pact-net; nothing on the bar gets the class now)
+            ".rail-act.rn-drop{animation:rnet-drop 0.42s ease-in-out 3}"
             "@keyframes rnet-drop{0%,100%{background:transparent;box-shadow:none}"
             "50%{background:rgba(229,72,77,0.45);box-shadow:0 0 0 2px rgba(229,72,77,0.9)}}"
             # mid-attach motion cue (the user 2026-07-12): while any tunnel is authorizing/connecting/starting
             # the network glyph turns accent and its connector lines MARCH (dashes flowing down the bus) — the
             # icon visibly "does something" during the seconds an attach takes. Class-driven off the same
             # /tunnels poll that lights .on (event-based; it clears the moment every tunnel settles). The
-            # mobile bottom bar's Net button carries the same classes.
+            # phone's copy carries the same classes: on the bottom bar until iOS item 4g, in the settings card since
+            # (gear.css restates these rules for #rs-pact-net). On the bar the #mtabs selectors now reach the bell alone,
+            # whose busy and on states (_LANDING_PUSH_JS) they style as before.
             ".rail-act.busy,#mtabs .mact.busy{color:var(--accent)}"
             ".rail-act.busy svg path,#mtabs .mact.busy svg path{stroke-dasharray:3 3;animation:rnet-march 0.9s linear infinite}"
             "@keyframes rnet-march{to{stroke-dashoffset:-6}}"
-            "#mtabs .mact.on{color:var(--accent)}"   # the mobile Net button lights up like the rail icon when connected
+            "#mtabs .mact.on{color:var(--accent)}"   # lit like the rail icon: the phone's Net button until iOS item 4g, the bell's on state now (which #mtabs #mbell.on also lights)
             # a centered modal (like settings/help), shell-native so it renders over collapsed panes too.
             "#rnet-back{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;"
             "background:rgba(0,0,0,0.55)}#rnet-back[hidden]{display:none}"
@@ -76574,16 +76594,18 @@ def _landing():
             # horizontal-only so the bar's height and every tap height stay exactly as they were
             "#mtabs button.mact{flex:0 0 auto;padding:6px 7px;color:#7d848b;font-size:17px;line-height:1}"
             "#mtabs button.mact svg{display:block}"
-            # The bar WRAPS when the tabs and the action buttons do not fit one row (iOS item 4g, 2026-10-04). In one row the
-            # default tabs and the six actions need about 413 to 418px (more with the Files tab on), and nothing in the row
-            # shrinks, so on a narrower phone the actions ran past the screen's right edge, where the overflow:hidden body
-            # leaves them unreachable (at 320px the Log's triangle, the bell and Settings, with Restart cut by the edge but its
-            # centre still on screen). The actions are one element (.mtabs-acts, the markup below), so a wrap moves them whole:
-            # the tabs keep the first row (flex:1, they fill it) and the actions take a second row, at the right edge by their
-            # auto margin, where they sat. Where everything fits, the row is the one it was: the tabs take all the free space,
-            # so the auto margin is 0 and the tabs do not move; the actions do not move in Chromium or Firefox, and in WebKit by
-            # at most 0.03px. barfit() reads the taller bar's height, and an observer on the bar re-reads it when the wrap
-            # changes with no resize (_LANDING_MOBILE_JS). tests/test_mtabs_fit_served.py measures the bar in three engines.
+            # The bar keeps ONE ROW where the row fits and WRAPS only where it does not (iOS item 4g, 2026-10-04 and 10-05).
+            # Nothing in the row shrinks and the bar does not scroll, so a row wider than the screen ran the actions past its
+            # right edge, where the overflow:hidden body leaves them unreachable: with six actions the default tabs' row
+            # needed 413 to 418px. Usage and Remote kernels then moved into the settings card (the markup below), and the
+            # default tabs with the four actions left need 354px in Chromium and 349 to 350px in WebKit and Firefox (390,
+            # and 384 to 385px, with the Files tab on): one row from 375 to 430px. Below that (from 320px up to 353px in
+            # Chromium and 349px in WebKit and Firefox, and below 390 or 385px with the Files tab on) the actions wrap. They
+            # are one element (.mtabs-acts), so a wrap moves them whole: the tabs keep the first row (flex:1, they fill it)
+            # and the actions take a second row at the right edge by their auto margin; where the row fits, the tabs take all
+            # the free space and the auto margin is 0. barfit() reads the taller bar's height, and an observer on the bar
+            # re-reads it when the wrap changes with no resize (_LANDING_MOBILE_JS). tests/test_mtabs_fit_served.py measures
+            # the bar in three engines.
             "#mtabs{flex-wrap:wrap}"
             "#mtabs .mtabs-acts{display:flex;flex:0 0 auto;margin-left:auto}"
             # the divider's 1px as its width too, not only its flex-basis: WebKit and Firefox size .mtabs-acts by its children's
@@ -76962,28 +76984,18 @@ def _landing():
             # the pane tabs, from _PANE_ORDER — the desktop rail's exact order (the user 2026-08-30:
             # mobile is a re-layout, never a re-ordering)
             + _mtab_buttons_html() +
-            # the rail's ACTIONS, reachable on mobile too (the user 2026-07-11): settings + the network
-            # panel + a usage panel showing the desktop tooltip's window bars. data-act (not data-pane) —
-            # they fire, they don't switch the shown pane.
+            # the rail's ACTIONS, reachable on mobile too (the user 2026-07-11): settings, restart, the Log and the bell.
+            # data-act (not data-pane): they fire, they don't switch the shown pane. Usage and Remote kernels sat here
+            # too until iOS item 4g (2026-10-05): the row ran past a phone's edge, and they are the bar's two panels about
+            # the machinery (spend and limits, other machines' kernels), not about the sessions, so they moved into the
+            # settings card, one tap from this bar's Settings (gear.js, the row of buttons under the card's title, shown on
+            # the phone layout), where each runs this bar's own handler (the A-map below, by the phoneAct message).
             # .mtabs-acts holds the divider and the actions as one box, so a bar too narrow for one row wraps them whole onto
             # a second row (the #mtabs wrap rules in the phone block; iOS item 4g)
             "<span class=mtabs-acts>"
             "<span class=mtabs-div></span>"
-            # the ACTUAL rail icons, not words (the user 2026-07-11). Usage has no desktop icon (the rail
-            # shows the live bars themselves) — its icon is the same motif: two stacked fill bars at
-            # different levels. SVG ATTRIBUTES MUST BE QUOTED (the rail-net invisible-squares saga).
-            "<button class=mact data-act=usage data-keycmd=usage.open aria-label=Usage title=Usage>"
-            "<svg viewBox='0 0 16 16' width='18' height='18'>"
-            "<rect x='1' y='3' width='14' height='4' rx='1' fill='none' stroke='currentColor' stroke-width='1'/>"
-            "<rect x='1' y='3' width='9' height='4' rx='1' fill='currentColor'/>"
-            "<rect x='1' y='9' width='14' height='4' rx='1' fill='none' stroke='currentColor' stroke-width='1'/>"
-            "<rect x='1' y='9' width='6' height='4' rx='1' fill='currentColor'/></svg></button>"
-            "<button class=mact data-act=net data-keycmd=net.open aria-label='Remote kernels' title='Remote kernels'>"
-            "<svg viewBox='0 0 16 16' width='18' height='18'>"
-            "<path d='M8 5 L8 8 M3 11 L3 8 L13 8 L13 11' fill='none' stroke='currentColor' stroke-width='1' stroke-linejoin='round'/>"
-            "<rect class=rn-me x='6' y='1' width='4' height='4' rx='0.6' fill='currentColor'/>"
-            "<rect class=rn-a x='1' y='11' width='4' height='4' rx='0.6' fill='currentColor'/>"
-            "<rect class=rn-b x='11' y='11' width='4' height='4' rx='0.6' fill='currentColor'/></svg></button>"
+            # the ACTUAL rail icons, not words (the user 2026-07-11). SVG ATTRIBUTES MUST BE QUOTED (the rail-net
+            # invisible-squares saga).
             # restart the kernel (the user 2026-07-22): the rail's ↻ is hidden on mobile, so mirror it here.
             # Same glyph as the rail; wired to window.__rompRestart (POST /restart, poll /healthz, reload).
             "<button class=mact data-act=restart data-keycmd=kernel.restart aria-label='Restart kernel' title='Restart kernel'>" + _REFRESH_SVG + "</button>"
