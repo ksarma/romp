@@ -42,8 +42,8 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 .rs-card { width: min(560px, 94%); max-height: 88vh; overflow: auto; background: var(--surface-raised, #252526); border: 1px solid var(--hairline, #3a3a3a);
   border-radius: 10px; padding: 16px 20px; font: 13px/1.6 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; color: var(--fg, #ccc); box-shadow: var(--shadow-modal, 0 12px 36px #000000aa); }
 #rsettings .rs-h { font-size: 14px; font-weight: 600; margin-bottom: 6px; color: var(--text-bright, #e8eaed); }
-/* the phone's panel buttons (iOS item 4g, 2026-10-05; gear.js #rs-pacts): Usage and Remote kernels, moved here from the phone's
-   bottom bar, a row under the title on the phone layout only. The menu vocabulary (ui/CLAUDE.md): the menu card, hairline,
+/* the phone's moved actions (iOS item 4g, 2026-10-05; gear.js #rs-pacts): Usage, Remote kernels and Restart kernel, moved here
+   from the phone's bottom bar, a row under the title on the phone layout only. The menu vocabulary (ui/CLAUDE.md): the menu card, hairline,
    radius and text, the row wash on hover, 12px romp sans (the tabs' size below); each is its glyph and its name */
 #rsettings .rs-pacts { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
 #rsettings .rs-pacts[hidden] { display: none; }

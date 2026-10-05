@@ -667,7 +667,8 @@ class MobileScript(unittest.TestCase):
         # the same rule as the tap: the relay's memory serves the file's close only while the person has not
         # moved on their own; a reveal (the feed's tap into a session) and the header pill are their moves. Two window-message
         # listeners: this arm (reveal, toggleFleet) and, since iOS item 4g (2026-10-05), the phoneAct arm that runs the A-map's
-        # net and usage for the settings card's buttons (it reads only phoneAct from the settings document, so a reveal passes it)
+        # net, usage and restart for the settings card's buttons (it reads only phoneAct from the settings document, so a reveal
+        # passes it)
         self.assertEqual(self.out["reveal"], {"tab": "feed", "from": None, "listeners": 2, "toggles": [["feed", True]]})
         self.assertEqual(self.out["pill"], {"tab": "chat", "from": None})
         self.assertEqual(self.out["pillOutline"], {"tab": "fleet", "from": None})

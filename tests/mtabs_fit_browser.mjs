@@ -11,12 +11,15 @@
 // Then the change the boot read cannot see: on the default set at cfg.dynamicViewport, the Files tab turned on the way
 // the gear turns it on (a write of the settings key from a same-origin pane document, so this window hears the storage
 // event the shell's pane controller acts on), with no resize, and the same reading after two frames.
-// Then the two actions that left the bar for the settings card (iOS item 4g's move: Usage and Remote kernels), on a phone at
-// cfg.actsViewport: the bar's Settings clicked at its centre, the card's row of panel buttons read (each button's box, the
-// element at its centre, and the Remote kernels glyph's classes and colours beside the rail glyph's, which the same poll
-// paints), then each button clicked once at its centre and its effect read in the shell (the Usage modal on #ru-back, the
-// Remote kernels panel #rnet-back) with the card closed. The shell's own GET /tunnels (the main frame's, not the panes')
-// answers cfg.tunnels, synthetic hosts, so the glyph has a state to show; the panes read the lab's real answer (no hosts).
+// Then the actions that left the bar for the settings card (iOS item 4g's move: cfg.moved, Usage, Remote kernels and Restart
+// kernel), on a phone at cfg.actsViewport: the bar's Settings clicked at its centre, the card's row of moved actions read
+// (each button's box, the element at its centre, and the Remote kernels glyph's classes and colours beside the rail glyph's,
+// which the same poll paints), then each button clicked once at its centre and its effect read in the shell (the Usage modal
+// on #ru-back, the Remote kernels panel #rnet-back, the kernel's restart: one POST /restart from the shell) with the card
+// closed. The shell's own GET /tunnels (the main frame's, not the panes') answers cfg.tunnels, synthetic hosts, so the glyph
+// has a state to show; the panes read the lab's real answer (no hosts). The shell's POST /restart never reaches the lab
+// kernel: it is answered here with a refusal (cfg.restartRefusal, the manager's 502 shape), which the shell's restart
+// handles by bringing its splash down and wearing the refusal's words on the rail's restart button, so the lab lives on.
 // Then the drop cue on the card's glyph (cfg.tunnelsDrop, a host that was up answering down): a drop with the card closed,
 // the glyph read at the card's next opening, and a drop with the card open, the glyph read while its flash runs.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
@@ -153,15 +156,24 @@ try {
     let polls = 0, answer = null;
     const held = [];
     const fulfil = (route, body) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
-    const { context, page } = await boot(false, (pg) => pg.route("**/tunnels", (route) => {
-      const q = route.request();
-      if (q.method() !== "GET" || q.frame() !== pg.mainFrame()) return route.continue();
-      polls++;
-      if (polls === 1) return fulfil(route, cfg.tunnels);
-      if (answer) return fulfil(route, answer);
-      held.push(route);
-      return undefined;
-    }));
+    const restarts = [];   // the shell's POST /restart, by frame: the restart's effect, answered with a refusal so the lab lives on
+    const { context, page } = await boot(false, async (pg) => {
+      await pg.route("**/tunnels", (route) => {
+        const q = route.request();
+        if (q.method() !== "GET" || q.frame() !== pg.mainFrame()) return route.continue();
+        polls++;
+        if (polls === 1) return fulfil(route, cfg.tunnels);
+        if (answer) return fulfil(route, answer);
+        held.push(route);
+        return undefined;
+      });
+      await pg.route("**/restart", (route) => {
+        const q = route.request();
+        if (q.method() !== "POST") return route.continue();
+        restarts.push(q.frame() === pg.mainFrame() ? "shell" : "pane");
+        return route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: cfg.restartRefusal }) });
+      });
+    });
     const [w, h] = cfg.actsViewport;
     await page.setViewportSize({ width: w, height: h });
     await frames(page);
@@ -172,8 +184,9 @@ try {
     const acts = { vp: [w, h], bar: await read(page), runs: {} };
     const settingsFrame = () => page.frames().find((f) => f !== page.mainFrame() && /\/settings(\?|$)/.test(f.url()));
     const clickCentre = async (box) => { await page.mouse.click(box.left + box.w / 2, box.top + box.h / 2); };
-    for (const act of ["usage", "net"]) {
+    for (const act of cfg.moved) {
       const run = {};
+      run.restartsBefore = restarts.slice();
       const gear = acts.bar.controls.find((c) => c.key === "settings");
       if (!gear) throw new Error("no Settings on the bar");
       await clickCentre(gear);
@@ -219,8 +232,12 @@ try {
       run.clicked = true;
       const seen = act === "usage"
         ? () => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip"); return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }
-        : () => { const b = document.getElementById("rnet-back"); return !!b && !b.hidden; };
-      try { await page.waitForFunction(seen, null, { timeout: 10000 }); run.opened = true; } catch (e) { run.opened = false; }
+        : act === "net" ? () => { const b = document.getElementById("rnet-back"); return !!b && !b.hidden; }
+        // the restart ran: the shell's handler took the refusal (its splash down, the refusal's words on the rail's button)
+        : (words) => { const r = document.getElementById("rail-refresh"), s = document.getElementById("romp-boot");
+            return !!r && r.title === words && (!s || s.classList.contains("gone")); };
+      try { await page.waitForFunction(seen, cfg.restartRefusal, { timeout: 10000 }); run.opened = true; } catch (e) { run.opened = false; }
+      run.restarts = restarts.slice();
       await frames(page);
       run.after = await page.evaluate(() => ({ settingsOpen: document.body.classList.contains("settings-open"),
         usage: (() => { const b = document.getElementById("ru-back"); return !!b && b.classList.contains("on"); })(),

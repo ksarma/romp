@@ -74018,11 +74018,11 @@ restart:function(){try{window.__rompRestart&&window.__rompRestart();}catch(e){}}
 errs:function(){try{window.__rompOpenErrs&&window.__rompOpenErrs();}catch(e){}}};
 Array.prototype.forEach.call(bar.querySelectorAll('button[data-act]'),function(b){
 b.addEventListener('click',function(){var f=A[b.getAttribute('data-act')];if(f)f();});});
-// net and usage have no button on this bar since iOS item 4g (2026-10-05): the settings card shows them on the phone (gear.js,
-// the row under the card's title), closes itself and posts {romp:'phoneAct',act}, and the handler here is the one their bar
-// buttons ran. Only those two acts, and only from the settings document: the others keep their buttons on the bar.
+// net, usage and restart have no button on this bar since iOS item 4g (2026-10-05): the settings card shows them on the phone
+// (gear.js, the row under the card's title), closes itself and posts {romp:'phoneAct',act}, and the handler here is the one
+// their bar buttons ran. Only those three acts, and only from the settings document: the others keep their buttons on the bar.
 window.addEventListener('message',function(e){var m=e.data,sf=document.getElementById('f-settings');
-if(!m||m.romp!=='phoneAct'||(m.act!=='net'&&m.act!=='usage')||!sf||e.source!==sf.contentWindow)return;A[m.act]();});
+if(!m||m.romp!=='phoneAct'||(m.act!=='net'&&m.act!=='usage'&&m.act!=='restart')||!sf||e.source!==sf.contentWindow)return;A[m.act]();});
 window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
 if(m.romp==='toggleFleet')userSwitch(m.to==='chat'?'chat':'fleet');});
 var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart signal — the shell asks /version whose kernel answered
@@ -76602,15 +76602,15 @@ def _landing():
             # The bar keeps ONE ROW where the row fits and WRAPS only where it does not (iOS item 4g, 2026-10-04 and 10-05).
             # Nothing in the row shrinks and the bar does not scroll, so a row wider than the screen ran the actions past its
             # right edge, where the overflow:hidden body leaves them unreachable: with six actions the default tabs' row
-            # needed 413 to 418px. Usage and Remote kernels then moved into the settings card (the markup below), and the
-            # default tabs with the four actions left need 354px in Chromium and 349 to 350px in WebKit and Firefox (390,
-            # and 384 to 385px, with the Files tab on): one row from 375 to 430px. Below that (from 320px up to 353px in
-            # Chromium and 349px in WebKit and Firefox, and below 390 or 385px with the Files tab on) the actions wrap. They
-            # are one element (.mtabs-acts), so a wrap moves them whole: the tabs keep the first row (flex:1, they fill it)
-            # and the actions take a second row at the right edge by their auto margin; where the row fits, the tabs take all
-            # the free space and the auto margin is 0. barfit() reads the taller bar's height, and an observer on the bar
-            # re-reads it when the wrap changes with no resize (_LANDING_MOBILE_JS). tests/test_mtabs_fit_served.py measures
-            # the bar in three engines.
+            # needed 413 to 418px. Usage, Remote kernels and Restart kernel then moved into the settings card (the markup
+            # below), and the default tabs with the three actions left need 322px in Chromium and 318px in WebKit and Firefox
+            # (358 and 353px with the Files tab on), so the bar is one row at every phone width from 360px, with the Files tab
+            # on or off. On a window narrower than that row (320px in Chromium, though not in WebKit or Firefox, and below 358
+            # or 353px with the Files tab on) the actions wrap. They are one element (.mtabs-acts), so a wrap moves them
+            # whole: the tabs keep the first row (flex:1, they fill it) and the actions take a second row at the right edge by
+            # their auto margin; where the row fits, the tabs take all the free space and the auto margin is 0. barfit() reads
+            # the taller bar's height, and an observer on the bar re-reads it when the wrap changes with no resize
+            # (_LANDING_MOBILE_JS). tests/test_mtabs_fit_served.py measures the bar in three engines.
             "#mtabs{flex-wrap:wrap}"
             "#mtabs .mtabs-acts{display:flex;flex:0 0 auto;margin-left:auto}"
             # the divider's 1px as its width too, not only its flex-basis: WebKit and Firefox size .mtabs-acts by its children's
@@ -76989,21 +76989,21 @@ def _landing():
             # the pane tabs, from _PANE_ORDER — the desktop rail's exact order (the user 2026-08-30:
             # mobile is a re-layout, never a re-ordering)
             + _mtab_buttons_html() +
-            # the rail's ACTIONS, reachable on mobile too (the user 2026-07-11): settings, restart, the Log and the bell.
+            # the rail's ACTIONS, reachable on mobile too (the user 2026-07-11): settings, the Log and the bell.
             # data-act (not data-pane): they fire, they don't switch the shown pane. Usage and Remote kernels sat here
             # too until iOS item 4g (2026-10-05): the row ran past a phone's edge, and they are the bar's two panels about
             # the machinery (spend and limits, other machines' kernels), not about the sessions, so they moved into the
             # settings card, one tap from this bar's Settings (gear.js, the row of buttons under the card's title, shown on
             # the phone layout), where each runs this bar's own handler (the A-map below, by the phoneAct message).
+            # Restart followed them there in the same item: the kernel's restart (the user 2026-07-22, mirroring the rail's,
+            # which the phone hides) is machinery too, rarely used and costly to hit by accident. The bell stays: whether
+            # notifications are on reads off it at a glance (struck through when they are off).
             # .mtabs-acts holds the divider and the actions as one box, so a bar too narrow for one row wraps them whole onto
             # a second row (the #mtabs wrap rules in the phone block; iOS item 4g)
             "<span class=mtabs-acts>"
             "<span class=mtabs-div></span>"
             # the ACTUAL rail icons, not words (the user 2026-07-11). SVG ATTRIBUTES MUST BE QUOTED (the rail-net
             # invisible-squares saga).
-            # restart the kernel (the user 2026-07-22): the rail's ↻ is hidden on mobile, so mirror it here.
-            # Same glyph as the rail; wired to window.__rompRestart (POST /restart, poll /healthz, reload).
-            "<button class=mact data-act=restart data-keycmd=kernel.restart aria-label='Restart kernel' title='Restart kernel'>" + _REFRESH_SVG + "</button>"
             # the log triangle on mobile too (same glyph + in-body count; opens the same popover)
             "<button class=mact id=merr data-act=errs data-keycmd=log.open aria-label=Log title='Log — click to open'>"
             + _ERRS_SVG +

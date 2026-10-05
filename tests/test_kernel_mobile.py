@@ -6,6 +6,7 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -132,15 +133,14 @@ class LandingShell(unittest.TestCase):
     def test_rail_actions_reachable_on_mobile(self):
         # the user 2026-07-11: settings / the network panel / usage stats were rail-only (the rail is
         # hidden on mobile). data-act buttons on the bar; each routes to the existing machinery. Since iOS item 4g
-        # (2026-10-05) net and usage are not on the bar: the settings card shows them on the phone (gear.js #rs-pacts) and
-        # posts phoneAct, which runs the same A-map handlers (tests/test_mtabs_fit_served.py clicks them in three engines).
+        # (2026-10-05) net, usage and restart are not on the bar: the settings card shows them on the phone (gear.js #rs-pacts)
+        # and posts phoneAct, which runs the same A-map handlers (tests/test_mtabs_fit_served.py clicks them in three engines).
         # The bar's buttons by their opening markup over the whole page (the page carries `data-act=usage` elsewhere, in the API
-        # health detail's link, so the act alone would not say which control): no Usage or Remote kernels button on the bar.
+        # health detail's link, so the act alone would not say which control): no Usage, Remote kernels or Restart button there.
         html = km._landing()
-        for act in ("<button class=mact data-act=settings ", "<button class=mact data-act=restart "):
-            self.assertIn(act, html)
-        self.assertNotIn("<button class=mact data-act=net ", html)
-        self.assertNotIn("<button class=mact data-act=usage ", html)
+        self.assertIn("<button class=mact data-act=settings ", html)
+        for act in ("net", "usage", "restart"):
+            self.assertNotIn("<button class=mact data-act=%s " % act, html)
         # ICONS, not words (the user 2026-07-11): settings wears the desktop rail's own gear glyph, net its
         # network-tree SVG; usage gets the theme's own motif — two stacked fill bars at different levels
         # the settings icon is the SAME gear the desktop rail uses (U+26ED ⛭), not the outlined star it had
@@ -151,9 +151,11 @@ class LandingShell(unittest.TestCase):
             gear = fh.read()
         self.assertIn("id=rs-pact-net data-pact=net title=\"Remote kernels\">' + PACT_NET_SVG", gear)
         self.assertIn("data-pact=usage title=Usage>' + PACT_USAGE_SVG", gear)
+        self.assertIn("data-pact=restart title=\"Restart kernel\">' + PACT_RESTART_SVG + '<span>Restart kernel</span>", gear)
         self.assertIn("<rect x='1' y='3' width='9' height='4' rx='1' fill='currentColor'/>", gear)   # the used-bar fill
         self.assertIn("window.parent.postMessage({ romp: 'phoneAct', act: b.getAttribute('data-pact') }, '*')", gear)
-        self.assertIn("if(!m||m.romp!=='phoneAct'||(m.act!=='net'&&m.act!=='usage')||!sf||e.source!==sf.contentWindow)return;A[m.act]();",
+        # the listener's accepted set is exactly the three moved acts (settings and errs keep their bar buttons)
+        self.assertIn("if(!m||m.romp!=='phoneAct'||(m.act!=='net'&&m.act!=='usage'&&m.act!=='restart')||!sf||e.source!==sf.contentWindow)return;A[m.act]();",
                       km._LANDING_MOBILE_JS)
         self.assertNotIn(">Gear</button>", html)
         self.assertIn("window.__rompOpenSettings&&window.__rompOpenSettings();", km._LANDING_MOBILE_JS)   # same path as the desktop gear: the settings iframe
@@ -169,9 +171,19 @@ class LandingShell(unittest.TestCase):
         # the user 2026-07-22: there was no restart-kernel affordance on mobile (the rail's own ↻ is hidden
         # there). Add a bar button that fires the SAME restart the rail does — factored to window.__rompRestart
         # (POST /restart, poll /healthz, reload) so both surfaces share one path, not a copy.
+        # Since iOS item 4g (2026-10-05) the phone's button is in the settings card (gear.js #rs-pacts), not on the bar: its tap
+        # posts phoneAct, which runs the A-map's restart, the same window.__rompRestart (tests/test_mtabs_fit_served.py clicks it).
         html = km._landing()
-        # …and it wears the SAME browser-style reload svg as the rail (the ↻ text glyph is gone, 2026-07-27)
-        self.assertIn("data-act=restart data-keycmd=kernel.restart aria-label='Restart kernel' title='Restart kernel'>" + km._REFRESH_SVG + "</button>", html)
+        self.assertNotIn("data-act=restart data-keycmd=kernel.restart", html)
+        # it wears the SAME browser-style reload svg as the rail (the ↻ text glyph is gone, 2026-07-27): the card's copy is the
+        # kernel's _REFRESH_SVG, its markup equal once the gear's string is joined and its aria-hidden set aside
+        with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, "ui", "webview", "gear.js"), encoding="utf-8") as fh:
+            gear = fh.read()
+        m = re.search(r'var PACT_RESTART_SVG = ((?:"[^"]*"\s*\+?\s*)+);', gear)
+        self.assertIsNotNone(m, "gear.js declares the card's restart glyph")
+        card = "".join(re.findall(r'"([^"]*)"', m.group(1))).replace(" aria-hidden='true'", "")
+        self.assertEqual(card, km._REFRESH_SVG)
+        self.assertIn(km._REFRESH_SVG, html)   # the rail's own copy
         self.assertIn("window.__rompRestart=function", km._LANDING_SETTINGS_JS)   # the shared restart path
         self.assertIn("fetch('/restart',{method:'POST'})", km._LANDING_SETTINGS_JS)
         self.assertIn("rf.onclick=function(){rf.style.pointerEvents='none';rf.style.opacity='0.5';window.__rompRestart();}", km._LANDING_SETTINGS_JS)
