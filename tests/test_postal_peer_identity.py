@@ -78,6 +78,7 @@ class PeerIdentityFold(_Seam):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
         ps.PEERS.clear()
         ps.PEER_STATE.clear()
+        ps._inbound_links.clear()
 
     def tearDown(self):
         os.environ.pop("ROMP_POSTAL_PEERS", None)

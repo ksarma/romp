@@ -132,7 +132,7 @@ class EnsureRoads(unittest.TestCase):
         except FileNotFoundError:
             pass
 
-    def _record(self, port=45678, pid=None, tok=None):
+    def _record(self, port=1, pid=None, tok=None):
         pm.PORTFILE.write_text(json.dumps({"port": port, "pid": os.getpid() if pid is None else pid,
                                            "tok": pm._token_mark() if tok is None else tok}))
 
@@ -141,7 +141,7 @@ class EnsureRoads(unittest.TestCase):
         self._record()
         self.assertEqual(pm.ensure_road(), (True, "up"), "a live record under this token: the machine's own bus")
         self.assertEqual(self.spawned, [])
-        self._record(port=45679)                   # the record's port need not be the port that answered: the bus is still ours
+        self._record(port=2)                       # the record's port need not be the port that answered: the bus is still ours
         self.assertEqual(pm.ensure_road(), (True, "up"))
 
     def test_a_bus_answering_without_a_live_record_of_this_token_is_answering_and_owned_by_nobody_here(self):

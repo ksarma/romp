@@ -1159,7 +1159,7 @@ class Proto2Wire(Harness):
             "print(json.dumps({'storeAfterImport': store.exists(), 'dirtyAfterImport': km._views_dirty[0]}))"])],
             capture_output=True, text=True, timeout=600,
             env=dict(os.environ, ROMP_CHAT_FLOOR0="1",                    # the postal trio: the child's bus is its own and never started
-                     ROMP_POSTAL_PORT=str(20000 + os.getpid() % 20000), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1"))
+                     ROMP_POSTAL_PORT="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1"))
         self.assertEqual(child.returncode, 0, child.stderr[-2000:])
         probe = json.loads(child.stdout.strip().splitlines()[-1])
         self.assertEqual(probe, {"storeAfterImport": False, "dirtyAfterImport": 0.0},

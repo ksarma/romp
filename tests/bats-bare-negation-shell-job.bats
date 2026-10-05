@@ -5,8 +5,10 @@
 # run, the TERM to the process running one, a synthetic suite decided candidate by candidate) and the oracle over the corpus
 # (BatsCorpus: every bare `!` in a test body of every suite the job's bats command names, its glob read off the workflow, decided
 # by running its test alone with the negation rewritten to `! true` and to `! false`, each rewrite run twice and its runs required
-# to agree; and, since fork PR #871's round 2, eleventh commit, its routes pin: a token and a state root planted in the python
-# process's environment reach no suite, the three candidates that read them decided in seconds). The corpus's other pin, the child
+# to agree, in two tests since fork PR 940's narrow re-check (2026-10-02), one for the suites CORPUS_APART names and one for
+# every other suite (corpus_parts); and, since fork PR #871's round 2, eleventh commit, its routes pin: a token and a state root
+# planted in the python process's environment reach no suite, the three candidates that read them decided in seconds). The
+# corpus's other pin, the child
 # pytest with a polluting module collected and deselected, is not run here: it needs pytest importable by the runner's python3,
 # which this job does not install, and it skips there saying so (a skipping test here would pin nothing). All skip in the python
 # cells of CI, which install no bats (warning once per process, since the tenth commit); the shell job's
@@ -27,7 +29,11 @@
 # candidate in the output bats shows. Since fork PR #871's round 2 each rewrite of a candidate runs twice (REPEATS) and four
 # candidates are decided at a time (CORPUS_WORKERS), each run in its own copy of the tree; the corpus's time under that is in the
 # module docstring, and the control arm on a red corpus runs after every verdict and report is out, bounded together at
-# CONTROL_BUDGET (60 s), so what the per-test bound can end mid-arm is diagnostics.
+# CONTROL_BUDGET (60 s), so what the per-test bound can end mid-arm is diagnostics. The corpus is two tests here for the same
+# reason: as one test it took 162.3 s of the 180 s bound in the job at the head that re-check read, and since then the suites
+# CORPUS_APART names (tests/pre-push-hook.bats and tests/romp-serve.bats, whose candidates take the longest) are decided in a
+# test of their own, each part under its own bound (the module docstring has the figures; a bats-free pin there holds the two
+# parts to the population, each suite in one).
 #
 # Every BATS_* variable is unset for the inner run. Under the job's BATS_TEST_TIMEOUT bats's timeout watcher is a background child
 # of each test, and a bare `wait` in a test waits on it: the register's D_bg shape hung to a 40 s kill with the variable set
@@ -73,8 +79,12 @@ run_module_tests() {   # $1 the dotted name under tests.test_bats_bare_negation:
     run_module_tests BatsRoad
 }
 
-@test "bats bare negation: every candidate of the tree is read by bats (tests/test_bats_bare_negation.py, the corpus)" {
-    run_module_tests BatsCorpus.test_every_candidate_of_every_suite_is_read_by_bats
+@test "bats bare negation: every candidate of the tree but the suites decided apart is read by bats (tests/test_bats_bare_negation.py, the corpus)" {
+    run_module_tests BatsCorpus.test_every_candidate_of_every_suite_but_those_apart_is_read_by_bats
+}
+
+@test "bats bare negation: every candidate of the suites decided apart, CORPUS_APART, is read by bats (tests/test_bats_bare_negation.py, the corpus)" {
+    run_module_tests BatsCorpus.test_every_candidate_of_the_suites_apart_is_read_by_bats
 }
 
 @test "bats bare negation: a token and a state root in the python process's environment reach no suite (tests/test_bats_bare_negation.py, the routes pin)" {

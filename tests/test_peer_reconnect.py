@@ -84,7 +84,7 @@ class PersistedIntent(unittest.TestCase):
     def test_a_restart_restores_the_row_and_dials_immediately(self):
         km._remotes["alpha"] = {"host": "alpha", "proc": None, "status": "up", "fails": 7,
                                 "next_try": 99999.0, "token": "tok", "kernel_port": 29855,
-                                "local_port": 50001, "bus_port": 50002, "sids": ["s1"]}
+                                "local_port": 1, "bus_port": 2, "sids": ["s1"]}
         km._remotes_save()
         km._remotes.clear()
         km._remotes_load()                      # the boot path (the restart event's own re-arm)
@@ -106,7 +106,7 @@ class PersistedIntent(unittest.TestCase):
 
     def test_detach_is_the_one_end_of_intent(self):
         km._remotes["alpha"] = {"host": "alpha", "proc": None, "status": "up", "token": "tok",
-                                "kernel_port": 29855, "local_port": 50001, "bus_port": 50002,
+                                "kernel_port": 29855, "local_port": 1, "bus_port": 2,
                                 "sids": [], "trust": "directed"}
         km._remotes_save()
         km.detach_remote("alpha")

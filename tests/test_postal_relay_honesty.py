@@ -507,6 +507,7 @@ class QuarantineApproveIsIdStrict(_RelayBase):
 
     def setUp(self):
         super().setUp()
+        pm._inbound_links.clear()
         pm.PEERS["TESTHOST"] = {"port": 1, "up": True, "trust": "directed"}
         self.delivered = []
         saved = pm.deliver

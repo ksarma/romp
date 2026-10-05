@@ -29,21 +29,21 @@ class PortRecord(unittest.TestCase):
 
     def test_the_record_names_the_bound_port_and_this_pid_and_lives_beside_the_pid_file(self):
         self.assertEqual(ps.PORTFILE, ps.STATE / "postal-port"); self.assertEqual(ps.PORTFILE.parent, ps.PIDFILE.parent)
-        ps._write_port_record(41234)
+        ps._write_port_record(1)
         rec = json.loads(ps.PORTFILE.read_text())
-        self.assertEqual(rec, {"port": 41234, "pid": os.getpid(), "tok": ps._token_mark()}, "the port the bus bound, the pid that bound it, and its token mark")
+        self.assertEqual(rec, {"port": 1, "pid": os.getpid(), "tok": ps._token_mark()}, "the port the bus bound, the pid that bound it, and its token mark")
         self.assertEqual(rec["tok"], hashlib.sha256(str(ps.SERVE_TOKEN or "").encode()).hexdigest()[:16], "the mark is a sha256 prefix of the serve token, never the token")
         self.assertEqual(len(rec["tok"]), 16)
         self.assertEqual([p.name for p in ps.STATE.glob("postal-port.*")], [], "written atomically: no temp left beside it")
 
     def test_a_clean_exit_removes_the_record_only_when_it_names_this_process(self):
-        ps._write_port_record(41234)
+        ps._write_port_record(1)
         ps._remove_port_record()
         self.assertFalse(ps.PORTFILE.exists(), "this process's record goes on its clean exit")
         # a NEWER bus's record (another pid) is left standing: the exiting process must not erase its successor's answer
-        ps.PORTFILE.write_text(json.dumps({"port": 41235, "pid": os.getpid() + 100000}))
+        ps.PORTFILE.write_text(json.dumps({"port": 2, "pid": os.getpid() + 100000}))
         ps._remove_port_record()
-        self.assertEqual(json.loads(ps.PORTFILE.read_text())["port"], 41235, "another process's record stands")
+        self.assertEqual(json.loads(ps.PORTFILE.read_text())["port"], 2, "another process's record stands")
         ps.PORTFILE.write_text("not json")
         ps._remove_port_record()                       # a torn record is left alone, never a raise on the exit path
         self.assertTrue(ps.PORTFILE.exists())

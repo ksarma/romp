@@ -547,20 +547,20 @@ class BusPortRecord(unittest.TestCase):
     def test_the_record_wins_over_the_environment_and_the_environment_is_the_fallback(self):
         km.BUS_PORT = 1                                            # the environment's word: a port nothing answers on
         self.assertEqual(km._bus_port(), 1, "no record: the environment")
-        self.rec.write_text(self._rec(45678))
-        self.assertEqual(km._bus_port(), 45678, "the record names the bound port, a live pid and this kernel's token mark: it wins")
-        self.rec.write_text(self._rec(45679, pid=2 ** 22 + 12345))   # a pid that does not run: a stale record
+        self.rec.write_text(self._rec(2))
+        self.assertEqual(km._bus_port(), 2, "the record names the bound port, a live pid and this kernel's token mark: it wins")
+        self.rec.write_text(self._rec(3, pid=2 ** 22 + 12345))   # a pid that does not run: a stale record
         self.assertEqual(km._bus_port(), 1, "a stale record (its pid gone) is ignored: the environment")
-        self.rec.write_text(self._rec(45680, tok="0123456789abcdef"))   # another bus's record: a token mark that is not ours
+        self.rec.write_text(self._rec(4, tok="0123456789abcdef"))   # another bus's record: a token mark that is not ours
         self.assertEqual(km._bus_port(), 1, "a foreign record (another bus, another world, a reused pid) is ignored: the environment")
-        self.rec.write_text(json.dumps({"port": 45681, "pid": os.getpid()}))   # a record with no mark (an older bus): never trusted
+        self.rec.write_text(json.dumps({"port": 5, "pid": os.getpid()}))   # a record with no mark (an older bus): never trusted
         self.assertEqual(km._bus_port(), 1)
         # a kernel that ensured NO bus (client-only, a lab's, an in-process test's) dials the environment whatever the record says
-        self.rec.write_text(self._rec(45682))
+        self.rec.write_text(self._rec(6))
         km._BUS_ENSURED[0] = False
         self.assertEqual(km._bus_port(), 1, "no ensure, no record: the environment")
         km._BUS_ENSURED[0] = True
-        self.assertEqual(km._bus_port(), 45682, "the ensure is the event that makes the bus this kernel's")
+        self.assertEqual(km._bus_port(), 6, "the ensure is the event that makes the bus this kernel's")
         self.rec.write_text("torn")
         self.assertEqual(km._bus_port(), 1, "a torn record: the environment, never a raise")
         self.rec.write_text(self._rec(0))
@@ -571,11 +571,11 @@ class BusPortRecord(unittest.TestCase):
         km._bus_port(); km._bus_port()
         lines = [l for l in self._err.getvalue().splitlines() if "postal bus dialed" in l]
         self.assertEqual(lines, ["romp-kernel: postal bus dialed on 127.0.0.1:25302 from the environment"], "said once, no mismatch when the environment is the source")
-        self.rec.write_text(self._rec(45678))
+        self.rec.write_text(self._rec(2))
         km._bus_port(); km._bus_port()
         lines = [l for l in self._err.getvalue().splitlines() if "postal bus dialed" in l]
         self.assertEqual(len(lines), 2, "a change is said again, once")
-        self.assertIn("127.0.0.1:45678 from the record (ROMP_POSTAL_PORT says 25302: the environment and the bus disagree; the record wins)", lines[1])
+        self.assertIn("127.0.0.1:2 from the record (ROMP_POSTAL_PORT says 25302: the environment and the bus disagree; the record wins)", lines[1])
 
     def test_a_kernel_on_one_port_and_a_bus_bound_on_another_still_reach_the_bus_that_holds_the_file(self):
         # the fault of 2026-09-18, red at main: the kernel's environment names a port nothing answers on while the bus that holds
