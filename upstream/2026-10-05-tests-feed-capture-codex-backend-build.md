@@ -3,7 +3,7 @@ title: test_feed_session_started and test_skill_load_wrapper build the kernel's 
 status: candidate
 where: tests/test_feed_session_started.py (_Feed._feed: km._codex() beside km._sdk(); FeedCaptureHoldsTheBuildAlone._first_call_outside and its _codex test); tests/test_skill_load_wrapper.py (HealOlderStores._feed: km._sdk() and km._codex() before the redirect_stderr; HealOlderStores._first_call_outside and its two tests); upstream/2026-10-05-tests-feed-capture-codex-backend-build.md (this entry)
 added: 2026-10-05
-pr:
+pr: 978
 tier: docs
 offered:
 closed:
