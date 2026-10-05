@@ -2529,13 +2529,12 @@ def _bell_rule_classes(html):
                               "rules' own selectors only" % (name.group(1).lower(), prelude))
             assert not _SELECTOR_TEST.search(prelude), "an at-rule prelude holds a selector() test (%r); this census reads rules' own selectors only" % prelude
             assert "\\" not in prelude, "an at-rule prelude is spelled with a CSS escape (%r); this census reads plain spellings only" % prelude
-    uncommented = html   # the page with each style element's comments removed, where served_css blanks them to spaces
-    for start, css in reversed(blocks):
+    rules, bare = served_css.rules(html), []
+    for _, css in blocks:   # each style element's rules again, its comments removed where served_css blanks them to spaces
         kept, at = "", 0
         for s, e in served_css.css_comment_spans(css):
             kept, at = kept + css[at:s], e
-        uncommented = uncommented[:start] + kept + css[at:] + uncommented[start + len(css):]
-    rules, bare = served_css.rules(html), served_css.rules(uncommented)
+        bare += served_css.rules("<!doctype html><style>%s</style>" % (kept + css[at:]))
     assert len(bare) == len(rules), "the served CSS parses to %d rules with its comments blanked and %d with them removed" % (len(rules), len(bare))
     named = {b: set() for b in _BELLS}
     for rule, plain in zip(rules, bare):
