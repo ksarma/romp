@@ -87,14 +87,15 @@
 //     ended and is not yet reaped) under it, is not cut, the knobs' refusals, the refusal of a ps that cannot read the
 //     process table as the bound reads it (one that exits 127, one that refuses -p, one whose whole-table read prints 0
 //     for every parent, one that leaves out the script's own process), those four and a refused knob under --check too,
-//     a run whose parent has exited before those reads, not refused (through a stand-in ps that shows that parent as 1,
-//     and through a launcher that exits once it has started the script), the count of legs at once read with nproc's
-//     OpenMP variables set and unset, the status of legs that exit differently, and a roster longer than the legs run
-//     at once, the most calls running at once counted and the outputs printed in roster order although the legs finish
-//     in another, and, with the real node, two legs run one at a time under a short bound each get their bound from
-//     their own start. A roster line holding a backslash is held by seen_at's rows, and a tree under a directory whose
-//     name holds one by the post-run key's row, each read as the script's comment above seen_at or above its awk pass
-//     states;
+//     --check over an empty roster, which agrees beside the ps that exits 127 and a refused knob (with no leg it makes
+//     neither those reads nor the knobs' check, as the step's run does not), a run whose parent has exited before those
+//     reads, not refused (through a stand-in ps that shows that parent as 1, and through a launcher that exits once it
+//     has started the script), the count of legs at once read with nproc's OpenMP variables set and unset, the status
+//     of legs that exit differently, and a roster longer than the legs run at once, the most calls running at once
+//     counted and the outputs printed in roster order although the legs finish in another, and, with the real node, two
+//     legs run one at a time under a short bound each get their bound from their own start. A roster line holding a
+//     backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's row,
+//     each read as the script's comment above seen_at or above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -2136,7 +2137,7 @@ test('the per-file bound through the stub: a node --test that does not end after
   const beside = run(B + '\n' + X + '\n' + C + '\n', { wedge: B, report: pass(B) + pass(X) + pass(C), linger: { [X]: '3.5' }, watch: { [C]: '2.9:0' }, timeout: 30000, env: { ROMP_BROWSER_LEGS_FILE_MS: '4001', ROMP_BROWSER_LEGS_GRACE_MS: '1003', ROMP_BROWSER_LEGS_JOBS: '2' } });
   const watchedDir = path.join(root, 'watched');
   const watch = fs.existsSync(watchedDir) ? fs.readdirSync(watchedDir).map((f) => read(path.join(watchedDir, f)).trim()) : [];
-  assert.deepEqual(watch, ['running alive 0'], 'beside a leg still running, the armed control: C\'s watch read B\'s node --test running once C\'s child had started (the grace\'s end had not begun), C\'s child alive by its pid once B\'s held mark was written (the grace\'s end had killed B), and the child\'s own exit 0 after that, so C ran with a process under it through B\'s grace\'s end. Read otherwise: not-running, a C that started its child after the grace\'s end began; gone, a child that had ended or been killed by the time C read it, once it saw the mark; unseen, a mark that never came; an exit of 137, a child killed rather than ending on its own, after C\'s read when that read says alive and before it when it says gone; no line, a C that never reached its reads: ' + JSON.stringify(watch));
+  assert.deepEqual(watch, ['running alive 0'], 'beside a leg still running, the armed control: C\'s watch read B\'s node --test running once C\'s child had started (the grace\'s end had not begun), C\'s child alive by its pid once B\'s held mark was written (the grace\'s end had killed B), and the child\'s own exit 0 after that, so C ran with a process under it through B\'s grace\'s end. What each reading can and cannot tell: alive, the child\'s pid a process not yet ended, a stopped one included, at C\'s read once it saw the mark, and nothing of the child after that read; gone, a child that had ended, on its own or by a kill, by that read, and not when; not-running, B\'s node --test stopped, ended or with no pid written yet at C\'s first read, made just after C started its child (the grace\'s end stops that node --test first); unseen, no mark within C\'s poll (every 10 ms, up to 1000 polls), so no read of the child; an exit of 137, a child ended by a SIGKILL rather than on its own, after C\'s read when that read says alive, before it when it says gone, and at a time no read places when it says unseen; no line, a C that had written none when the case read the directory, which cannot tell whether C made its reads: C writes its line last, after its child ends, so a C killed at any point before that, after both reads included, writes none, as does a C that never started its watch or was still in it then: ' + JSON.stringify(watch));
   assert.equal(beside.status, 1, 'beside a leg still running: the cut and held leg is red, exit 1, and the leg running across its grace\'s end sets no status of its own (a null status is the stub runner\'s timeout); stderr:\n' + beside.err);
   assert.ok(beside.err.includes('ci-browser-legs: ' + B + ' ran past the per-file bound (4001 ms)') && beside.err.includes('ci-browser-legs: ' + B + ': its node --test had not ended 1003 ms after the per-file bound'), 'beside a leg still running: the cut leg is named with the bound and its grace\'s end with the grace:\n' + beside.err);
   assert.deepEqual(beside.err.split('\n').filter((l) => l.startsWith('ci-browser-legs: ' + X) || l.startsWith('ci-browser-legs: ' + C)), [], 'beside a leg still running: no line of the script\'s names X or C, so neither is cut, held or failed:\n' + beside.err);
