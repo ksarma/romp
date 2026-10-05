@@ -13,7 +13,6 @@ import sys
 import unittest
 from romp_load import load_source
 import tempfile
-from html.parser import HTMLParser
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -2486,27 +2485,12 @@ _BELLS = ("mbell", "rail-bell")
 _NAMES_A_BELL = re.compile(r"(?<![\w-])(?:mbell|rail-bell)(?![\w-])")
 
 
-class _BellMarkup(HTMLParser):
-    """The class attribute of every live start tag whose id is a bell's (script and style content is text to the tokenizer)."""
-
-    def __init__(self, html):
-        super().__init__(convert_charrefs=True)
-        self.found = {b: [] for b in _BELLS}
-        self.feed(html)
-        self.close()
-
-    def handle_starttag(self, tag, attrs):
-        a = dict(attrs)
-        if a.get("id") in self.found:
-            self.found[a["id"]].append(set((a.get("class") or "").split()))
-
-    handle_startendtag = handle_starttag
-
-
 def _bell_rule_classes(html):
     """{bell id: classes} that the served shell's CSS rules name on the bell: every class in a compound that carries the bell's id,
     inside :not() and the other functional pseudo-classes as well (`#mbell:not(.on) .bell-slash` names `on` on #mbell), read from the
-    parsed rules (served_css.rules), less the classes the bell's own markup gives it."""
+    parsed rules (served_css.rules). A class the bell's markup gives it counts too, since served_css reads no attributes of other
+    elements: a rule naming one on a bell by id (`#mbell.mact`) would read as a class no script sets and turn the census red, the
+    safe side; no rule does."""
     named = {b: set() for b in _BELLS}
     for rule in served_css.rules(html):
         for member in served_css.members(rule.selector):
@@ -2515,10 +2499,6 @@ def _bell_rule_classes(html):
                     if re.search(r"#%s(?![\w-])" % re.escape(b), comp):
                         assert "[class" not in comp, "a rule selects #%s by its class attribute (%r); read it into this census" % (b, rule.selector)
                         named[b] |= set(re.findall(r"\.([\w-]+)", re.sub(r"\[[^\]]*\]", "", comp)))
-    markup = _BellMarkup(served_css.markup(html)).found
-    for b in _BELLS:
-        assert len(markup[b]) == 1, "the served shell carries %d elements with id=%s, not one" % (len(markup[b]), b)
-        named[b] -= markup[b][0]
     return named
 
 

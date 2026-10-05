@@ -1,7 +1,7 @@
 ---
 title: The phone and rail bells drop their busy rules, which no script has set since the popover took the tap, and a census holds every state class a rule names on a bell to a script that sets it
 status: candidate
-where: kernel/kernel.py (_landing: the push bell state comment and the #mbell and #rail-bell busy rules in the phone media block); tests/test_kernel_mobile.py (BellStateClassCensus, _bell_rule_classes, _BellMarkup and _BELL_CLASS_DRIVER, new; the re and HTMLParser imports); tests/test_kernel_webpush.py (RailBell.test_shell_serves_both_bells_and_one_flow_drives_them: the busy pin dropped); upstream/2026-10-05-bell-busy-rules-dead.md (this entry)
+where: kernel/kernel.py (_landing: the push bell state comment and the #mbell and #rail-bell busy rules in the phone media block); tests/test_kernel_mobile.py (BellStateClassCensus, _bell_rule_classes and _BELL_CLASS_DRIVER, new; the re import); tests/test_kernel_webpush.py (RailBell.test_shell_serves_both_bells_and_one_flow_drives_them: the busy pin dropped); upstream/2026-10-05-bell-busy-rules-dead.md (this entry)
 added: 2026-10-05
 pr:
 tier: fix
