@@ -206,8 +206,9 @@ for (const m of MODULES) {
 
 test('the Docs section records the guide\'s Files sentence for the margin layout, and the guide says it', () => {
   assert.ok(docs.includes('with the margin-layout follow-on (2026-09-07) it says that beside the file each card sits level with the passage it is about and scrolls with the text, and that a narrow column lists the cards (`tests/test_guide_files_margin_layout.py` holds the sentence to the panel and both sheets)'));
-  const files = read('docs', 'guide.md');
-  const at = files.indexOf('### Files');
-  assert.ok(at >= 0, 'the guide has a Files section');
+  // the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front pages are the project's, CLAUDE.md "The documentation front pages")
+  const files = read('docs', 'reference.md');
+  const at = files.indexOf('\n## The Files pane\n');
+  assert.ok(at >= 0, 'the reference has the Files pane section');
   assert.ok(files.slice(at).replace(/\s+/g, ' ').includes('where each card sits level with the passage it is about and scrolls with the text; when the column is narrow the panel drops below the file and lists the cards instead.'));
 });

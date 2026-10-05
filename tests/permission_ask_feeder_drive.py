@@ -138,9 +138,10 @@ async def main():
     check("ask_cleared", be.current_ask(SID) is None)
     # (d) the control: nothing parked, the feeder's pop marks working
     sess.inflight = 0; sess._mark("waiting"); fed_n = len(FED)
-    # the fork feeds ONE text at a time: inputs() holds every further feed while sess._untaken (the last fed text the CLI
-    # has not yet taken) is set, and only _on_message clears it on a streamed turn frame (_untaken_taken). This drive pushes
-    # its stream through be._forward and never reaches _on_message, so the take is stood in for by hand before each later enqueue
+    # the feeder feeds ONE text at a time: inputs() holds every further feed while sess._untaken (the last fed text the
+    # CLI has not yet taken) is set, and only _on_message clears it on a streamed turn frame (_untaken_taken). This drive
+    # pushes its stream through be._forward and never reaches _on_message, so the take is stood in for by hand before
+    # each later enqueue
     sess._untaken = None
     sess.enqueue("a second message, nothing parked")
     await asyncio.sleep(0.6)

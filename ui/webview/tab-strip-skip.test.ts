@@ -183,7 +183,8 @@ test("census: every s.-sourced glyph input of the loaded row has an m?. or kst?.
     ["placeholder", "sub", () => assert.doesNotMatch(phBuilder, /\bsub\b/,
       "a sub-agent viewer is client-only, so it is never drawn as a placeholder; the builder reads no sub flag")],
   ];
-  const placeholderReadsNoStatus = () => assert.doesNotMatch(phBuilder, /skeletonTabs\.status|applyTabStatus\(|appendTabAfterWidgets\(|\.status\b/,
+  // the placeholder draws the loaded tab's slots through the shared helpers with an EMPTY status (upstream 1907, the width plan); that literal reads no frame, so it is stripped before the check, and any call passing a real status still trips it
+  const placeholderReadsNoStatus = () => assert.doesNotMatch(phBuilder.replace(/\b(?:applyTabStatus|appendTabAfterWidgets)\(tab, \{ id, status: \{\} \}\)/g, ""), /skeletonTabs\.status|applyTabStatus\(|appendTabAfterWidgets\(|\.status\b/,
     "makePlaceholderTab reads no status frame (a placeholder's session is still being built; a held status is a skeleton's), so every st. input is exempt for its row while that holds");
   const misses: string[] = [];
   for (const f of sFields) {

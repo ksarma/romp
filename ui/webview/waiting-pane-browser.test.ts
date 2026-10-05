@@ -174,19 +174,28 @@ function kernelJs(name: string): string {
   return js;
 }
 // the pane controller, with the keys _landing() splices in from _PANE_ORDER. The kernel splices them inline
-// (`var KEYS=""" + json.dumps([k for k, _ in _PANE_ORDER]) + """;`, the placeholder-free form the 2026-09-15
-// upstream pull-in took, F2), so kernelJs()'s slice to the first triple quote would stop at `var KEYS=`: cut
-// at the splice instead and join the two literal halves with the keys parsed above (browse-route.test.ts's idiom)
+// (`var KEYS=""" + json.dumps([k for k, _ in _PANE_ORDER if k in _HAND_PANES]) + """;`, the placeholder-free form the
+// 2026-09-15 upstream pull-in took, F2, filtered to the hand-written panes since panes-as-data), so kernelJs()'s slice
+// to the first triple quote would stop at `var KEYS=`: cut at the splice instead and join the two literal halves with
+// the keys parsed above (browse-route.test.ts's idiom)
 function collapseJs(): string {
-  const at = KERNEL.indexOf("_PANE_ORDER = (");
-  assert.ok(at > 0, "_PANE_ORDER not found in kernel.py — re-anchor");
-  const keys = Array.from(KERNEL.slice(at, KERNEL.indexOf("\n\n", at)).matchAll(/\("(\w+)", "/g)).map((m) => m[1]);
-  assert.ok(keys.includes("waiting") && keys.includes("files"), "the pane keys parsed from _PANE_ORDER: " + keys.join(","));
+  // the keys the kernel splices in, `[k for k, _ in _PANE_ORDER if k in _HAND_PANES]`: since the project's panes-as-data change
+  // _PANE_ORDER is built from the shipped records in _CODE_PANES, so the keys are those records' ids in order, kept when the
+  // hand-written tuple _HAND_PANES names them (the generic panes join from body[data-panes] at run time, absent here)
+  assert.ok(KERNEL.includes('_PANE_ORDER = (*((p["id"], p["title"]) for p in _CODE_PANES),)'), "_PANE_ORDER is no longer built from _CODE_PANES: re-anchor");
+  const at = KERNEL.indexOf("_CODE_PANES = tuple(");
+  assert.ok(at > 0, "_CODE_PANES not found in kernel.py: re-anchor");
+  const ids = Array.from(KERNEL.slice(at, KERNEL.indexOf("\n))\n", at)).matchAll(/\{"id": "(\w+)"/g)).map((m) => m[1]);
+  const hand = KERNEL.match(/^_HAND_PANES = \(([^)]*)\)/m);
+  assert.ok(hand, "_HAND_PANES not found in kernel.py: re-anchor");
+  const handIds = Array.from(hand[1].matchAll(/"(\w+)"/g)).map((m) => m[1]);
+  const keys = ids.filter((k) => handIds.includes(k));
+  assert.ok(keys.includes("waiting") && keys.includes("files"), "the pane keys parsed from _CODE_PANES and _HAND_PANES: " + keys.join(","));
   const open = '_LANDING_COLLAPSE_JS = """';
   const at2 = KERNEL.indexOf(open);
   assert.ok(at2 > 0, "_LANDING_COLLAPSE_JS not found in kernel.py: re-anchor");
   const start = at2 + open.length;
-  const splice = '""" + json.dumps([k for k, _ in _PANE_ORDER]) + """';
+  const splice = '""" + json.dumps([k for k, _ in _PANE_ORDER if k in _HAND_PANES]) + """';
   const cut = KERNEL.indexOf(splice, start);
   assert.ok(cut > start, "the pane-keys splice in _LANDING_COLLAPSE_JS moved: re-anchor (the inline json.dumps of _PANE_ORDER)");
   const rest = cut + splice.length;

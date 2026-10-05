@@ -354,7 +354,7 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     'render.ts:paintGlowRuler:".turn.ext-glow"', 'render.ts:paintRailBand:".turn.ext-glow"',                                                // the two READERS of the glow: the ruler mirrors it, the band reads it
   ].sort(), "every string, template or regular-expression literal in the bundle naming a hover class as a token, by module and owner: the owners, the two readers, nothing else (a literal handed to a helper that mutates by parameter, a new selector on the class, or a pattern that strips it, a regular-expression literal or a RegExp source string, is enumerated here or reds)");
   // the mutators the two axes cannot read (a parameter, a computed value), by module, owner and method, a closed multiset; the message names
-  // what was added and what is gone, so a 48th is enumerated here (and its class, when a literal reaches it, on the literal axis) or reds
+  // what was added and what is gone, so a 49th is enumerated here (and its class, when a literal reaches it, on the literal axis) or reds
   const EXPECTED_UNRESOLVED = [
     "anchor-map.ts:makeMark:setAttribute(class)", "anchor-map.ts:makePoint:setAttribute(class)", "anchor-map.ts:stampBlock:setAttribute(class)",
     "code-block.ts:el:className=", "ctx-menu.ts:addMenuItem:className=", "ctx-menu.ts:menuCard:className=", "file-browse.ts:el:className=",
@@ -379,7 +379,7 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     "file-view.ts:el:className=", "path-links.ts:el:className=", "path-links.ts:markPathLink:setAttribute(class)",
     "pinned-notes.ts:make:className=", "preview.ts:say:classList.add",
     "render.ts:applyFold:classList.add", "render.ts:applyTabStatus:classList.add", "render.ts:dress:className=", "render.ts:el:className=",
-    "render.ts:notice:classList.add", "render.ts:notice:classList.add", "render.ts:onMoveDirCompletions:className=", "render.ts:rememberFold:classList.toggle",
+    "render.ts:notice:classList.add", "render.ts:notice:classList.add", "render.ts:noticeButton:className=", "render.ts:onMoveDirCompletions:className=", "render.ts:rememberFold:classList.toggle",
     "render.ts:renderDirMenu:className=", "render.ts:renderFilePreview:className=", "render.ts:renderPendingGroup:className=", "render.ts:updateCommentRail:className=",
     "render.ts:updateStatusline:classList.add",
     "status-chip.ts:statusChip:className=", "status-controls.ts:el:className=", "status-widgets.ts:el:className=",
