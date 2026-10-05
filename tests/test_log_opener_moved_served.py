@@ -11,11 +11,13 @@ without the extension deps or a Playwright browser). It also reads the button's 
 triangle's red in each (feed.css --log-unread, 2026-10-04), at 3:1 or better on the count's ground. Any box from the count
 up to the settings page's root whose drawing composites it with what lies behind it or dims it fails that read loudly (the
 round-2 review's rule, 2026-10-05): an opacity under 1, a filter or a backdrop-filter other than none, a mix-blend-mode
-other than normal, or a mask-image other than none, each read in its -webkit- form too where the engine reports one, since
+other than normal, or a mask-image or a mask-border other than none, each read in its -webkit- form too where the engine
+reports one (the mask-border's is -webkit-mask-box-image; Firefox supports neither form, so it has none to read), since
 each can change how the colours the read takes are drawn. A mutant that plants an opacity of 0.3 on the count, on its
 button (the count's ground), on body or on html, or `filter: opacity(.45)`, `backdrop-filter: brightness(.45)`,
-`mix-blend-mode: multiply` or a `mask-image` gradient at alpha .45 on the count, on its button or on html, turns it red
-through the ground error that names the box and the property, not through the ratio.
+`mix-blend-mode: multiply` or a `mask-image` gradient at alpha .45 on the count, on its button or on html, or the same
+gradient as a mask-border (`-webkit-mask-box-image` in Chromium and WebKit, `mask-border` in WebKit) on those three
+boxes, turns it red through the ground error that names the box and the property, not through the ratio.
 All fixtures synthetic.
 """
 import inspect
@@ -158,18 +160,24 @@ const readCount = () => feed.evaluate(async () => {
   // it or dims. Such drawing can change how the count is drawn against its ground, or the count and its ground together
   // against what is behind them, so the two computed colours may not be what the screen shows. The CSS that does, as this
   // read takes it: an opacity under 1, a filter or a backdrop-filter other than none, a mix-blend-mode other than normal,
-  // a mask-image other than none. The first box with any of them is named with the property and its value, whatever the
-  // value's effect (an identity filter fails too), and the ratio is never measured. Each property after the opacity is
-  // read in its standard form and in its -webkit- form wherever the engine reports that form, so an engine that reports
-  // only the prefixed one is read as well; a property reported in neither form, or an unreadable opacity, fails the same
-  // way. Paint effects outside the rule are not read, among them visibility, clip-path, a mask-border, a text fill colour
-  // (-webkit-text-fill-color) and a box off this path drawn over the count. The settings page is an iframe: the shell's
-  // boxes around it (#f-settings and up) belong to another document, and this read does not reach them
-  const DRAWN = [["filter", "none"], ["backdrop-filter", "none"], ["mix-blend-mode", "normal"], ["mask-image", "none"]];
+  // a mask-image or a mask-border other than none. The first box with any of them is named with the property and its
+  // value, whatever the value's effect (an identity filter fails too), and the ratio is never measured. Each property
+  // after the opacity is read in its standard form and in its -webkit- form wherever the engine reports that form, so an
+  // engine that reports only the prefixed one is read as well; the mask-border's -webkit- form is -webkit-mask-box-image,
+  // the only form Chromium reports. A property reported in neither form, or an unreadable opacity, fails the same way,
+  // except a mask-border in an engine that supports neither of its forms (CSS.supports), which draws none and is not
+  // read: Firefox does not support it. Paint effects outside the rule, which change the drawn colour without compositing
+  // the box, are not read: among them visibility, clip-path, an inset box-shadow on the ground box, a text-shadow or a
+  // -webkit-text-stroke on the count, a text fill colour (-webkit-text-fill-color) and a box off this path drawn over the
+  // count. The settings page is an iframe: the shell's boxes around it (#f-settings and up) belong to another document,
+  // and this read does not reach them
+  const DRAWN = [["filter", "none"], ["backdrop-filter", "none"], ["mix-blend-mode", "normal"], ["mask-image", "none"],
+                 ["mask-border", "none", "-webkit-mask-box-image"]];
   const drawn = (st) => {
     if (!(parseFloat(st.opacity) >= 1)) return "an opacity of " + st.opacity;
-    for (const [prop, flat] of DRAWN) {
-      const forms = [prop, "-webkit-" + prop].map((p) => [p, st.getPropertyValue(p)]).filter((f) => f[1] !== "");
+    for (const [prop, flat, prefixed = "-webkit-" + prop] of DRAWN) {
+      if (prop === "mask-border" && ![prop, prefixed].some((p) => CSS.supports(p, flat))) continue;
+      const forms = [prop, prefixed].map((p) => [p, st.getPropertyValue(p)]).filter((f) => f[1] !== "");
       if (!forms.length) return "an unreadable " + prop;
       const off = forms.find((f) => f[1] !== flat);
       if (off) return "a " + off[0] + " of " + off[1].slice(0, 120);

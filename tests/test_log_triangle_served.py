@@ -36,8 +36,9 @@ lightUnread). Not at downOpen: the Log's dimmed overlay (#rerr-back) covers the 
 not what sits behind the triangle on screen. A ground the walk cannot read (no opaque box, a translucent one, a background
 image) fails the leg at those steps; it never skips the ratio. So does any box from #merr up to the document's root whose
 drawing composites it with what lies behind it or dims it (the round-2 review's rule, 2026-10-05): an opacity under 1, a
-filter or a backdrop-filter other than none, a mix-blend-mode other than normal, or a mask-image other than none, each
-read in its -webkit- form too where the engine reports one. Each can change how the triangle, or the triangle and its
+filter or a backdrop-filter other than none, a mix-blend-mode other than normal, or a mask-image or a mask-border other
+than none, each read in its -webkit- form too where the engine reports one (the mask-border's is -webkit-mask-box-image;
+Firefox supports neither form, so it has none to read). Each can change how the triangle, or the triangle and its
 ground together, are drawn, so the two computed colours the ratio is taken from may not be what the screen shows; the
 walk refuses each without judging its effect.
 
@@ -50,8 +51,9 @@ the red (either theme's #mtabs background) turns that theme's contrast assertion
 the triangle's red (a sibling selector on the triangle's rule) turns the bell's colour assertion red; one that plants an
 opacity of 0.3 on the bar (#mtabs), on the triangle itself, on body or on html, or `filter: opacity(.45)`,
 `backdrop-filter: brightness(.45)`, `mix-blend-mode: multiply` or a `mask-image` gradient at alpha .45 on the bar, on the
-triangle or on body, turns the ground assertion red at the first contrast step, through the groundError that names the
-box and the property, not through the ratio.
+triangle or on body, or the same gradient as a mask-border (`-webkit-mask-box-image` in Chromium and WebKit, `mask-border`
+in WebKit) on those three boxes, turns the ground assertion red at the first contrast step, through the groundError that
+names the box and the property, not through the ratio.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), its port and its wait from tests/lab_ports.py, a
