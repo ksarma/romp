@@ -196,6 +196,10 @@ try {
       await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
       await frames(page);
       const lift = await page.evaluate(() => { const r = document.getElementById("f-settings").getBoundingClientRect(); return { left: r.left, top: r.top }; });
+      // the glyph's colour fades over the dress's transition when the opening paints it: read it once those transitions end
+      await sf.evaluate(() => { const n = document.getElementById("rs-pact-net");
+        const fades = n && n.getAnimations ? n.getAnimations().filter((a) => typeof CSSTransition !== "undefined" && a instanceof CSSTransition) : [];
+        return Promise.all(fades.map((a) => a.finished.catch(() => null))).then(() => fades.length); });
       run.card = await sf.evaluate((ctx) => {
         const r = (x) => Math.round(x * 100) / 100;
         const row = document.getElementById("rs-pacts"), card = document.querySelector("#rsettings .rs-card");
@@ -206,10 +210,18 @@ try {
           return { act: b.getAttribute("data-pact"), text: b.textContent.trim(), left: r(c.left + ctx.left), right: r(c.right + ctx.left),
                    top: r(c.top + ctx.top), bottom: r(c.bottom + ctx.top), w: r(c.width), h: r(c.height), hit: !!at && (at === b || b.contains(at)) };
         }) : [];
+        // each moved action's dress beside Customize shortcuts' (the card's word button the row copies), at rest
+        const DRESS = ["backgroundColor", "borderTopColor", "borderTopStyle", "borderTopWidth", "borderTopLeftRadius", "color",
+                       "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "fontFamily", "fontSize", "fontWeight", "cursor",
+                       "transitionProperty", "transitionDuration"];   // no line-height: its resolved value is the used one only where the
+                                                                      // element renders, and Customize shortcuts sits on a tab not shown
+        const dressOf = (el) => { const c = getComputedStyle(el), o = {}; DRESS.forEach((k) => { o[k] = c[k]; }); return o; };
+        const ref = document.getElementById("rs-keys-btn");
+        const dress = { ref: ref ? dressOf(ref) : null, acts: row ? Array.from(row.querySelectorAll("button")).map((b) => ({ act: b.getAttribute("data-pact"), cls: b.getAttribute("class"), dress: dressOf(b) })) : [] };
         const net = document.getElementById("rs-pact-net");
         const glyph = net ? { cls: net.getAttribute("class"), color: getComputedStyle(net).color,
           nodes: ["rn-me", "rn-a", "rn-b"].map((k) => { const e = net.querySelector("." + k); return e ? { cls: e.getAttribute("class"), fill: getComputedStyle(e).fill } : null; }) } : null;
-        return { rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none", buttons, glyph,
+        return { rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none", buttons, glyph, dress,
                  card: cr ? { left: r(cr.left + ctx.left), right: r(cr.right + ctx.left), top: r(cr.top + ctx.top), bottom: r(cr.bottom + ctx.top) } : null,
                  tab: (document.querySelector("#rs-tabs .rs-tab.on") || {}).textContent || "" };
       }, lift);

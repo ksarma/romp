@@ -43,14 +43,19 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
   border-radius: 10px; padding: 16px 20px; font: 13px/1.6 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; color: var(--fg, #ccc); box-shadow: var(--shadow-modal, 0 12px 36px #000000aa); }
 #rsettings .rs-h { font-size: 14px; font-weight: 600; margin-bottom: 6px; color: var(--text-bright, #e8eaed); }
 /* the phone's moved actions (iOS item 4g, 2026-10-05; gear.js #rs-pacts): Usage, Remote kernels and Restart kernel, moved here
-   from the phone's bottom bar, a row under the title on the phone layout only. The menu vocabulary (ui/CLAUDE.md): the menu card, hairline,
-   radius and text, the row wash on hover, 12px romp sans (the tabs' size below); each is its glyph and its name */
+   from the phone's bottom bar, a row under the title on the phone layout only, each its glyph and its name. They are buttons in
+   a card, not a dropdown's rows (the menu vocabulary, ui/CLAUDE.md, governs dropdowns), so they wear the dress of the card's
+   other word buttons: Customize shortcuts' (#rs-keys-btn below), whose declarations these copy, the button fill and the
+   hairline, a 5px radius, the card's text at the card's size, the accent hover and the press (Open log, .ra-openbtn, shares
+   the fill, the hairline, the hover and the press). The display, the glyph's gap and the row's layout are the row's own. */
 #rsettings .rs-pacts { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
 #rsettings .rs-pacts[hidden] { display: none; }
-#rsettings .rs-pact { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; line-height: 1; padding: 5px 10px;
-  border: 1px solid var(--menu-border, rgba(255, 255, 255, 0.12)); border-radius: var(--radius-menu, 6px);
-  background: var(--menu-bg, #252526); color: var(--menu-fg, #cccccc); cursor: pointer; }
-#rsettings .rs-pact:hover { background: var(--menu-hover, rgba(255, 255, 255, 0.09)); }
+#rsettings .rs-pact { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; background: var(--btn-bg, #2a2a2a); color: var(--fg, #ccc);
+  border: 1px solid var(--hairline, #3a3a3a); border-radius: 5px; padding: 3px 8px; font: inherit;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+#rsettings .rs-pact:active { transform: scale(0.96); }
+#rsettings .rs-pact:hover { border-color: var(--accent, #9cd2ff); color: var(--accent, #9cd2ff);
+  background: var(--accent-wash, rgba(156, 210, 255, 0.12)); }
 #rsettings .rs-pact svg { display: block; flex: none; }
 /* the Remote kernels glyph's live state, painted here by the shell's poll as it painted the bar's button (kernel
    _LANDING_REMOTES_JS paintIcon through mnet): the accent when a host is connected and while one attaches, the connector
