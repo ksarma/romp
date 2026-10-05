@@ -513,14 +513,19 @@ class Plan(_Base):
         why, and writes no state: the batch's two merges pass git -c branch.batch/<name>.mergeOptions= (merge_settings),
         and git splits a -c pair at its first '=', so for x=y it reads the key branch.batch/x, refuses it and starts no
         merge (the premise, run here under the git on PATH). pick_name never makes such a name. Red at round 3's head:
-        plan exited 0 and wrote the state, and assemble then exited 1 at its first merge with git's "invalid key"."""
+        plan exited 0 and wrote the state, and assemble then exited 1 at its first merge with git's "invalid key". plan
+        refuses before its fetch, so the clone's FETCH_HEAD stays absent (the check of the closing check's fix,
+        chk-r3e-2); red when plan fetches first, as it did at that check's head."""
         fx = self.fx
         self.two_members()
         premise = subprocess.run(["git", "-c", "branch.batch/x=y.mergeOptions=", "config", "--get-regexp", "^branch"],
                                  cwd=fx.dev, env=fx.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.assertEqual(premise.returncode, 128, premise)
         self.assertIn("invalid key: branch.batch/x\n", premise.stderr, "premise: git splits the -c pair at its first '='")
+        fetch_head = os.path.join(fx.dev, ".git", "FETCH_HEAD")
+        self.assertFalse(os.path.lexists(fetch_head), "premise: the clone has never fetched")
         p = fx.run("plan", "--name", "x=y")
+        self.assertFalse(os.path.lexists(fetch_head), "plan refused before its fetch")
         self.assertEqual((p.returncode, p.stdout, p.stderr), (2, "", (
             "batch: --name x=y holds '=', which a batch name cannot: the batch's merges pass git -c "
             "branch.batch/x=y.mergeOptions=, and git splits a -c pair at its first '=', so it would read the key "
@@ -529,11 +534,15 @@ class Plan(_Base):
 
     def test_a_state_named_with_an_equals_sign_is_refused_by_assemble_and_pull_before_any_write(self):
         """A state whose name holds '=' can still be on disk from a plan that did not refuse it (fork main's plan wrote
-        one), so assemble refuses it too, with plan's message, right after it loads the state and before any write;
+        one), so assemble refuses it too, right after it loads the state and before any write, naming the batch and
+        asking for a new plan, since assemble and pull take the name as an argument and have no --name (chk-r3e-3);
         pull reaches the refusal through assemble (the check of the closing check at round 3 of PR 959, chk-r3c-1). The
         state is planted as such a plan leaves it: planned as xy, then renamed to x=y.json with its name set to x=y.
-        Red before: assemble made the batch/x=y branch and the romp-batch-x=y worktree and then exited 1 at its first
-        merge with git's "invalid key: branch.batch/x"."""
+        origin's main then moves, so a fetch would move refs/remotes/origin/main, and the pin asserts that it did not:
+        the refusal comes before assemble's fetch (the check of that check's fix, chk-r3e-1; red when the refusal and
+        the fetch swap places, the mutant mFetchFirst, at the assemble leg). Red before: assemble made the batch/x=y
+        branch and the romp-batch-x=y worktree and then exited 1 at its first merge with git's "invalid key:
+        branch.batch/x"."""
         fx = self.fx
         self.two_members()
         fx.ok("plan", "--name", "xy")
@@ -547,9 +556,12 @@ class Plan(_Base):
         os.remove(os.path.join(sdir, "xy.json"))
         with open(os.path.join(sdir, "x=y.json"), "rb") as f:
             planted = f.read()
-        refusal = ("batch: --name x=y holds '=', which a batch name cannot: the batch's merges pass git -c "
+        fx.commit_main({"moved.txt": "main moved after the plan\n"})
+        tracking = fx.dev_git("rev-parse", "refs/remotes/origin/main")
+        self.assertNotEqual(tracking, fx.bare_rev("main"), "premise: origin's main moved past the tracking ref")
+        refusal = ("batch: the batch x=y holds '=', which a batch name cannot: the batch's merges pass git -c "
                    "branch.batch/x=y.mergeOptions=, and git splits a -c pair at its first '=', so it would read the key "
-                   "branch.batch/x and refuse it; pass a name without '=', or no --name for today's date and a letter\n")
+                   "branch.batch/x and refuse it; plan it again under a name without '='\n")
         for argv in (("assemble", "x=y"), ("pull", "x=y", "102")):
             p = fx.run(*argv)
             self.assertEqual((p.returncode, p.stdout, p.stderr), (2, "", refusal), argv)
@@ -558,6 +570,8 @@ class Plan(_Base):
             self.assertFalse(os.path.lexists(fx.wt("x=y")), "%s made no romp-batch-x=y worktree" % (argv,))
             with open(os.path.join(sdir, "x=y.json"), "rb") as f:
                 self.assertEqual(f.read(), planted, "%s left the state as planted" % (argv,))
+            self.assertEqual(fx.dev_git("rev-parse", "refs/remotes/origin/main"), tracking,
+                             "%s refused before its fetch: origin/main did not move" % (argv,))
 
     def test_a_one_member_batch_lands_through_the_whole_route(self):
         fx = self.fx
@@ -3151,11 +3165,12 @@ exec "$TRACE_REAL_GIT" "$@"
         merge, as git checkout does, so a file whose content is the same but whose stat data changed is not read as a
         change. The worktree has a change to notes.txt before bisect, so the cleanups are unforced, and the command, at
         the base (VERSION = 1), sets kernel/kernel.py's mtime to a fixed past time with touch -t, the form GNU's and
-        Apple's touch both take (Apple's has no -d; the closing check at round 3 of PR 959, N4), since a plain touch in
-        the second of the checkout could go unseen, git comparing the mtime to the second, on a file the base and the
-        tip hold differently: bisect names #102, the worktree is on batch/b1 at the tip with no bisect in progress, and
-        notes.txt keeps its change. Red without the refresh (the mutant mNoRefresh): the first cleanup's git read-tree
-        -m -u refuses with "Entry 'kernel/kernel.py' not uptodate. Cannot merge." and bisect exits 1."""
+        Apple's touch both take (Apple's -d takes a date only with a time of day, so it refuses -d 2001-01-01; the
+        closing check at round 3 of PR 959, N4, and chk-r3e-4), since a plain touch in the second of the checkout could
+        go unseen, git comparing the mtime to the second, on a file the base and the tip hold differently: bisect names
+        #102, the worktree is on batch/b1 at the tip with no bisect in progress, and notes.txt keeps its change. Red
+        without the refresh (the mutant mNoRefresh): the first cleanup's git read-tree -m -u refuses with "Entry
+        'kernel/kernel.py' not uptodate. Cannot merge." and bisect exits 1."""
         fx = self.fx
         tip, _merge_101 = self.bisect_chain()
         notes = os.path.join(fx.wt("b1"), "notes.txt")

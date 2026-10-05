@@ -536,19 +536,24 @@ def merge_settings(name):
     return ("-c", "branch.%s.mergeOptions=" % branch_of(name), "-c", "diff.algorithm=histogram")
 
 
-def refuse_equals_in_name(name):
+def refuse_equals_in_name(name, planned=False):
     """Refuse a batch name holding '=' (exit 2). The batch's two merges pass `-c branch.batch/<name>.mergeOptions=`
     (merge_settings), and git splits a -c pair at its first '=', so a name holding one could be planned and then not
-    merged (the closing check at round 3 of PR 959, cc959-r3-n1). pick_name never makes such a name. plan calls this
-    before it writes a state, and assemble (pull through it) calls it right after it loads one and before any write,
-    since a state with such a name can still be on disk from a plan that did not refuse it; without that, git refused
-    the key with its own "invalid key" after the batch branch and worktree were made (the check of that closing
-    check's fix, chk-r3c-1)."""
+    merged (the closing check at round 3 of PR 959, cc959-r3-n1). pick_name never makes such a name, so plan calls this
+    on a passed --name only, before its fetch (chk-r3e-2), and assemble (pull through it) calls it right after it loads
+    a state and before any write, since a state with such a name can still be on disk from a plan that did not refuse
+    it; without that, git refused the key with its own "invalid key" after the batch branch and worktree were made (the
+    check of that closing check's fix, chk-r3c-1). The message names its caller (chk-r3e-3): plan's --name, or, with
+    `planned`, the batch assemble loaded, whose remedy is to plan it again, since assemble and pull take the name as an
+    argument and have no --name. A batch that an older batch.py stopped mid-resolution under such a name is finished
+    or dropped by hand, since the refusal comes before assemble's --continue and --abort."""
     if "=" in name:
-        raise Fail("--name %s holds '=', which a batch name cannot: the batch's merges pass git -c %s.mergeOptions=, and "
-                   "git splits a -c pair at its first '=', so it would read the key %s and refuse it; pass a name "
-                   "without '=', or no --name for today's date and a letter"
-                   % (name, "branch." + branch_of(name), "branch." + branch_of(name).split("=")[0]), code=2)
+        raise Fail("%s %s holds '=', which a batch name cannot: the batch's merges pass git -c %s.mergeOptions=, "
+                   "and git splits a -c pair at its first '=', so it would read the key %s and refuse it; %s"
+                   % ("the batch" if planned else "--name", name, "branch." + branch_of(name),
+                      "branch." + branch_of(name).split("=")[0],
+                      "plan it again under a name without '='" if planned
+                      else "pass a name without '=', or no --name for today's date and a letter"), code=2)
 
 
 # The signals that stop the tool (the closing check wf_3b100f5e-b38, its item 4): each raises Stopped, a BaseException
@@ -1553,10 +1558,11 @@ def predict_conflicts(root, base_sha, ordered, cands):
 
 def cmd_plan(args):
     root = repo_root()
+    if args.name:
+        refuse_equals_in_name(args.name)
     fetch(root, args.no_fetch)
     base_sha = git("rev-parse", MAIN_REF, cwd=root)
     name = args.name or pick_name(root)
-    refuse_equals_in_name(name)
     if os.path.exists(state_path(root, name)) and not args.force:
         old = load_state(root, name)
         if old.get("assembly", {}).get("head"):
@@ -2388,7 +2394,7 @@ def run_assembly(root, state, resolve_set, resume):
 def cmd_assemble(args):
     root = repo_root()
     state = load_state(root, args.name)
-    refuse_equals_in_name(state["name"])
+    refuse_equals_in_name(state["name"], planned=True)
     fetch(root, args.no_fetch)
     others = other_remote_batches(root, args.name)
     if others:
