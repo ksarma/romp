@@ -83,7 +83,9 @@ absence has no event to wait on), and the line still shows; then a reading arriv
 to the shell as the timeline posts it, the shell's later pulls let through), and at the card's next opening Usage is enabled
 with no line, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then a desktop window, where
 the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell, the gear) and
-their boxes equal af7d18250's (RAIL_AF7 below). MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
+their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear clicked at its
+centre, shows no row of moved actions (not displayed, its buttons boxless: the rail has its own). MTABS_FIT_DUMP, a
+directory, keeps each engine's raw readings there.
 
 Red at the wrap-only head, in all three engines: its bar shows six actions, it wraps where one row is owed (at 375 and
 390px, and at 414 in Chromium; its row fits 414 in WebKit and Firefox and 430 in all three), and its card has no row of
@@ -94,11 +96,12 @@ follows. The button dress's pin is red at the menu dress the row wore before (th
 of padding, 12px text). The no-reading pins are red at the card without that state (Usage enabled with no reading, and its
 tap closing the card to open nothing) and under a mutant that reads the state once, at the card's first opening, where the
 reading that arrived later never enables Usage. The fallback's pin is red under the old rule restored (no wrap), and the
-rail's under the move applied to the rail as well. The drop cue's pin is red at the commit before its fix, where a drop that
-came while the card was closed flashed the glyph at the card's next opening. Runs in the "Browser-backed served-page tests
-(pytest)" step of the served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip
-here is a failure), in Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not
-declared in ROMP_SERVED_TESTS_ENGINES (CI declares chromium; a developer's box runs all three).
+rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
+(romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
+closed flashed the glyph at the card's next opening. Runs in the "Browser-backed served-page tests (pytest)" step of the
+served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
+Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
+ROMP_SERVED_TESTS_ENGINES (CI declares chromium; a developer's box runs all three).
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), its port from tests/lab_ports.py and proved its own
@@ -407,6 +410,12 @@ def _rail_problems(engine, rail):
         if ids != [a["id"] for a in want]:
             out.append("%s: the rail's actions are %s, not af7d18250's %s" % (where, ids, [a["id"] for a in want]))
             continue
+        # the settings card opened from the rail's gear: the phone's row of moved actions is not displayed (the rail has its own)
+        card = (r.get("card") or {}).get("card")
+        if not (r.get("card") or {}).get("opened") or not card or not card.get("row"):
+            out.append("%s: the settings card did not open from the rail's gear with its row in it: %r" % (where, r.get("card")))
+        elif card.get("display") != "none" or any(w > 0 or h > 0 for w, h in card.get("boxes", [])):
+            out.append("%s: the settings card shows the phone's row of moved actions on the desktop: %r" % (where, card))
         vw, gear = r["vw"], r["acts"][-1]
         for a, b in zip(r["acts"], want):
             if a["left"] < -EPS or a["right"] > vw + EPS or not a["hit"]:

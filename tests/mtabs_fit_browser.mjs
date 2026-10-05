@@ -29,7 +29,9 @@
 // reading arrives (the lab's own GET /usage payload posted to the shell as the timeline posts it, the shell's later pulls let
 // through), the card closed and opened again, Usage read again, and one click on it, its effect read.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
-// and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit.
+// and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
+// the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
+// boxes), which the phone alone shows.
 // Writes the readings as JSON to cfg.result and prints one `RESULT-FILE:` line naming it; exits 3 when the browser does not
 // launch (the Python side turns that into a skip).
 // Never touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. No sessions.
@@ -417,6 +419,22 @@ try {
           const at = c.width > 0 && c.height > 0 ? document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2) : null;
           return { id: a.id, left: r(c.left), right: r(c.right), top: r(c.top), bottom: r(c.bottom), w: r(c.width), h: r(c.height), hit: !!at && (at === a || a.contains(at)) }; }) };
     })) });
+    // the settings card from the rail's gear: its row of the phone's moved actions is not displayed here
+    const rg = out.rail[out.rail.length - 1].acts.find((a) => a.id === "rail-gear");
+    if (rg) {
+      await page.mouse.click(rg.left + rg.w / 2, rg.top + rg.h / 2);
+      const opened = await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 }).then(() => true, () => false);
+      const sf = settingsFrameOf(page);
+      let card = null;
+      if (opened && sf) {
+        await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+        await frames(page);
+        card = await sf.evaluate(() => { const row = document.getElementById("rs-pacts");
+          return { row: !!row, hidden: row ? row.hidden : null, display: row ? getComputedStyle(row).display : null,
+                   boxes: row ? Array.from(row.querySelectorAll("button")).map((b) => { const c = b.getBoundingClientRect(); return [c.width, c.height]; }) : [] }; });
+      }
+      out.rail[out.rail.length - 1].card = { opened, card };
+    }
     await context.close();
   }
   // the desktop: a fine pointer at a desktop size, where the phone bar is not shown at all
