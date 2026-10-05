@@ -462,16 +462,16 @@ class ConnLostLog(unittest.TestCase):
         one response, but the response does not say so, and WebKit treats the connection as persistent. Each crash followed a
         request on a fresh connection that the browser closed within about 1 ms of sending it, reported by WebKit as
         "Connection terminated unexpectedly". The crash reporter logged the SIGSEGV 0.12 to 0.20 s after that request in the
-        five failures below (0.13 to 0.17 s in the review's two at 19a19f37e), and the fault comes at or before that line. The
-        crash reporter holds the crashed process, so it exited 1.08 to 1.12 s after the logged SIGSEGV, 1.2 to 1.3 s after the
-        request, and the first refused redial came 20 to 30 ms after the exit (review round 2, 2026-10-05). Measured at
-        3e9c560f5 with an instrumented copy of the driver: 5 of 48 WebKit reload legs failed this way (1 of 8 in a fresh lab; 1 of 8 in a lab that first ran the whole module in all
-        three engines; 3 of 32 in a fresh lab, one of them at the leg's first load). Each failure matched a WPENetworkProcess
-        SIGSEGV in the machine's crash reporter log and followed that terminated request; none of the 53 legs that passed
-        with the proxy unchanged (Chromium, Firefox and WebKit) had one. With the proxy also writing Connection: close on
-        each response, 0 of 32 failed. The five earlier failures on record (at d8a1df87e, 9ee7dbd83 and fb62cb4cf) each
-        match a WPENetworkProcess SIGSEGV as well. A person's browser loads from the kernel directly, without the proxy's
-        rewrite."""
+        five failures at 3e9c560f5 below (0.13 to 0.17 s in the review's two at 19a19f37e), and the fault comes at or before
+        that line. The crash reporter holds the crashed process, so it exited 1.08 to 1.12 s after the logged SIGSEGV, 1.2 to
+        1.3 s after the request, and the first refused redial came 20 to 30 ms after the exit (review round 2, 2026-10-05).
+        Measured at 3e9c560f5 with an instrumented copy of the driver: 5 of 48 WebKit reload legs failed this way (1 of 8 in a
+        fresh lab; 1 of 8 in a lab that first ran the whole module in all three engines; 3 of 32 in a fresh lab, one of them
+        at the leg's first load). Each failure matched a WPENetworkProcess SIGSEGV in the machine's crash reporter log and
+        followed that terminated request; none of the 53 legs that passed with the proxy unchanged (Chromium, Firefox and
+        WebKit) had one. With the proxy also writing Connection: close on each response, 0 of 32 failed. The five earlier
+        failures on record (at d8a1df87e, 9ee7dbd83 and fb62cb4cf) each match a WPENetworkProcess SIGSEGV as well. A person's
+        browser loads from the kernel directly, without the proxy's rewrite."""
         self._reload("webkit", "reload-return")
 
     def test_webkit_desktop_reload_during_the_boot_dials(self):
