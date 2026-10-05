@@ -1563,7 +1563,11 @@ def _unbounded_readings():
         ("% by a constant, then a sum", "K = 7\nK = f()\nport = K %% %d + %d\n" % (20000, lo),
          [(lo, ass + "computed into %d-%d" % (lo, lo + 19999))]),
         ("a randrange whose start is under % by a constant", "K = 7\nK = f()\nport = random.randrange(%s, %d)\n" % (mod, hi),
-         [(LOW, ass + "computed into 20000-%d" % (hi - 1))])]
+         [(LOW, ass + "computed into 20000-%d" % (hi - 1))]),
+        ("a difference by the name, from a name every binding of which the census records",
+         "S = %d\nK = %d\nK = f()\nport = S - K\n" % (70000, lo), [(lo, ass + "an offset from %d" % lo)]),
+        ("a sum of the name and a name every binding of which the census records",
+         "S = 9000\nK = %d\nK = f()\nport = S + K\n" % n, [(n, ass + "an offset from %d" % n)])]
 
 
 def _holds(got, old):
@@ -2674,7 +2678,11 @@ class Plants(unittest.TestCase):
         an assignment and as an address's port) and 40000 + 90002 // K with K bound to 3 read 70000, 70000, 31000 and
         70000 and were not counted, each a sum built on 40000 again; and 40000 + K and K % 20000 + 40000 with K bound to
         7, and a randrange whose start is 20000 + K % 20000, kept a hit but read 40007, 40007 and 20007-49999 alone, where
-        the census reads the sum built on 40000, 40000-59999 and 20000-49999 again beside them."""
+        the census reads the sum built on 40000, 40000-59999 and 20000-49999 again beside them. The last two pin that the
+        reading with such a name unbounded in interval() reads it in offset_base() by its recorded ints, as that census
+        did: S - K, with S bound to 70000 and K to 40000 and by K = f(), read 30000 and was not counted, and S + K, with
+        S bound to 9000 and K to 45001 and by K = f(), read 54001 alone, where the census reads each as a sum built on
+        K's int again."""
         for label, src, old in _unbounded_readings():
             with self.subTest(label):
                 tree = ast.parse(src)
