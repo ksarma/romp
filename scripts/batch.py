@@ -536,6 +536,21 @@ def merge_settings(name):
     return ("-c", "branch.%s.mergeOptions=" % branch_of(name), "-c", "diff.algorithm=histogram")
 
 
+def refuse_equals_in_name(name):
+    """Refuse a batch name holding '=' (exit 2). The batch's two merges pass `-c branch.batch/<name>.mergeOptions=`
+    (merge_settings), and git splits a -c pair at its first '=', so a name holding one could be planned and then not
+    merged (the closing check at round 3 of PR 959, cc959-r3-n1). pick_name never makes such a name. plan calls this
+    before it writes a state, and assemble (pull through it) calls it right after it loads one and before any write,
+    since a state with such a name can still be on disk from a plan that did not refuse it; without that, git refused
+    the key with its own "invalid key" after the batch branch and worktree were made (the check of that closing
+    check's fix, chk-r3c-1)."""
+    if "=" in name:
+        raise Fail("--name %s holds '=', which a batch name cannot: the batch's merges pass git -c %s.mergeOptions=, and "
+                   "git splits a -c pair at its first '=', so it would read the key %s and refuse it; pass a name "
+                   "without '=', or no --name for today's date and a letter"
+                   % (name, "branch." + branch_of(name), "branch." + branch_of(name).split("=")[0]), code=2)
+
+
 # The signals that stop the tool (the closing check wf_3b100f5e-b38, its item 4): each raises Stopped, a BaseException
 # as scripts/sweep.py's Stopped is, so the except path of run_git, run_tool, _run and run_command ends the process it
 # started, which runs in a session of its own that no signal sent to batch.py or to its terminal's process group
@@ -924,10 +939,11 @@ def _odd_files(args, repo, limit):
     way, each of GIT_DIR_STATE_FILES in the call's git dir, the state files a commit, a merge or a bisect reads whole
     (COMMIT_EDITMSG, MERGE_MSG, MERGE_MODE, SQUASH_MSG, MERGE_AUTOSTASH and BISECT_START: round 3 of PR 959, extra4-1,
     before which a GitMemory from git commit named none of them). Each is named with why: its type, by cannot_read's
-    words, or its size. Not named: a file of the call's own that git reads by another road (the index, a config file),
-    and a smaller oversized file that still took the call past the limit; the remedy's list of places covers them
-    (_limit_met). Before ruling C a GitMemory named the batch branch's loose file for a push and MAIN_REF's for a fetch,
-    whatever the call had read."""
+    words, or its size; a directory at one of the files git reads whole is named as one (the closing check at round 3
+    of PR 959, NEW-2), and one at a loose ref's path is passed over, since the walk reads what it holds. Not named: a
+    file of the call's own that git reads by another road (the index, a config file), and a smaller oversized file that
+    still took the call past the limit; the remedy's list of places covers them (_limit_met). Before ruling C a
+    GitMemory named the batch branch's loose file for a push and MAIN_REF's for a fetch, whatever the call had read."""
     if repo is None or repo.common_dir is None:
         return []
     limits = git_limits()
@@ -989,7 +1005,7 @@ def _odd_files(args, repo, limit):
         except OSError as e:
             odd.append("%s (its lstat failed: %s)" % (path, e.strerror or e))
             continue
-        if not stat.S_ISDIR(st.st_mode):
+        if whole or not stat.S_ISDIR(st.st_mode):
             note(path, st, whole)
     return odd
 
@@ -1540,6 +1556,7 @@ def cmd_plan(args):
     fetch(root, args.no_fetch)
     base_sha = git("rev-parse", MAIN_REF, cwd=root)
     name = args.name or pick_name(root)
+    refuse_equals_in_name(name)
     if os.path.exists(state_path(root, name)) and not args.force:
         old = load_state(root, name)
         if old.get("assembly", {}).get("head"):
@@ -2371,6 +2388,7 @@ def run_assembly(root, state, resolve_set, resume):
 def cmd_assemble(args):
     root = repo_root()
     state = load_state(root, args.name)
+    refuse_equals_in_name(state["name"])
     fetch(root, args.no_fetch)
     others = other_remote_batches(root, args.name)
     if others:

@@ -508,6 +508,57 @@ class Plan(_Base):
         self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
         self.assertIn("--only #999: not an open PR", p.stderr)
 
+    def test_a_name_holding_an_equals_sign_is_refused_by_plan(self):
+        """plan refuses a --name that holds '=' (the closing check at round 3 of PR 959, cc959-r3-n1), naming it and
+        why, and writes no state: the batch's two merges pass git -c branch.batch/<name>.mergeOptions= (merge_settings),
+        and git splits a -c pair at its first '=', so for x=y it reads the key branch.batch/x, refuses it and starts no
+        merge (the premise, run here under the git on PATH). pick_name never makes such a name. Red at round 3's head:
+        plan exited 0 and wrote the state, and assemble then exited 1 at its first merge with git's "invalid key"."""
+        fx = self.fx
+        self.two_members()
+        premise = subprocess.run(["git", "-c", "branch.batch/x=y.mergeOptions=", "config", "--get-regexp", "^branch"],
+                                 cwd=fx.dev, env=fx.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(premise.returncode, 128, premise)
+        self.assertIn("invalid key: branch.batch/x\n", premise.stderr, "premise: git splits the -c pair at its first '='")
+        p = fx.run("plan", "--name", "x=y")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (2, "", (
+            "batch: --name x=y holds '=', which a batch name cannot: the batch's merges pass git -c "
+            "branch.batch/x=y.mergeOptions=, and git splits a -c pair at its first '=', so it would read the key "
+            "branch.batch/x and refuse it; pass a name without '=', or no --name for today's date and a letter\n")))
+        self.assertFalse(os.path.lexists(os.path.join(fx.dev, ".git", "batch", "x=y.json")), "no state was written")
+
+    def test_a_state_named_with_an_equals_sign_is_refused_by_assemble_and_pull_before_any_write(self):
+        """A state whose name holds '=' can still be on disk from a plan that did not refuse it (fork main's plan wrote
+        one), so assemble refuses it too, with plan's message, right after it loads the state and before any write;
+        pull reaches the refusal through assemble (the check of the closing check at round 3 of PR 959, chk-r3c-1). The
+        state is planted as such a plan leaves it: planned as xy, then renamed to x=y.json with its name set to x=y.
+        Red before: assemble made the batch/x=y branch and the romp-batch-x=y worktree and then exited 1 at its first
+        merge with git's "invalid key: branch.batch/x"."""
+        fx = self.fx
+        self.two_members()
+        fx.ok("plan", "--name", "xy")
+        sdir = os.path.join(fx.dev, ".git", "batch")
+        st = fx.state("xy")
+        self.assertEqual(st["order"], [101, 102], "premise: both members are planned")
+        st["name"] = "x=y"
+        with open(os.path.join(sdir, "x=y.json"), "w") as f:
+            json.dump(st, f, indent=1, sort_keys=True)
+            f.write("\n")
+        os.remove(os.path.join(sdir, "xy.json"))
+        with open(os.path.join(sdir, "x=y.json"), "rb") as f:
+            planted = f.read()
+        refusal = ("batch: --name x=y holds '=', which a batch name cannot: the batch's merges pass git -c "
+                   "branch.batch/x=y.mergeOptions=, and git splits a -c pair at its first '=', so it would read the key "
+                   "branch.batch/x and refuse it; pass a name without '=', or no --name for today's date and a letter\n")
+        for argv in (("assemble", "x=y"), ("pull", "x=y", "102")):
+            p = fx.run(*argv)
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (2, "", refusal), argv)
+            self.assertEqual(fx.dev_git("rev-parse", "--verify", "--quiet", "refs/heads/batch/x=y", check=False), "",
+                             "%s made no batch/x=y branch" % (argv,))
+            self.assertFalse(os.path.lexists(fx.wt("x=y")), "%s made no romp-batch-x=y worktree" % (argv,))
+            with open(os.path.join(sdir, "x=y.json"), "rb") as f:
+                self.assertEqual(f.read(), planted, "%s left the state as planted" % (argv,))
+
     def test_a_one_member_batch_lands_through_the_whole_route(self):
         fx = self.fx
         self.two_members()
@@ -3099,11 +3150,12 @@ exec "$TRACE_REAL_GIT" "$@"
         """restore_branch_tree's unforced restore refreshes the index (git update-index -q --refresh) before its two-way
         merge, as git checkout does, so a file whose content is the same but whose stat data changed is not read as a
         change. The worktree has a change to notes.txt before bisect, so the cleanups are unforced, and the command, at
-        the base (VERSION = 1), sets kernel/kernel.py's mtime to a fixed past time (a plain touch in the second of the
-        checkout could go unseen, git comparing the mtime to the second), on a file the base and the tip hold
-        differently: bisect names #102, the worktree is on batch/b1 at the tip with no bisect in progress, and notes.txt
-        keeps its change. Red without the refresh (the mutant mNoRefresh): the first cleanup's git read-tree -m -u
-        refuses with "Entry 'kernel/kernel.py' not uptodate. Cannot merge." and bisect exits 1."""
+        the base (VERSION = 1), sets kernel/kernel.py's mtime to a fixed past time with touch -t, the form GNU's and
+        Apple's touch both take (Apple's has no -d; the closing check at round 3 of PR 959, N4), since a plain touch in
+        the second of the checkout could go unseen, git comparing the mtime to the second, on a file the base and the
+        tip hold differently: bisect names #102, the worktree is on batch/b1 at the tip with no bisect in progress, and
+        notes.txt keeps its change. Red without the refresh (the mutant mNoRefresh): the first cleanup's git read-tree
+        -m -u refuses with "Entry 'kernel/kernel.py' not uptodate. Cannot merge." and bisect exits 1."""
         fx = self.fx
         tip, _merge_101 = self.bisect_chain()
         notes = os.path.join(fx.wt("b1"), "notes.txt")
@@ -3113,7 +3165,8 @@ exec "$TRACE_REAL_GIT" "$@"
             text = f.read()
         rc, out, err = self.bounded("bisect", "b1", "--", "sh", "-c",
                                     "if grep -q 'return 2' postal/postal_service.py; then exit 1; fi; "
-                                    "if grep -q 'VERSION = 1' kernel/kernel.py; then touch -d 2001-01-01 kernel/kernel.py; "
+                                    "if grep -q 'VERSION = 1' kernel/kernel.py; then "
+                                    "touch -t 200101010000 kernel/kernel.py; "
                                     "fi; exit 0")
         self.assertEqual((rc, err), (0, ""), out + err)
         self.assertIn("first bad: #102 ", out)
@@ -3435,10 +3488,13 @@ exec "$TRACE_REAL_GIT" "$@"
         HOOK_MEMORY to PLANT_HOOK_MEMORY (BATCH_BOUND_DRIVER, MALLOC_ARENA_MAX unset, under PLANT_CAP, so no call has a
         real 16 GiB): it stops (exit 1) with GitMemory naming git merge --abort and GIT_MEMORY, and the call the driver
         logged before the merge --abort is not the listing (git for-each-ref --format=); the remedy's list of places
-        names MERGE_AUTOSTASH. Red with git merge --abort among the calls that run hooks (the build head of round 2's
+        names MERGE_AUTOSTASH, and the GitMemory names the planted file as a symlink (_odd_files' lstat of each of
+        GIT_DIR_STATE_FILES). Red with git merge --abort among the calls that run hooks (the build head of round 2's
         rulings, whose _runs_hooks read the first word alone): the merge --abort came after a listing and met
-        PLANT_HOOK_MEMORY ("reached the 384 MiB memory limit (HOOK_MEMORY)"); and, at the remedy's list of places,
-        with a remedy that named no state file of a merge (no "MERGE_AUTOSTASH")."""
+        PLANT_HOOK_MEMORY ("reached the 384 MiB memory limit (HOOK_MEMORY)"); at the remedy's list of places, with a
+        remedy that named no state file of a merge (no "MERGE_AUTOSTASH"); and at the planted file, with the lstat of
+        MERGE_MSG, MERGE_AUTOSTASH and BISECT_START skipped and the remedy kept (the closing check at round 3 of PR
+        959, NEW-3, its mutant m5g): the remedy named it, the files named did not."""
         if not sys.platform.startswith("linux"):
             self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
                           "enforced: Linux")
@@ -3464,6 +3520,7 @@ exec "$TRACE_REAL_GIT" "$@"
         self.assertIn("git merge --abort in %s reached the %d MiB memory limit (GIT_MEMORY) batch.py sets on it and "
                       "failed (fatal: Out of memory, " % (wt, PLANT_MEMORY >> 20), err)
         self.assertIn(REMEDY_PLACES, err)
+        self.assertIn("%s (a symlink, not a regular file)" % planted, err)
         calls = [c[3] for c in self.calls]
         self.assertIn("merge --abort", calls, self.calls)
         at = calls.index("merge --abort")
@@ -3477,8 +3534,11 @@ exec "$TRACE_REAL_GIT" "$@"
         staged, MERGE_MSG in the batch worktree's git dir is made a symlink to /dev/zero, and assemble --continue runs
         with GIT_MEMORY lowered to PLANT_MEMORY and HOOK_MEMORY to PLANT_HOOK_MEMORY (BATCH_BOUND_DRIVER,
         MALLOC_ARENA_MAX unset, under PLANT_CAP, so no call has a real 16 GiB): it stops (exit 1) with GitMemory naming
-        the commit and HOOK_MEMORY, and the remedy names MERGE_MSG. Red before the remedy named it: the same GitMemory,
-        its list of places ending at the shallow file, with no "MERGE_MSG"."""
+        the commit and HOOK_MEMORY, the remedy names MERGE_MSG, and the GitMemory names the planted file as a symlink
+        (_odd_files' lstat of each of GIT_DIR_STATE_FILES). Red before the remedy named it: the same GitMemory, its
+        list of places ending at the shallow file, with no "MERGE_MSG"; and at the planted file, with the lstat of
+        MERGE_MSG, MERGE_AUTOSTASH and BISECT_START skipped and the remedy kept (the closing check at round 3 of PR
+        959, NEW-3, its mutant m5g): the remedy named it, the files named did not."""
         if not sys.platform.startswith("linux"):
             self.skipTest("a symlink to /dev/zero is planted only where RLIMIT_AS, the cap on a read without end, is "
                           "enforced: Linux")
@@ -3508,6 +3568,7 @@ exec "$TRACE_REAL_GIT" "$@"
         self.assertIn("git commit --quiet --no-edit in %s reached the %d MiB memory limit (HOOK_MEMORY) batch.py sets on "
                       "it and failed (fatal: Out of memory, " % (wt, PLANT_HOOK_MEMORY >> 20), err)
         self.assertIn(REMEDY_PLACES, err)
+        self.assertIn("%s (a symlink, not a regular file)" % planted, err)
 
     def stopped_at_108(self):
         """#101 and #108 changing line two of notes.txt, planned as b1, and #108 stopped for a hand resolution (assemble
@@ -5679,6 +5740,39 @@ class BatchGitLimits(unittest.TestCase):
                                       "and run the command again" % ", ".join(odd[:shown])), text)
         for past in odd[shown:]:
             self.assertNotIn(past, text)
+
+    def test_a_directory_at_a_file_git_reads_whole_is_named_and_one_at_a_loose_refs_path_is_not(self):
+        """A directory at one of the files git reads whole for a call (packed-refs, objects/info/alternates and shallow
+        in the common dir, and each of GIT_DIR_STATE_FILES in the git dir) is named by _odd_files as a directory, as its
+        docstring and docs/batching.md say of a file there that is not a regular file (the closing check at round 3 of
+        PR 959, NEW-2). git never reads a directory without end, so one cannot cause a GitMemory, but one beside the
+        file that did is named. A directory at the path of a loose ref the call names (refs/heads/batch/b1) is still
+        passed over, since the walk of refs/ reads what it holds. Here each of the nine is a directory, written as
+        literals, and so is refs/heads/batch/b1: the nine are named, in _odd_files' order, and the loose ref's path is
+        not. Red at round 3's head, which passed over a directory at every one of these paths: nothing named. Red too
+        with the directory test dropped for every path: the loose ref's directory named as well."""
+        gd = os.path.join(self.tmp, ".git")
+        whole = ("packed-refs", "objects/info/alternates", "shallow", "COMMIT_EDITMSG", "MERGE_MSG", "MERGE_MODE",
+                 "SQUASH_MSG", "MERGE_AUTOSTASH", "BISECT_START")
+        for rel in whole + ("refs/heads/batch/b1",):
+            os.makedirs(os.path.join(gd, *rel.split("/")))
+        self.assertEqual(batch._odd_files(["rev-parse", "--verify", "refs/heads/batch/b1"], self.repo, 1 << 30),
+                         ["%s (a directory, not a regular file)" % os.path.join(gd, *rel.split("/")) for rel in whole])
+
+    def test_each_state_file_in_the_git_dir_is_named_when_it_is_not_a_regular_file(self):
+        """_odd_files lstats each of GIT_DIR_STATE_FILES in the call's git dir and names one that is not a regular file,
+        BISECT_START among them, which no end-to-end test plants (the closing check at round 3 of PR 959, NEW-3; the
+        MERGE_AUTOSTASH and MERGE_MSG plant tests check those two through a real GitMemory). Here each of the six,
+        written as literals, is a symlink to /dev/zero: each is named as a symlink, in the tuple's order. Red with the
+        lstat of MERGE_MSG, MERGE_AUTOSTASH and BISECT_START skipped and the remedy kept (the closing check's mutant
+        m5g): those three not named."""
+        gd = os.path.join(self.tmp, ".git")
+        os.makedirs(gd)
+        names = ("COMMIT_EDITMSG", "MERGE_MSG", "MERGE_MODE", "SQUASH_MSG", "MERGE_AUTOSTASH", "BISECT_START")
+        for n in names:
+            os.symlink("/dev/zero", os.path.join(gd, n))
+        self.assertEqual(batch._odd_files([], self.repo, 1 << 30),
+                         ["%s (a symlink, not a regular file)" % os.path.join(gd, n) for n in names])
 
     def test_every_git_call_reads_the_settings_that_keep_its_need_flat_over_the_repositorys_own(self):
         """GIT_SETTINGS on every run_git call, over the repository's own config: the pack window caps, the index read on
