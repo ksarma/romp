@@ -145,13 +145,15 @@ not seen, adding no value and taking none away (HOST = "127.0.0.1", then HOST = 
   mapping names no parameter, yet can fill any parameter left empty: beside a randrange's start and stop, with its step
   left empty, it is read as a step interval() does not bound (below), and beside any other parameter left empty the call
   is not read, since what the call returns then depends on what the mapping holds (random.randrange(30000, **kw) returns
-  values up to 29999 when kw is empty, and up to 49999 when kw holds a stop of 50000). Two shapes Python refuses for
-  the way the arguments are passed are not read: a keyword that names a parameter a positional argument fills
-  (random.randint(40000, 50000, a=1)), and a randrange whose stop is left empty and whose step is given
-  (random.randrange(start=50000, step=7)), unless that step is the int 1 written there, randrange's default and the one
-  step Python takes without a stop: random.randrange(start=50000, step=1) reads as randrange(50000), and with a step
-  that is 1 only at run time (a name bound to 1) the call is not read. A stop written as None, randrange's own default,
-  is a stop left empty, once a keyword that repeats it is refused: random.randrange(50000, None) and
+  values up to 29999 when kw is empty, and up to 49999 when kw holds a stop of 50000). A call with an argument passed
+  through a * sequence (random.randrange(*(40000, 50000))) is not read. Two shapes Python refuses for the way the
+  arguments are passed are not read: a keyword that names a parameter a positional argument fills
+  (random.randint(40000, 50000, a=1)), and a randrange whose stop is left empty and whose step is anything but the int 1
+  (random.randrange(start=50000, step=7); Python tests that the step is the int 1 itself, so it refuses True). A step of
+  1, randrange's default, is the one step Python takes without a stop, however it is computed: the int 1 written there
+  reads as randrange(S) (random.randrange(start=50000, step=1) reads as randrange(50000)), and a step that is 1 only at
+  run time (a name bound to 1, +1, int(1)) is not read (WHAT IT CANNOT SEE). A stop written as None, randrange's own
+  default, is a stop left empty, once a keyword that repeats it is refused: random.randrange(50000, None) and
   random.randrange(50000, None, 1) read as randrange(50000), while random.randrange(50000, None, 7) and
   random.randrange(40000, None, stop=50000), which Python refuses, are not read. A randrange(start, stop[, step]) whose
   start and stop are bounded is read by one rule, whether or not interval() bounds its step (a step left out is 1, and
@@ -171,13 +173,14 @@ not seen, adding no value and taking none away (HOST = "127.0.0.1", then HOST = 
   a step of 0 is read with the steps that are never negative (random.randrange(40000, 50000, 0) is 40000-49999); a
   positive step from a start never below its stop, or a negative one from a start never above it, is read as a span with
   its ends reversed (random.randrange(50000, 40000, 7) is 50000-39999, and random.randrange(40000, 50000, -1) is
-  50001-40000); and a start and stop that are one and the same value, with an unbounded step, read as that value
-  (random.randrange(40000, 40000, k) is 40000-40000). RandrangeAgainstCPython checks this reading against CPython's own
-  randrange over generated calls. A sum or difference with an unbounded operand counts when one of its operands alone
-  is a constant expression (one interval() bounds with no unknown in it) whose value is in the range, found through
-  str(), int() and a unary plus and down a chain of sums and differences: 40000 + i is built on 40000, and so is
-  40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read. interval() reads a bool as the int
-  it is, True as 1 and False as 0 (random.randrange(True, 50000) is 1-49999), and a float not at all.
+  50001-40000); and a start and stop that are one and the same value, with a step that can take either sign or one
+  interval() does not bound, read as that value (random.randrange(40000, 40000, k) is 40000-40000, and so is the call
+  with a step of os.getpid() % 3 - 1). RandrangeAgainstCPython checks this reading against CPython's own randrange
+  over generated calls. A sum or difference with an unbounded operand counts when one of its operands alone is a
+  constant expression (one interval() bounds with no unknown in it) whose value is in the range, found through str(),
+  int() and a unary plus and down a chain of sums and differences: 40000 + i is built on 40000, and so is 40000 * 1 + i
+  (offset_base()); one with no such operand (base + i) is not read. interval() reads a bool as the int it is, True as 1
+  and False as 0 (random.randrange(True, 50000) is 1-49999), and a float not at all.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -250,6 +253,9 @@ these turns its plant red, and the example leaves this list.
   start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
   a float where the census reads an int, which a random call takes on 3.10 and 3.11 (random.randrange(40000.0, 50000))
   and int() takes everywhere (int(45001.0));
+  a random call with an argument passed through a * sequence (random.randrange(*(N, M)), random.randint(*[N, M]));
+  a randrange with its stop left empty and a step that is 1 only at run time, which Python takes (ONE = 1, then
+  random.randrange(start=50000, step=ONE); random.randrange(50000, step=+1));
   a host that THE RULE does not take for one (("TESTHOST", N), HTTPConnection(self.host, N)), a name bound to the
   empty string, even in a tuple (H = "", then (H, N)), and the empty string itself before a port in a call (serve("",
   N)); the port beside it is read only when another rule reads it;
@@ -615,9 +621,10 @@ def _random_args(call):
     which is no expression, so interval() never bounds it whatever the mapping holds; with any other parameter left
     empty beside it, None. None too when an argument is starred, the positional arguments outnumber the parameters, or
     Python refuses the call for the way its arguments are passed: a keyword names a parameter a positional argument
-    fills, or a randrange's stop is left empty and its step is given as anything but the int 1 written there
-    (randrange's default step, the one step Python takes without a stop). A call spelled on random.Random or
-    random.SystemRandom passes its instance first, and it is dropped (random.Random.randrange(rng, S, E))."""
+    fills, or a randrange's stop is left empty and its step is anything but the int 1 (randrange's default step, the
+    one step Python takes without a stop). None as well for a stop left empty beside a step that is 1 only at run time
+    (a name bound to 1, +1), which Python takes: only the int 1 written there is read. A call spelled on random.Random
+    or random.SystemRandom passes its instance first, and it is dropped (random.Random.randrange(rng, S, E))."""
     params, args = RANDOM_CALLS[_callee(call.func)], call.args
     if isinstance(call.func, ast.Attribute) and _callee(call.func.value) in ("Random", "SystemRandom") and args \
             and not isinstance(args[0], ast.Starred):
@@ -642,7 +649,7 @@ def _random_args(call):
     step = got.get("step")
     if step is not None and "stop" not in got \
             and not (isinstance(step, ast.Constant) and type(step.value) is int and step.value == 1):
-        return None                                 # Python: Missing a non-None stop argument
+        return None                                 # Python refuses it unless the step is 1 at run time; only a written 1 is read
     out = []
     for p in params:
         if p not in got:
@@ -1671,8 +1678,9 @@ class Plants(unittest.TestCase):
     def test_a_random_call_python_refuses_for_its_arguments_is_not_read(self):
         """A random call Python refuses for the way its arguments are passed is not read. Each green plant is in a file
         the census opens and is a call the old reading counted: a randrange whose stop is left empty and whose step is
-        given, by keyword or after a positional start (Python: Missing a non-None stop argument), and a keyword that
-        repeats a positional argument (Python: got multiple values for argument), in each of the three calls. Python
+        given, by keyword or after a positional start (Python: Missing a non-None stop argument, unless the step is 1
+        at run time, as step=k can be; WHAT IT CANNOT SEE lists that), and a keyword that repeats a positional argument
+        (Python: got multiple values for argument), in each of the three calls. Python
         accepts a stop left empty beside a step of 1, its default (and refuses True there), so randrange(start=S,
         step=1) reads as randrange(S), red. A stop written as None, randrange's default, is a stop left empty: the red
         plants randrange(S, None), randrange(start=S, stop=None) and randrange(S, None, 1) read as randrange(S), from
@@ -1769,8 +1777,8 @@ class Plants(unittest.TestCase):
         because both its ends lie in the range: randrange(40000, 50000, -1) is 50001-40000 (interval() bounds the
         unary minus), randrange(50000, 40000, 7) is 50000-39999, a step of 7 from a start of 40000 to 40099 to a stop
         of 40000 is 40000-39999, and with start and stop both 40000 a step of 7 is 40000-39999 and a step of -7
-        40001-40000. With an unbounded step, start and stop both 40000 read as 40000-40000. Python raises for every
-        plant."""
+        40001-40000. With a step that can take either sign or an unbounded one, start and stop both 40000 read as
+        40000-40000. Python raises for every plant."""
         lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
         for label, src, span, first in (
                 ("start below stop and a step of 0", 'port = random.randrange(%d, %d, 0)\n' % (lo, hi), (lo, hi - 1), lo),
@@ -1787,7 +1795,9 @@ class Plants(unittest.TestCase):
                 ("start equal to stop and a step of -7", 'port = random.randrange(%d, %d, -7)\n' % (lo, lo),
                  (lo + 1, lo), lo + 1),
                 ("start equal to stop and an unbounded step", 'port = random.randrange(%d, %d, k)\n' % (lo, lo), (lo, lo),
-                 lo)):
+                 lo),
+                ("start equal to stop and a step of either sign",
+                 'port = random.randrange(%d, %d, os.getpid() %% 3 - 1)\n' % (lo, lo), (lo, lo), lo)):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, "computed into %d-%d" % span, n=first)
 
@@ -2028,6 +2038,11 @@ class Plants(unittest.TestCase):
                  'port = type(rng).randrange(rng, %d, %d)\nport = MyRandom.randrange(rng, %d, %d)\n' % (n, n + 9, n, n + 9)),
                 ("a float where the census reads an int", "test_x.py",
                  'port = random.randrange(%d.0, %d)\nrow = {"port": int(%d.0)}\n' % (n, n + 9, n)),
+                ("a random call with an argument passed through a * sequence", "test_x.py",
+                 'port = random.randrange(*(%d, %d))\nport = random.randrange(%d, *[%d])\nport = random.randint(*[%d, %d])\n'
+                 % (n, n + 9, n, n + 9, n, n + 9)),
+                ("a randrange with its stop left empty and a step that is 1 only at run time", "test_x.py",
+                 'ONE = 1\nport = random.randrange(start=%d, step=ONE)\nport = random.randrange(%d, step=+1)\n' % (n, n)),
                 ("an attribute", "test_x.py", 'cfg.p = %d\nrow = {"port": cfg.p}\n' % n),
                 ("a name bound to a digit string, inside a display that is the position's value", "test_x.py",
                  'P = "%d"\nrow = {"ports": [P]}\n' % n),
