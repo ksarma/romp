@@ -27,6 +27,12 @@ Pins over ci.yml's header comment (its comment lines before `on:`, joined into o
    half its cap does not reach it by the CPU count alone, and one over half can.
 At the commit before these pins, all four are red: the header named secret-scan.yml alone of the other workflows, stated
 161 and 238 dollars as the total in all, said nothing of an allowance, and had no sentence on the first private batch run.
+5. THE TWO PREMISES (TheTwoPremises, 2026-10-05): the python job's shard caps take each unmeasured interpreter's projected
+   phase where it is the largest (tests/test_ci_bats_bound.py, governing_phase), and this estimate bills those
+   interpreters' shard jobs at the slower measured phase. Caps do not bill, so the estimate's figures stand, but the header
+   says in one sentence that the two take different phases, and what a batch run would bill at the projected ones, by the
+   estimate's own method. The shard jobs' 337 is derived here too, from the same phases and the cells' times. Red at the
+   commit before it: the header had no such sentence.
 Text pins: they hold what the header says and that its sums agree with the inputs here, not what GitHub bills; the first
 private batch run's billed minutes are the measurement."""
 import math
@@ -40,12 +46,14 @@ ROOT = os.path.dirname(HERE)
 # the checkout root on sys.path before the import from a sibling module, as tests/test_ci_macos_schedule.py does
 sys.path.insert(0, ROOT)
 from tests.test_ci_workflow_concurrency import JOBS, job_lines, job_value  # noqa: E402
+from tests import test_ci_bats_bound as bound  # noqa: E402
 
 WF = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 WORKFLOWS = os.path.dirname(WF)
 
 # ---- the inputs, each a literal of this file ---------------------------------------------------------------------------
-# a batch run: the twenty shard jobs (the header's derivation from the python job's cap comment), each other Linux job at its
+# a batch run: the twenty shard jobs (the header's derivation from the python job's cap comment, which shard_jobs_total
+# repeats), each other Linux job at its
 # seconds in run 37212676524 (batch/2026-10-04b, on the public runner; the jobs API), each rounded up to a whole minute, and
 # secret-scan.yml's copy on the push, about 3 minutes (that file's header); a manual run is the same Linux jobs without it
 SHARD_JOBS_MIN = 337
@@ -93,6 +101,45 @@ def derived():
         "all dollars at 30": (ci[lo] + other) * RATE, "all dollars at 58": (ci[hi] + other) * RATE,
         "all minutes at 30": ci[lo] + other, "all minutes at 58": ci[hi] + other,
     }
+
+
+# ---- the phases the caps take, against the estimate's (TheTwoPremises) -------------------------------------------------
+# each Linux cell's seconds before and after its Run pytest step in run 37212676524 (batch/2026-10-04b, on the public
+# runner; the jobs API's job start to the step's start, and the step's end to the job's end), which every shard job of
+# that interpreter is charged beside its phase
+CELL_EDGE_S = {"3.10": (25, 2), "3.11": (18, 3), "3.12": (18, 2), "3.13": (19, 3), "3.14t": (27, 3)}
+# the stated figures: a batch run's minutes with each unmeasured interpreter's shard jobs at its own projected phases, and
+# that figure less the estimate's batch run; exact, since each job is rounded up to a whole minute before the sum
+PROJECTED_STATED = {"projected batch run minutes": 482, "projected difference": 26}
+
+
+def shard_job_minutes(phases, py):
+    """[minutes] of interpreter py's shard jobs, one per shard of phases ({shard: seconds}) in shard order: each phase plus
+    the cell's seconds before and after the Run pytest step (CELL_EDGE_S), rounded up to a whole minute."""
+    before, after = CELL_EDGE_S[py]
+    return [math.ceil((phases[k] + before + after) / 60) for k in sorted(phases)]
+
+
+def shard_jobs_total(projected):
+    """The shard jobs' minutes for one batch run: 3.12 and 3.14t at their own measured phases, and each unmeasured
+    interpreter at the slower measured phase (the estimate; projected False) or at its own projected phase (projected
+    True), the phases tests/test_ci_bats_bound.py holds."""
+    total = sum(shard_job_minutes(bound.SHARD_PHASE_312_S, "3.12")) + sum(shard_job_minutes(bound.SHARD_PHASE_314T_S, "3.14t"))
+    for py in bound.UNMEASURED:
+        if projected:
+            phases = {k: bound.projected_phase(k, py) for k in bound.SHARD_PHASE_312_S}
+        else:
+            phases = bound.SHARD_PHASE_S
+        total += sum(shard_job_minutes(phases, py))
+    return total
+
+
+def projected_derived():
+    """{figure name: value} for each of PROJECTED_STATED: the estimate's batch run with its shard jobs at the projected
+    phases, and the difference from the estimate's batch run."""
+    batch = derived()["batch run minutes"]
+    projected = batch - SHARD_JOBS_MIN + shard_jobs_total(True)
+    return {"projected batch run minutes": projected, "projected difference": projected - batch}
 
 
 def header(path=WF):
@@ -198,6 +245,46 @@ class CapsTheFirstPrivateRunConfirms(unittest.TestCase):
                                     "sentence on the %s names it (%r)" % (job, secs, cap, CONFIRM, display))
         self.assertTrue(due, "no job is past half its cap: re-read the population (the served-pages job took 2951 s in "
                         "run 37212676524, past half of its cap, 50 minutes then and 60 since 2026-10-05)")
+
+
+class TheTwoPremises(unittest.TestCase):
+    def test_every_linux_interpreter_has_its_cells_times(self):
+        self.assertEqual(sorted(CELL_EDGE_S), sorted(bound.MEASURED + bound.UNMEASURED), "the times before and after the "
+                         "Run pytest step for each Linux interpreter of the matrix, measured or projected")
+
+    def test_the_shard_jobs_figure_is_its_derivation(self):
+        self.assertEqual(shard_jobs_total(False), SHARD_JOBS_MIN, "the estimate's twenty shard jobs: 3.12 and 3.14t at "
+                         "their own phases and 3.10, 3.11 and 3.13 at the slower measured phase, each job with its cell's "
+                         "times before and after the step, rounded up to a whole minute")
+
+    def test_each_projected_figure_is_its_derivation(self):
+        d = projected_derived()
+        self.assertEqual(sorted(PROJECTED_STATED), sorted(d), "a stated figure for each derived one")
+        for name, figure in sorted(PROJECTED_STATED.items()):
+            with self.subTest(figure=name):
+                self.assertEqual(figure, d[name], "%s: stated %d, derived %d" % (name, figure, d[name]))
+
+    def test_the_header_says_so_in_one_sentence(self):
+        # the sentence that names the projected phases states which interpreters, that the caps take the projected phases
+        # and the estimate the measured ones, the minutes a batch run would bill at the projected phases, and the
+        # difference from the estimate's batch run
+        text = header()
+        sentences = [x for x in re.split(r"(?<=\.) ", text) if "projected phases" in x]
+        self.assertEqual(len(sentences), 1, "one sentence of the header names the projected phases: %r" % sentences)
+        sentence = sentences[0]
+        n = PROJECTED_STATED["projected batch run minutes"]
+        diff = PROJECTED_STATED["projected difference"]
+        batch = STATED["batch run minutes"][0]
+        want = (
+            "take different phases for %s:" % bound.english(bound.UNMEASURED),
+            "the caps take their projected phases",
+            "the estimate the measured ones",
+            "a batch run would bill about %d minutes, %d %s than the estimate's %d" % (
+                n, abs(diff), "more" if diff >= 0 else "fewer", batch),
+        )
+        for piece in want:
+            with self.subTest(piece=piece):
+                self.assertTrue(piece in sentence, "the header's sentence on the two premises states %r" % piece)
 
 
 class TheReadersThemselves(unittest.TestCase):
