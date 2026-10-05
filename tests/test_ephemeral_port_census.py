@@ -1567,7 +1567,13 @@ def _unbounded_readings():
         ("a difference by the name, from a name every binding of which the census records",
          "S = %d\nK = %d\nK = f()\nport = S - K\n" % (70000, lo), [(lo, ass + "an offset from %d" % lo)]),
         ("a sum of the name and a name every binding of which the census records",
-         "S = 9000\nK = %d\nK = f()\nport = S + K\n" % n, [(n, ass + "an offset from %d" % n)])]
+         "S = 9000\nK = %d\nK = f()\nport = S + K\n" % n, [(n, ass + "an offset from %d" % n)]),
+        ("% by a constant, of a private name bound only under the spelling its class mangles it to",
+         "_C__K = 7\n_C__K = f()\n\n\nclass C:\n    def m(self):\n        port = %s\n" % mod.replace("K", "__K"),
+         [(LOW, ass + "computed into 20000-39999")]),
+        ("a sum on a private name bound only under the spelling its class mangles it to",
+         "_C__K = %d\n_C__K = f()\n\n\nclass C:\n    def m(self):\n        port = %d + __K\n" % (30000, lo),
+         [(lo, ass + "an offset from %d" % lo)])]
 
 
 def _holds(got, old):
@@ -2672,18 +2678,25 @@ class Plants(unittest.TestCase):
         records for it; where the first gives nothing (a bare name at a start or stop), the second stands alone. Each
         case of _unbounded_readings() is a shape and the readings the census gave it when it read such a name as
         unbounded, and fails when the census drops one: when no reading the census gives the place holds it (_holds()).
-        Each also has a hit where the census keeps one per place. Every case failed where such a name read by its
-        recorded ints alone: 20000 + K % 20000, with K bound to 7 and by K = f(), read 20007 and was not counted (in an
-        assignment, under a port-named key, beside a star import, and with K a name Python mangles in a class), where the
-        census reads 20000-39999 again; 40000 + K and K + 40000 with K bound to 30000, 40000 - K with K bound to 9000 (in
-        an assignment and as an address's port) and 40000 + 90002 // K with K bound to 3 read 70000, 70000, 31000 and
-        70000 and were not counted, each a sum built on 40000 again; and 40000 + K and K % 20000 + 40000 with K bound to
-        7, and a randrange whose start is 20000 + K % 20000, kept a hit but read 40007, 40007 and 20007-49999 alone, where
-        the census reads the sum built on 40000, 40000-59999 and 20000-49999 again beside them. The last two pin that the
-        reading with such a name unbounded in interval() reads it in offset_base() by its recorded ints, as that census
-        did: S - K, with S bound to 70000 and K to 40000 and by K = f(), read 30000 and was not counted, and S + K, with
-        S bound to 9000 and K to 45001 and by K = f(), read 54001 alone, where the census reads each as a sum built on
-        K's int again."""
+        Each also has a hit where the census keeps one per place. Every case but the last two failed where such a name
+        read by its recorded ints alone: 20000 + K % 20000, with K bound to 7 and by K = f(), read 20007 and was not
+        counted (in an assignment, under a port-named key, beside a star import, and with K a name Python mangles in a
+        class), where the census reads 20000-39999 again; 40000 + K and K + 40000 with K bound to 30000, 40000 - K with
+        K bound to 9000 (in an assignment and as an address's port) and 40000 + 90002 // K with K bound to 3 read 70000,
+        70000, 31000 and 70000 and were not counted, each a sum built on 40000 again; and 40000 + K and K % 20000 +
+        40000 with K bound to 7, and a randrange whose start is 20000 + K % 20000, kept a hit but read 40007, 40007 and
+        20007-49999 alone, where the census reads the sum built on 40000, 40000-59999 and 20000-49999 again beside them.
+        S - K and S + K pin that the reading with such a name unbounded in interval() reads it in offset_base() by its
+        recorded ints, as that census did: S - K, with S bound to 70000 and K to 40000 and by K = f(), read 30000 and
+        was not counted, and S + K, with S bound to 9000 and K to 45001 and by K = f(), read 54001 alone, where the
+        census reads each as a sum built on K's int again. The last two read a private name whose values come only
+        through the spelling its class mangles it to: 20000 + __K % 20000 and 40000 + __K in a method of C, with _C__K
+        bound to 7 or to 30000 and by _C__K = f(). The census that read such a name as unbounded, the one that read it
+        by its recorded ints (neither read __K by _C__K's values) and this one all read them as 20000-39999 and as a sum
+        built on 40000. They pin where the census looks for a name with a binding it does not record: among the names it
+        reads by the values of both spellings (self.reads). Looked for among the names with a value recorded under the
+        spelling written (self.bound), where __K has none, it read the two values by _C__K's ints alone, as 20007 and
+        70000, and counted neither."""
         for label, src, old in _unbounded_readings():
             with self.subTest(label):
                 tree = ast.parse(src)
