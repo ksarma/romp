@@ -3,15 +3,16 @@
 # ci-browser-legs.txt)" of .github/workflows/ci.yml calls this from vscode-extension/ after the job installs Chromium,
 # with ROMP_BROWSER_LEGS_REQUIRE=1. The one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts, reads the
 # switch (any non-empty value counts), and under the switch, inBrowser fails a launch it cannot make, naming the switch
-# and the reason, instead of skipping. Before node --test this script checks the roster file alone, and every red names
-# the line (or the file) and what to do:
+# and the reason, instead of skipping. Before node --test this script checks the roster file, and every red names the
+# line (or the file) and what to do:
 #   - the roster file is not in vscode-extension/: restore it;
 #   - a malformed line (the comment above well_formed states the shape): fix the line;
 #   - a duplicate line: remove one;
 #   - a line whose source (ui/webview/<name>.test.ts for out-tests/ui/webview/<name>.test.js) is not in the tree, because
 #     the source moved or was deleted: fix the line;
 #   - a line whose bundle is not under out-tests/ (the Test step's npm test builds it; locally, node esbuild.js --tests).
-# The tree test's case "the script refuses" runs each of these reds.
+# The tree test's case "the script refuses" runs each of these reds. With a leg in the roster the script then checks the
+# knobs and reads the process table, each refused by name before any leg runs, as "How the legs run" below states.
 # The roster rule: under the switch, a rostered leg passes only when inBrowser has launched Chromium, and the leg does
 # nothing that lets it pass otherwise (for example: it launches no browser of its own; nothing catches or settles
 # inBrowser's rejection, so the rejection fails its test; it does not change ROMP_BROWSER_LEGS_REQUIRE, and hands inBrowser
@@ -29,9 +30,11 @@
 # is the one engine the job installs. A leg with no line runs only under the Test step, before the job installs a browser.
 # tools/ci-browser-legs.test.mjs (CI's vendored-tooling job, no node_modules) runs this script over synthetic trees,
 # with a stub node on PATH that records each node --test call and writes the record a case hands it, and with the real
-# node and the real reporter. `--check`, read as the first argument alone, runs the pre-run checks alone and starts no
-# node --test (it does not check that the bundles are built, which the step's run does). The tree test's case "the
-# script runs the rostered legs" runs --check as the first argument, and as the second, where it is not read.
+# node and the real reporter. `--check`, read as the first argument alone, runs every check the step's run makes before
+# node --test but the bundle check (the roster's reds above, and with a leg in the roster the knobs and the ps reads),
+# and starts no node --test. The tree test's case "the script runs the rostered legs" runs --check as the first
+# argument, and as the second, where it is not read, and its case "the per-file bound through the stub" runs it over
+# each ps the step's run refuses and over a knob it refuses.
 # How the legs run. Each rostered leg runs as a node --test of its own over that one bundle, ROMP_BROWSER_LEGS_JOBS at a
 # time (by default one less than the CPUs that nproc, or getconf, counts, and at least one, which is node's own
 # --test-concurrency default where no cgroup CPU quota applies, as on CI's hosted runner: node counts the CPUs by
@@ -212,9 +215,11 @@ while IFS= read -r line || [ -n "$line" ]; do
 done < "$ROSTER"
 
 if [ "$fail" -ne 0 ]; then echo "ci-browser-legs: the roster is malformed or stale, or a rostered bundle is not built (above); no leg ran" >&2; exit 1; fi
-if [ "$check_only" -eq 1 ]; then echo "ci-browser-legs: the roster is well formed and every line names a source in the tree: ${#legs[@]} rostered (--check reads the roster alone and starts no node --test; the step's run also checks that each rostered bundle is built under out-tests/)"; exit 0; fi
+# --check's agreement, where the step's run goes on: after the knobs and the ps reads below, or, with no leg in the
+# roster, in place of "no legs in the roster", since the step's run then makes neither
+agreed() { echo "ci-browser-legs: the roster is well formed and every line names a source in the tree: ${#legs[@]} rostered (--check makes the step's checks before node --test but the bundle check, and starts no node --test; the step's run also checks that each rostered bundle is built under out-tests/)"; exit 0; }
 
-if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
+if [ "${#legs[@]}" -eq 0 ]; then [ "$check_only" -eq 0 ] || agreed; echo "no legs in the roster"; exit 0; fi
 
 # The per-file bound, its grace and the number of legs run at once, the knobs the header's "How the legs run" states, each
 # a whole number above 0 of at most 9 digits, refused by name before any leg runs. The bound's default sits above every
@@ -257,6 +262,7 @@ own_state=$(ps -o stat= -p "$$" 2>/dev/null) || own_state=""
 if [ -z "${own_state// /}" ]; then
   echo "ci-browser-legs: ps -o stat= -p printed no state for this script's own process, so the per-file bound could not tell a live process from an ended one and would name no cut: put a ps on PATH that reads one process's state so (procps, or BSD's; busybox's refuses -p); no leg ran" >&2; exit 1
 fi
+[ "$check_only" -eq 0 ] || agreed
 secs() { printf '%d.%03d' $(( $1 / 1000 )) $(( $1 % 1000 )); }
 
 # The run's files, in one directory under TMPDIR that the EXIT trap removes: per leg i (its place in the roster, from 0),

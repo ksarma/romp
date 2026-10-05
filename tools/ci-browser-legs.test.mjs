@@ -86,14 +86,15 @@
 //     status, a node --test that outlives the bound with no process under it, or with only a zombie (a child that has
 //     ended and is not yet reaped) under it, is not cut, the knobs' refusals, the refusal of a ps that cannot read the
 //     process table as the bound reads it (one that exits 127, one that refuses -p, one whose whole-table read prints 0
-//     for every parent, one that leaves out the script's own process), a run whose parent has exited before those
-//     reads, not refused (through a stand-in ps that shows that parent as 1, and through a launcher that exits once it
-//     has started the script), the count of legs at once read with nproc's OpenMP variables set and unset, the status
-//     of legs that exit differently, and a roster longer than the legs run at once, the most calls running at once
-//     counted and the outputs printed in roster order although the legs finish in another, and, with the real node, two
-//     legs run one at a time under a short bound each get their bound from their own start. A roster line holding a
-//     backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's row,
-//     each read as the script's comment above seen_at or above its awk pass states;
+//     for every parent, one that leaves out the script's own process), those four and a refused knob under --check too,
+//     a run whose parent has exited before those reads, not refused (through a stand-in ps that shows that parent as 1,
+//     and through a launcher that exits once it has started the script), the count of legs at once read with nproc's
+//     OpenMP variables set and unset, the status of legs that exit differently, and a roster longer than the legs run
+//     at once, the most calls running at once counted and the outputs printed in roster order although the legs finish
+//     in another, and, with the real node, two legs run one at a time under a short bound each get their bound from
+//     their own start. A roster line holding a backslash is held by seen_at's rows, and a tree under a directory whose
+//     name holds one by the post-run key's row, each read as the script's comment above seen_at or above its awk pass
+//     states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -1437,7 +1438,7 @@ test('the script runs the rostered legs through node --test when the roster is w
   // --check: the pre-run checks alone, no node started; the bundle check is the step's run's, so b (a source, no bundle) passes here
   const check = run('# header\n' + A + '\n' + B + '\n', { check: true });
   assert.equal(check.status, 0, '--check over a well-formed roster whose sources are present exits 0, a bundle not yet built included; stderr:\n' + check.err);
-  assert.ok(check.out.includes('ci-browser-legs: the roster is well formed and every line names a source in the tree: 2 rostered (--check reads the roster alone and starts no node --test; the step\'s run also checks that each rostered bundle is built under out-tests/)'), '--check prints its agreement line with the count of rostered lines: ' + JSON.stringify(check.out));
+  assert.ok(check.out.includes('ci-browser-legs: the roster is well formed and every line names a source in the tree: 2 rostered (--check makes the step\'s checks before node --test but the bundle check, and starts no node --test; the step\'s run also checks that each rostered bundle is built under out-tests/)'), '--check prints its agreement line with the count of rostered lines: ' + JSON.stringify(check.out));
   assert.equal(check.node, null, '--check starts no node');
   // the --check read's rows (the script's header states it): as the first argument above; as the second argument it is
   // not read, so the step's run starts node over the roster
@@ -2090,7 +2091,7 @@ test('a SIGKILL to the script leaves no process of the run waiting on the event 
   }
 });
 
-test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the leg second in its roster and run one leg at a time, so the reds name it and not the first leg, and the leg queued behind it runs and is read, the other legs\' records read and no timer left behind; with two legs at a time, a grace\'s end beside a leg still running with a process under it (read so by that leg itself: the held leg\'s node --test running once its process had started, and its process alive once the held mark was written, then ending on its own) kills the held leg alone, and the leg running then runs on and exits 0; a node --test still running at the grace\'s end when the bound cut nothing is killed and named too, red by that red alone; a node --test that has exited and is not yet reaped at the grace\'s end, a zombie with nothing under it, is not, and its exit 0 is the leg\'s status; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; a ps that cannot read the process table as the bound reads it (one that exits 127, one that refuses -p, one whose whole-table read prints 0 for every parent, one whose whole-table read leaves out the script\'s own process) is refused by name and no leg runs, and a run whose parent has exited before those reads (shown so by a stand-in ps, and through a launcher that exits once it has started the script) is not refused and its leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
+test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the leg second in its roster and run one leg at a time, so the reds name it and not the first leg, and the leg queued behind it runs and is read, the other legs\' records read and no timer left behind; with two legs at a time, a grace\'s end beside a leg still running with a process under it (read so by that leg itself: the held leg\'s node --test running once its process had started, and its process alive once the held mark was written, then ending on its own) kills the held leg alone, and the leg running then runs on and exits 0; a node --test still running at the grace\'s end when the bound cut nothing is killed and named too, red by that red alone; a node --test that has exited and is not yet reaped at the grace\'s end, a zombie with nothing under it, is not, and its exit 0 is the leg\'s status; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; a ps that cannot read the process table as the bound reads it (one that exits 127, one that refuses -p, one whose whole-table read prints 0 for every parent, one whose whole-table read leaves out the script\'s own process) is refused by name and no leg runs, in the step\'s run and under --check, which refuses a knob the step\'s run refuses too, and a run whose parent has exited before those reads (shown so by a stand-in ps, and through a launcher that exits once it has started the script) is not refused and its leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
   const { run, root, rec, A, B, envFor, fresh } = syntheticTree(t);
   // what a red run left behind, if anything, scoped to this tree (runProcs), killed by the pids read here
   t.after(() => { for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
@@ -2229,6 +2230,15 @@ test('the per-file bound through the stub: a node --test that does not end after
     if (!(r.status === 1 && r.node === null && r.err.includes(red))) psWrong.push(what + ': exit ' + r.status + ' (a null exit is the stub runner\'s timeout), node ' + JSON.stringify(r.node) + ', stderr ' + JSON.stringify(r.err));
   }
   assert.deepEqual(psWrong, [], 'with a ps that cannot read the process table as the bound reads it, the script refuses by name before any leg runs; the rows read otherwise: ' + JSON.stringify(psWrong));
+  // --check makes the step's checks before node --test but the bundle check (the script's header states it): each ps
+  // above, and a knob the step's run refuses, is refused under --check the same way, with no agreement line. The control
+  // is the --check runs of the case "the script runs the rostered legs", under the machine's ps, which agree
+  const checkWrong = [];
+  for (const [what, env, red] of [...PS_ROWS, ['a knob that is not a whole number above 0', { ROMP_BROWSER_LEGS_JOBS: '012' }, 'ci-browser-legs: ROMP_BROWSER_LEGS_JOBS=\'012\' is not a whole number above 0 of at most 9 digits (digits alone, no leading zero): fix it or unset it; no leg ran']]) {
+    const r = run(A + '\n', { check: true, env, timeout: 30000 });
+    if (!(r.status === 1 && r.node === null && r.err.includes(red) && !r.out.includes('the roster is well formed'))) checkWrong.push(what + ': exit ' + r.status + ' (a null exit is the stub runner\'s timeout), node ' + JSON.stringify(r.node) + ', stdout ' + JSON.stringify(r.out) + ', stderr ' + JSON.stringify(r.err));
+  }
+  assert.deepEqual(checkWrong, [], '--check refuses by name, with no agreement line, each ps the step\'s run refuses before any leg runs and a knob it refuses, so --check runs the step\'s checks before node --test but the bundle check, as the script\'s header and CONTRIBUTING.md say; the rows read otherwise: ' + JSON.stringify(checkWrong));
   // the preflight's first read keys on no parent of the script's own: bash sets $PPID once, at its start, so a check keyed
   // on it refuses a working ps once the script's parent has exited. Two runs whose parent has exited before the read, each
   // not refused, its leg run and green. The first, simulated: a stand-in whose whole-table read shows the script's parent
