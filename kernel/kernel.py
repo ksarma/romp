@@ -71615,7 +71615,7 @@ var x=(ev&&typeof ev.clientX==='number')?ev.clientX:(r.left+r.width/2);
 tip.style.left=Math.max(6,Math.min(window.innerWidth-tip.offsetWidth-6,x-tip.offsetWidth/2))+'px';
 tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
 // Mobile usage PANEL (the user 2026-07-11): the same window bars the desktop tooltip shows, opened as a
-// centered modal from the phone's Usage button (the rail — and its hover — don't exist on mobile): on the
+// centered modal from the phone's Usage button (the rail, and its hover, do not exist on mobile): on the
 // bottom bar until iOS item 4g, in the settings card since (the A-map's usage, by phoneAct).
 // Pulls fresh first so the numbers aren't a stale boot snapshot; any tap or Escape dismisses.
 window.__rompUsagePanel=function(){
