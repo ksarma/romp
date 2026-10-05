@@ -179,11 +179,13 @@ _JS_BLOCK_WORDS = {"if", "for", "while", "switch", "catch", "with"}
 
 def _js_lex(src):
     """A script's tokens as [kind, text, start, end], kind word, num, str (a quoted string's or a template's text, between its
-    delimiters), regex or punct; its comments as (start, end); and the number of templates and substitutions still open at
-    the end (0 for a script read whole). It keeps the comment, string, template and substitution states (a substitution's own
-    braces counted; its closing brace is the punct `}$`) and tells a regex literal from a division by the token before the
-    `/`. A quoted string with no closing quote ends at its line's end, so a stray quote in prose misreads one line at most."""
-    toks, comments, stack = [], [], []   # stack: "t" inside a template's text, or a substitution's brace depth
+    delimiters), regex or punct; its comments as (start, end); and the number of delimiters left open (0 for a script read
+    whole): the templates and substitutions still open at the end, plus each quoted string or regex literal that met an
+    unescaped line break, or the script's end, before its closing delimiter, which valid JavaScript never does. It keeps the
+    comment, string, template and substitution states (a substitution's own braces counted; its closing brace is the punct
+    `}$`) and tells a regex literal from a division by the token before the `/`. A quoted string or regex literal left open
+    ends at its line's end, so a stray quote or slash misreads one line at most, and is counted."""
+    toks, comments, stack, loose = [], [], [], 0   # stack: "t" inside a template's text, or a substitution's brace depth
     i, n = 0, len(src)
     while i < n:
         c = src[i]
@@ -215,6 +217,7 @@ def _js_lex(src):
             j = i + 1
             while j < n and src[j] not in (c, "\n"):
                 j += 2 if src[j] == "\\" else 1
+            loose += j >= n or src[j] == "\n"
             toks.append(["str", src[i + 1:j], i, min(j + 1, n)])
             i = j + 1
             continue
@@ -233,6 +236,7 @@ def _js_lex(src):
                 elif src[j] == "]":
                     cls = False
                 j += 1
+            loose += j >= n or src[j] == "\n"
             j += 1
             while j < n and (src[j].isalnum() or src[j] in "_$"):
                 j += 1
@@ -266,7 +270,7 @@ def _js_lex(src):
                 continue
         toks.append(["punct", t, i, i + len(t)])
         i += len(t)
-    return toks, comments, len(stack)
+    return toks, comments, len(stack) + loose
 
 
 def _js_brackets(toks):
@@ -384,9 +388,11 @@ def _door_census(src):
     part of its call; a local alias's calls are sites where they stand; and any other reference (an argument, a key held as a
     string, an alias the census cannot follow) is a site of its own, so it fails the role check loudly instead of passing
     unseen. Each is (kind, offset, enclosing functions). prose holds the mentions in comments, strings, regex literals and
-    longer names, none of them a reference. whole says the reading balanced (every bracket closed its own kind, no template
-    left open), so no misread comment, string, regex or template swallowed code: a census of a script read otherwise proves
-    nothing, and the tests below require it."""
+    longer names, none of them a reference. whole says the reading balanced: every bracket closed its own kind, and no
+    template, quoted string or regex literal was left open (_js_lex). That catches a misread whose stray delimiter is left
+    open; a misread that a later delimiter on its line closes again can leave the reading balanced, and then is not caught
+    (the stated limit in NotLeavingCallSites). A census of a script read otherwise proves nothing, and the tests below
+    require it."""
     toks, comments, unclosed = _js_lex(src)
     pair, whole = _js_brackets(toks)
     starts = [t[2] for t in toks]
@@ -572,9 +578,13 @@ class NotLeavingCallSites(unittest.TestCase):
     counted here, by the code: kernel.py's script literals, and every script under ui/ and vscode-extension/src but the
     tests (`*.test.*`). A call spelled with optional chaining, through a bracket's string key, or through a local alias
     counts; the definition, comments and strings that name the door do not; any other reference is a site of its own and
-    fails the role check; and a script the lexer did not read whole fails too. Stated limit, on the precondition that the
-    sources are written in good faith: a name assembled at run time (`w["__romp" + "NotLeaving"]`), or a call held in a
-    string and run as code, is not read."""
+    fails the role check; and a script the lexer did not read whole (a bracket unbalanced, or a template, quoted string or
+    regex literal left open) fails too. Stated limits. On the precondition that the sources are written in good faith, a
+    name assembled at run time (`w["__romp" + "NotLeaving"]`), or a call held in a string and run as code, is not read. A
+    call hidden by a misread that a later delimiter on its line closes again is not read either, when the reading still
+    balances; its witnesses are pinned in test_the_census_reads_a_call_by_the_code: 'a quote closed again' (a regex read as
+    a division, whose quote an apostrophe in a later comment on its line closes) and 'a slash closed again' (a division
+    read as a regex, which a later division on its line closes)."""
 
     @classmethod
     def setUpClass(cls):
@@ -587,7 +597,8 @@ class NotLeavingCallSites(unittest.TestCase):
                          "every mention of the door in kernel.py is in a string literal the census read, a docstring or a "
                          "Python comment: a mention outside them is one the census cannot classify")
         self.assertEqual(self.kernel["misread"], [], "each script naming the door was read whole (every bracket closed its own "
-                         "kind, no template left open), so no misread comment, string, regex or template hid a call")
+                         "kind; no template, quoted string or regex literal left open): a script read otherwise may hide a "
+                         "call behind a misread delimiter")
 
     def test_the_door_has_one_definition_the_logs(self):
         self.assertEqual([(o, kind) for o, _, kind, _ in self.kernel["defs"]], [("_LANDING_ERRS_JS", "definition")],
@@ -634,10 +645,25 @@ class NotLeavingCallSites(unittest.TestCase):
         for label, js, want_defs, want_sites in cases:
             d, s, _, whole = _door_census(js)
             self.assertEqual(([kind for kind, _, _ in d], [kind for kind, _, _ in s], whole), (want_defs, want_sites, True), label)
-        # a reading that does not balance is reported, never trusted: the lexer reads a regex literal after `if(a)` as a
-        # division, so its backtick opens a template that swallows the call after it
-        misread = _door_census("if(a)/`/.test(b);" + x + "();")
-        self.assertEqual((misread[1], misread[3]), ([], False), "the call is hidden, and the script is reported as not read whole")
+        # a reading that does not balance is reported, never trusted. The lexer reads a regex literal after `if(a)` as a
+        # division, so the regex's backtick opens a template, or its quote a string, that swallows the call after it; and it
+        # reads the division after `i++` as a regex literal that swallows the call. A quoted string or regex literal still
+        # open at its line's end, or the script's, is never valid JavaScript, so each is counted as left open.
+        for label, js in [("a backtick left open", "if(a)/`/.test(b);" + x + "();"),
+                          ("a quote left open at the script's end", "if(a)/'/.test(b)&&" + x + "();"),
+                          ("a quote left open at its line's end", "if(a)/'/.test(b)&&" + x + "();\nvar k=1;"),
+                          ("a slash left open at the script's end", "i++/n;" + x + "();"),
+                          ("a slash left open at its line's end", "i++/n;" + x + "();\nvar k=1;")]:
+            misread = _door_census(js)
+            self.assertEqual((misread[1], misread[3]), ([], False),
+                             label + ": the call is hidden, and the script is reported as not read whole")
+        # the stated limit's witnesses (the class docstring): a misread that a later delimiter on its line closes again
+        # balances, so the call it hides goes unseen; a lexer that reads either script right turns its witness red
+        for label, js in [("a quote closed again", "if(a)/'/.test(b);" + x + "();// it's"),
+                          ("a slash closed again", "i++/n;" + x + "();y=z/2;")]:
+            limit = _door_census(js)
+            self.assertEqual((limit[1], limit[3]), ([], True),
+                             label + ": the stated limit, a call hidden in a reading that balances")
 
     def test_the_census_names_a_sites_role_by_the_functions_enclosing_it(self):
         call = "window." + DOOR + "&&window." + DOOR + "();"
