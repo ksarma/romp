@@ -2721,18 +2721,26 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // landing parked under the same press, which runs first, its release listener installed first, and paints with the renderer in).
   // Its fill runs as one inside the settle (math.ts asSettleFill), so a failure's repaint parked under a press uses no retry at the
   // release, as it uses none with no press (the check of round 2's pass: the release sent a second request and logged a second line).
+  // A run parked under a press on the Outline button runs after the release's click opened the popover, and its paint closes it
+  // (renderBody's closeOutline), so the click appeared to do nothing (the PR's review, round 3, ui-1). It opens the popover again
+  // after the paint exactly as the text landing does (fetchFile, reopenOutline): `parked` read when the settle defers the run, the
+  // popover read before the paint; a press on a row, or on the button with the popover up, leaves it closed, and a run with no
+  // press under way closes an open popover as every paint does.
   const mathHold = pressHold(box);
   closeHooks.push(onMathSettled(() => {
     const held = mathHeld;
     const shown = !held && shownText !== null && mathFailedIn(body) ? body.querySelector(":scope > .fileview-md") : null;
     if (!held && !shown) return;
+    const parked = mathHold.held();   // the run parks under a press now under way (the landing's `parked`, land)
     void mathHold.defer(() => {   // a throw from the run (renderBody catches its build and swap; one past them is a bug) rejects: a page error
       if (!wrap.isConnected) return;
       if (held ? !mathHeld : !shown || shown.parentNode !== body) return;   // a paint since the settle: what it painted stands
+      const reopen = parked && outline !== null;   // read before the paint closes it (fetchFile's reopenOutline)
       asSettleFill(() => {
         if (held) { mathHeld = false; renderBody(); landTarget(); }
         else renderBody();
       });
+      if (reopen) openOutline();                   // after the paint and the held branch's landing, on the repainted body
     });
   }));
   const renderBody = () => {

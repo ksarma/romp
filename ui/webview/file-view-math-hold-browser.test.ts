@@ -40,6 +40,10 @@
 // state alone passed with mathHold built first, the note painted and then covered); in the URL viewer a press on Raw across the
 // retry's success keeps the Raw pick's rows, the one paint after the release, and so does a press on Raw over a held open across
 // the first arrival, the loader standing under the press, the re-check's held half (the review's round 3, tests-2)).
+// The repaint opens the Outline again as a reload's landing does (the review's round 3, ui-1): a press on the Outline button held
+// across a retry's success leaves the popover open after the release, holding the keyboard (before, the click opened it and the
+// parked repaint's paint closed it); with the popover up, the press's click closes it and the repaint leaves it closed; and with no
+// press under way the repaint closes an open popover, as every paint does.
 // Nothing in the body moves under the press either: the arrival leaves a failed load's sources in both viewers' bodies to the held repaint (math.ts
 // MATH_REPAINT_ATTR), so a press on a link below two display formulas, held across the retry's success, clicks the link, still in
 // the page, and its fragment lands, in both viewers (before, the in-place re-fill grew the formulas and the release met another
@@ -666,6 +670,86 @@ test("chromium: the Files pane's viewer: a viewer closed while the arrival's rep
     await page.mouse.up();
     await frames(page, 8);
     assert.equal(await page.evaluate(() => (window as any).__paints), closed, "the parked repaint found the viewer gone and painted nothing: no hook of the closed viewer heard a paint");
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+// ── the repaint opens the Outline again as a reload's landing does (the review's round 3, ui-1): the release's click on the Outline
+// button runs before the parked repaint, whose paint closes the popover ──
+
+type OutlineState = { popover: boolean; rows: number; focused: boolean; expanded: string | null; bodyFocused: boolean; paints: number };
+const outlineNow = (page: any): Promise<OutlineState> => page.evaluate(() => {
+  const pop = document.querySelector(".fileview-outline");
+  const a = document.activeElement;
+  return { popover: !!pop && pop.isConnected, rows: pop ? pop.querySelectorAll(".fileview-outline-row").length : 0, focused: !!pop && a === pop,
+    expanded: document.querySelector(".fileview-outline-btn")!.getAttribute("aria-expanded"), bodyFocused: a === document.querySelector(".fileview-body"),
+    paints: (window as any).__paints - (window as any).__reflows };
+});
+/** Presses the pointer on the Outline button and holds it. */
+async function pressOutlineButton(page: any): Promise<void> {
+  const box = await page.locator(".fileview-outline-btn").boundingBox();
+  assert.ok(box, "the Outline button to press");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+}
+
+test("chromium: the Files pane's viewer: a press on the Outline button held across a retry's success: the release's click opens the popover, and the parked repaint leaves it open on the laid-out note, holding the keyboard", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    await pressOutlineButton(page);
+    const paints0 = (await outlineNow(page)).paints;
+    await retryLandsNow(page, retry);
+    const under = await outlineNow(page);
+    await page.mouse.up();
+    await frames(page, 8);
+    const after = await outlineNow(page);
+    assert.deepEqual([after.popover, after.focused, after.expanded], [true, true, "true"], "after the release the popover stands, holding the keyboard: the click opened it, and the parked repaint, whose paint closes it, opened it again: " + JSON.stringify(after));
+    assert.deepEqual([under.popover, under.paints], [false, paints0], "under the press no popover yet and nothing painted: the repaint was parked: " + JSON.stringify(under));
+    assert.ok(after.rows > 0, "the popover lists the note's headings: " + JSON.stringify(after));
+    assert.equal(after.paints, paints0 + 1, "the release ran the repaint, once");
+    const b = await overNow(page);
+    assert.deepEqual([b.katex, b.src], [2, 0], "the note laid out under the popover: " + JSON.stringify(b));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a press on the Outline button with the popover up, held across a retry's success: the release's click closes the popover and the parked repaint leaves it closed, the body holding the keyboard", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    await page.locator(".fileview-outline-btn").click();
+    await frames(page, 2);
+    assert.equal((await outlineNow(page)).popover, true, "the popover up before the press");
+    await pressOutlineButton(page);
+    const paints0 = (await outlineNow(page)).paints;
+    await retryLandsNow(page, retry);
+    const under = await outlineNow(page);
+    assert.deepEqual([under.popover, under.paints], [true, paints0], "under the press the popover stands (a press on the button is not a press outside it) and nothing painted: " + JSON.stringify(under));
+    await page.mouse.up();
+    await frames(page, 8);
+    const after = await outlineNow(page);
+    assert.deepEqual([after.popover, after.expanded, after.bodyFocused], [false, "false", true], "the click closed the popover and the parked repaint opened nothing, the body holding the keyboard: " + JSON.stringify(after));
+    assert.equal(after.paints, paints0 + 1, "the release ran the repaint, once");
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a popover up with no press under way: the retry's success repaints the note and closes it, as every paint does", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    await page.locator(".fileview-outline-btn").click();
+    await frames(page, 2);
+    const before = await outlineNow(page);
+    assert.deepEqual([before.popover, before.focused], [true, true], "the popover up and holding the keyboard before the arrival: " + JSON.stringify(before));
+    await retryLandsNow(page, retry);
+    const after = await outlineNow(page);
+    assert.deepEqual([after.popover, after.expanded, after.bodyFocused], [false, "false", true], "the arrival's repaint closed the popover and opened nothing, the keyboard handed to the body: " + JSON.stringify(after));
+    assert.equal(after.paints, before.paints + 1, "the arrival repainted the note, once");
     assert.equal(requests.length, 2);
     assert.deepEqual(errors, []);
   });
