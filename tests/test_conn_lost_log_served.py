@@ -448,8 +448,8 @@ class ConnLostLog(unittest.TestCase):
         self._reload("chromium", "reload-boot")
 
     def test_webkit_desktop_reload_during_the_returns_redial(self):
-        """In WebKit this leg and test_webkit_desktop_reload_during_the_boot_dials fail intermittently, and the cause is the
-        lab (diagnosed 2026-10-04): upAfter is false, or the driver died at boot. Playwright's WebKit network process
+        """In WebKit this leg and test_webkit_desktop_reload_during_the_boot_dials fail intermittently, from a crash of the
+        lab's browser (diagnosed 2026-10-04): upAfter is false, or the driver died at boot. Playwright's WebKit network process
         (WPENetworkProcess, its WPE build) crashes with SIGSEGV during a page load through the driver's proxy. A context
         Playwright opens is ephemeral, so the context's cookie jar and localStorage are held in that process and are lost
         when it exits: within 1 ms of the exit the page's storage fell to one key without the page key, and no later request
@@ -470,14 +470,16 @@ class ConnLostLog(unittest.TestCase):
         at the leg's first load). Each failure matched a WPENetworkProcess SIGSEGV in the machine's crash reporter log and
         followed that terminated request; none of the 53 legs that passed with the proxy unchanged (Chromium, Firefox and
         WebKit) had one. With the proxy also writing Connection: close on each response, 0 of 32 failed. The five earlier
-        failures on record (at d8a1df87e, 9ee7dbd83 and fb62cb4cf) each match a WPENetworkProcess SIGSEGV as well. A person's
-        browser loads from the kernel directly, without the proxy's rewrite."""
+        failures on record (at d8a1df87e, 9ee7dbd83 and fb62cb4cf) each match a WPENetworkProcess SIGSEGV as well. What
+        this shows is Playwright's WebKit, its WPE build and not iOS Safari, crashing in its network process on loads through
+        the lab's proxy. The phone reaches the kernel through a proxy too (`tailscale serve`), and whether a real proxy in
+        front of the kernel can do the same to iOS Safari is not measured (review round 2, 2026-10-05)."""
         self._reload("webkit", "reload-return")
 
     def test_webkit_desktop_reload_during_the_boot_dials(self):
-        """In WebKit this leg fails intermittently for the lab cause test_webkit_desktop_reload_during_the_returns_redial's
-        docstring gives: Playwright's WebKit network process crashes during a page load through the driver's proxy, and the
-        page loses its session cookie and page key with it."""
+        """In WebKit this leg fails intermittently for the cause test_webkit_desktop_reload_during_the_returns_redial's
+        docstring gives: Playwright's WebKit network process (its WPE build, not iOS Safari) crashes during a page load
+        through the driver's proxy, and the page loses its session cookie and page key with it."""
         self._reload("webkit", "reload-boot")
 
     def _reload_frame(self, scenario):
