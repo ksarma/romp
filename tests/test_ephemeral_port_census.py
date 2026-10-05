@@ -2623,11 +2623,15 @@ class Plants(unittest.TestCase):
     def test_a_name_every_binding_of_which_the_census_records_reads_the_span_of_its_ints(self):
         """A name every binding of which the census records reads, wherever it is read, by the span of the ints those
         bindings give, as it does beside a binding the census does not record: adding such a binding is never what makes
-        a written number count (BOUND). Each red plant binds the name to two ints, or to an int and a string, and in no
-        other way, where a census that read such a name only when it held one value reported nothing: a start bound to
-        40000 and to 50000 reads random.randrange(S, 60000) as 40000-59999; a stop bound to 45000 and to 50000 reads
-        random.randrange(40000, E) as 40000-49999; P bound to 1 and to 45001 reads 1-45001 in a loop's sequence, in str()
-        and in int(); P bound to 45001 and to "x" reads 45001 inside a display; K bound to 40000 and to 45000 reads 1-45000
+        a written number count (BOUND). Each red plant binds the name to two ints, or to an int and a string, a float or
+        None, and in no other way, where a census that read such a name only when it held one value reported nothing:
+        a start bound to 40000 and to 50000 reads random.randrange(S, 60000) as 40000-59999; a stop bound to 45000 and to
+        50000 reads random.randrange(40000, E) as 40000-49999; P bound to 1 and to 45001 reads 1-45001 in a loop's
+        sequence, in str() and in int(). The reading is keyed on the ints the census records, whatever other values the
+        name holds: S bound to 40000 and to "x", or to 40000 and to 1.5, reads random.randrange(S, 50000) as 40000-49999;
+        E bound to 50000 and to None reads random.randrange(40000, E) as 0-49999, the span holding randrange(40000,
+        50000)'s reading and randrange(40000)'s, its stop left empty; P bound to 45001 and to "x" reads 45001 inside a
+        display. K bound to 40000 and to 45000 reads 1-45000
         as randint's bound; and BASE + worker is a sum built on 40000 with BASE bound to 40000 and to 50000, or to 1000
         and to 40000, and so is BASE * 1 + worker. At a step such a name, its every value an int, reads by their span: K
         bound to 3 and to 7 is a step never negative, so random.randrange(40000 + os.getpid() % 101, 39990 +
@@ -2647,6 +2651,12 @@ class Plants(unittest.TestCase):
                  "the key 'port', computed into 1-%d" % n, LOW),
                 ("a name bound to two ints in int()", 'P = 1\nP = %d\nrow = {"port": int(P)}\n' % n,
                  "the key 'port', computed into 1-%d" % n, LOW),
+                ("a start bound to an int and to a string", 'S = %d\nS = "x"\nport = random.randrange(S, %d)\n' % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a start bound to an int and to a float", 'S = %d\nS = 1.5\nport = random.randrange(S, %d)\n' % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a stop bound to an int and to None", 'E = %d\nE = None\nport = random.randrange(%d, E)\n' % (hi, lo),
+                 "computed into 0-%d" % (hi - 1), LOW),
                 ("a name bound to an int and to a string, inside a display", 'P = %d\nP = "x"\nrow = {"ports": [P]}\n' % n,
                  "the key 'ports', a constant expression", n),
                 ("a name bound to two ints as randint's bound", 'K = %d\nK = %d\nport = random.randint(1, K)\n' % (lo, n - 1),
@@ -3019,7 +3029,9 @@ class RandrangeAgainstCPython(unittest.TestCase):
     name bound to ints the census records and by a binding it does not record, with a name Python mangles in a class,
     and with the readings the owner's calls after them added: a name every binding of which the census records, bound
     to several ints, a name with a binding it does not record under % by a constant, a stop name bound to None, int() of
-    a name bound to strings and floats, and a private name read in a method, bound under its mangled spelling)."""
+    a name bound to strings and floats, and a private name read in a method, bound under its mangled spelling; and the
+    light check at the pushed head after them with a start or stop name bound to ints beside a string, a float or
+    None)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
@@ -3276,6 +3288,40 @@ class RandrangeAgainstCPython(unittest.TestCase):
                                                      role: "__RJ%d" % n}))
         return out
 
+    def _checked(self):
+        """The calls the light check of 2026-10-05 at the pushed head and the owner's calls after it added, from a
+        generator seeded apart from the grid's, _grown()'s, _mixed()'s and _recorded()'s so their calls, samples and
+        draws stay as they were. Per relation, a start and a stop name every binding of which the census records, bound
+        to several ints as _mixed() binds them and to a string or a float with a fraction, which no call takes and
+        interval() passes over, taking each int, the step drawn from STEP_SHAPES and the form from FORMS; and a stop name
+        so bound and to None, taking each int and None, in a form and with a step drawn from NONE_FORMS, with the
+        exceptions a stop left empty beside a step other than 1 raises."""
+        rng, out = random.Random(self.SEED + 4), []
+
+        def near():
+            return rng.choice((LOW + rng.randint(-60, 60), HIGH + rng.randint(-60, 60), rng.randint(LOW + 100, HIGH - 100),
+                               rng.randint(1024, LOW - 200)))
+        for relation in self.RELATIONS:
+            for role, kind in (("start", "a string"), ("start", "a float"), ("stop", "a string"), ("stop", "a float"),
+                               ("stop", "None")):
+                s, e = self._shape(relation, near(), rng)
+                iv, name = (s if role == "start" else e), "X%s%d" % ({"start": "S", "stop": "E"}[role], len(out))
+                v = rng.randint(*iv)
+                ints = sorted({v - 1000, v, v + 1000, iv[0], iv[1], rng.randint(*iv)})
+                pre = ["%s = %d" % (name, x) for x in ints]
+                pre.insert(rng.randint(0, len(pre)), "%s = %s" % (name, {"a string": '"x"', "a float": "%d.5" % v,
+                                                                          "None": "None"}[kind]))
+                takes = ints + ([None] if kind == "None" else [])
+                if kind == "None":
+                    form, k = rng.choice(self.NONE_FORMS)
+                    step, how = (k, None if k is None else [ast.literal_eval(k)]), {"raises": (ValueError, TypeError)}
+                else:
+                    form, step, how = rng.choice(self.FORMS), rng.choice(self.STEP_SHAPES), {}
+                out.append(("the %s, bound to several ints and to %s, every binding recorded" % (role, kind),
+                            takes if role == "start" else s, e if role == "start" else takes, step, form,
+                            dict(how, pre=pre, **{role: name})))
+        return out
+
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
         """A seeded generator writes randrange calls: start's interval below stop's, above it, touching it from either
         side, one value with it, and overlapping it four ways, crossed with STEP_SHAPES (steps known positive, known
@@ -3288,11 +3334,13 @@ class RandrangeAgainstCPython(unittest.TestCase):
         come the spellings _grown() writes: step names bound to signed numbers, names bound to negative numbers in a
         start or stop, a unary plus, the call spelled on the class, a bool start or stop, and a stop written as None.
         Then come the bindings _mixed() writes: a name bound to ints the census records and also by each binding form
-        it does not record, and a name Python mangles in a class, as the step, the start or the stop; and last those
+        it does not record, and a name Python mangles in a class, as the step, the start or the stop; then those
         _recorded() writes: a name every binding of which the census records, bound to several ints, as the step, the
         start or the stop, a start or stop under % by a constant of a name with a binding the census does not record,
         a stop name bound to None, a start or stop that is int() of a name bound to strings and floats, and a private
-        name read in a method, bound under the spelling its class mangles it to. The census reads them as one module,
+        name read in a method, bound under the spelling its class mangles it to; and last those _checked() writes: a
+        start or stop name every binding of which the census records, bound to several ints and to a string, a float
+        or None. The census reads them as one module,
         each call on a line of its own after the lines that bind its names (in the class's body or a method where the
         call reads the name there). For each call the test
         samples start and stop at each end of their intervals and at a seeded value between (or each value they take),
@@ -3318,7 +3366,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
                         c = rng.choice((LOW + rng.randint(-60, 60), HIGH + rng.randint(-60, 60),
                                         rng.randint(LOW + 100, HIGH - 100), rng.randint(1024, LOW - 200)))
                         cases.append((relation,) + self._shape(relation, c, rng) + (step, form, {}))
-        cases += self._grown() + self._mixed() + self._recorded()
+        cases += self._grown() + self._mixed() + self._recorded() + self._checked()
 
         def written(p, x):
             return "%s=%s" % (p, x) if p[0] != "*" else "**{%s}" % ("" if x is None else '"%s": %s' % (p[2:], x))
