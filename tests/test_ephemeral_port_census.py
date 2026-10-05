@@ -148,15 +148,17 @@ not seen, adding no value and taking none away (HOST = "127.0.0.1", then HOST = 
   (random.randint(40000, 50000, a=1)), and a randrange whose stop is left empty and whose step is given
   (random.randrange(start=50000, step=7)), unless that step is the int 1 written there, randrange's default and the one
   step Python takes without a stop: random.randrange(start=50000, step=1) reads as randrange(50000), and with a step
-  that is 1 only at run time (a name bound to 1) the call is not read. A randrange(start, stop[, step]) whose start and
-  stop are bounded is read by one rule, whether or not interval() bounds its step (a step left out is 1, and one a **
-  mapping can give is unbounded): a positive
-  step returns values from start up to stop less one, a negative step values from stop plus one up to start, and a step
-  of 0 raises. So, with start from s_lo to s_hi and stop from e_lo to e_hi, a step that is never negative is read as
-  s_lo to e_hi - 1, any other step that is never positive as e_lo + 1 to s_hi, and every remaining step, one that can
-  take either sign or one interval() does not bound, as the span holding both, min(s_lo, e_lo + 1) to
-  max(s_hi, e_hi - 1). random.randrange(40000, 50000, k) is 40000-49999, by keyword too
-  (random.randrange(40000, stop=50000, step=k)); random.randrange(50000, 40000, k) and
+  that is 1 only at run time (a name bound to 1) the call is not read. A stop written as None, randrange's own default,
+  is a stop left empty, once a keyword that repeats it is refused: random.randrange(50000, None) and
+  random.randrange(50000, None, 1) read as randrange(50000), while random.randrange(50000, None, 7) and
+  random.randrange(40000, None, stop=50000), which Python refuses, are not read. A randrange(start, stop[, step]) whose
+  start and stop are bounded is read by one rule, whether or not interval() bounds its step (a step left out is 1, and
+  one a ** mapping can give is unbounded): a positive step returns values from start up to stop less one, a negative
+  step values from stop plus one up to start, and a step of 0 raises. So, with start from s_lo to s_hi and stop from
+  e_lo to e_hi, a step that is never negative is read as s_lo to e_hi - 1, any other step that is never positive as
+  e_lo + 1 to s_hi, and every remaining step, one that can take either sign or one interval() does not bound, as the
+  span holding both, min(s_lo, e_lo + 1) to max(s_hi, e_hi - 1). random.randrange(40000, 50000, k) is 40000-49999, by
+  keyword too (random.randrange(40000, stop=50000, step=k)); random.randrange(50000, 40000, k) and
   random.randrange(50000, 40000, -7) are 40001-50000; random.randrange(40000 + os.getpid() % 61,
   40020 + os.getpid() % 21, k) is 40000-40060, and 40021-40060 with a step of -7; and
   random.randrange(30000 + os.getpid() % 5000, 30000, **kw) is 30000-34999 whatever kw holds, by keyword too
@@ -597,8 +599,9 @@ def interval(node, bound=None):
 def _random_args(call):
     """The arguments of a random call (RANDOM_CALLS) in its parameters' order, up to the first parameter left empty: each
     positional argument in its place, then each keyword in the place of the parameter it names (randint(a=A, b=B) is
-    randint(A, B)), a keyword that names no parameter passed over. A ** mapping can fill any parameter left empty, at
-    run time: beside a randrange's start and stop it fills the step, given as the keyword node that passes the mapping,
+    randint(A, B)), a keyword that names no parameter passed over. A stop written as None, randrange's default, is a
+    stop left empty, once a keyword that repeats it is refused. A ** mapping can fill any parameter left empty, at run
+    time: beside a randrange's start and stop it fills the step, given as the keyword node that passes the mapping,
     which is no expression, so interval() never bounds it whatever the mapping holds; with any other parameter left
     empty beside it, None. None too when an argument is starred, the positional arguments outnumber the parameters, or
     Python refuses the call for the way its arguments are passed: a keyword names a parameter a positional argument
@@ -615,6 +618,8 @@ def _random_args(call):
             return None                             # Python: got multiple values for argument
         elif kw.arg in params:
             got[kw.arg] = kw.value
+    if isinstance(got.get("stop"), ast.Constant) and got["stop"].value is None:
+        del got["stop"]                             # a stop of None written there is randrange's default: left empty
     if mapping is not None:
         if "start" in got and "stop" in got:
             got.setdefault("step", mapping)         # the step the mapping can give: unbounded, so the span holding both
@@ -1653,9 +1658,15 @@ class Plants(unittest.TestCase):
         given, by keyword or after a positional start (Python: Missing a non-None stop argument), and a keyword that
         repeats a positional argument (Python: got multiple values for argument), in each of the three calls. Python
         accepts a stop left empty beside a step of 1, its default (and refuses True there), so randrange(start=S,
-        step=1) reads as randrange(S), red."""
+        step=1) reads as randrange(S), red. A stop written as None, randrange's default, is a stop left empty: the red
+        plants randrange(S, None), randrange(start=S, stop=None) and randrange(S, None, 1) read as randrange(S), from
+        0 to S less one, which e50adc775 did not read; randrange(S, None, 7) stays a stop left empty beside a step, and
+        randrange(40000, None, stop=50000) a keyword that repeats the stop, both refused and green."""
         lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
         for label, src in (
+                ("randrange with its stop None and a step of 7", 'port = random.randrange(%d, None, 7)\n' % hi),
+                ("randrange with its stop None and a keyword that repeats it",
+                 'port = random.randrange(%d, None, stop=%d)\n' % (lo, hi)),
                 ("randrange with its stop left empty and its step given", 'port = random.randrange(start=%d, step=7)\n' % hi),
                 ("randrange with its start by position, its stop left empty and its step given",
                  'port = random.randrange(%d, step=k)\n' % hi),
@@ -1667,9 +1678,13 @@ class Plants(unittest.TestCase):
                  'port = secrets.randbelow(%d, exclusive_upper_bound=3)\n' % hi)):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
-        with self.subTest("randrange with its stop left empty and a step of 1"):
-            self.assertRed("test_plant.py", 'port = random.randrange(start=%d, step=1)\n' % hi, "computed into 0-%d" % (hi - 1),
-                           n=LOW)
+        for label, src in (
+                ("randrange with its stop left empty and a step of 1", 'port = random.randrange(start=%d, step=1)\n' % hi),
+                ("randrange with its stop None", 'port = random.randrange(%d, None)\n' % hi),
+                ("randrange with its stop None, by keyword", 'port = random.randrange(start=%d, stop=None)\n' % hi),
+                ("randrange with its stop None and a step of 1", 'port = random.randrange(%d, None, 1)\n' % hi)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, "computed into 0-%d" % (hi - 1), n=LOW)
 
     def test_a_randrange_whose_step_is_unbounded(self):
         """randrange(start, stop, step) with a step interval() does not bound (a name, k), given by position or by its
