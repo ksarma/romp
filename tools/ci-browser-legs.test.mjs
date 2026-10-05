@@ -80,20 +80,20 @@
 //     after which the leg's subshell and its timer, posting through the event pipe's descriptor they inherited, end
 //     once the leg and its bound have; and through the stub: a node --test that outlives the grace is killed and named,
 //     after a cut (the leg second in its roster, one leg at a time, the reds naming it and the leg queued behind it
-//     run), beside a leg still running (two legs at a time, the running leg left to run on and exit 0) and with nothing
-//     cut (where the grace's red alone sets the status), a node --test that has exited and is not yet reaped at the
-//     grace's end is not held and its exit is the leg's status, a node --test that outlives the bound with no process
-//     under it, or with only a zombie (a child that has ended and is not yet reaped) under it, is not cut, the knobs'
-//     refusals, the refusal of a ps that cannot read the process table as the bound reads it (one that exits 127, one
-//     that refuses -p, one whose whole-table read prints 0 for every parent, one that leaves out the script's own
-//     process), a run whose parent has exited before those reads, not refused (through a stand-in ps that shows that
-//     parent as 1, and through a launcher that exits once it has started the script), the count of legs at once read
-//     with nproc's OpenMP variables set and unset, the status of legs that exit differently, and a roster longer than
-//     the legs run at once, the most calls running at once counted and the outputs printed in roster order although the
-//     legs finish in another, and, with the real node, two legs run one at a time under a short bound each get their
-//     bound from their own start. A roster line holding a backslash is held by seen_at's rows, and a tree under a
-//     directory whose name holds one by the post-run key's row, each read as the script's comment above seen_at or
-//     above its awk pass states;
+//     run), beside a leg still running (two legs at a time, the running leg, which reads its own process alive through
+//     the grace's end, left to run on and exit 0) and with nothing cut (where the grace's red alone sets the status), a
+//     node --test that has exited and is not yet reaped at the grace's end is not held and its exit is the leg's
+//     status, a node --test that outlives the bound with no process under it, or with only a zombie (a child that has
+//     ended and is not yet reaped) under it, is not cut, the knobs' refusals, the refusal of a ps that cannot read the
+//     process table as the bound reads it (one that exits 127, one that refuses -p, one whose whole-table read prints 0
+//     for every parent, one that leaves out the script's own process), a run whose parent has exited before those
+//     reads, not refused (through a stand-in ps that shows that parent as 1, and through a launcher that exits once it
+//     has started the script), the count of legs at once read with nproc's OpenMP variables set and unset, the status
+//     of legs that exit differently, and a roster longer than the legs run at once, the most calls running at once
+//     counted and the outputs printed in roster order although the legs finish in another, and, with the real node, two
+//     legs run one at a time under a short bound each get their bound from their own start. A roster line holding a
+//     backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run key's row,
+//     each read as the script's comment above seen_at or above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -1230,9 +1230,15 @@ test('the script exists, is executable, runs one node --test per rostered leg (n
  *  directory first, so the legs' records joined hold the report once; then a call whose bundle CBL_STUB_ZOMBIE names
  *  (<bundle>=<seconds> pairs, space-separated) starts a child that exits at once and replaces itself with a sleep of those
  *  seconds, which never reaps that child, and exits 0 (a node --test whose one process under it at the bound has already
- *  ended and is not yet reaped, a zombie); a call whose bundle CBL_STUB_CHILD names (pairs of the same shape) runs a
- *  sleep of those seconds as its child and goes on once it ends, exiting with the sleep's status if the sleep failed (a
- *  node --test with a live process under it for those seconds: a kill of what is under it ends the sleep, and the call
+ *  ended and is not yet reaped, a zombie); a call whose bundle CBL_STUB_WATCH names (pairs of the same shape, each
+ *  value <seconds>:<index>) starts a sleep of those seconds as its child, and around it reads the leg at that roster
+ *  index in its own run's directory (the directory of the reporter's destination): first that leg's node --test, by the
+ *  pid in its i.pid, running or not (ps -o stat= -p: no state, a zombie or a stopped process is not running), then,
+ *  once that leg's held mark (i.held) is there (polled every 10 ms, up to 1000 polls), its own child's state by its pid
+ *  (no state or a zombie is gone, else alive, unseen when the mark never came), then waits for the child and writes the
+ *  two reads and the child's exit, one space apart, to a file of its own in watched/ under the tree (named by its pid),
+ *  exiting with the child's exit (a node --test with a live process under it for those seconds, which reads whether
+ *  that process was alive when another leg's grace ended: a kill of what is under it ends the sleep, and the call
  *  exits 137); a call whose bundle CBL_STUB_LINGER names (pairs of the same shape) replaces itself with a sleep of
  *  those seconds and exits 0 (a node --test that outlives the bound with no process under it, or a leg that finishes
  *  later than the ones after it); a call whose bundle CBL_STUB_UNREAPED names (pairs of the same shape)
@@ -1245,7 +1251,7 @@ test('the script exists, is executable, runs one node --test per rostered leg (n
  *  runner over roster text (null removes the file) that runs the script with the switch set to 1 as the step does
  *  (stub.switch names another value; null runs it unset, as a local run may; stub.check runs --check as the first
  *  argument; stub.argv is a list of arguments passed after it; stub.report is the record the stub writes; stub.exit its
- *  exit; stub.exits the exits per bundle, stub.zombie the zombie's sleeps per bundle, stub.child the child's sleeps per
+ *  exit; stub.exits the exits per bundle, stub.zombie the zombie's sleeps per bundle, stub.watch the watches per
  *  bundle, stub.linger the lingers per bundle and stub.unreaped the seconds before the SIGCONT per bundle, each an
  *  object from bundle to value, as above; stub.wedge the bundle whose call stays up; stub.hold the seconds each call
  *  holds and the count it takes, as above; stub.timeout a bound in ms on the script's run, past which the script is
@@ -1285,7 +1291,7 @@ function syntheticTree(t, prefix = 'cbl-') {
     + 'test("leg a keeps the slice\\nwhole # 2", async (t) => { await inBrowser(t, async (browser) => {}); });\n');
   web('b-browser.test.ts', shared + 'test("leg b opens the page", async (t) => { await inBrowser(t, async (browser) => {}); });\n');
   fs.writeFileSync(path.join(ext, 'out-tests', 'ui', 'webview', 'a-browser.test.js'), '');
-  const calls = path.join(root, 'node-calls'), wrote = path.join(root, 'report-written');
+  const calls = path.join(root, 'node-calls'), wrote = path.join(root, 'report-written'), watched = path.join(root, 'watched');
   fs.writeFileSync(path.join(root, 'bin', 'node'), [
     '#!/bin/sh',
     'mkdir -p "' + calls + '"',
@@ -1309,7 +1315,15 @@ function syntheticTree(t, prefix = 'cbl-') {
     '  prev="$a"',
     'done',
     'for kv in ${CBL_STUB_ZOMBIE:-}; do case "$kv" in "$last="*) sh -c \'exit 0\' & exec sleep "${kv#"$last="}";; esac; done',
-    'for kv in ${CBL_STUB_CHILD:-}; do case "$kv" in "$last="*) sleep "${kv#"$last="}" || exit "$?";; esac; done',
+    'for kv in ${CBL_STUB_WATCH:-}; do case "$kv" in "$last="*)',
+    '  w=${kv#"$last="}; run=${dest%/*}; sleep "${w%:*}" & kid=$!',
+    '  bp=""; [ ! -s "$run/${w#*:}.pid" ] || read -r bp < "$run/${w#*:}.pid"',
+    '  case "$(ps -o stat= -p "${bp:-0}" 2>/dev/null)" in ""|*Z*|*T*) before=not-running;; *) before=running;; esac',
+    '  i=0; while [ ! -e "$run/${w#*:}.held" ] && [ "$i" -lt 1000 ]; do sleep 0.01; i=$((i + 1)); done',
+    '  at=unseen; if [ -e "$run/${w#*:}.held" ]; then case "$(ps -o stat= -p "$kid" 2>/dev/null)" in ""|*Z*) at=gone;; *) at=alive;; esac; fi',
+    '  wait "$kid"; st=$?',
+    '  mkdir -p "' + watched + '"; echo "$before $at $st" > "' + watched + '/$$"; exit "$st";;',
+    'esac; done',
     'for kv in ${CBL_STUB_LINGER:-}; do case "$kv" in "$last="*) exec sleep "${kv#"$last="}";; esac; done',
     'for kv in ${CBL_STUB_UNREAPED:-}; do case "$kv" in "$last="*) pp=$PPID; w=0; while [ ! -s "${dest%.rec}.pid" ] && [ "$w" -lt 500 ]; do sleep 0.01; w=$((w + 1)); done; ( ( sleep "${kv#"$last="}"; kill -CONT "$pp" ) & ); kill -STOP "$pp"; exit 0;; esac; done',
     'code=${CBL_STUB_EXIT:-0}',
@@ -1322,7 +1336,7 @@ function syntheticTree(t, prefix = 'cbl-') {
   // otherwise, and the stub's variables as the stub argument names them
   const envFor = (tmp, stub) => {
     const env = { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH, TMPDIR: tmp, ...(stub.env || {}) };
-    delete env.CBL_STUB_REPORT; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_EXITS; delete env.CBL_STUB_LINGER; delete env.CBL_STUB_CHILD; delete env.CBL_STUB_ZOMBIE; delete env.CBL_STUB_UNREAPED; delete env.CBL_STUB_REAL_NODE; delete env.CBL_STUB_WEDGE; delete env.CBL_STUB_HOLD; delete env.NODE_TEST_CONTEXT;
+    delete env.CBL_STUB_REPORT; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_EXITS; delete env.CBL_STUB_LINGER; delete env.CBL_STUB_WATCH; delete env.CBL_STUB_ZOMBIE; delete env.CBL_STUB_UNREAPED; delete env.CBL_STUB_REAL_NODE; delete env.CBL_STUB_WEDGE; delete env.CBL_STUB_HOLD; delete env.NODE_TEST_CONTEXT;
     env[SWITCH] = '1';
     if (stub.switch === null) delete env[SWITCH]; else if (stub.switch !== undefined) env[SWITCH] = stub.switch;
     if (stub.report !== undefined) env.CBL_STUB_REPORT = stub.report;
@@ -1330,7 +1344,7 @@ function syntheticTree(t, prefix = 'cbl-') {
     const pairs = (o) => Object.entries(o).map(([bundle, v]) => bundle + '=' + v).join(' ');
     if (stub.exits !== undefined) env.CBL_STUB_EXITS = pairs(stub.exits);
     if (stub.linger !== undefined) env.CBL_STUB_LINGER = pairs(stub.linger);
-    if (stub.child !== undefined) env.CBL_STUB_CHILD = pairs(stub.child);
+    if (stub.watch !== undefined) env.CBL_STUB_WATCH = pairs(stub.watch);
     if (stub.zombie !== undefined) env.CBL_STUB_ZOMBIE = pairs(stub.zombie);
     if (stub.unreaped !== undefined) env.CBL_STUB_UNREAPED = pairs(stub.unreaped);
     if (stub.wedge !== undefined) env.CBL_STUB_WEDGE = stub.wedge;
@@ -1342,7 +1356,7 @@ function syntheticTree(t, prefix = 'cbl-') {
     if (roster === null) fs.rmSync(path.join(ext, ROSTER), { force: true }); else fs.writeFileSync(path.join(ext, ROSTER), roster);
     fs.rmSync(calls, { recursive: true, force: true });
     fs.rmSync(wrote, { recursive: true, force: true });
-    for (const d of ['running', 'peak']) fs.rmSync(path.join(root, d), { recursive: true, force: true });
+    for (const d of ['running', 'peak', 'watched']) fs.rmSync(path.join(root, d), { recursive: true, force: true });
     const tmp = path.join(base, 'tmp');
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.mkdirSync(tmp);
@@ -2076,7 +2090,7 @@ test('a SIGKILL to the script leaves no process of the run waiting on the event 
   }
 });
 
-test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the leg second in its roster and run one leg at a time, so the reds name it and not the first leg, and the leg queued behind it runs and is read, the other legs\' records read and no timer left behind; with two legs at a time, a grace\'s end beside a leg still running with a process under it kills the held leg alone, and the leg running then runs on and exits 0; a node --test still running at the grace\'s end when the bound cut nothing is killed and named too, red by that red alone; a node --test that has exited and is not yet reaped at the grace\'s end, a zombie with nothing under it, is not, and its exit 0 is the leg\'s status; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; a ps that cannot read the process table as the bound reads it (one that exits 127, one that refuses -p, one whose whole-table read prints 0 for every parent, one whose whole-table read leaves out the script\'s own process) is refused by name and no leg runs, and a run whose parent has exited before those reads (shown so by a stand-in ps, and through a launcher that exits once it has started the script) is not refused and its leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
+test('the per-file bound through the stub: a node --test that does not end after the bound\'s kill is killed at the grace\'s end and named, the leg second in its roster and run one leg at a time, so the reds name it and not the first leg, and the leg queued behind it runs and is read, the other legs\' records read and no timer left behind; with two legs at a time, a grace\'s end beside a leg still running with a process under it (read so by that leg itself: the held leg\'s node --test running once its process had started, and its process alive once the held mark was written, then ending on its own) kills the held leg alone, and the leg running then runs on and exits 0; a node --test still running at the grace\'s end when the bound cut nothing is killed and named too, red by that red alone; a node --test that has exited and is not yet reaped at the grace\'s end, a zombie with nothing under it, is not, and its exit 0 is the leg\'s status; a node --test that outlives the bound with no process under it, or with only a zombie under it (a child that has ended and is not yet reaped), is not cut, beside a control with a live process under it at the same bound that is; the knobs refuse a value that is not a whole number above 0 of at most 9 digits, naming it, and no leg runs; a ps that cannot read the process table as the bound reads it (one that exits 127, one that refuses -p, one whose whole-table read prints 0 for every parent, one whose whole-table read leaves out the script\'s own process) is refused by name and no leg runs, and a run whose parent has exited before those reads (shown so by a stand-in ps, and through a launcher that exits once it has started the script) is not refused and its leg runs; the count of legs at once is the same with nproc\'s OpenMP variables set as unset; the step\'s status is the first non-zero exit in roster order; a roster longer than the legs run at once runs every leg and reads each, the spec output in roster order although the legs finish in another', (t) => {
   const { run, root, rec, A, B, envFor, fresh } = syntheticTree(t);
   // what a red run left behind, if anything, scoped to this tree (runProcs), killed by the pids read here
   t.after(() => { for (const [pid] of runProcs(root)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } });
@@ -2107,13 +2121,21 @@ test('the per-file bound through the stub: a node --test that does not end after
   // grace 1003 ms, so its bound comes at about 4.0 s and its grace's end at about 5.0 s); X writes the report and replaces
   // itself with a 3.5 s sleep, so C starts behind X at about 3.5 s and its bound comes at about 7.5 s. C's node --test runs
   // a 2.9 s sleep as its child, from about 3.5 s to about 6.4 s, across B's bound and B's grace's end, and then exits 0,
-  // before its own bound. Each timing margin is about 1 s. The grace's end kills B alone: one that also walked C's tree
-  // there would kill C's child, so C would exit 137 (the stub exits with its child's status), and one that ended C's node
-  // --test would print C's line with the kill's exit, either one setting the step's status from it
+  // before its own bound. The grace's end kills B alone: one that also walked C's tree there would kill C's child, so C
+  // would exit 137 (the stub exits with its child's status), and one that ended C's node --test would print C's line with
+  // the kill's exit, either one setting the step's status from it. The armed control, C's watch (the stub's docstring):
+  // with its child started, C reads B's node --test running, so the grace's end had not begun (it stops that node --test
+  // first); once B's held mark is written, after the grace's end has killed B, C reads its child alive by its pid; and its
+  // child then ends on its own, exit 0. So C's child was alive through B's grace's end and outlived it, on what C read,
+  // and a red of this row under a grace's end that reaches other legs rests on those reads, not on the timing margins
+  // (each about 1 s), whose slip now reads red here instead of green
   const X = 'out-tests/ui/webview/x-browser.test.js';
   fs.writeFileSync(path.join(root, 'ui', 'webview', 'x-browser.test.ts'), '');
   fs.writeFileSync(path.join(root, 'vscode-extension', X), '');
-  const beside = run(B + '\n' + X + '\n' + C + '\n', { wedge: B, report: pass(B) + pass(X) + pass(C), linger: { [X]: '3.5' }, child: { [C]: '2.9' }, timeout: 30000, env: { ROMP_BROWSER_LEGS_FILE_MS: '4001', ROMP_BROWSER_LEGS_GRACE_MS: '1003', ROMP_BROWSER_LEGS_JOBS: '2' } });
+  const beside = run(B + '\n' + X + '\n' + C + '\n', { wedge: B, report: pass(B) + pass(X) + pass(C), linger: { [X]: '3.5' }, watch: { [C]: '2.9:0' }, timeout: 30000, env: { ROMP_BROWSER_LEGS_FILE_MS: '4001', ROMP_BROWSER_LEGS_GRACE_MS: '1003', ROMP_BROWSER_LEGS_JOBS: '2' } });
+  const watchedDir = path.join(root, 'watched');
+  const watch = fs.existsSync(watchedDir) ? fs.readdirSync(watchedDir).map((f) => read(path.join(watchedDir, f)).trim()) : [];
+  assert.deepEqual(watch, ['running alive 0'], 'beside a leg still running, the armed control: C\'s watch read B\'s node --test running once C\'s child had started (the grace\'s end had not begun), C\'s child alive by its pid once B\'s held mark was written (the grace\'s end had killed B), and the child\'s own exit 0 after that, so C ran with a process under it through B\'s grace\'s end. Read otherwise: not-running, a C that started its child after the grace\'s end began; gone, a child that had ended or been killed by the time the mark was written; unseen, a mark that never came; an exit of 137, a child killed after the mark; no line, a C that never reached its reads: ' + JSON.stringify(watch));
   assert.equal(beside.status, 1, 'beside a leg still running: the cut and held leg is red, exit 1, and the leg running across its grace\'s end sets no status of its own (a null status is the stub runner\'s timeout); stderr:\n' + beside.err);
   assert.ok(beside.err.includes('ci-browser-legs: ' + B + ' ran past the per-file bound (4001 ms)') && beside.err.includes('ci-browser-legs: ' + B + ': its node --test had not ended 1003 ms after the per-file bound'), 'beside a leg still running: the cut leg is named with the bound and its grace\'s end with the grace:\n' + beside.err);
   assert.deepEqual(beside.err.split('\n').filter((l) => l.startsWith('ci-browser-legs: ' + X) || l.startsWith('ci-browser-legs: ' + C)), [], 'beside a leg still running: no line of the script\'s names X or C, so neither is cut, held or failed:\n' + beside.err);
