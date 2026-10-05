@@ -324,14 +324,14 @@ names it, and rules read from a test's text cannot follow every way a test comes
 these turns its plant red, and the example leaves this list.
   a value in a position whose form THE RULE's values leave out: a name with no binding the census records (BOUND: a
   parameter, a name another module binds, B after B = A), an attribute (cfg.p after cfg.p = N), a container's element
-  (CFG["a"]), a call's result other than str() or int() around a bounded value and the random calls (pick(),
-  random.choice((N, M))), a random call with a parameter left empty that a ** mapping beside it can fill
-  (random.randrange(50000, **kw), random.randrange(start=50000, step=1, **kw), and random.randrange(50000, E, **kw)
-  with E bound to None, a stop the name can leave empty), a name interval() does not bound inside a display that is
-  the position's value or in a loop's sequence (P = "N", then {"ports": [P]}, the census recording no int for P), an
-  f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a sum or difference in the range
-  (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__ replaced at run time); a rule of
-  its own may still read such a value where it is written;
+  (CFG["a"]), a call's result other than str() or int() around a value interval() reads (int() of a constant or of a
+  name included) and the random calls (pick(), random.choice((N, M))), a random call with a parameter left empty that a
+  ** mapping beside it can fill (random.randrange(50000, **kw), random.randrange(start=50000, step=1, **kw), and
+  random.randrange(50000, E, **kw) with E bound to None, a stop the name can leave empty), a name interval() does not
+  bound inside a display that is the position's value or in a loop's sequence (P = "N", then {"ports": [P]}, the census
+  recording no int for P), an f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a
+  sum or difference in the range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__
+  replaced at run time); a rule of its own may still read such a value where it is written;
   an unbound random method spelled on anything but a name or attribute called Random or SystemRandom, whose instance
   then fills start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
   a name or attribute called Random or SystemRandom that holds an instance (Random = random.Random(), then
