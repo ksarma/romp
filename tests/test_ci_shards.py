@@ -184,6 +184,22 @@ class TheRule(unittest.TestCase):
         shards = sorted(HEAVY_MODULES.values())
         self.assertEqual(sorted(set(shards)), shards, "two heavy modules share a shard: the list puts at most one in each")
 
+    def test_parse_cache_states_the_shard_its_named_consumer_runs_in(self):
+        # tests/parse_cache.py's singleton check is order-dependent: a Linux cell reds on a writer only when a check runs
+        # after it in the same shard, and its named consumer, the thread-stop census, runs in one shard alone. The
+        # passage names that shard and how the rule gives it (listed in HEAVY_MODULES, or by the hash), held here to
+        # shard_of, so a move of the census by the list or by SHARD_COUNT reds until the passage is restated. A text pin:
+        # it holds what the passage says, not what a run does (the census above holds where the module runs)
+        census = "tests/test_thread_stop_census.py"
+        how = "listed for" if census in HEAVY_MODULES else "hashed to"
+        with open(os.path.join(HERE, "parse_cache.py"), encoding="utf-8") as fh:
+            text = " ".join(fh.read().split())
+        want = "the thread-stop census, %s shard %d, runs in shard %d alone" % (how, shard_of(census), shard_of(census))
+        self.assertTrue(want in text, "tests/parse_cache.py's passage on the Linux cells does not say where the "
+                        "thread-stop census runs as the rule places it (%r)" % want)
+        self.assertTrue("tests/conftest.py's CI's shards section" in text, "tests/parse_cache.py's passage points to the "
+                        "rule rather than copying its count")
+
     def test_the_count_the_cap_pin_reads_is_the_conftests(self):
         # tests/test_ci_bats_bound.py reads SHARD_COUNT from tests/conftest.py's text rather than importing it (the Shell
         # job imports that module under a python with no pytest); the text and the imported value agree
