@@ -259,7 +259,12 @@ no binding here, and the census does not see the value such a setting gives it (
   census records for it in turn, whatever its other bindings, a value other than an int adding nothing but inside
   int(): BASE + i, with BASE bound to 40000, or to 40000 and to 50000, or to 1000 and to 40000, or to 40000 and to "x",
   with or without BASE = f() beside them, is built on 40000, and so are BASE * 1 + i and, with BASE bound to "40000"
-  and to "50000", int(BASE) + i. A name with a binding the census does not record is also read unbounded (BOUND), so
+  and to "50000", int(BASE) + i. Where the names of one operand can take their values more than 256 ways (EACH), the
+  operand is read once instead, each name holding every value it is read by, a span that holds every way's reading:
+  the sum counts as built on the lowest value of that span in the range when the span reaches the range, an over-read
+  where no one way is in it, and on 32768 when that reading gives none and the operand holds a ** or a <<, whose cap
+  at 2**4096 can leave the wide reading empty where one way has a value. A name with a binding the census does not
+  record is also read unbounded (BOUND), so
   with K bound to 30000 and by K = f(), 40000 + K, which reads 70000 by K's int, is built on 40000, and so are 40000 - K
   and 40000 + 90002 // K. interval() reads a bool as the int it is, True as 1 and False as 0
   (random.randrange(True, 50000) is 1-49999), and a float only through int() of it or of a name bound to it (above).
@@ -907,13 +912,20 @@ def _random_args(call):
     return out
 
 
+EACH = 256                                          # the most ways offset_base() reads one operand value by value
+
+
+def _values(each, k):
+    """The values offset_base() reads the name `k` by, one at a time: its ints from the lowest, then its other values (a
+    float or a string, which int() reads) in the order the module binds them."""
+    return sorted({v for v in each[k] if isinstance(v, int)}) + [v for v in dict.fromkeys(each[k]) if not isinstance(v, int)]
+
+
 def _each_value(node, bound, each):
     """`bound` once for every way the names of `each` that `node` reads can each take one of their values there (just
-    `bound` when it reads none), each such name holding that one value: its ints from the lowest, then its other values
-    (a float or a string, which int() reads) in the order the module binds them."""
+    `bound` when it reads none), each such name holding that one value (_values())."""
     names = sorted({n.id for n in ast.walk(node) if isinstance(n, ast.Name) and each.get(n.id)})
-    for vals in itertools.product(*(sorted({v for v in each[k] if isinstance(v, int)})
-                                    + [v for v in dict.fromkeys(each[k]) if not isinstance(v, int)] for k in names)):
+    for vals in itertools.product(*(_values(each, k) for k in names)):
         yield {**bound, **{k: [ast.Constant(v)] for k, v in zip(names, vals)}}
 
 
@@ -927,7 +939,10 @@ def offset_base(node, bound=None, each=None):
     int(BASE) + i with BASE bound to "40000" and to "50000". literal() calls it once, where interval() gives no
     reading in one of the mixes it reads a value's names by, since it reads each name by each value alike in every
     mix: 40000 + K, with K bound to 30000 and by K = f(), which interval() reads as 70000 by K's int and not at all
-    with K unbounded, is built on 40000."""
+    with K unbounded, is built on 40000. An operand with more ways than EACH to take its names' values is read once,
+    each name holding every value it is read by, and the sum counts as built on the lowest value of that span in the
+    range when the span reaches it (it holds every way's reading, so this over-reads only), or on 32768 when it gives
+    no reading and holds a ** or a <<, whose cap at 2**BIG can leave a wide reading empty where one way has a value."""
     bound, each = bound or {}, each or {}
     if isinstance(node, ast.Call) and _callee(node.func) in ("str", "int") and len(node.args) == 1 and not node.keywords:
         return offset_base(node.args[0], bound, each)
@@ -935,10 +950,22 @@ def offset_base(node, bound=None, each=None):
         return offset_base(node.operand, bound, each)
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
         for side in (node.left, node.right):
-            for table in _each_value(side, bound, each):
-                iv = interval(side, table)
-                if iv and not iv[2] and in_range(iv[0]):
-                    return iv[0]
+            names = sorted({n.id for n in ast.walk(side) if isinstance(n, ast.Name) and each.get(n.id)})
+            ways = 1
+            for k in names:
+                ways *= len(_values(each, k))
+            if ways > EACH:                         # once, each name holding every value it is read by: their spans
+                iv = interval(side, {**bound, **{k: [ast.Constant(v) for v in _values(each, k)] for k in names}})
+                if iv and min(iv[:2]) <= HIGH and max(iv[:2]) >= LOW:
+                    return max(min(iv[:2]), LOW)    # it holds every way's reading: an over-read where none is in range
+                if iv is None and any(isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Pow, ast.LShift))
+                                      for n in ast.walk(side)):
+                    return LOW                      # a ** or << past 2**BIG can leave the spans unread, one way not
+            else:
+                for table in _each_value(side, bound, each):
+                    iv = interval(side, table)
+                    if iv and not iv[2] and in_range(iv[0]):
+                        return iv[0]
             got = offset_base(side, bound, each)
             if got is not None:
                 return got
@@ -2736,6 +2763,56 @@ class Plants(unittest.TestCase):
         with self.subTest("eight names, read"):
             self.assertGreen("test_x.py", "".join("%s = 1\n%s = f()\n" % (k, k) for k in "ABCDEFGH")
                              + "port = A + B + C + D + E + F + G + H                # %d opens the file\n" % lo)
+
+    def test_offset_base_reads_an_operand_with_more_ways_than_each_by_its_spans(self):
+        """offset_base() reads an operand value by value only while its names can take their values at most EACH ways;
+        past that it reads the operand once, each name holding every value it is read by (THE RULE). Pinned by counting
+        the interval() calls offset_base() makes itself, never by time: with A, B and C each bound by a loop over 40 ints
+        and by a call, A + B + C + worker costs at most EACH calls for each operand it reads (six), where reading every
+        way costs 40**3 + 40**2 + 3 * 40 + 1 = 65721; the sum is not counted either way (green). Past the cap the span
+        holds every way's reading, so it only over-reads: with each name over 0 to 19 and 70000 to 70019, no way is in
+        the range and the span 0-210057 reaches it, red, an over-read. A ** or a << past 2**BIG leaves the span unread
+        where one way has a value, so such an operand counts too: 2 ** (A + B + C) + worker, A over 15 and 5000 to
+        5038, B and C over 0 to 39, is red, as 2 ** 15 is 32768."""
+        lo = LOW + 7232                                                            # 40000, built at run time
+        opens = "                # %d opens the file\n" % lo
+
+        def names(*values):
+            return "".join("for %s in (%s):\n    pass\n%s = f()\n" % (k, ", ".join(map(str, v)), k)
+                           for k, v in zip("ABC", values))
+        small, gapped = list(range(40)), list(range(20)) + list(range(70000, 70020))
+        src = names(small, small, small) + "port = A + B + C + worker" + opens
+        tree = ast.parse(src)
+        sc = _Scan(defs_of(tree), {}, lambda x, end=False: getattr(x, "lineno", 1), 0)
+        sc.scan(tree)
+        value = tree.body[-1].value
+        operands = 2 * sum(isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Sub)) for n in ast.walk(value))
+        module, calls, depth = sys.modules[__name__], [0], [0]
+        real = module.interval
+
+        def counted(*args, **kwargs):
+            calls[0] += depth[0] == 0               # offset_base()'s own calls, not interval()'s calls inside them
+            depth[0] += 1
+            try:
+                return real(*args, **kwargs)
+            finally:
+                depth[0] -= 1
+        module.interval = counted
+        try:
+            got = offset_base(value, sc.reads, sc.each)
+        finally:
+            module.interval = real
+        self.assertIsNone(got)
+        self.assertEqual(operands, 6)
+        self.assertLessEqual(calls[0], operands * EACH, "offset_base() made %d interval() calls" % calls[0])
+        self.assertGreater(calls[0], 0)
+        self.assertGreen("test_x.py", src)
+        for label, src in (
+                ("past the cap, no way in the range, an over-read", names(gapped, gapped, gapped) + "port = A + B + C + worker"),
+                ("past the cap, ** past 2**BIG", names([15] + list(range(5000, 5039)), small, small)
+                 + "port = 2 ** (A + B + C) + worker")):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src + opens, "an assignment to port, an offset from %d" % LOW, n=LOW)
 
     def test_the_step_table_reaches_a_randrange_nested_anywhere(self):
         """interval() reads a name at a randrange's step, and anywhere inside one, by `steps`, which holds a name only
