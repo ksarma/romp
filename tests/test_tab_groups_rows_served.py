@@ -243,16 +243,20 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         pair of sids the driver drags at the opening width, src onto the end of dst with a real Chromium drag, for a
         survey right after the drop's rebuild (`dropped` in the result)."""
         cfg = os.path.join(self.lab, name + ".json")
+        result_path = os.path.join(self.lab, name + "-result.json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "rows": rows,
                        "width": width, "resizeTo": resize_to, "drag": drag,
                        "visible": len([s for s in SESSIONS if s[2] != "archived"]) + 1,   # web-search has two copies
                        "twoTag": next(sid for (n, sid, _t) in SESSIONS if n == "web-search"),
                        "shots": os.environ.get("TABROWS_SHOTS", ""),
-                       "resultPath": os.path.join(self.lab, name + "-result.json")}, f)   # the driver's full record; its RESULT: line names it
+                       "resultPath": result_path}, f)   # the driver's full record; its RESULT: line names it
         driver = os.path.join(self.lab, name + ".mjs")
         with open(driver, "w") as f:
             f.write(script)
+        # Two tests drive "inline" into this one class lab, so the second run would find the first run's file. Removing
+        # it before each run means a run that writes no record fails in _full_result instead of passing on a stale one.
+        Path(result_path).unlink(missing_ok=True)
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         if p.returncode == 3:
@@ -260,7 +264,7 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        return self._full_result(line, os.path.join(self.lab, name + "-result.json"), p)
+        return self._full_result(line, result_path, p)
 
     def _full_result(self, line, result_path, p):
         """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is

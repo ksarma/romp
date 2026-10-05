@@ -241,13 +241,18 @@ class ServedPickerTagChips(unittest.TestCase):
 
     def _drive(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        result_path = os.path.join(self.lab, "result.json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "activeSid": SESSIONS[0][1],
                        "shots": os.environ.get("TAG_SHOTS", ""),   # TAG_SHOTS=<dir>: the picker with its three chip states, dark and light (T343)
-                       "resultPath": os.path.join(self.lab, "result.json")}, f)   # the driver's full record; its RESULT: line names it
+                       "resultPath": result_path}, f)   # the driver's full record; its RESULT: line names it
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
+        # When a drive fails, _once drives again for the next test into this same class lab, and that drive would find the
+        # failed drive's file. Removing it before each run means a run that writes no record fails in _full_result
+        # instead of passing on a stale one.
+        Path(result_path).unlink(missing_ok=True)
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         if p.returncode == 3:
@@ -255,7 +260,7 @@ class ServedPickerTagChips(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        return self._full_result(line, os.path.join(self.lab, "result.json"), p)
+        return self._full_result(line, result_path, p)
 
     def _full_result(self, line, result_path, p):
         """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is
