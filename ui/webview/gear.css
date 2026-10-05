@@ -54,8 +54,9 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-pact svg { display: block; flex: none; }
 /* the Remote kernels glyph's live state, painted here by the shell's poll as it painted the bar's button (kernel
    _LANDING_REMOTES_JS paintIcon through mnet): the accent when a host is connected and while one attaches, the connector
-   dashes marching while it attaches, each node's colour (connected, dialing, needs you) and the red flash when a host drops.
-   The values are the kernel's own rules for that glyph (.rn-ok, .rn-wait and .rn-warn, .rail-act.on and .busy, the
+   dashes marching while it attaches, each node's colour (connected, dialing, needs you) and the red flash when a host drops
+   while the card is open (a drop while it is closed leaves the class on a page that runs no animation, and the kernel clears
+   it when the card opens, so the flash never plays late). The values are the kernel's own rules for that glyph (.rn-ok, .rn-wait and .rn-warn, .rail-act.on and .busy, the
    rnet-drop and rnet-march keyframes), restated because this page loads none of the shell's stylesheet; the node colours
    through tokens: the accent, feed.css's --rn-wait (the shell's dialing grey) and the blocked red, --st-blocked-bg, each
    with the shell's literal as its fallback and the same value in both themes as the shell's rule */

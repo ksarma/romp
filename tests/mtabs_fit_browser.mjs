@@ -17,6 +17,8 @@
 // paints), then each button clicked once at its centre and its effect read in the shell (the Usage modal on #ru-back, the
 // Remote kernels panel #rnet-back) with the card closed. The shell's own GET /tunnels (the main frame's, not the panes')
 // answers cfg.tunnels, synthetic hosts, so the glyph has a state to show; the panes read the lab's real answer (no hosts).
+// Then the drop cue on the card's glyph (cfg.tunnelsDrop, a host that was up answering down): a drop with the card closed,
+// the glyph read at the card's next opening, and a drop with the card open, the glyph read while its flash runs.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit.
 // Writes the readings as JSON to cfg.result and prints one `RESULT-FILE:` line naming it; exits 3 when the browser does not
@@ -238,6 +240,40 @@ try {
         acts.released = { polls, card: await sf.evaluate(() => { const n = document.getElementById("rs-pact-net");
           return n ? ["rn-me", "rn-a", "rn-b"].map((k) => { const e = n.querySelector("." + k); return e ? e.getAttribute("class") : null; }) : null; }) };
       }
+    }
+    // the drop cue: a host that was up answering down flashes the glyph three times (the shell's flashDrop). First with the
+    // card closed: the poll answers cfg.tunnelsDrop, the rail's nodes turn (the paint and the drop handler run in that one
+    // poll's callback), the card's copy is read while closed and again at the card's next opening (the bar's Settings at its
+    // centre), where a flash for the drop it could not show must not play. Then the host comes back and drops again with
+    // the card open, where the card's copy flashes. Each wait records its outcome, so a red run lists every line.
+    {
+      const sf = settingsFrame();
+      const drop = {};
+      const glyphNow = () => sf.evaluate(() => { const n = document.getElementById("rs-pact-net"); if (!n) return null;
+        return { cls: n.getAttribute("class"), anims: n.getAnimations ? n.getAnimations().map((a) => (a.animationName || "?") + ":" + a.playState) : null,
+                 cardHidden: document.getElementById("rsettings").hidden }; });
+      const railA = (want) => page.waitForFunction((w) => { const a = document.querySelector("#rail-net .rn-a"); return !!a && a.getAttribute("class") === w; }, want, { timeout: 15000 }).then(() => true, () => false);
+      answer = cfg.tunnelsDrop;
+      drop.closedPolled = await railA("rn-a rn-warn");
+      await frames(page);
+      drop.closed = await glyphNow();
+      const gear = acts.bar.controls.find((c) => c.key === "settings");
+      await clickCentre(gear);
+      await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+      await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+      await frames(page);
+      drop.reopened = await glyphNow();
+      answer = cfg.tunnels2;
+      drop.backUp = await railA("rn-a rn-ok");
+      answer = cfg.tunnelsDrop;
+      // read in the frame the moment the class lands (polled every frame), while its flash runs
+      drop.openDrop = await sf.waitForFunction(() => { const n = document.getElementById("rs-pact-net");
+        if (!n || !n.classList.contains("rn-drop")) return false;
+        return { cls: n.getAttribute("class"), anims: n.getAnimations ? n.getAnimations().map((a) => (a.animationName || "?") + ":" + a.playState) : null }; },
+        null, { timeout: 15000, polling: "raf" }).then((h) => h.jsonValue(), () => null);
+      await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+      await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+      acts.drop = drop;
     }
     out.acts = acts;
     await context.close();

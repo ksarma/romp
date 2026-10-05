@@ -23,7 +23,9 @@ wrap only where it still cannot.
   and runs the handler the bar's button ran (the shell's A-map, reached by a phoneAct message from the settings document),
   so Usage opens its modal and Remote kernels its panel, as before. The Remote kernels glyph keeps its live state there:
   the shell's /tunnels poll paints the card's copy as it painted the bar's (connected, attaching, each node's colour, the
-  drop flash), and the card's opening paints it from the last poll.
+  drop flash), and the card's opening paints it from the last poll. The drop flash plays only where the card is open at
+  the drop: a closed card runs no animation, so the class a drop left on its copy is cleared when the card opens, where
+  it would otherwise play the flash late.
 - The fallback. The action cluster is one element (.mtabs-acts) and the bar may wrap: where the tabs and the four actions
   left do not fit one row (320px, and up to 353px in Chromium and 349px in WebKit and Firefox; below 390px in Chromium and
   385px in WebKit and Firefox with the Files tab on), the cluster moves whole to a second row under the tabs, at the right
@@ -52,14 +54,17 @@ you and connected, the same classes, colours and fills as the rail's); the shell
 opening, so the card's paint is the opening's own, and when it is released with both hosts connected the card's copy
 follows it; then one click on Usage closes the card and opens the Usage modal (the lab's usage.json makes it a spend
 reading, so the panel has something to show), and after the bar's Settings again, one click on Remote kernels closes the
-card and opens the Remote kernels panel. Then a desktop window, where the bar is hidden, and the desktop rail at 821 and
+card and opens the Remote kernels panel. Then the drop cue (TUNNELS_DROP, a host that was up answering with no kernel):
+with the card closed the poll drops the host, and at the card's next opening its glyph carries no flash; then the host
+comes back and drops again with the card open, and the glyph's flash runs. Then a desktop window, where the bar is hidden, and the desktop rail at 821 and
 1100px, whose actions (restart, Remote kernels, the bell, the gear) and their boxes equal af7d18250's (RAIL_AF7 below).
 MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
 
 Red at e7a371172 (the wrap-only head), in all three engines: its bar shows six actions, it wraps where one row is owed (at
 375 and 390px, and at 414 in Chromium; its row fits 414 in WebKit and Firefox and 430 in all three), and its card has no
 row of panel buttons. The fallback's pin is red under the old rule restored (no wrap), and the rail's under the move applied to
-the rail as well. Runs in the "Browser-backed served-page tests (pytest)" step of the served-pages job, "Served pages
+the rail as well. The drop cue's pin is red at f48c325eb, the commit before its fix, where a drop that came while the card
+was closed flashed the glyph at the card's next opening. Runs in the "Browser-backed served-page tests (pytest)" step of the served-pages job, "Served pages
 (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in Chromium; the WebKit and
 Firefox legs are `optional:` skips where that engine is absent or not declared in ROMP_SERVED_TESTS_ENGINES (CI declares
 chromium; a developer's box runs all three).
@@ -112,6 +117,9 @@ TUNNELS = {"tunnels": [{"host": "TESTHOST", "status": "up"}, {"host": "PEERHOST"
            "peersMode": False, "autoUpdate": False, "local": {"host": "", "ver": "", "sha": ""}}
 TUNNELS2 = {"tunnels": [{"host": "TESTHOST", "status": "up"}, {"host": "PEERHOST", "status": "up"}],
             "peersMode": False, "autoUpdate": False, "local": {"host": "", "ver": "", "sha": ""}}
+# ...and the drop: PEERHOST, up in TUNNELS2, answers with no kernel, so that poll is a host dropping (the glyph's flash)
+TUNNELS_DROP = {"tunnels": [{"host": "TESTHOST", "status": "up"}, {"host": "PEERHOST", "status": "no-kernel"}],
+                "peersMode": False, "autoUpdate": False, "local": {"host": "", "ver": "", "sha": ""}}
 # The desktop rail at af7d18250 (fork main, before this PR), read by this module's driver against that tree in this lab: the
 # shown actions in order, each with its width, height and top, and its left and right edges as offsets from the gear's left
 # edge; for the gear itself its right edge as an offset from the window's right edge, its top and height. The gear is a text
@@ -266,6 +274,22 @@ def _acts_problems(engine, acts):
     second = (acts["runs"].get("net") or {}).get("card", {}).get("glyph")
     if not second or [n and n["cls"] for n in second["nodes"]] != ["rn-me rn-ok", "rn-a rn-ok", "rn-b rn-ok"]:
         out.append("%s: at the second opening the card's glyph nodes are %r" % (where, second and [n and n["cls"] for n in second["nodes"]]))
+    # the drop cue on the card's glyph: a drop that came while the card was closed plays no flash when the card next opens
+    # (on the bar the flash played at the drop; a closed card shows nothing then, and the colours carry the state after it),
+    # and a drop while the card is open flashes it
+    drop = acts.get("drop") or {}
+    if not drop.get("closedPolled"):
+        out.append("%s: the poll that drops a host never reached the rail's glyph (the drop leg's premise): %r" % (where, drop))
+    if not (drop.get("closed") or {}).get("cardHidden"):
+        out.append("%s: the card was not closed when the host dropped (the drop leg's premise): %r" % (where, drop.get("closed")))
+    re_ = drop.get("reopened")
+    if not re_ or "rn-drop" in (re_["cls"] or "").split() or any(a.startswith("rs-pact-drop:") for a in (re_["anims"] or [])):
+        out.append("%s: a host dropped while the card was closed, and the card's next opening plays its flash: %r" % (where, re_))
+    if not drop.get("backUp"):
+        out.append("%s: the host never came back on the rail's glyph before the second drop (its premise): %r" % (where, drop))
+    live = drop.get("openDrop")
+    if not live or "rs-pact-drop:running" not in (live["anims"] or []):
+        out.append("%s: a host dropping while the card is open does not flash the card's glyph: %r" % (where, live))
     return out
 
 
@@ -338,7 +362,7 @@ class MtabsFit(unittest.TestCase):
         cfg = {"engine": engine, "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "settleMs": 100,
                "viewports": [list(v) for v in PORTRAIT + LANDSCAPE], "dynamicViewport": list(DYNAMIC),
-               "actsViewport": list(ACTS), "tunnels": TUNNELS, "tunnels2": TUNNELS2,
+               "actsViewport": list(ACTS), "tunnels": TUNNELS, "tunnels2": TUNNELS2, "tunnelsDrop": TUNNELS_DROP,
                "desktopViewport": list(DESKTOP), "railViewports": [list(v) for v in RAIL],
                "result": os.path.join(self.lab, "result-%s.json" % engine)}
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)

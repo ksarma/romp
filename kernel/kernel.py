@@ -72943,7 +72943,12 @@ var m=mnet();if(m){m.classList.toggle('on',up);m.classList.toggle('busy',busy);p
 // the settings card opening ({romp:'settings',on:true}, gear.js feedFull) shows the phone's Remote kernels button: paint it
 // from the last poll then, so the card never shows the glyph's default between polls (its page loads on the first open,
 // after polls that found no button to paint). Nothing before the first poll: the default glyph is what the rail shows too.
-window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='settings'&&m.on&&lastPaint)paintIcon(lastPaint[0],lastPaint[1],lastPaint[2]);});
+// A drop's flash is cleared first: a host that dropped while the card was closed left rn-drop on the button (flashDrop
+// below) in a document that runs no animation then, so no animationend took it off, and the flash would play now, at the
+// opening, however long after the drop. The cue shows at the drop or not at all; the node colours carry the state after it.
+window.addEventListener('message',function(e){var m=e.data;if(!m||m.romp!=='settings'||!m.on)return;
+var c=mnet();if(c)c.classList.remove('rn-drop');
+if(lastPaint)paintIcon(lastPaint[0],lastPaint[1],lastPaint[2]);});
 // A host DROPPING is an EVENT, and it gets an event's cue: the rail's network glyph flashes red three
 // times and stops (the user 2026-07-29). This replaces a banner that dropped across the top of the pane
 // and covered the session tabs — the one strip you are actually reading — to announce a machine going
