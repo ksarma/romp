@@ -76590,7 +76590,8 @@ def _landing():
             # content widths, where an empty span counts 0, so the box came out 1px short and Settings sat 1px past the edge
             "#mtabs .mtabs-div{width:1px}"
             # a row of tabs alone keeps the single row's height, which the action buttons set (an 18px glyph with 6px above
-            # and below, 30px) and the tabs stretched to; without it a wrapped first row is one 12px label's line tall
+            # and below, 30px) and the tabs stretched to; without it the tabs on a wrapped first row are their label's line
+            # and their own 6px above and below, 27px in all three engines, 3px short of the row the actions set
             "#mtabs button[data-pane]{min-height:30px}"
             # the push bell's states: on = the romp accent (a selected toggle, not a status); busy =
             # dimmed, the immediate tap acknowledgement while the subscribe round-trip runs. The
