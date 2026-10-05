@@ -151,19 +151,28 @@ jobs:
     # may take on an 8 GB runner, which leaves the rest to the runner's own system. So the count is three.
     # Each shard's cap is T230b's rule for its own phase: the shard's one-worker pytest phase, plus the 600 s per-test
     # timeout, plus the time before the step, rounded up to a multiple of 5 minutes, in the expression's matrix.shard
-    # clauses, one figure for each shard. PLACEHOLDER: no shard's phase is measured yet, and each shard's figure, 90, is
-    # the cap the whole suite's estimated one-worker phase gave, held until the shards are measured because a shard runs
-    # a part of that suite; it is not a shard's figure. The estimate: the slowest finished two-worker Linux cell, the
-    # 3.10 cell of run 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880), 2312 s in its
-    # pytest step, scaled by the serial ratio measured on four CPUs (1437 s against 739 s, the Run pytest step's
-    # measurement) to 4496 s, and 4496 + 600 + 25 = 5121 s, about 85 min 21 s, so 90 (the 25 s before the step is that
-    # job's on the public runner). tests/test_ci_bats_bound.py is red until each shard's measured phase replaces the
-    # placeholder there and here. Each cap is then confirmed on the new repo's first CI run, whose jobs give the private
-    # runner's own phases and setup times. Each step's time is the jobs API's. With two workers on the public runner the
-    # same rule gave 50 (the 3.14t cell of run 37158350467: 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux cap
-    # from 2026-10-02 to 2026-10-04, after the 40 fork PR 926's branch set on 2026-09-30 from run 36664031774 and the 35
-    # main had before that PR.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 90 || matrix.shard == '2' && 90 || 90 }}
+    # clauses, one figure for each shard. The three shards were measured on 2026-10-05 the same way: the Run pytest
+    # step's command at this branch with the cell's ROMP_TESTS_SHARD, on a fresh checkout, under a CPUQuota of 200
+    # percent and an 8 GiB memory cap with no swap, with bats, zsh, gitleaks and perf off PATH as on the runner, on a
+    # shared machine whose 1-minute load was 27 to 80. The pytest phase on 3.12 and on 3.14t, then the worker's peak
+    # resident memory on each (the scope's peak, page cache included, in brackets): shard 1, 661 s and 678 s, 2.99 and
+    # 3.05 GB (3.16 and 3.24); shard 2, 930 s and 981 s, 3.04 and 2.89 GB (3.82 and 3.32); shard 3, 2348 s and 2459 s,
+    # 5.38 and 5.60 GB (5.57 and 5.81). No worker was killed. Each cap takes the slower interpreter's phase, 3.14t's for
+    # every shard, and the 27 s before the step in the 3.14t cell of run 37212676524 (batch/2026-10-04b, job
+    # 111476102341, on the public runner): shard 1, 678 + 600 + 27 = 1305 s, so 25; shard 2, 981 + 600 + 27 = 1608 s,
+    # so 30; shard 3, 2459 + 600 + 27 = 3086 s, so 55. Each cap is confirmed on the new repo's first CI run, whose jobs
+    # give the private runner's own phases and setup times. Each step's time is the jobs API's. Shard 3 holds the
+    # slowest and largest files and has the least room: its worker is 0.4 GB under the 6 GB a shard may take, so a
+    # fourth shard is the next step when it grows past that.
+    # Before the shards were measured, each shard's cap held 90, the figure the whole suite's estimated one-worker phase
+    # gave: the slowest finished two-worker Linux cell, the 3.10 cell of run 37208049133 (a dispatch of fork PR 959's
+    # branch on 2026-10-04, job 111453304880), 2312 s in its pytest step, scaled by the serial ratio measured on four
+    # CPUs (1437 s against 739 s, the Run pytest step's measurement) to 4496 s, and 4496 + 600 + 25 = 5121 s, about
+    # 85 min 21 s, so 90 (the 25 s before the step is that job's on the public runner). With two workers on the public
+    # runner the same rule gave 50 (the 3.14t cell of run 37158350467: 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the
+    # Linux cap from 2026-10-02 to 2026-10-04, after the 40 fork PR 926's branch set on 2026-09-30 from run 36664031774
+    # and the 35 main had before that PR.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 25 || matrix.shard == '2' && 30 || 55 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.

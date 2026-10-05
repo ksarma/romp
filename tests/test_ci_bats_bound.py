@@ -73,11 +73,15 @@ class BatsStepBound(unittest.TestCase):
 # swap, had its one worker killed by the memory cap once on 3.12 and twice on 3.14t). Each shard's cap is T230b's rule
 # (the pytest phase plus the per-test timeout plus the time before the step, rounded up to a multiple of 5 minutes;
 # rule_minutes) for that shard's one-worker phase, held against ci.yml by PythonJobCeiling below.
-# PLACEHOLDER: no shard's phase is measured yet. None marks it, and test_each_shards_cap_is_the_rules_figure_for_its_phase
-# is red while any shard's phase is None. Measuring a shard means setting its entry to the measured seconds, and ci.yml's
-# figure for that shard and its comment to match.
-SHARD_PHASE_S = {1: None, 2: None, 3: None}
-# what ci.yml's cap for each shard holds while that shard's phase is a placeholder: the cap the whole suite's estimated
+# Each entry is the shard's one-worker pytest phase in seconds, measured on 2026-10-05 under the private runner's shape
+# (a CPUQuota of 200 percent, an 8 GiB memory cap, no swap; ci.yml's python job comment has the run), the slower of
+# 3.12 and 3.14t, read from pytest's summary line and rounded up: 3.14t's for each shard (3.12's were 661, 930 and
+# 2348). None marks a shard whose phase is not measured (a shard SHARD_COUNT adds), and
+# test_each_shards_cap_is_the_rules_figure_for_its_phase is red while any shard's phase is None. Each cap is confirmed
+# on the new repo's first CI run.
+SHARD_PHASE_S = {1: 678, 2: 981, 3: 2459}
+# what ci.yml's cap for a shard holds while that shard's phase is a placeholder, and each shard held until the shards
+# were measured: the cap the whole suite's estimated
 # one-worker phase gave (WHOLE_SUITE_ESTIMATE_INPUTS: the slowest finished two-worker Linux cell, the 3.10 cell of run
 # 37208049133, job 111453304880, 2312 s in its pytest step, scaled by the serial ratio measured on four CPUs, 1437 s against
 # 739 s, to 4496 s; 4496 + 600 + 25 = 5121 s, so 90), which a shard, a part of that suite, is held under until measured
@@ -87,9 +91,12 @@ PLACEHOLDER_CAP = 90
 PLACEHOLDER_MARK = "PLACEHOLDER: no shard's phase is measured yet"
 # the Run pytest step's --timeout, read back from its run line by test_the_per_test_timeout_input_is_the_steps
 PER_TEST_TIMEOUT_S = 600
-# the steps before Run pytest in the 3.10 cell of run 37208049133, on the public runner, the jobs API's figure; the
-# private runner's is read from its first run
-SETUP_S = 25
+# the steps before Run pytest in the 3.14t cell of run 37212676524 (batch/2026-10-04b, job 111476102341), the slower
+# interpreter's cell, on the public runner, the jobs API's figure; the private runner's is read from its first run
+SETUP_S = 27
+# the steps before Run pytest in the 3.10 cell of run 37208049133 (job 111453304880), the setup the whole suite's
+# estimate used
+WHOLE_SUITE_SETUP_S = 25
 
 
 def rule_minutes(phase_s, per_test_s, setup_s):
@@ -197,8 +204,8 @@ class PythonJobCeiling(unittest.TestCase):
         cell_s, serial_s, two_worker_s = WHOLE_SUITE_ESTIMATE_INPUTS
         self.assertEqual(WHOLE_SUITE_PHASE_S, round(cell_s * serial_s / two_worker_s), "the whole suite's estimate is the "
                          "slowest finished two-worker cell's phase scaled by the serial ratio, rounded to the second")
-        self.assertEqual(PLACEHOLDER_CAP, rule_minutes(WHOLE_SUITE_PHASE_S, PER_TEST_TIMEOUT_S, SETUP_S))
-        for figure in WHOLE_SUITE_ESTIMATE_INPUTS + (WHOLE_SUITE_PHASE_S, SETUP_S):
+        self.assertEqual(PLACEHOLDER_CAP, rule_minutes(WHOLE_SUITE_PHASE_S, PER_TEST_TIMEOUT_S, WHOLE_SUITE_SETUP_S))
+        for figure in WHOLE_SUITE_ESTIMATE_INPUTS + (WHOLE_SUITE_PHASE_S, WHOLE_SUITE_SETUP_S):
             self.assertIn("%d s" % figure, self.joined, "the cap's comment states the estimate's input %d s" % figure)
         self.assertIn("8 GB does not hold one worker of this suite", self.joined, "the cap's comment keeps the record that "
                       "one worker running the whole suite does not fit the private runner")
@@ -214,7 +221,9 @@ class PythonJobCeiling(unittest.TestCase):
         self.assertEqual(rule_minutes(4426, 600, 32), 85, "the estimate the cap carried while the build awaited a measurement: "
                          "5058 s, about 84 min 18 s, so 85")
         self.assertEqual(rule_minutes(4496, 600, 25), 90, "the whole suite's one-worker estimate: 5121 s, about 85 min 21 s, "
-                         "so 90, the placeholder each shard's cap holds until it is measured")
+                         "so 90, the placeholder each shard's cap held until the shards were measured")
+        self.assertEqual([rule_minutes(p, 600, 27) for p in (678, 981, 2459)], [25, 30, 55], "each shard's measured "
+                         "figure: 1305 s, 1608 s and 3086 s, so 25, 30 and 55")
         self.assertEqual(rule_minutes(3000 - 632, 600, 32), 50, "exactly 50 minutes stays 50")
         self.assertEqual(rule_minutes(3001 - 632, 600, 32), 55, "a second past 50 minutes is 55")
 
