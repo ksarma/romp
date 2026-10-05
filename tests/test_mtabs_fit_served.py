@@ -17,11 +17,12 @@ Settings ran off at 430px too. Landscape phones fit.
 THE FIX (kernel/kernel.py, the shell's markup and its phone media block). The action cluster is one element
 (.mtabs-acts), and the bar may wrap: when the tabs and the cluster do not fit on one row, the cluster moves whole to a
 second row under the tabs, at the right edge where it sat, and the tabs take the full first row. Where everything fits the
-bar is the single row it was, every box where it was. The tabs keep the single row's height on a row of their own. A
-wrapped bar is taller, and its height can change with no resize at all (the Files tab turned on in the gear, the webfont
-arriving), so the shell re-measures the bar's height, the strip the panes leave for it, whenever the bar's box changes (a
-ResizeObserver on the bar, beside the resize events that already re-measure it). The desktop is untouched: the bar is
-display:none outside the phone media block and every rule of the fix is inside it.
+bar is the single row it was: every tab where it was, and the cluster too in Chromium and Firefox; in WebKit the cluster
+can sit up to 0.03px from where it was (the readings below, taken before and after the fix). The tabs keep the single
+row's height on a row of their own. A wrapped bar is taller, and its height can change with no resize at all (the Files
+tab turned on in the gear, the webfont arriving), so the shell re-measures the bar's height, the strip the panes leave for
+it, whenever the bar's box changes (a ResizeObserver on the bar, beside the resize events that already re-measure it). The
+desktop is untouched: the bar is display:none outside the phone media block and every rule of the fix is inside it.
 
 WHAT IS MEASURED, in the pages the kernel serves, in a real engine (tests/mtabs_fit_browser.mjs): the iPhone 14 descriptor
 (Firefox without isMobile, which Playwright does not support there) at 320, 360, 375, 390, 414 and 430px wide in portrait
