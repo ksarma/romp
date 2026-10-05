@@ -129,8 +129,8 @@ not seen, adding no value and taking none away (HOST = "127.0.0.1", then HOST = 
   character the source writes is read as an ordinary character, never as a placeholder ("http://", a NUL and a colon,
   then + str(N), is not read).
   An expression counts when it is bounded and can reach the range: interval() bounds int constants, a name bound to
-  exactly one value, an int written with or without a sign, and, over bounded operands, str() and int(), a unary minus
-  (-7), + - and *, and // and % by a positive constant; it reads an unknown operand of % by a positive constant as 0 to
+  exactly one value, an int, signed or not, and, over bounded operands, str() and int(), a unary minus or plus (-7,
+  +7), + - and *, and // and % by a positive constant; it reads an unknown operand of % by a positive constant as 0 to
   the constant less one, and a call to randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n)
   over bounded arguments (random's and secrets', by the callee's name; a randrange's step may be unbounded, below) as
   the values it can return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does random.randint(40000,
@@ -173,8 +173,8 @@ not seen, adding no value and taking none away (HOST = "127.0.0.1", then HOST = 
   (random.randrange(40000, 40000, k) is 40000-40000). RandrangeAgainstCPython checks this reading against CPython's own
   randrange over generated calls. A sum or difference with an unbounded operand counts when one of its operands alone
   is a constant expression (one interval() bounds with no unknown in it) whose value is in the range, found through
-  str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so is 40000 * 1 + i
-  (offset_base()); one with no such operand (base + i) is not read.
+  str(), int() and a unary plus and down a chain of sums and differences: 40000 + i is built on 40000, and so is
+  40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -535,8 +535,8 @@ def _signed_number(v):
 
 
 def interval(node, bound=None):
-    """(lo, hi, computed) for an int expression the census can bound, else None: constants, a unary minus, + - * // and
-    % over them, a name bound to one int (_signed_number() gives a signed one), str() or int() around one, an unknown
+    """(lo, hi, computed) for an int expression the census can bound, else None: constants, a unary minus or plus,
+    + - * // and % over them, a name bound to one int (signed or not), str() or int() around one, an unknown
     operand of % by a positive constant read as 0 to the constant less one, and randint(a, b), randrange(stop),
     randrange(start, stop[, step]) and randbelow(n) over bounded arguments read as the values each can return, each
     argument given by position or by its parameter's name (_random_args()). randrange(start, stop[, step]) is read by
@@ -571,6 +571,8 @@ def interval(node, bound=None):
             if name in ("randrange", "randbelow") and k == 1:
                 return 0, ivs[0][1] - 1, True
         return None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd):
+        return interval(node.operand, bound)       # +7 is 7
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         operand = interval(node.operand, bound)
         return (-operand[1], -operand[0], operand[2]) if operand else None
@@ -639,10 +641,12 @@ def _random_args(call):
 
 def offset_base(node, bound=None):
     """The constant in the range that a sum or difference with an unbounded operand is built on (40000 + i: 40000), read
-    through str() and int() and down a chain of sums and differences; None when no constant operand alone is in the
-    range."""
+    through str(), int() and a unary plus and down a chain of sums and differences; None when no constant operand alone
+    is in the range."""
     if isinstance(node, ast.Call) and _callee(node.func) in ("str", "int") and len(node.args) == 1 and not node.keywords:
         return offset_base(node.args[0], bound)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd):
+        return offset_base(node.operand, bound)
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
         for side in (node.left, node.right):
             iv = interval(side, bound)
@@ -1850,6 +1854,30 @@ class Plants(unittest.TestCase):
                 self.assertRed("test_plant.py", src, why, n=first)
         with self.subTest("a negative constant"):
             self.assertGreen("test_x.py", 'port = -%d\n' % lo)
+
+    def test_a_unary_plus_reads_as_its_operand(self):
+        """interval() and offset_base() read a unary plus as its operand, so +45001 is a constant expression, 45001, a
+        random call's argument may carry one, and +(40000 + i) is an offset from 40000. Each red plant asserts what the
+        census reports: randrange(+40000, 50000) and randrange(40000, +50000) are 40000-49999, randint(+40000, 50000) is
+        40000-50000, randrange(+50000, 40000, +k) is 40001-50000, and a step of +(-7), with start 40000 to 40060 and stop
+        40020 to 40040, is a negative step, 40021-40060. e50adc775 read none of these but the step, which it took for
+        an unbounded one, 40000-40060."""
+        lo, hi, n = LOW + 7232, LOW + 17232, _n()                                  # 40000, 50000 and 45001, built at run time
+        inside = 'port = random.randrange(%d + os.getpid() %% 61, %d + os.getpid() %% 21, +(-7))\n' % (lo, lo + 20)
+        for label, src, why, first in (
+                ("a port written with a plus", 'port = +%d\n' % n, "a constant expression", n),
+                ("a randrange whose start has a plus", 'port = random.randrange(+%d, %d)\n' % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a randrange whose stop has a plus", 'port = random.randrange(%d, +%d)\n' % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a randint whose first argument has a plus", 'port = random.randint(+%d, %d)\n' % (lo, hi),
+                 "computed into %d-%d" % (lo, hi), lo),
+                ("a plus over the start and over an unbounded step", 'port = random.randrange(+%d, %d, +k)\n' % (hi, lo),
+                 "computed into %d-%d" % (lo + 1, hi), lo + 1),
+                ("a step of +(-7)", inside, "computed into %d-%d" % (lo + 21, lo + 60), lo + 21),
+                ("a sum under a plus", 'port = +(%d + i)\n' % lo, "an offset from %d" % lo, lo)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
 
     def test_a_name_bound_to_a_signed_number_holds_that_number(self):
         """BOUND records a number written with a sign, a unary minus or plus over an int or float constant, as the
