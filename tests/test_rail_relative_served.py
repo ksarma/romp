@@ -302,7 +302,14 @@ out.web.stickyRun = await stickyAt(1, -20);
 out.web.stickyTwoLine = await stickyAt(1, 7);
 if (cfg.shots) fs.writeFileSync(cfg.shots + "/t406-measure.json", JSON.stringify({ font: { dark: out.web.dark.font, light: out.web.light.font }, slot: out.web.dark.slot, dotGap: 3,
   widthsAt13px: { dark: out.web.dark.widths, light: out.web.light.widths }, widthsAt14px: { dark: out.web.dark.widths14, light: out.web.light.widths14 } }, null, 1));   // the fit the user asked to have measured, beside the screenshots
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+// The full result goes to cfg.resultPath and the RESULT: line names it (2026-10-05; the shape of the result file
+// tests/return_from_background_browser.mjs writes). Loading playwright leaves stdout non-blocking, so one writeSync to a pipe
+// writes what the pipe has room for and the rest is lost: up to 64 KiB, and 8 KiB on a loaded machine (a user past
+// fs.pipe-user-pages-soft gets minimum-size pipes, pipe(7)), where this record, about 15 KB in a measured run, was cut at
+// 8 KiB and the Python side read a cut line.
+const line = { resultPath: cfg.resultPath || null };
+try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { line.resultWriteError = String(e).slice(0, 200); }
+fs.writeSync(1, "RESULT:" + JSON.stringify(line) + "\n");
 await browser.close();
 process.exit(0);
 """
@@ -401,12 +408,23 @@ class ServedRailRelative(unittest.TestCase):
             self.assertLessEqual(a["bottom"], b["top"], "%s: a two-line stamp never reaches the next stamp: %r / %r" % (where, a, b))
         return shown
 
+    def _full_result(self, line, result_path, p):
+        """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is
+        non-blocking, so one write to a pipe delivers what the pipe has room for, which is 8 KiB on a loaded machine, and
+        this record (about 15 KB in a measured run, 2026-10-05) printed whole was cut there."""
+        head = json.loads(line[len("RESULT:"):])
+        self.assertEqual(head.get("resultPath"), result_path, "the driver named its result file: %r" % head)
+        self.assertTrue(not head.get("resultWriteError") and os.path.exists(result_path), "the driver wrote its result (%r):\n%s" % (
+            head.get("resultWriteError"), (p.stdout[-1500:] + p.stderr[-1500:])))
+        return json.loads(Path(result_path).read_text(encoding="utf-8"))
+
     def test_today_reads_how_long_ago_with_the_exact_time_on_hover_and_turns_with_the_clock_without_moving_the_transcript(self):
         cfg = os.path.join(self.lab, "cfg.json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "web": SID_A, "api": SID_B,
                        "nowMs": self.now * 1000, "shots": os.environ.get("RT_SHOTS", ""),
-                       "injectRebuild": bool(os.environ.get("RT_INJECT_REBUILD"))}, f)
+                       "injectRebuild": bool(os.environ.get("RT_INJECT_REBUILD")),
+                       "resultPath": os.path.join(self.lab, "result.json")}, f)   # the driver's full record; its RESULT: line names it
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -417,7 +435,7 @@ class ServedRailRelative(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = self._full_result(line, os.path.join(self.lab, "result.json"), p)
         today_rows = [self.now - o for o in TODAY_OFFSETS]
         all_today = all(relative_label(t, self.now * 1000) for t in today_rows)   # false only within ~two hours after local midnight
         for theme in ("dark", "light"):

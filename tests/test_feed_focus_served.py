@@ -234,8 +234,16 @@ await page.click("#feed-undoclear");
 await page.waitForSelector(`#feed-cols [data-key="a:${cfg.webDone}"]`, { timeout: 10000 });
 await frame();
 const undone = await keyState();
-fs.writeSync(1, "RESULT:" + JSON.stringify({ off, offFocused, rowsBefore, on, rowsAfter, dark, light: lit, api, none, bare,
-                                              storedBefore, reloaded, restored, tabbed, clearing, cleared, undone, errors }) + "\n");
+const rec = { off, offFocused, rowsBefore, on, rowsAfter, dark, light: lit, api, none, bare,
+              storedBefore, reloaded, restored, tabbed, clearing, cleared, undone, errors };
+// The full result goes to cfg.resultPath and the RESULT: line names it (2026-10-05; the shape of the result file
+// tests/return_from_background_browser.mjs writes). Loading playwright leaves stdout non-blocking, so one writeSync to a pipe
+// writes what the pipe has room for and the rest is lost: up to 64 KiB, and 8 KiB on a loaded machine (a user past
+// fs.pipe-user-pages-soft gets minimum-size pipes, pipe(7)), where this record, about 12 KB in a measured run, was cut at
+// 8 KiB and the Python side read a cut line.
+const line = { resultPath: cfg.resultPath || null };
+try { fs.writeFileSync(cfg.resultPath, JSON.stringify(rec)); } catch (e) { line.resultWriteError = String(e).slice(0, 200); }
+fs.writeSync(1, "RESULT:" + JSON.stringify(line) + "\n");
 await browser.close();
 process.exit(0);
 """
@@ -283,6 +291,17 @@ class ServedFocusedSessionSection(unittest.TestCase):
                 out.setdefault(c["col"], []).append(c["title"])
         return {k: sorted(v) for k, v in out.items()}
 
+    def _full_result(self, line, result_path, p):
+        """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is
+        non-blocking, so one write to a pipe delivers what the pipe has room for, which is 8 KiB on a loaded machine, and
+        this record (about 12 KB in a measured run, 2026-10-05) printed whole was cut there."""
+        head = json.loads(line[len("RESULT:"):])
+        self.assertEqual(head.get("resultPath"), result_path, "the driver named its result file: %r" % head)
+        self.assertTrue(not head.get("resultWriteError") and os.path.exists(result_path), "the driver wrote its result (%r):\n%s" % (
+            head.get("resultWriteError"), (p.stdout[-1500:] + p.stderr[-1500:])))
+        with open(result_path, encoding="utf-8") as f:
+            return json.load(f)
+
     def test_the_section_follows_the_chats_active_tab_switches_on_from_the_view_menu_and_persists(self):
         cfg = os.path.join(self.lab, "cfg.json")
         with open(cfg, "w") as f:
@@ -290,7 +309,8 @@ class ServedFocusedSessionSection(unittest.TestCase):
                        "web": SID_WEB, "api": SID_API, "tests": SID_TESTS,
                        "webBlocked": WEB_BLOCKED, "webWorking": WEB_WORKING, "webDone": WEB_DONE, "apiWorking": API_WORKING,
                        "colors": {"web": {"bg": "#1EA1EB", "fg": "#ffffff"}, "api": {"bg": "#E0A526", "fg": "#000000"}},
-                       "shots": os.environ.get("FEED_FOCUS_SHOTS", "")}, f)
+                       "shots": os.environ.get("FEED_FOCUS_SHOTS", ""),
+                       "resultPath": os.path.join(self.lab, "result.json")}, f)   # the driver's full record; its RESULT: line names it
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -301,7 +321,7 @@ class ServedFocusedSessionSection(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = self._full_result(line, os.path.join(self.lab, "result.json"), p)
         self.assertEqual(r.get("errors"), [], "the page threw nothing (an exception mid-render would skip the view-state write): %r" % r.get("errors"))
         off, on = r["off"], r["on"]
         board_keys = sorted(c["key"] for c in off["boardCards"])

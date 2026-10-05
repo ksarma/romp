@@ -177,9 +177,20 @@ await page.addInitScript((ackMs) => {
   const setItem = Storage.prototype.setItem;
   Storage.prototype.setItem = function (k, v) { if (k === "romp-chat-cols") window.__shellLog.push({ t: Date.now(), store: v }); return setItem.call(this, k, v); };
 }, cfg.ackMs);
+// The full result goes to cfg.resultPath and the RESULT: line names it (2026-10-05; the shape of the result file
+// tests/return_from_background_browser.mjs writes). Loading playwright leaves stdout non-blocking, so one writeSync to a pipe
+// writes what the pipe has room for and the rest is lost: up to 64 KiB, and 8 KiB on a loaded machine (a user past
+// fs.pipe-user-pages-soft gets minimum-size pipes, pipe(7)), where this record, about 16 KB in a measured run, was cut at
+// 8 KiB and the Python side read a cut line. The line carries the died reason too.
+const writeResult = (rec) => {
+  const line = { resultPath: cfg.resultPath || null };
+  if (rec.died) line.died = String(rec.died).slice(0, 600);
+  try { fs.writeFileSync(cfg.resultPath, JSON.stringify(rec)); } catch (e) { line.resultWriteError = String(e).slice(0, 200); }
+  fs.writeSync(1, "RESULT:" + JSON.stringify(line) + "\n");
+};
 const die = async (why) => {
   out.ms = Date.now() - out.t0;
-  fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n");
+  writeResult({ ...out, died: why });
   await browser.close();
   process.exit(0);
 };
@@ -700,7 +711,7 @@ out.s12.toasts1 = await toastsIn("f-chat");
 out.s12.log = await shellLog();
 } catch (e) { out.lateError = String((e && e.stack) || e); }
 out.ms = Date.now() - out.t0;
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+writeResult(out);
 await browser.close();
 process.exit(0);
 """
@@ -770,7 +781,8 @@ class ServedChatSplit(unittest.TestCase):
         cfg = os.path.join(cls.lab, "cfg.json")
         with open(cfg, "w") as f:
             json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token),
-                       "sidA": SID_A, "sidB": SID_B, "sidC": SID_C, "sidX": SID_X, "dragPx": DRAG_PX, "draft": DRAFT, "orphan": ORPHAN_DRAFT, "ackMs": CLOSE_ACK_MS_LAB}, f)
+                       "sidA": SID_A, "sidB": SID_B, "sidC": SID_C, "sidX": SID_X, "dragPx": DRAG_PX, "draft": DRAFT, "orphan": ORPHAN_DRAFT, "ackMs": CLOSE_ACK_MS_LAB,
+                       "resultPath": os.path.join(cls.lab, "result.json")}, f)   # the driver's full record; its RESULT: line names it
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -792,7 +804,15 @@ class ServedChatSplit(unittest.TestCase):
         if line is None:
             cls.driver_error = "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:]
             return
-        r = json.loads(line[len("RESULT:"):])
+        # the record is in the file the RESULT: line names: the driver's stdout is non-blocking, so one write to a pipe
+        # delivers what the pipe has room for, 8 KiB on a loaded machine, and this record (about 16 KB in a measured run,
+        # 2026-10-05) printed whole was cut there
+        head, result_path = json.loads(line[len("RESULT:"):]), os.path.join(cls.lab, "result.json")
+        if head.get("resultPath") != result_path or head.get("resultWriteError") or not os.path.exists(result_path):
+            cls.driver_error = "the driver wrote no result file where it was told (%r; died: %r):\n%s" % (
+                head, head.get("died"), p.stdout[-1500:] + p.stderr[-1500:])
+            return
+        r = json.loads(Path(result_path).read_text(encoding="utf-8"))
         if "died" in r:
             cls.driver_error = "driver aborted early: %s\n%s" % (r["died"], json.dumps(r, indent=1)[-3000:])
             return

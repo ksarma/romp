@@ -128,6 +128,7 @@ class KeyboardGap(unittest.TestCase):
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "bootTimeoutMs": 30000, "settleMs": 500,
                "context": context,   # None: the phone (the iPhone 14 descriptor at 390 by 844); else a device (or null) and a viewport
                "shots": os.path.join(self.lab, "kb-gap-" + engine + tag) if os.environ.get("KB_GAP_SHOTS") else ""}
+        cfg["resultPath"] = os.path.join(self.lab, "result-%s%s.json" % (engine, tag))   # the driver's full record; its RESULT: line names it
         cfg_path = os.path.join(self.lab, "cfg-%s%s.json" % (engine, tag))
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
@@ -143,11 +144,21 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = self._full_result(line, cfg["resultPath"], p)
         self.assertNotIn("died", r, "driver aborted early: %r (kernel log tail: %s)" % (r.get("died"), Path(self.klog).read_text()[-800:]))
         self.assertTrue(r.get("ready"), "the chat composer never laid out under the shell: %r" % (r,))
         self.assertEqual(r.get("errors"), [], "page errors")
         return r
+
+    def _full_result(self, line, result_path, p):
+        """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is
+        non-blocking, so one write to a pipe delivers what the pipe has room for, which is 8 KiB on a loaded machine, and
+        this driver's record (about 46 KB in a measured run, 2026-10-05) printed whole was cut there."""
+        head = json.loads(line[len("RESULT:"):])
+        self.assertEqual(head.get("resultPath"), result_path, "the driver named its result file: %r" % head)
+        self.assertTrue(not head.get("resultWriteError") and os.path.exists(result_path), "the driver wrote its result (%r; died: %r):\n%s" % (
+            head.get("resultWriteError"), head.get("died"), (p.stdout[-1500:] + p.stderr[-1500:])))
+        return json.loads(Path(result_path).read_text(encoding="utf-8"))
 
     def _leg(self, engine):
         r = self._drive(engine)

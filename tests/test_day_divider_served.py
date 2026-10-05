@@ -225,7 +225,14 @@ out.api.sticky = await page.evaluate(() => {
            headDay: m ? m.dataset.day : null, headEpoch: m ? m.dataset.epoch : null,
            dayLabel: vis(day) ? day.textContent : null, stickyHm: vis(sticky) ? sticky.textContent : null };
 });
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+// The full result goes to cfg.resultPath and the RESULT: line names it (2026-10-05; the shape of the result file
+// tests/return_from_background_browser.mjs writes). Loading playwright leaves stdout non-blocking, so one writeSync to a pipe
+// writes what the pipe has room for and the rest is lost: up to 64 KiB, and 8 KiB on a loaded machine (a user past
+// fs.pipe-user-pages-soft gets minimum-size pipes, pipe(7)), where this record, about 17 KB in a measured run, was cut at
+// 8 KiB and the Python side read a cut line.
+const line = { resultPath: cfg.resultPath || null };
+try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { line.resultWriteError = String(e).slice(0, 200); }
+fs.writeSync(1, "RESULT:" + JSON.stringify(line) + "\n");
 await browser.close();
 process.exit(0);
 """
@@ -312,12 +319,23 @@ class ServedDayDivider(unittest.TestCase):
         self.assertLessEqual(d["rail"]["segTop"], prv["bottom"] + 0.5, "the segment reaches the turn above: %r / %r" % (d["rail"], prv))
         self.assertGreaterEqual(d["rail"]["segBottom"], nxt["top"] - 0.5, "…and the turn below: %r / %r" % (d["rail"], nxt))
 
+    def _full_result(self, line, result_path, p):
+        """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is
+        non-blocking, so one write to a pipe delivers what the pipe has room for, which is 8 KiB on a loaded machine, and
+        this record (about 17 KB in a measured run, 2026-10-05) printed whole was cut there."""
+        head = json.loads(line[len("RESULT:"):])
+        self.assertEqual(head.get("resultPath"), result_path, "the driver named its result file: %r" % head)
+        self.assertTrue(not head.get("resultWriteError") and os.path.exists(result_path), "the driver wrote its result (%r):\n%s" % (
+            head.get("resultWriteError"), (p.stdout[-1500:] + p.stderr[-1500:])))
+        return json.loads(Path(result_path).read_text(encoding="utf-8"))
+
     def test_the_divider_opens_each_past_day_once_centered_with_the_rail_through_it_and_never_on_a_stale_row(self):
         cfg = os.path.join(self.lab, "cfg.json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "web": SID_A, "api": SID_B,
                        "nowMs": int(self.now * 1000),
-                       "shots": os.environ.get("DD_SHOTS", ""), "shotSuffix": "-before" if self.before else ""}, f)
+                       "shots": os.environ.get("DD_SHOTS", ""), "shotSuffix": "-before" if self.before else "",
+                       "resultPath": os.path.join(self.lab, "result.json")}, f)   # the driver's full record; its RESULT: line names it
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -328,7 +346,7 @@ class ServedDayDivider(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = self._full_result(line, os.path.join(self.lab, "result.json"), p)
         if self.before and not os.environ.get("DD_BEFORE_ASSERT"):
             self.skipTest("a before-the-change dist: screenshots only, the assertions describe the change")
         now = self.now
