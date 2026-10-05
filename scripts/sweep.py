@@ -446,7 +446,8 @@ The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-brow
 the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
 switch, so a Chromium that fails to launch there skips instead of failing), the Python versions other than --python's,
 and macOS run only in GitHub's CI: the Linux jobs in every run of ci.yml (a batch push or a manual run; the weekly
-schedule is paused), and the macOS cells only in a manual run (workflow_dispatch). CI's free-threaded
+schedule is paused), and the macOS cells only in a manual run (workflow_dispatch) whose macos input is on, which
+is off by default. CI's free-threaded
 cell also runs pytest with PYTHON_GIL=0, which the runner does not set, so a free-threaded --python runs with its own
 default.
 

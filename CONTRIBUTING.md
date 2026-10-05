@@ -127,9 +127,13 @@ runs as four jobs, one for each shard of the test files, each with one pytest
 worker: one worker running the whole suite does not fit the private runner's
 8 GB. `tests/conftest.py` (its CI's shards section) states the rule that puts
 each test file in one shard, so a new test file needs nothing to join one, and a run whose
-`ROMP_TESTS_SHARD` is unset, every local run, runs every file. The macOS cells run on
-demand from the Actions tab, not on a batch push; the weekly schedule that also
-ran them is paused until the first month's bill on the private runner is read.
+`ROMP_TESTS_SHARD` is unset, every local run, runs every file. The macOS cells
+never run on a batch push. A manual run of CI runs the Linux jobs alone unless you
+ask for macOS: tick the `macos` box in the Actions tab's "Run workflow" form, or
+run `gh workflow run CI --ref <branch> -f macos=true`. The box is off by default
+to control cost: the macOS cells bill at about ten times the Linux rate, about 8
+dollars per manual run. The weekly schedule that also ran them is paused until the first
+month's bill on the private runner is read.
 CI's secret scan alone runs on every push of a branch or a tag whose commit
 carries `.github/workflows/secret-scan.yml`, once per push: it has no pull
 request trigger, since the private runner bills every run. Among the pushes

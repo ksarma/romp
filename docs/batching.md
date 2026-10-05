@@ -325,7 +325,9 @@ subject; `verify` refuses the branch otherwise.
    switch, so a Chromium that fails to launch there skips instead of failing), the other Python
    versions and macOS run only in GitHub's CI: the Linux jobs in every run of `ci.yml` (a batch
    push or a manual run; the weekly schedule is paused), and the macOS cells only in a manual run
-   (`workflow_dispatch`). CI's free-threaded cell runs pytest with
+   (`workflow_dispatch`) whose `macos` input is on: it is off by default, for cost, and you turn it
+   on with the box in the Actions tab's "Run workflow" form or with `gh workflow run CI --ref
+   <branch> -f macos=true`. CI's free-threaded cell runs pytest with
    `PYTHON_GIL=0`, which the sweep does not set, so a free-threaded `--python` runs with its own
    default. Each
    leg gets an allowlisted environment: a TMPDIR of its own, made when the leg starts and removed

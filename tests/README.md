@@ -150,7 +150,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   controller whose interpreter has no SDK, which on a box is every controller; and
   the CI steps that install no SDK, today the served-pages job's served-page
   pytest step, which loads this conftest; the Python matrix cells' interpreter (the
-  five Linux cells, and the two macOS cells on a dispatch run) imports the
+  five Linux cells, and the two macOS cells on a dispatch run with its macos input on) imports the
   class since the SDK install step, in the controller and, on the Linux cells'
   workers since batch 917 (two, and one since 2026-10-04), in each worker, since the package is installed in
   that interpreter rather than added to the path at import); a module-level

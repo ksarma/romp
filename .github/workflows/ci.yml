@@ -50,9 +50,11 @@ name: CI
 # measured and billed figures. The same push also runs secret-scan.yml's copy
 # of the secrets job once, for the push (that file has had no pull_request trigger since 2026-10-04),
 # about 3 minutes a run (2 to 5 measured, and more as the history grows; that file's header gives the
-# runs). A manual run adds the macOS cells: 132
-# runner minutes in run 36716348831, billed at about ten times the Linux rate, so about 1,320 Linux
-# minutes' worth, and a floor: the 3.13 cell was cancelled at its 60-minute cap, the 3.10 cell
+# runs). A manual run (workflow_dispatch) runs the Linux jobs alone by default, the jobs a batch push
+# runs, about 2.83 dollars by the estimate above. With its macos input on (2026-10-05; the on: block
+# says why it is off by default) it adds the macOS cells: 132 runner minutes in run 36716348831,
+# billed at about ten times the Linux rate, so about 1,320 Linux minutes' worth, about 8 dollars,
+# and a floor: the 3.13 cell was cancelled at its 60-minute cap, the 3.10 cell
 # ended 52 minutes into its pytest step when the per-test timeout stopped its in-process run on a
 # test that hung (the same hang is in main's macOS runs), and the bats cell failed 11 s into its
 # test step without running a test (bats could not gather the tests: macOS's bash 3.2 rejected the
@@ -66,10 +68,12 @@ name: CI
 # an earlier note here said it was billed), but the macOS cells are slow (a macOS bats
 # job alone has taken 48 min 1 s, above) and the runners are scarcer, so they do NOT run
 # on every push. From 2026-09-16 they also ran once a week on a schedule; that run is paused until
-# the first month's bill on the private runner is read (see `on:`). They run
-# by hand from the Actions tab ("Run workflow") when you want a cross-platform
-# check before a release or after touching a platform-sensitive surface (launchd,
-# the folder opener, the CLI scope).
+# the first month's bill on the private runner is read (see `on:`). They run on a
+# manual run that asks for them: tick the macos box in the Actions tab's "Run workflow"
+# form, or run `gh workflow run CI --ref <branch> -f macos=true`. Ask for them when you
+# want a cross-platform check before a release (scripts/release.sh's gate dispatches
+# with the input on) or after touching a platform-sensitive surface (launchd, the
+# folder opener, the CLI scope).
 # On a macOS dev box, the pre-push hook runs the same suites locally, so the
 # common macOS-only breakages (a real browser opening, a GNU-only flag)
 # are caught before the push rather than waiting on this manual run.
