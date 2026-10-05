@@ -46,8 +46,12 @@ or nonlocal statement, a match capture), and any binding form the census does no
 these (unrecorded_bindings()). Such a binding takes no value away from the hop, a host, a template or offset_base()
 (HOST = "127.0.0.1", then HOST = os.environ["H"], leaves HOST a host), but interval() reads a name only when the
 census records every binding of it: K bound to 7 and by K = f() is a name interval() does not bound, and beside a star
-import, which binds names the module's text does not write, it bounds no name. A name set by no binding form
-(globals()["K"] = f(), or mod.K = f() in another module) has no binding here.
+import, which binds names the module's text does not write, it bounds no name. Inside a class Python reads a name
+written with two leading underscores and not two trailing ones as another (__K in class C is _C__K), so a binding of
+either spelling binds the name a read of the other sees: once such a name is written anywhere in a class statement, the
+census counts both spellings among the names with a binding it does not record, wherever the module reads them, unless
+the class's name is underscores alone, which mangles nothing. A name set by no binding form (globals()["K"] = f(), or
+mod.K = f() in another module) has no binding here.
   In Python, read by AST (scan_python), the positions:
     a value under a dict key that names a port ({"port": N}, {"local_port": N}, {"busPort": N}; a key names a port when
     one of its words, split at underscores, other punctuation and camelCase, is "port" or "ports": "report" does not;
@@ -724,26 +728,43 @@ def _target_names(t):
     return []
 
 
+def _names_held(n):
+    """The names the node `n` writes where Python's grammar binds or reads one: a Name's id, the name an import's alias
+    binds (import a.b binds a; none for a star), and each name in a field BINDING_FIELDS says binds it, or does not
+    classify."""
+    if isinstance(n, ast.Name):
+        return [n.id]
+    if isinstance(n, ast.alias):
+        return [] if n.name == "*" else [n.asname or n.name.split(".")[0]]
+    out = []
+    for field, v in ast.iter_fields(n):
+        held = [v] if isinstance(v, str) else [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+        if held and BINDING_FIELDS.get((type(n).__name__, field), True):
+            out += held
+    return out
+
+
 def unrecorded_bindings(tree, recorded):
     """(names, star): the names `tree` binds anywhere by a binding the census does not record (BOUND), and True when it
     holds a star import, which binds names its text does not write. A binding is a Name in a Store or Del context not
     in `recorded` (the ids of the Names _bind recorded a value for), an import's alias (import a.b binds a), and the
-    name held in a field BINDING_FIELDS says binds it, or does not classify."""
+    name held in a field BINDING_FIELDS says binds it, or does not classify. Inside a class Python mangles a name
+    written with two leading underscores and not two trailing ones: __K there is _C__K, C the class's name less its
+    leading underscores (none when that leaves nothing), so a binding written one way binds the name read the other.
+    The census keys a name by its spelling, so each such name written anywhere in a class statement, a read included,
+    and the spelling it mangles to for that class (for each class it is written in, so an outer one too), count here."""
     names, star = set(), False
     for n in ast.walk(tree):
-        if isinstance(n, ast.Name):
-            if not isinstance(n.ctx, ast.Load) and id(n) not in recorded:
-                names.add(n.id)
-        elif isinstance(n, ast.alias):
-            if n.name == "*":
-                star = True
-            else:
-                names.add(n.asname or n.name.split(".")[0])
-        else:
-            for field, v in ast.iter_fields(n):
-                held = [v] if isinstance(v, str) else [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
-                if held and BINDING_FIELDS.get((type(n).__name__, field), True):
-                    names.update(held)
+        if isinstance(n, ast.alias) and n.name == "*":
+            star = True
+        elif not (isinstance(n, ast.Name) and (isinstance(n.ctx, ast.Load) or id(n) in recorded)):
+            names.update(_names_held(n))
+        cls = n.name.lstrip("_") if isinstance(n, ast.ClassDef) else ""
+        if cls:
+            for x in ast.walk(n):
+                for name in _names_held(x):
+                    if name.startswith("__") and not name.endswith("__"):
+                        names.update((name, "_" + cls + name))
     return names, star
 
 
@@ -1345,6 +1366,15 @@ UNRECORDED_FORMS_312 = (
     ("a type parameter", ("def {k}f[{k}]():", "    pass")),
     ("a type parameter tuple", ("class {k}c[*{k}]:", "    pass")),
     ("a parameter specification", ("def {k}f[**{k}]():", "    pass")))
+# Each way a name Python mangles in a class gives the name a read sees a binding the census files under the other
+# spelling (unrecorded_bindings()), as (label, the lines before the call, the call's indent, the name as the call
+# writes it): {k} the name as the class writes it, two leading underscores first, {c} the class, and {v} the int the
+# census records under the spelling the call writes.
+MANGLED_FORMS = (
+    ("a name read in a class body, its mangled spelling bound by a call", ("{k} = {v}", "_{c}{k} = f()", "class {c}:"),
+     4, "{k}"),
+    ("a mangled spelling read outside its class, bound in it under a global statement by a call",
+     ("_{c}{k} = {v}", "class {c}:", "    def g(self):", "        global {k}", "        {k} = f()"), 0, "_{c}{k}"))
 
 
 def _bound_by(name, lines, v):
@@ -2217,6 +2247,63 @@ class Plants(unittest.TestCase):
         sc.scan(tree)
         self.assertEqual([(v, w) for _l, v, w in sc.hits], [(LOW, "an assignment to port, computed into 1001-%d" % lo)])
 
+    def test_a_name_python_mangles_in_a_class_is_unbounded(self):
+        """Inside a class Python reads __K as _C__K, so a binding of either spelling binds the name a read of the other
+        sees, and the census, which keys a name by its spelling, counts both as names with a binding it does not record
+        (unrecorded_bindings()). As a step such a name reads as the span holding both signs, so
+        random.randrange(40000, 1000, K) reads 1001-40000 in each of these red plants, where 016098526 read the one int
+        recorded under the spelling the call writes and reported nothing, though CPython returns values from 1001 to
+        40000 when the name the call reads is negative: each of MANGLED_FORMS; __K bound to 7 and _C__K to -7, every
+        binding recorded; __K bound to 7 in the class body and read in a method, which reads the module's _C__K; and
+        _C__K bound to 7, read outside the class, with a match in a method capturing __K under a global statement, a
+        binding no Name node writes. As a start or a stop it is not read: each of MANGLED_FORMS so is green, where
+        016098526 read 40000-49999. The census being module-wide, such a name is unbounded wherever the module reads it:
+        __K bound to 7 and read outside the class reads 1001-40000 too, an over-read, since CPython refuses that call
+        for every value (red). A name with one leading underscore (_S) or two trailing ones (__S__) is not mangled, nor
+        is any name in a class whose name is underscores alone (class __:), and each is read by its one recorded int:
+        random.randrange(S, 50000) with S bound to 40000 reads 40000-49999 (red)."""
+        lo, hi = LOW + 7232, LOW + 17232                                            # 40000 and 50000, built at run time
+
+        def module(lines, indent, spelled, k, v, call):
+            text = "".join(x.format(k=k, c="C", v=v) + "\n" for x in lines)
+            return text + " " * indent + call.format(n=spelled.format(k=k, c="C")) + "\n"
+        for label, lines, indent, spelled in MANGLED_FORMS:
+            with self.subTest(label, role="step"):
+                self.assertRed("test_plant.py", module(lines, indent, spelled, "__K", 7,
+                                                       "port = random.randrange(%d, 1000, {n})" % lo),
+                               "computed into 1001-%d" % lo, n=LOW)
+            with self.subTest(label, role="start"):
+                self.assertGreen("test_x.py", module(lines, indent, spelled, "__S", lo,
+                                                     "port = random.randrange({n}, %d)" % hi))
+            with self.subTest(label, role="stop"):
+                self.assertGreen("test_x.py", module(lines, indent, spelled, "__E", hi,
+                                                     "port = random.randrange(%d, {n})" % lo))
+        step = "    def m(self):\n        port = random.randrange(%d, 1000, __K)\n" % lo
+        for label, src, why, first in (
+                ("__K bound to 7 and _C__K to -7, every binding recorded",
+                 "__K = 7\n_C__K = -7\n\n\nclass C:\n" + step, "computed into 1001-%d" % lo, LOW),
+                ("__K bound to 7 in the class body, read in a method, which reads the module's _C__K",
+                 "_C__K = f()\n\n\nclass C:\n    __K = 7\n\n" + step, "computed into 1001-%d" % lo, LOW),
+                ("_C__K bound to 7, and by a match capture of __K under a global statement in a method of C",
+                 "_C__K = 7\n\n\nclass C:\n    def g(self, x):\n        global __K\n        match x:\n"
+                 "            case __K:\n                pass\n\n\nport = random.randrange(%d, 1000, _C__K)\n" % lo,
+                 "computed into 1001-%d" % lo, LOW),
+                ("__K read outside the class too, an over-read",
+                 "__K = 7\nport = random.randrange(%d, 1000, __K)\n\n\nclass C:\n    def m(self):\n"
+                 "        return __K\n" % lo,
+                 "computed into 1001-%d" % lo, LOW),
+                ("a name with one leading underscore, which Python does not mangle",
+                 "_S = %d\n\n\nclass C:\n    port = random.randrange(_S, %d)\n" % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a name with two trailing underscores, which Python does not mangle",
+                 "__S__ = %d\n\n\nclass C:\n    port = random.randrange(__S__, %d)\n" % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a class whose name is underscores alone, which mangles nothing",
+                 "__S = %d\n\n\nclass __:\n    port = random.randrange(__S, %d)\n" % (lo, hi),
+                 "computed into %d-%d" % (lo, hi - 1), lo)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
         that reads one turns its subtest red, and the example leaves the docstring's list."""
@@ -2399,7 +2486,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
     """THE RULE's randrange reading, checked against CPython's own randrange over generated calls (the ruling of
     2026-10-05 on fork PR 973: one rule, and a property test in place of one more plant per pass; the closing check
     that day grew the generator with the spellings it found misread or unread, and the owner's calls after it with a
-    name bound to an int and by a binding the census does not record)."""
+    name bound to an int and by a binding the census does not record, and with a name Python mangles in a class)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
@@ -2454,8 +2541,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
         """The calls the closing check of 2026-10-05 found misread or unread, each as (label, start, stop, (step as
         written, its values), form, how), from a generator seeded apart from the grid's so the grid's calls, samples and
         draws stay as they were. A start, stop or step is an interval (lowest, highest), a list of the values it takes,
-        or None for an unbounded step; `how` holds the lines written before the call ("pre"; "loop" when the first is a
-        for loop's header and the call its body), the start or stop as written where it is no interval's text, the
+        or None for an unbounded step; `how` holds the lines written before the call ("pre"; "indent", 4 when the first
+        is a for loop's header and the call its body), the start or stop as written where it is no interval's text, the
         callee as written and the class whose randrange runs it, and the exceptions a call Python refuses raises. Per
         relation and form: a step name for each of NAMED_STEPS; a start, and half the time a stop, offset by a name
         bound to a negative number or written as such a name negated; a unary plus over the start, half the time over
@@ -2479,7 +2566,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
                     out.append(("a step name: " + "; ".join(b.format(k="K").rstrip(":") for b in binds),)
                                + self._shape(relation, near(), rng)
                                + ((name, sorted({v for b in binds for v in bound(b)})), form,
-                                  {"pre": [b.format(k=name) for b in binds], "loop": binds[0].startswith("for ")}))
+                                  {"pre": [b.format(k=name) for b in binds],
+                                   "indent": 4 if binds[0].startswith("for ") else 0}))
                 s, e = self._shape(relation, near(), rng)
                 how = {"pre": []}
                 for p, iv in (("start", s), ("stop", e)):
@@ -2528,29 +2616,40 @@ class RandrangeAgainstCPython(unittest.TestCase):
         drawn from an interval in the relation, that int less 1000 and plus 1000, and the interval's ends and a seeded
         value inside it; the case is marked blind, since THE RULE does not read a start or stop interval() cannot
         bound, whatever CPython returns. The step of a start or stop case is drawn from STEP_SHAPES, and each case's
-        form from FORMS."""
+        form from FORMS. After them, the same four cases per relation for a name Python mangles in a class, written
+        each way MANGLED_FORMS writes it, drawn on after the others so theirs stay as they were; there a step's form is
+        one with no ** mapping, since a step a mapping gives is unbounded whatever the name holds."""
         rng, out = random.Random(self.SEED + 2), []
 
         def near():
             return rng.choice((LOW + rng.randint(-60, 60), HIGH + rng.randint(-60, 60), rng.randint(LOW + 100, HIGH - 100),
                                rng.randint(1024, LOW - 200)))
-        for label, lines in UNRECORDED_FORMS:
+
+        def pre(lines, mangled, k, c, v):
+            """The lines that bind the name `k` (in the class `c` when `mangled`) before its call."""
+            return [x.format(k=k, c=c, v=v) for x in lines] if mangled else _bound_by(k, lines, v).splitlines()
+        shapes = [("a name bound to an int and by " + label, lines, None) for label, lines in UNRECORDED_FORMS] \
+            + [(label, lines, (indent, spelled)) for label, lines, indent, spelled in MANGLED_FORMS]
+        unmapped = tuple(f for f in self.FORMS if not any(p.startswith("**") for p in f))
+        for label, lines, mangled in shapes:
             for relation in self.RELATIONS:
                 for role, sign in (("step", 1), ("step", -1), ("start", 0), ("stop", 0)):
                     s, e = self._shape(relation, near(), rng)
-                    name, form = "M%s%d" % ({"step": "K", "start": "S", "stop": "E"}[role], len(out)), rng.choice(self.FORMS)
-                    tag = "the %s, a name bound to an int and by %s" % (role, label)
+                    forms = unmapped if mangled and role == "step" else self.FORMS
+                    name, form = "M%s%d" % ({"step": "K", "start": "S", "stop": "E"}[role], len(out)), rng.choice(forms)
+                    tag, k, c = "the %s, %s" % (role, label), ("__" if mangled else "") + name, "C%d" % len(out)
+                    written, how = (mangled[1].format(k=k, c=c), {"indent": mangled[0]}) if mangled else (k, {})
                     if role == "step":
                         v = sign * rng.choice((1, 7))
-                        out.append((tag, s, e, (name, sorted(set(self.STEPS) | {v})), form,
-                                    {"pre": _bound_by(name, lines, v).splitlines()}))
+                        out.append((tag, s, e, (written, sorted(set(self.STEPS) | {v})), form,
+                                    dict(how, pre=pre(lines, mangled, k, c, v))))
                         continue
                     iv = s if role == "start" else e
                     v = rng.randint(*iv)
                     takes = sorted({v - 1000, v, v + 1000, iv[0], iv[1], rng.randint(*iv)})
                     out.append((tag, takes if role == "start" else s, e if role == "start" else takes,
                                 rng.choice(self.STEP_SHAPES), form,
-                                {"pre": _bound_by(name, lines, v).splitlines(), role: name, "blind": True}))
+                                dict(how, pre=pre(lines, mangled, k, c, v), blind=True, **{role: written})))
         return out
 
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
@@ -2565,8 +2664,9 @@ class RandrangeAgainstCPython(unittest.TestCase):
         come the spellings _grown() writes: step names bound to signed numbers, names bound to negative numbers in a
         start or stop, a unary plus, the call spelled on the class, a bool start or stop, and a stop written as None.
         Last come the bindings _mixed() writes: a name bound to an int the census records and also by each binding
-        form it does not record, as the step, the start or the stop. The census reads them as one module, each call on
-        a line of its own after the lines that bind its names. For each call the test samples start and stop at each
+        form it does not record, and a name Python mangles in a class, as the step, the start or the stop. The census
+        reads them as one module, each call on a line of its own after the lines that bind its names (in the class's
+        body where the call reads the name there). For each call the test samples start and stop at each
         end of their intervals and at a seeded value between (or each value they take), and the step at each end, a
         seeded value between, and -1, 0 and 1 where the step can take them (an unbounded step takes STEPS, a step name
         each value it is bound to), and runs CPython's Random.randrange, the function random.randrange is bound to,
@@ -2596,7 +2696,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
                         stop=how["stop"] if "stop" in how else self._text(e), **({"step": k} if k is not None else {}))
             pos, kw = self._call(form, args)
             lines += [b + "\n" for b in how.get("pre", ())]
-            lines.append("%sport = %s%s)\n" % ("    " if how.get("loop") else "", how.get("callee", "random.randrange("),
+            lines.append("%sport = %s%s)\n" % (" " * how.get("indent", 0), how.get("callee", "random.randrange("),
                                                ", ".join(pos + [written(p, x) for p, x in kw])))
             line_of[n] = len(lines)
         case_at = {line: n for n, line in line_of.items()}
