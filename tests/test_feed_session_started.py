@@ -105,12 +105,13 @@ class _Feed(unittest.TestCase):
         first test here was one of those. build_feed reaches _codex() as well, through _feed_session_key
         (Sessions.backend_for asks the Codex backend about every session the SDK backend does not own, this module's
         included), and the first _codex() call in a process loads codex_backend.py and constructs the CodexBackend.
-        That construction writes nothing today, since the constructor logs only for an unreadable registry, but
-        _codex() writes "codex-backend unavailable" and a traceback when loading or constructing the backend raises,
-        and a one-time line the constructor gains later would reach err the way the SDK backend's did. Neither
-        construction is the feed path. Built here, they leave the capture holding build_feed alone, and every stderr
-        write build_feed makes, a later _sdk() or _codex() call's included, still reaches err (pinned by
-        FeedCaptureHoldsTheBuildAlone below)."""
+        That construction writes nothing today: the constructor logs only about an existing registry (an unreadable
+        file, a malformed or unknown-mode row, a live row whose names file is missing), and the state root it is built
+        over has none. But _codex() writes "codex-backend unavailable" and a traceback when loading or
+        constructing the backend raises, and a one-time line the constructor gains later would reach err the way the
+        SDK backend's did. Neither construction is the feed path. Built here, they leave the capture holding
+        build_feed alone, and every stderr write build_feed makes, a later _sdk() or _codex() call's included, still
+        reaches err (pinned by FeedCaptureHoldsTheBuildAlone below)."""
         km._sdk()
         km._codex()
         err = io.StringIO()
