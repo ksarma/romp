@@ -3,7 +3,7 @@ title: The phone and rail bells drop their busy rules, which no script has set s
 status: candidate
 where: kernel/kernel.py (_landing: the push bell state comment and the #mbell and #rail-bell busy rules in the phone media block); tests/test_kernel_mobile.py (BellStateClassCensus, BellRuleReader, _bell_rule_classes, _ATTR_NAME and _BELL_CLASS_DRIVER, new; the re import); tests/test_kernel_webpush.py (RailBell.test_shell_serves_both_bells_and_one_flow_drives_them: the busy pin dropped); upstream/2026-10-05-bell-busy-rules-dead.md (this entry)
 added: 2026-10-05
-pr:
+pr: 977
 tier: fix
 offered:
 closed:
