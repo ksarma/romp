@@ -399,8 +399,9 @@ RUN (2026-10-05): the checks over the derivation are ONE pytest item, ThreadStop
 runs each check of _TreeChecks as a subtest, so no scheduler sends them to two workers. Before that, a run in which
 pytest-xdist split the class across the two workers of CI's 3.14t cell had both build the derivation at once, about 2.1 to
 2.5 GiB each, and CI's 3.14t command under a 16.5 GiB cap with no swap (the cell's runner has 16 GB) was killed by the cap
-(2026-10-04; reproduced with the split forced, 2026-10-05). TheTreeChecksAreOnePytestItem pins the one item by pytest's
-own collection, and that the item runs every check once inside a subtest named for it.
+(2026-10-04; reproduced with the split forced, 2026-10-05). TheTreeChecksAreOnePytestItem pins the one item by pytest's own
+collection, that the item runs every check once inside a subtest named for it, and which scopes of this module name the
+derivation (DERIVATION_ROADS: a second reader in any other class reds it).
 A second census in the same process that reads kernel/kernel.py or another
 product file through the helper gets this census's parse (a tree test holds that from this side). WHAT A DERIVATION LEAVES
 ALIVE stays for the process: its results, the modules, units and trees they hold, the helper modules and the product
@@ -425,8 +426,9 @@ hold, at that module's turn (after_module: _units_held, _Module.release_units), 
 iterative fixer (_fix_locations), so
 reference counting frees both before the freeze; ParseCacheRetention's plant builds a _Tree with the collector off and
 asserts gc.collect() finds nothing. And EVERY gc.get_freeze_count() READ AFTER THE DERIVATION WALKS the permanent
-generation's list, a tenth of a second per read over the eight million objects this module froze before its cut (about
-six million since, on 3.12 and 3.14t, 2026-10-05; up to a second once a collection has scattered the heap): the kernel's perf snapshot (_PerfStats.snapshot) reads it, so a test that reads
+generation's list, a tenth of a second per read over the nine to ten million objects this module froze before its cut (about
+six million since, on 3.10, 3.12 and 3.14t, 2026-10-05; up to a second once a collection has scattered the heap): the
+kernel's perf snapshot (_PerfStats.snapshot) reads it, so a test that reads
 the snapshot after this module in the same process pays that per read, 2 to 60 times its call time (about 2 s over a
 serial run such as CI's cells until 2026-09-25 and its macOS cells since, where four snapshot-reading modules sort
 after this one;
@@ -4984,7 +4986,7 @@ _IMPORT_LINE = re.compile(r"^[ \t]*(?:import[ \t]+(.+)|from[ \t]+(\S+)[ \t]+impo
 
 def _imported_test_modules(paths):
     """The stems of the modules among `paths` that another of them names on an import line (`import test_x as TX`, `from
-    tests.test_x import y`, `from tests import test_x`), read from the texts by a regex before anything is parsed: the
+    tests.test_x import y`, `from tests import test_x`), read from the texts by a regex, without parsing them: the
     tree derivation keeps their trees in parse_cache (_Tree), since a later importer reads one through the cache and a
     dropped tree would be parsed a second time. It reads each import that stands on one line; an import written over
     several lines (a parenthesised `from tests import (...)`) is missed, and then the helper-index guard in _Tree keeps the
@@ -5664,11 +5666,15 @@ class TheBuildDropsEachRowlessModuleAtItsTurn(unittest.TestCase):
     parsed before the build, an earlier reader's parse; test_k_product starts none and calls the planted product's spawner,
     so its one result is an informational row. Held: the hook runs once per module, in the population's order; the
     build drops test_b_quiet and test_q_quiet and nothing else; each has left the cache by the end of its own turn and is in it
-    at no later turn, so the build never holds the trees no result holds (a drop at the end of the build would hold them all);
+    at no later turn, and its _Module and that _Module's tree are freed before the next module's turn (weak references, the
+    build run with the collector off as parse_cache.derived runs it, so reference counting alone frees them), so the build
+    never holds the trees no result holds at once (a census that calls the hook only after its loop, a modules index _Tree
+    keeps through the build, or a list that keeps the trees, would hold them all, though each leaves the cache at its turn);
     every other planted module is in the cache after the build, and each planted module was parsed once (test_m_late's import
     does not parse test_c_named a second time); and the list joins read module by module equal list_join_cleanups over the
     whole population, test_a_first's inline join among them. Each part of the cut reds a line here when it is undone: the
-    PC.clear, the drop at the module's turn, the import guard (a second parse of test_c_named), the earlier-reader guard, the
+    PC.clear, the drop at the module's turn, the module's freeing by the next module's turn, the import guard (a second parse
+    of test_c_named), the earlier-reader guard, the
     helper-index guard, the early return for a module a result holds (test_a_first and test_m_late by their rows,
     test_k_product by its informational row), and the list joins."""
 
@@ -5709,18 +5715,26 @@ class TheBuildDropsEachRowlessModuleAtItsTurn(unittest.TestCase):
         def planted():
             return sorted(os.path.basename(r) for r, _tree in PC.cached_trees()
                           if r.startswith(real + os.sep) and os.path.basename(r).startswith("test_"))
-        g, turns = globals(), []
+        import weakref
+        g, turns, refs = globals(), [], {}
         saved = g["ROOT"], g["census"]
         self.addCleanup(g.update, ROOT=saved[0], census=saved[1])
 
         def recording(*args, after_module=None, **kwargs):
             def hook(p, m, module_rows, module_starts):
+                refs[os.path.basename(p)] = (weakref.ref(m), weakref.ref(m.tree))
                 after_module(p, m, module_rows, module_starts)
-                turns.append((os.path.basename(p), planted()))
+                turns.append((os.path.basename(p), planted(), sorted(n for n, rs in refs.items() if any(r() is not None for r in rs))))
             return saved[1](*args, after_module=hook, **kwargs)
         PC.source_and_tree(os.path.join(d, "tests", "test_e_early.py"))           # an earlier reader's parse
         g.update(ROOT=d, census=recording)
-        tree = _Tree(d)
+        was = gc.isenabled()
+        gc.disable()   # as under parse_cache.derived: reference counting alone frees what the build drops
+        try:
+            tree = _Tree(d)
+        finally:
+            if was:
+                gc.enable()
         parses = {os.path.basename(p): PC.parses_of(p) for p in tree.paths}
         joins = list_join_cleanups(tree.paths, tree.helpers)                         # parses the dropped modules again: after the counts
         g.update(ROOT=saved[0], census=saved[1])
@@ -5729,13 +5743,18 @@ class TheBuildDropsEachRowlessModuleAtItsTurn(unittest.TestCase):
                          "the plant's rows come from the two modules that start threads")
         self.assertEqual({os.path.basename(r.unit.module.path) for r in tree.extras["product_starts"]}, {"test_k_product.py"},
                          "the plant's one informational row, a thread the product starts on a test's call, comes from test_k_product")
-        self.assertEqual([n for n, _cached in turns], names, "census hands every module to the hook once, in the population's order")
+        self.assertEqual([n for n, _cached, _alive in turns], names, "census hands every module to the hook once, in the population's order")
         self.assertEqual([os.path.basename(p) for p in tree.dropped], self.DROPPED,
                          "the build drops exactly the modules no row holds, no earlier reader parsed, no test module imports and the "
                          "helper index does not hold")
-        self.assertEqual([(n, [x for x in self.DROPPED if x in cached and names.index(x) <= i]) for i, (n, cached) in enumerate(turns)],
-                         [(n, []) for n, _cached in turns],
+        self.assertEqual([(n, [x for x in self.DROPPED if x in cached and names.index(x) <= i]) for i, (n, cached, _alive) in enumerate(turns)],
+                         [(n, []) for n, _cached, _alive in turns],
                          "a dropped module has left the cache by the end of its own turn and is not back at any later turn")
+        self.assertEqual([n for n, _cached, alive in turns if n not in alive], [],
+                         "the weak references read a live module as alive: each module is alive at its own turn")
+        self.assertEqual([(n, [x for x in self.DROPPED if x in alive and names.index(x) < i]) for i, (n, _cached, alive) in enumerate(turns)],
+                         [(n, []) for n, _cached, _alive in turns],
+                         "a dropped module's _Module and its tree are freed before the next module's turn, by reference count")
         self.assertEqual(turns[-1][1], [n for n in names if n not in self.DROPPED],
                          "every module a row holds, an earlier reader parsed, another test module imports or the helper index holds "
                          "is in the cache after the build")
@@ -5754,7 +5773,10 @@ class TheTreeChecksAreOnePytestItem(unittest.TestCase):
     stand-in TestCase whose subTest records, with every check of _TreeChecks replaced by a recorder (each restored by a
     cleanup registered before the change), test_the_tree_derivation enters a subtest named for each check, in name order,
     calls that check inside it and leaves it, every check once, so a loop that runs fewer checks, or a check outside its
-    subtest, reds there."""
+    subtest, reds there. The third case holds every reference in this module to a name that reaches the derivation
+    (tree_census, _Tree, ThreadStopCensus, _TreeChecks), keyed on the scope around it, equal to DERIVATION_ROADS, so a second
+    item in another class that reads or builds the derivation (directly, through a helper, by subclassing or by reusing the one
+    item's setUpClass) reds there."""
 
     class _Recorder:
         """The stand-in TestCase: subTest(check=...) records its entry and exit; the checks record their calls here too."""
@@ -5772,6 +5794,47 @@ class TheTreeChecksAreOnePytestItem(unittest.TestCase):
                     rec.events.append(("exit", params.get("check")))
                     return False
             return _Sub()
+
+    DERIVATION_ROADS = {   # each name that reaches the tree's derivation -> the scopes that name it (the class around the reference,
+        # else the module-level function, else __main__), each with its reason
+        "tree_census": {"ThreadStopCensus", "_TreeChecks", "__main__"},   # the one item's setUpClass, the checks it runs, the --table road
+        "_Tree": {"tree_census", "TheBuildDropsEachRowlessModuleAtItsTurn", "ParseCacheRetention"},   # the memo's build; two builds over a plant
+        "ThreadStopCensus": {"TheTreeChecksAreOnePytestItem"},   # the recorded run of the one item, its checks replaced
+        "_TreeChecks": {"ThreadStopCensus", "TheTreeChecksAreOnePytestItem"},   # the one item's loop, and this class's pins
+    }
+
+    def test_only_the_one_item_reads_the_derivation(self):
+        """Every reference in this module to a name that reaches the tree's derivation (tree_census, _Tree, ThreadStopCensus,
+        _TreeChecks: a call, a base class, an attribute read), keyed on the scope around it, equals DERIVATION_ROADS, exactly, as
+        UNPARSE_ROADS is held. So no second item can build the derivation on another worker: not by calling tree_census, directly
+        or through a helper, not by building _Tree over the tree beside the memo, not by subclassing ThreadStopCensus or reusing
+        its setUpClass, not by running a check of _TreeChecks elsewhere; a new reference reds here until its scope is listed with
+        its reason. Not seen, the residuals: the two plant classes may call _Tree on any root, this class may name
+        ThreadStopCensus and _TreeChecks, and a reference that is no ast.Name (getattr on the module object) is not read."""
+        _src, tree = PC.source_and_tree(__file__)
+        found = {}
+
+        def is_main(node):
+            t = node.test
+            return (isinstance(t, ast.Compare) and isinstance(t.left, ast.Name) and t.left.id == "__name__" and len(t.comparators) == 1
+                    and isinstance(t.comparators[0], ast.Constant) and t.comparators[0].value == "__main__")
+
+        def visit(node, scope):
+            for child in ast.iter_child_nodes(node):
+                s = scope
+                if isinstance(child, ast.ClassDef):
+                    s = child.name
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and scope is None:
+                    s = child.name
+                elif isinstance(child, ast.If) and node is tree and is_main(child):
+                    s = "__main__"
+                if isinstance(child, ast.Name) and child.id in self.DERIVATION_ROADS:
+                    found.setdefault(child.id, set()).add(s)
+                visit(child, s)
+        visit(tree, None)
+        self.assertEqual(found, self.DERIVATION_ROADS,
+                         "the derivation is read only by the one item (its setUpClass and the checks it runs), built by tree_census and "
+                         "over a plant, and run by the --table road; a scope outside DERIVATION_ROADS can build it on another worker")
 
     def test_pytest_collects_the_checks_over_the_derivation_as_one_item(self):
         rel = os.path.relpath(os.path.realpath(__file__), ROOT)

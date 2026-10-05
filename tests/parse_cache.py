@@ -98,24 +98,30 @@ one gc.collect() just before the freeze, after the memo and on the returning roa
 measured cost is memory: that build's collector starts an automatic collection only once the objects allocated since its
 last one reach a quarter of the objects in its heap, frozen ones counted (up to a half, by its memory check), so a
 worker several GiB into the suite holds millions of dead objects when a build returns, and the freeze kept them for the
-process (about 12 million across one run's two workers, 2026-10-03). Measured with CI's 3.14t pytest command on 3.14.6t:
+process (about 12 million across one run's two workers, 2026-10-03). Measured with CI's 3.14t pytest command, less
+tests/test_cut_turn_tree_kill.py, on 3.14.6t:
 as the run's peak anonymous memory, 16.8 to 18.6 GiB without a collection before the freeze and 14.8 GiB with this one,
 at this pull request's head of 2026-10-03; at its head of 2026-10-04, where the census module's builds already collect
 before their freeze and the module releases its derivations after its last case, memory.peak under a 16.5 GiB cap with
 no swap was 16.30 GiB without this collection and 15.64 GiB with it (16.22 and 15.78 GiB with no cap; four runs at
-once). Across the capped runs with this collection at the heads of 2026-10-04, memory.peak ranged 15.36 to 16.10 GiB
-from run to run (0.40 to 1.14 GiB under the cap), and the peak anonymous memory, which leaves page cache out, was 15.10
-to 15.66 GiB, against 15.81 to 16.08 GiB in the capped runs without this collection. A run in which xdist split the
+once). Across the capped runs with this collection at the heads of 2026-10-04, each writing bytecode at a module's first
+import as CI does, memory.peak ranged 15.36 to 16.10 GiB from run to run (0.40 to 1.14 GiB under the cap), and the peak
+anonymous memory, which leaves page cache out, was 15.10 to 15.66 GiB, against 15.81 to 16.08 GiB in the capped runs
+without this collection. Run with PYTHONDONTWRITEBYTECODE=1 over a tree holding no bytecode, which CI does not do, the
+same command at the last of those heads reached the cap with one build of the thread-stop census's derivation, and the
+cap killed it. A run in which xdist split the
 thread-stop census's class across the two workers had both build that census's derivation at once, and the cap killed it
 (2026-10-04, reproduced with the split forced on 2026-10-05); the census's cut and one item address that
-(tests/test_thread_stop_census.py's _Tree and _TreeChecks, 2026-10-05). With both, six capped runs at this pull request's
-head of 2026-10-05, three of them with that census's module forced to split across the two workers, reached memory.peak
+(tests/test_thread_stop_census.py's _Tree and _TreeChecks, 2026-10-05). With both, six capped runs at this pull
+request's head of 2026-10-05, each writing bytecode as CI does, three of them with that census's module forced to split
+across the two workers, reached memory.peak
 14.89 to 15.29 GiB (1.21 to 1.61 GiB under the cap) and peak anonymous memory 14.55 to 14.93 GiB. An interpreter without that function (3.10
 to 3.12) is read as having its GIL, so nothing changes on 3.10 or 3.12, nor on a GIL build of 3.13 or later (it reports
 true); a free-threaded build run with its GIL on keeps that collector and is not collected here, since the test is the
 GIL. The count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen object dies
-by reference count, and reading it WALKS the permanent generation's list: a tenth of a second per read over the eight
-million objects the census froze before its cut (about six million since, 2026-10-05), up to a second once a collection
+by reference count, and reading it WALKS the permanent generation's list: a tenth of a second per read over the nine to
+ten million objects the census froze before its cut (about six million since, 2026-10-05), up to a second once a
+collection
 has scattered the heap, so nothing in this module
 reads it and a pin reads it at most twice.
 EVERY READER PAYS THAT after a derivation, not this module's pins
