@@ -448,8 +448,16 @@ ASCII or a comma, or whose part before any `;`, stripped of spaces and tabs
 alone and lower-cased, is in neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no
 `+xml` suffix (NO_SCRIPT_TYPES: the types that run no script among those the
 census types at such places in the live tree, application/json,
-application/manifest+json, application/octet-stream, image/png and text/plain);
-the part before any `;`, stripped and lower-cased, is compared
+application/manifest+json, application/octet-stream, image/png and text/plain,
+all but image/png only with a nosniff header); and so is one of those but
+image/png (SNIFF_SCRIPT_TYPES) where no X-Content-Type-Options: nosniff header
+is written beside its Content-Type (an expression statement calling send_header
+on the write's own receiver with exactly those two string constants, in the
+write's block, before any statement there that calls end_headers or
+flush_headers), at a `_send` call and at a write outside it alike, since without
+that header a browser runs such a response as a classic script when a page loads
+it by <script src>, and the census reads no body of a type it types as running
+none; the part before any `;`, stripped and lower-cased, is compared
 with the types a browser runs script from
 (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and

@@ -272,7 +272,12 @@ type, since a browser may run a page under any other (a list of types by its las
 header stands, a multipart's HTML part): one holding a character past ASCII or a comma, or whose part before any `;`, stripped of
 spaces and tabs alone and lower-cased, is in neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix (NO_SCRIPT_TYPES:
 the types that run no script among those the census types at such places in the live tree, application/json,
-application/manifest+json, application/octet-stream, image/png and text/plain); the part before any `;`, stripped and lower-cased,
+application/manifest+json, application/octet-stream, image/png and text/plain, all but image/png only with a nosniff header); and
+so is one of those but image/png (SNIFF_SCRIPT_TYPES) where no X-Content-Type-Options: nosniff header is written beside its
+Content-Type (an expression statement calling send_header on the write's own receiver with exactly those two string constants, in
+the write's block, before any statement there that calls end_headers or flush_headers), at a `_send` call and at a write outside
+it alike, since without that header a browser runs such a response as a classic script when a page loads it by <script src>, and
+the census reads no body of a type it types as running none; the part before any `;`, stripped and lower-cased,
 is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml`
 suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
@@ -1617,7 +1622,8 @@ SCRIPT_TYPES = ("text/html", "text/xml", "application/xml", "text/xsl", "applica
                 "text/javascript", "application/javascript", "application/ecmascript", "application/x-ecmascript", "application/x-javascript",
                 "text/ecmascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4",
                 "text/javascript1.5", "text/jscript", "text/livescript", "text/x-ecmascript", "text/x-javascript")
-# The content types that run no script among those the census types in the live tree, the only others it types (_typed_ctype; item 2
+# The content types that run no script, all but image/png only where a nosniff header comes with them (SNIFF_SCRIPT_TYPES, below),
+# among those the census types in the live tree, the only others it types (_typed_ctype; item 2
 # of the reviewer's 02:3xZ ruling of 2026-10-04, fix C): derived from the live tree, every value judge typed there being one of these
 # or a script-running type above. judge types nothing at a place SERVED_ALLOW names, reading that place's type for a CR or LF alone,
 # so the list holds no type the tree serves only at such a place; at any other place a content type the census does not type is
@@ -1625,6 +1631,11 @@ SCRIPT_TYPES = ("text/html", "text/xml", "application/xml", "text/xsl", "applica
 # tree's run typed that run no script (Result.typed_ctypes; TheNoScriptTypesAreTheLiveTreesOwn), so an entry for a type the census
 # types nowhere in the live tree fails there.
 NO_SCRIPT_TYPES = ("application/json", "application/manifest+json", "application/octet-stream", "image/png", "text/plain")
+# The types of NO_SCRIPT_TYPES a browser runs as a classic script when a page loads them by <script src> and the response carries no
+# X-Content-Type-Options: nosniff header (every one but image/png, which no engine runs as a script, with the header or without it;
+# NEW-i2-1 of the second closing check, item A of the reviewer's ruling on it): judge types one of these as running no script only
+# where a nosniff header is written beside its Content-Type (_nosniff_beside), and refuses it by name anywhere else
+SNIFF_SCRIPT_TYPES = ("application/json", "application/manifest+json", "application/octet-stream", "text/plain")
 _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")                        # a URL scheme at the head of a literal
 _PY_SLOT = re.compile(r"%[sdr(]|\{[A-Za-z_0-9]*\}")                         # a Python format slot inside a served page's literal
 
@@ -4392,6 +4403,44 @@ def _ctype_charset(v):
     return None
 
 
+def _nosniff_beside(write, home):
+    """Whether an `X-Content-Type-Options: nosniff` header is written beside a Content-Type write (item A of the reviewer's ruling on
+    the second closing check; judge's refusal of SNIFF_SCRIPT_TYPES): the innermost statement list one of whose statements holds the
+    write (a body, an else, a finally, an except handler's body or a match case's, searched from `home`, the definition or the module
+    around the write, which only bounds the search) also holds, before any statement holding a call of end_headers or flush_headers
+    (either writes the header buffer to the stream, so a header written after it reaches the body), an expression statement calling
+    send_header on the write's own receiver with exactly two positional string constants, X-Content-Type-Options in any case and
+    nosniff stripped of spaces and tabs in any case. A nosniff header after such a statement, under an if or in any other block than
+    the write's (a def nested in the definition among them), written on another receiver, through any other method or as anything but
+    an expression statement, or with any other arguments, is not beside it, so the type is refused (the (nd) and (ns) plants hold each
+    condition). The search finds the write's block from any root that holds the write, as `home` always does."""
+    def nosniff(s):
+        c = s.value if isinstance(s, ast.Expr) else None
+        return (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "send_header" and len(c.args) == 2
+                and not c.keywords and all(isinstance(a, ast.Constant) and type(a.value) is str for a in c.args)
+                and c.args[0].value.lower() == "x-content-type-options" and c.args[1].value.strip(" \t").lower() == "nosniff"
+                and ast.dump(c.func.value) == ast.dump(write.func.value))
+
+    def ends(s):   # a statement holding a call that writes the header buffer to the stream, wherever it stands in the statement
+        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("end_headers", "flush_headers")
+                   for n in ast.walk(s))
+
+    def block(stmts):   # the innermost statement list under `stmts` one of whose statements holds the write
+        for s in stmts:
+            if not any(n is write for n in ast.walk(s)): continue
+            inner = [getattr(s, f) for f in ("body", "orelse", "finalbody") if isinstance(getattr(s, f, None), list)]
+            for b in inner + [h.body for h in getattr(s, "handlers", ())] + [c.body for c in getattr(s, "cases", ())]:
+                got = block(b)
+                if got is not None: return got
+            return stmts
+        return None
+
+    for s in block(home.body):
+        if ends(s): return False
+        if nosniff(s): return True
+    return False
+
+
 def _is_ctype_write(c):
     """A `send_header("Content-Type", <value>)` call, the header's name in any case."""
     return (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "send_header" and len(c.args) >= 2
@@ -5539,7 +5588,9 @@ def routes_of(rel, tree, sc, res):
     records, and through a local whose every binding _scopes_of reads) and a script-running one (_script_type) makes the call a
     route whose text the served pass reads; an unresolved type is a SERVED line, and so is a type holding a CR or LF, before it is
     compared, a type that is not exactly one listed type (_typed_ctype, NO_SCRIPT_TYPES; item 2 of the reviewer's 02:3xZ ruling of
-    2026-10-04), and a script-running type whose parameters name a charset other than utf-8 (_ctype_charset; the reviewer's 13:2xZ
+    2026-10-04), a type of SNIFF_SCRIPT_TYPES where no nosniff header is written beside its Content-Type (_nosniff_beside; item A
+    of the reviewer's ruling on the second closing check), and a script-running type whose parameters name a charset other than
+    utf-8 (_ctype_charset; the reviewer's 13:2xZ
     ruling of 2026-10-03, items 2 and 1); and before any typing, a call that hands its definition a header value holding a CR or LF
     in any argument but its page body and its content type, a constant, a module constant it names or a module name the census does
     not follow by binding (_header_crlf, _unfollowed), is a SERVED line too, which no allowlist entry excuses. A route's page body is
@@ -5621,11 +5672,13 @@ def routes_of(rel, tree, sc, res):
         if key not in SERVED_ALLOW: return False
         res.allow_hits.setdefault(key, set()).add((call.lineno, call.col_offset)); return True
 
-    def judge(call, where, expr, defs, direct):
+    def judge(call, where, expr, defs, direct, write, home):
         """The script-running type of one candidate, or None: allowlisted, not script-running, or refused by name here. An allowlisted
         place's content type is still read for a CR or LF where the census resolves it (the allow hit recorded all the same), and for
         nothing else: it is neither typed nor refused for its type. At any other place a content type the census does not type
-        (_typed_ctype) is refused by name before it is compared."""
+        (_typed_ctype) is refused by name before it is compared, and so is one of SNIFF_SCRIPT_TYPES where no nosniff header is
+        written beside its Content-Type (_nosniff_beside, handed `write`, that Content-Type write, and `home`, the definition or
+        module around it), a type a browser runs as a script a page loads by <script src>."""
         if allowed(where, expr, call):   # the place's type read for a CR or LF all the same, where it resolves (NEW-3 of the closing
             # check, item 5 of the reviewer's 02:3xZ ruling of 2026-10-04): no allowlist entry excuses a header that ends early
             vals = _ctype_values(expr, scopes(defs), consts, written) if expr is not None else None
@@ -5666,6 +5719,14 @@ def routes_of(rel, tree, sc, res):
         if script and direct:
             res.problems.append("SERVED %s:%d writes Content-Type %s outside _send (%s): the census follows a page's text only through _send; "
                                 "serve it there, or name it in SERVED_ALLOW with its reason" % (rel, call.lineno, script[0], where))
+            return None
+        sniffed = sorted(v for v in vals if _ctype_essence(v) in SNIFF_SCRIPT_TYPES)
+        if sniffed and not _nosniff_beside(write, home):   # a type a browser runs as a script a page loads by <script src> where no
+            # nosniff header stands beside its Content-Type (NEW-i2-1 of the second closing check, item A of the reviewer's ruling on
+            # it): typed as running no script only beside one, refused by name anywhere else
+            res.problems.append("SERVED %s:%d serves %s with no X-Content-Type-Options: nosniff header beside its Content-Type (%s in %s): a "
+                                "browser runs it as a script a page loads by <script src>, and the census reads no body of a type it "
+                                "types as running none; write the header beside it" % (rel, call.lineno, sniffed[0], ast.unparse(expr)[:60], where))
             return None
         named = sorted(c for c in map(_ctype_charset, script) if c is not None)
         if named:   # a script-running type naming a charset a browser decodes the page by (item 1 of the reviewer's 13:2xZ ruling of
@@ -5787,9 +5848,9 @@ def routes_of(rel, tree, sc, res):
                 if idx is not None and idx < len(call.args) and not any(isinstance(x, ast.Starred) for x in call.args[:idx + 1]): expr = call.args[idx]
                 elif v.id in kw: expr = kw[v.id]
                 else: expr = defaults.get(v.id)
-                ctype = judge(call, where, expr, defs, False)
+                ctype = judge(call, where, expr, defs, False, w, d)
             else:   # the definition writes the type itself
-                ctype = judge(call, dkey.split(":", 1)[1], v, [d], False)
+                ctype = judge(call, dkey.split(":", 1)[1], v, [d], False, w, d)
             if ctype is None: continue
             if unread:   # a script-running call whose body the census does not read: refused by name, never read at a guessed position
                 res.problems.append("SERVED %s:%d serves %s through %s, whose page body the census does not read (%s, in %s): the census reads "
@@ -5816,7 +5877,7 @@ def routes_of(rel, tree, sc, res):
                 res.problems.append("SERVED %s:%d writes a Content-Type header of %s in %s, %s: the census cannot read the type it writes"
                                     % (rel, call.lineno, ast.unparse(call.args[1])[:60], where, _LAMBDA))
             continue
-        judge(call, where, call.args[1], defs, True)
+        judge(call, where, call.args[1], defs, True, call, inner if inner is not None else tree)
     for call, defs, where in sc.responds:
         inner = next((x for x in reversed(defs) if not isinstance(x, ast.ClassDef)), None)
         if inner is not None and inner.name == "_send": continue

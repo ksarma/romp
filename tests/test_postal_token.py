@@ -324,6 +324,26 @@ class BusBodyGate(_BusServer):
         self.assertIn("sender identity required", r.get("error", ""))
 
 
+class BusAnswersDeclareTheirTypeFinal(_BusServer):
+    """The bus's _send writes X-Content-Type-Options: nosniff beside its application/json Content-Type, as the kernel's _send does
+    (tests/test_kernel_auth_hardening.py, ResponseHardeningHeaders). Without it a browser runs a bus answer as a classic script when
+    a page loads it by <script src>, and the network census (scripts/network-inventory.py) refuses a type it types as running no
+    script, application/json among them, where no nosniff header is written beside its Content-Type (item A of the reviewer's ruling
+    on the second closing check, 2026-10-04). Source-pinned the way the kernel's header set is, and executed: the liveness probe's
+    answer, which every caller can ask for, carries the header."""
+
+    def test_send_writes_nosniff(self):
+        import inspect
+        src = inspect.getsource(ps.Handler._send)
+        self.assertIn('"Content-Type", "application/json"', src)
+        self.assertIn('"X-Content-Type-Options", "nosniff"', src)
+
+    def test_an_answer_carries_nosniff_beside_its_json_type(self):
+        with urllib.request.urlopen("http://127.0.0.1:%d/ping" % self.port, timeout=5) as r:
+            self.assertEqual((r.status, r.headers.get("Content-Type"), r.headers.get("X-Content-Type-Options")),
+                             (200, "application/json", "nosniff"))
+
+
 class TrackedIsABoolean(_BusServer):
     """`tracked` arms a report-back delegation. Both doors coerced it with bool(), so the STRING "false"
     tracked a send. Now a non-boolean is refused -- HTTP /send with a 400 naming the field, the MCP tool

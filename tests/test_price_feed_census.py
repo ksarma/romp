@@ -1456,8 +1456,13 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "past ASCII or a comma, or whose part before any `;`, stripped of spaces and tabs alone and lower-cased, is in "
                 "neither SCRIPT_TYPES nor NO_SCRIPT_TYPES and has no `+xml` suffix (NO_SCRIPT_TYPES: the types that run no script "
                 "among those the census types at such places in the live tree, application/json, application/manifest+json, "
-                "application/octet-stream, image/png and "
-                "text/plain); the part before any `;`, stripped and lower-cased, is compared with the types a browser "
+                "application/octet-stream, image/png and text/plain, all but image/png only with a nosniff header); and so is one "
+                "of those but image/png (SNIFF_SCRIPT_TYPES) where no X-Content-Type-Options: nosniff header is written beside its "
+                "Content-Type (an expression statement calling send_header on the write's own receiver with exactly those two "
+                "string constants, in the write's block, before any statement there that calls end_headers or flush_headers), at a "
+                "`_send` call and at a write outside it alike, since without that header a browser runs such a response as a "
+                "classic script when a page loads it by <script src>, and the census reads no body of a type it types as running "
+                "none; the part before any `;`, stripped and lower-cased, is compared with the types a browser "
                 "runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a "
                 "`+xml` "
                 "suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript, "
@@ -3817,6 +3822,10 @@ A_DEFS = "\n\n" + "\n\n\n".join(("def _probe_h_deco(page):\n    return lambda f:
 # typed through it is no route; a module-level `_send` writes through _H, a module name, having no self.
 A_SEND = ("    def _send(self, code, body, ctype):\n        self.send_response(code)\n        self.send_header(\"Content-Type\", ctype)\n"
           "%s        self.end_headers()\n        self.wfile.write(body)\n")
+# The nosniff header a probe writes beside its Content-Type where it serves one of SNIFF_SCRIPT_TYPES and holds some other mechanism
+# (since the second closing check, item A of the reviewer's ruling on it, such a type with no nosniff header beside its Content-Type is
+# refused by name; A_SEND % A_NOSNIFF, and the same line beside the write in the probes that write their own)
+A_NOSNIFF = '        self.send_header("X-Content-Type-Options", "nosniff")\n'
 A_JSON_SEND = ("    def _send(self, code, body, ctype):\n        self.send_response(code)\n        self.send_header(\"Content-Type\", \"application/json\")\n"
                "        self.end_headers()\n        self.wfile.write(body)\n")
 A_MODULE_SEND = 'def _send(code, body, ctype):\n    _H.send_header("Content-Type", %s)\n    _H.wfile.write(body)\n'
@@ -4249,7 +4258,8 @@ A_BARE = (("bfw", 'with open(__file__) as _send:\n    return _send(200, "%s", "t
           ("bgi", 'return [x for x in _send(200, "%s", "text/html") for _send in (x,)]', None, None),
           ("bgl", 'return (lambda _send=_send(200, "%s", "text/html"): 0)()', None, None),
           ("bgq", '_all = [0 for _send in (1,)]\nreturn _send(200, "%s", "text/html")', None, None))
-A_BARE_MODULE = (A_MODULE_SEND % '"application/json"' + "\n\nclass Handler(object):\n" + "\n".join(
+A_BARE_MODULE = ((A_MODULE_SEND % '"application/json"').replace("    _H.wfile.write(body)\n", '    _H.send_header("X-Content-Type-Options", "nosniff")\n'
+                                                                  "    _H.wfile.write(body)\n") + "\n\nclass Handler(object):\n" + "\n".join(
     "    def _probe_%s(self):\n%s" % (tag, _a_indent(body % (FGH_PAGE % tag) + "\n", 8)) for tag, body, _, _ in A_BARE))
 A_DEFAULT_HEAD = ('_PROBE_ZDK = "%s"\n_PROBE_ZDU = lambda: "%s"\n\n\n'
                   'def _probe_zdp_page(msg, route="%s"):\n    return "<p>" + msg + "</p>" + route\n\n\n'
@@ -4960,7 +4970,7 @@ Y_PC_BRANCHES = tuple(_y_page(tag, shown) for tag, _, shown in Y_PC_SHOWN if tag
     ("pcrd", 'reg = {"a": _PcA}\n            return self._send(200, "<p>pcrd</p>" + reg.get("a").PAGE_RD, "text/html")'))
 
 
-Y_FILES = (("ylam", _a_module("ylam", A_SEND % "" + Y_LAMBDA_CLASS, head=Y_LAMBDA_HEAD, branches=Y_LAMBDA_BRANCHES)),
+Y_FILES = (("ylam", _a_module("ylam", A_SEND % A_NOSNIFF + Y_LAMBDA_CLASS, head=Y_LAMBDA_HEAD, branches=Y_LAMBDA_BRANCHES)),
            ("ydoc", _a_module("ydoc", A_SEND % "", head='"""%s"""' % (FGH_PAGE % "ydoc"), branches=Y_DOC_BRANCHES)),
            ("ysf", _a_module("ysf", Y_SELF_SEND, branches=Y_SELF_BRANCHES, tail=Y_SELF_TAIL)),
            ("ycls", _a_module("ycls", Y_CLS_SEND, branches=tuple(_y_page(tag, expr) for tag, expr in Y_CLS_PAGES), tail=Y_CLS_TAIL)),
@@ -5774,8 +5784,8 @@ R13_FILES = tuple((tag, _r13_module(tag, lines)) for tag, _, lines in R13_SPEC) 
                         call='return self._send(200, "%s", ctype="text/plain")' % (FGH_PAGE % "srq"))),
     ("srn", _r13_module("srn", '        @_probe_srn_call\n        def _send(ctype="text/html"):\n    ' + R13_WRITE,
                         head="def _probe_srn_call(f):\n    f()\n    return f")),
-    ("srd", _r13_module("srd", "        def _probe_srd_w(ctype):\n    " + R13_WRITE + '        _probe_srd_w("text/html")\n')),
-    ("srk", _r13_module("srk", '        (lambda t: self.send_header("Content-Type", ctype))(0)\n'))) + R13_SX_FILES + (
+    ("srd", _r13_module("srd", "        def _probe_srd_w(ctype):\n    " + R13_WRITE + "    " + A_NOSNIFF + '        _probe_srd_w("text/html")\n')),
+    ("srk", _r13_module("srk", '        (lambda t: self.send_header("Content-Type", ctype))(0)\n' + A_NOSNIFF))) + R13_SX_FILES + (
     # later alone, gated as hyt is
     (("srt", _r13_module("srt", "        class _ProbeSrt[ctype]:\n    " + R13_WRITE)),
      ("sxty", _r13_module("sxty", "        type ctype = str\n" + R13_WRITE))) if sys.version_info >= (3, 12) else ())
@@ -6580,7 +6590,7 @@ RT_M_HEAD = (RT_SWAP + "\n\nclass _ProbeDecos(object):\n    swap = _probe_swap_d
              "_probe_rtdw_install()\n\n\n"
              "def _probe_rtdok_d(f):\n    return f\n\n\ndef _probe_rtdok_f(tag):\n    return _probe_rtdok_d\n\n\n"
              "def _probe_rtcs_name():\n    return \"_probe_rtcs_serve\"\n\n\n_PROBE_NO = False\n\n\n")
-RT_M_BODY = (A_SEND % "" + "\n    _probe_rtdb_d = _probe_swap_deco\n\n"
+RT_M_BODY = (A_SEND % A_NOSNIFF + "\n    _probe_rtdb_d = _probe_swap_deco\n\n"
              + "    def _probe_rt1_serve(me):\n        self = _ProbeSwap(me)\n        return self._send(200, \"%s\", \"text/plain\")\n\n" % (FGH_PAGE % "rt1")
              + _rt_serve("rt1c", "text/plain", recv="_ProbeSwap(me)", param="me") + "\n"
              + _rt_serve("rt2", "text/plain", param="me, self") + "\n"
@@ -8305,7 +8315,7 @@ _MK_LINE = ("SERVED %s:%%d serves a response whose content type the census canno
 # silent at the reviewed head (the literals read, xat no route). The limit that stays, a module reached another way, has its witness:
 # probe_xw.py serves a module constant `<p>ok</p>` (xw), which probe_xv.py's function stores a fetch into through sys.modules, silent
 # at both heads while Python, with that function called, serves the fetch. The matcher's arms (_imports_page) are pinned by rows.
-XA_TEXT = _a_module("xa", A_SEND % "", head='_PROBE_XAC = "<p>ok</p>"\n_PROBE_XAL = ["<p>ok</p>"]\n_PROBE_XAD = {"a": "<p>ok</p>"}\n'
+XA_TEXT = _a_module("xa", A_SEND % A_NOSNIFF, head='_PROBE_XAC = "<p>ok</p>"\n_PROBE_XAL = ["<p>ok</p>"]\n_PROBE_XAD = {"a": "<p>ok</p>"}\n'
                     '_PROBE_XAT = "application/json"', branches=(
     ("xac", 'return self._send(200, _PROBE_XAC, "text/html")'), ("xal", 'return self._send(200, "".join(_PROBE_XAL), "text/html")'),
     ("xad", 'return self._send(200, _PROBE_XAD["a"], "text/html")'), ("xat", 'return self._send(200, "%s", _PROBE_XAT)' % (FGH_PAGE % "xat"))))
@@ -8348,7 +8358,7 @@ XR_IMPORTS = [(1, 0, "os.path", None), (1, 0, "json", None), (2, 1, None, ("x",)
 # fetch, which the census reads as bound. Each silent at both heads (no SERVED line, no site), the limit's witnesses, held by the (x)
 # case. A container so reached is refused by name on every version (the (lc) plants), and a content type read other than as a string
 # constant or a name bound once to one is refused too (the (cf) plants), so no rebind of frwt's kind is owed a limit beyond the scalar.
-FRW_TEXT = _a_module("frw", A_SEND % "", head="import inspect", branches=(
+FRW_TEXT = _a_module("frw", A_SEND % A_NOSNIFF, head="import inspect", branches=(
     ("frwt", '_probe_ct = "application/json"\n            inspect.getargvalues(inspect.currentframe())[3]["_probe_ct"] = "text/html"\n'
              '            return self._send(200, "%s", _probe_ct)' % (FGH_PAGE % "frwt")),
     ("frwb", '_probe_pg = "<p>ok</p>"\n            inspect.getargvalues(inspect.currentframe())[3]["_probe_pg"] = "%s"\n'
@@ -9404,6 +9414,70 @@ RD_X3 = (tuple((t, 'return self._send(200, "<p>%s</p>", "text/html", %s)' % (t, 
          + (("x3b", 'return self._send(200, "%s", "text/html", cache=str.lower("NO-CACHE"))' % (FGH_PAGE % "x3b")),
             ("x3l", '_PROBE_X3L = "no-cache"\n            return self._send(200, "%s", "text/html", cache=_PROBE_X3L)' % (FGH_PAGE % "x3l"))))
 _RD_X3NAME = "the module name %s, no module constant the census follows by binding"
+# (nd) and (ns), item A of the reviewer's ruling on the second closing check (NEW-i2-1): a type of SNIFF_SCRIPT_TYPES (text/plain,
+# application/json, application/octet-stream and application/manifest+json), which a browser runs as a classic script when a page
+# loads it by <script src> and no nosniff header comes with it, is typed as running no script only where an X-Content-Type-Options:
+# nosniff header is written beside its Content-Type (_nosniff_beside), and is refused by name anywhere else. Refused at the
+# Content-Type's line: each of the four written outside `_send` with no nosniff header (ndp, ndj, ndo, ndm) and each served through a
+# `_send` that writes none (A_SEND: nsp, nsj, nso, nsm, at the call); and a nosniff header after the end_headers (nda), after a
+# statement holding an end_headers (ndie) or a flush_headers (ndfl), under an if (ndi), on another receiver (ndr), as an assignment
+# (ndx), through a bare name (ndu) or another method (ndl), with a third argument (nd3) or a keyword (ndk), its value a name (ndv),
+# another header's name (ndh) or another value (ndy). Each was typed as running no script at the head that check read, its page
+# never read and nothing printed. Typed as before, no line: each of the four written outside `_send` with a nosniff header beside it
+# (ndpk, ndjk, ndok, ndmk) and served through the kernel's shape, which writes one (nkp, nkj, nko, nkm); the header's name and value in
+# another case among spaces and a tab (ndc); a constant statement before it (ndn); the write and its nosniff header in a try's body
+# (ndt), an else (ndb), a finally (ndf), an except handler (nde) and a match case (ndq); and image/png, which no engine runs as a
+# script, written outside `_send` with no nosniff header (ndg) and served through A_SEND (nsg)
+_RD_ND_TYPES = (("p", "text/plain"), ("j", "application/json"), ("o", "application/octet-stream"), ("m", "application/manifest+json"))
+_RD_NS_LINE = 'self.send_header("X-Content-Type-Options", "nosniff")'
+
+
+def _rd_direct(tag, ct, between="", indent=12):
+    """A direct write's branch: the response line, the Content-Type `ct` and `between` (lines, each ending in a newline), then the
+    end_headers and the write of the page tagged `tag`."""
+    pad = " " * indent
+    return ('self.send_response(200)\n%sself.send_header("Content-Type", "%s")\n%s%sself.end_headers()\n%sreturn self.wfile.write(b"%s")'
+            % (pad, ct, between, pad, pad, FGH_PAGE % tag))
+
+
+def _rd_ns(line, indent=12):
+    return " " * indent + line + "\n"
+
+
+def _rd_block(tag, head, tail=""):
+    """A branch whose Content-Type write and nosniff header stand in a block `head` opens (its lines indented 16), the end_headers and
+    the write after it, `tail` closing the block."""
+    return ('self.send_response(200)\n            %s\n                self.send_header("Content-Type", "text/plain")\n                %s\n'
+            '%s            self.end_headers()\n            return self.wfile.write(b"%s")' % (head, _RD_NS_LINE, tail, FGH_PAGE % tag))
+
+
+RD_ND_HEAD = '_PROBE_NDV = "nosniff"'
+RD_ND = (tuple(("nd" + k, _rd_direct("nd" + k, ct)) for k, ct in _RD_ND_TYPES)
+         + (("nda", _rd_direct("nda", "text/plain").replace("self.end_headers()\n", "self.end_headers()\n            " + _RD_NS_LINE + "\n")),
+            ("ndie", _rd_direct("ndie", "text/plain", "            if self.path is None:\n                self.end_headers()\n" + _rd_ns(_RD_NS_LINE))),
+            ("ndfl", _rd_direct("ndfl", "text/plain", "            self.flush_headers()\n" + _rd_ns(_RD_NS_LINE))),
+            ("ndi", _rd_direct("ndi", "text/plain", "            if self.path:\n" + _rd_ns(_RD_NS_LINE, 16))),
+            ("ndr", _rd_direct("ndr", "text/plain", _rd_ns('self.other.send_header("X-Content-Type-Options", "nosniff")'))),
+            ("ndx", _rd_direct("ndx", "text/plain", _rd_ns("_probe_ndx = " + _RD_NS_LINE))),
+            ("ndu", _rd_direct("ndu", "text/plain", _rd_ns('send_header("X-Content-Type-Options", "nosniff")'))),
+            ("ndl", _rd_direct("ndl", "text/plain", _rd_ns('self.log_message("X-Content-Type-Options", "nosniff")'))),
+            ("nd3", _rd_direct("nd3", "text/plain", _rd_ns('self.send_header("X-Content-Type-Options", "nosniff", "x")'))),
+            ("ndk", _rd_direct("ndk", "text/plain", _rd_ns('self.send_header("X-Content-Type-Options", "nosniff", x=1)'))),
+            ("ndv", _rd_direct("ndv", "text/plain", _rd_ns('self.send_header("X-Content-Type-Options", _PROBE_NDV)'))),
+            ("ndh", _rd_direct("ndh", "text/plain", _rd_ns('self.send_header("X-Frame-Options", "nosniff")'))),
+            ("ndy", _rd_direct("ndy", "text/plain", _rd_ns('self.send_header("X-Content-Type-Options", "sniff")'))))
+         + tuple(("nd" + k + "k", _rd_direct("nd" + k + "k", ct, _rd_ns(_RD_NS_LINE))) for k, ct in _RD_ND_TYPES)
+         + tuple(("nk" + k, 'return self._send(200, "%s", "%s")' % (FGH_PAGE % ("nk" + k), ct)) for k, ct in _RD_ND_TYPES)
+         + (("ndc", _rd_direct("ndc", "text/plain", _rd_ns('self.send_header("X-CONTENT-TYPE-OPTIONS", " NoSniff\\t")'))),
+            ("ndn", _rd_direct("ndn", "text/plain", _rd_ns('"a constant statement"') + _rd_ns(_RD_NS_LINE))),
+            ("ndt", _rd_block("ndt", "try:", "            finally:\n                pass\n")),
+            ("ndb", _rd_block("ndb", "if self.path is None:\n                pass\n            else:")),
+            ("ndf", _rd_block("ndf", "try:\n                pass\n            finally:")),
+            ("nde", _rd_block("nde", "try:\n                raise ValueError(self.path)\n            except ValueError:")),
+            ("ndq", _rd_block("ndq", "match self.path:\n                case _:").replace("\n                self.send_header", "\n                    self.send_header")),
+            ("ndg", _rd_direct("ndg", "image/png"))))
+RD_NS = tuple(("ns" + k, 'return self._send(200, "%s", "%s")' % (FGH_PAGE % ("ns" + k), ct)) for k, ct in _RD_ND_TYPES + (("g", "image/png"),))
+_RD_NOSNIFF = "serves %s with no X-Content-Type-Options: nosniff header beside its Content-Type ("
 RD_FILES = (("rdzb", _a_module("rdzb", B_KERNEL_SEND, branches=RD_ZB)),
             ("rdzd", _a_module("rdzd", B_KERNEL_SEND, head=RD_ZD_HEAD, branches=RD_ZD)),
             ("rdcr", _a_module("rdcr", B_KERNEL_SEND, head=RD_CT_HEAD, branches=RD_CT)),
@@ -9415,7 +9489,9 @@ RD_FILES = (("rdzb", _a_module("rdzb", B_KERNEL_SEND, branches=RD_ZB)),
             ("rdty", _a_module("rdty", B_KERNEL_SEND, branches=RD_TY)),
             ("rdsn", _a_module("rdsn", A_SEND % "", branches=RD_SN)),
             ("rdx2", _a_module("rdx2", B_KERNEL_SEND, head=RD_X2_HEAD, branches=RD_X2)),
-            ("rdx3", _a_module("rdx3", RD_X3_SEND, head=RD_X3_HEAD, branches=RD_X3)))
+            ("rdx3", _a_module("rdx3", RD_X3_SEND, head=RD_X3_HEAD, branches=RD_X3)),
+            ("rdnd", _a_module("rdnd", B_KERNEL_SEND, head=RD_ND_HEAD, branches=RD_ND)),
+            ("rdns", _a_module("rdns", A_SEND % "", branches=RD_NS)))
 _RD_LEAF = "a digest of hmac's new whose digestmod is no constructor or algorithm name of hashlib's, whose return may be any text"
 _RD_CTYPE = "serves a response whose content type holds a CR or LF ("
 _RD_ARG = "a constant holding a CR or LF"
@@ -9464,7 +9540,10 @@ RD_REFUSED = (("rdzb", "zbu", 1, "a bytes constant holding a byte past ASCII", 1
     ("rdx3", "x3d", 1, _RD_X3NAME % "__doc__", 1), ("rdx3", "x3h", 1, _RD_X3NAME % "__doc__", 1),
     ("rdx3", "x3e", 1, "the module constant _PROBE_X3E, whose bound value reads __doc__, no module constant the census follows by binding", 1),
     ("rdx3", "x3o", 1, _RD_X3NAME % "__annotations__", 1)) + tuple(
-    ("rdx3", t, 3, _RD_X3NAME % ("_PROBE_" + t.upper()), 1) for t in ("x3r", "x3s", "x3k"))
+    ("rdx3", t, 3, _RD_X3NAME % ("_PROBE_" + t.upper()), 1) for t in ("x3r", "x3s", "x3k")) + tuple(
+    ("rdnd", "nd" + k, 2, _RD_NOSNIFF % ct, 1) for k, ct in _RD_ND_TYPES) + tuple(
+    ("rdnd", t, 2, _RD_NOSNIFF % "text/plain", 1) for t in ("nda", "ndie", "ndfl", "ndi", "ndr", "ndx", "ndu", "ndl", "nd3", "ndk", "ndv", "ndh", "ndy")) + tuple(
+    ("rdns", "ns" + k, 1, _RD_NOSNIFF % ct, 1) for k, ct in _RD_ND_TYPES)
 RD_WHOLE = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe", "zxe") + tuple(
     a + f for a in ("qs", "qb") for f, _kw in RD_CF_FORMS) + ("qxe", "qxq", "qsp")   # the plants whose every page text is refused
 # the plants read at the fix (and at the reviewed head), each page's fetch a site and no SERVED line at it
@@ -9502,7 +9581,8 @@ RD_UNREAD = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe
              "chyx", "chbx", "chqx", "chnx", "chmx", "chtx", "chgx", "chvx", "chpx", "hdmx") + tuple(
     a + f for a in ("qs", "qb", "qf", "qj") for f, _kw in RD_CF_FORMS) + ("qxe", "qxq", "qsp") + (
     "ycp", "ych", "ycj", "ycn", "ycs", "ymx", "yvt", "yna", "ywc", "yws", "yse", "ysa", "ysu", "ysp", "ysm", "yrp") + tuple(
-    t + "x" for t in ("x2u", "x2n", "x2t", "x2g", "x2w", "x2m", "x2k", "x2i", "x2v", "x3d", "x3o", "x3r", "x3s", "x3k"))
+    t + "x" for t in ("x2u", "x2n", "x2t", "x2g", "x2w", "x2m", "x2k", "x2i", "x2v", "x3d", "x3o", "x3r", "x3s", "x3k")) + tuple(
+    t for t, _b in RD_ND + RD_NS)
 AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES + AT_FILES + RD_FILES
 
 
@@ -15804,7 +15884,10 @@ class TheLandingRoundsClassesFailClosed(_Scope):
     call hands its definition through a module name the census does not follow by binding refused by name (the (x2) plants). And the
     second closing check (item B of the reviewer's ruling on it, rule 2): a header argument the census cannot resolve to a value it
     read refused by name, never skipped, the module docstring's `__doc__`, `__annotations__` and a module name a route declares
-    `global` and binds there among them (the (x3) plants), a builtin's name and a route's own local still read. Each
+    `global` and binds there among them (the (x3) plants), a builtin's name and a route's own local still read; and item A: a type of
+    SNIFF_SCRIPT_TYPES typed as running no script only where a nosniff header is written beside its Content-Type, refused by name
+    anywhere else, written outside `_send` and through a `_send` that writes none (the (nd) and (ns) plants, each of the conditions on
+    that header held by a plant of its own), image/png and the written header still typed. Each
     refusal is held at its line with its text and the count of its lines, each module's lines being its refused plants' and no other;
     each read plant's fetch is a site and each refused text none. The reds of a mutant per conjunct of each mechanism are in the build
     record."""
@@ -16019,7 +16102,9 @@ class NoAllowlistEntryIsKeyedOnSendItself(unittest.TestCase):
 
 
 class TheNoScriptTypesAreTheLiveTreesOwn(unittest.TestCase):
-    """NO_SCRIPT_TYPES is the list of the types that run no script among those the census types in the live tree (item 2 of the
+    """NO_SCRIPT_TYPES is the list of the types that run no script (all but image/png only where a nosniff header comes with them,
+    SNIFF_SCRIPT_TYPES, refused by name elsewhere: the (nd) and (ns) plants) among those the census types in the live tree (item 2 of
+    the
     reviewer's 02:3xZ ruling of 2026-10-04, fix C, which derives it from the live tree), and this case holds it to that: the essence of
     every content type judge typed in the tree's run (Result.typed_ctypes, each value's _ctype_essence), less those that run script
     (_script_type), is the list's set. judge types nothing at a place SERVED_ALLOW names: it reads that place's type for a CR or LF and
