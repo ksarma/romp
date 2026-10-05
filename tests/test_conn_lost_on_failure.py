@@ -35,10 +35,12 @@ here under node against the code as served:
                          another pane's socket (a pane not shown included) or a column's stands; a refusal writes whatever
                          stands; with nothing open (a parked pane holds no socket) the cut writes. The same DOM stub.
   AnUnloadsClosesFailNothing
-                         _LANDING_ERRS_JS: from a beforeunload, neither the link's failure nor a failure word writes; the
-                         shell's next dial, open or frame on its link (window.__rompNotLeaving), a pane's or a column's
-                         open, and pageshow each clear the latch, so a navigation that did not unload hides no later
-                         outage; a pane's wsFresh clears nothing. The same DOM stub.
+                         _LANDING_ERRS_JS: from a beforeunload, neither the link's failure nor a failure word writes, and
+                         a pane's down word, which the shim posts just before its failure word, clears nothing (a real
+                         Firefox unload's order); the shell's next dial, open or frame on its link
+                         (window.__rompNotLeaving), a pane's or a column's open (its up word), and pageshow each clear the
+                         latch, so a navigation that did not unload hides no later outage; a pane's wsFresh clears
+                         nothing. The same DOM stub.
 
 The composition in real engines (phone and desktop, healthy, slow and failing returns; reloads while a dial is connecting, and a
 204 followed by an outage) is tests/test_conn_lost_log_served.py.
@@ -524,17 +526,23 @@ const snap = () => CONN.slice();
 // the steps' own assertions; out.door says whether the door was there
 out.door = typeof window.__rompNotLeaving === 'function';
 function notLeaving() { if (out.door) window.__rompNotLeaving(); }
-// the unload: beforeunload, then the closes Firefox delivers to the page before its pagehide
-post({ romp: 'wsState', app: 'chat', state: 'down' });
-post({ romp: 'wsState', app: 'feed', state: 'down' });
-postFrom({ col: '2' }, { romp: 'wsState', app: 'chat', state: 'down' });
+// the unload, in a real Firefox reload's order (review round 2 of item 4b, 2026-10-05): beforeunload first, then the closes
+// Firefox delivers to the page before its pagehide. At a reload during the boot dials no pane has said a word yet, and each
+// pane's or column's dial that never opened posts its down word and then its failure word (the shim's onclose: netState("down"),
+// then netFail), so its down word lands while the page is leaving too, and only an up word may clear the latch
 fire('beforeunload');
-window.__rompLinkFailed(false);
-out.linkWhileLeaving = snap();                             // the shell's dial that never opened, closed by the unload
 post({ romp: 'wsFresh' });                                 // a pane's first frame of data after a return, the one word its frames post: no clear
+post({ romp: 'wsState', app: 'chat', state: 'down' });
+post({ romp: 'wsFail', app: 'chat', cut: false });
+post({ romp: 'wsState', app: 'feed', state: 'down' });
 post({ romp: 'wsFail', app: 'feed', cut: false });
+post({ romp: 'wsState', app: 'timeline', state: 'down' });
+post({ romp: 'wsFail', app: 'timeline', cut: false });
+postFrom({ col: '2' }, { romp: 'wsState', app: 'chat', state: 'down' });
 postFrom({ col: '2' }, { romp: 'wsFail', app: 'chat', cut: false });
-out.wordWhileLeaving = snap();                             // a pane's and a column's, the same
+out.wordWhileLeaving = snap();                             // the three shown panes' and a column's down word and failure word
+window.__rompLinkFailed(false);
+out.linkWhileLeaving = snap();                             // the shell's dial that never opened, closed by the unload: four drops waiting
 // clear 1: the shell's next dial (window.__rompNotLeaving, which the shell calls at each dial, at its open and at each frame on its link)
 notLeaving();
 post({ romp: 'wsFail', app: 'feed', cut: false });
@@ -554,9 +562,9 @@ out.leavingThird = snap();
 postFrom({ col: '4' }, { romp: 'wsState', app: 'chat', state: 'up' });
 window.__rompLinkFailed(false);
 out.afterAColumnsOpen = snap();
-// clear 4: pageshow
-post({ romp: 'wsState', app: 'timeline', state: 'down' });
+// clear 4: pageshow (the Sessions pane's down word and failure word after the beforeunload, in the shim's order)
 fire('beforeunload');
+post({ romp: 'wsState', app: 'timeline', state: 'down' });
 post({ romp: 'wsFail', app: 'timeline', cut: false });
 out.leavingFourth = snap();
 fire('pageshow');
@@ -573,7 +581,10 @@ class AnUnloadsClosesFailNothing(unittest.TestCase):
     failure doors (window.__rompLinkFailed and the wsFail listener), and cleared by the page's next real event, since
     beforeunload also fires for a navigation that does not unload (a 204, a download): the shell's next dial, its open or the
     next frame on its link (window.__rompNotLeaving), a pane's or a column's open, or pageshow. Each door and each clear is executed here; the real
-    engines are tests/test_conn_lost_log_served.py's unload legs. Through tests/test_error_center.py's DOM stub."""
+    engines are tests/test_conn_lost_log_served.py's unload legs. The unload posts its words in a real Firefox reload's order
+    (review round 2, 2026-10-05): beforeunload first, then each pane's down word followed by its wsFail, as the shim's onclose
+    posts them, so a Log that clears the latch on a down word, or on any wsState word, writes an entry for each of those panes
+    and the column here. Through tests/test_error_center.py's DOM stub."""
 
     @classmethod
     def setUpClass(cls):
@@ -598,11 +609,12 @@ class AnUnloadsClosesFailNothing(unittest.TestCase):
         self.assertIs(self.out["door"], True, "window.__rompNotLeaving is the Log's: the shell calls it at each dial and at its open")
 
     def test_the_links_failure_while_leaving_writes_nothing(self):
-        self.assertEqual(self.out["linkWhileLeaving"], [], "the shell's close made by the unload: three drops waiting, none written")
+        self.assertEqual(self.out["linkWhileLeaving"], [], "the shell's close made by the unload: four drops waiting, none written")
 
     def test_a_panes_failure_word_while_leaving_writes_nothing(self):
-        self.assertEqual(self.out["wordWhileLeaving"], [], "a pane's and a column's close made by the unload write nothing, and a "
-                         "pane's wsFresh before them cleared nothing")
+        self.assertEqual(self.out["wordWhileLeaving"], [], "each pane's and the column's close made by the unload posts its down "
+                         "word and then its failure word: the down word leaves the latch set, so the failure word writes "
+                         "nothing, and a pane's wsFresh before them cleared nothing")
 
     def test_the_shells_next_dial_clears_the_latch(self):
         self.assertEqual(self.out["afterTheShellsDial"], [self.FEED], "the page stayed: the next failure is written")
