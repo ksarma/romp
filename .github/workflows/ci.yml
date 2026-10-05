@@ -21,26 +21,28 @@ name: CI
 # dispatch before it, run 36664031774). On the private runner each Linux Python interpreter runs as
 # SHARD_COUNT jobs (tests/conftest.py), four today, each running one worker over one shard of the test
 # files: two workers peak at 10.9 GB (the Run pytest step gives the measurement), and one worker
-# running the whole suite outgrew 8 GB in a local run, as did the larger of two shards, and the
-# largest of three passed the 5 GB a shard's worker is held to (the python job's cap comment gives
-# those measurements; this file ran the cells on one worker each, on the premise that one worker
-# fits, until the first of them). The estimate below is for three shards (2026-10-05); the four
-# shards are not measured yet, and their measured phases replace it. A fourth shard adds five jobs,
-# one per interpreter, each adding its time before and after the Run pytest step and its rounding
-# to a whole minute, while the test files' own time is split four ways instead of three. The
-# three-shard estimate: each shard job is that shard's measured one-worker phase (the python job's cap comment: 3.12's own
-# for 3.12, and 3.14t's, the slower, for 3.10, 3.11, 3.13 and 3.14t) plus the time before and after
-# the Run pytest step in that interpreter's cell of run 37212676524 (batch/2026-10-04b, 18 to 27 s
-# before and 2 to 3 s after), each job rounded up to a whole minute: 12, 17 and 42 minutes for an
-# interpreter's three shards (12, 16 and 40 for 3.12), 352 for the fifteen shard jobs. The other
-# Linux jobs at their times in that run, on the public runner: 50 for Served pages, 41 for Shell, 15
-# for Vendored tooling, 7 for vscode-extension and 3 for the secrets job, 116 minutes (95 in run
-# 37179700919, 111 in run 37128151383). With secret-scan.yml's copy, about 3 minutes (below), a batch
-# run bills about 471 minutes. At 0.006 dollars a minute, GitHub's posted rate for its Linux 2-core
-# x64 runner (read 2026-10-05), that is about 2.83 dollars a run. The fork had 30 CI runs on batch
-# branches in the 30 days to 2026-10-04 and none in the 30 days before (23 in September; 27 since
-# 2026-09-21, when batches began to land daily, about 58 a month at that rate), so about 85 dollars a
-# month at 30 runs and about 164 at 58. The other jobs' times are the public runner's, on 4 CPUs, so
+# running the whole suite outgrew 8 GB in a local run, as did the larger of two shards, the largest
+# of three passed the 5 GB a shard's worker is held to, and so did one of four by the hash alone,
+# which is why the shards follow a weighted rule (the python job's cap comment gives those
+# measurements; this file ran the cells on one worker each, on the premise that one worker fits,
+# until the first of them). The estimate (four shards at the weighted rule, 2026-10-05): each shard
+# job is that shard's measured one-worker phase (the python job's cap comment: 3.12's own for 3.12,
+# 3.14t's own for 3.14t, and the slower of the two for 3.10, 3.11 and 3.13) plus the time before and
+# after the Run pytest step in that interpreter's cell of run 37212676524 (batch/2026-10-04b, 18 to
+# 27 s before and 2 to 3 s after), each job rounded up to a whole minute: 12, 25, 11 and 21 or 22
+# minutes for an interpreter's four shards (10, 21, 11 and 21 for 3.12; 12, 25, 8 and 21 for 3.14t),
+# 337 for the twenty shard jobs (352 for the fifteen jobs of three shards). The other Linux jobs at
+# their times in that run, on the public runner: 50 for Served pages, 41 for Shell, 15 for Vendored
+# tooling, 7 for vscode-extension and 3 for the secrets job, 116 minutes (95 in run 37179700919, 111
+# in run 37128151383). With secret-scan.yml's copy, about 3 minutes (below), a batch run bills about
+# 456 minutes (471 with three shards). At 0.006 dollars a minute, GitHub's posted rate for its Linux
+# 2-core x64 runner (read 2026-10-05), that is about 2.74 dollars a run. The fork had 30 CI runs on
+# batch branches in the 30 days to 2026-10-04 and none in the 30 days before (23 in September; 27
+# since 2026-09-21, when batches began to land daily, about 58 a month at that rate), so about 82
+# dollars a month at 30 runs and about 159 at 58. A manual run, Linux alone by default (below), bills
+# about 453 minutes, about 2.72 dollars, and at last month's pace of 29 manual runs that is about 79
+# dollars a month, so about 161 dollars a month in all at 30 batch runs and about 238 at 58. The
+# other jobs' times are the public runner's, on 4 CPUs, so
 # on the private runner's 2 they are a floor. The estimate made for one worker per cell, before the
 # first measurement: by the serial ratio measured on four CPUs (1437 s against 739 s) the cells of
 # run 36716348831 would take about 40 to 53 minutes each, and those of run 37158350467 about 61 to
@@ -51,7 +53,7 @@ name: CI
 # of the secrets job once, for the push (that file has had no pull_request trigger since 2026-10-04),
 # about 3 minutes a run (2 to 5 measured, and more as the history grows; that file's header gives the
 # runs). A manual run (workflow_dispatch) runs the Linux jobs alone by default, the jobs a batch push
-# runs, about 2.83 dollars by the estimate above. With its macos input on (2026-10-05; the on: block
+# runs but secret-scan.yml's copy, about 2.72 dollars by the estimate above. With its macos input on (2026-10-05; the on: block
 # says why it is off by default) it adds the macOS cells: 132 runner minutes in run 36716348831,
 # billed at about ten times the Linux rate, so about 1,320 Linux minutes' worth, about 8 dollars,
 # and a floor: the 3.13 cell was cancelled at its 60-minute cap, the 3.10 cell
