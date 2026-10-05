@@ -36,10 +36,11 @@ as ASCII ones do.
 
 THE RULE. A number in the range counts when it is WRITTEN AS A PORT: a value of one of the forms below, in one of the
 positions below. This section states what the census reads. A name is BOUND, here and below, by the bindings the census
-records: a constant or a list, tuple or set display given to the name anywhere in the module by =, an annotated = or :=,
-by a tuple or list assignment element by element, or by a for loop or a comprehension over a display. Any other binding
-of the name (a call's result, a parameter, an import, B = A) is not seen, adding no value and taking none away (HOST =
-"127.0.0.1", then HOST = os.environ["H"], leaves HOST a host).
+records: a constant, a number written with a sign (-7, +7, -7.0, which Python parses as a unary minus or plus over a
+constant, recorded as the number Python computes), or a list, tuple or set display, given to the name anywhere in the
+module by =, an annotated = or :=, by a tuple or list assignment element by element, or by a for loop or a
+comprehension over a display. Any other binding of the name (a call's result, a parameter, an import, B = A, 0 - 7) is
+not seen, adding no value and taking none away (HOST = "127.0.0.1", then HOST = os.environ["H"], leaves HOST a host).
   In Python, read by AST (scan_python), the positions:
     a value under a dict key that names a port ({"port": N}, {"local_port": N}, {"busPort": N}; a key names a port when
     one of its words, split at underscores, other punctuation and camelCase, is "port" or "ports": "report" does not;
@@ -116,8 +117,8 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
     wherever the position's own value is the bare name, the positions that are themselves elements of a display
     included: a tuple assignment's element (h, port = "x", P), the port of an address ((HOST, P)) and the element after
     a --*port option. A name inside a display that is the position's value ({"ports": [P]}, the tuple a % formats), and
-    a name in a loop's sequence, counts only through interval(), which reads a name bound to exactly one value, an int
-    literal.
+    a name in a loop's sequence, counts only through interval(), which reads a name bound to exactly one value, an int,
+    written with or without a sign.
   An address is a loopback or wildcard host (127.0.0.1, localhost or 0.0.0.0 with no underscore and no character
   str.isalnum() accepts against either end; [::1]; [::]) or // and a run of word characters, dots and dashes, standing
   right before the colon, with spaces or tabs allowed on either side of the colon except in a %-template; in that run a
@@ -128,20 +129,20 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   character the source writes is read as an ordinary character, never as a placeholder ("http://", a NUL and a colon,
   then + str(N), is not read).
   An expression counts when it is bounded and can reach the range: interval() bounds int constants, a name bound to
-  exactly one value, an int literal, and, over bounded operands, str() and int(), a unary minus (-7), + - and *, and //
-  and % by a positive constant; it reads an unknown operand of % by a positive constant as 0 to the constant less one,
-  and a call to randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n) over bounded arguments
-  (random's and secrets', by the callee's name; a randrange's step may be unbounded, below) as the values it can
-  return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does random.randint(40000, 50000). A call
-  Python always refuses can give a span whose ends are reversed (random.randint(50000, 40000) is 50000-40000), and such
-  a span counts when both its ends lie in the range. Each argument of one of these random calls is given by position or
-  by its parameter's name (randint's a and b, randrange's start, stop and step, randbelow's exclusive_upper_bound; a
-  keyword that names none is passed over), and the call is read by the arguments that fill its parameters from the
-  first up to the first left empty: random.randint(a=40000, b=50000) counts as random.randint(40000, 50000) does,
-  randrange(start=S) reads as randrange(S), and neither randint(b=N) nor randrange(stop=E) is read. A ** mapping names
-  no parameter, yet can fill any parameter left empty: beside a randrange's start and stop, with its step left empty,
-  it is read as a step interval() does not bound (below), and beside any other parameter left empty the call is not
-  read, since what the call returns then depends on what the mapping holds (random.randrange(30000, **kw) returns
+  exactly one value, an int written with or without a sign, and, over bounded operands, str() and int(), a unary minus
+  (-7), + - and *, and // and % by a positive constant; it reads an unknown operand of % by a positive constant as 0 to
+  the constant less one, and a call to randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n)
+  over bounded arguments (random's and secrets', by the callee's name; a randrange's step may be unbounded, below) as
+  the values it can return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does random.randint(40000,
+  50000). A call Python always refuses can give a span whose ends are reversed (random.randint(50000, 40000) is
+  50000-40000), and such a span counts when both its ends lie in the range. Each argument of one of these random calls
+  is given by position or by its parameter's name (randint's a and b, randrange's start, stop and step, randbelow's
+  exclusive_upper_bound; a keyword that names none is passed over), and the call is read by the arguments that fill its
+  parameters from the first up to the first left empty: random.randint(a=40000, b=50000) counts as random.randint(40000,
+  50000) does, randrange(start=S) reads as randrange(S), and neither randint(b=N) nor randrange(stop=E) is read. A **
+  mapping names no parameter, yet can fill any parameter left empty: beside a randrange's start and stop, with its step
+  left empty, it is read as a step interval() does not bound (below), and beside any other parameter left empty the call
+  is not read, since what the call returns then depends on what the mapping holds (random.randrange(30000, **kw) returns
   values up to 29999 when kw is empty, and up to 49999 when kw holds a stop of 50000). Two shapes Python refuses for
   the way the arguments are passed are not read: a keyword that names a parameter a positional argument fills
   (random.randint(40000, 50000, a=1)), and a randrange whose stop is left empty and whose step is given
@@ -160,12 +161,13 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   40020 + os.getpid() % 21, k) is 40000-40060, and 40021-40060 with a step of -7; and
   random.randrange(30000 + os.getpid() % 5000, 30000, **kw) is 30000-34999 whatever kw holds, by keyword too
   (random.randrange(start=30000 + os.getpid() % 5000, stop=30000, **kw)). Each reading holds every value the
-  call can return, and can hold values it never returns (a step of 7 returns values 7 apart). Where Python refuses a
-  call for every value its start, stop and step can take, the reading still stands, an over-read: a step of 0 is read
-  with the steps that are never negative (random.randrange(40000, 50000, 0) is 40000-49999); a positive step from a
-  start never below its stop, or a negative one from a start never above it, is read as a span with its ends reversed
-  (random.randrange(50000, 40000, 7) is 50000-39999, and random.randrange(40000, 50000, -1) is 50001-40000); and a
-  start and stop that are one and the same value, with an unbounded step, read as that value
+  call can return wherever every binding of each name in the call is one the census records (BOUND; WHAT IT CANNOT
+  SEE gives a name that also has another), and can hold values it never returns (a step of 7 returns values 7 apart).
+  Where Python refuses a call for every value its start, stop and step can take, the reading still stands, an over-read:
+  a step of 0 is read with the steps that are never negative (random.randrange(40000, 50000, 0) is 40000-49999); a
+  positive step from a start never below its stop, or a negative one from a start never above it, is read as a span with
+  its ends reversed (random.randrange(50000, 40000, 7) is 50000-39999, and random.randrange(40000, 50000, -1) is
+  50001-40000); and a start and stop that are one and the same value, with an unbounded step, read as that value
   (random.randrange(40000, 40000, k) is 40000-40000). RandrangeAgainstCPython checks this reading against CPython's own
   randrange over generated calls. A sum or difference with an unbounded operand counts when one of its operands alone
   is a constant expression (one interval() bounds with no unknown in it) whose value is in the range, found through
@@ -230,12 +232,15 @@ these turns its plant red, and the example leaves this list.
   parameter, a name another module binds, B after B = A), an attribute (cfg.p after cfg.p = N), a container's element
   (CFG["a"]), a call's result other than str() or int() around a bounded value and the random calls (pick(),
   random.choice((N, M))), a random call with a parameter left empty that a ** mapping beside it can fill
-  (random.randrange(50000, **kw), random.randrange(start=50000, step=1, **kw)), a name bound to anything but one int
-  literal inside a display that is the position's value
-  or in a loop's sequence (P = "N", then {"ports": [P]}; P bound to 1 and to N, then for host, port in (("h", P),)), an
-  f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a sum or difference in the
-  range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__ replaced at run time); a
-  rule of its own may still read such a value where it is written;
+  (random.randrange(50000, **kw), random.randrange(start=50000, step=1, **kw)), a name bound to anything but one int,
+  signed or not, inside a display that is the position's value or in a loop's sequence (P = "N", then {"ports": [P]};
+  P bound to 1 and to N, then for host, port in (("h", P),)), an f-string ("127.0.0.1:" + f"{N}"), an unbounded
+  expression with no constant operand of a sum or difference in the range (base + i, N * k), and a run-time
+  substitution into code text (a template's __VALUE__ replaced at run time); a rule of its own may still read such a
+  value where it is written;
+  a name bound to one int the census records and also by a binding it does not record (K = 7, then K = f() or
+  K *= -1), which interval() reads as that one int, so random.randrange(40000, 1000, K) is read as 40000-999 whatever
+  else K holds;
   a host that THE RULE does not take for one (("TESTHOST", N), HTTPConnection(self.host, N)), a name bound to the
   empty string, even in a tuple (H = "", then (H, N)), and the empty string itself before a port in a call (serve("",
   N)); the port beside it is read only when another rule reads it;
@@ -518,16 +523,25 @@ def _callee(f):
     return f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
 
 
+def _signed_number(v):
+    """The number a unary minus or plus over an int or float constant computes (-7, +7, -7.0; True among the ints, so
+    -True is -1), which BOUND records for a name; None for any other node."""
+    if isinstance(v, ast.UnaryOp) and isinstance(v.op, (ast.USub, ast.UAdd)) and isinstance(v.operand, ast.Constant) \
+            and isinstance(v.operand.value, (int, float)):
+        return -v.operand.value if isinstance(v.op, ast.USub) else +v.operand.value
+    return None
+
+
 def interval(node, bound=None):
     """(lo, hi, computed) for an int expression the census can bound, else None: constants, a unary minus, + - * // and
-    % over them, a name bound to one int literal, str() or int() around one, an unknown operand of % by a positive
-    constant read as 0 to the constant less one, and randint(a, b), randrange(stop), randrange(start, stop[, step]) and
-    randbelow(n) over bounded arguments read as the values each can return, each argument given by position or by its
-    parameter's name (_random_args()). randrange(start, stop[, step]) is read by its step's sign, the step bounded or
-    not (a step left out is 1, and one a ** mapping can give is unbounded): start's lowest value to stop's highest less
-    one for a step that is never negative, stop's lowest plus one to start's highest for any other step that is never
-    positive, and the span holding both for the rest, a step that can take either sign or one interval() does not bound
-    (THE RULE). computed is True when an unknown took part."""
+    % over them, a name bound to one int (_signed_number() gives a signed one), str() or int() around one, an unknown
+    operand of % by a positive constant read as 0 to the constant less one, and randint(a, b), randrange(stop),
+    randrange(start, stop[, step]) and randbelow(n) over bounded arguments read as the values each can return, each
+    argument given by position or by its parameter's name (_random_args()). randrange(start, stop[, step]) is read by
+    its step's sign, the step bounded or not (a step left out is 1, and one a ** mapping can give is unbounded): start's
+    lowest value to stop's highest less one for a step that is never negative, stop's lowest plus one to start's highest
+    for any other step that is never positive, and the span holding both for the rest, a step that can take either sign
+    or one interval() does not bound (THE RULE). computed is True when an unknown took part."""
     bound = bound or {}
     if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
         return node.value, node.value, False
@@ -800,6 +814,8 @@ class _Scan:
         if isinstance(t, ast.Name):
             if isinstance(v, (ast.Constant, ast.Tuple, ast.List, ast.Set)):
                 self.bound.setdefault(t.id, []).append(v)
+            elif _signed_number(v) is not None:     # -7 is a unary minus over 7: recorded as the number it computes
+                self.bound.setdefault(t.id, []).append(ast.copy_location(ast.Constant(_signed_number(v)), v))
         elif isinstance(t, (ast.Tuple, ast.List)) and isinstance(v, (ast.Tuple, ast.List)) and len(t.elts) == len(v.elts):
             for te, ve in zip(t.elts, v.elts):
                 self._bind(te, ve)
@@ -1820,6 +1836,45 @@ class Plants(unittest.TestCase):
         with self.subTest("a negative constant"):
             self.assertGreen("test_x.py", 'port = -%d\n' % lo)
 
+    def test_a_name_bound_to_a_signed_number_holds_that_number(self):
+        """BOUND records a number written with a sign, a unary minus or plus over an int or float constant, as the
+        number Python computes. So a name bound to 7 and to -7 holds two values and reads as a step interval() does not
+        bound, by the span holding both, and a name bound to -40000 alone reads as -40000. Each red plant asserts what
+        the census reports. e50adc775 recorded no such binding, so it read a name bound to 7 and to -7 as 7 alone, a
+        positive step: it reported nothing for randrange(40000, 30000, step) in a loop over (1, -1), from which CPython
+        returns values from 30001 to 40000, nor for randrange(40000, 1000, K) with K bound to 7 and to -7, or to -7.0,
+        which 3.10 and 3.11 take as a step. It read a name bound to -7 alone as unbounded, 40000-40060 where the step
+        is negative and CPython returns 40021 to 40060, and left unread the calls whose name holds a negative number
+        alone: randint(1, -S) with S bound to -40000 returns values up to 40000, and randrange(41000 + OFFSET, 42000)
+        with OFFSET bound to -1000 values from 40000. A name bound to -7 and to +7 holds both (recording the minus
+        alone would read it as -7, a negative step, and miss randrange(1000, 40000, K)'s values), and a name bound to
+        +45001 holds 45001, read through the hop. WHAT IT CANNOT SEE lists a name bound to an int and by a binding the
+        census does not record, with a green plant."""
+        lo, n = LOW + 7232, _n()                                                   # 40000 and 45001, built at run time
+        s = LOW - 2768                                                             # 30000, built at run time
+        inside = 'port = random.randrange(%d + os.getpid() %% 61, %d + os.getpid() %% 21, K)\n' % (lo, lo + 20)
+        for label, src, why, first in (
+                ("a loop over a positive and a negative step",
+                 'for step in (1, -1):\n    port = random.randrange(%d, %d, step)\n' % (lo, s),
+                 "computed into %d-%d" % (s + 1, lo), LOW),
+                ("a name bound to 7 and to -7", 'K = 7\nK = -7\nport = random.randrange(%d, 1000, K)\n' % lo,
+                 "computed into 1001-%d" % lo, LOW),
+                ("a name bound to 7 and to -7.0", 'K = 7\nK = -7.0\nport = random.randrange(%d, 1000, K)\n' % lo,
+                 "computed into 1001-%d" % lo, LOW),
+                ("a name bound to -7 and to +7", 'K = -7\nK = +7\nport = random.randrange(1000, %d, K)\n' % lo,
+                 "computed into 1000-%d" % (lo - 1), LOW),
+                ("a name bound to -7 alone, a negative step", 'K = -7\n' + inside,
+                 "computed into %d-%d" % (lo + 21, lo + 60), lo + 21),
+                ("a name bound to a negative number, negated", 'S = -%d\nport = random.randint(1, -S)\n' % lo,
+                 "computed into 1-%d" % lo, LOW),
+                ("a name bound to a negative number, added",
+                 'OFFSET = -1000\nport = random.randrange(%d + OFFSET, %d)\n' % (lo + 1000, lo + 2000),
+                 "computed into %d-%d" % (lo, lo + 1999), lo),
+                ("a name bound to a number written with a plus, through the hop", 'P = +%d\nrow = {"port": P}\n' % n,
+                 "key 'port', through the name P", n)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+
     def test_a_mapping_beside_a_randrange_s_start_and_stop_is_read_as_an_unbounded_step(self):
         """A ** mapping names no parameter, yet can fill any parameter left empty. Beside a randrange's start and stop,
         with its step left empty, it is read as a step interval() does not bound, by the span holding both, and each
@@ -1865,6 +1920,9 @@ class Plants(unittest.TestCase):
                 ("a name another module binds", "test_x.py",
                  'from plant_helpers import P\nrow = {"port": P}\nOTHER = %d                # opens the file\n' % (n + 1)),
                 ("a name bound to a name (B = A)", "test_x.py", 'A = %d\nB = A\nrow = {"port": B}\n' % n),
+                ("a name bound to an int and by a binding the census does not record", "test_x.py",
+                 'K = 7\nK = f()\nport = random.randrange(%d, 1000, K)\nJ = 7\nJ *= -1\nport = random.randrange(%d, 1000, J)\n'
+                 % (n, n)),
                 ("an attribute", "test_x.py", 'cfg.p = %d\nrow = {"port": cfg.p}\n' % n),
                 ("a name bound to a digit string, inside a display that is the position's value", "test_x.py",
                  'P = "%d"\nrow = {"ports": [P]}\n' % n),
