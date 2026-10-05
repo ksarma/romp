@@ -15,6 +15,7 @@ Synthetic only — placeholder hosts/shas, no ssh, no restarts.
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -381,7 +382,8 @@ class GlyphSaysTheFleetState(unittest.TestCase):
     def test_both_glyphs_carry_paintable_nodes_and_the_colours_are_defined(self):
         # the rail glyph is the page's; the phone's copy left the bottom bar for the settings card in iOS item 4g (2026-10-05), so
         # it is gear.js's markup, painted by the same paintIcon through mnet, with its colours restated in gear.css (that page
-        # loads none of the shell's sheet); tests/test_mtabs_fit_served.py reads the painted copy against the rail's in a browser
+        # loads none of the shell's sheet) through tokens whose values are the shell's literals in both themes;
+        # tests/test_mtabs_fit_served.py reads the painted copy against the rail's in a browser
         html = km._landing()
         self.assertEqual(html.count("class=rn-me"), 1, "the rail glyph (the phone's copy is in the settings card)")
         self.assertEqual(html.count("class=rn-a"), 1)
@@ -396,11 +398,21 @@ class GlyphSaysTheFleetState(unittest.TestCase):
             gear = fh.read()
         with open(os.path.join(ui, "gear.css"), encoding="utf-8") as fh:
             gear_css = fh.read()
+        with open(os.path.join(ui, "feed.css"), encoding="utf-8") as fh:
+            feed_css = fh.read()
         for node in ("class=rn-me", "class=rn-a", "class=rn-b"):
             self.assertEqual(gear.count(node), 1, node + " in the settings card's Remote kernels glyph")
         self.assertIn("#rs-pact-net .rn-ok { fill: var(--accent, #9cd2ff); }", gear_css)
-        self.assertIn("#rs-pact-net .rn-wait { fill: #8a8a8a; }", gear_css)
-        self.assertIn("#rs-pact-net .rn-warn { fill: #e5484d; }", gear_css)
+        self.assertIn("#rs-pact-net .rn-wait { fill: var(--rn-wait, #8a8a8a); }", gear_css)
+        self.assertIn("#rs-pact-net .rn-warn { fill: var(--st-blocked-bg, #e5484d); }", gear_css)
+        # the tokens' values are the shell's literals in both of feed.css's theme blocks (the dark block leaves --st-blocked-bg
+        # undeclared, so the fallback, the shell's literal, is what the card wears there)
+        dark, light = feed_css[feed_css.index(":root {"):], feed_css[feed_css.index("body.theme-light {"):]
+        dark, light = dark[:dark.index("\n}")], light[:light.index("\n}")]
+        self.assertEqual(re.findall(r"--rn-wait: (#[0-9a-fA-F]{6});", dark), ["#8a8a8a"])
+        self.assertEqual(re.findall(r"--rn-wait: (#[0-9a-fA-F]{6});", light), ["#8a8a8a"])
+        self.assertEqual(re.findall(r"--st-blocked-bg: (#[0-9a-fA-F]{6});", dark), [])
+        self.assertEqual(re.findall(r"--st-blocked-bg: (#[0-9a-fA-F]{6});", light), ["#e5484d"])
 
     def test_the_tooltip_says_the_verdict_in_words(self):
         # the colour is the glance; the words behind it are one hover away (progressive disclosure)

@@ -142,6 +142,8 @@
      day rules, toggle buttons). */
   --card-border: rgba(255, 255, 255, 0.10);
   --outbound-line: #8a8a8a;   /* the viewer's outbound dress line, mirrored byte-equal from styles.css (4.83:1 on --bg; theme-parity.test.ts holds the pair) */
+  --rn-wait: #8a8a8a;   /* the Remote kernels glyph's dialing node (a host attached and not answering), byte-equal to the shell's
+                         .rn-wait (kernel.py): the settings card's copy of the glyph (gear.css #rs-pact-net, iOS item 4g) reads it */
   --detail-bg: rgba(255, 255, 255, 0.05);
 
   /* Relevance category colors — single source, the CLASSIC identity-palette hexes
@@ -182,6 +184,7 @@ body.theme-light {
   --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
   --card-border: rgba(0, 0, 0, 0.10);
   --outbound-line: #6b645a;   /* mirrored from styles.css (4.90:1 on the page) */
+  --rn-wait: #8a8a8a;   /* the same in this theme, as the shell's .rn-wait literal is */
   --detail-bg: rgba(0, 0, 0, 0.04);
   --rel-done: #3E7D0E;       /* the light ok-green (matches --green) */
   --rel-decision: #1478B8;   /* the classic blue, darkened to read on cream */
