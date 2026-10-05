@@ -21,16 +21,28 @@ name: CI
 # dispatch before it, run 36664031774). On the private runner each Linux Python interpreter runs as
 # SHARD_COUNT jobs (tests/conftest.py), three today, each running one worker over one shard of the test
 # files: two workers peak at 10.9 GB (the Run pytest step gives the measurement), and one worker
-# running the whole suite outgrew 8 GB in a local run (the python job's cap comment gives that
-# measurement; this file ran the cells on one worker each, on the premise that one worker fits,
-# until it). An interpreter's shards together run about as long as a serial run of the suite, plus
-# each job's own setup. The estimate made for one worker per cell, before that measurement: by the
-# serial ratio measured on four CPUs (1437 s against 739 s) the cells of run 36716348831 would take
-# about 40 to 53 minutes each, and those of run 37158350467 about 61 to 74, so a batch run's Linux
-# jobs would bill about 325 minutes by run 36716348831 and about 444 by run 37158350467, whose Linux
-# jobs bill 279 on the public runner (each cell's pytest step scaled by that ratio, every other job
-# at its public time). PLACEHOLDER: the estimate for the shards, with each job's setup time, is
-# recomputed from the shards' measured phases; the first batch push on the private runner gives the
+# running the whole suite outgrew 8 GB in a local run, as did the larger of two shards (the python
+# job's cap comment gives those measurements; this file ran the cells on one worker each, on the
+# premise that one worker fits, until the first of them). The estimate for the shards (2026-10-05):
+# each shard job is that shard's measured one-worker phase (the python job's cap comment: 3.12's own
+# for 3.12, and 3.14t's, the slower, for 3.10, 3.11, 3.13 and 3.14t) plus the time before and after
+# the Run pytest step in that interpreter's cell of run 37212676524 (batch/2026-10-04b, 18 to 27 s
+# before and 2 to 3 s after), each job rounded up to a whole minute: 12, 17 and 42 minutes for an
+# interpreter's three shards (12, 16 and 40 for 3.12), 352 for the fifteen shard jobs. The other
+# Linux jobs at their times in that run, on the public runner: 50 for Served pages, 41 for Shell, 15
+# for Vendored tooling, 7 for vscode-extension and 3 for the secrets job, 116 minutes (95 in run
+# 37179700919, 111 in run 37128151383). With secret-scan.yml's copy, about 3 minutes (below), a batch
+# run bills about 471 minutes. At 0.006 dollars a minute, GitHub's posted rate for its Linux 2-core
+# x64 runner (read 2026-10-05), that is about 2.83 dollars a run. The fork had 30 CI runs on batch
+# branches in the 30 days to 2026-10-04 and none in the 30 days before (23 in September; 27 since
+# 2026-09-21, when batches began to land daily, about 58 a month at that rate), so about 85 dollars a
+# month at 30 runs and about 164 at 58. The other jobs' times are the public runner's, on 4 CPUs, so
+# on the private runner's 2 they are a floor. The estimate made for one worker per cell, before the
+# first measurement: by the serial ratio measured on four CPUs (1437 s against 739 s) the cells of
+# run 36716348831 would take about 40 to 53 minutes each, and those of run 37158350467 about 61 to
+# 74, so a batch run's Linux jobs would bill about 325 minutes by run 36716348831 and about 444 by
+# run 37158350467, whose Linux jobs bill 279 on the public runner (each cell's pytest step scaled by
+# that ratio, every other job at its public time). The first batch push on the private runner gives the
 # measured and billed figures. The same push also runs secret-scan.yml's copy
 # of the secrets job once, for the push (that file has had no pull_request trigger since 2026-10-04),
 # about 3 minutes a run (2 to 5 measured, and more as the history grows; that file's header gives the
