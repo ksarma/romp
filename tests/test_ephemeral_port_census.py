@@ -159,10 +159,11 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   start never below its stop, or a negative one from a start never above it, is read as a span with its ends reversed
   (random.randrange(50000, 40000, 7) is 50000-39999, and random.randrange(40000, 50000, -1) is 50001-40000); and a
   start and stop that are one and the same value, with an unbounded step, read as that value
-  (random.randrange(40000, 40000, k) is 40000-40000). A sum or difference with an unbounded operand counts when one of
-  its operands alone is a constant expression (one interval() bounds with no unknown in it) whose value is in the
-  range, found through str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so is
-  40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read.
+  (random.randrange(40000, 40000, k) is 40000-40000). RandrangeAgainstCPython checks this reading against CPython's own
+  randrange over generated calls. A sum or difference with an unbounded operand counts when one of its operands alone
+  is a constant expression (one interval() bounds with no unknown in it) whose value is in the range, found through
+  str() and int() and down a chain of sums and differences: 40000 + i is built on 40000, and so is 40000 * 1 + i
+  (offset_base()); one with no such operand (base + i) is not read.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -300,6 +301,7 @@ Synthetic: reads the tree only; no socket, no kernel, no subprocess.
 import ast
 import io
 import os
+import random
 import re
 import shutil
 import string
@@ -1944,6 +1946,125 @@ class Plants(unittest.TestCase):
                  "argument ports of listen_all()")):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why)
+
+
+class _RandrangeEnds(random.Random):
+    """CPython's Random with only its draw replaced: _randbelow(n) returns n - 1 when top is set and 0 when it is not, so
+    randrange, CPython's own code, returns the lowest value a call can return, or the highest."""
+    top = False
+
+    def _randbelow(self, n):
+        return n - 1 if self.top else 0
+
+
+class RandrangeAgainstCPython(unittest.TestCase):
+    """THE RULE's randrange reading, checked against CPython's own randrange over generated calls (the ruling of
+    2026-10-05 on fork PR 973: one rule, and a property test in place of one more plant per pass)."""
+
+    SEED = 973                                      # fixed: the same calls, samples and draws on every run
+    STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
+    STEP_SHAPES = (                                 # (the step as written or None, left out; its values or None, unbounded)
+        ("7", (7, 7)), ("1 + os.getpid() % 5", (1, 5)),                                       # known positive
+        ("0 - 7", (-7, -7)), ("-7", (-7, -7)), ("-(1 + os.getpid() % 5)", (-5, -1)),          # known negative
+        ("os.getpid() % 3 - 1", (-1, 1)), ("-(os.getpid() % 11 - 5)", (-5, 5)),               # either sign
+        ("os.getpid() % 6 - 5", (-5, 0)), ("os.getpid() % 6", (0, 5)), ("0", (0, 0)),         # 0 at an end, or alone
+        ("k", None), ("-k", None),                                                            # unbounded
+        (None, (1, 1)))                                                                       # left out: 1
+    FORMS = ((), ("step",), ("stop", "step"), ("step", "start", "stop"))   # the parameters given by keyword, in order
+    RELATIONS = ("start below stop", "start above stop", "start's highest value stop's lowest",
+                 "start's lowest value stop's highest", "start and stop one value", "overlapping, start lower",
+                 "overlapping, start higher", "start inside stop", "stop inside start")
+
+    @staticmethod
+    def _shape(relation, c, rng):
+        """(start's interval, stop's interval) in `relation`, about the value `c`."""
+        w1, w2, g = rng.randint(0, 40), rng.randint(0, 40), rng.randint(1, 30)
+        return {"start below stop": ((c - g - w1, c - g), (c, c + w2)),
+                "start above stop": ((c, c + w1), (c - g - w2, c - g)),
+                "start's highest value stop's lowest": ((c - w1, c), (c, c + w2)),
+                "start's lowest value stop's highest": ((c, c + w1), (c - w2, c)),
+                "start and stop one value": ((c, c), (c, c)),
+                "overlapping, start lower": ((c - w1 - 1, c + g), (c, c + g + w2 + 1)),
+                "overlapping, start higher": ((c, c + g + w1 + 1), (c - w2 - 1, c + g)),
+                "start inside stop": ((c, c + g), (c - w2 - 1, c + g + w2 + 1)),
+                "stop inside start": ((c - w1 - 1, c + g + w1 + 1), (c, c + g))}[relation]
+
+    @staticmethod
+    def _call(form, args):
+        """randrange's arguments as (positional, keyword), the parameters `form` names given by keyword in its order;
+        `args` maps each parameter the call gives to its value or its text."""
+        return ([args[p] for p in ("start", "stop", "step") if p in args and p not in form],
+                [(p, args[p]) for p in form if p in args])
+
+    def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
+        """A seeded generator writes randrange calls: start's interval below stop's, above it, touching it from either
+        side, one value with it, and overlapping it four ways, crossed with STEP_SHAPES (steps known positive, known
+        negative, of either sign, from -5 to 0 and from 0 to 5, of 0, unbounded, a unary minus among them, and a step
+        left out) and with FORMS (every argument by position, the step by keyword, the stop and the step, and all
+        three in another order), each twice about a value drawn near 32768, near 65535, inside the range or below it;
+        and the two calls CPython showed 1e04b89f8 missed. The census reads them as one module, a call to a line. For
+        each call the test samples start and stop at each end of their intervals and at a seeded value between, and the
+        step at each end, a seeded value between, and -1, 0 and 1 where the step can take them (an unbounded step takes
+        STEPS), and runs CPython's Random.randrange, the function random.randrange is bound to, three times: with its
+        draw pinned to the lowest and to the highest (_RandrangeEnds), and with a seeded draw. Every value returned
+        must lie in the span the census reports, and where the census reports nothing no value may lie in the range."""
+        rng = random.Random(self.SEED)
+        cases = [("overlapping, start higher", (30000, 32999), (20000, 30999), ("0 - 7", (-7, -7)), ()),
+                 ("start's lowest value stop's highest", (30000, 34999), (30000, 30000), ("0 - 7", (-7, -7)), ())]
+        for relation in self.RELATIONS:
+            for step in self.STEP_SHAPES:
+                for form in self.FORMS:
+                    for _ in range(2):
+                        c = rng.choice((LOW + rng.randint(-60, 60), HIGH + rng.randint(-60, 60),
+                                        rng.randint(LOW + 100, HIGH - 100), rng.randint(1024, LOW - 200)))
+                        cases.append((relation,) + self._shape(relation, c, rng) + (step, form))
+
+        def text(iv):
+            return "%d" % iv[0] if iv[0] == iv[1] else "%d + os.getpid() %% %d" % (iv[0], iv[1] - iv[0] + 1)
+        lines = []
+        for _relation, s, e, (k, _kiv), form in cases:
+            args = dict(start=text(s), stop=text(e), **({"step": k} if k is not None else {}))
+            pos, kw = self._call(form, args)
+            lines.append("port = random.randrange(%s)\n" % ", ".join(pos + ["%s=%s" % pv for pv in kw]))
+        reading = {}
+        for line, _v, why in scan_python(ast.parse("".join(lines)), {}):
+            m = re.search(r"computed into (-?\d+)-(-?\d+)$", why)
+            reading[line] = (int(m.group(1)), int(m.group(2))) if m else why
+
+        def between(iv):
+            return sorted({iv[0], iv[1], rng.randint(*iv)})
+        low, high, seeded = _RandrangeEnds(), _RandrangeEnds(), random.Random(self.SEED)
+        high.top = True
+        failures, bad, reached, returned = [], set(), set(), 0
+        for n, (relation, s, e, (k, kiv), form) in enumerate(cases, 1):
+            got = reading.get(n)
+            said = "nothing" if got is None else ("%d-%d" % got if isinstance(got, tuple) else got)
+            ks = self.STEPS if kiv is None else sorted(set(between(kiv)) | {x for x in (-1, 0, 1) if kiv[0] <= x <= kiv[1]})
+            for a in between(s):
+                for b in between(e):
+                    for step in (ks if k is not None else (None,)):
+                        pos, kw = self._call(form, dict(start=a, stop=b, **({"step": step} if k is not None else {})))
+                        for draw in (low, high, seeded):
+                            try:
+                                v = draw.randrange(*pos, **dict(kw))
+                            except ValueError:
+                                continue
+                            returned += 1
+                            if LOW <= v <= HIGH:
+                                reached |= {relation, k}
+                            if (got is None and LOW <= v <= HIGH) or (got is not None and not (
+                                    isinstance(got, tuple) and got[0] <= v <= got[1])):
+                                bad.add(n)
+                                failures.append("line %d, %s: start %d, stop %d, step %s returned %d; the census reads %s"
+                                                % (n, lines[n - 1].strip(), a, b, step, v, said))
+        if failures:
+            self.fail("%d values from %d of %d calls lie outside the census's reading; the first 8:\n%s"
+                      % (len(failures), len(bad), len(cases), "\n".join(failures[:8])))
+        self.assertGreater(returned, 0)
+        self.assertEqual(sorted(set(self.RELATIONS) - {"start and stop one value"} - reached), [],
+                         "a relation with no call that returned a value in the range: the test proves nothing there")
+        self.assertEqual(sorted({k for k, _ in self.STEP_SHAPES} - {"0"} - reached, key=str), [],
+                         "a step with no call that returned a value in the range: the test proves nothing there")
 
 
 class SentinelPorts(unittest.TestCase):
