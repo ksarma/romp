@@ -3,7 +3,7 @@ title: The phone's bottom bar wraps its action buttons onto a second row when th
 status: candidate
 where: kernel/kernel.py (_landing: the #mtabs wrap rules in the phone media block, the .mtabs-acts wrapper in the bar's markup, the bell's comments; _LANDING_MOBILE_JS: the bar's ResizeObserver beside the refit bindings); tests/test_mtabs_fit_served.py (MtabsFit, new); tests/mtabs_fit_browser.mjs (its driver, new); upstream/2026-10-05-phone-bar-wraps-actions.md (this entry)
 added: 2026-10-05
-pr:
+pr: 976
 tier: fix
 offered:
 closed:
