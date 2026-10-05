@@ -989,8 +989,9 @@ out({ atLoad, atPaint: at() });""")
     # grabbing and the 14 resize cursors. Since round 3 (2026-10-04) both rules count a cursor unless it equals the body's (round 3's
     # call 2 at 5445e1e31, in place of a comparison with the parent's), and both name the two resize handles: the drag cases and the
     # inherited-cursor cases below execute rctl's half, and the served legs of the two handle drags
-    # (test_return_from_background_served.py, _handle_drag_surface) execute the recorder's; the text checks here keep the two rules
-    # one rule, and say nothing on their own about behaviour
+    # (test_return_from_background_served.py, _handle_drag_surface) execute the recorder's, as does the recorder case below on the
+    # first inherited-cursor shape, beside rctl; the text checks here keep the two rules one rule, and say nothing on their own about
+    # behaviour
     def test_the_served_recorder_counts_a_cursor_as_a_control_exactly_when_rctl_does(self):
         node = shutil.which("node")
         if not node:
@@ -1009,7 +1010,8 @@ out({ atLoad, atPaint: at() });""")
         self.assertEqual(re.findall(r"[\w.]+\.test\(cs\.cursor\)", rec), ["CURSOR.test(cs.cursor)"], "the recorder's control test reads CURSOR, and no other cursor rule")
         self.assertEqual((rec.count("const bodyCursor = getComputedStyle(document.body).cursor;"),
                           rec.count("if (!el.matches(CONTROL) && !(CURSOR.test(cs.cursor) && cs.cursor !== bodyCursor)) continue;")), (1, 1),
-                         "the recorder counts a cursor unless it equals the body's, as rctl does (executed in the served handle drag legs)")
+                         "the recorder counts a cursor unless it equals the body's, as rctl does (executed in the served handle drag legs and in the "
+                         "recorder case on the inherited pointer drawn outside its setter's box)")
         rctl_list = re.findall(r"var RCTL='([^']*)'", script)
         control = re.findall(r'^\s*const CONTROL = "([^"]*)";$', rec, re.M)
         self.assertEqual((len(rctl_list), len(control)), (1, 1), "RCTL and the recorder's CONTROL are found once each")
@@ -1135,6 +1137,75 @@ out({ atPaint: at(), kid: kid.cs.cursor, body: document.body.cs.cursor });""" % 
         for pos in ("sticky", "fixed"):
             with self.subTest(pos):
                 self._assert_inherited(self._inherited(("CONTENT", [200, 40, 190, 300], {}), {"position": pos}), "a " + pos + " child of a setter in the list")
+
+    # ...and the served recorder's chrome() on the first of those shapes, executed beside rctl (the owner's question 4 at 362fe1d18,
+    # 2026-10-05: the two rules held together by execution, not by text). The recorder (cueRec, read from the driver) runs under node
+    # over a fake page, as the served module's CueRecorderCap runs it: the badge painted at its first place, the content container,
+    # and outside it the first case's setter, which sets a cursor and matches no CONTROL entry, with its absolute child over the
+    # badge's first place, drawn outside the setter's box, which sets no cursor and inherits the setter's; the body's cursor is auto.
+    # The loop's first frame records the painted badge with chrome(). With the setter's pointer the child is in the chrome with its
+    # box, as rctl counts it in the same shape (the loader's half runs here too); a comparison with the parent's cursor leaves it out
+    # of both. With the witness's text cursor neither the setter nor the child is chrome, and the loader keeps its first place
+    _REC_FAKE = r"""
+'use strict';
+let NOW = 1000000; Date.now = () => NOW;
+const FR = []; global.requestAnimationFrame = (fn) => { FR.push(fn); return FR.length; };
+global.MutationObserver = class { constructor(cb) { this.cb = cb; } observe() {} disconnect() {} };
+global.window = global; global.addEventListener = () => {};
+global.location = { pathname: '/chat' };
+const rect = (b) => ({ left: b[0], top: b[1], right: b[0] + b[2], bottom: b[1] + b[3], width: b[2], height: b[3] });
+const DEF = { display: 'block', position: 'static', visibility: 'visible', overflowX: 'visible', overflowY: 'visible', contain: 'none', transform: 'none', filter: 'none', perspective: 'none', willChange: 'auto' };
+const el = (tag, id, box, own, parent) => { const e = { tagName: tag, id, className: '', box, own, parentElement: parent, textContent: '', clientLeft: 0, clientTop: 0, clientWidth: box[2], clientHeight: box[3],
+  getBoundingClientRect: () => rect(e.box), getAttribute: () => null, matches: () => false,
+  contains: (n) => { for (let p = n; p; p = p.parentElement) if (p === e) return true; return false; } }; return e; };
+// the computed style: what the element sets over the defaults, and the cursor its parent computes when it sets none (cursor inherits)
+const cs = (e) => Object.assign({}, DEF, { cursor: 'cursor' in e.own ? e.own.cursor : e.parentElement ? cs(e.parentElement).cursor : 'auto' }, e.own);
+global.getComputedStyle = cs;
+const BODY = el('BODY', '', [0, 0, 390, 844], {}, null);
+const CONTENT = el('DIV', 'content', [0, 44, 390, 656], { overflowY: 'auto' }, BODY);
+const BADGE = el('DIV', 'pane-reconn', [248, 52, 134, 25], {}, BODY); BADGE.classList = { contains: (c) => c === 'on' }; BADGE.textContent = 'reconnecting…';
+const SETTER = el('DIV', 'setter', %(setter)s, { cursor: %(cursor)s }, BODY);
+const KID = el('SPAN', 'kid', %(kid)s, { position: 'absolute' }, SETTER);
+BODY.getElementsByTagName = () => [CONTENT, BADGE, SETTER, KID];
+global.document = { getElementById: (id) => ({ 'pane-reconn': BADGE, content: CONTENT })[id] || null, documentElement: { clientWidth: 390 }, body: BODY };
+"""
+
+    def _recorder_chrome(self, cursor, setter, kid):
+        node = shutil.which("node")
+        if not node:
+            raise unittest.SkipTest("node not installed")
+        with open(os.path.join(HERE, "return_from_background_browser.mjs"), encoding="utf-8") as f:
+            src = f.read()
+        a = src.index("const cueRec = () => {")
+        b = src.index("\n};\n", a) + 3
+        script = self._REC_FAKE % {"setter": json.dumps(setter), "kid": json.dumps(kid), "cursor": json.dumps(cursor)} + src[a:b] + r"""
+cueRec(); NOW += 16; FR.splice(0).forEach((fn) => fn(NOW));
+console.log(JSON.stringify({ badge: window.__labCue.badge, kid: cs(KID).cursor, body: cs(BODY).cursor }));
+"""
+        fx = tempfile.mkdtemp()
+        try:
+            path = os.path.join(fx, "rec.js")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(script)
+            r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+        finally:
+            shutil.rmtree(fx, ignore_errors=True)
+        self.assertEqual(r.returncode, 0, "the recorder ran over the fake page: " + r.stderr[-800:])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_the_served_recorders_chrome_counts_an_inherited_pointer_drawn_outside_its_setters_box_as_rctl_does(self):
+        setter, kid = [10, 300, 100, 40], [300, 54, 60, 20]   # the first case's shape: the kid over the first place, outside the setter's box
+        self._assert_inherited(self._inherited(("null", setter, {}), {"position": "absolute"}), "the loader's rctl on the recorder's shape")
+        o = {k: self._recorder_chrome(k, setter, kid) for k in ("pointer", "text")}
+        for k in ("pointer", "text"):
+            self.assertEqual((o[k]["kid"], o[k]["body"]), (k, "auto"), k + ": the kid inherits the setter's cursor, and the body's cursor is auto")
+            self.assertEqual([(b["on"], b.get("box")) for b in o[k]["badge"]], [(True, [248, 52, 134, 25])], k + ": the first frame recorded the painted badge at its first place")
+        self.assertEqual(o["pointer"]["badge"][0]["chrome"],
+                         [{"el": "div#setter", "label": "", "box": setter, "inContent": False}, {"el": "span#kid", "label": "", "box": kid, "inContent": False}],
+                         "the recorder's chrome() counts the setter and the kid, which shows the setter's pointer outside the setter's box and over the "
+                         "badge, so the leg's check would see the badge over it, as rctl counts it; under a comparison with the parent's cursor the kid "
+                         "was in neither")
+        self.assertEqual(o["text"]["badge"][0]["chrome"], [], "the witness: a text cursor, set and inherited the same way, makes no chrome")
 
     # ...and the texts state that rule: the kernel's comment, the placement entry, the recorder's comments and this module's own state
     # that a cursor counts unless it equals the body's, and none states the parent comparison or the residual it left (the old

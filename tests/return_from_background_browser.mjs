@@ -62,7 +62,7 @@ catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const result = async (extra) => {
   Object.assign(out, extra || {});
   if (cfg.resultPath) { try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { out.resultWriteError = String(e).slice(0, 200); } }
-  const compact = { ...out, dials: undefined, dialsN: out.dials.length, wsWords: undefined, vis: undefined, cue: undefined, postTap: undefined, resultPath: cfg.resultPath || null };   // the cue's records (every painted frame's chrome) ride the full result alone
+  const compact = { ...out, dials: undefined, dialsN: out.dials.length, wsWords: undefined, vis: undefined, cue: undefined, postTap: undefined, census: undefined, resultPath: cfg.resultPath || null };   // the cue's records (every painted frame's chrome) and the control census ride the full result alone
   fs.writeSync(1, "RESULT:" + JSON.stringify(compact) + "\n");
   try { await browser.close(); } catch (e) { /* closing */ }
   process.exit(0);
@@ -387,6 +387,81 @@ const cueRec = () => {
   return "armed";
 };
 
+// THE CONTROL CENSUS (round 3 of the review, the owner's question 2 at 362fe1d18, 2026-10-05): outside a drag the loader's rctl,
+// which counts a cursor unless it equals the body's, counts exactly the elements the rule before round 3 counted: an RCTL entry,
+// or a pointer, grab or resize cursor read from the computed style alone. cfg.census turns it on (the Chromium legs, so CI runs
+// it). censusOf(at, only) reads each pane document the shell shows (its frame element has a box), or the pane `only` names. In
+// each it runs the loader's own scan, robs, with the loader's own rctl, rclip and RCTL, their text read from the document's
+// script (the loader is a closure, so nothing outside it can call its functions), over the document's own badge and content
+// container (the id the script hands getElementById): the set robs returns is what rctl counts, as robs calls it. Then the same
+// scan runs again with the earlier rule in rctl's place, evaluated in the document on the same computed styles, and the two sets
+// must be one. The earlier rule's RCTL is the page's without the two handle names round 3 added. A reading keeps both counts, the
+// elements the two sets disagree on (at most 12 named), the body's cursor, and `inherit`: the elements the earlier rule's scan
+// holds that show a counted cursor equal to their parent's and match no RCTL entry, the elements a comparison with the parent's
+// cursor drops, so a reading that has some tells the body comparison from that one. A third scan, with a rule that counts nothing
+// in rctl's place, must hold nothing (`none`): the witness that the swap reaches the scan. A document with no badge (#pane-reconn)
+// has no loader and is listed as such (the Sessions band and Files carry none).
+const censusPage = (scan, rule, PRE, c) => {
+  const CUR = /^(pointer|grab|grabbing|(n|e|s|w|ne|nw|se|sw|ew|ns|nesw|nwse|col|row)-resize)$/;
+  const own = scan().map((t) => t[0]);                                                   // robs with the loader's rctl
+  rule((e, s) => !!(e.matches && e.matches(PRE)) || CUR.test(s.cursor));                  // the rule before round 3 in rctl's place
+  const pre = scan().map((t) => t[0]);
+  rule(() => false);                                                                       // the swap's own witness: a rule that counts nothing
+  const none = scan().length;
+  const A = new Set(own), P = new Set(pre);
+  const nm = (e) => e.tagName.toLowerCase() + (e.id ? "#" + e.id : "") + (typeof e.className === "string" && e.className.trim() ? "." + e.className.trim().split(/\s+/)[0] : "");
+  const diff = own.filter((e) => !P.has(e)).map((e) => ({ el: nm(e), cursor: getComputedStyle(e).cursor, rctl: true, pre: false }))
+    .concat(pre.filter((e) => !A.has(e)).map((e) => ({ el: nm(e), cursor: getComputedStyle(e).cursor, rctl: false, pre: true })));
+  const inherit = pre.filter((e) => { const s = getComputedStyle(e); return CUR.test(s.cursor) && !(e.matches && e.matches(PRE)) && !!e.parentElement && getComputedStyle(e.parentElement).cursor === s.cursor; }).length;
+  return { body: getComputedStyle(document.body).cursor, vw: document.documentElement.clientWidth, n: document.body.getElementsByTagName("*").length,
+           rctl: own.length, pre: pre.length, none, inContent: own.filter((e) => c.contains(e)).length, inherit, diffN: diff.length, diff: diff.slice(0, 12) };
+};
+// the loader's declaration of `name`, whole (its braces balanced from the first), from a script that declares it once; else null
+const fnText = (src, name) => {
+  const i = src.indexOf("function " + name + "(");
+  if (i < 0 || src.indexOf("function " + name + "(", i + 1) >= 0) return null;
+  for (let k = src.indexOf("{", i), depth = 0; k > 0 && k < src.length; k++) {
+    if (src[k] === "{") depth++;
+    else if (src[k] === "}" && --depth === 0) return src.slice(i, k + 1);
+  }
+  return null;
+};
+// what the census runs of the loader: rctl, rclip and robs, the RCTL list and the content container's id; null when any is missing
+const loaderText = (src) => {
+  const list = /var RCTL='([^']*)'/.exec(src), cid = /,c=document\.getElementById\('([^']*)'\)/.exec(src);
+  const fns = { rctl: fnText(src, "rctl"), rclip: fnText(src, "rclip"), robs: fnText(src, "robs") };
+  return list && cid && fns.rctl && fns.rclip && fns.robs ? { list: list[1], cid: cid[1], fns } : null;
+};
+const HANDLES = ["#composer-resize", "#tabbar-resize"];
+if (cfg.census) { out.census = []; out.censusMs = 0; }
+const censusOf = async (at, only) => {
+  if (!cfg.census) return;
+  const t0 = now();
+  for (const f of page.frames()) {
+    let app = null;
+    try { app = new URL(f.url()).pathname.slice(1); } catch (e) { continue; }
+    if (!APPS.includes(app) || (only && app !== only)) continue;
+    const reading = { at, app };
+    try {
+      reading.shown = await page.evaluate((a) => { const fe = document.getElementById("f-" + a); if (!fe) return false; const r = fe.getBoundingClientRect(); return r.width > 0 && r.height > 0; }, app);
+      if (reading.shown) {
+        const src = await f.evaluate(() => ({ badge: !!document.getElementById("pane-reconn"), scripts: Array.from(document.scripts).map((s) => s.textContent || "").filter((t) => t.indexOf("function rctl(") >= 0) }));
+        reading.loader = src.badge;
+        const k = src.scripts.length === 1 ? loaderText(src.scripts[0]) : null;
+        if (src.badge && !k) reading.err = "the loader's rctl, rclip, robs, RCTL and container were not found once in the document's script (" + src.scripts.length + " scripts name rctl)";
+        else if (src.badge) {
+          Object.assign(reading, { rctlList: k.list, cid: k.cid });
+          const pre = k.list.split(",").filter((x) => !HANDLES.includes(x)).join(",");
+          Object.assign(reading, await f.evaluate("(function () { var rb = document.getElementById('pane-reconn'), c = document.getElementById(" + JSON.stringify(k.cid) + "), rhs = null, rpins = [], RCTL = " + JSON.stringify(k.list) + ";\n"
+            + k.fns.rctl + "\n" + k.fns.rclip + "\n" + k.fns.robs + "\nreturn (" + censusPage.toString() + ")(function () { return robs(); }, function (f) { rctl = f; }, " + JSON.stringify(pre) + ", c); })()"));
+        }
+      }
+    } catch (e) { reading.err = String(e).slice(0, 200); }
+    out.census.push(reading);
+  }
+  out.censusMs += now() - t0;
+};
+
 const readDiag = () => {
   let txt = "";
   try { txt = fs.readFileSync(cfg.diag, "utf8"); } catch (e) { return []; }
@@ -466,6 +541,7 @@ try {
       let after = null;
       while (now() < showDeadline) { after = await feedRead(); if (after && after.cards > 0 && after.spinGone) break; await sleep(100); }
       out.feedAfterShow = { ...(after || {}), ms: after && after.cards > 0 ? now() - out.t.feedShow : -1 };
+      await censusOf("feed", "feed");   // the phone's Feed, shown and painted (the control census, above)
       await page.click("#mtabs button[data-pane=" + (cfg.bootTab || "chat") + "]");   // back to the boot tab (a Feed show-and-hide: the feed is exempt from parking, so the parked set below is unchanged)
       await sleep(300);
     }
@@ -712,6 +788,7 @@ try {
     out.srcAfterTap = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("iframe[id^=f-]")).map((f) => [f.id.slice(2), f.getAttribute("src")])));
     out.loadingAfterTap = await page.evaluate(() => ({ body: document.body.classList.contains("pane-loading"), failed: document.body.classList.contains("pane-failed"), panes: Array.from(document.querySelectorAll(".pane.loading")).map((d) => d.id), failedPanes: Array.from(document.querySelectorAll(".pane.failed")).map((d) => d.id),
       retryHidden: (function () { const b = document.getElementById("pane-load-retry"); return b ? b.hidden : null; })() }));
+    await censusOf("tap", cfg.tapPane);   // the tapped pane, shown and painted (the control census, above)
     await page.click("#mtabs button[data-pane=chat]");
     await sleep(Math.max(300, (cfg.settleMs || 1500) / 2));
     // the kernel's wsopen rows carry whole seconds and the measurement's return window opens one second early, so the tapped
@@ -834,6 +911,9 @@ try {
     }, cfg.overflowStrip).catch((e) => ({ err: String(e).slice(0, 120) }));
     await sleep(600);
   }
+  // the control census (above) in every pane the shell shows, the leg's surface set up (the viewer opened, the strip filled, the
+  // long note shown, the composer grown and the drag's mouse released)
+  await censusOf("pre");
   out.cueArm = {
     pane: cueChat ? await cueChat.evaluate(cueRec).catch((e) => "ERR:" + String(e).slice(0, 80)) : "no-pane-frame",
     shell: await page.evaluate(() => {
@@ -903,6 +983,7 @@ try {
     out.t.notice = now();
     out.notice = await frameOf("chat").evaluate(() => { if (typeof window.__rompLoadingPill !== "function") return { hook: false };
       window.__rompLoadingPill(true); const n = document.querySelector(".tx-landing-notice"); return { hook: true, shown: !!n && getComputedStyle(n).display !== "none" }; }).catch((e) => ({ err: String(e).slice(0, 120) }));
+    await censusOf("notice", "chat");   // the chat with the notice shown (the control census, above)
   })().catch((e) => { out.noticeError = String(e).slice(0, 200); });
   // the drag while the badge is painted (cfg.handleDrag, above): started at the return's flip, it waits for the cue pane's badge to
   // paint, then drags the handle in five steps (the composer's down, which shrinks it; the strip's down, which grows the strip),

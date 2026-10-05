@@ -115,6 +115,16 @@ def km_pane_order():
     return pairs
 
 
+def km_loader_apps():
+    """The panes whose page carries the loader and its badge, read from kernel.py as text: each _pane_spin call's container id,
+    the chat's `content` or a pane's `<pane>-list` (the recorder's own lookup of the content container), on code lines only (a
+    comment names a page that has no loader)."""
+    src = "\n".join(ln for ln in Path(os.path.join(ROOT, "kernel", "kernel.py")).read_text().splitlines() if not ln.lstrip().startswith("#"))
+    apps = sorted({"chat" if cid == "content" else cid[:-len("-list")] for cid in re.findall(r'_pane_spin\("([a-z]+(?:-list)?)"', src)})
+    assert "chat" in apps and len(apps) >= 2, apps
+    return apps
+
+
 def _eager(shell, tap=None):
     """The panes whose documents the shell has loaded before the suspend: every pane on the desktop; on the phone the eager ones plus
     the pane a leg tapped (its document loaded on the tap)."""
@@ -549,6 +559,7 @@ class ReturnFromBackground(unittest.TestCase):
                "postTap": post_tap or "", "postTapMs": 2000, "cueHoldMs": cue_hold_ms() if post_tap else 0,
                "cueApp": cue_app or "chat", "subView": bool(sub_view), "noticeAfterPaint": bool(notice_after_paint),
                "handleDrag": handle_drag or "",   # round 3 of the review (2026-10-04): a resize handle dragged while the badge is painted ("composer" or "tabbar")
+               "census": engine == "chromium",   # the control census (the owner's question 2 at 362fe1d18): in every Chromium leg, so CI runs it; _census reads it
                "landscapeKeyboard": bool(landscape_keyboard), "pinnedNote": bool(landscape_keyboard),   # ruling 3 at 79dce614c (2026-10-04): the landscape phone with the keyboard up and a long pinned note
                "overflowStrip": overflow_strip or "",   # round 2 of the review (2026-10-03, correctness-1): the chat strip filled past its cap before the suspend ("tabs" or "notes")   # round 1 of the review (2026-10-03): the pane whose badge is read, the subagent viewer opened before the suspend, the landing notice shown over the painted badge   # iOS item 4: the tap after the return, 2 s on (inside the badge's 30 s failsafe, where the off-screen paint showed)
                "showFilesControl": tap == "files",   # extra9-2 (review round 3): the Files tab exists only with the gear's Files control on (romp:settings.showFilesControl, the literal true); the install seeds it before the shell parses
@@ -665,6 +676,62 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertEqual(set(texts) - {CUE_WAIT}, set(), where + "a hung outage shorter than the cut keeps the wait line: %r" % (log,))
         else:
             self.assertTrue([x for x in texts if x and x.endswith(CUE_CONNECT)], where + "a refused try's connect line: %r" % (log,))
+        self._census(name, r)
+
+    def _census(self, name, r):
+        """THE CONTROL CENSUS, executed (round 3 of the review, the owner's question 2 at 362fe1d18, 2026-10-05): outside a drag the
+        loader's rctl, which counts a pointer, grab or resize cursor unless it equals the body's computed cursor, counts exactly the
+        elements the rule before round 3 counted, an RCTL entry or such a cursor read from the computed style alone. That is the
+        property the body comparison claims: during a drag it drops the body's own cursor, and outside one it drops nothing. Each
+        Chromium leg runs it (the driver's censusOf; WebKit and Firefox legs do not), so CI's served job runs it on every surface its
+        legs open: each pane document the shell shows once the leg's surface is set up and before the suspend (the chat with the
+        subagent viewer, either overflowing strip, the long pinned note on the landscape phone with the keyboard up, the composer grown
+        for the drag; on the desktop every pane it shows, the Feed among them), the phone's Feed at its first show, a tapped pane
+        (the Outline, Waiting) once it has painted, and the chat with the landing notice shown. The legs use one theme, so the census
+        reads that one. Each reading runs the loader's own scan (robs, with its rctl, rclip and RCTL, read from the document's
+        script), whose set is what rctl counts, and the same scan with the earlier rule evaluated in the document in rctl's place; the
+        two sets must be one, element by element, with the body's cursor auto (a third scan, with a rule that counts nothing in rctl's
+        place, holds nothing, the witness that the swap reaches the scan). The elements the earlier rule's scan holds that show a
+        counted cursor equal to their parent's and match no RCTL entry are what a comparison with the parent's cursor drops, so the
+        leg must hold some, or the census could not tell the body comparison from that one. The earlier probe's readings in three
+        engines and three themes are the PR body's measurement; this is the executed check."""
+        if r.get("engine") != "chromium":
+            return
+        where = name + ": the control census: "
+        rs = r.get("census")
+        self.assertIsInstance(rs, list, where + "the driver ran it: %r" % ({k: r.get(k) for k in ("census", "censusMs")},))
+        self.assertEqual([c for c in rs if c.get("err")], [], where + "every reading ran")
+        read = [c for c in rs if c.get("shown")]
+        need = {("pre", "chat")}
+        if r.get("shell") == "desktop":
+            need.add(("pre", "feed"))
+        if r.get("feedAfterShow") is not None:
+            need.add(("feed", "feed"))
+        if r.get("tapped"):
+            need.add(("tap", r["tapped"]))
+        if r.get("notice"):
+            need.add(("notice", "chat"))
+        got = {(c["at"], c["app"]) for c in read}
+        self.assertEqual(need - got, set(), where + "every surface the leg opens was read, shown: %r" % ([(c["at"], c["app"], c.get("shown"), c.get("loader")) for c in rs],))
+        loaded = [c for c in read if c.get("loader")]
+        apps = km_loader_apps()
+        self.assertEqual([k for k in need if k[1] in apps and k not in {(c["at"], c["app"]) for c in loaded}], [],
+                         where + "each of those whose page carries the loader (%s) was read through its scan: %r" % (", ".join(apps), [(c["at"], c["app"], c.get("loader")) for c in read],))
+        for c in loaded:
+            at = "%s, %s: " % (c["at"], c["app"])
+            self.assertEqual(c.get("body"), "auto", where + at + "outside a drag the body's cursor is auto: %r" % (c.get("body"),))
+            self.assertEqual(c.get("none"), 0, where + at + "the swap reaches the scan: with a rule that counts nothing in rctl's place it holds nothing: %r" % (c.get("none"),))
+            self.assertEqual((c.get("diffN"), c.get("diff")), (0, []),
+                             where + at + "the loader's scan with rctl under the body comparison holds the elements it holds with the rule before round 3 (an "
+                             "RCTL entry or the computed cursor alone) in rctl's place, element by element: %d differ, %r" % (c.get("diffN", -1), c.get("diff")))
+            self.assertEqual(c.get("rctl"), c.get("pre"), where + at + "...so the two counts are equal")
+        chat = [c for c in loaded if (c["at"], c["app"]) == ("pre", "chat")]
+        self.assertTrue(chat and all(c.get("rctl", 0) > 0 for c in chat), where + "the chat's scan before the suspend holds controls (its header's at least; the lab's "
+                        "Waiting pane holds none outside its list, so this is not asked of every reading): %r" % ([{k: c.get(k) for k in ("n", "rctl", "pre", "inContent")} for c in chat],))
+        self.assertGreater(sum(c.get("inherit", 0) for c in loaded), 0,
+                           where + "the leg's documents hold elements that show a counted cursor inherited from their parent and match no RCTL entry, which a "
+                           "comparison with the parent's cursor drops, so the census tells the body comparison from it: %r" % ([(c["at"], c["app"], c.get("inherit")) for c in loaded],))
+        type(self).measurements.setdefault(name, {})["census"] = {"ms": r.get("censusMs"), "readings": [{k: c.get(k) for k in ("at", "app", "shown", "loader", "n", "rctl", "pre", "none", "inContent", "inherit", "body", "vw")} for c in rs]}
 
     def _badge_text(self, where, badge):
         """The glance carries no count (romp-manager's rule of 2026-09-18): every frame that painted the badge read exactly BADGE_TEXT
