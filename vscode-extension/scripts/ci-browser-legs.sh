@@ -46,33 +46,37 @@
 # --test's exit, so a leg's spec output appears when the leg and every leg before it in roster order have ended.
 # The step's status is node's own: the first non-zero exit among those runs, in roster order, a run the grace's end
 # killed aside. On an INT or a TERM the script ends each leg still running, as the grace's end below does, waits for
-# that leg's subshell to write its node --test's exit (a leg ended during its launch is ended with its subshell
-# instead, and its line reads "with no status"), and then prints in roster order every leg's output it still holds,
-# the ended legs' partial output among it, each after the line naming its exit. A leg whose output the main loop was
-# printing when the signal landed is printed again in full, its line naming its exit included, since the count of legs
-# printed moves only after a leg's output has been printed whole (moving it first would lose the rest of that leg's
-# output instead, as the trap can run between the leg's spec output and its stderr; no case sends a signal while a leg
-# is printed). A further INT, TERM or HUP while the trap does all this is ignored, so it cannot cut that short. A
-# SIGKILL runs no trap: the output still held then is lost, the run's directory stays in TMPDIR, and the legs still
-# running, the processes under them and their timers run on until they end (each posts to the event pipe through the
-# descriptor it inherited and holds open itself, so none waits for a reader that is gone). The per-file bound:
-# ROMP_BROWSER_LEGS_FILE_MS (default 240000) ms after a leg's node --test starts, the script stops and kills every
-# process under that node --test, found by parent links over the whole process table (the file's own node process, and a
-# browser Playwright launched, which runs in a session of its own and so outside the file's process group, among them),
-# with the process group each of them leads, which reaches a process left in such a group after its parent exited,
-# outside the parent links. What neither reaches follows one rule: a process whose parent exited before the walk, and
-# which was adopted by a process outside that node --test's tree (init, or a subreaper above the leg's node --test), is
-# reached only through the group of a process the walk finds, and so is every process under it, since the parent links
-# from that node --test lead to none of them. They are reached by neither when no process the walk finds leads their
-# group. Examples, not the whole set: a process that leads its own group (started by setsid -f, or by a
-# detached spawn whose launcher exited); one in a group whose leader has exited (as Chromium starts its crash handler by
-# a double fork: that handler ends when its browser does, recorded with Playwright's new-headless Chromium on a
-# development box, not executed here); and one in the file's own process group, this script's, since no kill signals
-# that group (the file's process shares this script's own process group, which holds the script itself). The rostered
-# legs launch Chromium directly, and no process of the step's command over the real roster was left after it ended
-# (measured on a development box). The tree test's case "the per-file bound ends a leg that outlives it" runs a keeper
-# of each of those three kinds, its launcher exited before the walk, the first with a child of its own, and reads each
-# keeper and that child still alive after the cut.
+# that leg's subshell to write its node --test's exit (a leg ended during its launch is ended with its subshell instead,
+# and its line reads "with no status"), and then prints in roster order every leg's output it still holds, the ended
+# legs' partial output among it, each after the line naming its exit. Where the signal goes decides what a running leg's
+# line reads: a TERM or an INT to the script alone, or an INT to its whole process group (a background subshell of a
+# shell without job control ignores INT), lets each running leg's subshell write that exit, 137, the kill's; a TERM to
+# the whole process group, as timeout(1) sends one without --foreground (measured on a development box) and as a runner
+# that cancels the step may (not executed here), ends those subshells too, before they write it, so a running leg's line
+# reads "with no status" as well. A leg whose output the main loop was printing when the signal landed is printed again
+# in full, its line naming its exit included, since the count of legs printed moves only after a leg's output has been
+# printed whole (moving it first would lose the rest of that leg's output instead, as the trap can run between the leg's
+# spec output and its stderr; no case sends a signal while a leg is printed). A further INT, TERM or HUP while the trap
+# does all this is ignored, so it cannot cut that short. A SIGKILL runs no trap: the output still held then is lost, the
+# run's directory stays in TMPDIR, and the legs still running, the processes under them and their timers run on until
+# they end (each posts to the event pipe through the descriptor it inherited and holds open itself, so none waits for a
+# reader that is gone). The per-file bound: ROMP_BROWSER_LEGS_FILE_MS (default 240000) ms after a leg's node --test
+# starts, the script stops and kills every process under that node --test, found by parent links over the whole process
+# table (the file's own node process, and a browser Playwright launched, which runs in a session of its own and so
+# outside the file's process group, among them), with the process group each of them leads, which reaches a process left
+# in such a group after its parent exited, outside the parent links. What neither reaches follows one rule: a process
+# whose parent exited before the walk, and which was adopted by a process outside that node --test's tree (init, or a
+# subreaper above the leg's node --test), is reached only through the group of a process the walk finds, and so is every
+# process under it, since the parent links from that node --test lead to none of them. They are reached by neither when
+# no process the walk finds leads their group. Examples, not the whole set: a process that leads its own group (started
+# by setsid -f, or by a detached spawn whose launcher exited); one in a group whose leader has exited (as Chromium
+# starts its crash handler by a double fork: that handler ends when its browser does, recorded with Playwright's
+# new-headless Chromium on a development box, not executed here); and one in the file's own process group, this
+# script's, since no kill signals that group (the file's process shares this script's own process group, which holds the
+# script itself). The rostered legs launch Chromium directly, and no process of the step's command over the real roster
+# was left after it ended (measured on a development box). The tree test's case "the per-file bound ends a leg that
+# outlives it" runs a keeper of each of those three kinds, its launcher exited before the walk, the first with a child
+# of its own, and reads each keeper and that child still alive after the cut.
 # The walk stops each process it finds and reads the table again until a read finds no new one, a guard against a
 # process that forks during the walk, which no case executes. node --test then records the file as failed as a whole
 # (its process ended on a signal), beside the results the file recorded before the kill, and the cut's red after the run
@@ -278,16 +282,17 @@ started=0
 work=$(mktemp -d)
 # On any exit: each leg still running is ended (its timer's group killed, its node --test and every process under it
 # killed, as end_leg below does) and its subshell waited for, so the subshell has written its node --test's exit (137,
-# the kill's) before the output is printed and writes nothing in the run's directory while it is removed (a write that
-# landed during the removal failed it, and the script exited 1 instead of the signal's status, leaving the directory);
-# then every started leg's output not yet printed is printed in roster order (on an INT or a TERM: the ended legs'
-# partial output, and the whole output of legs that finished behind one still running; a leg the main loop was printing
-# when the signal landed is printed again in full, since shown moves only after show returns), then the run's directory
-# is removed. A further INT, TERM or HUP while it does so is ignored (its first line), so a second
-# signal cannot end the shell between a stop and its kill, which would leave the rest of the legs running and the one being
-# ended stopped for good. A leg counts as started before its launch begins, so a signal that lands during the launch ends
-# what the launch had started by then; a signal in the gap between a background start and the next command, which keeps
-# its pid (tmr[i] or job[i]), can leave that one process outside this reach.
+# the kill's; a TERM to the whole process group ends that subshell first, before it writes the exit, and the leg's line
+# then reads "with no status", as the header states) before the output is printed and writes nothing in the run's
+# directory while it is removed (a write that landed during the removal failed it, and the script exited 1 instead of
+# the signal's status, leaving the directory); then every started leg's output not yet printed is printed in roster
+# order (on an INT or a TERM: the ended legs' partial output, and the whole output of legs that finished behind one
+# still running; a leg the main loop was printing when the signal landed is printed again in full, since shown moves
+# only after show returns), then the run's directory is removed. A further INT, TERM or HUP while it does so is ignored
+# (its first line), so a second signal cannot end the shell between a stop and its kill, which would leave the rest of
+# the legs running and the one being ended stopped for good. A leg counts as started before its launch begins, so a
+# signal that lands during the launch ends what the launch had started by then; a signal in the gap between a background
+# start and the next command, which keeps its pid (tmr[i] or job[i]), can leave that one process outside this reach.
 cleanup() {
   trap '' INT TERM HUP
   local i=0
