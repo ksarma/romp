@@ -213,7 +213,11 @@ jobs:
     # the 27 s in the 3.14t cell of run 37212676524 (batch/2026-10-04b, job 111476102341, on the public runner): shard 1,
     # 679 + 600 + 27 = 1306 s, so 25; shard 2, 1451 + 600 + 27 = 2078 s, so 35; shard 3, 614 + 600 + 27 = 1241 s, so 25;
     # shard 4, 1237 + 600 + 27 = 1864 s, so 35. Shard 2's sum is 22 s short of 35 minutes: a slower runner, or a time
-    # before the step past 49 s, would give 40. Each cap is confirmed on the new repo's first CI run, whose jobs give the
+    # before the step past 49 s, would give 40. Each cap is the slower of 3.12 and 3.14t, measured locally, and serves
+    # 3.10, 3.11 and 3.13 unmeasured. In run 37212676524 the 3.10 and 3.11 pytest steps took 1.31 and 1.25 times 3.12's
+    # (1639 s and 1554 s against 1248 s; 3.13's 1422 s is 1.14 times). At those ratios shard 2 (1220 s on 3.12) and
+    # shard 4 (1237 s on 3.12) pass 1473 s, the phase past which T230b's rule gives 40, while shards 1 and 3 stay at 25
+    # (tests/test_ci_bats_bound.py holds this disclosure to the figures). Each cap is confirmed on the new repo's first CI run, whose jobs give the
     # private runner's own phases and setup times. Each step's time is the jobs API's.
     # 90 is the figure each shard's cap held before the shards were measured. The whole suite's estimated one-worker
     # phase gave it: the slowest finished two-worker Linux cell, the 3.10 cell of run

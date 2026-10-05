@@ -83,7 +83,18 @@ class BatsStepBound(unittest.TestCase):
 # ci.yml's comment, not entries here: a file's shard moved with the count and with the rule. Re-measuring a shard means
 # setting its entry to the measured seconds, and ci.yml's figure for that shard and its comment to match. Each cap is
 # confirmed on the new repo's first CI run.
+# Each entry serves 3.10, 3.11 and 3.13 unmeasured. In run 37212676524 the 3.10 and 3.11 pytest steps took 1.31 and 1.25
+# times 3.12's (UNMEASURED_RATIO_STEP_S), and at those ratios shard 2 (1220 s on 3.12) and shard 4 (1237 s) pass 1473 s,
+# the phase past which the rule gives 40, while shards 1 and 3 stay at 25; ci.yml's cap comment discloses it, and
+# test_the_cap_comment_discloses_each_shard_an_unmeasured_interpreter_would_raise holds that disclosure to the figures.
 SHARD_PHASE_S = {1: 679, 2: 1451, 3: 614, 4: 1237}
+# each shard's own phase on 3.12 (the same measurement), the base the unmeasured interpreters' ratios scale
+SHARD_PHASE_312_S = {1: 529, 2: 1220, 3: 614, 4: 1237}
+# the Run pytest step's seconds in each Linux cell of run 37212676524 (batch/2026-10-04b, two workers on the public runner),
+# the jobs API's figures: each unmeasured interpreter's ratio to 3.12
+UNMEASURED_RATIO_RUN = 37212676524
+UNMEASURED_RATIO_STEP_S = {"3.10": 1639, "3.11": 1554, "3.12": 1248, "3.13": 1422}
+UNMEASURED = ("3.10", "3.11", "3.13")
 # what ci.yml's cap for a shard holds while that shard's phase is a placeholder, and each shard held until the shards
 # were measured: the cap the whole suite's estimated
 # one-worker phase gave (WHOLE_SUITE_ESTIMATE_INPUTS: the slowest finished two-worker Linux cell, the 3.10 cell of run
@@ -203,6 +214,45 @@ class PythonJobCeiling(unittest.TestCase):
                                  "the %d s per-test timeout plus %d s before the step, rounded up to a multiple of 5 minutes, "
                                  "is %d; ci.yml has %d" % (k, phase, PER_TEST_TIMEOUT_S, SETUP_S, want, self.caps[k]))
                 self.assertIn("%d s" % phase, self.head, "the cap's comment states shard %d's phase, %d s" % (k, phase))
+
+    def test_the_cap_comment_discloses_each_shard_an_unmeasured_interpreter_would_raise(self):
+        # Each cap takes the slower of 3.12 and 3.14t, measured locally, and serves 3.10, 3.11 and 3.13 unmeasured. Scaled by
+        # each unmeasured interpreter's ratio to 3.12 in run UNMEASURED_RATIO_RUN, a shard whose rule figure passes its cap
+        # is one the first private run may cancel. The comment names each such shard with its 3.12 phase and the phase past
+        # which the rule passes its cap, names no other shard that way, and states the run and the ratio of each
+        # interpreter that raises one. A text pin over figures this file derives: it holds the disclosure, not a cap
+        # (test_each_shards_cap_is_the_rules_figure_for_its_phase holds the caps)
+        self.assertEqual(sorted(SHARD_PHASE_312_S), list(range(1, self.count + 1)), "a 3.12 phase for each shard")
+        for k in range(1, self.count + 1):
+            self.assertGreaterEqual(SHARD_PHASE_S[k], SHARD_PHASE_312_S[k], "shard %d's entry is the slower of 3.12 and "
+                                    "3.14t, so it is at least 3.12's own phase" % k)
+        base = UNMEASURED_RATIO_STEP_S["3.12"]
+        raising, raised = set(), set()
+        for k in range(1, self.count + 1):
+            for py in UNMEASURED:
+                scaled = -(-SHARD_PHASE_312_S[k] * UNMEASURED_RATIO_STEP_S[py] // base)   # rounded up to the second
+                if rule_minutes(scaled, PER_TEST_TIMEOUT_S, SETUP_S) > self.caps[k]:
+                    raising.add(py)
+                    raised.add(k)
+        if raised:
+            self.assertTrue("run %d" % UNMEASURED_RATIO_RUN in self.joined,
+                            "the disclosure names the run its ratios come from")
+        for py in sorted(raising):
+            ratio = "%.2f" % (UNMEASURED_RATIO_STEP_S[py] / base)
+            self.assertTrue(ratio in self.joined, "%s's ratio to 3.12 in run %d, %s, raises a shard's rule figure past "
+                            "its cap: the cap's comment states it" % (py, UNMEASURED_RATIO_RUN, ratio))
+        for k in range(1, self.count + 1):
+            named = "shard %d (%d s on 3.12)" % (k, SHARD_PHASE_312_S[k])
+            with self.subTest(shard=k):
+                if k in raised:
+                    self.assertTrue(named in self.joined, "an unmeasured interpreter's ratio raises shard %d's rule figure "
+                                    "past its cap of %d: the cap's comment names it" % (k, self.caps[k]))
+                    edge = self.caps[k] * 60 - PER_TEST_TIMEOUT_S - SETUP_S
+                    self.assertTrue("%d s, the phase past which" % edge in self.joined, "the cap's comment states the "
+                                    "phase past which the rule passes shard %d's cap, %d s" % (k, edge))
+                else:
+                    self.assertFalse(named in self.joined, "no unmeasured interpreter's ratio raises shard %d's rule "
+                                     "figure past its cap: the cap's comment does not name it among those that do" % k)
 
     def test_the_placeholder_figure_is_the_whole_suites_estimate_and_its_comment_states_it(self):
         cell_s, serial_s, two_worker_s = WHOLE_SUITE_ESTIMATE_INPUTS
