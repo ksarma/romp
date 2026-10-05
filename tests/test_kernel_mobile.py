@@ -6,12 +6,14 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
 import unittest
 from romp_load import load_source
 import tempfile
+from html.parser import HTMLParser
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -2478,6 +2480,154 @@ class MobileBellExecutes(unittest.TestCase):
         js = km._LANDING_MOBILE_JS
         self.assertIn("var B=bar.querySelectorAll('button[data-pane]')", js)
         self.assertNotIn("bar.querySelectorAll('button'),", js)
+
+
+_BELLS = ("mbell", "rail-bell")
+_NAMES_A_BELL = re.compile(r"(?<![\w-])(?:mbell|rail-bell)(?![\w-])")
+
+
+class _BellMarkup(HTMLParser):
+    """The class attribute of every live start tag whose id is a bell's (script and style content is text to the tokenizer)."""
+
+    def __init__(self, html):
+        super().__init__(convert_charrefs=True)
+        self.found = {b: [] for b in _BELLS}
+        self.feed(html)
+        self.close()
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if a.get("id") in self.found:
+            self.found[a["id"]].append(set((a.get("class") or "").split()))
+
+    handle_startendtag = handle_starttag
+
+
+def _bell_rule_classes(html):
+    """{bell id: classes} that the served shell's CSS rules name on the bell: every class in a compound that carries the bell's id,
+    inside :not() and the other functional pseudo-classes as well (`#mbell:not(.on) .bell-slash` names `on` on #mbell), read from the
+    parsed rules (served_css.rules), less the classes the bell's own markup gives it."""
+    named = {b: set() for b in _BELLS}
+    for rule in served_css.rules(html):
+        for member in served_css.members(rule.selector):
+            for comp in served_css._split_top(re.sub(r"\s*([>+~])\s*", r"\1", member), " >+~"):
+                for b in _BELLS:
+                    if re.search(r"#%s(?![\w-])" % re.escape(b), comp):
+                        assert "[class" not in comp, "a rule selects #%s by its class attribute (%r); read it into this census" % (b, rule.selector)
+                        named[b] |= set(re.findall(r"\.([\w-]+)", re.sub(r"\[[^\]]*\]", "", comp)))
+    markup = _BellMarkup(served_css.markup(html)).found
+    for b in _BELLS:
+        assert len(markup[b]) == 1, "the served shell carries %d elements with id=%s, not one" % (len(markup[b]), b)
+        named[b] -= markup[b][0]
+    return named
+
+
+# The executed half of the census below: _BELL_HARNESS's stub shell, with every DOM write that can put a class on a bell recorded,
+# then the scripts the census hands over (SCRIPTS, in the page's order) driven through every bell transition this driver knows.
+_BELL_CLASS_DRIVER = r"""
+process.on('uncaughtException', (e) => { console.error(e && e.stack || e); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.error(e && e.stack || e); process.exit(1); });
+const settle = async () => { for (let i = 0; i < 40; i++) await new Promise((r) => setImmediate(r)); };
+const SET = {};
+for (const b of [mbell, railBell]) {
+  const got = SET[b.id] = new Set(), cl = b.classList, add = cl.add, toggle = cl.toggle, setA = b.setAttribute.bind(b);
+  const tokens = (v) => String(v).split(/\s+/).filter(Boolean);
+  cl.add = (...cs) => cs.forEach((c) => { got.add(c); add(c); });
+  cl.toggle = (c, f) => { const on = toggle(c, f); if (on) got.add(c); return on; };
+  cl.replace = (a, c) => { if (!cl.contains(a)) return false; cl.remove(a); got.add(c); add(c); return true; };
+  Object.defineProperty(b, 'className', { set(v) { tokens(v).forEach((c) => { got.add(c); add(c); }); }, get() { return ''; } });
+  b.setAttribute = (k, v) => { if (String(k).toLowerCase() === 'class') tokens(v).forEach((c) => { got.add(c); add(c); }); setA(k, v); };
+}
+// the kernel's answers: ok by default; FAIL refuses a POST with a 500; HOLD keeps a POST pending until it is released
+let FAIL = new Set(), HOLD = false;
+const HELD = [], answered = global.fetch;
+global.fetch = (path, init) => {
+  const post = !!(init && init.method === 'POST');
+  if (post && HOLD) { POSTS.push([path, JSON.parse(init.body)]);
+    return new Promise((res) => HELD.push(() => res({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }), text: () => Promise.resolve('{}') }))); }
+  if (post && FAIL.has(path)) { POSTS.push([path, JSON.parse(init.body)]);
+    return Promise.resolve({ ok: false, status: 500, json: () => Promise.reject(new Error('not json')), text: () => Promise.resolve('refused in the lab') }); }
+  return answered(path, init);
+};
+const ws = () => WSS[WSS.length - 1];
+const frame = (m) => ws().onmessage({ data: JSON.stringify(m) });
+const post = (m) => (WIN.message || []).forEach((f) => f({ data: m }));
+const pane = (k) => bar.querySelector('button[data-pane=' + k + ']');
+(async () => {
+  for (const js of SCRIPTS) (0, eval)(js);
+  await settle();
+  const opened = [];
+  mbell.fire('click'); opened.push(!back.hidden); mbell.fire('click'); opened.push(!back.hidden);       // the phone bell opens it, a second tap closes it
+  railBell.fire('click'); opened.push(!back.hidden); back.fire('click'); opened.push(!back.hidden);    // the rail bell opens it, an outside tap closes it
+  pane('feed').fire('click'); post({ romp: 'reveal', pane: 'chat' }); frame({ type: 'reveal', pane: 'timeline' });
+  frame({ type: 'notifyAll', on: false }); frame({ type: 'notifyTurns', on: true }); frame({ type: 'notifyAll', on: true }); frame({ type: 'notifyTurns', on: false });
+  mbell.fire('click');
+  for (const k of ['all', 'all', 'turns', 'turns', 'dev', 'dev']) { rows[k].fire('click'); await settle(); }   // every row, answered
+  pop.querySelector('[data-act=test]').fire('click'); await settle();
+  FAIL = new Set(['/notify-all', '/notify-turns', '/push/subscribe', '/push/unsubscribe']);
+  for (const k of ['all', 'turns', 'dev', 'dev']) { rows[k].fire('click'); await settle(); }                    // every row, refused
+  FAIL = new Set(); HOLD = true;
+  for (const k of ['all', 'turns', 'dev']) rows[k].fire('click');                                              // every row, pending
+  await settle();
+  const pending = ['all', 'turns', 'dev'].filter((k) => rows[k].classList.contains('busy'));
+  HOLD = false; HELD.splice(0).forEach((f) => f()); await settle();
+  Notification.permission = 'denied'; frame({ type: 'notifyAll', on: false }); frame({ type: 'notifyAll', on: true });
+  back.fire('click');
+  process.stdout.write(JSON.stringify({ set: Object.fromEntries(Object.entries(SET).map(([k, v]) => [k, [...v].sort()])),
+    opened, pending, posts: POSTS.map((p) => p[0]), held: HELD.length }) + '\n');
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+class BellStateClassCensus(unittest.TestCase):
+    """Every state class the served CSS names on a bell is one a served script sets on that bell (T10, 2026-10-05). The shell kept
+    `#mtabs #mbell.busy{opacity:.45}` and `.rail-acts #rail-bell.busy{opacity:.45}`, under a comment calling the dim the tap's
+    acknowledgement while the subscribe request ran, after the popover took over the tap (2026-09-05). Before it, a bell tap
+    subscribed this device and the script put `busy` on both bells until the request answered; since then a tap only opens the
+    popover, `setBusy` dims the popover's rows, and no script puts `busy` on a bell, so the rules described a state the page never
+    shows. Both halves come from the served shell (km._landing()). The rule half is _bell_rule_classes. The script half runs the
+    served scripts that name a bell, with the phone bar's own script before them in the page's order (its pane switcher once wrote
+    the bell's class through every bar button, MobileBellExecutes above), on _BELL_HARNESS's stub shell, and records every class a
+    DOM write puts on each bell (classList add, toggle and replace, className, setAttribute) through the bells' taps, the kernel's
+    frames, and every popover row answered, refused and left pending. A writer this run does not reach (a script that finds a bell
+    through a generic selector, a transition the driver does not make) reads as unset, which can turn the census red and never
+    green; either half coming back empty for a bell fails it."""
+
+    @classmethod
+    def setUpClass(cls):
+        html = km._landing()
+        cls.rule_classes = _bell_rule_classes(html)
+        scripts = served_css.scripts(html)
+        cls.writers = [js for js in scripts if _NAMES_A_BELL.search(js)]
+        bar_script = served_css.js_code(_mobile_js())
+        assert scripts.count(bar_script) == 1, "the phone bar's script is not served exactly once as written"
+        run = [js for js in scripts if js in cls.writers or js == bar_script]
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(_BELL_HARNESS + "const SCRIPTS=%s;" % json.dumps(run) + _BELL_CLASS_DRIVER)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, "the shell scripts threw: " + r.stderr[:1200]
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+        cls.script_classes = {b: set(cls.out["set"].get(b, [])) for b in _BELLS}
+
+    def test_every_class_a_rule_names_on_a_bell_is_one_a_served_script_sets_there(self):
+        self.assertTrue(self.writers, "no served script names a bell, so there is nothing to execute")
+        for b in _BELLS:
+            self.assertTrue(self.rule_classes[b], "no served rule names a state class on #%s: the census has nothing to check there" % b)
+            self.assertTrue(self.script_classes[b], "the run set no class on #%s: the driver did not reach the bell's writer" % b)
+        dead = {b: sorted(self.rule_classes[b] - self.script_classes[b]) for b in _BELLS if self.rule_classes[b] - self.script_classes[b]}
+        self.assertEqual(dead, {}, "the served CSS names these classes on the bells, and no served script sets them there (the scripts "
+                         "set %s): remove the rules, or wire the state and drive it here" % {b: sorted(self.script_classes[b]) for b in _BELLS})
+
+    def test_the_run_reached_every_transition_it_drives(self):
+        self.assertEqual(self.out["opened"], [True, False, True, False], "each bell opens the popover, a second tap or an outside tap closes it")
+        self.assertEqual(self.out["held"], 0, "every pending request was answered before the run ended")
+        self.assertEqual(self.out["pending"], ["all", "turns", "dev"], "each row with its request pending wears its own busy")
+        for path in ("/notify-all", "/notify-turns", "/push/subscribe", "/push/unsubscribe", "/push/test"):
+            self.assertIn(path, self.out["posts"], "the run sent %s" % path)
 
 
 # A node stand-in for the phone with the shell socket in view: the fit harness's window plus a mutable copy of the
