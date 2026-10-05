@@ -689,6 +689,10 @@ process.exit(0);
 # from the prose before a formula to the prose after it, then a right-click inside the selection, and the menu's items read. Comment
 # is left off over a formula WAITING for the renderer and over one SHOWING A FAILED LOAD'S SOURCE (the arrival changes both texts, so
 # a thread made there would record the TeX as its passage) and offered over a REFUSED formula and a LAID-OUT one, whose text holds.
+# In the waiting, failed and laid-out states three more shapes are read (the check of round 2's pass: a selector that lost the display
+# placeholder's class, or the test for a selection inside a formula, passed the one inline shape): a selection INSIDE the inline
+# formula's own text (two characters of it), one ACROSS the display formula after STEP-01 (from the end of its paragraph to the start of
+# STEP-02's), and one INSIDE that display formula's text.
 # The first chunk request is held, then answered 404; the retry, used by a reply the driver appends, is served.
 DRIVER_COMMENT = r"""
 import { createRequire } from "node:module";
@@ -736,6 +740,45 @@ try {
         : f.matches("code.md-math-src") ? "refused" : "laid";
       return { labels, state, across: !!f && r.intersectsNode(f) };
     };
+    // the other shapes: "inside" the inline formula of paragraph `marker` (the first two characters of its first text, under KaTeX's
+    // visible tree once laid out), "display" across the display formula after that paragraph (from `head` in it to `tail` in the next
+    // paragraph, `next`), "displayInside" within that display formula's text; each read as __menuOver reads its shape
+    const para = (marker) => Array.from(document.querySelectorAll("#content p")).find((e) => (e.textContent || "").startsWith(marker)) || null;
+    const textIn = (root, needle) => { const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) if (n.data.includes(needle)) return n; return null; };
+    const stateOf = (f) => !f ? "none" : f.matches(".md-math-inline, .md-math-display") ? "waiting" : f.matches("[data-math-failed]") ? "failed"
+      : f.matches(".katex, .katex-display") ? "laid" : f.matches("code.md-math-src") || (f.matches("pre") && f.querySelector("code.md-math-src")) ? "refused" : "other:" + f.tagName;
+    const displayAfter = (marker) => {
+      const p = para(marker); if (!p) return null;
+      let e = p.nextElementSibling;
+      while (e && !e.matches(".md-math-display, pre, .katex-display") && !e.querySelector(".katex-display")) { if (e.matches("p")) return null; e = e.nextElementSibling; }
+      if (!e) return null;
+      return e.matches(".md-math-display, pre, .katex-display") ? e : e.querySelector(".katex-display");
+    };
+    const menu = (r, target) => {
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      const box = r.getBoundingClientRect();
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: box.left + 2, clientY: box.top + 2 }));
+      return Array.from(document.querySelectorAll(".ctx-menu .ctx-item-label")).map((x) => x.textContent);
+    };
+    window.__menuShape = (shape, marker, head, next, tail) => {
+      if (shape === "display") {
+        const p1 = para(marker), p2 = para(next);
+        if (!p1 || !p2) return { error: "no paragraph starting " + (p1 ? next : marker) };
+        const s = textIn(p1, head), e = textIn(p2, tail);
+        if (!s || !e) return { error: "no text holding " + (s ? tail : head) };
+        const r = document.createRange(); r.setStart(s, s.data.indexOf(head)); r.setEnd(e, e.data.indexOf(tail) + tail.length);
+        const f = displayAfter(marker);
+        return { labels: menu(r, p1), state: stateOf(f), across: !!f && r.intersectsNode(f) };
+      }
+      const p = para(marker);
+      const f = shape === "displayInside" ? displayAfter(marker) : p && p.querySelector(".md-math-inline, code.md-math-src, .katex");
+      if (!f) return { error: "no formula for " + shape + " at " + marker };
+      const w = document.createTreeWalker(f.querySelector(".katex-html") || f, NodeFilter.SHOW_TEXT); let n, tn = null;
+      while ((n = w.nextNode())) if (n.data.trim().length > 0) { tn = n; break; }
+      if (!tn) return { error: "no text inside the formula", state: stateOf(f) };
+      const r = document.createRange(); r.setStart(tn, 0); r.setEnd(tn, Math.min(tn.data.length, 2));
+      return { labels: menu(r, tn.parentElement), state: stateOf(f), across: f.contains(r.commonAncestorContainer) };
+    };
   });
   const over = async (marker, head, tail) => {
     const m = await page.evaluate(([a, b, c]) => window.__menuOver(a, b, c), [marker, head, tail]);
@@ -744,16 +787,30 @@ try {
     await settle();
     return m;
   };
+  const shapes = async () => {
+    const o = {};
+    for (const shape of ["inside", "display", "displayInside"]) {
+      o[shape] = await page.evaluate((a) => window.__menuShape(...a), [shape, cfg.marker, cfg.displayHead, cfg.displayNext, cfg.displayTail]);
+      await page.keyboard.press("Escape");
+      await page.evaluate(() => window.getSelection().removeAllRanges());
+      await settle();
+    }
+    return o;
+  };
+  out.shapes = {};
   out.waiting = await over(cfg.marker, cfg.head, cfg.tail);
+  out.shapes.waiting = await shapes();
   out.refused = await over(cfg.refusedMarker, cfg.refusedHead, cfg.refusedTail);
   release();
   await page.waitForFunction((sel) => !document.querySelector(sel) && !!document.querySelector("#content [data-math-failed]"), PENDING, { timeout: 30000 });
   await settle();
   out.failed = await over(cfg.marker, cfg.head, cfg.tail);
+  out.shapes.failed = await shapes();
   fs.appendFileSync(cfg.transcript, cfg.retryLines);
   await page.waitForFunction(() => !document.querySelector("#content [data-math-failed]") && !!document.querySelector("#content .katex"), null, { timeout: 30000 });
   await settle();
   out.laid = await over(cfg.marker, cfg.head, cfg.tail);
+  out.shapes.laid = await shapes();
   out.requests = reqs.length;
   out.errors = errors;
 } catch (e) {
@@ -1251,6 +1308,7 @@ class ServedMathChunk(unittest.TestCase):
         Path(cfg).write_text(json.dumps({
             "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "transcript": self.transcript,
             "marker": "STEP-01", "head": MARK_HEAD, "tail": MARK_TAIL,
+            "displayHead": "rarely read notes.", "displayNext": "STEP-02", "displayTail": "STEP-02",
             "refusedMarker": "REFUSED-01", "refusedHead": "the doubled macro", "refusedTail": "stays as its source",
             "retryLines": jsonl([reply("rr", "r2", self.t0 + 300, "RETRY-REPLY: and $$\\sum_{k=1}^{m} k$$ for the tally.\n")])}))
         r = self._run(engine, DRIVER_COMMENT, cfg, "comment-" + engine)
@@ -1266,6 +1324,18 @@ class ServedMathChunk(unittest.TestCase):
                              w + "%s: Comment is %s over a formula %s: %r" % (name, "offered" if comment else "left off", {
                                  "waiting": "waiting for the renderer, whose text the arrival changes", "failed": "showing a failed load's source, which a success lays out",
                                  "refused": "refused for good, its source stable", "laid": "laid out, its text stable"}[name], every))
+        # the other shapes, in the three states whose text the arrival changes or has laid out: every shape's Comment, for each message
+        shaped = dict(("%s/%s" % (st, sh), (m.get("state"), m.get("across"), "Comment" in m.get("labels", [])))
+                      for st, ms in r["shapes"].items() for sh, m in ms.items())
+        for state, comment in (("waiting", False), ("failed", False), ("laid", True)):
+            for shape, what in (("inside", "a selection inside the inline formula's own text"), ("display", "a selection across the display formula"),
+                                ("displayInside", "a selection inside the display formula's own text")):
+                m = r["shapes"][state][shape]
+                self.assertNotIn("error", m, w + state + "/" + shape + ": %r" % m)
+                self.assertEqual((m["state"], m["across"]), (state, True), w + "%s/%s: %s meets a formula in that state: %r" % (state, shape, what, m))
+                self.assertIn("Quote", m["labels"], w + state + "/" + shape + ": the menu opened over the selection: %r" % m)
+                self.assertEqual("Comment" in m["labels"], comment, w + "%s/%s: Comment is %s for %s: %r" % (
+                    state, shape, "offered" if comment else "left off", what, shaped))
         self.assertEqual(r["requests"], 2, w + "the held first request (a 404), then the retry: %r" % r)
         self.assertEqual(r["errors"], [], w + "no page error")
 
