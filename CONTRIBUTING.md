@@ -123,7 +123,7 @@ On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
 each batch head, and GitHub's CI runs once per batch, on the push of the batch
 branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux; member PRs
 and merges to main run none of it (`docs/batching.md`). Each Linux interpreter
-runs as two jobs, one for each shard of the test files, each with one pytest
+runs as three jobs, one for each shard of the test files, each with one pytest
 worker: one worker running the whole suite does not fit the private runner's
 8 GB. `tests/conftest.py` (its CI's shards section) states the rule that puts
 each test file in one shard, so a new test file needs nothing to join one, and a run whose

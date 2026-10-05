@@ -76,7 +76,7 @@ class BatsStepBound(unittest.TestCase):
 # PLACEHOLDER: no shard's phase is measured yet. None marks it, and test_each_shards_cap_is_the_rules_figure_for_its_phase
 # is red while any shard's phase is None. Measuring a shard means setting its entry to the measured seconds, and ci.yml's
 # figure for that shard and its comment to match.
-SHARD_PHASE_S = {1: None, 2: None}
+SHARD_PHASE_S = {1: None, 2: None, 3: None}
 # what ci.yml's cap for each shard holds while that shard's phase is a placeholder: the cap the whole suite's estimated
 # one-worker phase gave (WHOLE_SUITE_ESTIMATE_INPUTS: the slowest finished two-worker Linux cell, the 3.10 cell of run
 # 37208049133, job 111453304880, 2312 s in its pytest step, scaled by the serial ratio measured on four CPUs, 1437 s against

@@ -86,7 +86,7 @@ Once, already done on this fork: delete branches on merge, squash and rebase mer
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
 on, admin bypass) is optional and comes after the first batch has shown the check names. The checks
 to require are the job checks a batch push reports: `Python <version> (ubuntu-latest, shard <shard>)`
-for each Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t) and each shard (1 and 2),
+for each Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t) and each shard (1, 2 and 3),
 `Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
 `Vendored tooling (node --test, ubuntu-latest)`, `vscode-extension (typecheck + test + build)` and
 `Served pages (pytest, ubuntu-latest)`. Each Linux interpreter runs as one job per shard of the test

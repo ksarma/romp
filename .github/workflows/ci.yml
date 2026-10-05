@@ -19,7 +19,7 @@ name: CI
 # runner has 4 CPUs and 16 GB. Run 36716348831, a dispatch of 2026-09-30, ran on the public runner;
 # by that rule its Linux jobs come to 214 minutes, all of this workflow a batch push runs (211 in the
 # dispatch before it, run 36664031774). On the private runner each Linux Python interpreter runs as
-# SHARD_COUNT jobs (tests/conftest.py), two today, each running one worker over one shard of the test
+# SHARD_COUNT jobs (tests/conftest.py), three today, each running one worker over one shard of the test
 # files: two workers peak at 10.9 GB (the Run pytest step gives the measurement), and one worker
 # running the whole suite outgrew 8 GB in a local run (the python job's cap comment gives that
 # measurement; this file ran the cells on one worker each, on the premise that one worker fits,
@@ -134,7 +134,7 @@ jobs:
     # dispatch); on the dispatch of 2026-09-30 (run 36664031774) the macOS 3.10 and 3.13 cells were
     # both cancelled at this cap, 3555 s and 3598 s into their pytest steps, so the macOS suite now
     # runs longer than the ceiling allows.
-    # Linux: each interpreter runs as SHARD_COUNT jobs (tests/conftest.py), two today, one for each shard of the test
+    # Linux: each interpreter runs as SHARD_COUNT jobs (tests/conftest.py), three today, one for each shard of the test
     # files (the matrix's shard axis below; tests/conftest.py's CI's shards section states the rule that puts each file
     # in one shard), and each job runs ONE worker over its shard on the private runner (2 CPUs and 8 GB; the Run pytest
     # step says why). The shards exist because one worker running the whole suite does not fit 8 GB. A local measurement
@@ -145,6 +145,10 @@ jobs:
     # running; the worker was about 7.2 GB resident at 81 percent of the suite), so the runs' phases, 4283 s and 4411 s,
     # include those restarts, and 8 GB does not hold one worker of this suite. This file ran the cells on one worker
     # each, on the premise that one worker fits, until that measurement.
+    # Two shards did not fit either. Measured the same way on 2026-10-05 (1-minute load 21 to 54), shard 1's pytest
+    # phase was 1098 s on 3.12 and 1211 s on 3.14t, its worker peaking at 4.01 and 4.51 GB resident, but shard 2's
+    # worker reached 6.66 GB resident on 3.12 (the scope's peak, page cache included, 6.92 GB), past the 6 GB a shard
+    # may take on an 8 GB runner, which leaves the rest to the runner's own system. So the count is three.
     # Each shard's cap is T230b's rule for its own phase: the shard's one-worker pytest phase, plus the 600 s per-test
     # timeout, plus the time before the step, rounded up to a multiple of 5 minutes, in the expression's matrix.shard
     # clauses, one figure for each shard. PLACEHOLDER: no shard's phase is measured yet, and each shard's figure, 90, is
@@ -159,7 +163,7 @@ jobs:
     # same rule gave 50 (the 3.14t cell of run 37158350467: 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux cap
     # from 2026-10-02 to 2026-10-04, after the 40 fork PR 926's branch set on 2026-09-30 from run 36664031774 and the 35
     # main had before that PR.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 90 || 90 }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 90 || matrix.shard == '2' && 90 || 90 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -175,7 +179,7 @@ jobs:
         # section), and the Run pytest step hands it the cell's shard, so it skips the other shards' files. The axis
         # lists 1 to SHARD_COUNT (tests/test_ci_shards.py holds it to the constant, and the shards to a partition of
         # the files).
-        shard: ['1', '2']
+        shard: ['1', '2', '3']
         exclude:
           # macOS runs 3.10 and 3.13 alone, as before the shards (the header says why), and unsharded (below)
           - os: macos-latest
@@ -190,6 +194,8 @@ jobs:
           # first CI run.
           - os: macos-latest
             shard: '2'
+          - os: macos-latest
+            shard: '3'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
