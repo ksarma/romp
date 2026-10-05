@@ -56,8 +56,9 @@ card and opens the Remote kernels panel. Then a desktop window, where the bar is
 1100px, whose actions (restart, Remote kernels, the bell, the gear) and their boxes equal af7d18250's (RAIL_AF7 below).
 MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
 
-Red at e7a371172 (the wrap-only head): its bar shows six actions and wraps at 375, 390 and 414px, and its card has no row
-of panel buttons. The fallback's pin is red under the old rule restored (no wrap), and the rail's under the move applied to
+Red at e7a371172 (the wrap-only head), in all three engines: its bar shows six actions, it wraps where one row is owed (at
+375 and 390px, and at 414 in Chromium; its row fits 414 in WebKit and Firefox and 430 in all three), and its card has no
+row of panel buttons. The fallback's pin is red under the old rule restored (no wrap), and the rail's under the move applied to
 the rail as well. Runs in the "Browser-backed served-page tests (pytest)" step of the served-pages job, "Served pages
 (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in Chromium; the WebKit and
 Firefox legs are `optional:` skips where that engine is absent or not declared in ROMP_SERVED_TESTS_ENGINES (CI declares
