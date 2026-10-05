@@ -416,21 +416,30 @@ test("contain: layout on .fileview-md in BOTH sheets, byte-equal, with the media
 /** A phrase as a document wraps it: any run of whitespace between words. */
 const prose = (words: string) => new RegExp(words.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"));
 
-test("the guide says what a file's own HTML may do, in the terms the code enforces", () => {
-  const guide = fs.readFileSync(path.join(ROOT, "docs", "guide.md"), "utf8");
-  const at = guide.indexOf("**A file's own HTML.**");
-  assert.ok(at >= 0, "the guide has the paragraph");
-  const para = guide.slice(at, guide.indexOf("\n\n", at));
+test("the reference says what a file's own HTML may do, in the terms the code enforces", () => {
+  // the paragraph moved out of the guide with the rest of the chat pane's detail (CLAUDE.md
+  // "The documentation front pages"); it is a section of its own now, and the pin follows it
+  const ref = fs.readFileSync(path.join(ROOT, "docs", "reference.md"), "utf8");
+  const head = ref.indexOf("### A file's own HTML\n");
+  assert.ok(head >= 0, "the reference has the section");
+  const at = ref.indexOf("\n\n", head) + 2;
+  const para = ref.slice(at, ref.indexOf("\n\n", at));
   assert.match(para, /`<style>`/);
   assert.match(para, /user-content-/);
   assert.match(para, /`color` and `background-color`/);
   assert.match(para, /`background=`/);
   assert.match(para, prose("cannot be ticked"));
+  assert.doesNotMatch(para, /\u2014/, "no em dash");
+  // The fork's copy of this paragraph is `para` itself: fold 4 moved the fork's paragraph (the guide's Files section) into
+  // this reference section and merged it with the project's copy there, keeping the fork's content (CLAUDE.md "The
+  // documentation front pages"; the front pages are the project's). So all nine of the fork's pins hold on it: the
+  // project's five above (`<style>`, user-content-, `color` and `background-color`, `background=`, "cannot be ticked") and
+  // the fork's four below (the comment, the body title, the svg title, and the marquee, which fork PR 862 added to the
+  // guide's copy and the re-stack on slice 1 moved here with its sentence), as md-sanitize-guide.test.ts reads the same paragraph.
   assert.match(para, prose("HTML comment is dropped"), "the comment rule: dropped before the element holding it is judged, so the prose around it stays (dropCommentChildren)");
   assert.match(para, prose("An HTML `<title>` is dropped with its text"), "the body title rule: dropped with its text, since the browser shows one nowhere outside the page's head (dropBodyTitle)");
   assert.match(para, prose("the `<title>` of an inline `svg`, the drawing's tooltip, stays"), "and its one exception, dropBodyTitle's namespace test: an svg's own <title> is kept (review round 6: the sentence had said every <title> is dropped, while the same paragraph says an inline svg is kept)");
   assert.match(para, prose("A `<marquee>` is removed, and its text and pictures stay where it stood, not moving"), "the marquee rule: the sanitizer removes an author's marquee and keeps what it held where it stood, unmoving (MD_FORBID_TAGS with KEEP_CONTENT; the file review's round 18, regression-2: the forbid reached every markdown surface and this paragraph did not say so)");
-  assert.doesNotMatch(para, /\u2014/, "no em dash");
 });
 
 test("SECURITY.md's output-sanitization bullet names KaTeX as the renderer that writes after DOMPurify, under trust: false and the plan's bounds", () => {

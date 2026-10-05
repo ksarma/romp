@@ -35,7 +35,10 @@ const flat = (s) => s.replace(/\s+/g, ' ');
 
 const plan = read('plans', 'markdown-viewer.md');
 const viewer = read('ui', 'webview', 'file-view.ts');
-const guide = read('docs', 'guide.md');
+// The guide's figure sentence lives in docs/reference.md ("### Links inside a file") since fold 4 made docs/guide.md the
+// project's front page and moved every fork paragraph to the reference beside its topic (CLAUDE.md "The documentation front
+// pages"); `guide` is that reference.
+const guide = read('docs', 'reference.md');
 
 const HEAD = '## Follow-on: Link navigation (2026-09-19)';
 const headAt = plan.indexOf('\n' + HEAD + '\n');

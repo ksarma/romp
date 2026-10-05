@@ -17,7 +17,7 @@ abstract method, so the duck-typing can't drift.
 
 Method groups:
   liveness/identity — owns, live_sessions
-  control           — send, interrupt, set_model, set_mode, set_effort, set_fast
+  control           — send, interrupt, set_model, set_mode, set_effort, set_fast, clear
   lifecycle         — spawn, resume, move, connect, kill, rename
   coordination      — working_note, set_working_note, wake   (backend-agnostic: the kernel keeps the note in
                       its own store, and the SDK backend wakes a session by an enqueue)
@@ -155,6 +155,24 @@ class SessionBackend(ABC):
         surfaced as a fork lane with no bracket, the gap plans/clear-episodes.md records)."""
         return None
 
+    def clear(self, sid: str, text: str = "/clear") -> str:
+        """Start a FRESH conversation for the same session (2026-09-19): name, mailbox, tags, color, note, mode,
+        model, effort and any queued sends stay; the conversation the agent can see restarts. "" on success;
+        "busy" when a turn is in flight (the kernel parks the op and retries at turn end); any other string is
+        the reason, shown to the user verbatim. `text` is the command as the user typed it, whitespace-trimmed
+        ("/clear", "/new", "/clear now"): the acknowledging chip a backend leaves carries those exact words,
+        because the composer retires its optimistic bubble only by that text (or a copy id, which a clear does
+        not carry), and a typed /new acknowledged by a literal "/clear" chip left the bubble standing (review
+        find, 2026-09-19). Codex implements it as a new app-server thread under the same
+        sid (CodexBackend.clear), bracketed by clearing() from before thread/start until the new thread id is
+        durable. The Claude Code backend does not implement it: a typed /clear on an SDK session still goes to
+        the CLI as literal text, which executes it (SdkBackend.send brackets it); the kernel routes to this
+        verb only for the backend that owns it (kernel _route_meta_command). The default is a refusal in
+        move()'s idiom, worded for no backend in particular, so a new backend never reads as clearable by
+        omission — and deliberately without the word "backend", which reaches a toast."""
+        return ("this session can't start a fresh conversation from here — "
+                "start a new session instead")
+
     def launch_error(self, sid: str):
         """Why this session's CLI could NOT start — {text, at, limit} — or None when it started fine (and
         on a backend with no such signal). A launch failure is otherwise invisible: the session settles
@@ -171,11 +189,12 @@ class SessionBackend(ABC):
         """True if this backend accepts a plain composer send at ANY time — even mid-turn — and manages its
         own delivery: forwarding the message to the model at the next tool boundary, handing queued sends to
         the CLI one message each, in order (SdkSession._pending + its inputs() generator, which holds the
-        next text until the CLI has taken the last: since 2026-09-08, when two texts sent during one turn
-        reached the agent fused; that incident superseded the 2026-07-17 fold of several queued sends into
-        one turn for SDK sessions), and holding them across an interrupt until the turn settles. The kernel
-        then hands composer sends straight to send() the instant they arrive (the user 2026-07-17, who
-        wanted them in as soon as possible), instead of parking them itself.
+        next text until the CLI has taken the last, since 2026-09-08, when two texts sent during one turn
+        reached the agent as one fused message; the user 2026-09-20 accepted one message each for a drained
+        pile, up to one turn each, over the 2026-07-17 fold of several queued sends into one turn for SDK
+        sessions), and holding them across an interrupt until the turn settles.
+        The kernel then hands composer sends straight to send() the instant they arrive (the user 2026-07-17,
+        who wanted them in as soon as possible), instead of parking them itself.
         False (default) means the backend has no such queue, so the kernel holds sends while a turn runs and
         merges them into one message at turn end (the tmux backend's regime, until its removal 2026-09-11).
         Slash-command drive ops (/compact, /effort, …) still

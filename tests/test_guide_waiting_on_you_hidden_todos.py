@@ -39,17 +39,10 @@ def _read(*parts):
 
 
 def _section(md, heading):
-    """The body of one `### heading` up to the next heading of any level."""
-    m = re.search(r"^### " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} )", md, re.S | re.M)
+    """The body of one `## heading` or `### heading` up to the next heading of either level."""
+    m = re.search(r"^#{2,3} " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} )", md, re.S | re.M)
     assert m, "section %r not found" % heading
     return m.group(1)
-
-
-def _toc_entry(md, heading, anchor):
-    """The guide's table-of-contents bullet for one section, up to the next bullet or blank line."""
-    start = md.index("**[%s](#%s)**" % (heading, anchor))
-    m = re.compile(r"\n- |\n\n").search(md, start)
-    return md[start:m.start() if m else None]
 
 
 def _flat(text):
@@ -68,12 +61,18 @@ def _avoid_words(context_md, term):
 
 
 class WaitingOnYouVocabulary(unittest.TestCase):
-    """The section and its TOC line use CONTEXT.md's term and none of the words it says to avoid."""
+    """The section uses CONTEXT.md's term and none of the words it says to avoid.
+
+    Fold 4 (CLAUDE.md "The documentation front pages"): the front pages are the project's, so the guide's Waiting on you
+    section moved to docs/reference.md as "## The Waiting on you pane", and the guide's table-of-contents bullet for it is
+    gone with the fork's intro (the project's front page names four views and the other panes). The TOC line's two pins
+    (its term, its avoid-words) have no line left to read; they are retired here by name, not silently: what the bullet
+    said is in the section's first sentence, which both tests still hold, and the guide is held to carry no link to the
+    section's old anchor, which would now be a dead link."""
 
     def setUp(self):
         self.guide = _read("docs", "guide.md")
-        self.section = _flat(_section(self.guide, "Waiting on you"))
-        self.toc = _flat(_toc_entry(self.guide, "Waiting on you", "waiting-on-you"))
+        self.section = _flat(_section(_read("docs", "reference.md"), "The Waiting on you pane"))
         self.avoid = _avoid_words(_read("CONTEXT.md"), "User todo")
 
     def test_context_md_still_lists_the_words_this_test_bans(self):
@@ -84,7 +83,8 @@ class WaitingOnYouVocabulary(unittest.TestCase):
 
     def test_the_section_introduces_the_term_and_the_toc_uses_it(self):
         self.assertIn("One list of every user todo a session has flagged for you", self.section)
-        self.assertIn("lists every user todo a session has flagged for you", self.toc)
+        # the TOC bullet is gone (see the class docstring): no front-page link may point at the section's old anchor
+        self.assertNotIn("(#waiting-on-you)", self.guide, "the guide links a Waiting on you section it no longer has")
 
     def test_neither_the_section_nor_the_toc_uses_an_avoid_word(self):
         # "ask" is avoided as a noun (the feed's `asks` field); as a verb it is ordinary English
@@ -95,7 +95,7 @@ class WaitingOnYouVocabulary(unittest.TestCase):
             if word == "ask":
                 continue
             pat = r"\b" + re.escape(word) + r"s?\b"
-            for where, text in (("section", self.section), ("TOC entry", self.toc)):
+            for where, text in (("section", self.section),):
                 self.assertNotRegex(text, re.compile(pat, re.I),
                                     "the Waiting on you %s says %r; CONTEXT.md avoids it" % (where, word))
 
@@ -106,11 +106,12 @@ class WaitingOnYouVocabulary(unittest.TestCase):
 
 
 class WaitingOnYouHiddenTodos(unittest.TestCase):
-    """The section names both hiding causes, with the UI's own labels and glyph."""
+    """The section names both hiding causes, with the UI's own labels and glyph (docs/reference.md's "## The Waiting on you
+    pane" since fold 4, see WaitingOnYouVocabulary)."""
 
     def setUp(self):
-        self.guide = _read("docs", "guide.md")
-        self.section = _flat(_section(self.guide, "Waiting on you"))
+        self.guide = _read("docs", "guide.md")   # its Sessions section, the project's front page, for the revival pointer
+        self.section = _flat(_section(_read("docs", "reference.md"), "The Waiting on you pane"))
         self.render = _read("ui", "webview", "render.ts")
 
     def test_the_section_names_both_hiding_causes(self):

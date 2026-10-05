@@ -426,7 +426,7 @@ export const REASON_MISSING = "missing";
  *  section named" would be false of it. */
 export const HIDDEN_SECTION = "That section is hidden in the rendered view; opened at the top.";
 /** The Outline button's label (plans/markdown-viewer.md Slice 6, item 2): the action that lists a rendered note's headings by
- *  depth and lands the picked one at the top of the body. The plan's word, a document viewer's usual one; the guide says
+ *  depth and lands the picked one at the top of the body. The plan's word, a document viewer's usual one; the reference says
  *  "the file's headings" beside it so the sessions pane's outline is never confused with it (the brief's open question 2). */
 export const OUTLINE_LABEL = "Outline";
 /** The line a failed render stands under (plans/markdown-viewer.md Slice 7, item 1): when marked, the sanitizer or a DOM pass
@@ -434,7 +434,7 @@ export const OUTLINE_LABEL = "Outline";
  *  dress as the body's first child (its second, under EMPTY_FILE's line, over an empty file whose render still threw:
  *  renderFellLine), and the file's text as Raw rows under it (codeBlock), so a render that fell shows the text
  *  and says why, where the old catch wrote the source into the Rendered box as one unannounced paragraph. No hint row (the
- *  title bar names the path) and no Download (the text is showing). Without a terminal period so the guide can carry the words;
+ *  title bar names the path) and no Download (the text is showing). Without a terminal period so the reference can carry the words;
  *  the line's text is this constant, the message in parentheses, then the period (renderFellLine). */
 export const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";
 /** The `.fileview-err` line for a render that fell (RENDER_FELL, above), naming what threw: the body's first child above the
@@ -464,7 +464,7 @@ function fellMessage(err: unknown): string {
  *  fact, then the authored source and the alt in parentheses when there is one, in one line (`Image failed to load: figs/p95.png
  *  (p95 by day)`), where the browser drew a wordless broken-image glyph or nothing. The img's `error` event carries no status, so
  *  the label names the fact and the source, never a reason, and the viewer makes no second request to learn one (the Comments
- *  panel's poll already HEADs the figure and its card says absent). Without a terminal period so the guide can carry the words. */
+ *  panel's poll already HEADs the figure and its card says absent). Without a terminal period so the reference can carry the words. */
 export const FIGURE_FAILED = "Image failed to load:";
 /** The line an empty file shows in place of its text (plans/markdown-viewer.md Slice 7, item 6). A zero-byte file painted zero
  *  Raw rows or an empty Rendered box and nothing else, a blank pane with Edit shown, so nothing told the reader an empty file from
@@ -475,7 +475,7 @@ export const FIGURE_FAILED = "Image failed to load:";
  *  shown (an empty file is editable; the editor mounts over ""), the Outline button hides (no heading), error() is null (the
  *  content, all none of it, shows) and mode() follows the buttons; a reload that lands bytes repaints without the line. Keyed on
  *  the text the landing applied, never on a byte count or a timer. The one constant of the slice with its own terminal period:
- *  the line shows it alone (contract C5), and the guide carries the words. */
+ *  the line shows it alone (contract C5), and the reference carries the words. */
 export const EMPTY_FILE = "This file is empty.";
 /** The `.fileview-err` line for an empty file (EMPTY_FILE, above): prepended to the body right after the text paint's swap in
  *  both viewers, so it stands above the empty root and outside it. */
@@ -528,7 +528,7 @@ export const LATIN1_NOTICE = "This file is not UTF-8 on disk, so it can be read 
  *  offset but becomes another character, so a record whose text crosses one no longer matches, and the save writes LF where
  *  the file had CR under records anchored to the disk bytes. Before this slice the refusal named CRLF alone and keyed on CRLF
  *  alone, so a CR-only file's pending changes went into an editor that rewrote every ending under them. Shown with the panel's
- *  own refusal after it (contract C5: `CR_REFUSAL + " " + pending.refusal`); the guide carries the words. Without pending
+ *  own refusal after it (contract C5: `CR_REFUSAL + " " + pending.refusal`); the reference carries the words. Without pending
  *  changes the editor mounts as before, over the LF view of the text (norm), and the save door writes the lone CRs back where
  *  the buffer has LF (eolCR, the CRLF restore's shape), so a CR-only file keeps its endings through an edit (the Slice 7
  *  review's round 1; before, a save wrote LF where the file had CR, a data change the reader did not make). */
@@ -1875,7 +1875,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // plans/markdown-viewer.md, item 7; CR_REFUSAL says how: norm rewrites a CRLF or a lone CR to LF before the mount, as
   // CodeMirror's document model would as it loads the string), which moves or mismatches the offsets the records
   // hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked. The
-  // CR refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same). The
+  // CR refusal states its consequence literally: it is copy the person acts on (docs/reference.md says the same). The
   // words for what `begin()` returned, or null when the editor may carry it — asked at the CLICK (so a refusal needs no
   // consent popup first) and again at the MOUNT over the begin() whose records the editor takes (enterEdit): the consent
   // read between the two is a kernel round-trip, and a status landing inside it (the poll's tick, the panel's mount-time
@@ -2682,6 +2682,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // named with its state above), so the panes that the probes' own fetches paint share one budget.
   const armWayBack = () => { wayBack = true; wayBackSeq++; wayBackProbing = false; paneView = viewSeq; };
 
+  // The view group takes no gap when every control in it is hidden (edit mode hides the format pair too). Its
+  // state is derived from the controls' own hidden states, so it is read after the last of them is decided: at
+  // the top of the paint, and again inside the media branch, which decides the Source button after that first
+  // read. Over a picture the Source button is the group's one control (no format pair, the zoom glyph hidden),
+  // so an SVG's first paint would otherwise leave the shown button inside a hidden group and the Source view
+  // unreachable; a PNG or a PDF keeps every control hidden and the group hidden with them. A markdown file's
+  // Outline button rides the group too (T367's grouping), and a text paint decides it after this read, so
+  // syncOutline re-reads the group on the same rule once it has.
+  const syncViewGroup = () => {
+    viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);
+  };
   // Chooses the body for the current prefs and syncs the buttons. The pressed state flips SYNCHRONOUSLY
   // in the click handler — the immediate acknowledgement ui/CLAUDE.md requires — and so does the content
   // swap, since the text is already in memory.
@@ -2762,7 +2773,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // 523px low). So a text paint decides it inside the paint, after the swap and before the hooks measure and the seat
     // writes (syncOutline, below); only the paths that paint no text hide it here (the loader, the editor's entry).
     if (editing || text === null) outlineBtn.hidden = true;
-    viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);   // an all-hidden group takes no gap (edit mode hides the pair too); the Outline button is decided inside the paint, so syncOutline re-reads this
+    syncViewGroup();                          // the Outline button is decided inside the paint, so syncOutline re-reads the group
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
@@ -2776,7 +2787,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       srcBtn.hidden = !(isSvgImage && objUrl !== null);
       srcBtn.classList.toggle("on", svgSource);
       srcBtn.setAttribute("aria-pressed", String(svgSource));
-      viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);   // the media branch decides the Source button after the group's first sync above, so the group is re-read here: the SVG Source view is the one media control in the view group (T367's grouping)
+      syncViewGroup();                        // the Source button was decided after the group's read above: the group follows it
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
       viewError = null; endHold();            // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3), and no hold stands over it (endHold)
       // a target on a picture or a PDF (a heading, a line, an offset) is judged by the landing, not here: landMedia, over a body
@@ -5665,8 +5676,9 @@ export function viewerHtml(text: string, walk?: (token: Token) => void): string 
  *  over-counts on the safe side: an opacity it cannot read as a number (a var(), a calc()) counts as under 1, and a rule on a
  *  pseudo-element counts for its element's class. */
 const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
-  "agent-gist-meta", "agent-steps-note", "armed", "ask-btn-primary", "ask-pair-a", "bg-await-note", "bg-caret", "bg-stop",
-  "branch-chip", "busy", "chip", "chip-interrupting", "chip-nav", "cl", "cleared", "cmd-row", "cmt-attach", "cmt-err",
+  "agent-gist-meta", "agent-steps-note", "armed", "art-age", "art-chev", "art-count", "art-dir", "art-empty", "art-lock",
+  "art-name", "art-none", "art-not-open", "art-note", "art-via", "ask-btn-primary", "ask-pair-a", "bg-await-note", "bg-caret",
+  "bg-stop", "branch-chip", "busy", "chip", "chip-interrupting", "chip-nav", "cl", "cleared", "cmd-row", "cmt-attach", "cmt-err",
   "cmt-mail", "cmt-max", "cmt-note", "cmt-quote", "cmt-relayed-note", "cmt-send", "cmt-tick", "cmt-x", "code-copy",
   "col-dragging", "compacting-bar-fill", "composer-note-hint", "composer-ship-dots", "ctx-bar", "ctx-caret", "ctx-clicked",
   "ctx-icon", "ctx-item", "ctx-item-body", "ctx-item-sub", "ctx-scan", "cv", "day-divider", "diff-code", "diff-ctx", "diff-gut",
@@ -5681,14 +5693,16 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
   "fv-cl", "fv-dead", "fv-figopen", "fv-wikilink", "fx-body", "glyph", "gone", "host-off", "host-prefix", "idle", "img-caption",
   "img-pending", "jl-sess", "jl-switch", "jl-text", "jl-unknown", "ledger-tnode", "loading", "locate-toast", "machine", "mcount",
   "mcp-act", "mention-more", "meta-caret", "meta-dots", "meta-item-sub", "meta-label", "mrow", "msg-del", "msg-edit", "msg-fork",
-  "msg-restorefiles", "nm", "none", "notice-act", "notice-caret", "notice-sub", "off", "on", "opening", "opening-line-dots",
+  "msg-restorefiles", "nm", "none", "notice-act", "notice-caret", "notice-sub", "ntc-back", "ntc-body", "ntc-btn", "off", "on",
+  "opening", "opening-line-dots",
   "pane-gone", "path-full-retry", "path-load-note", "pending", "ph", "picker-action", "picker-be-opt", "picker-browse",
   "picker-dir", "picker-lifted", "rail-day", "rail-sticky", "repeat", "resolved", "rewound", "rl-dots", "romp-acted",
-  "romp-bubble", "romp-tl-tip", "rs-dragging", "rs-fastin", "rs-jrow", "rs-login-rm", "rs-off", "rs-pane-gone", "rs-row",
+  "romp-bubble", "romp-tl-tip", "rs-dragging", "rs-fastin", "rs-jrow", "rs-login-rm", "rs-off", "rs-pane-gone", "rs-pin",
+  "rs-row",
   "rs-stale-toast", "rs-widget", "rs-widget-demo", "scroll-mark", "sel", "send-held", "sending", "sess-exit", "slash-arg",
   "slash-key-hint", "sn-applying", "sn-known", "sn-trust", "snap-act", "snap-count", "snap-note", "snap-sess", "st-cleared",
   "tab", "tab-close", "tab-closed", "tab-compacting-fill", "tab-dot", "tab-group-count", "tab-group-head", "tab-label",
-  "tag-chip-off", "tg-child", "tg-last", "thinking", "tool-fold-toggle", "toolgroup-caret", "turn", "turn-elapsed",
+  "tab-ph-end", "tag-chip-off", "tg-child", "tg-last", "thinking", "tool-fold-toggle", "toolgroup-caret", "turn", "turn-elapsed",
   "turn-toolgroup", "tx-gap-glyph", "tx-starting-swirl", "typing", "undelivered-bubble", "undo-dots", "user-bubble",
   "user-img-path", "ut-file", "ut-link", "warn-toast", "wt-empty", "wt-file", "wt-link", "wt-notice", "wt-sess"
 ]);
@@ -6187,7 +6201,7 @@ function keepAuthoredSpellings(root: ParentNode): void {
  *  and the two readers above take it as a directory named `~` beside the file, and the kernel's `~` expansion
  *  (_resolve_open_path) never sees it because the joined path no longer starts with it. A LINK's `~/…` is the
  *  opposite on purpose (joinDocPath leaves it for the kernel to expand): a link has one reader, the kernel at click
- *  time; a figure has three that must name one file (file-view-figures-absolute.test.ts pins both, and docs/guide.md
+ *  time; a figure has three that must name one file (file-view-figures-absolute.test.ts pins both, and docs/reference.md
  *  states them). Untouched: a src with a scheme (http:, https:, data:, blob:, …), a protocol-relative URL
  *  (`//host/…`, which the browser and every markdown reader take as a web address), and an empty one. `..` segments and `./` pass through
  *  as written: the kernel resolves the path and gates it, and a client-side normalization would be a second, weaker
@@ -7609,10 +7623,13 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
     } else if (m.type === "fileSaveFailed" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       h.failed(String(m.error || "the save failed"));
-    } else if (m.type === "warn" && editHooks) {
+    } else if (m.type === "warn" && typeof m.sid !== "string" && editHooks) {
       // A federation drop (the session's host unreachable) answers a saveFile with a warn instead
       // of a reply — the feed page renders no toasts, so without this the button spins forever
       // (the same hole the browse overlay closed for listDir).
+      // A warn carrying a session id answers a send INTO that session (the kernel's refusal of a slash command a
+      // Codex session cannot take, broadcast to every chat pane when no socket carried it; 2026-09-19), never this
+      // save: mid-save it read as the save failing. A save's own failure names no session.
       const h = editHooks; editHooks = null;
       h.failed(String(m.text || "the session's host is not answering — the save was not sent"));
     }

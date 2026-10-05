@@ -3,8 +3,10 @@ side). A real child interpreter over a pipe, a synthetic transcript under a temp
 answers a fixed result envelope, and a temp state root: one `pass` through the child writes the stores an in-process pass
 over the same fixture writes in a fresh interpreter, and the protocol's roads (ready, done, tracking off, malformed,
 unknown op, busy, a raising tier, a pass that dies short of its done, quit, end of input) each answer as the protocol says;
-the pass body is the one the kernel's producer runs (judge.py run_pass), pinned by the call on both sides, never a mirror. No
-real prompt or transcript text: every string here is invented."""
+the pass body is the one the kernel's producer runs (judge.py run_pass), pinned by the call on both sides, never a mirror.
+The gate cases run the loop in this process over pipes, with a stand-in pass body whose thread outlives its done line, ends
+without one, or is held short of it while more requests arrive. No real prompt or transcript text: every string here is
+invented."""
 import json
 import os
 import queue
@@ -166,7 +168,7 @@ class Harness(unittest.TestCase):
     def env(self, root, **extra):
         env = dict(os.environ, XDG_STATE_HOME=root, CLAUDE_CONFIG_DIR=self.claude_root, ROMP_CLAUDE_BIN=self.fake,
                    SERVE_TEST_ENVELOPE=ENVELOPE, SERVE_TEST_CLAUDE_LOG=os.path.join(root, "claude-calls.log"),
-                   ROMP_POSTAL_PORT=str(20000 + os.getpid() % 20000), ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1")
+                   ROMP_POSTAL_PORT="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_CLIENT_ONLY="1")
         for k in ("ROMP_STATE_DIR", "ROMP_MANAGER_PID", "ROMP_KERNEL_PORT", "ROMP_JUDGE_SERVE_FAULT"):
             env.pop(k, None)
         env.update(extra)
@@ -444,57 +446,67 @@ class Roads(Harness):
         c.send({"op": "quit"}); c.proc.wait(timeout=60); self.assertEqual(c.proc.returncode, 0)
 
     def _serve_in_process(self, pass_body):
-        """The harness of the two gate cases: jd.serve on its own thread over two pipes, `pass_body` in _serve_pass's place
-        for the loop's life, the answer lines on a queue, and the ready line consumed. Returns (send, answer, loop): `send(obj)`
-        writes one request line, `answer()` parses the next answer line, `loop` is the serve thread (join it after the quit).
-        At cleanup the request pipe closes first, so the end of input ends a loop a failed step left waiting, then the loop is
-        joined, the loop's stream and stage-provider swaps undone (the pump read to its end before its pipe closes) and the
-        patch lifted; the fault knob is out of the environment for the run."""
+        """jd.serve on a thread of this process over two pipes, with `pass_body` in _serve_pass's place for the loop's life: the
+        harness of the gate cases, which need a pass whose thread outlives its done line, one that ends without a done line,
+        or one held short of it until the case releases it, and none of those shapes can be asked of the real pass body
+        through a child process. A pump thread puts each answer line on a queue; the ready line is consumed here. Returns (send,
+        answer, loop): send(obj) writes one request line, answer() parses the next answer line and fails the case when none
+        arrives in 30 s, loop is the serve thread, which the case joins after its quit.
+        The cleanups run in this order: the request pipe's write end closes and the loop is joined (the end of input ends a
+        loop that a failed step left waiting); the loop's swaps of sys.stdout, sys.stderr and the event model's two stage
+        providers are undone, the loop's pipe ends closed and the pump joined (the closed write end is its end of input);
+        the patch is lifted; the fault knob, when the environment carried one, goes back. The knob is out of the environment
+        for the run, so a runner's knob cannot reach the loop."""
         from unittest import mock
-        r_in, w_in = os.pipe(); r_out, w_out = os.pipe()
+        r_in, w_in = os.pipe()
+        r_out, w_out = os.pipe()
         inp, req_w = os.fdopen(r_in, "r"), os.fdopen(w_in, "w", buffering=1)
         out, ans_r = os.fdopen(w_out, "w", buffering=1), os.fdopen(r_out, "r")
-        saved = sys.stdout, sys.stderr, jd.em._SET_STAGE_FN[0], jd.em._READ_STAGE_FN[0]
-        loop = threading.Thread(target=jd.serve, args=(inp, out), name="serve-under-test", daemon=True)
+        saved = (sys.stdout, sys.stderr, jd.em._SET_STAGE_FN[0], jd.em._READ_STAGE_FN[0])
         lines = queue.Queue()
+        loop = threading.Thread(target=jd.serve, args=(inp, out), name="serve-under-test", daemon=True)
         pump = threading.Thread(target=_Child._pump, args=(ans_r, lines.put), daemon=True)
+
+        def end_input():
+            req_w.close()
+            if loop.ident is not None:
+                loop.join(30.0)
 
         def restore():
             sys.stdout, sys.stderr = saved[0], saved[1]
             jd.em.set_stage_provider(saved[2]); jd.em.set_read_stage_provider(saved[3])
             inp.close(); out.close()
             if pump.ident is not None:
-                pump.join(30.0)                                # the closed write end is the pump's end of input
+                pump.join(30.0)
             ans_r.close()
 
-        def end_input():
-            req_w.close()                                      # the end of input ends the loop if a step failed short of quit
-            if loop.ident is not None:
-                loop.join(30.0)
-        patch = mock.patch.object(jd, "_serve_pass", pass_body); patch.start()
-        self.addCleanup(patch.stop)                            # cleanups run last to first: end_input, restore, then the patch
-        self.addCleanup(restore)
-        self.addCleanup(end_input)
         fault = os.environ.pop("ROMP_JUDGE_SERVE_FAULT", None)
         if fault is not None:
-            self.addCleanup(os.environ.__setitem__, "ROMP_JUDGE_SERVE_FAULT", fault)
+            self.addCleanup(os.environ.__setitem__, "ROMP_JUDGE_SERVE_FAULT", fault)   # registered first: it runs last
+        patch = mock.patch.object(jd, "_serve_pass", pass_body); patch.start()
+        self.addCleanup(patch.stop)                            # cleanups run last to first: end_input, restore, the patch, the knob
+        self.addCleanup(restore)
+        self.addCleanup(end_input)
         pump.start(); loop.start()
 
         def send(obj):
             req_w.write(json.dumps(obj) + "\n")
 
         def answer():
-            return json.loads(lines.get(timeout=30))
+            try:
+                return json.loads(lines.get(timeout=30))
+            except queue.Empty:
+                self.fail("the loop wrote no answer line within 30 s")
         self.assertEqual(answer()["op"], "ready")
         return send, answer, loop
 
     def test_a_pass_sent_on_its_predecessors_done_line_is_never_refused_busy_while_that_thread_exits(self):
-        """The busy gate keys on the DONE LINE, the protocol's end of a pass, never on the pass thread's exit. A thread is alive
-        through its teardown after its last statement, and on a free-threaded interpreter, where no GIL holds the loop's thread
-        behind the exiting one, that teardown outlives the done line by more than a request's round trip: the request that
-        followed a done read busy (the free-threaded cell: a KeyError on tierStarts on the line after a done, twice, and the
-        busy test's third pass), and the kernel kills a child that answers anything but the pass's done. In process, with a
-        pass body that lingers AFTER its done line, every interpreter shows the race; the loop's gate must not."""
+        """The one-pass-at-a-time gate keys on the DONE LINE, the protocol's own end of a pass, never on the pass thread's
+        exit. A thread is alive through its teardown after its last statement, and on a free-threaded interpreter, where no
+        GIL holds the loop's thread behind the exiting one, that teardown outlives the done line by more than a request's
+        round trip: the request that followed a done line read busy, and the kernel kills a child that answers anything but
+        the pass's done. In process, with a pass body that lingers AFTER its done line, every interpreter shows the window,
+        so a gate on the thread's liveness fails this case on a GIL build too."""
         def lingering_pass(req, emit):
             emit({"op": "done", "seq": req.get("seq"), "tierStarts": 0})
             time.sleep(0.5)                                    # the thread outlives its own done line, as a teardown does
@@ -503,46 +515,83 @@ class Roads(Harness):
         for seq in (1, 2, 3):                                  # each request follows its predecessor's done line at once
             send({"op": "pass", "seq": seq, "now": NOW, "mayStart": False})
             self.assertEqual(answer(), {"op": "done", "seq": seq, "tierStarts": 0},
-                             "the pass that follows a done line answers with its own done (the base read the exiting thread as busy)")
+                             "the pass that follows a done line answers with its own done (a gate on the thread's liveness "
+                             "reads the exiting thread as busy)")
         send({"op": "quit"})
         loop.join(30.0)
         self.assertFalse(loop.is_alive(), "the loop ended on quit")
 
     def test_a_pass_that_dies_short_of_its_done_line_frees_the_child_for_the_next_pass(self):
-        """The gate's other clause, the pass thread's LIVENESS: busy is a pass short of its done line on a thread still
-        running (kernel/judge.py serve(): `inflight[0] and running[0] is not None and running[0].is_alive()`), so a pass body
-        that ends WITHOUT a done line, a raising _serve_pass, frees the child once its thread exits, and the next pass runs.
-        With the clause dropped (busy = inflight[0] alone) the raise leaves inflight set for the child's life, every later pass
-        reads busy, and the kernel kills a child that answers anything but the pass's done. The wait is on the thread's exit
-        itself, never a sleep: the unhandled exception's hook (threading.excepthook, swapped for the run and restored after)
-        records the exception and its thread and sets an Event, then the thread is joined; the traceback is recorded, not
-        printed, so the run stays quiet."""
+        """The gate's second clause, the pass thread's liveness, covers the one case the done line cannot: a pass whose thread
+        ended WITHOUT a done line (an exception out of _serve_pass) leaves the in-flight flag set, and its dead thread is what
+        frees the child, so the next pass runs. With that clause dropped, the flag alone as the gate, the child reads busy for
+        the rest of its life and the kernel kills it on the next answer. The wait is on the thread's exit itself, never a
+        sleep: threading.excepthook, swapped for the run and restored after it, records the pass thread's exception and sets
+        an Event, then that thread is joined; the exception is recorded, not printed, so the run stays quiet. The swap is
+        process-wide, so an exception on any other thread in the window goes to the hook that was installed: it neither
+        redirects the wait onto that thread nor fails this case."""
         from unittest import mock
-        exited, seen = threading.Event(), []
+        exited, seen, installed_hook = threading.Event(), [], threading.excepthook
 
-        def record(args):                                      # runs on the dying pass thread, after its last statement
+        def record(args):                                      # runs on the dying thread, after its last statement
+            if args.thread is None or args.thread.name != "serve-pass":
+                installed_hook(args)                           # not the pass thread's: the runner's hook reports it
+                return
             seen.append(args); exited.set()
 
-        def raising_then_done(req, emit):
+        def dies_then_answers(req, emit):
             if req.get("seq") == 1:
                 raise RuntimeError("the pass died short of its done line (invented)")
             emit({"op": "done", "seq": req.get("seq"), "tierStarts": 0})
 
         with mock.patch.object(threading, "excepthook", record):
-            send, answer, loop = self._serve_in_process(raising_then_done)
+            send, answer, loop = self._serve_in_process(dies_then_answers)
             send({"op": "pass", "seq": 1, "now": NOW, "mayStart": False})
             self.assertTrue(exited.wait(30.0), "the raising pass reached the unhandled-exception hook")
             seen[0].thread.join(30.0)
             self.assertFalse(seen[0].thread.is_alive(), "the pass thread exited: the liveness the clause reads")
             send({"op": "pass", "seq": 2, "now": NOW, "mayStart": False})
             self.assertEqual(answer(), {"op": "done", "seq": 2, "tierStarts": 0},
-                             "the pass after one that died short of its done answers with its own done (with the liveness clause "
-                             "dropped it reads busy, and the child is latched busy for its life)")
+                             "the pass after one that died short of its done line answers with its own done (with the liveness "
+                             "clause dropped it reads busy, and the child is latched busy for its life)")
             send({"op": "quit"})
             loop.join(30.0)
         self.assertFalse(loop.is_alive(), "the loop ended on quit")
         self.assertEqual([(a.exc_type, a.thread.name) for a in seen], [(RuntimeError, "serve-pass")],
                          "the one unhandled exception was the raising pass's, on the pass thread")
+
+    def test_only_a_done_line_clears_the_gate_so_a_pass_refused_busy_leaves_the_running_one_alone(self):
+        """The gate's other half: a pass is in flight from its request to its DONE line, and no other line ends it. The loop
+        writes error lines while a pass runs (a second pass is answered busy, a bad request malformed or unknownOp), and a
+        gate that any written line cleared would admit the request after the busy answer beside the running pass, two
+        passes in one child. The pass body here is held short of its done line on an Event until the case releases it: the
+        two passes sent meanwhile are both refused, the release answers the held pass, and the pass sent on that done line
+        runs. Under a gate that every line clears, the third pass is admitted and answers nothing, so its assertion fails
+        on the 30 s wait; the Event is set at cleanup, so no pass thread stays parked on it after a failed step."""
+        gate, entered = threading.Event(), []
+
+        def held_pass(req, emit):
+            entered.append(req.get("seq"))
+            gate.wait(60.0)                                    # released by the case, at the latest in its cleanup; the bound
+                                                               #  ends a wait no cleanup reached
+            emit({"op": "done", "seq": req.get("seq"), "tierStarts": 0})
+
+        send, answer, loop = self._serve_in_process(held_pass)
+        self.addCleanup(gate.set)
+        send({"op": "pass", "seq": 1, "now": NOW, "mayStart": False})
+        for seq in (2, 3):                                     # both arrive while pass 1 is short of its done line
+            send({"op": "pass", "seq": seq, "now": NOW, "mayStart": False})
+            self.assertEqual(answer(), {"op": "error", "seq": seq, "reason": "busy"},
+                             "a pass sent while another is short of its done line is refused, a busy line already written or "
+                             "not (a gate that any written line cleared admits this one beside the running pass)")
+        gate.set()
+        self.assertEqual(answer(), {"op": "done", "seq": 1, "tierStarts": 0}, "the release answers the held pass")
+        send({"op": "pass", "seq": 4, "now": NOW, "mayStart": False})
+        self.assertEqual(answer(), {"op": "done", "seq": 4, "tierStarts": 0}, "the pass sent on the done line runs")
+        send({"op": "quit"})
+        loop.join(30.0)
+        self.assertFalse(loop.is_alive(), "the loop ended on quit")
+        self.assertEqual(entered, [1, 4], "the refused passes never reached the pass body")
 
     def test_a_tier_that_raises_is_counted_and_the_pass_still_answers(self):
         root = self.state_root("raise"); c = self.child(root, ROMP_JUDGE_SERVE_FAULT="raise:triage")

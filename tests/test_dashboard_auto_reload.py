@@ -58,6 +58,7 @@ function pane(busy, since, other) { return { contentWindow: { __rompReload: { bu
                                                               __rompShimPersist: function () { SHIM_PERSISTS.push(1); } } }; }   // an iframe the shell's walk visits; `other` answers past the fresh answer
 var DIAG = [];                                                  // what a pane's socket would carry up: the shell's held breadcrumb
 var window = { addEventListener: function (t, f) { (WLISTENERS[t] = WLISTENERS[t] || []).push(f); } };
+window.__rompPaneSourceOk = function () { return true; };   // the shell's source check (the boot script's, plans/panes-as-data.md): this stub's posts stand for a protocol pane's
 window.parent = window;
 window.__rompPersistForReload = function () { PERSISTED++; };
 var location = { pathname: "/", reload: function () { RELOADS++; if (REFUSE) throw new Error("host forbids reload"); } };
@@ -124,8 +125,8 @@ out({ same: same, older: older, offered: offered, offers: OFFERS, after: state()
         o = s["offered"]
         self.assertEqual(o["reloads"], 0, "a newer build is offered, never taken")
         self.assertIsNone(o["owed"], "nothing owed: no hold, no backstop, no line")
-        self.assertEqual(o["offered"], {"dv": 8, "code": "", "behind": False, "text": OFFER})
-        self.assertEqual(s["offers"], [{"dv": 8, "code": "", "behind": False, "text": OFFER}, None], "the hook saw the offer, then its retirement at the accept")
+        self.assertEqual(o["offered"], {"dv": 8, "code": "", "pv": "", "behind": False, "text": OFFER})
+        self.assertEqual(s["offers"], [{"dv": 8, "code": "", "pv": "", "behind": False, "text": OFFER}, None], "the hook saw the offer, then its retirement at the accept")
         a = s["after"]
         self.assertEqual(a["reloads"], 1)
         self.assertTrue(a["fired"])
@@ -176,7 +177,7 @@ window.__rompFreshPending = false; R.ended(); await tick(); await tick();
 out({ offered: offered, held: held, after: state() });""", code="abc1234")
         self.assertEqual(s["offered"]["reloads"], 0, "a changed build is offered, never taken (2026-09-16)")
         self.assertIsNone(s["offered"]["owed"])
-        self.assertEqual(s["offered"]["offered"], {"dv": 0, "code": "def5678", "behind": False, "text": OFFER}, "the offer names the code identity that changed")
+        self.assertEqual(s["offered"]["offered"], {"dv": 0, "code": "def5678", "pv": "", "behind": False, "text": OFFER}, "the offer names the code identity that changed")
         self.assertEqual(s["held"]["reloads"], 0, "accepted but held: the reload must land on a warm kernel")
         self.assertEqual(s["held"]["owed"], {"reason": "build", "detail": "def5678"})
         self.assertEqual(s["held"]["waiting"], "fresh")
@@ -1573,8 +1574,8 @@ VERSION = { boot: "2.2", dist_ver: 7, code_ident: "abc1234" }; R.checkBoot(); aw
 R.noteDv(8); var once = state(); R.noteDv(8); R.noteVersion({ boot: "2.2", dist_ver: 8, code_ident: "abc1234" });   // the keepalives and polls after it
 out({ restart: restart, restarted: R.restarted(), once: once, after: state(), offers: OFFERS, held: held, timers: TIMERS.length });""", code="abc1234")
         self.assertEqual([s["restart"]["reloads"], s["restart"]["owed"], s["restart"]["offered"], s["restarted"]], [0, None, None, 1], "a same-build restart: counted, nothing else")
-        self.assertEqual(s["once"]["offered"], {"dv": 8, "code": "", "behind": False, "text": OFFER})
-        self.assertEqual(s["offers"], [{"dv": 8, "code": "", "behind": False, "text": OFFER}], "one offer per build, however many readings carry it")
+        self.assertEqual(s["once"]["offered"], {"dv": 8, "code": "", "pv": "", "behind": False, "text": OFFER})
+        self.assertEqual(s["offers"], [{"dv": 8, "code": "", "pv": "", "behind": False, "text": OFFER}], "one offer per build, however many readings carry it")
         self.assertEqual([s["after"]["reloads"], s["after"]["owed"], s["held"], s["timers"]], [0, None, 0, 0], "an offer owes nothing: no reload, no hold, no line, no backstop")
 
     def test_not_now_is_kept_per_build_and_a_strictly_newer_build_re_offers(self):
@@ -1584,7 +1585,7 @@ R.noteDv(8); R.dismiss(); var declined = state();
 R.noteDv(8); R.noteVersion({ boot: "1.1", dist_ver: 8 }); var still = state();
 R.noteDv(9); var newer = state();
 out({ declined: declined, still: still, newer: newer, offers: OFFERS });""")
-        self.assertIsNone(s["declined"]["offered"]); self.assertEqual(s["declined"]["notNow"], {"dv": 8, "code": ""}, "the Not now is kept, per build, in localStorage")
+        self.assertIsNone(s["declined"]["offered"]); self.assertEqual(s["declined"]["notNow"], {"dv": 8, "code": "", "pv": ""}, "the Not now is kept, per build and pane-set revision, in localStorage")
         self.assertIsNone(s["still"]["offered"], "the declined build stays quiet through every later reading")
         self.assertEqual(s["newer"]["offered"]["dv"], 9, "a strictly newer build is new information")
         self.assertEqual([o and o["dv"] for o in s["offers"]], [8, None, 9])
@@ -1602,8 +1603,8 @@ R.noteVersion({ boot: "2.2", dist_ver: 8, code_ident: "def5678" }); var both = s
 R.noteVersion({ boot: "2.2", dist_ver: 8, code_ident: "def5678" }); var quiet = state();
 R.noteVersion({ boot: "3.3", dist_ver: 8, code_ident: "ghi9012" }); var other = state();
 out({ both: both, quiet: quiet, other: other, notNow: state().notNow });""", code="abc1234")
-        self.assertEqual(u["both"]["offered"], {"dv": 8, "code": "def5678", "behind": False, "text": OFFER}, "one offer carries both signals")
-        self.assertIsNone(u["quiet"]["offered"]); self.assertEqual(u["notNow"], {"dv": 8, "code": "def5678"})
+        self.assertEqual(u["both"]["offered"], {"dv": 8, "code": "def5678", "pv": "", "behind": False, "text": OFFER}, "one offer carries both signals")
+        self.assertIsNone(u["quiet"]["offered"]); self.assertEqual(u["notNow"], {"dv": 8, "code": "def5678", "pv": ""})
         self.assertEqual(u["other"]["offered"]["code"], "ghi9012", "another code identity re-offers")
         # a malformed Not now record is read as none
         v = run_core("""
@@ -1616,7 +1617,7 @@ var R = window.__rompReload;
 R.noteDv(8); R.behind(); R.behind(); R.noteDv(8);
 out({ after: state(), offers: OFFERS });""")
         self.assertEqual([o["text"] for o in s["offers"]], [OFFER, BEHIND], "the wording moves once; a second refusal and the next keepalive repaint nothing")
-        self.assertEqual(s["after"]["offered"], {"dv": 8, "code": "", "behind": True, "text": BEHIND})
+        self.assertEqual(s["after"]["offered"], {"dv": 8, "code": "", "pv": "", "behind": True, "text": BEHIND})
         self.assertEqual(s["after"]["reloads"], 0, "still an offer: a refusal never reloads")
         t = run_core("""
 var R = window.__rompReload;
@@ -1745,7 +1746,7 @@ var document = { getElementById: function (id) { return id === "rstale" ? box : 
 var RL = { offer: null, held: null, announce: function () {}, offered: function () { return null; },
            noteVersion: function (v) { CALLS.push(["noteVersion", v.dist_ver]); }, checkBoot: function () { CALLS.push(["checkBoot"]); },
            accept: function () { CALLS.push(["accept"]); }, dismiss: function () { CALLS.push(["dismiss"]); } };
-var window = { addEventListener: function (t, f) { (LISTEN[t] = LISTEN[t] || []).push(f); }, __rompNotify: function (k, t) { CALLS.push(["notify", k, t]); }, __rompReload: RL, innerWidth: 800, innerHeight: 600 };
+var window = { addEventListener: function (t, f) { (LISTEN[t] = LISTEN[t] || []).push(f); }, __rompPaneSourceOk: function () { return true; }, __rompNotify: function (k, t) { CALLS.push(["notify", k, t]); }, __rompReload: RL, innerWidth: 800, innerHeight: 600 };
 var location = { reload: function () { RELOADS++; } };
 function fetch() { return { then: function () { return { then: function () { return { "catch": function () {} }; } }; } }; }   /* the poll never answers here */
 function setInterval() {}

@@ -43,6 +43,7 @@ class ResolverBase(unittest.TestCase):
         pm.peers_on = lambda: True
         pm._postal_off = lambda sid: sid in self._isolated
         pm.PEER_STATE.clear()
+        pm._inbound_links.clear()
 
     def tearDown(self):
         for k, v in self._saved.items():

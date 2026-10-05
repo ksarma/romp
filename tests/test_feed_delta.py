@@ -28,12 +28,14 @@ import base64
 import io
 import json
 import os
+import re
 import socket
 import struct
 import tempfile
 import threading
 import time
 import unittest
+from collections import Counter
 from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
@@ -765,6 +767,62 @@ class ConnectTimeFrame(_DefaultPalette):
             _restore(saved)
 
 
+# Every caller of the pane shim in the kernel, by its exact arguments, and why it announces what it does. This is what the
+# old count stood for (444557b8f: "a fifth caller must announce too"): every pane page opens its socket from the shim before
+# its bundle has loaded, and the shim has no inbound buffer, so a page that takes pushed frames announces the READY_GATE_CAP
+# hold, and a page that announces none says here why no frame it needs can land before its listener. The count saw a caller
+# added; the register also sees one whose announcement changed, a second copy of one, and one swapped for another.
+_SHIM_CALLERS = {
+    "app, v, caps=caps, no_stale=no_stale":
+        "_shim_core_js, the node tests' slice of the real shim (upstream c017b510, folded 2026-09-08): it passes its "
+        "test's own arguments through",
+    '"chat", v, caps=READY_GATE_CAP': "the chat page: the hold",
+    '"feed", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP': "the feed page: deltas and the hold",
+    '"fleet", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP': "the Outline page (2026-09-05): deltas and the hold",
+    '"waiting", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP': "the Waiting on you page (2026-09-03): deltas and the hold",
+    '"timeline", v, caps=READY_GATE_CAP': "the timeline page: the hold",
+    '"files", v, caps=READY_GATE_CAP, no_stale=True': "the Files pane: the hold and the stale opt-out",
+    '"settings", v, no_stale=True':
+        "the gear's settings page (T400): no cap; it takes no pushed view, its socket carries keepalives and op replies",
+    '"artifacts", v, no_stale=True':
+        "the Artifacts page (upstream PR 1911): no cap. Its pushed frames are the window's active chat, sent again at its "
+        "ready (_client_reset_chat_base clears the activeChat slot), and its watched session's growth signal, armed only "
+        "by its own watchArtifacts",
+    'pid, _dist_ver(), no_stale=True, pv=snap["rev"], data=snap["data"]':
+        "a state-root pane's /pane/<id>/shim.js (upstream PR 1919; no_stale and the one listing from PR 1952): no cap; no "
+        "pushed view reaches a state-root page (the route's own comment)",
+}
+
+
+def _shim_calls(src):
+    """The argument text of every call of `_shim(` in `src`, in source order: the definition is not a call, a longer name
+    ending in _shim is another function, and the arguments are read to their balanced closing parenthesis with string
+    literals skipped. An unclosed call raises, so a source the scan cannot read fails loudly."""
+    out = []
+    for m in re.finditer(r"(?<![\w.])_shim\(", src):
+        if src[max(0, m.start() - 4):m.start()] == "def ":
+            continue
+        k, depth, quote = m.end(), 1, None
+        while depth:
+            if k >= len(src):
+                raise AssertionError("an unclosed _shim( call at offset %d" % m.start())
+            ch = src[k]
+            if quote:
+                if ch == "\\":
+                    k += 1
+                elif ch == quote:
+                    quote = None
+            elif ch in "\"'":
+                quote = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            k += 1
+        out.append(src[m.end():k - 1])
+    return out
+
+
 class ShimAnnouncesForTheFeedPage(_DefaultPalette):
     def test_every_feed_consumer_page_announces_the_delta_capability_and_every_pane_announces_the_hold(self):
         feed = km._shim("feed", 5, caps=km.FEED_DELTA_CAP + "," + km.READY_GATE_CAP)
@@ -788,10 +846,14 @@ class ShimAnnouncesForTheFeedPage(_DefaultPalette):
         # the stale opt-out, the `no_stale` keyword (F1: no pushed view ever resyncs it, so its arm could only ever
         # raise; the fork's cap token for it retired for upstream's keyword form, 2026-09-15)
         self.assertIn('_shim("files", v, caps=READY_GATE_CAP, no_stale=True)', KSRC)
-        self.assertEqual(KSRC.count("_shim("), 9, "the definition, the seven pages (the gear's settings page since T400, which "
-                                                 "announces no cap: its bundle posts no ready and takes no pushed view) and the "
-                                                 "_shim_core test helper (upstream "
-                         "c017b510, folded 2026-09-08) that slices the real shim for the node tests; another caller must announce too")
+        # another caller must announce too: every caller, by its exact arguments, against the register above
+        self.assertEqual(KSRC.count("def _shim("), 1, "one definition of the shim")
+        calls, registered = Counter(_shim_calls(KSRC)), Counter(list(_SHIM_CALLERS))   # the keys, each once (a dict would count by its values)
+        unregistered = sorted((calls - registered).elements())
+        gone = sorted((registered - calls).elements())
+        self.assertEqual(unregistered, [], "a _shim( call the register does not name (a new caller, a changed announcement "
+                                           "or a second copy of one): decide what it announces and register it with why")
+        self.assertEqual(gone, [], "a registered caller no longer in the kernel: drop its entry, or restore the call")
 
 
 class OutlineDeltaStream(_DefaultPalette):

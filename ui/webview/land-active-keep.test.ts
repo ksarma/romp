@@ -252,6 +252,7 @@ function world(o: Opts, arm: Arm = {}): World {
     let pendingAnchor = H.arm.anchor ?? null, pendingAnchorT = H.arm.t ?? null, pendingAnchorIntent = null, pendingAnchorKind = null;
     let pendingAnchorKeepY = H.arm.keepY ?? null, pendingAnchorKeepAt = null, pendingAnchorClick = false, pendingReloadScroll = H.arm.reload ?? null;
     let seek = H.arm.seek ?? null, landTrail = [], landSettling = null, anchorPendingOlder = false;
+    let landingNoticeSid = null; const liveWindowAsk = () => false; const hideLandingNotice = () => {};   // upstream 1896's landing notice: none shown in these scenes
     const activeId = "A"; const views = new Map([["A", H.v]]); const sessions = new Map([["A", { name: "web" }]]);
     const document = H.document;
     const vscodeApi = { postMessage: (row) => { H.rows.push(row); } };

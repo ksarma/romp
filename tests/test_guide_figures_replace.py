@@ -43,8 +43,10 @@ class FiguresNamesReplace(unittest.TestCase):
     """The Figures paragraph names the button by its label and describes it as its tooltip does."""
 
     def setUp(self):
-        guide = _read("docs", "guide.md")
-        files = guide[guide.index("### Files"):guide.index("## Automatic nudges")]
+        # the Figures paragraph is in docs/reference.md's Files pane since fold 4 moved the fork's Files section out of
+        # docs/guide.md (the front pages are the project's, CLAUDE.md "The documentation front pages")
+        ref = _read("docs", "reference.md")
+        files = ref[ref.index("\n## The Files pane\n"):ref.index("\n## The Artifacts pane")]
         self.figures = _flat(_paragraph(files, "Figures"))
         self.panel = _read("ui", "webview", "file-comments.ts")
 

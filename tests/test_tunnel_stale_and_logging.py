@@ -128,18 +128,18 @@ class ForwardBindFailure(unittest.TestCase):
             self.assertFalse(km._forward_bind_failed(line), line)
 
     def test_reminting_moves_every_forwarded_port_off_the_one_that_collided(self):
-        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001, "_peer_notified": (True, "trusted")}
+        r = {"host": "TESTHOST", "local_port": 1, "bus_port": 2, "_peer_notified": (True, "trusted")}
         km._remint_forward_ports(r)
-        self.assertNotEqual(r["local_port"], 51000)
-        self.assertNotEqual(r["bus_port"], 51001)
+        self.assertNotEqual(r["local_port"], 1)
+        self.assertNotEqual(r["bus_port"], 2)
         self.assertIsNone(r["_peer_notified"], "the bus holds a stale endpoint until it is re-notified")
 
     def test_reminting_a_checked_in_row_also_moves_its_reverse_ports_and_re_handshakes(self):
-        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001, "checkin": True,
-             "rk_port": 52025, "rb_port": 52026, "_handshook": 999}
+        r = {"host": "TESTHOST", "local_port": 1, "bus_port": 2, "checkin": True,
+             "rk_port": 3, "rb_port": 4, "_handshook": 999}
         km._remint_forward_ports(r)
-        self.assertNotEqual(r["rk_port"], 52025)
-        self.assertNotEqual(r["rb_port"], 52026)
+        self.assertNotEqual(r["rk_port"], 3)
+        self.assertNotEqual(r["rb_port"], 4)
         self.assertNotIn("_handshook", r, "the hub must be told the new ports")
 
 
@@ -159,12 +159,12 @@ class ForwardBindFailure(unittest.TestCase):
     def test_reminting_never_hands_back_any_old_port_and_keeps_the_new_ones_distinct(self):
         # the allocator returns the four OLD ports first, scrambled across slots, then fresh ones:
         # every slot must land on a fresh port — avoiding the whole old set, not just its own slot
-        self._stub_ports([52025, 51001, 51000, 52026, 61001, 61002, 61003, 61004, 61005, 61006])
-        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001, "checkin": True,
-             "rk_port": 52025, "rb_port": 52026, "_handshook": 999, "_peer_notified": (True, "trusted")}
+        self._stub_ports([3, 2, 1, 4, 11, 12, 13, 14, 15, 16])
+        r = {"host": "TESTHOST", "local_port": 1, "bus_port": 2, "checkin": True,
+             "rk_port": 3, "rb_port": 4, "_handshook": 999, "_peer_notified": (True, "trusted")}
         km._remint_forward_ports(r)
         new = [r["local_port"], r["bus_port"], r["rk_port"], r["rb_port"]]
-        self.assertFalse(set(new) & {51000, 51001, 52025, 52026}, "an old port came back: %r" % new)
+        self.assertFalse(set(new) & {1, 2, 3, 4}, "an old port came back: %r" % new)
         self.assertEqual(len(set(new)), 4, "two forwards on one port are a doomed argv too: %r" % new)
         self.assertNotIn("_handshook", r)
         self.assertIsNone(r["_peer_notified"])
@@ -172,14 +172,14 @@ class ForwardBindFailure(unittest.TestCase):
     def test_an_allocator_that_cannot_move_the_ports_fails_loudly_and_leaves_the_row_intact(self):
         # a degenerate allocator (the same port forever) exhausts the DRAW bound: RuntimeError, the
         # old ports untouched (atomic), and a ports-remint-failed record appended to the dial log
-        self._stub_ports([52025] * 200)
+        self._stub_ports([3] * 200)
         before = len(km.TUNNEL_LOG.read_text().splitlines()) if km.TUNNEL_LOG.exists() else 0
-        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001, "checkin": True,
-             "rk_port": 52025, "rb_port": 52026, "_handshook": 999}
+        r = {"host": "TESTHOST", "local_port": 1, "bus_port": 2, "checkin": True,
+             "rk_port": 3, "rb_port": 4, "_handshook": 999}
         with self.assertRaises(RuntimeError):
             km._remint_forward_ports(r)
         self.assertEqual((r["local_port"], r["bus_port"], r["rk_port"], r["rb_port"]),
-                         (51000, 51001, 52025, 52026), "a failed remint changes nothing")
+                         (1, 2, 3, 4), "a failed remint changes nothing")
         self.assertEqual(r.get("_handshook"), 999, "no re-handshake was armed for ports that never moved")
         appended = [json.loads(x) for x in km.TUNNEL_LOG.read_text().splitlines()[before:] if x.strip()]
         self.assertTrue(any(x.get("event") == "ports-remint-failed" and x.get("host") == "TESTHOST"
@@ -195,23 +195,23 @@ class ForwardBindFailure(unittest.TestCase):
         km._free_port = boom
         self.addCleanup(setattr, km, "_free_port", saved)
         before = len(km.TUNNEL_LOG.read_text().splitlines()) if km.TUNNEL_LOG.exists() else 0
-        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001}
+        r = {"host": "TESTHOST", "local_port": 1, "bus_port": 2}
         with self.assertRaises(RuntimeError):
             km._remint_forward_ports(r)
-        self.assertEqual((r["local_port"], r["bus_port"]), (51000, 51001))
+        self.assertEqual((r["local_port"], r["bus_port"]), (1, 2))
         appended = [json.loads(x) for x in km.TUNNEL_LOG.read_text().splitlines()[before:] if x.strip()]
         self.assertTrue(any(x.get("event") == "ports-remint-failed" and "open files" in str(x.get("error"))
                             for x in appended), appended)
 
     def test_reminting_avoids_every_other_attached_rows_ports(self):
         # a peer waiting out its backoff has its -L port unbound — a bare draw could hand it over
-        self._stub_ports([61001, 61002, 61003, 61004, 61005])
-        peer = {"host": "PEERHOST", "local_port": 61001, "bus_port": 61003}
+        self._stub_ports([11, 12, 13, 14, 15])
+        peer = {"host": "PEERHOST", "local_port": 11, "bus_port": 13}
         km._remotes["PEERHOST"] = peer
         self.addCleanup(km._remotes.pop, "PEERHOST", None)
-        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001}
+        r = {"host": "TESTHOST", "local_port": 1, "bus_port": 2}
         km._remint_forward_ports(r)
-        self.assertEqual((r["local_port"], r["bus_port"]), (61002, 61004))
+        self.assertEqual((r["local_port"], r["bus_port"]), (12, 14))
 
     def test_the_supervisor_claims_fresh_ports_only_after_it_holds_them(self):
         # the row's detail said "retrying on fresh ports" BEFORE the remint ran, so on the loud path

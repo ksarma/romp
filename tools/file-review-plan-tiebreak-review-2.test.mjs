@@ -42,7 +42,9 @@ const exists = (...parts) => fs.existsSync(path.join(REPO, ...parts));
 const plan = read('plans', 'file-review.md');
 const host = read('tools', 'file-comments-host.mjs');
 const panel = read('ui', 'webview', 'file-comments.ts');
-const guide = read('docs', 'guide.md').replace(/\s+/g, ' ');
+// the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front
+// pages are the project's, CLAUDE.md "The documentation front pages"), so `guide` reads the reference and the pins hold there
+const guide = read('docs', 'reference.md').replace(/\s+/g, ' ');
 
 // The text between two headings, hard wraps collapsed so an assertion survives a rewrap.
 function section(from, to) {
