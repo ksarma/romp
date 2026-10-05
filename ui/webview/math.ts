@@ -412,17 +412,17 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
  *  (kernel.py _RELOAD_CORE_JS fire) runs persist, which calls each window's __rompShimPersist, then location.reload, and the pane shim
  *  defines that hook on every kernel page that loads this module (the chat, the feed, the Files pane, Waiting); this chains onto it.
  *  That hook is the one sign of a reload romp started. A beforeunload sets nothing (the review's round 3, extra5-1): iOS Safari does not
- *  fire it, and in Chromium one that no unload follows (a navigation started from the browser's own controls that never commits: a
- *  download, a 204, a cancelled one) left the latch set for the rest of the page life, so a real load failure showed only at the
- *  backstop, under the backstop's reason. While the latch is set a tag's error fails nothing and the attempt's backstop stays its end,
- *  in case the page does not unload after all; pageshow, the page shown again from the back-forward cache, clears it. Hooked when the
- *  first attempt sends its request, after the page's load event, so the shim's hook exists by then; a page without the shim (the VS
- *  Code webview) has no reload core to latch on. What stays, in WebKit on iOS and on the desktop alike: a reload that does not go
- *  through the fire step still logs one false line on the dying page, the browser's own reload control and romp's direct
- *  location.reload() calls alike (kernel.py: the pane shim's Reload on its connection and build bars, the shell's stale-connection
- *  Reload with no offer standing, the update wait's and the boot poll's reloads; render.ts: the chat's federation-failure Reload); and
- *  a reload through the fire step that the browser refuses leaves the latch set (no pageshow follows), so a later attempt's tag error
- *  in that page life waits for its backstop. */
+ *  fire it, and one that no unload follows (a navigation started from the browser's own controls that never commits: a download or a
+ *  204, in Chromium and in WebKit on the desktop alike, or a cancelled one) left the latch set for the rest of the page life, so a real
+ *  load failure showed only at the backstop, under the backstop's reason. While the latch is set a tag's error fails nothing and the
+ *  attempt's backstop stays its end, in case the page does not unload after all; pageshow, the page shown again from the back-forward
+ *  cache, clears it. Hooked when the first attempt sends its request, after the page's load event, so the shim's hook exists by then; a
+ *  page without the shim (the VS Code webview) has no reload core to latch on. What stays, in WebKit on iOS and on the desktop alike: a
+ *  reload that does not go through the fire step still logs one false line on the dying page, the browser's own reload control and
+ *  romp's direct location.reload() calls alike (kernel.py: the pane shim's Reload on its connection and build bars, the shell's
+ *  stale-connection Reload with no offer standing, the update wait's and the boot poll's reloads; render.ts: the chat's
+ *  federation-failure Reload); and a reload through the fire step that the browser refuses leaves the latch set (no pageshow follows),
+ *  so a later attempt's tag error in that page life waits for its backstop. */
 function latchOnLeave(): void {
   if (leaveHooked || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
   leaveHooked = true;
