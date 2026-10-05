@@ -73783,6 +73783,11 @@ document.addEventListener('visibilitychange',function(){if(document.visibilitySt
 document.addEventListener('focusout',refit);
 if(window.visualViewport){window.visualViewport.addEventListener('resize',refit);
 window.visualViewport.addEventListener('scroll',refit);}
+// The bar's own box changing re-measures its strip (iOS item 4g, 2026-10-04). A bar too narrow for one row wraps its action
+// buttons onto a second row, so its height can change with no viewport event at all: the Files tab turned on in the gear, the
+// webfont arriving and widening the labels. The strip would then stay one row short, the second row over the pane's bottom.
+// The observer reports the bar's box after layout, in the frame it changed; barfit is read by name then (it is rebound above).
+if(window.ResizeObserver&&document.getElementById('mtabs'))new ResizeObserver(function(){barfit();}).observe(document.getElementById('mtabs'));
 function hearBlur(f){try{if(!f.contentDocument)return;f.contentWindow.addEventListener('focusout',refit);}catch(e){}}   // cross-origin → nothing to hear
 ['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].forEach(function(id){var f=document.getElementById(id);if(!f)return;   // the three extra panes (waiting, files, settings) are heard too
 f.addEventListener('load',function(){hearBlur(f);});hearBlur(f);});   // now (already loaded) + on every (re)load, as the Alt+Arrow wiring does; the gear's document too (its login field)
@@ -76569,10 +76574,25 @@ def _landing():
             # horizontal-only so the bar's height and every tap height stay exactly as they were
             "#mtabs button.mact{flex:0 0 auto;padding:6px 7px;color:#7d848b;font-size:17px;line-height:1}"
             "#mtabs button.mact svg{display:block}"
+            # The bar WRAPS when the tabs and the action buttons do not fit one row (iOS item 4g, 2026-10-04). In one row the
+            # default tabs and the six actions need about 413 to 418px (more with the Files tab on), and nothing in the row
+            # shrinks, so on a narrower phone the actions ran past the screen's right edge, where the overflow:hidden body
+            # leaves them unreachable (at 320px Restart, the Log's triangle, the bell and Settings). The actions are one
+            # element (.mtabs-acts, the markup below), so a wrap moves them whole: the tabs keep the first row (flex:1, they
+            # fill it) and the actions take a second row, at the right edge by their auto margin, where they sat. Where
+            # everything fits, the row is the one it was: the tabs take all the free space, so the auto margin is 0 and no box
+            # moves. barfit() reads the taller bar's height, and an observer on the bar re-reads it when the wrap changes with
+            # no resize (_LANDING_MOBILE_JS). tests/test_mtabs_fit_served.py measures the bar in three engines.
+            "#mtabs{flex-wrap:wrap}"
+            "#mtabs .mtabs-acts{display:flex;flex:0 0 auto;margin-left:auto}"
+            # a row of tabs alone keeps the single row's height, which the action buttons set (an 18px glyph with 6px above
+            # and below, 30px) and the tabs stretched to; without it a wrapped first row is one 12px label's line tall
+            "#mtabs button[data-pane]{min-height:30px}"
             # the push bell's states: on = the romp accent (a selected toggle, not a status); busy =
             # dimmed, the immediate tap acknowledgement while the subscribe round-trip runs. The
             # [hidden] rule matters: the #mtabs button display:flex above outspecifies the UA's
-            # [hidden]{display:none}, so without it the capability-gated bell would always show.
+            # [hidden]{display:none}, so without it a pane tab the gear turned off, or the bell before the
+            # push script reveals it, would show.
             "#mtabs button[hidden]{display:none}"
             "#mtabs #mbell.on{color:var(--accent)}"
             "#mtabs #mbell.busy{opacity:.45}"
@@ -76939,6 +76959,9 @@ def _landing():
             # the rail's ACTIONS, reachable on mobile too (the user 2026-07-11): settings + the network
             # panel + a usage panel showing the desktop tooltip's window bars. data-act (not data-pane) —
             # they fire, they don't switch the shown pane.
+            # .mtabs-acts holds the divider and the actions as one box, so a bar too narrow for one row wraps them whole onto
+            # a second row (the #mtabs wrap rules in the phone block; iOS item 4g)
+            "<span class=mtabs-acts>"
             "<span class=mtabs-div></span>"
             # the ACTUAL rail icons, not words (the user 2026-07-11). Usage has no desktop icon (the rail
             # shows the live bars themselves) — its icon is the same motif: two stacked fill bars at
@@ -76963,8 +76986,9 @@ def _landing():
             + _ERRS_SVG +
             "</button>"
             # the push bell (plans/ios-app.md proposal 2): opt this DEVICE into needs-you notifications.
-            # Ships hidden; _LANDING_PUSH_JS reveals it only where the Push API exists (on iOS: the
-            # installed home-screen app). No data-act — it owns its own tap flow, not the A-map's.
+            # Ships hidden; _LANDING_PUSH_JS reveals it on every page (since 2026-08-09 it carries the master
+            # switch, which matters where the Push API is missing too), so the bar always has it. No data-act:
+            # it owns its own tap flow, not the A-map's.
             "<button class=mact id=mbell hidden aria-label=Notifications title=Notifications>"
             "<svg viewBox='0 0 16 16' width='18' height='18'>"
             "<path d='M8 2 C5.7 2 4.3 3.8 4.3 6.2 L4.3 9 L3 11.2 L13 11.2 L11.7 9 L11.7 6.2 C11.7 3.8 10.3 2 8 2 Z'"
@@ -76973,6 +76997,7 @@ def _landing():
             "<line class='bell-slash' x1='2.8' y1='2.2' x2='13.2' y2='13.8' stroke='currentColor' stroke-width='1.2' stroke-linecap='round'/></svg></button>"
             # settings wears the desktop rail's OWN gear glyph, ⛭ (U+26ED), not the outlined star it had.
             "<button class=mact data-act=settings data-keycmd=settings.open aria-label=Settings title=Settings>⛭</button>"
+            "</span>"   # /.mtabs-acts
             "</nav>"
             # the usage MODAL (T247): the click on the rail's readout opens the per-session breakdown +
             # stacked histogram here — shell-native like #rnet-back, a centered card over the dimmed,
