@@ -70743,12 +70743,15 @@ var lost={};
 // in Chromium and WebKit a 204 or a download closes no socket, so the link can stand through a whole outage of the panes alone,
 // and without the frame that outage went unwritten and its entries were dropped at its end. The link's next frame comes
 // within one keepalive (KEEPALIVE_S, 10 s by default), so a pane-only outage that ends before it still goes unwritten. An unload
-// makes none of these events. One that lands in the 1 to 2 ms between beforeunload and the closes Firefox delivers clears the
-// latch, and that reload writes an entry for each shown pane whose dial the unload closed. The likeliest is a frame on the link,
-// so the reloads exposed are those while a pane's dial connects and the link is open: the boot dials, and a return's pane
-// redials, since the panes wait for the link and dial once it is up (and a burst of frames follows the link's open, the
-// kernel's answers to its ready). Only the shell's own return dial, which the panes wait behind, is not exposed: the link is
-// down then and carries no frame.
+// makes none of these events. One that lands after beforeunload and before a failure word reaches this Log clears the latch, and
+// each failure word read after it writes its entry: up to 3 false entries on the desktop with the default panes shown, one for
+// each shown pane whose dial the unload closed (review round 2 of item 4b, 2026-10-05, as measured in the lab's Firefox reloads
+// while the panes' dials connected: the unload's closes came mostly 1 to 2 ms after beforeunload, 453 of 462 within 13 ms and
+// the latest at 21 ms, and the failure words reached the Log's listener 2 to 9 ms after it, 352 of 388 of them, the latest at
+// 32 ms). The likeliest is a frame on the link, so the reloads exposed are those while a pane's dial connects and the link is
+// open: the boot dials, and a return's pane redials, since the panes wait for the link and dial once it is up (and a burst of
+// frames follows the link's open, the kernel's answers to its ready). Only the shell's own return dial, which the panes wait
+// behind, is not exposed: the link is down then and carries no frame.
 var leaving=false;
 window.addEventListener('beforeunload',function(){leaving=true;});
 window.addEventListener('pageshow',function(){leaving=false;});
