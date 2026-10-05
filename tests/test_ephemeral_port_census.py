@@ -169,13 +169,12 @@ no binding here, and the census does not see the value such a setting gives it (
   turn; and, over bounded operands, str() and int(), a unary minus or plus (-7, +7), + - and *, and // and % by a
   divisor whose every value is positive, of one value or of several: // as the span from the least to the greatest
   quotient of an end of its left operand by an end of its divisor (90002 // K, with K bound to 2, to 3 and by K = f(),
-  is 30000-45001), % by one value as the remainder
-  where the left operand is one value and as 0 to the divisor less one otherwise, and % by a divisor of several values
-  as 0 to its highest value less one (50000 % K, with K bound to 60000, to 70000 and by K = f(), is 0-69999). It reads
-  an unknown operand of % by such a divisor as 0 to the divisor's highest value less one, and
-  a call to randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n) over bounded arguments
-  (random's and secrets', by the callee's name; a randrange's step may be unbounded, below) as the values it can
-  return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does random.randint(40000,
+  is 30000-45001), % by one value as the remainder where the left operand is one value and as 0 to the divisor less one
+  otherwise, and % by a divisor of several values as 0 to its highest value less one (50000 % K, with K bound to 60000,
+  to 70000 and by K = f(), is 0-69999). It reads an unknown operand of % by such a divisor as 0 to the divisor's highest
+  value less one, and a call to randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n) over
+  bounded arguments (random's and secrets', by the callee's name; a randrange's step may be unbounded, below) as the
+  values it can return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does random.randint(40000,
   50000). A call Python always refuses can give a span whose ends are reversed (random.randint(50000, 40000) is
   50000-40000), and such a span counts when both its ends lie in the range. Each argument of one of these random calls
   is given by position or by its parameter's name (randint's a and b, randrange's start, stop and step, randbelow's
@@ -623,30 +622,29 @@ def _signed_number(v):
 
 
 def interval(node, bound=None, steps=None):
-    """(lo, hi, computed) for an int expression the census can bound, else None: constants, a unary minus or plus,
-    + - and * over them, // and % by a divisor whose every value is positive (// by the least and greatest quotient of
-    their ends, so 90002 // K, with K bound to 2, to 3 and by K = f(), is 30000-45001; % by a divisor of several values
-    as 0 to its highest value less one), a name (below), str() or int() around one (int() of a name as CPython's int()
-    of each of its values in `bound`, a float or a string included and a value int() refuses passed over), an unknown
+    """(lo, hi, computed) for an int expression the census can bound, else None: constants, a unary minus or plus, + -
+    and * over them, // and % by a divisor whose every value is positive (// by the least and greatest quotient of their
+    ends, so 90002 // K, with K bound to 2, to 3 and by K = f(), is 30000-45001; % by a divisor of several values as 0
+    to its highest value less one), a name (below), str() or int() around one (int() of a name as CPython's int() of
+    each of its values in `bound`, a float or a string included and a value int() refuses passed over), an unknown
     operand of % by such a divisor read as 0 to its highest less one, and randint(a, b), randrange(stop),
-    randrange(start, stop[, step]) and
-    randbelow(n) over bounded arguments read as the values each can return, each argument given by position or by its
-    parameter's name (_random_args()). randrange(start, stop[, step]) is read by its step's sign, the step bounded or
-    not (a step left out is 1, and one a ** mapping can give is unbounded): start's lowest value to stop's highest less
-    one for a step that is never negative, stop's lowest plus one to start's highest for any other step that is never
-    positive, and the span holding both for the rest, a step that can take either sign or one interval() does not bound
-    (THE RULE). A bool is the int it is (True 1, False 0). computed is True when an unknown took part, or a name's
-    values differ. `bound` maps a name to the values it reads by, and `steps` does the same at a randrange's step and
-    anywhere inside one (`bound` when not given): the span from the lowest int among them to the highest, a None, a
-    float or a string among them adding nothing, and no reading when none is an int. A randrange's stop that is a name
-    with None among its values in `bound` is also read as a stop left empty, randrange's default, when the step is left
-    out or is the int 1 written there, and the call reads as the span holding both readings. literal() hands it as
-    `bound` every value the census records for each name (BOUND), so a name bound to 7, to 9 and by K = f() reads 7-9,
-    and as `steps` the values of each name every binding of which the census records, each to an int, so at a step
-    that K is one it does not bound; and, for a value that reads a name with a binding the census does not record, it
-    calls again with `bound` holding only the names every binding of which the census records, so that K reads
-    unbounded there. offset_base() hands it the values of its own `bound`, each name it reads holding one of its ints at
-    a time."""
+    randrange(start, stop[, step]) and randbelow(n) over bounded arguments read as the values each can return, each
+    argument given by position or by its parameter's name (_random_args()). randrange(start, stop[, step]) is read by
+    its step's sign, the step bounded or not (a step left out is 1, and one a ** mapping can give is unbounded): start's
+    lowest value to stop's highest less one for a step that is never negative, stop's lowest plus one to start's highest
+    for any other step that is never positive, and the span holding both for the rest, a step that can take either sign
+    or one interval() does not bound (THE RULE). A bool is the int it is (True 1, False 0). computed is True when an
+    unknown took part, or a name's values differ. `bound` maps a name to the values it reads by, and `steps` does the
+    same at a randrange's step and anywhere inside one (`bound` when not given): the span from the lowest int among them
+    to the highest, a None, a float or a string among them adding nothing, and no reading when none is an int. A
+    randrange's stop that is a name with None among its values in `bound` is also read as a stop left empty, randrange's
+    default, when the step is left out or is the int 1 written there, and the call reads as the span holding both
+    readings. literal() hands it as `bound` every value the census records for each name (BOUND), so a name bound to 7,
+    to 9 and by K = f() reads 7-9, and as `steps` the values of each name every binding of which the census records,
+    each to an int, so at a step that K is one it does not bound; and, for a value that reads a name with a binding the
+    census does not record, it calls again with `bound` holding only the names every binding of which the census
+    records, so that K reads unbounded there. offset_base() hands it the values of its own `bound`, each name it reads
+    holding one of its ints at a time."""
     bound = bound or {}
     steps = bound if steps is None else steps
     if isinstance(node, ast.Constant) and isinstance(node.value, int):
@@ -2418,10 +2416,9 @@ class Plants(unittest.TestCase):
         reads 1001-40000, where 3d5b30b85 read K as 7, the call as 40000-999, and reported nothing (CPython returns
         values from 1001 to 40000 when K is negative). Anywhere else such a name reads by the ints the census records
         for it (and, where the position's value gives a reading with the name unbounded, by that one too: BOUND),
-        where 6766e22fe left it unread and dropped a
-        number the test writes: per form, random.randrange(S,
-        50000) with S bound to 40000 and by the form, and random.randrange(40000, E) with E bound to 50000 and by the
-        form, read 40000-49999, as their twins with no other binding do. So does a start beside a star import, which
+        where 6766e22fe left it unread and dropped a number the test writes: per form, random.randrange(S, 50000) with S
+        bound to 40000 and by the form, and random.randrange(40000, E) with E bound to 50000 and by the form, read
+        40000-49999, as their twins with no other binding do. So does a start beside a star import, which
         binds names its text does not write, and so does the name inside a display that is the position's value, in a
         loop's sequence, in a two-hop display, in str() and int(), in arithmetic outside a sum, and as randint's and
         randbelow's bounds, each red. A name bound to two ints reads the span from one to the other: a stop bound to
@@ -2567,11 +2564,11 @@ class Plants(unittest.TestCase):
         for the spelling with the two underscores, under the spelling it mangles to (THE RULE), as a name with a binding
         the census does not record does anywhere but at a step: each of MANGLED_FORMS so reads 40000-49999 (red), where
         6766e22fe reported nothing for the first two, and the census before the spellings were joined for the last. The
-        census being module-wide, such a name is unbounded at a
-        step wherever the module reads it: __K bound to 7 and read outside the class reads 1001-40000 too, an over-read,
-        since CPython refuses that call for every value (red). A name with one leading underscore (_S) or two trailing
-        ones (__S__) is not mangled, nor is any name in a class whose name is underscores alone (class __:), and each is
-        read by its one recorded int: random.randrange(S, 50000) with S bound to 40000 reads 40000-49999 (red)."""
+        census being module-wide, such a name is unbounded at a step wherever the module reads it: __K bound to 7 and
+        read outside the class reads 1001-40000 too, an over-read, since CPython refuses that call for every value
+        (red). A name with one leading underscore (_S) or two trailing ones (__S__) is not mangled, nor is any name in a
+        class whose name is underscores alone (class __:), and each is read by its one recorded int: random.randrange(S,
+        50000) with S bound to 40000 reads 40000-49999 (red)."""
         lo, hi = LOW + 7232, LOW + 17232                                            # 40000 and 50000, built at run time
 
         def module(lines, indent, spelled, k, v, call):
