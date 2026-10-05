@@ -2923,6 +2923,24 @@ class Plants(unittest.TestCase):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
 
+    def test_the_hop_counts_a_string_a_binding_records_beside_one_it_does_not(self):
+        """THE RULE's clause on a None, a float or a string a binding the census records is interval()'s alone: the hop
+        counts every value recorded, a digit string wherever a string counts, whatever the name's other bindings. Each
+        red plant is a name bound to "45001" and also by a binding the census does not record (P = f(), or a star
+        import), read by the hop: under a port-named key, as the argument after --port, and beside an int it records
+        (P bound to 7, to "45001" and by P = f()). A census that took the clause as the hop's too, dropping such a
+        string, would read none of them."""
+        n = _n()
+        for label, src, why in (
+                ("under a port-named key", 'P = "%d"\nP = f()\nrow = {"port": P}\n' % n, "the key 'port', through the name P"),
+                ("after --port", 'P = "%d"\nP = f()\nsubprocess.run(["romp", "--port", P])\n' % n,
+                 "the argument after the flag --port, through the name P"),
+                ("beside an int", 'P = 7\nP = "%d"\nP = f()\nrow = {"port": P}\n' % n, "the key 'port', through the name P"),
+                ("beside a star import", 'from m import *\nP = "%d"\nrow = {"port": P}\n' % n,
+                 "the key 'port', through the name P")):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why)
+
     def test_int_of_a_name_reads_cpython_s_int_of_each_value_the_census_records(self):
         """int() of a name reads as the span of CPython's int() of each value the census records for it, a float or a
         string included and a value int() refuses passed over (THE RULE), so a test that writes a port as a string and
