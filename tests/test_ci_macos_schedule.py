@@ -1,5 +1,6 @@
 """The weekly macOS run is paused (.github/workflows/ci.yml, 2026-10-04) until the first month's bill on the private runner is
-read; a manual dispatch still runs the macOS cells.
+read; a manual dispatch with its macos input on still runs the macOS cells (since 2026-10-05 a dispatch is Linux alone by
+default: tests/test_ci_macos_input.py).
 
 From 2026-09-16 the macOS cells ran on a weekly schedule as well as on a manual dispatch: with the manual switch alone the
 release gate was the first macOS run in two weeks and found twenty-nine accumulated failures. On a private repository every
@@ -10,11 +11,11 @@ job's os: expression still names the schedule event, so un-commenting the two li
 Pins, each over ci.yml's text, read with tests/test_ci_workflow_concurrency.py's readers (no YAML library in the test deps):
 1. PAUSED: the on: block, read as keys with its comment lines dropped (triggers), has no schedule key, and no line of the
    workflow is a live cron entry (`- cron:` after nothing but blanks). Both are red on the workflow before the pause.
-2. DISPATCH KEPT: workflow_dispatch is a trigger, and each matrix job's os: expression, evaluated for a dispatch, gives
-   macos-latest, so a dispatch still runs the macOS cells beside the Linux ones.
+2. DISPATCH KEPT: workflow_dispatch is a trigger, and each matrix job's os: expression, evaluated for a dispatch with
+   its macos input on, gives macos-latest, so such a dispatch still runs the macOS cells beside the Linux ones.
 3. RESTORABLE: the on: block holds the schedule's two lines commented out, once each, and un-commented (restored: the `# `
    after their two blanks removed) they give one weekly cron at a quiet hour Pacific, and each matrix job's os: expression,
-   evaluated for the schedule event, gives macos-latest as a dispatch's does. So the restore the comment promises is the
+   evaluated for the schedule event, gives macos-latest as a dispatch's with the macos input on does. So the restore the comment promises is the
    old run, and the commented lines cannot drift into something else unread. Red before the pause, where there is nothing
    commented to restore.
 4. The reason stands in the on: block's comments: the run is paused until the first month's bill is read (keyed on those
@@ -28,7 +29,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 # the checkout root on sys.path before the one import from a sibling module, as tests/test_ci_secret_scan.py does
 sys.path.insert(0, ROOT)
-from tests.test_ci_workflow_concurrency import MAIN, MATRIX_JOBS, SHA_A, matrix_os, os_list, run, triggers  # noqa: E402
+from tests.test_ci_workflow_concurrency import (  # noqa: E402
+    MAIN, MATRIX_JOBS, SHA_A, dispatch_run, matrix_os, os_list, run, triggers)
 
 WF = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 # The schedule's two lines as the on: block holds them commented out: the key and its one cron entry.
@@ -60,12 +62,14 @@ def restored(src):
     return src.replace(block, "\n".join(lines), 1)
 
 
-def macos_on(src, event):
-    """{matrix job: whether its os: expression, evaluated for `event` on main, gives macos-latest}."""
+def macos_on(src, event, **inputs):
+    """{matrix job: whether its os: expression, evaluated for `event` on main, gives macos-latest}; a workflow_dispatch
+    carries `inputs`, every other input at its declared default (dispatch_run)."""
+    ctx = dispatch_run(src, MAIN, SHA_A, **inputs) if event == "workflow_dispatch" else run(event, MAIN, SHA_A)
     out = {}
     for job in MATRIX_JOBS:
         expr, _includes = matrix_os(src, job)
-        out[job] = "macos-latest" in os_list(expr, run(event, MAIN, SHA_A))
+        out[job] = "macos-latest" in os_list(expr, ctx)
     return out
 
 
@@ -80,11 +84,11 @@ class MacosSchedulePaused(unittest.TestCase):
                                                         "the first month's bill on the private runner is read (2026-10-04)")
         self.assertEqual(LIVE_CRON.findall(self.wf), [], "ci.yml holds a live cron entry; the weekly run is paused")
 
-    def test_2_a_dispatch_still_runs_the_macos_cells(self):
+    def test_2_a_dispatch_with_macos_on_still_runs_the_macos_cells(self):
         self.assertIn("workflow_dispatch", triggers(self.wf), "the manual on-switch stays")
-        self.assertEqual(macos_on(self.wf, "workflow_dispatch"), {job: True for job in MATRIX_JOBS},
-                         "each matrix job selects macOS on a dispatch, the one road left to the macOS cells while the weekly "
-                         "run is paused")
+        self.assertEqual(macos_on(self.wf, "workflow_dispatch", macos=True), {job: True for job in MATRIX_JOBS},
+                         "each matrix job selects macOS on a dispatch with the macos input on, the one road left to the "
+                         "macOS cells while the weekly run is paused")
 
     def test_3_un_commenting_the_two_lines_restores_the_weekly_run(self):
         back = restored(self.wf)

@@ -31,7 +31,8 @@ expressions for each kind of run instead of matching their spelling.
 Runners (2026-09-28): a batch push gets Linux alone. CiMatrixRunners evaluates each matrix job's `os:` expression
 (python, shell and vendored-tooling) for each kind of run with the same evaluator, joins every `include:` entry's os,
 and reads the other jobs' literal `runs-on:` (secrets, vscode-extension and served-pages), so macOS on a batch push by
-any of those roads fails by name.
+any of those roads fails by name. A dispatch adds macOS only when its `macos` input is true (2026-10-05;
+tests/test_ci_macos_input.py holds the input and the gate, with dispatch_inputs and dispatch_run below).
 
 No YAML library is in the test deps, so the blocks are read by indentation, and anything the readers
 do not understand fails with "re-anchor" rather than passing."""
@@ -282,7 +283,10 @@ def _text_of(v):
 def evaluate(expr, ctx):
     """GitHub's value semantics for the subset the stanza uses: string literals, github.event_name, github.ref and
     github.sha, `==` and `!=` (case-insensitive on strings), `!`, `&&` and `||` (which return an operand, not a
-    boolean), parentheses, and startsWith(). Anything else raises LookupError."""
+    boolean), parentheses, and startsWith(). A name under `inputs.` (the matrix expressions' inputs.macos) is
+    ctx's value for it, and null when ctx has none: GitHub's inputs context is empty outside a dispatch, so an input
+    reads as null on a push (run() puts a dispatch's inputs in ctx; dispatch_run fills each at its declared default).
+    Anything else raises LookupError."""
     toks = _tokens(expr)
     pos = [0]
 
@@ -324,6 +328,8 @@ def evaluate(expr, ctx):
                 b = or_()
                 take("op", ")")
                 return _text_of(a).lower().startswith(_text_of(b).lower())
+            if value.startswith("inputs."):
+                return ctx.get(value)
             if value not in ctx:
                 raise LookupError("the name %s is not modelled; re-anchor this pin" % value)
             return ctx[value]
@@ -438,8 +444,61 @@ def concurrency(src=None):
     return keys["group"], keys["cancel-in-progress"]
 
 
-def run(event, ref, sha):
-    return {"github.event_name": event, "github.ref": ref, "github.sha": sha}
+def run(event, ref, sha, inputs=None):
+    """The context a run of `event` on `ref` at `sha` evaluates its expressions in. `inputs`, {name: value}, are a
+    dispatch's inputs, each as inputs.<name>; only a workflow_dispatch carries any (ValueError otherwise), and each one
+    the dict lacks reads as null (evaluate), so dispatch_run is the faithful dispatch: it fills every declared input."""
+    ctx = {"github.event_name": event, "github.ref": ref, "github.sha": sha}
+    if inputs:
+        if event != "workflow_dispatch":
+            raise ValueError("a %s run carries no inputs; only a workflow_dispatch does" % event)
+        ctx.update(("inputs." + k, v) for k, v in inputs.items())
+    return ctx
+
+
+def dispatch_inputs(src=None):
+    """{name: {key: value}} for each input `on: workflow_dispatch: inputs:` declares, as written (comment lines dropped):
+    each input's keys at two columns past its name, each a one-line plain or quoted scalar, unquoted; a plain true or
+    false is that boolean, as YAML reads it, and a quoted one stays a string. {} when the dispatch declares none. A
+    workflow_dispatch key other than inputs:, or a line in a shape this reader does not read, raises LookupError."""
+    lines = triggers(src).get("workflow_dispatch")
+    if lines is None:
+        raise LookupError("ci.yml has no workflow_dispatch trigger; re-anchor this pin")
+    keys = _keys_at(lines, 4)
+    if [k for k, _r, _i in keys] not in ([], ["inputs"]):
+        raise LookupError("workflow_dispatch holds %r, not inputs: alone; re-anchor this pin" % [k for k, _r, _i in keys])
+    if not keys:
+        return {}
+    under = _children(lines, keys[0][2], 4)
+    out, read = {}, 0
+    for name, rest, i in _keys_at(under, 6):
+        if _strip_comment(rest):
+            raise LookupError("the input %s has a value on its own line, not a mapping; re-anchor this pin" % name)
+        fields = {}
+        body = _children(under, i, 6)
+        for key, value, _j in _keys_at(body, 8):
+            value = _strip_comment(value)
+            fields[key] = {"true": True, "false": False}.get(value, _unquote(value))
+        if len(_keys_at(body, 8)) != len(body):
+            raise LookupError("the input %s holds a line deeper than its keys; re-anchor this pin" % name)
+        out[name] = fields
+        read += 1 + len(body)
+    if read != len(under):
+        raise LookupError("inputs: holds a line that is neither an input's name nor one of its keys; re-anchor this pin")
+    return out
+
+
+def dispatch_run(src, ref, sha, **given):
+    """run() for a workflow_dispatch on `ref` at `sha` as GitHub fills its inputs: every input the file declares
+    (dispatch_inputs), at its declared default unless `given` names it (an input with no default reads as null);
+    a name `given` holds that the file does not declare raises LookupError, as GitHub refuses an undeclared input."""
+    declared = dispatch_inputs(src)
+    unknown = sorted(set(given) - set(declared))
+    if unknown:
+        raise LookupError("the dispatch declares no input %r; GitHub refuses it" % unknown)
+    values = {name: fields.get("default") for name, fields in declared.items()}
+    values.update(given)
+    return run("workflow_dispatch", ref, sha, values)
 
 
 SHA_A, SHA_B = "a" * 40, "b" * 40
@@ -484,6 +543,11 @@ class CiConcurrency(unittest.TestCase):
         self.assertNotEqual(self.group("schedule", MAIN, SHA_A), self.group("push", MAIN, SHA_A))
 
     def test_the_evaluator_itself(self):
+        dispatch = run("workflow_dispatch", MAIN, SHA_A, {"macos": True})
+        self.assertIs(evaluate("github.event_name == 'workflow_dispatch' && inputs.macos", dispatch), True)
+        self.assertIsNone(evaluate("inputs.macos", run("push", MAIN, SHA_A)), "an input reads as null outside a dispatch")
+        with self.assertRaises(ValueError):
+            run("push", MAIN, SHA_A, {"macos": True})
         ctx = run("push", MAIN, SHA_A)
         self.assertEqual(evaluate("github.event_name == 'PUSH' && github.sha || github.ref", ctx), SHA_A)
         self.assertEqual(evaluate("github.event_name == 'pull_request' && github.sha || github.ref", ctx), MAIN)
@@ -504,13 +568,14 @@ FIXED_JOBS = ("secrets", "vscode-extension", "served-pages")   # runs-on: a lite
 class CiMatrixRunners(unittest.TestCase):
     """Round 1, tests-5: a batch push gets Linux alone. Every job's runners on a push to refs/heads/batch/x: each matrix
     job's (MATRIX_JOBS) evaluated os: list joined with every include: entry's os, and each other job's (FIXED_JOBS)
-    literal runs-on. A manual dispatch adds macOS to every matrix job, and so would the schedule event, whose weekly run is
-    paused (the expressions still name it, so restoring the run restores its macOS cells)."""
+    literal runs-on. A manual dispatch with its macos input on adds macOS to every matrix job (one with the input at its
+    default, off, adds none: tests/test_ci_macos_input.py), and so would the schedule event, whose weekly run is paused
+    (the expressions still name it, so restoring the run restores its macOS cells)."""
 
     def setUp(self):
         self.src = _source()
 
-    def runners(self, event, ref, src=None):
+    def runners(self, event, ref, src=None, inputs=None):
         """{job: its runner labels} for EVERY job ci.yml defines (job_keys), not a list of the known ones: a job whose
         runs-on is `${{ matrix.os }}` gets its matrix's evaluated os: list joined with every include: entry's os, any
         other job its literal runs-on; a runs-on in neither form is a re-anchor."""
@@ -522,7 +587,7 @@ class CiMatrixRunners(unittest.TestCase):
                 raise LookupError("the %s job has no runs-on:; re-anchor this pin" % job)
             if value == "${{ matrix.os }}":
                 expr, includes = matrix_os(src, job)
-                out[job] = sorted(set(os_list(expr, run(event, ref, SHA_A))) | set(includes))
+                out[job] = sorted(set(os_list(expr, run(event, ref, SHA_A, inputs))) | set(includes))
             elif "${{" in value:
                 raise LookupError("the %s job's runs-on %r is neither ${{ matrix.os }} nor a literal; re-anchor this pin" % (job, value))
             else:
@@ -539,9 +604,9 @@ class CiMatrixRunners(unittest.TestCase):
         for job in MATRIX_JOBS:
             self.assertEqual(job_value(self.src, job, "runs-on"), "${{ matrix.os }}", "the %s job runs on its matrix's os" % job)
 
-    def test_the_schedule_and_a_dispatch_add_macos_to_every_matrix_job(self):
-        for event in ("schedule", "workflow_dispatch"):
-            got = self.runners(event, MAIN)
+    def test_the_schedule_and_a_dispatch_with_macos_on_add_macos_to_every_matrix_job(self):
+        for event, inputs in (("schedule", None), ("workflow_dispatch", {"macos": True})):
+            got = self.runners(event, MAIN, inputs=inputs)
             for job in MATRIX_JOBS:
                 with self.subTest(event=event, job=job):
                     self.assertEqual(got[job], ["macos-latest", "ubuntu-latest"])

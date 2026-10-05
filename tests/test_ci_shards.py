@@ -14,7 +14,8 @@ Two kinds of pin:
    puts a file in two shards, or that is absent (every shard collects every file).
 2. Source pins over ci.yml, read by line shape with no YAML library, as tests/test_ci_workflow_concurrency.py reads it
    (ShardMatrix): the python job's shard axis lists 1 to SHARD_COUNT; a batch push runs each interpreter as
-   SHARD_COUNT Linux jobs, one per shard, and a dispatch adds one macOS job per macOS interpreter, unsharded; the Run
+   SHARD_COUNT Linux jobs, one per shard, and a dispatch with its macos input on (tests/test_ci_macos_input.py) adds one
+   macOS job per macOS interpreter, unsharded; the Run
    pytest step hands each Linux cell its shard and each macOS cell an empty value; and each cell's job name differs.
    Each shard's cap is tests/test_ci_bats_bound.py's (PythonJobCeiling).
 """
@@ -36,6 +37,8 @@ from tests.test_ci_workflow_concurrency import (  # noqa: E402
 
 WF = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 BATCH = "refs/heads/batch/2026-10-04a"
+# a dispatch's inputs that put the macOS cells in the matrix (ci.yml's macos input, off by default)
+MACOS_ON = {"macos": True}
 
 
 # ---- the census -------------------------------------------------------------------------------------------------------
@@ -209,18 +212,18 @@ def python_matrix(src):
     return (_strip_comment(keys["os"][0]), _flow_list(keys["python-version"][0]), _flow_list(keys["shard"][0]), excludes)
 
 
-def python_cells(src, event, ref=MAIN):
+def python_cells(src, event, ref=MAIN, inputs=None):
     """The python job's cells for a run of `event` on `ref`, as GitHub builds them: the product of the os list (the
-    os: expression evaluated by tests/test_ci_workflow_concurrency.py's os_list), the python-version list and the shard
-    list, less each cell an exclude entry matches (every key of the entry equal to the cell's; a key the matrix lacks is
-    an error, as GitHub makes it one). [{"os", "python-version", "shard"}]."""
+    os: expression evaluated by tests/test_ci_workflow_concurrency.py's os_list, a dispatch carrying `inputs`), the
+    python-version list and the shard list, less each cell an exclude entry matches (every key of the entry equal to the
+    cell's; a key the matrix lacks is an error, as GitHub makes it one). [{"os", "python-version", "shard"}]."""
     os_expr, versions, shards, excludes = python_matrix(src)
     for e in excludes:
         unknown = set(e) - {"os", "python-version", "shard"}
         if unknown:
             raise LookupError("an exclude entry names %r, which the matrix does not define" % sorted(unknown))
     cells = [{"os": o, "python-version": v, "shard": s}
-             for o, v, s in itertools.product(os_list(os_expr, run(event, ref, SHA_A)), versions, shards)]
+             for o, v, s in itertools.product(os_list(os_expr, run(event, ref, SHA_A, inputs)), versions, shards)]
     return [c for c in cells if not any(all(c[k] == v for k, v in e.items()) for e in excludes)]
 
 
@@ -284,16 +287,17 @@ class ShardMatrix(unittest.TestCase):
                          "a batch push runs every interpreter as one Linux job per shard, and no macOS job")
 
     def test_a_dispatch_adds_one_unsharded_macos_job_per_macos_interpreter(self):
-        mac = [c for c in python_cells(self.src, "workflow_dispatch") if c["os"] == "macos-latest"]
+        mac = [c for c in python_cells(self.src, "workflow_dispatch", inputs=MACOS_ON) if c["os"] == "macos-latest"]
         self.assertEqual(sorted(c["python-version"] for c in mac), ["3.10", "3.13"],
-                         "a dispatch runs one macOS job for each of 3.10 and 3.13, as before the shards: %r" % mac)
+                         "a dispatch with the macos input on runs one macOS job for each of 3.10 and 3.13, as before the "
+                         "shards: %r" % mac)
         for c in mac:
             self.assertEqual(cell_value(shard_env_value(self.src), c), "",
                              "a macOS cell's %s must be empty, so the cell runs every test file: %r" % (SHARD_ENV, c))
 
     def test_the_run_pytest_step_hands_each_linux_cell_its_shard(self):
         value = shard_env_value(self.src)
-        for c in python_cells(self.src, "workflow_dispatch"):
+        for c in python_cells(self.src, "workflow_dispatch", inputs=MACOS_ON):
             if c["os"] == "ubuntu-latest":
                 with self.subTest(cell=c):
                     self.assertEqual(cell_value(value, c), c["shard"], "the Run pytest step's %s on %r" % (SHARD_ENV, c))
@@ -301,7 +305,7 @@ class ShardMatrix(unittest.TestCase):
     def test_each_cells_job_name_is_its_own(self):
         name = re.search(r"^    name: (.+)$", python_job_head(self.src), re.M)
         self.assertTrue(name, "the python job has no name: line")
-        cells = python_cells(self.src, "workflow_dispatch")
+        cells = python_cells(self.src, "workflow_dispatch", inputs=MACOS_ON)
         names = [cell_value(name.group(1), c) for c in cells]
         self.assertEqual(len(set(names)), len(names), "two cells share a job name, so their checks cannot be told apart: %r"
                          % sorted(names))

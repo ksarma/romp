@@ -53,7 +53,9 @@ literal, and any change to it is red until the literal changes with it, on purpo
    tests/test_ci_macos_schedule.py still reads the schedule and the dispatch: this equality refuses any change to the block,
    and that module says what the lines must mean (no live schedule, the manual dispatch kept, and the commented schedule
    lines, un-commented, one weekly cron at a quiet hour Pacific) and ties them to every matrix expression's events, so a
-   change made on purpose, the schedule's restore among them, updates ON_LINES here and must still pass that module.
+   change made on purpose, the schedule's restore among them, updates ON_LINES here and must still pass that module. The
+   block holds the dispatch's macos input too (2026-10-05), and tests/test_ci_macos_input.py says what it must mean: a
+   boolean, off by default, the one switch that puts the macOS cells in a manual run.
 4. The Shell job's cap line EQUALS SHELL_CAP_LINE (60 minutes on macOS, 55 on Linux, in the python job's per-OS form;
    ci.yml's comment above the line sizes each, the slowest finished job of its OS plus 10 minutes rounded up to a multiple
    of 5. Main had a flat 35 until fork PR 940 landed on 2026-10-04 with 60 on macOS and 50 on Linux, the figures its
@@ -170,8 +172,8 @@ EXPECTED_JOB = (
     "    strategy:",
     "      fail-fast: false",
     "      matrix:",
-    "        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && "
-    "'[\"ubuntu-latest\",\"macos-latest\"]' || '[\"ubuntu-latest\"]') }}",
+    "        os: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.macos) || github.event_name == 'schedule') "
+    "&& '[\"ubuntu-latest\",\"macos-latest\"]' || '[\"ubuntu-latest\"]') }}",
     "    steps:",
     "      - uses: actions/checkout@v4",
     "      - uses: actions/setup-node@v4",
@@ -191,7 +193,12 @@ ON_LINES = (
     "on:",
     "  push:",
     "    branches: ['batch/**']",
-    "  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)",
+    "  workflow_dispatch:   # the manual run; its macos input, off by default, adds the macOS cells (below)",
+    "    inputs:",
+    "      macos:",
+    "        description: 'Also run the macOS cells (about 8 dollars of macOS runner minutes a run)'",
+    "        type: boolean",
+    "        default: false",
     "",
 )
 # The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
@@ -747,10 +754,10 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
             (check_on_block, "the push branch pattern narrowed", "top", "    branches: ['batch/**']", ["    branches: ['batch/x']"]),
             (check_on_block, "a pull_request trigger added", "top", "  push:", ["  pull_request:", "  push:"]),
             (check_on_block, "push replaced by pull_request", "top", "  push:", ["  pull_request:"]),
-            (check_on_block, "the paused weekly schedule restored", "top",
-             "  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)",
-             ["  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)", "  schedule:",
-              '    - cron: "0 10 * * 1"']),
+            (check_on_block, "the paused weekly schedule restored", "top", "        default: false",
+             ["        default: false", "  schedule:", '    - cron: "0 10 * * 1"']),
+            (check_on_block, "the dispatch's macos input on by default", "top", "        default: false",
+             ["        default: true"]),
             (check_on_block, "the push branch filter widened to main", "top", "    branches: ['batch/**']",
              ["    branches: ['batch/**', main]"]),
             (check_top_keys, "a second, quoted on key", "top", "concurrency:", ["\"on\": [workflow_dispatch]", "concurrency:"]),

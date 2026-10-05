@@ -92,26 +92,39 @@ on:
     # is not a trigger: its branch filter selects the BASE branch, so picking out batch PRs there
     # would take a job-level `if:`, and a skipped job reports success.
     branches: ['batch/**']
-  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)
+  workflow_dispatch:   # the manual run; its macos input, off by default, adds the macOS cells (below)
+    # The macos input (2026-10-05): a manual run runs the Linux jobs alone unless the input is true. To ask for the
+    # macOS cells, tick the box in the Actions tab's "Run workflow" form, or run `gh workflow run CI --ref <branch>
+    # -f macos=true`. The reason is cost control, as for the paused weekly run: the macOS cells bill at about ten
+    # times the Linux rate, about 8 dollars of macOS minutes a dispatch by the header's figures (132 runner minutes in
+    # run 36716348831, a floor), where a run's Linux jobs come to about 3 dollars. Each matrix job's os: expression
+    # selects macOS on a dispatch only when the input is true, and never on a batch push; the schedule event still
+    # selects it (tests/test_ci_macos_input.py holds the input and the gate). scripts/release.sh, whose release gate
+    # is the macOS run, dispatches with the input on.
+    inputs:
+      macos:
+        description: 'Also run the macOS cells (about 8 dollars of macOS runner minutes a run)'
+        type: boolean
+        default: false
   # The weekly schedule is PAUSED (2026-10-04) until the first month's bill on the private runner is
   # read. On a private repository every run is billed, and the scheduled run would add its Linux jobs
   # and the macOS cells, which bill at about ten times the Linux rate (about 1,320 Linux minutes' worth
   # in run 36716348831, the header's figure), every week. While it is paused, nothing runs on a
-  # schedule, a batch push runs the Linux jobs alone, and a manual dispatch runs the Linux jobs and the
-  # macOS cells, as before: each matrix expression below still selects macOS on workflow_dispatch. Those
-  # expressions still name the schedule event as well, so un-commenting the two lines at the end of
-  # this comment restores the weekly run as it was (tests/test_ci_macos_schedule.py holds both).
+  # schedule, a batch push runs the Linux jobs alone, and a manual dispatch runs the Linux jobs and,
+  # when its macos input is true, the macOS cells. Each matrix expression below still names the
+  # schedule event, so un-commenting the two lines at the end of this comment restores the weekly run
+  # as it was, the macOS cells included (tests/test_ci_macos_schedule.py holds both).
   # From 2026-09-16 the macOS cells ran ONCE A WEEK on their own: with the manual switch alone the
   # release gate was the first macOS run in two weeks, and it found twenty-nine failures that had
   # accumulated unseen. One run at a quiet hour Pacific (Monday 10:00 UTC is 03:00 Pacific in summer,
   # 02:00 in winter); the manual dispatch stays for the release day and for a platform-sensitive change.
   # schedule:
-  #   - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the same matrix a manual dispatch does
+  #   - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the matrix a dispatch with macos on does
 
 # A newer push to a BATCH BRANCH cancels the older in-flight run on that branch:
 # a rebuild's new head supersedes the old one, whose verdict nobody reads and
 # whose minutes would still be spent. The event is part of the key on purpose: a
-# dispatch (the macOS gate, on main or on a batch branch) is keyed apart from
+# dispatch (the macOS gate with its macos input on, on main or on a batch branch) is keyed apart from
 # that ref's pushes, so a push never cancels it; a bare ref key let an
 # auto-merged PR cancel the in-flight release run mid-watch (2026-07-27).
 # main is not a push trigger (see `on:`), but the group still keys a push to
@@ -198,10 +211,10 @@ jobs:
       # macOS-only break look identical if the matrix stops at the first.
       fail-fast: false
       matrix:
-        # macOS is in the matrix ONLY on a manual run (workflow_dispatch) or the weekly
-        # schedule, which is paused (see `on:`); a batch push gets Linux alone. See the billing
-        # note in the header.
-        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        # macOS is in the matrix ONLY on a manual run (workflow_dispatch) whose macos input is
+        # true, or on the weekly schedule, which is paused (see `on:`); a batch push, and a manual
+        # run with the input left off, get Linux alone. See the billing note in the header.
+        os: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.macos) || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
         # 3.14t is setup-python's spelling for the free-threaded build (see the header).
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14t']
         # The shards: tests/conftest.py assigns each test file to one of SHARD_COUNT shards (its CI's shards
@@ -547,8 +560,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS only on a manual run (workflow_dispatch) or the weekly schedule, which is paused; see the header note.
-        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        # macOS only on a manual run (workflow_dispatch) whose macos input is true, or the weekly schedule, which is
+        # paused; see the header note.
+        os: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.macos) || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       # bats comes from the pinned release tarball, NOT apt: an Azure apt-mirror outage hung
@@ -778,9 +792,9 @@ jobs:
     # hour the python job's macOS cap keeps (tests/test_ci_bats_bound.py holds it at 60 or less,
     # since past an hour a hung cell holds the dispatch): the rule's figure for this step, 70 to 76
     # minutes, is already past that hour, so a hung macOS cell here holds a dispatch for up to 90
-    # minutes. The first macOS run (a dispatch, while the weekly schedule is paused) measures the step, and the
-    # cap is re-read from it. A batch push's run starts the Linux cell alone, so batches are not
-    # affected.
+    # minutes. The first macOS run (a dispatch with its macos input on, while the weekly schedule is
+    # paused) measures the step, and the cap is re-read from it. A batch push's run starts the Linux
+    # cell alone, so batches are not affected.
     # Follow-ups, in this order: (1) make the hook's per-paren case check linear (skipNested in
     # hooks/romp-track-bash-guard.mjs tests /\bcase\b/ over the whole slice read so far at every
     # `)`: about 210 s of this step on CI, and a stall of about 16 s in the hook itself on a command
@@ -801,8 +815,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS only on a manual run (workflow_dispatch) or the weekly schedule, which is paused, as in the Shell job; see the header note.
-        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        # macOS only on a manual run (workflow_dispatch) whose macos input is true, or the weekly schedule, which is
+        # paused, as in the Shell job; see the header note.
+        os: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.macos) || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       # Node 22, pinned as the Shell job pins it for the handshake step, so the step never rides
@@ -946,7 +961,7 @@ jobs:
         # one hung leg fails by name (node cancels that file and ends its process at the bound, naming it, and runs the
         # other files on; a leg's own { timeout } does not end the process, since a live browser handle keeps it up
         # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in
-        # the batch push's CI run, or in a workflow_dispatch of the PR's branch (which also runs the macOS cells), since
+        # the batch push's CI run, or in a workflow_dispatch of the PR's branch (the macOS cells too if its macos input is on), since
         # the PR's own sweep does not run this step (scripts/sweep.py's docstring: it runs only in GitHub's CI, in every
         # run of this workflow: a batch push or a manual run, the weekly schedule being paused), and raises the step's timeout-minutes
         # when the total needs it, and the job's cap with it when the new bound does not fit the margin (the job

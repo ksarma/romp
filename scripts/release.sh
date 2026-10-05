@@ -34,7 +34,8 @@
 #   * macOS CI does not run on pushes (it is billed even on public repos, ~10x, so it is
 #     workflow_dispatch-only). A macOS-only breakage can therefore sit undetected until a
 #     user hits it. Releasing is exactly when that matters, so this triggers the macOS run
-#     and REFUSES to tag unless it goes green.
+#     and REFUSES to tag unless it goes green. A dispatch runs Linux alone unless the
+#     workflow's macos input is true (ci.yml, 2026-10-05), so the dispatch turns it on.
 #
 # --skip-macos exists for the case where you must ship anyway; it is deliberately an
 # explicit flag (never an env default) and it says so loudly.
@@ -280,7 +281,9 @@ elif [ "$dry_run" -eq 1 ]; then
 else
     say "triggering the macOS CI run on $REF (it is dispatch-only, so this is the check)..."
     before="$("$GH" run list --workflow CI --event workflow_dispatch -L 1 --json databaseId -q '.[0].databaseId // ""' 2>/dev/null || true)"
-    "$GH" workflow run CI --ref "$REF" || die "could not dispatch the CI workflow."
+    # -f macos=true: the workflow's boolean input, off by default, without which a dispatch runs Linux alone and this
+    # gate would pass with no macOS cell run (tests/test_ci_macos_input.py holds this line to the input ci.yml declares).
+    "$GH" workflow run CI --ref "$REF" -f macos=true || die "could not dispatch the CI workflow."
 
     # Identify OUR run by waiting for the newest dispatch run to differ from the one that was
     # newest before we dispatched — `gh workflow run` prints no run id, and taking the newest
