@@ -227,7 +227,7 @@ class ServedLabsUnderCI(unittest.TestCase):
         knob = two_host_lab_knob()
         self.assertIsNotNone(knob, "the corners module's TwoHostsBytesByHost gate was not found: re-aim two_host_lab_knob()")
         self.assertTrue((step["env"].get(knob) or "").strip(),
-                        "the served step does not set the two-host lab's knob %s (the gate reads any non-blank value): %r" % (knob, step["env"]))
+                        "the served step does not set the two-host lab's knob %s (the gate reads any non-blank value): %r" % (knob, sorted(step["env"])))
 
     def test_the_gear_browser_legs_are_rostered_in_the_step_after_the_browser_install(self):
         """ui/webview/gear-sub-focus-browser.test.ts holds the source pins and the browser legs of the description-on-focus work

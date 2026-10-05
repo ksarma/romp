@@ -2760,7 +2760,7 @@ class ListedInvocations(unittest.TestCase):
     def test_the_served_step_does_not_set_the_switch(self):
         # a listed step that sets the switch is a contradiction: either it is compliant, or it is listed
         for inv in self.served:
-            self.assertNotIn(SWITCH, inv["env"], "the served step's pytest line %d sets %s: it declares an SDK it does not install" % (inv["line"], SWITCH))
+            self.assertFalse(SWITCH in inv["env"], "the served step's pytest line %d sets %s: it declares an SDK it does not install" % (inv["line"], SWITCH))
 
     def test_the_served_steps_globs_collect_no_module_that_spells_the_switch(self):
         # keyed on the switch's name spelled in the file's text (switch_spellers), not on an environment read, over

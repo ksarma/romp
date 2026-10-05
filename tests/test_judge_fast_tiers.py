@@ -363,7 +363,7 @@ class Readback(_Base):
         jd._FAST_ORG_MEMO["env"] = {"X": "1"}
         jd._note_fast_readback("distill", "opus", other, "distiller", None)
         self.assertEqual(len(self._rows(jd.ERRORS)), 2, "a new reason is a new row")
-        self.assertIsNone(jd._FAST_ORG_MEMO["env"], "an org-shaped refusal drops the org-check memo")
+        self.assertTrue(jd._FAST_ORG_MEMO["env"] is None, "an org-shaped refusal drops the org-check memo")
         jd._note_fast_readback("distill", "opus", _fixture("claude-p-result-envelope-fast.json"), "distiller", None)
         self.assertEqual(jd._fast_refused(), {}, "an on clears the tier's record")
         self.assertEqual(len(self._rows(jd.ERRORS)), 2)
@@ -399,10 +399,10 @@ class ReadbackEdges(Readback):
         jd._FAST_ORG_MEMO["env"] = {}
         std = dict(_fixture("claude-p-result-envelope-standard.json"), fast_mode_disabled_reason="extra_usage_disabled")
         jd._note_fast_readback("triage", "opus", std, "planner", None)
-        self.assertIsNone(jd._FAST_ORG_MEMO["env"], "the paying account is asked again after any refusal")
+        self.assertTrue(jd._FAST_ORG_MEMO["env"] is None, "the paying account is asked again after any refusal")
         jd._FAST_ORG_MEMO["env"] = {"X": "1"}
         jd._note_fast_readback("triage", "opus", std, "planner", None)
-        self.assertIsNone(jd._FAST_ORG_MEMO["env"], "a standing same-reason refusal drops it too (no row, but the ask stands)")
+        self.assertTrue(jd._FAST_ORG_MEMO["env"] is None, "a standing same-reason refusal drops it too (no row, but the ask stands)")
 
     def test_concurrent_refusals_of_two_tiers_both_stand(self):
         import threading
@@ -484,7 +484,7 @@ class RunEndToEnd(_Base):
         # judge child, as it did before the per-tier boxes and as it reaches every session
         with patch.dict(os.environ, {"CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK": "1", "CLAUDE_CODE_DISABLE_FAST_MODE": "1"}):
             out, seen = self._run(fast, auth="login")
-        self.assertNotIn("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK", seen["env"], "a login-billed call: the CLI's probe already asks the paying account")
+        self.assertFalse("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK" in seen["env"], "a login-billed call: the CLI's probe already asks the paying account")
         self.assertEqual(seen["env"].get("CLAUDE_CODE_DISABLE_FAST_MODE"), "1", "the operator's kill switch reaches the judge child")
         self.assertEqual(json.loads(seen["cmd"][seen["cmd"].index("--settings") + 1]), {"fastMode": True, "apiKeyHelper": ""})
         with patch.dict(os.environ, {"CLAUDE_CODE_DISABLE_FAST_MODE": "1"}):
@@ -494,7 +494,7 @@ class RunEndToEnd(_Base):
         # fast off for the tier, or a model that cannot run it: no probe, no opt-in
         out, seen = self._run(fast, auth="key", model="sonnet")
         self.assertNotIn("--settings", seen["cmd"])
-        self.assertNotIn("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK", seen["env"])
+        self.assertFalse("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK" in seen["env"], "CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK")
         km._set_judge_fast("off")
         out, seen = self._run(fast, auth="key")
         self.assertNotIn("--settings", seen["cmd"])
@@ -531,16 +531,16 @@ class RunEndToEnd(_Base):
         for t in ts:
             t.join()
         self.assertEqual(self.asked, [None], "one helper run for the pool: the others wait for its answer")
-        self.assertEqual(jd._fast_org_env(), {"CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK": "1"})
+        self.assertTrue(jd._fast_org_env() == {"CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK": "1"}, "the pool's one answer is the org-check switch")
 
     def test_a_probe_with_nothing_to_say_is_kept_until_a_refusal(self):
         sys.modules["romp_sdk_backend"] = types.SimpleNamespace(helper_fast_org_env=lambda log, cwd: (self.asked.append(cwd) or {}))
-        self.assertEqual(jd._fast_org_env(), {})
-        self.assertEqual(jd._fast_org_env(), {})
+        self.assertTrue(jd._fast_org_env() == {}, "a probe with nothing to say answers {}")
+        self.assertTrue(jd._fast_org_env() == {}, "and the kept answer is read again, not asked again")
         self.assertEqual(self.asked, [None], "a dead network does not cost a probe per call")
         km._set_judge_fast("on")
         out, seen = self._run(_fixture("claude-p-result-envelope-standard.json"), auth="key")   # the CLI refuses: re-ask
-        self.assertIsNone(jd._FAST_ORG_MEMO["env"])
+        self.assertTrue(jd._FAST_ORG_MEMO["env"] is None, "the refusal drops the kept answer")
         jd._fast_org_env()
         self.assertEqual(self.asked, [None, None])
 

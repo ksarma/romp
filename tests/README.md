@@ -1002,6 +1002,11 @@ assertion message; that report loses pytest's colour and source highlighting.
 One it leaves alone keeps pytest's own rendering.
 `tests/test_env_value_redaction.py` pins the rule, the write-time capture,
 the patterns, the scrub's cost and the hook end to end.
+`tests/test_env_mapping_assert_census.py` holds the assertion rule over every
+test module by AST: it fails on an assertion, message or bare `assert` that
+renders an environment mapping of a shape it reads (`os.environ`, a captured
+child `env`, a `dict(os.environ, ...)` copy, a call that returns one), names
+the fix, and lists in its docstring the shapes it cannot see.
 
 **A lab kernel's environment is built from a list of names, and the file a
 relaunch reads from carries a shorter list.** Every module that boots a hermetic

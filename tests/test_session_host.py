@@ -178,7 +178,7 @@ class SpawnSecrets(unittest.TestCase):
     def test_the_credential_names_leave_the_spec_env_and_are_returned_for_the_hosts_environment(self):
         spec = {"sid": SID, "env": {"ROMP_SID": SID, "CLAUDE_CODE_OAUTH_TOKEN": self.tok, "ANTHROPIC_AUTH_TOKEN": "synthetic-bearer"}}
         secrets = sb.split_spawn_secrets(spec)
-        self.assertEqual(spec["env"], {"ROMP_SID": SID}, "every credential name is gone from the spec; the rest stays")
+        self.assertTrue(spec["env"] == {"ROMP_SID": SID}, "every credential name is gone from the spec; the rest stays")
         self.assertEqual(sorted(secrets), ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"])
         self.assertTrue(secrets["CLAUDE_CODE_OAUTH_TOKEN"] == self.tok, "the returned value is the login's token")
         for name in sb.AUTH_ENV_NAMES:
@@ -186,7 +186,7 @@ class SpawnSecrets(unittest.TestCase):
         self.assertEqual(sb.split_spawn_secrets({"sid": SID}), {}, "a spec with no env: nothing to move")
         plain = {"env": {"ROMP_SID": SID, "PATH": "/usr/bin"}}
         self.assertEqual(sb.split_spawn_secrets(plain), {})
-        self.assertEqual(plain["env"], {"ROMP_SID": SID, "PATH": "/usr/bin"}, "a key-billed launch's overlay is untouched")
+        self.assertTrue(plain["env"] == {"ROMP_SID": SID, "PATH": "/usr/bin"}, "a key-billed launch's overlay is untouched")
 
     def _spawn(self, cli_scope, secret_env, which=None):
         """_spawn_host with subprocess.Popen replaced: returns (argv, kwargs) of the one launch."""
@@ -210,9 +210,9 @@ class SpawnSecrets(unittest.TestCase):
     def test_spawn_host_hands_the_token_to_the_host_through_its_environment_never_the_command_line(self):
         argv, kw = self._spawn(False, {"CLAUDE_CODE_OAUTH_TOKEN": self.tok})
         self.assertTrue(argv[1].endswith(os.path.join("bin", "romp-session-host")), "a plain child runs the launcher")
-        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "the token is in the host's environment")
+        self.assertTrue("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "the token is in the host's environment")
         self.assertTrue(kw["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == self.tok)
-        self.assertIn("PATH", kw["env"], "the kernel's own environment is inherited beside it")
+        self.assertTrue("PATH" in kw["env"], "the kernel's own environment is inherited beside it")
         self.assertFalse(any(self.tok in a for a in argv), "the token never rides the command line")
         self.assertTrue(kw.get("start_new_session") and kw.get("close_fds"), "the detached launch is unchanged")
 
@@ -220,7 +220,7 @@ class SpawnSecrets(unittest.TestCase):
         argv, kw = self._spawn(True, {"CLAUDE_CODE_OAUTH_TOKEN": self.tok}, which="/usr/bin/systemd-run")
         self.assertEqual(argv[0], "systemd-run")
         self.assertIn("--scope", argv, "a scope runs the command as systemd-run's own child, in its environment")
-        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"])
+        self.assertTrue("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "CLAUDE_CODE_OAUTH_TOKEN")
         self.assertFalse(any(self.tok in a for a in argv), "no --setenv, no value on the command line")
 
     def test_a_launch_with_no_secrets_hands_the_host_the_kernels_environment_and_no_bearer(self):
@@ -230,7 +230,7 @@ class SpawnSecrets(unittest.TestCase):
             argv, kw = self._spawn(False, None)
         self.assertEqual(kw["env"].get("ROMP_TEST_MARKER"), "1", "the kernel's environment, as a plain Popen inherited it")
         for name in sb.AUTH_ENV_NAMES:
-            self.assertNotIn(name, kw["env"], "a key-billed launch's host gets no bearer to hand its CLI")
+            self.assertFalse(name in kw["env"], "a key-billed launch's host gets no bearer to hand its CLI")
 
     def test_the_host_launch_writes_a_stored_login_spawn_json_without_the_token_and_hands_it_to_the_host(self):
         """The real _host_transport_for, on its spawn road, over a stub kernel: the login's token is in the options'
@@ -256,7 +256,7 @@ class SpawnSecrets(unittest.TestCase):
         self.assertEqual(t[0], "transport", "the spawn road handed back the new transport")
         written = json.loads(handed["spec_path"].read_text())
         self.assertEqual(handed["spec_path"], Path(self.state) / "hosts" / SID / "spawn.json")
-        self.assertEqual(written["env"], {"ROMP_SID": SID}, "the file carries the overlay minus every credential name")
+        self.assertTrue(written["env"] == {"ROMP_SID": SID}, "the file carries the overlay minus every credential name")
         self.assertEqual(written["login"], "login-rec-1", "the login IDENTIFIER stays in the file")
         self.assertNotIn(self.tok, handed["spec_path"].read_text(), "the token's value is nowhere in the file")
         self.assertEqual(sorted(handed["secrets"]), ["CLAUDE_CODE_OAUTH_TOKEN"], "the host gets the moved variable")
@@ -275,8 +275,8 @@ class SpawnSecrets(unittest.TestCase):
         spec = {"sid": SID, "env": {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val,
                                     "NOTES_API_KEY": key, "OP_SESSION_notes": op, "EMPTY_TOKEN": ""}}
         secrets = sb.split_spawn_secrets(spec)
-        self.assertEqual(spec["env"], {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "EMPTY_TOKEN": ""},
-                         "a plain name stays; an empty credential-shaped value holds no secret and stays the unset it means")
+        self.assertTrue(spec["env"] == {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test", "EMPTY_TOKEN": ""},
+                        "a plain name stays; an empty credential-shaped value holds no secret and stays the unset it means")
         self.assertEqual(sorted(secrets), ["NOTES_API_KEY", "NOTES_API_TOKEN", "OP_SESSION_notes"])
         self.assertTrue(secrets["NOTES_API_TOKEN"] == val and secrets["NOTES_API_KEY"] == key and secrets["OP_SESSION_notes"] == op,
                         "the returned values are the overlay's")
@@ -353,8 +353,8 @@ class SpawnSecrets(unittest.TestCase):
         t = asyncio.run(sb.SdkBackend._host_transport_for(me, sess, opts, ()))
         self.assertEqual(t[0], "transport", "the spawn road handed back the new transport")
         written = json.loads((Path(self.state) / "hosts" / SID / "spawn.json").read_text())
-        self.assertEqual(written["env"], {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test"},
-                         "the plain name stays in the file; the credential-shaped one is gone")
+        self.assertTrue(written["env"] == {"ROMP_SID": SID, "NOTES_ENDPOINT": "http://notes.test"},
+                        "the plain name stays in the file; the credential-shaped one is gone")
         under_hosts = [q for q in (Path(self.state) / "hosts").rglob("*") if q.is_file()]
         self.assertTrue(under_hosts, "the write left files to check")
         for q in under_hosts:
@@ -367,7 +367,7 @@ class SpawnSecrets(unittest.TestCase):
         self.assertIs(said[0][1].get("problem"), False, "a routine line, never a problem row: filed as False explicitly")
         # the three login names are routine (every login launch moves one) and go unsaid
         written, handed, logged = self._spawn_road({"ROMP_SID": SID, "CLAUDE_CODE_OAUTH_TOKEN": self.tok})
-        self.assertEqual(written["env"], {"ROMP_SID": SID})
+        self.assertTrue(written["env"] == {"ROMP_SID": SID}, "the file carries the overlay minus the login name")
         self.assertEqual(handed["secrets"], {"CLAUDE_CODE_OAUTH_TOKEN": self.tok}, "the login token still moves")
         self.assertEqual([m for m, _ in logged if "credential-shaped" in m], [], "a login name alone: nothing said")
 
@@ -388,19 +388,19 @@ class SpawnSecrets(unittest.TestCase):
         docstring carries the same note)."""
         spec = {"sid": SID, "env": {"ROMP_SID": SID, "X_COUNT": 5, "X_FLAG": True}}
         self.assertEqual(sb.split_spawn_secrets(spec), {}, "nothing credential-shaped: nothing moves, nothing raises")
-        self.assertEqual(spec["env"], {"ROMP_SID": SID, "X_COUNT": 5, "X_FLAG": True}, "the plain values stay as they were")
+        self.assertTrue(spec["env"] == {"ROMP_SID": SID, "X_COUNT": 5, "X_FLAG": True}, "the plain values stay as they were")
         num = 10 ** 12 + uuid.uuid4().int % 10 ** 12
         spec = {"sid": SID, "env": {"ROMP_SID": SID, "NOTES_API_TOKEN": num, "NOTES_API_KEY": ["a", "b"], "X_FLAG": True}}
         secrets = sb.split_spawn_secrets(spec)
         self.assertEqual(secrets, {"NOTES_API_TOKEN": str(num), "NOTES_API_KEY": str(["a", "b"])},
                          "a credential-shaped name moves whatever its value's type, as text for the host's environment")
-        self.assertEqual(spec["env"], {"ROMP_SID": SID, "X_FLAG": True})
+        self.assertTrue(spec["env"] == {"ROMP_SID": SID, "X_FLAG": True}, "the plain values stay")
         self.assertNotIn(str(num), json.dumps(spec), "the value is gone from the spec")
         self.assertEqual(sb.split_spawn_secrets({"env": {"CLAUDE_CODE_OAUTH_TOKEN": None}}), {"CLAUDE_CODE_OAUTH_TOKEN": ""},
                          "a login name moves whatever its value; None rides as the empty string, never the word None")
         spec = {"env": {"EMPTY_TOKEN": None}}
         self.assertEqual(sb.split_spawn_secrets(spec), {}, "None under another credential-shaped name holds no secret and stays")
-        self.assertEqual(spec["env"], {"EMPTY_TOKEN": None})
+        self.assertTrue(spec["env"] == {"EMPTY_TOKEN": None}, "None under a credential-shaped name stays")
         for v in (5, True, 1.5, ["a"], {"k": "v"}, 0, False, None, "", []):
             self.assertEqual(sb.spawn_env_secret_names({"X_VALUE": v}), [], "total over every JSON-native value: %r" % (v,))
 
@@ -413,7 +413,7 @@ class SpawnSecrets(unittest.TestCase):
         from a spec whose overlay holds a non-string value; pre-existing, unchanged here, see split_spawn_secrets."""
         num = 10 ** 12 + uuid.uuid4().int % 10 ** 12
         written, handed, logged = self._spawn_road({"ROMP_SID": SID, "X_COUNT": 5, "NOTES_API_TOKEN": num})
-        self.assertEqual(written["env"], {"ROMP_SID": SID, "X_COUNT": 5}, "the plain integer stays in the file as it was")
+        self.assertTrue(written["env"] == {"ROMP_SID": SID, "X_COUNT": 5}, "the plain integer stays in the file as it was")
         under_hosts = [q for q in (Path(self.state) / "hosts").rglob("*") if q.is_file()]
         self.assertTrue(under_hosts, "the write left files to check")
         for q in under_hosts:
@@ -436,10 +436,10 @@ class SpawnSecrets(unittest.TestCase):
                                     "editor_tokenizer": "x"}}
         secrets = sb.split_spawn_secrets(spec)
         self.assertEqual(secrets, {"notes_api_token": val, "Notes_Api_Key": key}, "moved under their own spelling, values byte for byte")
-        self.assertEqual(spec["env"], {"ROMP_SID": SID, "empty_token": "", "editor_tokenizer": "x"})
+        self.assertTrue(spec["env"] == {"ROMP_SID": SID, "empty_token": "", "editor_tokenizer": "x"}, "the lowercase and the empty names stay in the spec")
         self.assertNotIn(val, json.dumps(spec)); self.assertNotIn(key, json.dumps(spec))
         written, handed, _ = self._spawn_road({"ROMP_SID": SID, "notes_api_token": val})
-        self.assertEqual(written["env"], {"ROMP_SID": SID}, "the file omits the lowercase name")
+        self.assertTrue(written["env"] == {"ROMP_SID": SID}, "the file omits the lowercase name")
         self.assertNotIn(val, (Path(self.state) / "hosts" / SID / "spawn.json").read_text())
         self.assertEqual(handed["secrets"], {"notes_api_token": val})
 

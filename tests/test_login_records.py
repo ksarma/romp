@@ -296,11 +296,11 @@ class TheTokenCommand(unittest.TestCase):
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
-        seen = json.loads(probe.read_text())
-        self.assertNotIn("ROMP_SERVE_TOKEN", seen)
-        self.assertNotIn("STRAY_VAR", seen)
+        seen = json.loads(probe.read_text())                  # the child's whole environment: test names in it, never print it
+        self.assertFalse("ROMP_SERVE_TOKEN" in seen, "ROMP_SERVE_TOKEN")
+        self.assertFalse("STRAY_VAR" in seen, "STRAY_VAR")
         for k in ("PATH", "HOME"):
-            self.assertIn(k, seen, k)
+            self.assertTrue(k in seen, k)
         self.assertEqual((seen.get("XDG_CONFIG_HOME"), seen.get("LC_TIME")), ("/x/config", "C"), "the XDG and LC names pass")
         injected = {"__CF_USER_TEXT_ENCODING"} if sys.platform == "darwin" else set()   # CoreFoundation adds it to every child at
         #                                                                                  start-up on macOS; romp passed nothing
@@ -770,11 +770,11 @@ class StoredLoginPick(_Backend):
         self.assertEqual(st.get("apiKeyHelper"), "", "the box's helper disabled, as for the machine's own login")
         self.assertEqual(kw["env"].get("CLAUDE_CODE_OAUTH_TOKEN"), tok, "the stored login's token, from its command")
         self.assertNotEqual(kw["env"].get("CLAUDE_CODE_OAUTH_TOKEN"), machine_tok, "the machine's token stays out of a stored-login launch")
-        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", kw["env"])
+        self.assertFalse("ANTHROPIC_AUTH_TOKEN" in kw["env"], "ANTHROPIC_AUTH_TOKEN")
         # ANTHROPIC_API_KEY outranks the helper in the CLI's precedence, and the launch's overlay cannot unset an
         # inherited variable: the guarantee is the kernel's own environment, which the boot check refuses to run with
         # while that name is set (credentials.check_boot_environment, RETIRED_VARS), so no child inherits it
-        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"])
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "ANTHROPIC_API_KEY")
         self.assertIn("ANTHROPIC_API_KEY", sb._cred.RETIRED_VARS)
         self.assertIn("RETIRED_VARS", inspect.getsource(sb._cred.check_boot_environment))
         self.assertEqual(s._launched_login, rec["id"])
@@ -796,7 +796,7 @@ class StoredLoginPick(_Backend):
         self.be._log = lambda m, problem=False: logs.append((m, problem))
         s = self._sess(1, auth="login", authLogin=rec["id"])
         kw = self._launch_options(s)
-        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "a key launch: no token of either kind")
+        self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "a key launch: no token of either kind")
         self.assertNotIn("apiKeyHelper", self._settings_of(kw), "the box's helper runs (the fall is the key)")
         self.assertEqual(s._launched_login, "")
         state = lg.record_state(self.be.state_dir, rec["id"])
@@ -1123,7 +1123,7 @@ class StoredLoginPick(_Backend):
         sid, reg, lines = self._spawn_unpicked("n")
         kw = self._launch_options(sb.SdkSession(self.be, reg))
         self.assertNotIn("apiKeyHelper", self._settings_of(kw), "the helper is not suppressed: the key bills")
-        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "no stored-login token rides")
+        self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "no stored-login token rides")
         rows = self._unseeded_rows()
         self.assertEqual(len(rows), 1, self.be.problems(50))
         text = rows[0]["text"]
@@ -1146,7 +1146,7 @@ class StoredLoginPick(_Backend):
         sid, reg, lines = self._spawn_unpicked("n")
         kw = self._launch_options(sb.SdkSession(self.be, reg))
         self.assertFalse(kw.get("settings"), "a plain launch: no overlay")
-        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "no stored-login token: the machine's own login rides")
+        self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "no stored-login token: the machine's own login rides")
         self.assertEqual(self.be.default_auth(reg), "login", "the side word is login, as the pick's was")
         rows = self._unseeded_rows()
         self.assertEqual(len(rows), 1, self.be.problems(50))
@@ -1168,7 +1168,7 @@ class StoredLoginPick(_Backend):
         self.be.login_ok = lambda: False
         sid, reg, lines = self._spawn_unpicked("n")
         kw = self._launch_options(sb.SdkSession(self.be, reg))
-        self.assertFalse(kw.get("settings")); self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"])
+        self.assertFalse(kw.get("settings")); self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "CLAUDE_CODE_OAUTH_TOKEN")
         rows = self._unseeded_rows()
         self.assertEqual(len(rows), 1, self.be.problems(50))
         text = rows[0]["text"]

@@ -33,4 +33,4 @@ class SupervisedFloor(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-400:])
 
     def test_the_floor_holds_inside_a_test(self):
-        self.assertNotIn("ROMP_SUPERVISED", os.environ, "a romp-managed shell's export must not reach a test")
+        self.assertFalse("ROMP_SUPERVISED" in os.environ, "a romp-managed shell's export must not reach a test")

@@ -7688,7 +7688,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(s.snapshot()["pickHeld"]["surfaces"], ["env"])
         self.assertTrue(s.backend.set_env(self.SID, {"A": "1"}))              # the revert
         self.assertIsNone(s.snapshot()["pickHeld"]); self.assertFalse(s._reconnect_when_idle)
-        self.assertEqual(s.env_vars, {"A": "1"}); self.assertEqual(sb.read_reg(s.backend.state_dir, self.SID).get("env"), {"A": "1"})
+        self.assertEqual(s.env_vars, {"A": "1"}); self.assertTrue(sb.read_reg(s.backend.state_dir, self.SID).get("env") == {"A": "1"}, "the registry holds the reverted env")
         self.assertTrue(any("env (web): per-session env set (A); the pending env pick is withdrawn" in str(m) for m in self.logs), self.logs)
         self.assertTrue(any("the withdrawn env pick was the only one pending; no reconnect" in str(m) for m in self.logs), self.logs)
         self._stop(s, "a1")
@@ -7712,7 +7712,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s = self._sess(env={"A": "1"})
         s._launched_env = {"A": "1"}
         self.assertTrue(s.backend.set_env(self.SID, {"A": "2"}))
-        self.assertTrue(s._reconnect); self.assertEqual(s._launching["env"], {"A": "2"})
+        self.assertTrue(s._reconnect); self.assertTrue(s._launching["env"] == {"A": "2"}, "the arm stamps the env the relaunch runs")
         asked = []
         s.request_reconnect = lambda *a, **k: asked.append(1)
         self.assertTrue(s.backend.set_env(self.SID, {"A": "1"}))
@@ -7726,15 +7726,15 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._reset_reconnect_state()
         s._launching = s.backend._launch_shape(s)                          # _options composes from the session
         s._connect_landed()
-        self.assertEqual(s._launched_env, {"A": "2"}, "the landing stamps the launched env")
+        self.assertTrue(s._launched_env == {"A": "2"}, "the landing stamps the launched env")
         self.assertIsNone(s._launching)
         # a launch with no env stamps {}, and a fresh session has no stamp at all
         s = self._sess()
-        self.assertIsNone(s._launched_env)
+        self.assertTrue(s._launched_env is None, "a fresh session has no launched-env stamp")
         s._launching = s.backend._launch_shape(s)
-        self.assertEqual(s._launching["env"], {})
+        self.assertTrue(s._launching["env"] == {}, "a launch with no env carries {}")
         s._connect_landed()
-        self.assertEqual(s._launched_env, {})
+        self.assertTrue(s._launched_env == {}, "a launch with no env stamps {}")
         # an unchanged re-assert of the reg's env is a no-op before any compare, as before
         asked = []
         s.request_reconnect = lambda *a, **k: asked.append(1)
@@ -7755,7 +7755,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(asked, [], "no ask")
         self.assertEqual(s._reconnect_surfaces, set()); self.assertFalse(s._reconnect_when_idle)
         self.assertEqual(s.env_vars, {"A": "1"})
-        self.assertEqual(sb.read_reg(s.backend.state_dir, self.SID).get("env"), {"A": "1"}, "the reg reads the launch again")
+        self.assertTrue(sb.read_reg(s.backend.state_dir, self.SID).get("env") == {"A": "1"}, "the reg reads the launch again")
         self.assertIsNone(s.snapshot()["pickHeld"])
         self.assertFalse(any("withdrawn" in str(m) for m in self.logs if "env (web)" in str(m)), self.logs)
 
@@ -8635,7 +8635,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         by_name = {n: [w[1] for w in writes if w[0] == n] for n in STAMPS}
         self.assertEqual(by_name["_launched_mode"], ["default", "plan", "acceptEdits"], "the landing, the switch and the init")
         self.assertEqual(by_name["_launched_effort"], [sb.effort_launch_shape("high")])
-        self.assertEqual(by_name["_launched_auth"], ["login"]); self.assertEqual(by_name["_launched_env"], [{}])
+        self.assertEqual(by_name["_launched_auth"], ["login"]); self.assertTrue(by_name["_launched_env"] == [{}], "the landing stamps the launched env once, empty")
         # the static enumeration: every assignment-shaped statement writing one of the four names outside __init__ sits
         # inside a _hold_write block: a plain or chained Assign, tuple or list unpacking (Starred included), an AnnAssign
         # with a value, an AugAssign, a for or with target, setattr(obj, "<name>", v) and obj.__dict__["<name>"]. Until
@@ -12580,7 +12580,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self._wait(lambda: c4 is s.client and s._launching is None, "the env connect landed")
         time.sleep(0.3)
         self.assertEqual(len(self._Client.instances), 4)
-        self.assertEqual(s._launched_env, {"A": "1"}); self.assertEqual(s.env_vars, {"A": "1"})
+        self.assertTrue(s._launched_env == {"A": "1"}, "the env connect stamps the launched env"); self.assertEqual(s.env_vars, {"A": "1"})
 
     def test_the_landing_switches_only_for_a_pending_mode_pick_never_for_the_clis_own_report(self):
         # the landing's live switch passed perm_mode, which the init handler sets from the CLI's report when no pick

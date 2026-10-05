@@ -137,7 +137,7 @@ class HelperAvailability(_Keyed):
 
     def test_a_configured_helper_makes_the_key_side_available_without_running_it(self):
         self.assertTrue(self.be.key_available)
-        self.assertNotIn("ANTHROPIC_API_KEY", os.environ, "no key ever enters this process's environment")
+        self.assertFalse("ANTHROPIC_API_KEY" in os.environ, "no key ever enters this process's environment")
         self.assertFalse(hasattr(self.be, "work_key"), "the backend holds no key attribute at all")
 
     def test_no_helper_means_no_key_side(self):
@@ -197,15 +197,15 @@ class _OptionsHarness(_Keyed):
 class OptionsInjection(_OptionsHarness):
     def test_no_pick_ever_puts_a_key_in_the_environment_and_a_login_pick_disables_the_helper(self):
         kw = self._options_kw(self._sess(1, auth="key"))
-        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"], "a key pick launches plain: the CLI runs the helper itself")
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "a key pick launches plain: the CLI runs the helper itself")
         self.assertNotIn("apiKeyHelper", self._settings_of(kw), "and nothing disables it")
         kw2 = self._options_kw(self._sess(2, auth="login"))
-        self.assertNotIn("ANTHROPIC_API_KEY", kw2["env"])
+        self.assertFalse("ANTHROPIC_API_KEY" in kw2["env"], "ANTHROPIC_API_KEY")
         self.assertEqual(self._settings_of(kw2).get("apiKeyHelper"), "",
                          "the login pick disables the box's helper for this one process (the CLI's precedence "
                          "puts the helper above every login form)")
         kw3 = self._options_kw(self._sess(3))
-        self.assertNotIn("ANTHROPIC_API_KEY", kw3["env"], "unpicked: the CLI decides, romp injects nothing")
+        self.assertFalse("ANTHROPIC_API_KEY" in kw3["env"], "unpicked: the CLI decides, romp injects nothing")
         self.assertNotIn("apiKeyHelper", self._settings_of(kw3))
 
     def test_options_records_what_it_launched_with_for_the_init_check(self):
@@ -280,9 +280,9 @@ class OptionsInjection(_OptionsHarness):
         kw = self._options_kw(self._sess(1, auth="login"))
         self.assertEqual(kw["env"].get("CLAUDE_CODE_OAUTH_TOKEN"), "synthetic-login-token", "a login pick")
         kw = self._options_kw(self._sess(2))
-        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "unpicked on a helper box: the key, no bearer beside it")
+        self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "unpicked on a helper box: the key, no bearer beside it")
         kw = self._options_kw(self._sess(3, auth="key"))
-        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "a key pick")
+        self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "a key pick")
         self._no_helper()
         kw = self._options_kw(self._sess(4))
         self.assertEqual(kw["env"].get("CLAUDE_CODE_OAUTH_TOKEN"), "synthetic-login-token",
@@ -293,8 +293,8 @@ class OptionsInjection(_OptionsHarness):
                          "its token rides like any login launch")
         self.be.login_ok = lambda: False
         kw = self._options_kw(self._sess(6, auth="key"))
-        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "…and with no login either, the CLI decides: no bearer")
-        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"])
+        self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "…and with no login either, the CLI decides: no bearer")
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "ANTHROPIC_API_KEY")
 
     def test_a_login_pick_cannot_apply_under_a_managed_helper_and_says_so(self):
         """A managed helper outranks the per-session layer in the CLI's precedence, so a login pick could not
@@ -328,7 +328,7 @@ class OptionsInjection(_OptionsHarness):
         self.be.login_ok = lambda: False
         s = self._sess(3, auth="key")
         kw = self._options_kw(s)
-        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"], "nothing injected, not an empty var either")
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "nothing injected, not an empty var either")
         self.assertFalse(s._launched_keyed)
         self.assertTrue(s._launched_unkeyed_pick)
         self.assertEqual(s._pick_fell_said, "", "nothing to fall to: no fall, no notice")
@@ -348,7 +348,7 @@ class UnpickedFollowsTheExplicitDefaultAtLaunch(_OptionsHarness):
         self.assertEqual(self._settings_of(kw).get("apiKeyHelper"), "", "the explicit login default suppresses the helper for the next connect")
         self.assertFalse(s._launched_keyed, "the launch means the login, as the status says")
         self.assertEqual(s.effective_auth(), "login")
-        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"])
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "ANTHROPIC_API_KEY")
         self.assertFalse([p for p in self.be.problems(10) if "cannot apply" in p["text"]], "following a default is no fall: no problem row")
         self.assertTrue(self.be.set_auth_default("key"))
         kw2 = self._options_kw(s)
@@ -374,12 +374,12 @@ class PickFallsToTheAvailableSide(_OptionsHarness):
         s = self._sess(1, auth="login")
         kw = self._options_kw(s)
         self.assertNotIn("apiKeyHelper", self._settings_of(kw), "no helper suppression: the helper runs, the key bills")
-        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"])
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "ANTHROPIC_API_KEY")
         self.assertTrue(s._launched_keyed, "the per-init check expects the keyed landing: no false alarm")
         self.assertFalse(s._launched_unkeyed_pick)
         sb._STARTUP_AUTH_ENV = {"CLAUDE_CODE_OAUTH_TOKEN": "synthetic-login-token"}
         kw = self._options_kw(s)   # the reconnect
-        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "a keyed launch carries no login bearer")
+        self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "a keyed launch carries no login bearer")
         rows = [p["text"] for p in self.be.problems(20) if "billing pick 'login' cannot apply" in p["text"]]
         self.assertEqual(len(rows), 1, "once per session, not per reconnect")
         self.assertIn(sb._cred.WHY_NO_LOGIN, rows[0])
@@ -796,7 +796,7 @@ class PickNotSeededSaysSo(_OptionsHarness):
         # login pick wrote {"apiKeyHelper": ""} and the session billed the login)
         kw = self._options_kw(sb.SdkSession(self.be, reg))
         self.assertNotIn("apiKeyHelper", self._settings_of(kw), "the helper runs: the key bills")
-        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"])
+        self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in kw["env"], "CLAUDE_CODE_OAUTH_TOKEN")
         rows = self._rows()
         self.assertEqual(len(rows), 1, self.be.problems(50))
         self.assertEqual(added, rows, "one ring entry across the spawn, and it is this row")

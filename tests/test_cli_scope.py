@@ -332,7 +332,7 @@ class ConstructionVerdict(_Backend):
         try:
             be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)   # the test floor: off
             self.assertFalse(be.cli_scope)
-            self.assertNotIn("ROMP_CLI_REAL", os.environ)
+            self.assertFalse("ROMP_CLI_REAL" in os.environ, "ROMP_CLI_REAL")
         finally:
             if before is not None:
                 os.environ["ROMP_CLI_REAL"] = before
@@ -345,7 +345,7 @@ class OptionsWiring(_Backend):
         self.be.cli_scope = False
         kw = self._kw()
         self.assertEqual(kw["cli_path"], "/bin/true")
-        self.assertNotIn("ROMP_CLI_REAL", kw["env"])
+        self.assertFalse("ROMP_CLI_REAL" in kw["env"], "ROMP_CLI_REAL")
 
     def test_on_spawns_the_wrapper_with_the_real_cli_in_the_env(self):
         self.be.cli_scope = True
@@ -375,7 +375,7 @@ class OptionsWiring(_Backend):
             sb.cli_scope_wrapper = before
         for kw in (kw1, kw2):
             self.assertEqual(kw["cli_path"], "/bin/true", "the session still starts, on the direct path")
-            self.assertNotIn("ROMP_CLI_REAL", kw["env"])
+            self.assertFalse("ROMP_CLI_REAL" in kw["env"], "ROMP_CLI_REAL")
         loud = [(m, p) for m, p in problems if "no-such-wrapper" in m]
         self.assertEqual(len(loud), 1, "reported once per backend, as a problem: %r" % (problems,))
         self.assertTrue(loud[0][1])
@@ -708,7 +708,7 @@ class LimitsOnTheBackend(_Backend):
         self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_MAX"], "16G")
         self.assertEqual(env["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"], "500")
         self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_HIGH"], "", "refused: down empty, so the wrapper reads it as unset")
-        self.assertNotIn("ROMP_CLI_SCOPE_MEMORY_SWAP_MAX", env, "unset: not sent")
+        self.assertFalse("ROMP_CLI_SCOPE_MEMORY_SWAP_MAX" in env, "unset: not sent")
         self.assertEqual(env["ROMP_CLI_REAL"], "/bin/true", "the rest of the overlay is unchanged")
 
     def test_options_sends_none_of_the_four_when_none_is_set(self):
@@ -718,7 +718,7 @@ class LimitsOnTheBackend(_Backend):
         self.assertEqual((self.be.cli_scope_limits, self.be.cli_scope_rejected), ({}, {}))
         env = self._kw()["env"]
         for v in LIMIT_VARS:
-            self.assertNotIn(v, env, v)
+            self.assertFalse(v in env, v)
         self.assertEqual(set(env), {"ROMP_SID", "ROMP_SESSION_NAME", "ROMP_CLI_REAL", sb.CLI_SCOPE_OOM_POLICY_REJECTED_VAR}
                          | ({"PATH"} if "PATH" in env else set()),
                          "the overlay carries the identity, the real CLI, the policy marker (empty: the policy is on), "
@@ -749,7 +749,7 @@ class LimitsOnTheBackend(_Backend):
         self.assertEqual(env[sb.CLI_SCOPE_OOM_POLICY_REJECTED_VAR], "1")
         self.assertEqual(sb.CLI_SCOPE_OOM_POLICY_REJECTED_VAR, "ROMP_CLI_SCOPE_OOM_POLICY_REJECTED")
         for v in LIMIT_VARS:
-            self.assertNotIn(v, env, "the policy's key in rejected is no variable: nothing is masked for it")
+            self.assertFalse(v in env, "the policy's key in rejected is no variable: nothing is masked for it")
         self.be.cli_scope_rejected = {}
         self.assertEqual(self._kw()["env"][sb.CLI_SCOPE_OOM_POLICY_REJECTED_VAR], "", "sent, empty: the wrapper reads only 1")
         # the wrapper reads that name and no other, and puts the policy on by those words
@@ -769,7 +769,7 @@ class LimitsOnTheBackend(_Backend):
         env = self._kw()["env"]
         self.assertEqual((env[sb.CLI_SCOPE_OOM_POLICY_REJECTED_VAR], env["ROMP_CLI_SCOPE_MEMORY_MAX"], env["ROMP_CLI_SCOPE_MEMORY_SWAP_MAX"],
                           env["ROMP_CLI_SCOPE_OOM_SCORE_ADJ"]), ("1", "16G", "0", "500"))
-        self.assertNotIn("ROMP_CLI_SCOPE_MEMORY_HIGH", env, "unset: not sent")
+        self.assertFalse("ROMP_CLI_SCOPE_MEMORY_HIGH" in env, "unset: not sent")
         snap = self.be.api_health_snapshot()["cliScope"]
         self.assertEqual((snap["memoryMax"], snap["memorySwapMax"], snap["oomScoreAdj"], snap["oomPolicy"], snap["rejected"],
                           snap["memoryControllerDelegated"]), ("16G", "0", 500, None, ["OOMPolicy"], True))
@@ -814,7 +814,7 @@ class LimitsOnTheBackend(_Backend):
         self.be.cli_scope_limits = {"memoryMax": "16G"}
         self.be.cli_scope = False
         for v in LIMIT_VARS:
-            self.assertNotIn(v, self._kw()["env"], v)
+            self.assertFalse(v in self._kw()["env"], v)
         self.be.cli_scope = True
         before = sb.cli_scope_wrapper
         sb.cli_scope_wrapper = lambda: os.path.join(self.d, "no-such-wrapper")
@@ -824,7 +824,7 @@ class LimitsOnTheBackend(_Backend):
         finally:
             sb.cli_scope_wrapper = before
         for v in LIMIT_VARS:
-            self.assertNotIn(v, env, "no wrapper, no scope, nothing for a limit to apply to")
+            self.assertFalse(v in env, "no wrapper, no scope, nothing for a limit to apply to")
 
     def test_the_snapshot_reports_the_values_in_force_and_the_refused_names(self):
         self.be.cli_scope_limits = {"memoryMax": "16G", "memoryHigh": "12G", "oomScoreAdj": "500"}

@@ -889,11 +889,14 @@ def test_the_guard_denies_a_tracked_write_in_a_romp_session_and_stands_aside_oth
     assert denied.returncode == 2, (denied.returncode, denied.stderr)
     assert "Track-changes is ON" in denied.stderr and "track-edit" in denied.stderr and str(world.fp) in denied.stderr
     assert denied.stdout == ""
-    assert _guard("Edit", world.fp, romp).returncode == 2, "the matcher's other tools are denied too"
-    assert _guard("Write", world.other, romp).returncode == 0, "an untracked file passes"
+    edited = _guard("Edit", world.fp, romp)          # bound first: pytest explains a call in an assert by its arguments, romp's env among them
+    assert edited.returncode == 2, "the matcher's other tools are denied too"
+    untracked = _guard("Write", world.other, romp)
+    assert untracked.returncode == 0, "an untracked file passes"
     passed = _guard("Write", world.png, romp)
     assert passed.returncode == 0 and passed.stderr == "", "a tracked image passes: track-edit would destroy it"
-    assert _guard("Read", world.fp, romp).returncode == 0, "a read is never a write"
+    read = _guard("Read", world.fp, romp)
+    assert read.returncode == 0, "a read is never a write"
     # a session romp did not launch: exit 0 at once, before stdin is read (the pipe stays open)
     child = subprocess.Popen([NODE, GUARD], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              env=_env())

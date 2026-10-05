@@ -470,14 +470,14 @@ class JudgesRunOnClaudeCodesOwnCredential(unittest.TestCase):
             env = jd._judge_env("triage", "key")
         for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
                   "OP_SERVICE_ACCOUNT_TOKEN", "OP_SESSION_acct"):
-            self.assertNotIn(k, env, k)
+            self.assertFalse(k in env, k)
         self.assertEqual(env.get("ROMP_SUMMARIZING"), "1", "the rest of the env contract is untouched")
 
     def test_a_login_billed_call_gets_the_login_tokens_and_the_helper_suppression(self):
         jd._LOGIN_AUTH_ENV_FN = lambda: {"CLAUDE_CODE_OAUTH_TOKEN": "synthetic-login-token"}
         env = jd._judge_env("triage", "login")
         self.assertEqual(env.get("CLAUDE_CODE_OAUTH_TOKEN"), "synthetic-login-token")
-        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY")
         cmd = jd._judge_cmd("sonnet", "SYS", None, auth="login")
         i = cmd.index("--settings")
         self.assertEqual(json.loads(cmd[i + 1]), {"apiKeyHelper": ""},
@@ -511,7 +511,7 @@ class JudgesRunOnClaudeCodesOwnCredential(unittest.TestCase):
         self.assertEqual((out1, out2), ("ok", "ok"))
         self.assertEqual(len(seen), 2)
         for cmd, env in seen:
-            self.assertNotIn("ANTHROPIC_API_KEY", env)
+            self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY")
             self.assertNotIn("--settings", cmd, "a key-billed call: the child resolves the helper itself")
         self.assertEqual(jd._auth_down_map(), {}, "the first call after boot is not an auth failure")
         self.assertFalse(jd._judge_ctx.paused)

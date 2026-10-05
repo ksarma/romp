@@ -91,7 +91,7 @@ class KeySourceFloor(unittest.TestCase):
 
     def test_the_floor_holds_inside_a_test(self):
         for name in _floor_names():
-            self.assertNotIn(name, os.environ, "a configured shell's %s must not reach a test" % name)
+            self.assertFalse(name in os.environ, "a configured shell's %s must not reach a test" % name)
         self.assertEqual([k for k in os.environ if k.startswith("OP_SESSION_")], [])
 
 

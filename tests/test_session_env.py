@@ -681,7 +681,7 @@ class FlagSettingsEnv(unittest.TestCase):
     def test_env_rides_beside_the_boolean_keys(self):
         p = sb.flag_settings_path(self.d, PARENT, ultracode=True, fast=True, env=ENV)
         got = self._read(p)
-        self.assertEqual(got["env"], ENV)
+        self.assertTrue(got["env"] == ENV, "the env rides beside the boolean keys")
         self.assertTrue(got["ultracode"] and got["fastMode"],
                         "env must merge INTO the payload, not replace the keys already riding it")
 
@@ -977,7 +977,7 @@ class FlagSettingsWriter(unittest.TestCase):
         os.symlink(str(inside), str(d))
         del logged[:]
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, log=log), str(p), "a link into the root is written through")
-        self.assertEqual(json.loads(Path(inside, PARENT + ".json").read_text())["env"], ENV)
+        self.assertTrue(json.loads(Path(inside, PARENT + ".json").read_text())["env"] == ENV, "the file written through the link carries the env")
         self.assertEqual(sorted(glob.glob(os.path.join(self.d, sb.FLAG_SETTINGS_DIR, "*.json"))), [str(p)], "and the lister's glob finds it")
         self.assertEqual(logged, [], "no row for a write that stayed under the root")
 
@@ -997,7 +997,7 @@ class FlagSettingsWriter(unittest.TestCase):
         for state in (linked, Path(parent_link, "real-state")):
             p = sb.flag_settings_path(state, PARENT, env=ENV, log=log)
             self.assertEqual(p, str(Path(state, sb.FLAG_SETTINGS_DIR, PARENT + ".json")), "written, and the in-root path returned: %s" % state)
-            self.assertEqual(json.loads(Path(real, sb.FLAG_SETTINGS_DIR, PARENT + ".json").read_text())["env"], ENV, "the file is beside the registry")
+            self.assertTrue(json.loads(Path(real, sb.FLAG_SETTINGS_DIR, PARENT + ".json").read_text())["env"] == ENV, "the file is beside the registry")
             self.assertEqual(logged, [], "no row: the root relocated whole")
             os.unlink(Path(real, sb.FLAG_SETTINGS_DIR, PARENT + ".json"))
         # commonpath, not a prefix: a sibling directory whose name begins with the root's is outside it
@@ -1026,7 +1026,7 @@ class FlagSettingsWriter(unittest.TestCase):
         before = os.stat(p).st_ino
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV), str(p))
         self.assertNotEqual(os.stat(p).st_ino, before, "a fresh inode: the bytes never went through the existing one")
-        self.assertEqual(json.loads(p.read_text())["env"], ENV)
+        self.assertTrue(json.loads(p.read_text())["env"] == ENV, "the fresh inode carries the env")
         self.assertEqual(json.loads(other.read_text()), {"env": {"OLD_FLAG": "x"}},
                          "the other name keeps the old bytes and is never refreshed")
         self.assertEqual(os.stat(other).st_nlink, 1)
@@ -1113,7 +1113,7 @@ class FlagSettingsWriter(unittest.TestCase):
         self.assertTrue(p)
         self.assertEqual(seen, {"islink": 1, "realpath": 1, "replace": 1}, "all three moments run inside the lock")
         self.assertEqual(_Probe.depth, 0, "and the lock is released on the way out")
-        self.assertEqual(json.loads(Path(p).read_text())["env"], ENV)
+        self.assertTrue(json.loads(Path(p).read_text())["env"] == ENV, "the file written inside the lock carries the env")
 
     def test_two_connects_for_one_sid_write_in_turn(self):
         """The lock's stated job: a second writer for the same sid waits for the first. A stand-in signals when a
@@ -1146,7 +1146,7 @@ class FlagSettingsWriter(unittest.TestCase):
         t.join(30)
         self.assertFalse(t.is_alive(), "released, the second writer runs")
         self.assertEqual(out, [path])
-        self.assertEqual(json.loads(Path(path).read_text())["env"], ENV)
+        self.assertTrue(json.loads(Path(path).read_text())["env"] == ENV, "the second writer's file carries the env")
 
     def test_the_lock_is_re_entrant(self):
         """The lock's comment says it is re-entrant, as round 2 made it (review round 5's mutation pass, 2026-09-19: an
@@ -1268,7 +1268,7 @@ class FlagSettingsWriter(unittest.TestCase):
 class SpawnEnv(_Backend):
     def test_spawn_persists_the_env_in_the_reg(self):
         sid = self.be.spawn("web", "/tmp", env=ENV)
-        self.assertEqual(self._reg(sid).get("env"), ENV)
+        self.assertTrue(self._reg(sid).get("env") == ENV, "spawn persists the env in the reg")
 
     def test_spawn_without_env_writes_no_key(self):
         sid = self.be.spawn("web", "/tmp")
@@ -1322,7 +1322,7 @@ class OptionsThreadsEnv(_OptionsBackend):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         kw = self._options_kw(self._sess(sid))
         self.assertIn("settings", kw)
-        self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], ENV)
+        self.assertTrue(json.loads(Path(kw["settings"]).read_text())["env"] == ENV, "the settings file carries the env")
 
     def test_no_env_and_no_flags_means_no_settings_file(self):
         sid = self.be.spawn("web", "/tmp")
@@ -1338,9 +1338,9 @@ class OptionsThreadsEnv(_OptionsBackend):
         Path(p).write_text('{"env": {"TAMPERED": "yes"}}')   # drift the file behind romp's back
         p2 = self._options_kw(s)["settings"]
         self.assertEqual(p2, p)
-        self.assertEqual(json.loads(Path(p2).read_text())["env"], ENV,
-                         "the file is rewritten from the session on EVERY use — a reconnect "
-                         "re-asserts the env by construction, never trusts what's on disk")
+        self.assertTrue(json.loads(Path(p2).read_text())["env"] == ENV,
+                        "the file is rewritten from the session on EVERY use — a reconnect "
+                        "re-asserts the env by construction, never trusts what's on disk")
 
     def test_a_connect_with_no_keys_leaves_the_file_an_earlier_connect_left(self):
         """The seam's face of the no-keys contract: a session whose pick was cleared (`romp new --no-env`) connects
@@ -1352,7 +1352,7 @@ class OptionsThreadsEnv(_OptionsBackend):
         p = self._options_kw(self._sess(sid))["settings"]
         before = Path(p).read_bytes()
         self.assertTrue(self.be.set_env(sid, {}), "the clear is accepted: the registry follows at once")
-        self.assertEqual(self._reg(sid).get("env") or {}, {})
+        self.assertTrue((self._reg(sid).get("env") or {}) == {}, "the registry holds no env after the clear")
         kw = self._options_kw(self._sess(sid))
         self.assertNotIn("settings", kw, "no key rides: the no-keys contract")
         self.assertEqual(Path(p).read_bytes(), before, "the file the earlier connect left stays as it was")
@@ -4578,7 +4578,7 @@ class SetEnv(_Backend):
         sid = self.be.spawn("web", "/tmp")
         s = self._live(sid)
         self.assertTrue(self.be.set_env(sid, ENV))
-        self.assertEqual(self._reg(sid)["env"], ENV)
+        self.assertTrue(self._reg(sid)["env"] == ENV, "the registry follows the accepted env")
         self.assertEqual(s.env_vars, ENV)
         self.assertTrue(self.reconnects, "env is connect-time — the reconnect is what applies it")
 
@@ -4594,13 +4594,13 @@ class SetEnv(_Backend):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         self._live(sid)
         self.assertTrue(self.be.set_env(sid, {"FEATURE_FLAG": "0"}))
-        self.assertEqual(self._reg(sid)["env"], {"FEATURE_FLAG": "0"},
-                         "the payload IS the session's per-session env — names not re-asserted drop")
+        self.assertTrue(self._reg(sid)["env"] == {"FEATURE_FLAG": "0"},
+                        "the payload IS the session's per-session env — names not re-asserted drop")
 
     def test_refuses_junk_and_unknown_sids(self):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         self.assertFalse(self.be.set_env(sid, {"9BAD": "1"}))
-        self.assertEqual(self._reg(sid)["env"], ENV, "a refused payload must not half-apply")
+        self.assertTrue(self._reg(sid)["env"] == ENV, "a refused payload must not half-apply")
         self.assertFalse(self.be.set_env(CHILD, ENV), "no reg, no session — refuse, don't mint")
 
     def test_an_unreadable_registry_is_refused_with_one_row_saying_why(self):
@@ -4639,13 +4639,13 @@ class SetEnv(_Backend):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         self.assertFalse(self.be.set_env(sid, {"FEATURE_FLAG": "1\x00x"}),
                          "a NUL value is unfulfillable — refuse, never persist it into the reg")
-        self.assertEqual(self._reg(sid)["env"], ENV, "the poisoned payload must not half-apply")
+        self.assertTrue(self._reg(sid)["env"] == ENV, "the poisoned payload must not half-apply")
 
     def test_refuses_the_identity_names(self):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         self.assertFalse(self.be.set_env(sid, {"ROMP_SESSION_NAME": "impostor"}),
                          "the identity env is romp's own — never a per-session override")
-        self.assertEqual(self._reg(sid)["env"], ENV, "the refused payload must not half-apply")
+        self.assertTrue(self._reg(sid)["env"] == ENV, "the refused payload must not half-apply")
 
     def test_an_explicit_empty_dict_clears_and_reconnects(self):
         # the replace-not-merge contract's limiting case: {} DECLARES "no per-session env" —
@@ -4653,7 +4653,7 @@ class SetEnv(_Backend):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         s = self._live(sid)
         self.assertTrue(self.be.set_env(sid, {}))
-        self.assertEqual(self._reg(sid)["env"], {}, "the empty declaration replaces the whole set")
+        self.assertTrue(self._reg(sid)["env"] == {}, "the empty declaration replaces the whole set")
         self.assertEqual(s.env_vars, {})
         self.assertTrue(self.reconnects, "clearing is a CHANGE — it applies by reconnecting")
         self.assertEqual(sb.flag_settings_path(self.be.state_dir, sid, env=s.env_vars), "",
@@ -4665,9 +4665,9 @@ class SetEnv(_Backend):
     def test_a_dormant_session_persists_without_a_live_object(self):
         sid = self.be.spawn("web", "/tmp")
         self.assertTrue(self.be.set_env(sid, ENV))
-        self.assertEqual(self._reg(sid)["env"], ENV,
-                         "the next connect reads the reg — persistence alone is a full apply "
-                         "for a session with no live client")
+        self.assertTrue(self._reg(sid)["env"] == ENV,
+                        "the next connect reads the reg — persistence alone is a full apply "
+                        "for a session with no live client")
 
 
 class ForkInheritsEnv(_Backend):
@@ -4676,9 +4676,9 @@ class ForkInheritsEnv(_Backend):
         try:
             self.be.spawn("parent", self.d, sid=PARENT, env=ENV)
             self.be.fork("child", PARENT, "a1", sid=CHILD)
-            self.assertEqual(self._reg(CHILD).get("env"), ENV,
-                             "it is that conversation, continued elsewhere — env inherits like "
-                             "model/auth do")
+            self.assertTrue(self._reg(CHILD).get("env") == ENV,
+                            "it is that conversation, continued elsewhere — env inherits like "
+                            "model/auth do")
         finally:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
 
@@ -4716,8 +4716,8 @@ class LegacyReservedEnv(_OptionsBackend):
         self.be._log = lambda msg, problem=False, **kw: logged.append((msg, problem))
         kw = self._options_kw(self._sess(sid))
         applied = json.loads(Path(kw["settings"]).read_text())["env"]
-        self.assertEqual(applied, {"FEATURE_FLAG": "1"},
-                         "the rest of the stored env still applies — skip the var, not the session")
+        self.assertTrue(applied == {"FEATURE_FLAG": "1"},
+                        "the rest of the stored env still applies — skip the var, not the session")
         self.assertEqual(kw["env"]["ROMP_SID"], sid,
                          "the identity overlay stands untouched — the forged sid never shadows it")
         self.assertTrue(any(problem and "ROMP_SID" in msg and "web" in msg
@@ -4745,8 +4745,8 @@ class LegacyReservedEnv(_OptionsBackend):
             logged = []
             self.be._log = lambda msg, problem=False, **kw: logged.append((msg, problem))
             self.be.fork("child", PARENT, "a1", sid=CHILD)
-            self.assertEqual(self._reg(CHILD).get("env"), {"FEATURE_FLAG": "1"},
-                             "the copy is where a legacy reg's poison stops propagating")
+            self.assertTrue(self._reg(CHILD).get("env") == {"FEATURE_FLAG": "1"},
+                            "the copy is where a legacy reg's poison stops propagating")
             self.assertTrue(any(problem and "ROMP_SID" in msg and "child" in msg
                                 for msg, problem in logged),
                             "the drop must be loud, naming the session and the var: %r" % (logged,))
@@ -5331,17 +5331,17 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         s = self._live(sid)
         self.be._options(s, dict)                              # the session launched with ENV: the file carries it
-        self.assertEqual(json.loads(self._flag_file(sid).read_text())["env"], ENV)
+        self.assertTrue(json.loads(self._flag_file(sid).read_text())["env"] == ENV, "the session launched with ENV: the file carries it")
         val = _secret_value("notes-token")
         self.assertFalse(self.be.set_env(sid, {**PLAIN, "NOTES_API_TOKEN": val}), "the pick is refused")
-        self.assertEqual(self._reg(sid)["env"], ENV, "the stored pick stays what it was")
+        self.assertTrue(self._reg(sid)["env"] == ENV, "the stored pick stays what it was")
         self.assertEqual(s.env_vars, ENV, "the live session's env stays what it was")
         self.assertFalse(self.reconnects, "nothing to apply, no reconnect")
         text = self._flag_file(sid).read_text()
-        self.assertEqual(json.loads(text)["env"], ENV, "the flag-settings file is untouched")
+        self.assertTrue(json.loads(text)["env"] == ENV, "the flag-settings file is untouched")
         self.assertNotIn("NOTES_API_TOKEN", text)
         self.be._options(s, dict)                              # the next connect rewrites the file from the reg
-        self.assertEqual(json.loads(self._flag_file(sid).read_text())["env"], ENV)
+        self.assertTrue(json.loads(self._flag_file(sid).read_text())["env"] == ENV, "the next connect rewrites the file from the reg")
         self.assertEqual(self._files_carrying(val), [], "the value is in no file under the state root")
         rows = [m for m, problem, _kw in self.logged if problem and "NOTES_API_TOKEN" in m]
         self.assertTrue(rows, "the refusal is a problem row naming the variable: %r" % (self.logged,))
@@ -5360,8 +5360,8 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
     def test_a_plain_name_still_lands_in_the_flag_settings_file(self):
         sid = self.be.spawn("web", "/tmp", env=dict(PLAIN))
         kw = self.be._options(self._sess(sid), dict)
-        self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], PLAIN,
-                         "a name of no credential shape rides the file as before")
+        self.assertTrue(json.loads(Path(kw["settings"]).read_text())["env"] == PLAIN,
+                        "a name of no credential shape rides the file as before")
         self.assertTrue(self.be.set_env(sid, {**PLAIN, "FEATURE_FLAG": "1"}), "and a plain re-pick is accepted")
 
     def test_a_stored_credential_shaped_name_still_launches_and_is_said_once_per_session(self):
@@ -5375,7 +5375,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         s = self._sess(sid)
         kw = self.be._options(s, dict)
         got = json.loads(Path(kw["settings"]).read_text())["env"]
-        self.assertEqual(got, {**ENV, "NOTES_API_TOKEN": val}, "the stored env launches whole; nothing is dropped")
+        self.assertTrue(got == {**ENV, "NOTES_API_TOKEN": val}, "the stored env launches whole; nothing is dropped")
         rows = [(m, kw2) for m, problem, kw2 in self.logged if problem and "NOTES_API_TOKEN" in m]
         self.assertEqual(len(rows), 1, "one problem row names the stored variable: %r" % (self.logged,))
         self.assertNotIn(val, rows[0][0], "the value is never in the line")
@@ -5390,7 +5390,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.assertEqual(rows[0][1].get("key"), ("env-stored-credential", sid), "keyed per session: the ring dedupes")
         self.assertFalse(any(val in m for m, _p, _k in self.logged))
         self.assertTrue(self.be.set_env(sid, dict(ENV)), "a re-declaration without the name is accepted by the door")
-        self.assertEqual(self._reg(sid)["env"], ENV, "and the registry follows it, as before the door; the file is not this change's")
+        self.assertTrue(self._reg(sid)["env"] == ENV, "and the registry follows it, as before the door; the file is not this change's")
 
     def test_a_stored_lowercase_credential_shaped_name_is_said_too(self):
         """The stored-offender line judges by the writer's rule, which folds case since the spawn-spec fix's
@@ -5401,8 +5401,8 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         self.be._update_reg(sid, env={**ENV, "notes_api_token": val})
         s = self._sess(sid)
         kw = self.be._options(s, dict)
-        self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], {**ENV, "notes_api_token": val},
-                         "the stored env launches whole; nothing is dropped")
+        self.assertTrue(json.loads(Path(kw["settings"]).read_text())["env"] == {**ENV, "notes_api_token": val},
+                        "the stored env launches whole; nothing is dropped")
         rows = [(m, kw2) for m, problem, kw2 in self.logged if problem and "notes_api_token" in m]
         self.assertEqual(len(rows), 1, "one problem row names the stored lowercase variable: %r" % (self.logged,))
         self.assertNotIn(val, rows[0][0], "the value is never in the line")
@@ -5423,9 +5423,9 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
             val = _secret_value("notes-token")
             self.be._update_reg(PARENT, env={**ENV, "NOTES_API_TOKEN": val, "op_session_notes": val})
             self.be.fork("child", PARENT, "a1", sid=CHILD)
-            self.assertEqual(self._reg(CHILD).get("env"), ENV, "the env inherits less the credential-shaped names")
+            self.assertTrue(self._reg(CHILD).get("env") == ENV, "the env inherits less the credential-shaped names")
             kw = self.be._options(self._sess(CHILD), dict)
-            self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], ENV, "the child's own file is clean")
+            self.assertTrue(json.loads(Path(kw["settings"]).read_text())["env"] == ENV, "the child's own file is clean")
             for path in self._files_carrying(val):
                 self.assertIn(PARENT, path, "the value sits in the parent's files alone: %r" % (path,))
             self.assertTrue(self._files_carrying(val), "the parent's registry still holds it (nothing is cleaned there)")
@@ -5455,7 +5455,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         val = _secret_value("login-token")
         self.be._update_reg(sid, env={**ENV, "ANTHROPIC_AUTH_TOKEN": val, "ROMP_SID": PARENT})
         kw = self.be._options(self._sess(sid), dict)
-        self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], ENV, "the legacy names are stripped from the launch")
+        self.assertTrue(json.loads(Path(kw["settings"]).read_text())["env"] == ENV, "the legacy names are stripped from the launch")
         reserved = [m for m, problem, _kw in self.logged if problem and "ignoring reserved" in m]
         self.assertEqual(len(reserved), 1, "the reserved skip's own row: %r" % (self.logged,))
         self.assertIn("ANTHROPIC_AUTH_TOKEN", reserved[0])
@@ -5487,7 +5487,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
             val = _secret_value("login-token")
             self.be._update_reg(PARENT, env={**ENV, "ANTHROPIC_API_KEY": val, "ROMP_SID": PARENT, "NOTES_API_TOKEN": val})
             self.be.fork("child", PARENT, "a1", sid=CHILD)
-            self.assertEqual(self._reg(CHILD).get("env"), ENV, "neither kind of name crosses the copy")
+            self.assertTrue(self._reg(CHILD).get("env") == ENV, "neither kind of name crosses the copy")
             reserved = [m for m, problem, _kw in self.logged if problem and "dropping reserved" in m]
             shaped = [(m, kw2) for m, problem, kw2 in self.logged if problem and "not copying credential-shaped" in m]
             self.assertEqual(len(reserved), 1, self.logged)
@@ -5503,7 +5503,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
             self.be._update_reg(PARENT, env={**ENV, "CLAUDE_CODE_OAUTH_TOKEN": val})
             del self.logged[:]
             self.be.fork("child2", PARENT, "a2", sid=CHILD2)
-            self.assertEqual(self._reg(CHILD2).get("env"), ENV)
+            self.assertTrue(self._reg(CHILD2).get("env") == ENV, "the fork's env is ENV, less the login token")
             self.assertTrue(any(problem and "dropping reserved" in m and "CLAUDE_CODE_OAUTH_TOKEN" in m
                                 for m, problem, _k in self.logged), self.logged)
             self.assertFalse(any("not copying credential-shaped" in m for m, _p, _k in self.logged),
@@ -5540,7 +5540,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
                     self.be._update_reg(PARENT, env={**ENV, **vals})
                     del self.logged[:]
                     child = self.be.fork(long_child, PARENT, "a%d" % count)
-                    self.assertEqual(self._reg(child).get("env"), ENV)
+                    self.assertTrue(self._reg(child).get("env") == ENV, "the fork's env is ENV, less the credential-shaped names")
                     rows = [(m, kw) for m, problem, kw in self.logged if problem and "not copying credential-shaped" in m]
                     self.assertEqual(len(rows), 1, self.logged)
                     expect = sb.FORK_DROP_RING % (cut_child, cut_name + (" and %d more" % (count - 1) if count > 1 else ""))
@@ -5561,7 +5561,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
                     self.be._update_reg(PARENT, env={**ENV, **{n: val for n in names}})
                     del self.logged[:]
                     child = self.be.fork(long_child, PARENT, "b%d" % count)
-                    self.assertEqual(self._reg(child).get("env"), ENV)
+                    self.assertTrue(self._reg(child).get("env") == ENV, "the fork's env is ENV, less the credential-shaped names")
                     rows = [(m, kw) for m, problem, kw in self.logged if problem and "dropping reserved" in m]
                     self.assertEqual(len(rows), 1, self.logged)
                     expect = sb.FORK_RESERVED_RING % (cut_child, sb._cred.first_and_count(names, sb.RING_NAME_BUDGET))
@@ -5577,7 +5577,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
                     self.be._update_reg(sid, env={**ENV, **{n: val for n in names}})
                     del self.logged[:]
                     kw = self.be._options(self._sess(sid), dict)
-                    self.assertEqual(json.loads(Path(kw["settings"]).read_text())["env"], ENV, "the reserved names are stripped from the launch")
+                    self.assertTrue(json.loads(Path(kw["settings"]).read_text())["env"] == ENV, "the reserved names are stripped from the launch")
                     rows = [(m, kw2) for m, problem, kw2 in self.logged if problem and "ignoring reserved" in m]
                     self.assertEqual(len(rows), 1, self.logged)
                     cut_sess = sb._cred.cut_to(long_child + "-%d" % count, sb.RING_SESSION_BUDGET)

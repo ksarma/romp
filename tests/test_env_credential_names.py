@@ -499,7 +499,7 @@ class BootWiring(unittest.TestCase):
                "OPENAI_API_KEY": "value-oai-helper"}
         with patch.dict(os.environ, env, clear=False):
             _, logs = self.build()
-            self.assertIn("OP_SERVICE_ACCOUNT_TOKEN", os.environ, "nothing of romp's claims op's names")
+            self.assertTrue("OP_SERVICE_ACCOUNT_TOKEN" in os.environ, "nothing of romp's claims op's names")
         rows = [m for m in logs if "reach every session" in m]
         self.assertEqual(len(rows), 1)
         for name in env:
@@ -516,8 +516,8 @@ class BootWiring(unittest.TestCase):
                "OPENAI_API_KEY": "value-oai-login"}
         with patch.dict(os.environ, env, clear=False):
             _, logs = self.build()
-            self.assertNotIn("ANTHROPIC_AUTH_TOKEN", os.environ, "claimed for login launches only")
-            self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", os.environ, "claimed for login launches only")
+            self.assertFalse("ANTHROPIC_AUTH_TOKEN" in os.environ, "claimed for login launches only")
+            self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in os.environ, "claimed for login launches only")
         rows = [m for m in logs if "reach every session" in m]
         self.assertEqual(len(rows), 1)
         self.assertIn("OPENAI_API_KEY", rows[0])

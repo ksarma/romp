@@ -244,7 +244,7 @@ class JudgeBillingResolution(_JudgeAuthBase):
         # Claude Code's own resolution decides (KeylessKeyBilledCalls below), never a silent fall to login
         self._reg("key")
         self.assertEqual(jd._judge_auth(SID), "key")
-        self.assertNotIn("ANTHROPIC_API_KEY", jd._judge_env("triage", "key"))
+        self.assertFalse("ANTHROPIC_API_KEY" in jd._judge_env("triage", "key"), "ANTHROPIC_API_KEY")
 
     def test_a_helper_that_disables_itself_reads_as_no_helper(self):
         # the empty string is the CLI's disable value (a login launch's per-session layer writes it), so a
@@ -293,7 +293,7 @@ class JudgeEnvBilling(_JudgeAuthBase):
                     # itself): they are the login, not key material, and the design keeps them
                     self.assertEqual(env.get(name), AMBIENT, "%s is the login-billed child's credential" % name)
                     continue
-                self.assertNotIn(name, env, "%s rode a %s-billed child" % (name, auth))
+                self.assertFalse(name in env, "%s rode a %s-billed child" % (name, auth))
             self.assertEqual(env.get("ROMP_SUMMARIZING"), "1", "the rest of the env contract is untouched")
 
     def test_the_op_scrub_is_exact_so_a_lowercase_op_name_and_every_other_token_name_ride(self):
@@ -309,7 +309,7 @@ class JudgeEnvBilling(_JudgeAuthBase):
             with patch.dict(os.environ, dict(rides, **{name: AMBIENT for name in goes})):
                 env = jd._judge_env("triage", auth)
             for name in goes:
-                self.assertNotIn(name, env, "%s, as 1Password spells it, rode a %s-billed child" % (name, auth))
+                self.assertFalse(name in env, "%s, as 1Password spells it, rode a %s-billed child" % (name, auth))
             for name, value in rides.items():
                 self.assertEqual(env.get(name), value, "%s is not the scrub's: it rides a %s-billed child" % (name, auth))
 
@@ -320,15 +320,15 @@ class JudgeEnvBilling(_JudgeAuthBase):
         jd._LOGIN_AUTH_ENV_FN = lambda: {"CLAUDE_CODE_OAUTH_TOKEN": "synthetic-login-token"}
         env = jd._judge_env("triage", "key")
         for name in CREDENTIAL_NAMES:
-            self.assertNotIn(name, env)
+            self.assertFalse(name in env, name)
 
     def test_a_login_billed_child_gets_the_claimed_login_tokens_and_only_those(self):
         jd._LOGIN_AUTH_ENV_FN = lambda: {"CLAUDE_CODE_OAUTH_TOKEN": "synthetic-login-token"}
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": AMBIENT, "ANTHROPIC_AUTH_TOKEN": AMBIENT}):
             env = jd._judge_env("triage", "login")
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "synthetic-login-token")
-        self.assertNotIn("ANTHROPIC_API_KEY", env)
-        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env, "the ambient bearer stays stripped: only the wire's tokens ride")
+        self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY")
+        self.assertFalse("ANTHROPIC_AUTH_TOKEN" in env, "the ambient bearer stays stripped: only the wire's tokens ride")
 
     def test_standalone_a_login_billed_child_reads_the_login_tokens_from_the_environment(self):
         # no kernel wire (romp-judge --once, tests): the login tokens come straight from os.environ, and
@@ -340,8 +340,8 @@ class JudgeEnvBilling(_JudgeAuthBase):
             key_env = jd._judge_env("triage", "key")
         for name, value in staged.items():
             self.assertEqual(login_env.get(name), value)
-            self.assertNotIn(name, key_env)
-        self.assertNotIn("ANTHROPIC_API_KEY", login_env)
+            self.assertFalse(name in key_env, name)
+        self.assertFalse("ANTHROPIC_API_KEY" in login_env, "ANTHROPIC_API_KEY")
 
     def test_the_existing_env_contract_survives(self):
         os.environ["TMUX"] = "sock,1,0"
@@ -409,7 +409,7 @@ class RuntimeJudgeBilling(_JudgeAuthBase):
                     patch.object(jd, "_judge_engine", return_value="claude"), \
                     patch.object(jd.subprocess, "run") as run:
                 self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
-                run.assert_not_called()
+                self.assertEqual(run.call_count, 0, "a usage pause spawns no judge child")
                 self.assertTrue(jd._judge_ctx.paused)
                 self.assertEqual(jd._limit_down()["bucket"], "five_hour")
                 self.assertEqual(jd._auth_down_map(), {}, "a usage pause is not an auth failure")
@@ -429,9 +429,9 @@ class RuntimeJudgeBilling(_JudgeAuthBase):
                 patch.dict(os.environ, {name: AMBIENT for name in CREDENTIAL_NAMES}), \
                 patch.object(jd.subprocess, "run", side_effect=codex_reply) as run:
             self.assertEqual(jd._judge_run("synthetic-model", "SYS", "input", judge="planner"), "ok")
-        run.assert_called_once()
+        self.assertEqual(run.call_count, 1, "one codex child per call")
         for name in CREDENTIAL_NAMES:
-            self.assertNotIn(name, run.call_args.kwargs["env"])
+            self.assertFalse(name in run.call_args.kwargs["env"], name)
         self.assertNotIn("--settings", run.call_args.args[0])
 
 
@@ -474,7 +474,7 @@ class CredentialErrorNote(_JudgeAuthBase):
                 patch.object(jd.subprocess, "run") as run, \
                 patch.object(jd, "_log_judge_error") as log:
             self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "")
-        run.assert_not_called()
+        self.assertEqual(run.call_count, 0, "an env that cannot be built spawns no judge child")
         self.assertTrue(jd._judge_ctx.paused)
         row = jd._auth_down_map()[SID]
         self.assertEqual(row["mode"], "key", "the mode is the call's resolved billing")
@@ -559,7 +559,7 @@ class JudgeRunBilling(_JudgeAuthBase):
         self.assertTrue(row, "credential refusal must latch judge-auth-down")
         self.assertEqual(row["mode"], "key", "the unpicked default on a helper box")
         self.assertIn("Not logged in", row["note"])
-        self.assertNotIn("ANTHROPIC_API_KEY", seen["env"], "the key-billed child resolved the helper itself")
+        self.assertFalse("ANTHROPIC_API_KEY" in seen["env"], "the key-billed child resolved the helper itself")
 
     def test_a_refusal_on_a_login_pick_latches_with_the_login_mode(self):
         # the card copy branches on the mode (KernelWiringAndFloorPins): sign in again vs fix the helper
@@ -585,7 +585,7 @@ class JudgeRunBilling(_JudgeAuthBase):
             out, seen = self._run({"result": "ok", "usage": {}, "duration_ms": 3})
         self.assertEqual(out, "ok")
         for name in CREDENTIAL_NAMES + _op_names():
-            self.assertNotIn(name, seen["env"], name)
+            self.assertFalse(name in seen["env"], name)
         self.assertNotIn("--settings", seen["cmd"], "the child resolves the helper itself")
 
     def test_a_login_pick_launches_with_the_login_tokens_and_the_helper_disabled(self):
@@ -617,7 +617,7 @@ class JudgeRunBilling(_JudgeAuthBase):
             (jd.STATE / "judge-fast").unlink()
             jd._state_cache.clear()
         self.assertEqual(out, "ok")
-        self.assertNotIn("ANTHROPIC_API_KEY", seen["env"])
+        self.assertFalse("ANTHROPIC_API_KEY" in seen["env"], "ANTHROPIC_API_KEY")
         self.assertEqual(seen["env"].get("CLAUDE_CODE_OAUTH_TOKEN"), "synthetic-login-token")
         self.assertEqual(seen["cmd"].count("--settings"), 1)
         self.assertEqual(json.loads(seen["cmd"][seen["cmd"].index("--settings") + 1]),
@@ -671,7 +671,7 @@ class KeylessKeyBilledCalls(_JudgeAuthBase):
             out, err = self._stderr(lambda: jd._judge_run("sonnet", "SYS", "u", judge="planner", tier="triage"))
         self.assertEqual(out, "ok")
         for name in CREDENTIAL_NAMES:
-            self.assertNotIn(name, seen["env"], name)
+            self.assertFalse(name in seen["env"], name)
         self.assertNotIn("--settings", seen["cmd"])
         self.assertEqual(err, "", "nothing is missing, so nothing is announced")
         self.assertEqual(jd._auth_down_map(), {}, "a call that ran is not an auth failure")

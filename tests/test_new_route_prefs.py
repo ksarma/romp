@@ -282,8 +282,8 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual(self.created, [("opt", "", {"FEATURE_FLAG": "1"})],
                          "the reg must be born with the env — BEFORE the eager connect, "
                          "not patched in behind it")
-        self.assertEqual(body.get("env"), {"FEATURE_FLAG": "1"},
-                         "the echo is the ack the CLI is loud about missing")
+        self.assertTrue(body.get("env") == {"FEATURE_FLAG": "1"},
+                        "the echo is the ack the CLI is loud about missing")
         self.assertIn(("env", SID2, {"FEATURE_FLAG": "1"}), self.calls,
                       "the prefs pass re-asserts (set_env's unchanged-skip makes it free)")
 
@@ -301,7 +301,7 @@ class NewRouteEnv(unittest.TestCase):
         self.assertTrue(body["ok"] and body["existing"])
         self.assertEqual(self.calls, [("env", SID, {"FEATURE_FLAG": "1"})],
                          "re-asserted if <name> already runs — the model/effort contract")
-        self.assertEqual(body.get("env"), {"FEATURE_FLAG": "1"})
+        self.assertTrue(body.get("env") == {"FEATURE_FLAG": "1"}, "the echo carries the re-asserted env")
 
     def test_an_explicit_empty_env_clears_a_running_session(self):
         # the clear-all door: {} is the replace-not-merge contract's limiting case (a re-run
@@ -313,7 +313,7 @@ class NewRouteEnv(unittest.TestCase):
         self.assertTrue(body["ok"] and body["existing"])
         self.assertEqual(self.calls, [("env", SID, {})],
                          "an explicit {} must reach set_env, which clears by replacing")
-        self.assertEqual(body.get("env"), {}, "the clear ask is echoed like any other env ask")
+        self.assertTrue(body.get("env") == {}, "the clear ask is echoed like any other env ask")
 
     def test_a_refused_env_is_not_echoed_as_applied_and_the_echo_carries_the_refusal(self):
         """Review round 2 of the env-pick door (2026-09-19): the prefs pass discarded set_env's verdict, so a pick
@@ -362,7 +362,7 @@ class NewRouteEnv(unittest.TestCase):
         self.assertTrue(body["ok"])
         self.assertEqual(self.created, [("opt", "", {})],
                          "spawn's own `if env:` makes the empty declaration naturally vacuous")
-        self.assertEqual(body.get("env"), {})
+        self.assertTrue(body.get("env") == {}, "the empty declaration is echoed")
 
     def test_an_existing_codex_session_refuses_with_the_codex_reason(self):
         # a live Codex session has no set_env, and the refusal names it as a Codex one (until the tmux
