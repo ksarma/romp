@@ -2195,7 +2195,8 @@ class _RandrangeEnds(random.Random):
 
 class RandrangeAgainstCPython(unittest.TestCase):
     """THE RULE's randrange reading, checked against CPython's own randrange over generated calls (the ruling of
-    2026-10-05 on fork PR 973: one rule, and a property test in place of one more plant per pass)."""
+    2026-10-05 on fork PR 973: one rule, and a property test in place of one more plant per pass; the closing check
+    that day grew the generator with the spellings it found misread or unread)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
@@ -2211,6 +2212,13 @@ class RandrangeAgainstCPython(unittest.TestCase):
     RELATIONS = ("start below stop", "start above stop", "start's highest value stop's lowest",
                  "start's lowest value stop's highest", "start and stop one value", "overlapping, start lower",
                  "overlapping, start higher", "start inside stop", "stop inside start")
+    NAMED_STEPS = (("{k} = -7",), ("{k} = 7", "{k} = -7"), ("{k} = -2", "{k} = 1"),   # a step name's bindings, {k} the
+                   ("{k} = -7", "{k} = +7"), ("for {k} in (1, -1):",),               # name: signed numbers alone and
+                   ("for {k} in (-7, 2, 7):",))                                      # beside others, and a loop's
+    BOOL_STEPS = (("True", [True]), ("-True", [-1]))                                  # a step written with a bool
+    NONE_FORMS = (((), None), ((), "1"), (("stop",), None), (("start", "stop"), None),   # randrange(S, None, ...): the
+                  (("stop", "step"), "1"), ((), "7"), (("step",), "-1"), ((), "True"))  # last three Python refuses
+    CLASSES = (("random.Random", random.Random), ("random.SystemRandom", random.SystemRandom), ("Random", random.Random))
 
     @staticmethod
     def _shape(relation, c, rng):
@@ -2234,6 +2242,81 @@ class RandrangeAgainstCPython(unittest.TestCase):
         return ([args[p] for p in ("start", "stop", "step") if p in args and p not in form and "**" + p not in form],
                 [(p, args.get(p.lstrip("*"))) for p in form if p.lstrip("*") in args or p.startswith("**")])
 
+    @staticmethod
+    def _text(iv):
+        """An interval as a call writes it: the value, or its lowest value plus os.getpid() % its width."""
+        return "%d" % iv[0] if iv[0] == iv[1] else "%d + os.getpid() %% %d" % (iv[0], iv[1] - iv[0] + 1)
+
+    def _grown(self):
+        """The calls the closing check of 2026-10-05 found misread or unread, each as (label, start, stop, (step as
+        written, its values), form, how), from a generator seeded apart from the grid's so the grid's calls, samples and
+        draws stay as they were. A start, stop or step is an interval (lowest, highest), a list of the values it takes,
+        or None for an unbounded step; `how` holds the lines written before the call ("pre"; "loop" when the first is a
+        for loop's header and the call its body), the start or stop as written where it is no interval's text, the
+        callee as written and the class whose randrange runs it, and the exceptions a call Python refuses raises. Per
+        relation and form: a step name for each of NAMED_STEPS; a start, and half the time a stop, offset by a name
+        bound to a negative number or written as such a name negated; a unary plus over the start, half the time over
+        the stop and half the time over the step; and the call spelled on random.Random, random.SystemRandom or Random,
+        the instance first, the step each time drawn from STEP_SHAPES. Then a start or stop written as True or False,
+        the step drawn from STEP_SHAPES and BOOL_STEPS, twice per form; and a stop written as None, three times for each
+        of NONE_FORMS."""
+        rng, out = random.Random(self.SEED + 1), []
+
+        def near():
+            return rng.choice((LOW + rng.randint(-60, 60), HIGH + rng.randint(-60, 60), rng.randint(LOW + 100, HIGH - 100),
+                               rng.randint(1024, LOW - 200)))
+
+        def bound(line):
+            v = ast.literal_eval(line.split(" in ")[1].rstrip(":") if line.startswith("for ") else line.split(" = ")[1])
+            return v if isinstance(v, tuple) else (v,)
+        for relation in self.RELATIONS:
+            for form in self.FORMS:
+                for binds in self.NAMED_STEPS:
+                    name = "K%d" % len(out)
+                    out.append(("a step name: " + "; ".join(b.format(k="K").rstrip(":") for b in binds),)
+                               + self._shape(relation, near(), rng)
+                               + ((name, sorted({v for b in binds for v in bound(b)})), form,
+                                  {"pre": [b.format(k=name) for b in binds], "loop": binds[0].startswith("for ")}))
+                s, e = self._shape(relation, near(), rng)
+                how = {"pre": []}
+                for p, iv in (("start", s), ("stop", e)):
+                    if p == "start" or rng.random() < 0.5:
+                        name, rest = "%s%d" % ("S" if p == "start" else "E", len(out)), self._text(iv)[len("%d" % iv[0]):]
+                        if rng.random() < 0.5:
+                            m = rng.randint(1, 5000)
+                            how[p], line = "%d + %s%s" % (iv[0] + m, name, rest), "%s = -%d" % (name, m)
+                        else:
+                            how[p], line = "-%s%s" % (name, rest), "%s = -%d" % (name, iv[0])
+                        how["pre"].append(line)
+                out.append(("a start or stop offset by a name bound to a negative number", s, e,
+                            rng.choice(self.STEP_SHAPES), form, how))
+                s, e = self._shape(relation, near(), rng)
+                how = {}
+                for p, iv in (("start", s), ("stop", e)):
+                    if p == "start" or rng.random() < 0.5:
+                        how[p] = rng.choice(("+(%s)", "+%s")) % self._text(iv)
+                k, kiv = rng.choice(self.STEP_SHAPES)
+                if k is not None and rng.random() < 0.5:
+                    k = "+(%s)" % k
+                out.append(("a unary plus", s, e, (k, kiv), form, how))
+                spelled, cls = rng.choice(self.CLASSES)
+                out.append(("the unbound method",) + self._shape(relation, near(), rng)
+                           + (rng.choice(self.STEP_SHAPES), form, {"callee": spelled + ".randrange(rng, ", "cls": cls}))
+        for relation in ("start below stop", "start above stop"):
+            for form in self.FORMS:
+                for _ in range(2):
+                    b, c = rng.choice((True, False)), near()
+                    iv, step = (c, c + rng.randint(0, 40)), rng.choice(self.STEP_SHAPES + self.BOOL_STEPS)
+                    out.append(("a bool start or stop", [b], iv, step, form, {"start": str(b)}) if relation == "start below stop"
+                               else ("a bool start or stop", iv, [b], step, form, {"stop": str(b)}))
+        for form, k in self.NONE_FORMS:
+            for _ in range(3):
+                c = near()
+                out.append(("a stop written as None", (c, c + rng.randint(0, 40)), [None],
+                            (k, None if k is None else [ast.literal_eval(k)]), form,
+                            {"stop": "None", "raises": (ValueError, TypeError)}))
+        return out
+
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
         """A seeded generator writes randrange calls: start's interval below stop's, above it, touching it from either
         side, one value with it, and overlapping it four ways, crossed with STEP_SHAPES (steps known positive, known
@@ -2242,74 +2325,90 @@ class RandrangeAgainstCPython(unittest.TestCase):
         another order, and the step in a ** mapping after start and stop by position or between them by keyword, a
         mapping that is empty when the step is left out; no call gives a mapping beside an empty stop, which THE RULE
         does not read), each twice about a value drawn near 32768, near 65535, inside the range or below it; and the
-        two calls CPython showed 1e04b89f8 missed, and the one with a mapping that 7d1bdcda6 missed. The census reads
-        them as one module, a call to a line. For each call the test samples start and stop at each end of their
-        intervals and at a seeded value between, and the step at each end, a seeded value between, and -1, 0 and 1
-        where the step can take them (an unbounded step takes STEPS), and runs CPython's Random.randrange, the function
-        random.randrange is bound to, three times: with its draw pinned to the lowest and to the highest
-        (_RandrangeEnds), and with a seeded draw. Every value returned must lie in the span the census reports, and
-        where the census reports nothing no value may lie in the range."""
+        two calls CPython showed 1e04b89f8 missed, and the one with a mapping that 7d1bdcda6 missed. After that grid
+        come the spellings _grown() writes: step names bound to signed numbers, names bound to negative numbers in a
+        start or stop, a unary plus, the call spelled on the class, a bool start or stop, and a stop written as None.
+        The census reads them as one module, each call on a line of its own after the lines that bind its names. For
+        each call the test samples start and stop at each end of their intervals and at a seeded value between (or
+        each value they take), and the step at each end, a seeded value between, and -1, 0 and 1 where the step can
+        take them (an unbounded step takes STEPS, a step name each value it is bound to), and runs CPython's
+        Random.randrange, the function random.randrange is bound to, three times: with its draw pinned to the lowest
+        and to the highest (_RandrangeEnds), and with a seeded draw. Every value returned must lie in the span the
+        census reports, and where the census reports nothing no value may lie in the range. The failure names the
+        calls outside by shape, with the first of each."""
         rng = random.Random(self.SEED)
-        cases = [("overlapping, start higher", (30000, 32999), (20000, 30999), ("0 - 7", (-7, -7)), ()),
-                 ("start's lowest value stop's highest", (30000, 34999), (30000, 30000), ("0 - 7", (-7, -7)), ()),
-                 ("start's lowest value stop's highest", (30000, 34999), (30000, 30000), ("0 - 7", (-7, -7)), ("**step",))]
+        cases = [("overlapping, start higher", (30000, 32999), (20000, 30999), ("0 - 7", (-7, -7)), (), {}),
+                 ("start's lowest value stop's highest", (30000, 34999), (30000, 30000), ("0 - 7", (-7, -7)), (), {}),
+                 ("start's lowest value stop's highest", (30000, 34999), (30000, 30000), ("0 - 7", (-7, -7)), ("**step",),
+                  {})]
         for relation in self.RELATIONS:
             for step in self.STEP_SHAPES:
                 for form in self.FORMS:
                     for _ in range(2):
                         c = rng.choice((LOW + rng.randint(-60, 60), HIGH + rng.randint(-60, 60),
                                         rng.randint(LOW + 100, HIGH - 100), rng.randint(1024, LOW - 200)))
-                        cases.append((relation,) + self._shape(relation, c, rng) + (step, form))
-
-        def text(iv):
-            return "%d" % iv[0] if iv[0] == iv[1] else "%d + os.getpid() %% %d" % (iv[0], iv[1] - iv[0] + 1)
+                        cases.append((relation,) + self._shape(relation, c, rng) + (step, form, {}))
+        cases += self._grown()
 
         def written(p, x):
             return "%s=%s" % (p, x) if p[0] != "*" else "**{%s}" % ("" if x is None else '"%s": %s' % (p[2:], x))
-        lines = []
-        for _relation, s, e, (k, _kiv), form in cases:
-            args = dict(start=text(s), stop=text(e), **({"step": k} if k is not None else {}))
+        lines, line_of = [], {}
+        for n, (_label, s, e, (k, _kiv), form, how) in enumerate(cases, 1):
+            args = dict(start=how["start"] if "start" in how else self._text(s),
+                        stop=how["stop"] if "stop" in how else self._text(e), **({"step": k} if k is not None else {}))
             pos, kw = self._call(form, args)
-            lines.append("port = random.randrange(%s)\n" % ", ".join(pos + [written(p, x) for p, x in kw]))
+            lines += [b + "\n" for b in how.get("pre", ())]
+            lines.append("%sport = %s%s)\n" % ("    " if how.get("loop") else "", how.get("callee", "random.randrange("),
+                                               ", ".join(pos + [written(p, x) for p, x in kw])))
+            line_of[n] = len(lines)
+        case_at = {line: n for n, line in line_of.items()}
         reading = {}
         for line, _v, why in scan_python(ast.parse("".join(lines)), {}):
+            self.assertIn(line, case_at, "a hit on a line that writes no call: %s" % why)
             m = re.search(r"computed into (-?\d+)-(-?\d+)$", why)
-            reading[line] = (int(m.group(1)), int(m.group(2))) if m else why
+            reading[case_at[line]] = (int(m.group(1)), int(m.group(2))) if m else why
 
         def between(iv):
             return sorted({iv[0], iv[1], rng.randint(*iv)})
         low, high, seeded = _RandrangeEnds(), _RandrangeEnds(), random.Random(self.SEED)
         high.top = True
-        failures, bad, reached, returned = [], set(), set(), 0
-        for n, (relation, s, e, (k, kiv), form) in enumerate(cases, 1):
+        failures, bad, reached, returned = {}, set(), set(), 0
+        for n, (label, s, e, (k, kiv), form, how) in enumerate(cases, 1):
             got = reading.get(n)
             said = "nothing" if got is None else ("%d-%d" % got if isinstance(got, tuple) else got)
-            ks = self.STEPS if kiv is None else sorted(set(between(kiv)) | {x for x in (-1, 0, 1) if kiv[0] <= x <= kiv[1]})
-            for a in between(s):
-                for b in between(e):
+            ks = self.STEPS if kiv is None else (kiv if isinstance(kiv, list) else
+                                                 sorted(set(between(kiv)) | {x for x in (-1, 0, 1) if kiv[0] <= x <= kiv[1]}))
+            randrange = how.get("cls", random.Random).randrange
+            for a in (between(s) if isinstance(s, tuple) else s):
+                for b in (between(e) if isinstance(e, tuple) else e):
                     for step in (ks if k is not None else (None,)):
                         pos, kw = self._call(form, dict(start=a, stop=b, **({"step": step} if k is not None else {})))
                         for draw in (low, high, seeded):
                             try:
-                                v = draw.randrange(*pos, **{p.lstrip("*"): x for p, x in kw if x is not None})
-                            except ValueError:
+                                v = randrange(draw, *pos, **{p.lstrip("*"): x for p, x in kw if x is not None})
+                            except how.get("raises", ValueError):
                                 continue
                             returned += 1
                             if LOW <= v <= HIGH:
-                                reached |= {relation, k}
+                                reached |= {label} | (set() if how else {k})
                             if (got is None and LOW <= v <= HIGH) or (got is not None and not (
                                     isinstance(got, tuple) and got[0] <= v <= got[1])):
                                 bad.add(n)
-                                failures.append("line %d, %s: start %d, stop %d, step %s returned %d; the census reads %s"
-                                                % (n, lines[n - 1].strip(), a, b, step, v, said))
+                                failures.setdefault(label, []).append(
+                                    "line %d, %s: start %s, stop %s, step %s returned %d; the census reads %s"
+                                    % (line_of[n], lines[line_of[n] - 1].strip(), a, b, step, v, said))
         if failures:
-            self.fail("%d values from %d of %d calls lie outside the census's reading; the first 8:\n%s"
-                      % (len(failures), len(bad), len(cases), "\n".join(failures[:8])))
+            self.fail("%d values from %d of %d calls lie outside the census's reading. By shape, the calls outside and "
+                      "the first value:\n%s" % (sum(map(len, failures.values())), len(bad), len(cases), "\n".join(
+                          "  %s: %d calls; %s" % (label, len({c for c in bad if cases[c - 1][0] == label}), got[0])
+                          for label, got in failures.items())))
         self.assertGreater(returned, 0)
         self.assertEqual(sorted(set(self.RELATIONS) - {"start and stop one value"} - reached), [],
                          "a relation with no call that returned a value in the range: the test proves nothing there")
         self.assertEqual(sorted({k for k, _ in self.STEP_SHAPES} - {"0"} - reached, key=str), [],
                          "a step with no call that returned a value in the range: the test proves nothing there")
+        self.assertEqual(sorted({c[0] for c in cases if c[5]} - reached), [],
+                         "a spelling with no call that returned a value in the range: the test proves nothing there")
 
 
 class SentinelPorts(unittest.TestCase):
