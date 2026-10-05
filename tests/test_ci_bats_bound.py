@@ -338,7 +338,11 @@ class PythonJobCeiling(unittest.TestCase):
 
     def test_each_shards_cap_is_the_ruled_figure_for_its_slowest_run(self):
         # the candidates are built here from MEASURED_RUNS directly, not through governing_phase, and counted, so a
-        # governing_phase that skipped a round, an interpreter or a projection is red, and so is an empty population
+        # governing_phase that skipped the run or projection that governs on MEASURED_RUNS is red, and so is an empty
+        # population. A skip of an input that does not govern on this data is not red here: no measured run governs,
+        # each passed by 3.10's projection (ci.yml's cap comment), and 3.11's and 3.13's projections cannot govern
+        # while 3.10's ratio to 3.12 is the largest (UNMEASURED_RATIO_STEP_S). GoverningPhase holds those skips over
+        # synthetic data.
         self.assertTrue(MEASURED_RUNS, "no measured run: each shard's cap comes from its measured runs")
         for py in UNMEASURED + ("3.12",):
             self.assertIsNotNone(UNMEASURED_RATIO_STEP_S.get(py), "no Run pytest seconds for %s in run %d: an unmeasured "
@@ -613,9 +617,10 @@ class ShardCapsReader(unittest.TestCase):
 
 class GoverningPhase(unittest.TestCase):
     """projected_phase, governing_phase, ruled_cap and cap_clause over synthetic data: the projection rounds up, the
-    largest phase governs over every round and interpreter, the slowest run governs when it is not the first, a
-    projection that only ties a measured run does not, a tie between two projections goes to the first in order, the
-    margin rule raises a cap whose margin is under the floor and only then, and missing data is refused."""
+    largest phase governs over every round and interpreter: the slowest measured run governs whether it is in the first
+    round or a later one, and each unmeasured interpreter's projection governs when it is the largest, a projection that
+    only ties a measured run does not, a tie between two projections goes to the first in order, the margin rule raises
+    a cap whose margin is under the floor and only then, and missing data is refused."""
     STEPS = {"3.10": 130, "3.11": 100, "3.12": 100}
 
     def test_the_projection_rounds_up_to_the_second(self):
@@ -637,6 +642,19 @@ class GoverningPhase(unittest.TestCase):
         self.assertEqual(governing_phase(1, even, ("3.10",), self.STEPS), (130, "a", "3.14t"),
                          "a projection must pass the measured run to govern")
         self.assertEqual(governing_phase(1, low, (), self.STEPS), (100, "a", "3.12"))
+
+    def test_the_slowest_run_governs_when_it_is_the_first(self):
+        first = {"a": {"3.12": {1: 100}, "3.14t": {1: 200}}, "b": {"3.12": {1: 90}, "3.14t": {1: 95}}}
+        self.assertEqual(governing_phase(1, first, ("3.10",), self.STEPS), (200, "a", "3.14t"),
+                         "the first round's 3.14t run is the slowest, past the second round's runs and each projection")
+
+    def test_each_unmeasured_interpreters_projection_governs_when_it_is_the_largest(self):
+        self.assertTrue(UNMEASURED, "no unmeasured interpreter to project")
+        for py in UNMEASURED:
+            steps = dict.fromkeys(UNMEASURED, 110)
+            steps.update({"3.12": 100, py: 150})
+            with self.subTest(interpreter=py):
+                self.assertEqual(governing_phase(1, {"a": {"3.12": {1: 100}}}, UNMEASURED, steps), (150, "a", py))
 
     def test_the_slowest_run_governs_when_it_is_not_the_first(self):
         later_314t = {"a": {"3.12": {1: 100}, "3.14t": {1: 110}}, "b": {"3.12": {1: 90}, "3.14t": {1: 150}}}

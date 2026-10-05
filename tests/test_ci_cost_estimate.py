@@ -31,11 +31,14 @@ At the commit before these pins, all four are red: the header named secret-scan.
    phase where it is the largest (tests/test_ci_bats_bound.py, governing_phase), and since the slowest-run rule of the
    same day those are the projections of each shard's slower 3.12 run of the two runs of four shards (the hash-alone run
    and the weighted run), where this estimate bills those interpreters' shard jobs at the weighted run's slower measured
-   phase. Caps do not bill, so the estimate's figures stand, but the header says in one sentence that the two take
-   different phases, and what a batch run would bill at the caps' projected ones, by the estimate's own method. The shard
-   jobs' 337 is derived here too, from the same phases and the cells' times. Red at the commit before it: the header had
-   no such sentence. The figures moved with the caps' basis: 482 minutes, 26 more than the estimate, at the weighted
-   run's projections, the caps' basis until the slowest-run rule.
+   phase. The caps also read both runs' measured phases on 3.12 and 3.14t, where the estimate bills the weighted run's
+   alone. Caps do not bill, so the estimate's figures stand, but the header says in one sentence what each of the two
+   takes, and what a batch run would bill at the caps' projected ones, by the estimate's own method, with 3.12 and 3.14t
+   held at the weighted run's phases, as the estimate bills them. The shard jobs' 337 is derived here too, from the same
+   phases and the cells' times. Red at the commit before it: the header had no such sentence. The figures moved with the
+   caps' basis: 482 minutes, 26 more than the estimate, at the weighted run's projections, the caps' basis until the
+   slowest-run rule. Red at the commit before the sentence named 3.12 and 3.14t: it said the two take different phases
+   for 3.10, 3.11 and 3.13 alone, and did not say where the figure holds 3.12 and 3.14t.
 Text pins: they hold what the header says and that its sums agree with the inputs here, not what GitHub bills; the first
 private batch run's billed minutes are the measurement."""
 import math
@@ -305,9 +308,11 @@ class TheTwoPremises(unittest.TestCase):
                 self.assertEqual(figure, d[name], "%s: stated %d, derived %d" % (name, figure, d[name]))
 
     def test_the_header_says_so_in_one_sentence(self):
-        # the sentence that names the projected phases states which interpreters, that the caps take the projections of
-        # each shard's slower 3.12 run of the two runs and the estimate the weighted run's measured phases, the minutes a
-        # batch run would bill at the caps' projected phases, and the difference from the estimate's batch run
+        # the sentence that names the projected phases states that the caps take each shard's slower measured run of
+        # the two runs on 3.12 and 3.14t and, for the unmeasured interpreters, the projections of each shard's slower
+        # 3.12 run, and the estimate the weighted run's measured phases; the minutes a batch run would bill with the
+        # unmeasured interpreters at the caps' projected phases and 3.12 and 3.14t at the weighted run's, the basis the
+        # figure holds; and the difference from the estimate's batch run
         text = header()
         sentences = [x for x in re.split(r"(?<=\.) ", text) if "projected phases" in x]
         self.assertEqual(len(sentences), 1, "one sentence of the header names the projected phases: %r" % sentences)
@@ -316,11 +321,13 @@ class TheTwoPremises(unittest.TestCase):
         diff = PROJECTED_STATED["projected difference"]
         batch = STATED["batch run minutes"][0]
         want = (
-            "take different phases for %s:" % bound.english(bound.UNMEASURED),
-            "the caps take their projected phases of each shard's slower 3.12 run of the two runs of four shards",
+            "take different phases: the caps take each shard's slower measured run of the two runs of four shards "
+            "on %s," % bound.english(bound.MEASURED),
+            "and for %s their projected phases of each shard's slower 3.12 run" % bound.english(bound.UNMEASURED),
             "the estimate the weighted run's measured ones",
-            "at those projected phases a batch run would bill about %d minutes, %d %s than the estimate's %d" % (
-                n, abs(diff), "more" if diff >= 0 else "fewer", batch),
+            "with %s at those projected phases and %s at the weighted run's, a batch run would bill about %d minutes, "
+            "%d %s than the estimate's %d" % (bound.english(bound.UNMEASURED), bound.english(bound.MEASURED), n,
+                                              abs(diff), "more" if diff >= 0 else "fewer", batch),
         )
         for piece in want:
             with self.subTest(piece=piece):

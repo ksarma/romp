@@ -37,10 +37,11 @@ name: CI
 # in run 37128151383). With secret-scan.yml's copy, about 3 minutes (below), a batch run bills about
 # 456 minutes (471 with three shards). At 0.006 dollars a minute, GitHub's posted rate for its Linux
 # 2-core x64 runner (read 2026-10-05), that is about 2.74 dollars a run. The caps and this estimate
-# take different phases for 3.10, 3.11 and 3.13: the caps take their projected phases of each shard's
-# slower 3.12 run of the two runs of four shards (the python job's cap comment), the estimate the
-# weighted run's measured ones, and at those projected phases a batch run would bill about 500
-# minutes, 44 more than the estimate's 456. The fork had 30 CI runs on
+# take different phases: the caps take each shard's slower measured run of the two runs of four shards
+# on 3.12 and 3.14t, and for 3.10, 3.11 and 3.13 their projected phases of each shard's slower 3.12
+# run (the python job's cap comment), the estimate the weighted run's measured ones, and with 3.10,
+# 3.11 and 3.13 at those projected phases and 3.12 and 3.14t at the weighted run's, a batch run would
+# bill about 500 minutes, 44 more than the estimate's 456. The fork had 30 CI runs on
 # batch branches in the 30 days to 2026-10-04 and none in the 30 days before (23 in September; 27
 # since 2026-09-21, when batches began to land daily, about 58 a month at that rate), so about 82
 # dollars a month at 30 runs and about 159 at 58. A manual run, Linux alone by default (below), bills
