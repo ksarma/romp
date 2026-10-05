@@ -2365,23 +2365,36 @@ def pytest_collectreport(report):
 # the Run pytest step's command on 2026-10-04, under a CPUQuota of 200 percent and an 8 GiB memory cap with no swap, had
 # its one worker killed by the memory cap once on Python 3.12 and twice on 3.14t, the worker about 7.2 GB resident at
 # 81 percent of the suite (ci.yml's python job comment has the measurement).
-# THE RULE: a test file's shard is the SHA-256 digest of its path relative to the repository root, written with forward
-# slashes ("tests/test_x.py"), its first eight bytes read as a big-endian integer, modulo SHARD_COUNT, plus one
-# (shard_of). It is a function of the path alone, so a new test file always lands in exactly one shard, and adding,
-# removing or renaming a file moves no other file. Python's built-in hash() is not used: it is salted per process for
-# strings, so two processes could disagree.
-# Why a hash and not a list of heavy files: what a worker holds grows over its process's life (every module it imports
-# stays imported, and the run's caches only grow; a collection of the whole suite alone held more than 5 GB on
-# 2026-10-04, and of one shard about 3.2 GB), so a shard's peak depends on which files, and how many, its one process
-# collects and runs. A hash spreads each family of related modules (the kernel's, the postal service's, the censuses
-# that parse the tree) across the shards in about equal parts, and it needs no upkeep; a list of heavy files would need
-# a per-file memory measurement to write and would go stale as files grow. Whether the split holds each shard under the
+# THE RULE (weighted, 2026-10-05): a test file named in HEAVY_MODULES is in the shard the list gives it; every other test
+# file's shard is the SHA-256 digest of its path relative to the repository root, written with forward slashes
+# ("tests/test_x.py"), its first eight bytes read as a big-endian integer, modulo SHARD_COUNT, plus one (hash_shard).
+# shard_of applies both. It is a function of the path alone, so a new test file always lands in exactly one shard, and
+# adding, removing or renaming a file moves no other file. Python's built-in hash() is not used: it is salted per
+# process for strings, so two processes could disagree.
+# Why a hash for most files: what a worker holds grows over its process's life (every module it imports stays
+# imported, and the run's caches only grow; a collection of the whole suite alone held more than 5 GB on 2026-10-04,
+# and of one shard about 3.2 GB), so a shard's peak depends on which files, and how many, its one process collects and
+# runs. A hash spreads each family of related modules (the kernel's, the postal service's, the censuses that parse the
+# tree) across the shards in about equal parts, and it needs no upkeep. Whether the split holds each shard under the
 # runner's budget is the measurement in ci.yml's python job comment. Two shards did not: on 2026-10-05, under the
 # runner's shape, shard 2's worker reached 6.66 GB on 3.12, past the 6 GB a shard may take on an 8 GB runner. Three
 # did not meet the target set the same day, 5 GB for each shard's worker, which keeps about 1 GB of the 6 GB for the
-# files' growth: shard 3's worker reached 5.38 GB on 3.12 and 5.60 GB on 3.14t. So the count is four. If a shard of
-# four still passes 5 GB, the heavy files cluster under the hash, and the rule becomes a stated weighted one: a short
-# list of the heaviest modules, each with its measured peak, one to a shard, and the rest by this hash.
+# files' growth: shard 3's worker reached 5.38 GB on 3.12 and 5.60 GB on 3.14t. Four by the hash alone did not either:
+# shard 4's worker reached 4.72 GB on 3.12 and 5.13 GB on 3.14t, and it was one module. In a run of shard 4 on 3.14t
+# that stamped each test's result with the time and sampled the worker every second, the worker was at 2.72 GB when
+# tests/test_thread_stop_census.py began and grew 2.41 GB while it ran; no other file grew any shard's worker by more
+# than 0.4 GB once the shard's collection was done.
+# Why the list: a module that heavy lands where the hash puts it, and the shard it lands in is the one that passes the
+# budget. So the heaviest modules are named, each with its measured peak (the module's own run, the Run pytest step's
+# command with the one file named, under the runner's shape), at most one to a shard, each in the shard whose worker
+# held the least where the module runs (the files run in path order, so a module adds to what the files before it
+# left). A module joins the list when a shard passes 5 GB because of it; tests/test_ci_shards.py holds every entry to
+# a test file that exists and to one entry a shard.
+HEAVY_MODULES = {
+    # alone: 2.53 GB on 3.12 and 2.81 GB on 3.14t. Shard 1's worker held 1.97 GB on 3.14t where this file runs, the
+    # least of the four shards (shard 4's, where the hash put it, held 2.72 GB)
+    "tests/test_thread_stop_census.py": 1,
+}
 # WHERE IT ACTS: pytest_ignore_collect below, when the run's environment names a shard (SHARD_ENV, set by ci.yml's Run
 # pytest step from the matrix's shard axis on the ubuntu-latest cells, and empty on the macOS cells, which run every
 # file), skips every test file of the other shards before pytest imports it, so a shard's process never imports another
@@ -2407,10 +2420,18 @@ _RUN_SHARD_TEXT = os.environ.get("ROMP_TESTS_SHARD")
 _RUN_SHARD = pytest.StashKey()
 
 
-def shard_of(relpath):
-    """The shard, 1 to SHARD_COUNT, of the test file whose repository-relative path is relpath (THE RULE above)."""
+def hash_shard(relpath):
+    """The hash half of THE RULE above: the digest's first eight bytes modulo SHARD_COUNT, plus one."""
     digest = hashlib.sha256(relpath.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big") % SHARD_COUNT + 1
+
+
+def shard_of(relpath):
+    """The shard, 1 to SHARD_COUNT, of the test file whose repository-relative path is relpath (THE RULE above): its
+    HEAVY_MODULES entry when it has one, else hash_shard."""
+    if relpath in HEAVY_MODULES:
+        return HEAVY_MODULES[relpath]
+    return hash_shard(relpath)
 
 
 def shard_repo_path(path):

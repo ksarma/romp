@@ -11,7 +11,9 @@ Two kinds of pin:
    which lists each file pytest decides to make a test module of without importing it (a real collection of this
    suite took 696 s and more than 5 GB on 2026-10-04); every step before that one, tests/conftest.py's
    pytest_ignore_collect among them, runs as in CI. Red under a selection that drops a file from every shard, that
-   puts a file in two shards, or that is absent (every shard collects every file).
+   puts a file in two shards, or that is absent (every shard collects every file), and when a module tests/conftest.py's
+   HEAVY_MODULES lists (the weighted rule's short list) runs anywhere but its listed shard. TheRule holds the list in
+   process: each entry an existing test file, at most one to a shard, and every other path placed by the hash.
 2. Source pins over ci.yml, read by line shape with no YAML library, as tests/test_ci_workflow_concurrency.py reads it
    (ShardMatrix): the python job's shard axis lists 1 to SHARD_COUNT; a batch push runs each interpreter as
    SHARD_COUNT Linux jobs, one per shard, and a dispatch with its macos input on (tests/test_ci_macos_input.py) adds one
@@ -30,7 +32,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 # the checkout root on sys.path before the imports from sibling modules, as tests/test_ci_macos_schedule.py does
 sys.path.insert(0, ROOT)
-from tests.conftest import SHARD_COUNT, SHARD_ENV, is_test_file, parse_shard, shard_of, shard_repo_path  # noqa: E402
+from tests.conftest import (  # noqa: E402
+    HEAVY_MODULES, SHARD_COUNT, SHARD_ENV, hash_shard, is_test_file, parse_shard, shard_of, shard_repo_path)
 from tests.ci_shard_probe import PROBE_ITEM  # noqa: E402
 from tests.test_ci_workflow_concurrency import (  # noqa: E402
     MAIN, SHA_A, _children, _keys_at, _strip_comment, _unquote, evaluate, job_lines, os_list, run)
@@ -109,6 +112,15 @@ class ShardsPartitionTheCollectedFiles(unittest.TestCase):
                                  "files tests/conftest.py's shard_of assigns it" % k)
                 self.assertTrue(files, "shard %d collects no file, and pytest exits 5 on a run that collects nothing" % k)
 
+    def test_each_listed_heavy_module_runs_in_its_listed_shard_and_no_other(self):
+        # read against HEAVY_MODULES itself rather than shard_of, so a shard_of that ignored the list would be red here
+        # while the rule's census above, which reads shard_of, stayed green
+        for path, k in sorted(HEAVY_MODULES.items()):
+            with self.subTest(module=path):
+                self.assertIn(path, self.collected, "a HEAVY_MODULES entry the run with no shard does not collect")
+                self.assertEqual(sorted(j for j, files in self.shards.items() if path in files), [k],
+                                 "%s is listed for shard %d, and the shards that collect it are not that one alone" % (path, k))
+
 
 class PartitionFaultsReadsEachFault(unittest.TestCase):
     """partition_faults over synthetic shards: green on a partition, and each way out of one named."""
@@ -146,8 +158,31 @@ class TheRule(unittest.TestCase):
     def test_the_rule_is_the_digests_first_eight_bytes_modulo_the_count(self):
         import hashlib
         path = "tests/test_ci_shards.py"
+        self.assertNotIn(path, HEAVY_MODULES, "the example is a file the hash places")
         want = int.from_bytes(hashlib.sha256(path.encode()).digest()[:8], "big") % SHARD_COUNT + 1
+        self.assertEqual(hash_shard(path), want)
         self.assertEqual(shard_of(path), want)
+
+    def test_a_listed_heavy_module_is_in_its_listed_shard_and_every_other_path_is_the_hashs(self):
+        for path, k in sorted(HEAVY_MODULES.items()):
+            self.assertEqual(shard_of(path), k, "shard_of gives %s, listed for shard %d, another shard" % (path, k))
+        for i in range(500):
+            path = "tests/test_synthetic_%d.py" % i
+            self.assertEqual(shard_of(path), hash_shard(path))
+
+    def test_the_heavy_list_names_existing_test_files_at_most_one_to_a_shard(self):
+        self.assertTrue(HEAVY_MODULES, "the weighted rule's list is empty: the rule is the hash alone, and the comments "
+                        "that state a weighted rule are stale")
+        for path, k in sorted(HEAVY_MODULES.items()):
+            with self.subTest(module=path):
+                self.assertTrue(is_test_file(os.path.join(ROOT, path)), "a HEAVY_MODULES entry that is not a test file "
+                                "on disk (renamed or removed): it would place nothing")
+                self.assertEqual(shard_repo_path(os.path.join(ROOT, path)), path, "an entry is written as shard_of reads "
+                                 "a path: repository-relative, with forward slashes")
+                self.assertIs(type(k), int, "an entry's shard is a whole number, not a string or a bool")
+                self.assertIn(k, range(1, SHARD_COUNT + 1), "an entry's shard must be one of 1 to SHARD_COUNT")
+        shards = sorted(HEAVY_MODULES.values())
+        self.assertEqual(sorted(set(shards)), shards, "two heavy modules share a shard: the list puts at most one in each")
 
     def test_the_count_the_cap_pin_reads_is_the_conftests(self):
         # tests/test_ci_bats_bound.py reads SHARD_COUNT from tests/conftest.py's text rather than importing it (the Shell
