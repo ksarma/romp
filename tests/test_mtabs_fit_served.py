@@ -3,19 +3,21 @@
 4g, 2026-10-04).
 
 THE BUG. The bar is one flex row: the pane tabs (each flex:1, never narrower than its label, 8px apart) and then the action
-cluster, a divider and six fixed buttons (Usage, Remote kernels, Restart, the Log's triangle, the push bell and Settings),
-each an 18px glyph in 7px of padding, 32px wide. The bell is not capability-gated: the shell's push script reveals it on
-every page since the bell became the master switch (it shows where the Push API is missing too), so it is always one of
-the six. With the default tabs (Chat, Sessions, Outline, Feed, Waiting) the row needs about 413 to 418px, and nothing in it
-could shrink or wrap, so on a narrower window the cluster ran past the right edge of the screen, where the shell's
-overflow:hidden body leaves it unreachable: at 390px Settings, at 375 and 360 the bell too, at 320 Restart, the Log's
-triangle, the bell and Settings (so the Log could not be opened from its triangle there). With the Files tab on the row is
-wider still and ran off at 430px too.
+cluster, a divider and six buttons that never shrink (Usage, Remote kernels, Restart, the Log's triangle, the push bell and
+Settings), each a glyph in 7px of side padding, 28 to 32px wide. The bell is not capability-gated: the shell's push script
+reveals it on every page since the bell became the master switch (it shows where the Push API is missing too), so it is
+always one of the six. With the default tabs (Chat, Sessions, Outline, Feed, Waiting) the row needs 418px in Chromium and
+413px in WebKit and Firefox (454 and 448px with the Files tab on), nothing in it could shrink or wrap, and the bar does not
+scroll (overflow visible, in the shell's overflow:hidden body), so on a narrower window the cluster ran past the right edge
+of the screen out of reach. Measured before the fix in all three engines: at 390px Settings past the edge; at 375 the bell
+cut and Settings past; at 360 the bell and Settings past; at 320 Restart cut and the Log's triangle, the bell and Settings
+past, so the Log could not be opened from its triangle there; at 414 in Chromium Settings cut by 4px. With the Files tab on
+Settings ran off at 430px too. Landscape phones fit.
 
 THE FIX (kernel/kernel.py, the shell's markup and its phone media block). The action cluster is one element
 (.mtabs-acts), and the bar may wrap: when the tabs and the cluster do not fit on one row, the cluster moves whole to a
 second row under the tabs, at the right edge where it sat, and the tabs take the full first row. Where everything fits the
-bar is the single row it was, byte for byte the same boxes. The tabs keep the single row's height on a row of their own. A
+bar is the single row it was, every box where it was. The tabs keep the single row's height on a row of their own. A
 wrapped bar is taller, and its height can change with no resize at all (the Files tab turned on in the gear, the webfont
 arriving), so the shell re-measures the bar's height, the strip the panes leave for it, whenever the bar's box changes (a
 ResizeObserver on the bar, beside the resize events that already re-measure it). The desktop is untouched: the bar is
@@ -25,13 +27,14 @@ WHAT IS MEASURED, in the pages the kernel serves, in a real engine (tests/mtabs_
 (Firefox without isMobile, which Playwright does not support there) at 320, 360, 375, 390, 414 and 430px wide in portrait
 and the same phones in landscape, on the default tab set and with the Files tab on. Wherever the phone layout applies, for
 every control the bar shows: its box wholly inside the window, the element at its centre is that control, no two controls
-overlap, a tab's label fits inside it, an action button keeps its 32px width and every control its single-row height (the
-tap area the bar was designed with: ui/CLAUDE.md states no figure, the bar's own rule does), the bar spans the window at
-its bottom edge and nothing in it overflows, and the strip the panes leave (--mtabs-h) equals the bar's height with the
-shown pane ending above it. Where the bar's natural one-row width (the bar laid out at max-content without wrapping) fits
-the window, every control shares one row as before; where it does not, the tabs fill the first row and the cluster sits
-together on the second at the right edge. Then the Files tab turned on with no resize, at 430px where the default set fits
-one row and the Files set does not: the bar wraps and the strip follows it. And a desktop window, where the bar is hidden.
+overlap, a tab's label fits inside it, every control keeps at least its natural width (its width in the unsqueezed row:
+an action button its glyph and padding) and the single row's height (the tap area the bar was designed with; ui/CLAUDE.md
+states no figure), the bar spans the window at its bottom edge and nothing in it overflows, and the strip the panes leave
+(--mtabs-h) equals the bar's height with the shown pane ending above it. Where the bar's natural one-row width (the bar
+laid out at max-content without wrapping) fits the window, every control shares one row as before; where it does not, the
+tabs fill the first row and the cluster sits together on the second at the right edge. Then the Files tab turned on with
+no resize, at 430px where the default set fits one row and the Files set does not: the bar wraps and the strip follows it.
+And a desktop window, where the bar is hidden. MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
 
 Red before the fix in each engine at the widths whose natural row overflows (the past-the-edge and centre-hit lines name
 them); green after. Runs in the "Browser-backed served-page tests (pytest)" step of the served-pages job, "Served pages
@@ -75,7 +78,7 @@ PORTRAIT = ((320, 568), (360, 640), (375, 667), (390, 844), (414, 896), (430, 93
 LANDSCAPE = tuple((h, w) for w, h in PORTRAIT)
 DYNAMIC = (430, 932)   # the default tabs fit one row here and the Files set does not (asserted, so the leg proves a wrap)
 DESKTOP = (1280, 800)
-ACTION_W = 32          # an action button's width: the 18px glyph in 7px of side padding (the bar's own rule, kernel.py)
+DUMP = os.environ.get("MTABS_FIT_DUMP", "")   # a directory: each engine's raw readings are copied there (evidence for a run)
 EPS = 0.5
 
 
@@ -112,9 +115,9 @@ def _problems(where, row):
         out.append("%s: the document is wider than the window (%s)" % (where, row["docScrollW"]))
     acts = [c for c in cs if not c["tab"]]
     one_h = max((c["h"] for c in acts), default=0)
-    narrow = [c["key"] for c in acts if c["w"] < ACTION_W - EPS]
+    narrow = ["%s (%g, natural %g)" % (c["key"], c["w"], c["naturalW"]) for c in cs if c["w"] < c["naturalW"] - EPS]
     if narrow:
-        out.append("%s: an action button is narrower than its %dpx: %s" % (where, ACTION_W, ", ".join(narrow)))
+        out.append("%s: narrower than its natural width: %s" % (where, ", ".join(narrow)))
     short = [c["key"] for c in cs if c["h"] < one_h - EPS]
     if short:
         out.append("%s: shorter than the single row's %gpx: %s" % (where, one_h, ", ".join(short)))
@@ -187,7 +190,7 @@ class MtabsFit(unittest.TestCase):
         cfg = {"engine": engine, "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "settleMs": 100,
                "viewports": [list(v) for v in PORTRAIT + LANDSCAPE], "dynamicViewport": list(DYNAMIC),
-               "desktopViewport": list(DESKTOP)}
+               "desktopViewport": list(DESKTOP), "result": os.path.join(self.lab, "result-%s.json" % engine)}
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
@@ -201,9 +204,14 @@ class MtabsFit(unittest.TestCase):
                 self.skipTest("no playwright chromium on this box: the served leg needs one (CI installs it)")
             self.skipTest("optional: no playwright %s on this machine: %s" % (engine, p.stderr.strip()[-300:]))
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
+        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT-FILE:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        self.assertEqual(line[len("RESULT-FILE:"):], cfg["result"], "the driver wrote the file it was given")
+        raw = Path(cfg["result"]).read_text()
+        if DUMP:
+            os.makedirs(DUMP, exist_ok=True)
+            Path(DUMP, engine + ".json").write_text(raw)
+        r = json.loads(raw)
         self.assertNotIn("died", r, "driver aborted early: %r (kernel log tail: %s)" % (r.get("died"), Path(self.klog).read_text()[-800:]))
         self.assertEqual(r.get("errors"), [], "page errors")
         return r

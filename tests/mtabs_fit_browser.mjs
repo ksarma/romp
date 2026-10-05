@@ -12,7 +12,8 @@
 // the gear turns it on (a write of the settings key from a same-origin pane document, so this window hears the storage
 // event the shell's pane controller acts on), with no resize, and the same reading after two frames.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden.
-// Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip).
+// Writes the readings as JSON to cfg.result and prints one `RESULT-FILE:` line naming it; exits 3 when the browser does not
+// launch (the Python side turns that into a skip).
 // Never touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. No sessions.
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -47,14 +48,17 @@ const READ = () => {
   const vw = window.innerWidth, vh = window.innerHeight;
   const bs = getComputedStyle(bar);
   const br = bar.getBoundingClientRect();
-  // the natural one-row width: the bar at max-content with no wrapping, read and restored synchronously (no paint between)
+  const shownButtons = Array.from(bar.querySelectorAll("button")).filter((b) => getComputedStyle(b).display !== "none");
+  // the natural one-row width, and each control's natural width (its width when nothing squeezes it): the bar at max-content
+  // with no wrapping, read and restored synchronously (no paint between)
   const saved = bar.getAttribute("style");
   bar.style.setProperty("flex-wrap", "nowrap", "important");
   bar.style.setProperty("width", "max-content", "important");
   bar.style.setProperty("right", "auto", "important");
   const natural = r(bar.getBoundingClientRect().width);
+  const naturalW = new Map(shownButtons.map((b) => [b, r(b.getBoundingClientRect().width)]));
   if (saved === null) bar.removeAttribute("style"); else bar.setAttribute("style", saved);
-  const controls = Array.from(bar.querySelectorAll("button")).filter((b) => getComputedStyle(b).display !== "none").map((b) => {
+  const controls = shownButtons.map((b) => {
     const c = b.getBoundingClientRect();
     let hit = false;
     if (c.width > 0 && c.height > 0) {
@@ -63,7 +67,7 @@ const READ = () => {
     }
     return { key: b.getAttribute("data-pane") || b.id || b.getAttribute("data-act") || "?", tab: b.hasAttribute("data-pane"),
              left: r(c.left), right: r(c.right), top: r(c.top), bottom: r(c.bottom), w: r(c.width), h: r(c.height),
-             labelFits: b.scrollWidth <= b.clientWidth + 0.5, hit };
+             naturalW: naturalW.get(b), labelFits: b.scrollWidth <= b.clientWidth + 0.5, hit };
   });
   const div = bar.querySelector(".mtabs-div");
   const dr = div ? div.getBoundingClientRect() : null;
@@ -149,6 +153,9 @@ try {
 } catch (e) {
   out.died = String(e).slice(0, 600);
 }
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+// the result goes to the file the Python side names (cfg.result): one write to a pipe can stop at the pipe's buffer, and these
+// readings run past 64 KB
+fs.writeFileSync(cfg.result, JSON.stringify(out));
+fs.writeSync(1, "RESULT-FILE:" + cfg.result + "\n");
 try { await browser.close(); } catch (e) { /* closing */ }
 process.exit(0);
