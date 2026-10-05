@@ -104,10 +104,10 @@ def derived():
 
 
 # ---- the phases the caps take, against the estimate's (TheTwoPremises) -------------------------------------------------
-# each Linux cell's seconds before and after its Run pytest step in run 37212676524 (batch/2026-10-04b, on the public
-# runner; the jobs API's job start to the step's start, and the step's end to the job's end), which every shard job of
-# that interpreter is charged beside its phase
-CELL_EDGE_S = {"3.10": (25, 2), "3.11": (18, 3), "3.12": (18, 2), "3.13": (19, 3), "3.14t": (27, 3)}
+# each Linux cell's seconds before and after its Run pytest step in run 37212676524, which every shard job of that
+# interpreter is charged beside its phase: tests/test_ci_bats_bound.py's CELL_EDGE_S, where the caps' time before the
+# step is derived from the same figures
+CELL_EDGE_S = bound.CELL_EDGE_S
 # the stated figures: a batch run's minutes with each unmeasured interpreter's shard jobs at its own projected phases, and
 # that figure less the estimate's batch run; exact, since each job is rounded up to a whole minute before the sum
 PROJECTED_STATED = {"projected batch run minutes": 482, "projected difference": 26}
@@ -233,6 +233,8 @@ class CapsTheFirstPrivateRunConfirms(unittest.TestCase):
                          "each Linux job but the python shards: a job added to ci.yml needs its time here")
         sentences = confirming_sentences(header())
         self.assertTrue(sentences, "the header has no sentence on the %s" % CONFIRM)
+        self.assertTrue(any("the shard caps are re-derived from its times" in s for s in sentences), "the header's "
+                        "sentence on the %s says the shard caps are re-derived from its times" % CONFIRM)
         due = []
         for job, secs in sorted(OTHER_JOB_S.items()):
             cap = linux_cap(src, job)
@@ -251,6 +253,16 @@ class TheTwoPremises(unittest.TestCase):
     def test_every_linux_interpreter_has_its_cells_times(self):
         self.assertEqual(sorted(CELL_EDGE_S), sorted(bound.MEASURED + bound.UNMEASURED), "the times before and after the "
                          "Run pytest step for each Linux interpreter of the matrix, measured or projected")
+
+    def test_the_header_states_the_cells_times_before_and_after_the_step(self):
+        befores = [before for before, _after in CELL_EDGE_S.values()]
+        afters = [after for _before, after in CELL_EDGE_S.values()]
+        text = header()
+        cell = "in that interpreter's cell of run %d" % bound.CELL_EDGE_RUN
+        self.assertTrue(cell in text, "the header names the run the cells' times come from (%r)" % cell)
+        span = "%d to %d s before and %d to %d s after" % (min(befores), max(befores), min(afters), max(afters))
+        self.assertTrue(span in text, "the header states the range of the cells' times before and after the Run pytest "
+                        "step (%r)" % span)
 
     def test_the_shard_jobs_figure_is_its_derivation(self):
         self.assertEqual(shard_jobs_total(False), SHARD_JOBS_MIN, "the estimate's twenty shard jobs: 3.12 and 3.14t at "

@@ -245,13 +245,17 @@ jobs:
     # 695 + 600 + 27 = 1322 s, so 25; shard 2, 3.10 projected, 1220 s on 3.12 times 1639/1248 is 1603 s, and
     # 1603 + 600 + 27 = 2230 s, so 40; shard 3, 3.10 projected, 614 s on 3.12 times 1639/1248 is 807 s, and
     # 807 + 600 + 27 = 1434 s, so 25; shard 4, 3.10 projected, 1237 s on 3.12 times 1639/1248 is 1625 s, and
-    # 1625 + 600 + 27 = 2252 s, so 40. The measured phases alone (679, 1451, 614 and 1237 s) gave 25, 35, 25 and 35: the
-    # projections raise shard 2 from 35 to 40 and shard 4 from 35 to 40, and leave shards 1 and 3 at 25. The caps take the
-    # projections (decided 2026-10-05): a higher cap costs nothing on a normal run, since billing counts only the minutes
-    # a job uses, and a timeout shows as a cancelled, red job. tests/test_ci_bats_bound.py holds each cap to its governing
-    # phase and this comment to the figures. Each cap is re-derived from the first run on the private repository's 2-CPU
-    # runners, whose jobs give the private runner's own phases and setup times; the fork's public runners have more CPUs,
-    # so the fork's CI times are not that measurement. Each step's time is the jobs API's.
+    # 1625 + 600 + 27 = 2252 s, so 40. At the hash-alone run's 1482 s for shard 2 on 3.12, the same rule gives 45 (3.10
+    # projected 1947 s, and 1947 + 600 + 27 = 2574 s): shard 2 keeps 40 only while its 3.12 phase is 1350 s or less. Shard
+    # 3's sum, 1434 s, is the closest of the four to its cap, 66 s under its 25 minutes, past which the rule gives 30; at
+    # the hash-alone run's 661 s on 3.12 (a run of the shard with 3 fewer tests) it is 1496 s, 4 s under. The measured
+    # phases alone (679, 1451, 614 and 1237 s) gave 25, 35, 25 and 35: the projections raise shard 2 from 35 to 40 and
+    # shard 4 from 35 to 40, and leave shards 1 and 3 at 25. The caps take the projections (decided 2026-10-05): a higher
+    # cap costs nothing on a normal run, since billing counts only the minutes a job uses, and a timeout shows as a
+    # cancelled, red job. tests/test_ci_bats_bound.py holds each cap to its governing phase and this comment to the
+    # figures. Each cap is re-derived from the first run on the private repository's 2-CPU runners, whose jobs give the
+    # private runner's own phases and setup times; the fork's public runners have more CPUs, so the fork's CI times are
+    # not that measurement. Each step's time is the jobs API's.
     # 90 is the figure each shard's cap held before the shards were measured. The whole suite's estimated one-worker
     # phase gave it: the slowest finished two-worker Linux cell, the 3.10 cell of run
     # 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880), 2312 s in its pytest step,
