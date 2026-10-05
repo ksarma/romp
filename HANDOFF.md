@@ -24,7 +24,7 @@ Three things this repo needs are not files, so cloning does not bring them: remo
 
 ```bash
 scripts/fork-remotes.sh                   # adds upstream as FETCH-ONLY with a dead push URL
-scripts/fork-remotes.sh --check           # confirm: origin (the fork) is the only pushable remote
+scripts/fork-remotes.sh --check           # confirm: upstream is fetch-only; origin is set in .git/config alone, pushes only where it fetches, shares no repository with another remote, gets every bare push, and is gh's default
 npm install --prefix vscode-extension     # else its suite dies on "Cannot find module 'esbuild'"
 ```
 
