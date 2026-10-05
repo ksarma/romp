@@ -3,7 +3,7 @@ title: Served drivers whose records pass 8 KiB write them to a result file and p
 status: candidate
 where: tests/keyboard_gap_browser.mjs and tests/test_keyboard_gap_served.py, tests/reply_sheet_browser.mjs and tests/test_reply_sheet_served.py (two driver files, each writing its record to cfg.resultPath and printing a short RESULT: line, and the modules that pass resultPath and read the file); tests/test_api_health_hover_browser.py, tests/test_chat_split_served.py (its died path too), tests/test_day_divider_served.py, tests/test_feed_focus_served.py, tests/test_file_preview_browser.py, tests/test_files_pane_toggle_served.py, tests/test_rail_relative_served.py, tests/test_scroll_marks_click_served.py, tests/test_tab_groups_rows_served.py, tests/test_tab_overview_mode_served.py, tests/test_tag_chips_everywhere_browser.py and tests/test_unfocused_pane_browser.py (the same change to each module's inline driver and its reader); upstream/2026-10-05-tests-served-records-to-a-file.md (this entry)
 added: 2026-10-05
-pr:
+pr: 981
 tier: docs
 offered:
 closed:
