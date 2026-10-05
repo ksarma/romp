@@ -906,6 +906,16 @@ for (const [pointer, touch, name, start, hold, words] of [
       const row = acts().childNodes.filter((n): n is E => n instanceof E);
       assert.deepEqual(row.map((n) => n.dataset.act || n.className), ["fcsave", "fccancel", "fileview-load fc-load fc-wait"],
         "Save and Cancel side by side, then the line after both: never between the two buttons");
+      // the reason file-view-seam.test.ts's JUDGED_SITES gives this line's constant markup (waitLine), asserted on the scene: the
+      // line is on the composer's button row in the Comments panel, and the panel is the aside the viewer's main row holds beside
+      // its body, so the line is never under the Rendered box (fc-wait > fc-actions > fc-composer ... > fc-panel > fileview-main)
+      const up: E[] = [];
+      for (let e: E | null = wait!; e; e = e.parentElement) up.push(e);
+      const lineage = up.map((e) => e.className).join(" > ");
+      assert.ok(up[1]?.classList.contains("fc-actions") && up[2]?.classList.contains("fc-composer"), "the line's parent is the composer's button row, in the composer: " + lineage);
+      const panelAt = up.findIndex((e) => e.classList.contains("fc-panel"));
+      assert.ok(panelAt > 2 && up[panelAt + 1] === h.main, "…inside the Comments panel, whose parent is the viewer's main row (fileview-main), beside its body: " + lineage);
+      assert.equal(h.body.contains(wait!), false, "…so the line is not under the viewer's body, where the Rendered box is built: " + lineage);
       for (const f of ["styles.css", "feed.css"]) {
         // a rule pin: the stand-in lays nothing out, so the row of its own is held by the two rules it needs in each sheet (a
         // Chromium check at 390 and 320 px, made by hand and not committed, saw the line on its own row under the buttons)

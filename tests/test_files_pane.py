@@ -172,8 +172,8 @@ class Plumbing(unittest.TestCase):
         # the pages that pass it: this one and the settings page (the gear alone, no pushed view either;
         # tests/test_settings_page.py); the pane pages call the shim exactly as they did
         shims = re.findall(r'_shim\("(\w+)", v(?:, ([^)]*))?\)', SRC)
-        self.assertEqual([app for app, kw in shims if "no_stale=True" in (kw or "")], ["files", "settings"])
-        self.assertEqual(sorted(app for app, kw in shims), ["chat", "feed", "files", "fleet", "settings", "timeline", "waiting"])
+        self.assertEqual([app for app, kw in shims if "no_stale=True" in (kw or "")], ["files", "artifacts", "settings"])   # the Artifacts pane receives no pushed view either (2026-09-19)
+        self.assertEqual(sorted(app for app, kw in shims), ["artifacts", "chat", "feed", "files", "fleet", "settings", "timeline", "waiting"])   # the fork's Waiting pane keeps its page (plans/user-todos.md)
 
     def test_the_editor_chunk_derives_from_the_pages_own_bundle_tag(self):
         # file-view.ts loads its CodeMirror chunk from a URL rewritten off the page's running bundle
@@ -209,8 +209,8 @@ class Shell(unittest.TestCase):
     def setUp(self):
         self.html = km._landing()
 
-    def test_the_pane_is_in_the_one_ordering_last(self):
-        self.assertEqual(km._PANE_ORDER[-1], ("files", "Files"))
+    def test_the_pane_is_in_the_one_ordering_second_to_last_before_artifacts(self):
+        self.assertEqual(km._PANE_ORDER[-2], ("files", "Files"))   # the Artifacts pane sits after it since 2026-09-19 (plans/artifacts-pane.md)
         _has(self, "<div class=rail-btn data-pane=files>Files</div>", self.html)
         _has(self, "<button data-pane=files>Files</button>", self.html)
 
@@ -226,7 +226,7 @@ class Shell(unittest.TestCase):
         self.assertIn("body:not(.po-files) #gv-d,body:not(.po-chat):not(.po-fleet):not(.po-feed):not(.po-waiting) #gv-d{display:none}", self.html)
 
     def test_off_by_default_and_toggled_by_the_controller(self):
-        _has(self, "<body class='po-chat po-feed po-timeline'>", self.html)   # not po-files
+        _has(self, "<body class='po-chat po-feed po-timeline' data-panes=\"", self.html)   # not po-files
         _has(self, "po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false}", self.html)
         _has(self, "po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false}", self.html)   # the ?panes= reset
         _has(self, "document.body.classList.toggle('po-files',!!po.files)", self.html)
@@ -236,8 +236,8 @@ class Shell(unittest.TestCase):
         _has(self, "'f-files':'files-pane'", km._LANDING_FOCUS_JS)
         _has(self, "var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files']", km._LANDING_FOCUS_JS)
         # the settings iframe (the gear's document, not a pane) rides the two keyboard lists with the panes
-        _has(self, "['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].forEach", km._LANDING_ESC_JS)
-        _has(self, "['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].forEach", km._LANDING_MOBILE_JS)
+        _has(self, "['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].concat((function(){try{return JSON.parse(document.body.getAttribute('data-panes')||'[]').map(function(p){return 'f-'+p.id;});}catch(e){return [];}})()).forEach", km._LANDING_ESC_JS)   # the hand panes (the fork's Waiting among them) and the generic panes' frames (plans/panes-as-data.md)
+        _has(self, "['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].concat((function(){try{return JSON.parse(document.body.getAttribute('data-panes')||'[]').map(function(p){return 'f-'+p.id;});}catch(e){return [];}})()).forEach", km._LANDING_MOBILE_JS)
         # the Log's connection-lost label reads the one map, so the pane's row in _PANE_ORDER is the pin
         _has(self, "var PN=" + json.dumps(dict(km._PANE_ORDER)) + ";", km._LANDING_ERRS_JS)
         self.assertEqual(dict(km._PANE_ORDER).get("files"), "Files")
@@ -275,7 +275,7 @@ class Shell(unittest.TestCase):
         _has(self, "<input type=checkbox id=rs-filesctl>", gear)
         self.assertNotIn("id=rs-filesctl checked", gear, "off by default: the box is not pre-checked")
         self.assertEqual(gear.count("showFilesControl: false, stripGroupRows"), 2, "the gear's load defaults (the assign and its catch) say off")
-        _has(self, "delete o.filesControl; delete o.fileLinkPane; return o; } catch (e) {", gear)   # load() drops the T317-era key and the T404-era file-links key, so the next save leaves both behind
+        _has(self, "delete o.filesControl; delete o.fileLinkPane; delete o.showArtifactsControl; return o; } catch (e) {", gear)   # load() drops the T317-era key, the T404-era file-links key and the Artifacts control's retired key, so the next save leaves them behind
         # the box has a NAME OF ITS OWN in the gear's one var list (review find: a second `fc` shadowed the feed's
         # collapsed box, so the new row was dead and the feed box wrote this setting)
         _has(self, "fsc = document.getElementById('rs-filesctl')", gear)
@@ -364,17 +364,26 @@ class Relay(unittest.TestCase):
         route = (UI / "file-route.ts").read_text()
         _has(self, "export function fileLinkRoute(framed: boolean, filesOpen: boolean, filesAvail: boolean = true): FileRoute {", route)   # no setting since T404
 
-    def test_the_gear_and_the_guide_say_the_open_pane_wins(self):
+    def test_the_gear_and_the_docs_say_the_open_pane_wins(self):
         # T404: the file-links row is gone from the gear; the Files control row and the pane's own hint say the rule
         gear = (UI / "gear.js").read_text()
         _has(self, "closes the Files pane if it is open; file links then open over the pane you clicked.", gear)
         self.assertNotIn("<option value=chat>The pane you clicked</option>", gear, "the setting's options are gone")
         _has(self, "While this pane is open, a file or folder clicked in the chat opens here. Closed, they open over the pane you clicked.", (UI / "files.ts").read_text())
+        # the pane's own paragraph moved to the reference with the rest of the interface detail
+        # (CLAUDE.md "The documentation front pages"); the guide introduces the pane and links there. Fold 4 moved the
+        # fork's paragraph there too, merged with the project's copy: the fork's wording ("opens here") is the paragraph's
+        # now, so the project's pin on "opens in it" follows it (R4), and the fork's placement pin reads the reference:
+        # the section stands in the interface block, before the Artifacts pane
+        ref = (Path(ROOT) / "docs" / "reference.md").read_text()
+        _has(self, "## The Files pane\n", ref)
+        _has(self, "While the pane is open, a file link clicked in the chat opens here.", ref.replace("\n", " "))
+        self.assertLess(ref.index("## The interface, feature by feature"), ref.index("## The Files pane\n"))
+        self.assertLess(ref.index("## The Files pane\n"), ref.index("## The Artifacts pane"))
         guide = (Path(ROOT) / "docs" / "guide.md").read_text()
-        _has(self, "### Files\n", guide)
-        _has(self, "While the pane is open, a file link clicked in the chat opens here.", guide.replace("\n", " "))
-        self.assertLess(guide.index("### The outline"), guide.index("### Files"))
-        self.assertLess(guide.index("### Files"), guide.index("## Automatic nudges"))
+        _has(self, "**Files** keeps the file viewer in a column of its own", guide.replace("\n", " "))
+        self.assertLess(guide.index("### The outline"), guide.index("### The other panes"))
+        self.assertLess(guide.index("### The other panes"), guide.index("## Automatic nudges"))
 
     def test_the_pane_branch_forwards_the_todo_id(self):
         """The Waiting-on-you pane's detail link (plans/file-review.md, Slice 0) posts the same viewFile with
@@ -449,6 +458,7 @@ const frame = (id) => ({ contentWindow: { postMessage: (m) => POSTED[id].push(JS
   addEventListener: (ev, f) => { if (ev === 'load' && id === 'f-files') FILES_LOADS.push(f); },
   removeEventListener: (ev, f) => { if (id === 'f-files') FILES_LOADS = FILES_LOADS.filter((g) => g !== f); } });
 global.window = global;
+window.__rompPaneSourceOk = () => true;   // the shell's source check (the boot script's, plans/panes-as-data.md): this stub's posts stand for a protocol pane's
 global.addEventListener = (ev, f) => { if (ev === 'message') LISTENERS.push(f); };
 global.__rompPaneToggle = (k, on) => TOGGLES.push([k, on]);
 global.__rompMobileTab = (t) => TABS.push(t);
@@ -661,14 +671,16 @@ class BrowseRelay(unittest.TestCase):
         _has(self, "export function browseRoute(web: boolean, framed: boolean, filesOpen: boolean, filesAvail: boolean = true): BrowseRoute {", route)
         _has(self, 'export type BrowseRoute = FileRoute | "editor";', route)
 
-    def test_the_gear_and_the_guide_name_the_folder(self):
+    def test_the_gear_and_the_docs_name_the_folder(self):
         gear = (UI / "gear.js").read_text()
         self.assertNotIn("Where a file or folder clicked in the chat opens.", gear, "the file-links row is gone (T404)")
         _has(self, "closes the Files pane if it is open; file links then open over the pane you clicked.", gear)
-        guide = (Path(ROOT) / "docs" / "guide.md").read_text().replace("\n", " ")
-        _has(self, "opens a listing of that folder by the same rule: in this pane while it is open, otherwise over the chat.", guide)
-        _has(self, "Pick a file in the listing and it opens where the listing is.", guide)
-        _has(self, "While the pane is open, a file link clicked in the chat opens here.", guide, "the file sentence stands")
+        # the Files pane paragraph is the fork's since fold 4 merged it into the reference's copy (CLAUDE.md "The documentation
+        # front pages"): the fork's wording ("The folder ... opens a listing", "opens here") is the one that stands
+        ref = (Path(ROOT) / "docs" / "reference.md").read_text().replace("\n", " ")
+        _has(self, "opens a listing of that folder by the same rule: in this pane while it is open, otherwise over the chat.", ref)
+        _has(self, "Pick a file in the listing and it opens where the listing is.", ref)
+        _has(self, "While the pane is open, a file link clicked in the chat opens here.", ref, "the file sentence stands")
 
 
 if __name__ == "__main__":

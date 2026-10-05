@@ -1,4 +1,5 @@
-// The guide's PDFs paragraph (docs/guide.md, the Files section; plans/file-review.md Slice 4) pinned to the
+// The guide's PDFs paragraph (docs/reference.md's "The Files pane" since fold 4 moved the fork's Files section out of
+// docs/guide.md, the front pages being the project's; plans/file-review.md Slice 4) pinned to the
 // code it describes. The paragraph states a number the code owns (the pages cap, pdf-cap.ts PDF_MAX_BYTES),
 // a fallback the viewer builds (file-view.ts), an omission the build makes (esbuild.js copies only pdf.js's
 // worker; the chunk hands getDocument no font, CMap or wasm URL), and two behaviors of the panel (a region
@@ -13,14 +14,14 @@ import { PDF_MAX_BYTES } from "./pdf-cap";
 import { regionDesc } from "./region-geometry";
 
 const root = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", ...p), "utf8");
-const GUIDE = root("docs", "guide.md");
+const REF = root("docs", "reference.md");   // the fork's Files section, moved from docs/guide.md (CLAUDE.md "The documentation front pages")
 const VIEW = root("ui", "webview", "file-view.ts");
 const CHUNK = root("ui", "webview", "pdf-chunk.ts");
 const PANEL = root("ui", "webview", "file-comments.ts");
 const ESBUILD = root("vscode-extension", "esbuild.js");
 
-const flat = (t: string) => t.replace(/\s+/g, " ").trim();   // the guide wraps at 80 columns
-const FILES = GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges"));
+const flat = (t: string) => t.replace(/\s+/g, " ").trim();   // the reference wraps its lines
+const FILES = REF.slice(REF.indexOf("\n## The Files pane\n"), REF.indexOf("\n## The Artifacts pane"));
 /** The PDFs paragraph: from its bold lead to the blank line that ends it. */
 function pdfParagraph(files: string): string {
   const at = files.indexOf("**PDFs.**");
@@ -94,7 +95,7 @@ test("the paragraph speaks the person's words and carries no identifiers; so doe
   // this file's assertion messages print to the person on failure, so it scans itself, with the guard's own
   // regex line set aside (the precedent is file-comments.test.ts)
   const SELF = root("ui", "webview", "guide-pdf.test.ts").split("\n").filter((l) => !l.includes("/fleet/i")).join("\n");
-  for (const [name, text] of [["guide.md PDFs", PARA], ["guide-pdf.test.ts", SELF]] as const) {
+  for (const [name, text] of [["reference.md PDFs", PARA], ["guide-pdf.test.ts", SELF]] as const) {
     assert.doesNotMatch(text, /fleet/i, name + ": no new prose with the banned word");
     assert.doesNotMatch(text, /\/home\/[a-z]/, name + ": no absolute home paths");
   }

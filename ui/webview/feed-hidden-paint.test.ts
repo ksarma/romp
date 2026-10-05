@@ -19,14 +19,14 @@ import { paintHeld, paintReleased, publishPaneHidden, firstPaintHeld, viewportHi
 import { sameKeySeq } from "./feed-card-gate";
 import { searchMatches, searchSids } from "./feed-search";   // the real modules feed.ts's lifted paint plan calls (review round 2)
 import { lensAll, lensUnions, lensVisible } from "./tag-lens";
-import { FEED_BOARD, columnOf, isNeedsYou } from "./board-def";   // the board definition the lifted viewBase and askColumn read (the boards' phase two)
+import { FEED_BOARD, columnOf, isNeedsYou, boardOf } from "./board-def";   // the board definition the lifted viewBase and askColumn read (the boards' phase two)
 import { hideEdges } from "../test-dom-shim";   // the fake-DOM rule (ui/test-dom-shim.test.ts): a window stand-in with a parent edge enumerates its primitives alone
 
 const requireCjs = createRequire(__filename);
 
 type Ask = { itemId: string; column: string };
 type Payload = { asks: Ask[] };
-const COLS = ["asks", "needsInput", "completed"] as const;   // feed.ts FLY_COLS
+const COLS = ["asks", "needsInput", "completed"] as const;   // feed.ts activeCols() on the feed board
 
 // The harness: feed.ts's render() gate, flip decision, release path and the follow-move backstop, line for
 // line (the pins below are what keep this honest), over a list whose "content" is its painted cards. The
@@ -39,7 +39,7 @@ function feedHarness() {
     asks: [] as Ask[], painted: 0,                     // painted = list.childElementCount after the last paint
     pendingFollowMove: new Map<string, true>(),
     paintDirty: false, skipFlipOnce: false,
-    domKeys: { asks: [], needsInput: [], completed: [] } as Record<string, string[]>,   // childKeys(cols[k]) after the last paint
+    domKeys: { asks: [], needsInput: [], completed: [] } as Record<string, string[]>,   // childKeys(cols.lists[k]) after the last paint
     paints: 0, flipChecks: 0, lastFlipCols: null as string[] | null,
   };
   // the planned key sequence per column (bucketed like reconcileCol's input; a working card sits in the asks column)
@@ -163,7 +163,7 @@ test("the flip is skipped exactly once after a release, and the painted key sequ
   // the fork's per-column gate (feed-card-gate.ts sameKeySeq) in place of upstream's flipNeeded/prevCols, ui-code
   // DECISION 2: the snap empties the differing set and is spent before flipCols; reconcileCol then writes the
   // painted sequences, which the next render compares against
-  assert.match(SRC, /const differing = skipFlipOnce \? \[\] : FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), [\s\S]*?\);\n\s*skipFlipOnce = false;\n\s*const flipCols = /);
+  assert.match(SRC, /const differing = skipFlipOnce \? \[\] : activeCols\(\)\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\.lists\[k\]\), [\s\S]*?\);\n\s*skipFlipOnce = false;\n\s*const flipCols = /);
   assert.doesNotMatch(SRC, /flipNeeded|columnsOf\(|prevCols/, "no board-level flip baseline beside the per-column gate");
   assert.match(SRC, /askEls\.clear\(\); groupEls\.clear\(\);\n\s*skipFlipOnce = false;/, "the empty-board paint spends the snap too");
   const rel = body("releasePaint");
@@ -320,13 +320,15 @@ type PlanState = { model: ModelAsk[]; onlySid: string | null; searchQ: string; m
 function liftedPlan() {
   // …with the follow-move prediction lifted too (review round 3, extra6-1): predictFollowMoves, the pure transform, and applyFollowMove,
   // render()'s in-place application, over the module's three Maps stood in (pendingFollowMove, pendingMoveKind, predictedFrom), and
-  // askColumn, the transform's skip since the boards' phase two, lifted with them over board-def's FEED_BOARD and columnOf
+  // askColumn, the transform's skip since the boards' phase two, lifted with them over board-def's boardOf and columnOf (upstream 1886:
+  // the card's own board), with feed.ts's onActiveBoard line lifted too and the feed standing in for the active board
   const names = ["viewScope", "viewBase", "viewFiltered", "turnGroups", "paintPlan", "paintedKeyOf", "askColumn", "predictFollowMoves", "applyFollowMove"];
-  const src = names.map((n) => body(n)).join("\n");
+  const src = [SRC.match(/^const onActiveBoard = [^\n]*$/m)![0], ...names.map((n) => body(n))].join("\n");   // feed.ts's own board filter, which paintPlan reads (boards phase four, PR 1886)
   const js = requireCjs("esbuild").transformSync(src, { loader: "ts" }).code;
   const prelude = `
     const searchSids = M.searchSids, searchMatches = M.searchMatches, lensAll = M.lensAll, lensUnions = M.lensUnions, lensVisible = M.lensVisible;
-    const FEED_BOARD = M.FEED_BOARD, columnOf = M.columnOf, isNeedsYou = M.isNeedsYou;
+    const FEED_BOARD = M.FEED_BOARD, columnOf = M.columnOf, isNeedsYou = M.isNeedsYou, boardOf = M.boardOf;
+    const activeBoard = () => FEED_BOARD;   // no data board adopted here: the active board is the feed (boards phase four, PR 1886)
     let asks = [], feedOnlySid = null, feedSearchQ = "", sessionsMeta = [], feedLens = { all: true }, feedTagViews = null;
     const pendingFollowMove = new Map(), pendingMoveKind = new Map(), predictedFrom = new Map();
     const bind = (st) => { asks = st.model; feedOnlySid = st.onlySid; feedSearchQ = st.searchQ; sessionsMeta = st.metas; feedLens = st.lens; feedTagViews = st.views; };
@@ -338,7 +340,7 @@ function liftedPlan() {
              pending: (id, kind) => { pendingFollowMove.set(id, 1); pendingMoveKind.set(id, kind); },
              clearMoves: () => { pendingFollowMove.clear(); pendingMoveKind.clear(); predictedFrom.clear(); },
              predictedFrom: () => predictedFrom };`)(
-    { searchSids, searchMatches, lensAll, lensUnions, lensVisible, FEED_BOARD, columnOf, isNeedsYou }) as {
+    { searchSids, searchMatches, lensAll, lensUnions, lensVisible, FEED_BOARD, columnOf, isNeedsYou, boardOf }) as {
       plan(st: PlanState): { shown: ModelAsk[]; byTurn: Map<string, ModelAsk[]>; grouped: Set<string> }; keyOf(st: PlanState, id: string): string | null;
       rendered(st: PlanState): { shown: ModelAsk[]; byTurn: Map<string, ModelAsk[]>; grouped: Set<string> }; predict(list: ModelAsk[]): ModelAsk[];
       pending(id: string, kind: "followup" | "answer"): void; clearMoves(): void; predictedFrom(): Map<string, ModelAsk> };
@@ -598,7 +600,7 @@ test("HIGH-1 (review round 2, 2026-09-19): a reveal the paint will NOT stamp und
   assert.doesNotMatch(body("predictFollowMoves"), /predictedFrom|pendingMoveKind\.set|list\[i\] =/, "the transform writes nothing");
   PLAN.clearMoves();
   assert.match(body("paintedKeyOf"), /const plan = paintPlan\(predictFollowMoves\(asks\)\);[^\n]*\n\s*const a = plan\.shown\.find\(\(x\) => x\.itemId === itemId\);\n\s*if \(!a\) return null;\n\s*return plan\.grouped\.has\(itemId\) \? "g:" \+ a\.turnId : "a:" \+ itemId;/, "paintedKeyOf answers from the same plan, over the render's INPUT (the predicted list, pass 3)");   // the source pin after the executed case, so a wrong input reds by execution first
-  assert.match(body("paintPlan"), /const shown = viewFiltered\(list\);\n\s*const byTurn = turnGroups\(shown\);/, "the plan is the display view and its groups, the lines renderBody used to run inline");
+  assert.match(body("paintPlan"), /const allBoards = viewFiltered\(list\);[^\n]*\n\s*const shown = onActiveBoard\(allBoards\);\n\s*const byTurn = turnGroups\(shown\);/, "the plan is the display view (every board's, kept for the tag-lens line), the active board's cards of it and their groups, the lines renderBody used to run inline");
 });
 
 test("feed.ts wires the first-paint hold: the shell's word and the two probes beside the observer's word, and the panes handler releases on the phone's show", () => {

@@ -44,7 +44,7 @@ const RENDERERS: Record<string, Renderer> = {
   "webview/render.ts:userMd": { kind: "capped" },                 // the user's own message
   "webview/render.ts:renderFilePreview": { kind: "capped" },      // a hover card's provider HTML
   "webview/render.ts:previewMdClean": { kind: "capped" },         // a hover card's rendered markdown file
-  "webview/feed.ts:noticeBodyNodes": { kind: "capped" },          // a notice card's body
+  "webview/notice-face.ts:noticeBodyNodes": { kind: "capped" },   // a notice's body: the feed card, its modal and the chat's approval box (one face since PR 1890)
   "webview/file-view.ts:mdBlock": { kind: "capped" },            // the viewer's markdown: a /file URL written with a scheme (fileUrl caps the rest)
 };
 

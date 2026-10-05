@@ -767,7 +767,7 @@ class SettleUnderTheUnansweredArm(World):
     def test_cost_e_a_dead_sender_rolled_up_while_a_reachable_row_is_unanswered_stays_unsettled_after_the_release(self):
         bus = _real_bus(self.td.name)
         self.assertEqual(bus.STATE / "remote-sids", _mirror(), "the real writer's file is the one the reader reads")
-        for host, port in ((LISTED, 50002), (CACHED, 50003)):
+        for host, port in ((LISTED, 2), (CACHED, 3)):
             list(bus.peer_update({"host": host, "port": port, "up": True}))   # the kernel's notify: both links up
         self.assertEqual(_dials_us(bus, LISTED, True), 200)    # heard, answered, its link up; its answer to our dial
         _answers_our_dial(bus, LISTED, True)                   # releases its row (a first dial holds): it vouches for absence
@@ -845,25 +845,25 @@ class SettleWhenTheCachedHostIsHeldDown(World):
 
     def test_v5_the_kernel_holds_the_cached_host_down_after_the_exchange_that_carried_the_senders_mail(self):
         bus = _real_bus(self.td.name)
-        for host, port in ((LISTED, 50002), (CACHED, 50003)):
+        for host, port in ((LISTED, 2), (CACHED, 3)):
             list(bus.peer_update({"host": host, "port": port, "up": True}))   # the kernel's notify: both links up
         self.assertEqual(_dials_us(bus, LISTED, True), 200)
         _answers_our_dial(bus, LISTED, True)                   # its answer to our dial releases its row: it vouches
         self.assertEqual(_dials_us(bus, CACHED, False), 200)   # the exchange that carried the live sender's mail
         self._plant()                                          # the courier plants the sender's tracker here
         self.assertEqual(_verdict(LIVE_ON_CACHED, T + 10), (None, "listing-unanswered: " + CACHED + " (listing unanswered)"))
-        list(bus.peer_update({"host": CACHED, "port": 50003, "up": False}))   # the kernel: no kernel answering on CACHED
+        list(bus.peer_update({"host": CACHED, "port": 3, "up": False}))   # the kernel: no kernel answering on CACHED
         self._assert_unsettled(*self._complete_and_propagate())
 
     def test_v1_the_held_down_host_dials_us_over_its_cache_carrying_the_senders_mail(self):
         bus = _real_bus(self.td.name)
-        for host, port in ((LISTED, 50002), (CACHED, 50003)):
+        for host, port in ((LISTED, 2), (CACHED, 3)):
             list(bus.peer_update({"host": host, "port": port, "up": True}))
         self.assertEqual(_dials_us(bus, LISTED, True), 200)
         _answers_our_dial(bus, LISTED, True)                   # its answer to our dial releases its row: it vouches
         self.assertEqual(_dials_us(bus, CACHED, True), 200)
         _answers_our_dial(bus, CACHED, True)                   # CACHED answered and released before our kernel holds it down
-        list(bus.peer_update({"host": CACHED, "port": 50003, "up": False}))   # held down by our kernel
+        list(bus.peer_update({"host": CACHED, "port": 3, "up": False}))   # held down by our kernel
         self.assertEqual(_dials_us(bus, CACHED, False), 200)  # CACHED's own dial to us, over its cache, with the mail
         self._plant()
         self._assert_unsettled(*self._complete_and_propagate())

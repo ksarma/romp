@@ -67,7 +67,8 @@ def _nth(text, quote, n):
 
 class GuideConfirmSentence(unittest.TestCase):
     def test_the_guide_says_saving_again_adds_a_new_card_and_the_old_one_keeps_its_tag(self):
-        guide = _flat(_read("docs", "guide.md"))
+        # the fork's Files text is in docs/reference.md since fold 4 (CLAUDE.md "The documentation front pages")
+        guide = _flat(_read("docs", "reference.md"))
         self.assertIn("When none of those can tell which copy the comment meant, its highlight is dashed and the card "
                       "carries a **passage recurs** tag: the copy shown is a guess, and the card says so. Saving the "
                       "comment again from the right copy, as the card asks, adds a new card on that copy with no tag; "

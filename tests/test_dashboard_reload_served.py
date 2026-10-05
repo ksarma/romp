@@ -115,7 +115,15 @@ const banner = () => page.evaluate(() => { const b = document.getElementById("rs
 const waitOffer = (ms) => page.waitForFunction(() => { const b = document.getElementById("rstale"); return !!b && b.classList.contains("show") && b.classList.contains("offer"); }, null, { timeout: ms }).then(() => true).catch(() => false);
 const paneBox = () => page.evaluate(() => { const f = document.querySelector('iframe[src^="/chat"]'); const r = f.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; });
 const bump = (n) => { const t = new Date(Date.now() + n * 60 * 1000); fs.utimesSync(cfg.bumpFile, t, t); };
-const relaunch = (env) => { const k = spawn(cfg.relaunch.cmd, [], { env, detached: true,
+// the killed kernel releases its instance lock at its exit (the first kernel is the runner's process, so this driver cannot
+// reap it): block on the lock itself (cfg.relaunch.waitFree) before each relaunch, which a still-held lock would refuse
+const waitFree = () => new Promise((resolve) => {
+  const w = spawn(cfg.relaunch.waitFree[0], cfg.relaunch.waitFree.slice(1), { stdio: "ignore" });
+  w.on("error", (e) => resolve(String(e)));
+  w.on("exit", (code, sig) => resolve(code === 0 ? true : String(sig || code)));
+});
+const relaunch = async (env) => { const freed = await waitFree(); if (freed !== true) await die("the killed kernel's instance lock never freed: " + freed);
+  const k = spawn(cfg.relaunch.cmd, [], { env, detached: true,
   stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] }); k.unref(); fs.writeSync(1, "KPID:" + k.pid + "\n"); return k; };
 
 // ---- load, scroll to mid-history ----
@@ -169,7 +177,7 @@ out.bannerAfterReload = await banner();
 const beforeRestart = await info(fr);
 process.kill(cfg.kernelPid, "SIGKILL");
 await page.waitForTimeout(500);
-const k2 = relaunch(cfg.relaunch.env);
+const k2 = await relaunch(cfg.relaunch.env);
 out.restartSeen = await page.waitForFunction(() => window.__rompReload && window.__rompReload.restarted() >= 1, null, { timeout: 60000 }).then(() => true).catch(() => false);
 out.freshAfterRestart = await fr.waitForFunction(() => window.__rompFreshPending === false, null, { timeout: 60000 }).then(() => true).catch(() => false);
 await page.waitForTimeout(7000);                           // three keepalives on the new kernel
@@ -183,7 +191,7 @@ out.noticesAfterRestart = await notices();
 // ---- 5. a restart onto a CHANGED build: the offer, no reload; an unknown op sharpens its wording; the accept reloads ----
 process.kill(k2.pid, "SIGKILL");
 await page.waitForTimeout(500);
-relaunch({ ...cfg.relaunch.env, ROMP_CODE_IDENT: "changed-build" });
+await relaunch({ ...cfg.relaunch.env, ROMP_CODE_IDENT: "changed-build" });
 out.offerOnChangedBuild = await waitOffer(60000);
 out.bannerChangedBuild = await banner();
 await page.waitForTimeout(7000);

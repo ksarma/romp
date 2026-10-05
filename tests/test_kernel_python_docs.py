@@ -159,7 +159,11 @@ def _steps_text(block):
 
 
 PICK_PYTHON = _function(_read("bin", "romp-serve"), "pick_python")
-INSTALL = _section(_read("docs", "install.md"), "Which Python runs the kernel")
+# install.md's section "Which Python runs the kernel" moved whole into docs/reference.md, as a subsection at the end of "The
+# kernel's Python" (fold 4: the front pages are the project's, CLAUDE.md "The documentation front pages"), so INSTALL reads it
+# there; _section stops at the next heading of any level, so REFERENCE is still the section's own body and the two texts stay
+# two sources held to the one script.
+INSTALL = _section(_read("docs", "reference.md"), "Which Python runs the kernel")
 REFERENCE_HEADING = "The kernel's Python"
 REFERENCE = _section(_read("docs", "reference.md"), REFERENCE_HEADING)
 ARCHITECTURE = _section(_read("docs", "architecture.md"), "What the installer sets up")
@@ -222,9 +226,11 @@ class TheDocsFollowTheScript(unittest.TestCase):
             self.assertIn("`python%s`" % end, INSTALL, "install.md names the walk's " + end)
 
     def test_install_md_points_at_the_references_section(self):
-        # GitHub's anchor for a heading: lowercased, punctuation other than hyphens dropped, spaces to hyphens.
+        # GitHub's anchor for a heading: lowercased, punctuation other than hyphens dropped, spaces to hyphens. The moved
+        # section sits in the same page as the heading it names, so the link is the bare anchor.
         slug = re.sub(r"[^a-z0-9 -]", "", REFERENCE_HEADING.lower()).replace(" ", "-")
-        self.assertIn("](reference.md#%s)" % slug, INSTALL, "install.md links the reference's section")
+        self.assertIn("](#%s)" % slug, INSTALL, "install.md's moved section links the reference's section")
+        self.assertIn("\n### %s\n" % REFERENCE_HEADING, _read("docs", "reference.md"), "the anchor's heading is in the same page")
 
 
 class TheMoveProcedure(unittest.TestCase):

@@ -55,7 +55,7 @@
 //  7. A decision focuses the editor (romp's). Both mousedown paths preventDefault and stop CodeMirror's own
 //     handler — the one that would have focused — and a prevented mousedown moves no focus natively, so an
 //     editor that had lost focus to the toolbar or the panel stayed unfocused after an accept, and the undo the
-//     guide promises went nowhere until the person clicked plain text.
+//     reference promises went nowhere until the person clicked plain text.
 //  8. FIX: the hover cue survives the editor's own DOM work (PointerTracker). Upstream's module-level lastHoverKey
 //     is cleared only by mouseout, which cannot fire once the view's DOM is gone, so an editor destroyed under the
 //     pointer (a save, a cancel) left the cache naming a change of a document that no longer showed one;

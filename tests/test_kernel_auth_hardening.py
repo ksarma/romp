@@ -367,7 +367,7 @@ class CookieDoesNotBypassOrigin(unittest.TestCase):
         # the cookie, but its Origin is not ours → the cookie must not authorize
         for what, cookie in _cookies():
             with self.subTest(cookie=what):
-                ok, _, why = _auth(headers={"Cookie": cookie, "Origin": "http://127.0.0.1:59999",
+                ok, _, why = _auth(headers={"Cookie": cookie, "Origin": "http://127.0.0.1:%d" % (km.PORT + 1),   # a port not ours
                                             "Host": "127.0.0.1:%d" % km.PORT}, path="/")
                 self.assertFalse(ok, "a cookie sent with another origin on this host must not authorize")
                 self.assertEqual(why, "cross-site origin")

@@ -304,6 +304,7 @@ class Mirror(unittest.TestCase):
         saved = (dict(pm.HEARTBEATS), dict(pm.PEER_STATE), dict(pm.PEERS), _listing_record(), pm._PEERS_SEEDED[0],
                  set(answered))                       # round-5 ruling B): one test's far buses are not another's
         pm.HEARTBEATS.clear(); pm.PEER_STATE.clear(); pm.PEERS.clear(); answered.clear()
+        pm._inbound_links.clear()
         _forget_listing()                             # no listing read yet in this "process": the writer releases nothing
         pm._PEERS_SEEDED[0] = False                   # ...and no seed from the kernel's list of links
 
@@ -364,7 +365,7 @@ class Mirror(unittest.TestCase):
             jd.discover = found
         return (v.closed, v.rule, v.why)
 
-    def _notify(self, host, up, port=50002):
+    def _notify(self, host, up, port=1):
         """The kernel's /peer notify for a tunnel transition, through the real handler (peer_update), which writes
         the mirror itself; nothing else writes between the notify and the read that follows it."""
         payload, status = pm.peer_update({"host": host, "port": port, "up": up})
@@ -1686,7 +1687,7 @@ class Mirror(unittest.TestCase):
         this then writes the mirror once when the seed applied a link, as serve() does after its bind (round 7 of fork PR
         #897, the reviewer's round-6 ruling R4 on kernel-1: until then the seed's peer_update wrote the mirror for each
         link, before serve()'s bind). The transport is put back as found."""
-        body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": st} for h, st in links],
+        body = json.dumps({"tunnels": [{"host": h, "busPort": 1, "status": st} for h, st in links],
                            "known": [{"host": h, "trust": "trusted"} for h in known]}).encode()
 
         class Answer:
@@ -2165,7 +2166,7 @@ class Mirror(unittest.TestCase):
         _LoopbackServer subclass that records its bind and returns from serve_forever at once, or None for the real class).
         Returns (serve()'s return, the events). The dialer, the monitor and the retry loop are not under test."""
         events = []
-        body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": "up"} for h in links], "known": []}).encode()
+        body = json.dumps({"tunnels": [{"host": h, "busPort": 1, "status": "up"} for h in links], "known": []}).encode()
 
         class Answer:
             def read(self):
@@ -2244,7 +2245,7 @@ class Mirror(unittest.TestCase):
         self.assertEqual((rc, events), (0, ["bind", "write", "serve_forever"]),
                          "the control: the bound serve() writes the mirror once, after its bind and before it serves")
         self.assertEqual(({h: [r.get("port"), r.get("up")] for h, r in pm.PEERS.items()}, pm._PEERS_SEEDED[0],
-                          self.path.exists()), ({HOST: [50002, True]}, True, True),
+                          self.path.exists()), ({HOST: [1, True]}, True, True),
                          "the one write follows the seed: HOST linked, the seed flag set, the mirror written")
 
     def test_a_standing_mark_survives_a_mark_of_another_shape_and_a_stray_byte_inside_a_top_level_key(self):
@@ -4249,8 +4250,8 @@ class PeerStateLock(unittest.TestCase):
     store lost a far host's unanswered word, and a session whose mail rode it answered rule 5 while another row vouched
     (every vote of the round reproduced it through the real recorders). _PEER_STATE_LOCK is held by every read-modify-write
     of the table and every iteration runs under it: the two that read every row in place (_canon_peer_name and
-    _peer_name_dupes) inside the recorders' holds or the /peer-exchange route's canonicalization hold, and every other
-    iteration on its copy taken under it. The census (_peer_state_lock_census) derives both populations
+    _peer_name_dupes) inside the recorders' holds or the /peer-exchange route's canonicalization holds (before and after
+    the handler), and every other iteration on its copy taken under it. The census (_peer_state_lock_census) derives both populations
     from the bus's source by AST and refuses a node outside the lock, a re-entry and a lock-order inversion; the
     interleavings through the real recorders are tests/test_dead_session_staleness.py ReaderFollowsTheWriter's
     test_the_recorders_race_* witnesses (executed, the reader's answer). Each census rule has a plant here that it refuses by
@@ -4316,9 +4317,13 @@ class PeerStateLock(unittest.TestCase):
                         "the census derived its populations from the source: an empty one proves nothing (%r)" % got)
         self.assertTrue(any(fn != "<module>" for fn, _, _ in got["writers"]), "writers beyond the module's declaration")
         self.assertIn("_exchange_peer_name", got["protected"],
-                      "the ruled reader: the canonicalization reads every row, and both of _exchange_peer_name's call sites "
-                      "(the handler and the /peer-exchange route) hold the lock")
-        self.assertGreaterEqual(got["callSites"].get("_exchange_peer_name", 0), 2, "both call sites were derived: %r" % got)
+                      "the ruled reader: the canonicalization reads every row, and every call site of _exchange_peer_name "
+                      "(the handler, and the /peer-exchange route before and after the handler) holds the lock")
+        # by equality, against the count derived at 29cde65ae (fork PR 958): a change that adds or drops a call site
+        # re-derives it here
+        self.assertEqual(got["callSites"].get("_exchange_peer_name", 0), 3,
+                         "the census derived the call sites of _exchange_peer_name, exactly three (the handler, and the "
+                         "/peer-exchange route before and after the handler), the count derived at 29cde65ae: %r" % got)
         self.assertIn("_canon_peer_name", got["protected"], "reached only through _exchange_peer_name")
         self.assertEqual(sorted({fn for fn, _, _ in got["answered"]}), ["_heard_answering", "_via_held"],
                          "THE ANSWERED SET's population, derived from the source: the recorders' note and the release's "

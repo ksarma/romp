@@ -220,7 +220,7 @@ class PaneGutterDragExecutes(unittest.TestCase):
 
     def test_boot_writes_the_five_default_grows_and_shows_no_ghost(self):
         b = self.out["boot"]
-        self.assertEqual(b["writes"], 5)
+        self.assertEqual(b["writes"], 5)   # the five default grows of the hand-written columns, this fork's Waiting pane among them (the Artifacts pane is a generic pane since phase three, rendered from its record)
         self.assertEqual(b["grows"], {"--g-chat": 60, "--g-fleet": 34, "--g-feed": 40, "--g-waiting": 34, "--g-files": 40})
         self.assertEqual(b["ghost"]["display"], "none")
         self.assertFalse(b["drag"] or b["dragv"])
