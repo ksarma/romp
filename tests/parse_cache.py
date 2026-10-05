@@ -108,7 +108,9 @@ from run to run (0.40 to 1.14 GiB under the cap), and the peak anonymous memory,
 to 15.66 GiB, against 15.81 to 16.08 GiB in the capped runs without this collection. A run in which xdist split the
 thread-stop census's class across the two workers had both build that census's derivation at once, and the cap killed it
 (2026-10-04, reproduced with the split forced on 2026-10-05); the census's cut and one item address that
-(tests/test_thread_stop_census.py's _Tree and _TreeChecks, 2026-10-05). An interpreter without that function (3.10
+(tests/test_thread_stop_census.py's _Tree and _TreeChecks, 2026-10-05). With both, six capped runs at this pull request's
+head of 2026-10-05, three of them with that census's module forced to split across the two workers, reached memory.peak
+14.89 to 15.29 GiB (1.21 to 1.61 GiB under the cap) and peak anonymous memory 14.55 to 14.93 GiB. An interpreter without that function (3.10
 to 3.12) is read as having its GIL, so nothing changes on 3.10 or 3.12, nor on a GIL build of 3.13 or later (it reports
 true); a free-threaded build run with its GIL on keeps that collector and is not collected here, since the test is the
 GIL. The count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen object dies
