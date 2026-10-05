@@ -4,15 +4,18 @@
 // Two contexts, one page each. The phone: playwright's iPhone 14 descriptor (isMobile dropped in Firefox, which does not
 // support it), so the shell is in its phone layout, and the Log opened by a click on the phone bar's triangle (#merr) at
 // cfg.openWidth (390 px: the bar itself is wider than the narrowest phones, so the triangle is off the screen at 320 px, a
-// separate defect this test does not cover). The page is then resized through cfg.phoneWidths (the panel is pure CSS, so a
-// resize re-lays it out in place), and the geometry is read at each width after two animation frames. Each context waits for
-// the shell to finish booting first (bootDone below). The desktop: a plain context (a fine pointer) at each of
+// separate defect this test does not cover). The page is then resized through cfg.phoneWidths at each of cfg.phoneHeights
+// in turn (the panel is pure CSS, so a resize re-lays it out in place), and the geometry is read at each size after two
+// animation frames. Each context waits for the shell to finish booting first (bootDone below). The desktop: a plain
+// context (a fine pointer) at each of
 // cfg.desktopWidths, the Log opened by the shell's opener (window.__rompOpenErrs, the function the gear's Open log button and
 // the command palette call; tests/test_log_opener_moved_served.py drives the gear itself). Before opening, the page logs one
 // synthetic entry of every kind the filter grid shows (the kinds are read from the grid's own buttons), so the list under
 // the grid is populated the way a busy Log is.
 //
-// At each width it reads: the viewport and the document's scroll width (a page that scrolls sideways), the panel's and the
+// At each size it reads: the viewport's width and height and the document's scroll width (a page that scrolls sideways),
+// the panel's box and its inner top and bottom (its border stripped: the toggles must end above that bottom, since the
+// filter bar grows with the grid and so bounds nothing vertically), the list's box (the entries left under the grid), the
 // filter bar's boxes (the bar's content box: its padding stripped), the grid's box and its computed column tracks, and for
 // every toggle its box, the width its label needs (the text's own width plus the chip's padding and border), its font size,
 // its display and visibility, and whether a point at its centre hits it (reachable by a tap).
@@ -64,7 +67,7 @@ const measure = (page) => page.evaluate(() => {
   const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, h: r.height }; };
   const de = document.documentElement;
   const panel = document.getElementById("rerr-panel"), bar = document.getElementById("rerr-filters"), grid = document.getElementById("rerr-fgrid");
-  const bcs = getComputedStyle(bar), br = bar.getBoundingClientRect();
+  const bcs = getComputedStyle(bar), br = bar.getBoundingClientRect(), pcs = getComputedStyle(panel), pr = panel.getBoundingClientRect();
   const btns = Array.from(grid.children).map((b) => {
     const r = b.getBoundingClientRect(), cs = getComputedStyle(b);
     const rg = document.createRange(); rg.selectNodeContents(b);
@@ -75,9 +78,10 @@ const measure = (page) => page.evaluate(() => {
       w: r.width, h: r.height, need, fontSize: cs.fontSize, display: cs.display, visibility: cs.visibility, hit: hit === b };
   });
   const x0 = window.scrollX; window.scrollTo(100000, window.scrollY); const scrollX = window.scrollX; window.scrollTo(x0, window.scrollY);
-  return { vw: window.innerWidth, docSW: de.scrollWidth, docCW: de.clientWidth, scrollX,
+  return { vw: window.innerWidth, vh: window.innerHeight, docSW: de.scrollWidth, docCW: de.clientWidth, scrollX,
     mobile: !!(window.__rompMobileOn && window.__rompMobileOn()), logOpen: !document.getElementById("rerr-back").hidden,
-    panel: box(panel), bar: box(bar),
+    panel: box(panel), bar: box(bar), list: box(document.getElementById("rerr-list")),
+    panelInner: { t: pr.top + parseFloat(pcs.borderTopWidth), b: pr.bottom - parseFloat(pcs.borderBottomWidth) },
     barContent: { l: br.left + parseFloat(bcs.borderLeftWidth) + parseFloat(bcs.paddingLeft), r: br.right - parseFloat(bcs.borderRightWidth) - parseFloat(bcs.paddingRight) },
     grid: box(grid), cols: getComputedStyle(grid).gridTemplateColumns, btns };
 });
@@ -97,7 +101,7 @@ const seed = (page) => page.evaluate(() => {
 {
   const dev = { ...(playwright.devices["iPhone 14"] || {}) };
   delete dev.defaultBrowserType;
-  const opts = { ...dev, viewport: { width: cfg.openWidth, height: cfg.phoneHeight } };
+  const opts = { ...dev, viewport: { width: cfg.openWidth, height: cfg.phoneHeights[0] } };
   if (engine === "firefox") delete opts.isMobile;   // playwright: isMobile is not supported in Firefox
   const ctx = await browser.newContext(opts);
   const page = await ctx.newPage();
@@ -109,10 +113,12 @@ const seed = (page) => page.evaluate(() => {
   await page.click("#merr");
   try { await page.waitForFunction(() => !document.getElementById("rerr-back").hidden, null, { timeout: 8000 }); }
   catch (e) { await result({ died: "the Log never opened on the triangle's click: " + String(e).slice(0, 200) }); }
-  for (const w of cfg.phoneWidths) {
-    await page.setViewportSize({ width: w, height: cfg.phoneHeight });
-    await frames(page);
-    out.phone.push({ w, m: await measure(page) });
+  for (const h of cfg.phoneHeights) {
+    for (const w of cfg.phoneWidths) {
+      await page.setViewportSize({ width: w, height: h });
+      await frames(page);
+      out.phone.push({ w, h, m: await measure(page) });
+    }
   }
   await ctx.close();
 }
