@@ -46,16 +46,32 @@ equal their literals. The checks here:
    such a key whose name is whole on one line, but a twin whose name is split over lines or spelled through an escape is
    read by neither check. tests/test_ci_sdk_pin.py refuses those
    five forms in ci.yml, and in the other workflow files no tests/test_ci_*.py module refuses them.
+4. The served-pages job's cap meets the rule that sized it, so a cap lowered in ci.yml and in EXPECTED_SERVED_JOB together,
+   which check 1 cannot see, is red. The cap is the block's one line at four spaces that holds `timeout`, with its
+   comment-only lines removed (the read the other module's check_shell_cap makes of the Shell job's cap), and it must be
+   `    timeout-minutes: ` and digits alone: no such line, two of them, or any other value is red, not skipped. Its minutes
+   must be at least SERVED_CAP_FLOOR, SLOWEST_SERVED_JOB_S plus 600 s rounded up to a multiple of 5 minutes. The job's
+   comment-only lines before the cap line, each with its `#` marker and the blanks around it dropped and joined with one
+   space, hold exactly one sentence `<m> min <s> s plus 10 minutes is <m> min <s> s, so <N>.`, whose first time is
+   SLOWEST_SERVED_JOB_S, whose second is that time plus 600 s, and whose N is the cap: a cap changed without its sentence is
+   red, and so is a newly measured slowest job written into the comment but not into the constant. The floor is a lower
+   bound, as the extension job's is (tests/test_ci_bats_bound.py::ExtensionJobCeiling): a cap above the rule's figure,
+   with its sentence saying so, is green.
 A job's key written twice is refused by job_block with the reason (the other module's check 2 states which spellings it
 reads).
 
 The caps in the literals. The served job, 60 minutes since 2026-10-05: the slowest measured job plus 10 minutes, rounded up
-to a multiple of 5, the rule ci.yml's Shell job states for its cap. Of the 255 completed jobs of this name in ci.yml's runs
-from the job's first, on 2026-09-28, to 11:47 UTC on 2026-10-05, the slowest with a measured length (a job cancelled at a
-cap has none) took 49 min 11 s, in run 37212676524 (batch PR 970's checks; it concluded failure, which still gives a
-measured length); the same PR's checks at two later heads took 47 min 35 s (run 37252801761) and 48 min 8 s (run
-37265609611), all on the public runner, each job's time the jobs API's. 49 min 11 s plus 10 minutes is 59 min 11 s, so 60.
-Two of the 255 were cancelled at the 50-minute cap, longer by an amount not measured: runs 36898691471 and 37293073638.
+to a multiple of 5, the rule ci.yml's Shell job states for its cap; SERVED_CAP_FLOOR is that rule's figure for
+SLOWEST_SERVED_JOB_S, and check 4 holds the cap at or above it. Of the 246 completed jobs of this name in ci.yml's runs from
+the job's first, on 2026-09-28, to 11:47 UTC on 2026-10-05 (the jobs API lists 255 records across every run attempt,
+filter=all, nine of them copies of a finished job that a re-run of the run's failed jobs lists again in the later attempt
+with the same times and runner; each run's latest attempt alone, the API's default, gives 242), the slowest with a
+measured length (a job cancelled at a cap has none) took 49 min 11 s, in run 37212676524 (batch PR 970's checks; it
+concluded failure, which still gives a measured length); the same PR's checks at two later heads took 47 min 35 s (run
+37252801761) and 48 min 8 s (run 37265609611), all on the public runner, each job's time the jobs API's. 49 min 11 s plus
+10 minutes is 59 min 11 s, so 60. Two of the 246 were cancelled at the 50-minute cap, longer by an amount not measured: job
+110492093901 of run 36898691471, and job 111708325878, the first attempt of run 37293073638 (its re-run succeeded in
+40 min 12 s).
 The 10 minutes are the step's own 600 s per-test timeout, so the margin past it is the rounding alone: the python job's
 rule for run 37212676524, its step's 2926 s plus the 600 s plus the 22 s before the step, is 3548 s, about 59 min 8 s,
 52 s under 60. Until 2026-10-05 the cap was 50, the expected time and half again (the vendored tooling job's rule): the
@@ -76,6 +92,7 @@ tools/ci-browser-legs.test.mjs; the extension job's cap floor by tests/test_ci_b
 EachCheckRedsOnItsDefect runs every check against a synthetic workflow built from the same constants: green as built, and red
 on each change it plants, so a check that stopped reading would be red there."""
 import os
+import re
 import sys
 import unittest
 
@@ -93,6 +110,17 @@ SERVED_STEP = "Browser-backed served-page tests (pytest)"
 # runner slot as an expression (`Served pages (pytest, ${{ matrix.os }})`, the vendored-tooling job's style), which GitHub
 # shows under the same check name, is read too.
 SERVED_NAME_TEXT = "Served pages (pytest, "
+# The slowest served-pages job with a measured length, in seconds: run 37212676524's, 49 min 11 s (batch PR 970's checks; it
+# concluded failure, which still gives a measured length), the slowest of the 246 completed jobs of this name from the job's
+# first, on 2026-09-28, to 11:47 UTC on 2026-10-05, each job's time the jobs API's. It is a measurement, not a cap: when a
+# slower job is measured, this constant, the sentence in the job's comment that check 4 reads and the cap change together.
+SLOWEST_SERVED_JOB_S = 2951
+# The rule's figure for it in minutes, the floor check 4 holds the cap to: the slowest job plus 600 s, rounded up to a
+# multiple of 5 minutes (300 s), the rule ci.yml's Shell job states for its cap.
+SERVED_CAP_FLOOR = 5 * -(-(SLOWEST_SERVED_JOB_S + 600) // 300)
+# The sentence of the job's comment that works the rule's arithmetic: the slowest job's time, plus 10 minutes, the sum, and
+# the cap after "so".
+RULE_SENTENCE = re.compile(r"(\d+) min (\d+) s plus 10 minutes is (\d+) min (\d+) s, so (\d+)\.")
 # The setup both jobs run before their own steps: the checkout and node with its npm cache, then npm ci.
 _SETUP = (
     "    defaults:",
@@ -197,6 +225,40 @@ def check_served_name_once_in(src):
     return check_name_once(SERVED_NAME_TEXT, [("ci.yml", src)])
 
 
+def check_served_cap_floor(src):
+    """Check 4: the served-pages job's one plain cap line at or above SERVED_CAP_FLOOR, and the one RULE_SENTENCE in the
+    job's comment before that line naming SLOWEST_SERVED_JOB_S, that time plus 600 s, and the cap."""
+    try:
+        block = job_block(SERVED_JOB, lines(src))
+    except WorkflowShape as e:
+        return [str(e)]
+    caps = [l for l in content(block) if re.match(r"    [^ \t]", l) and "timeout" in l.lower()]
+    m = re.fullmatch(r"    timeout-minutes: (\d+)", caps[0]) if len(caps) == 1 else None
+    if not m:
+        return ["the served-pages job's cap lines are %r, where check 4 reads one line, `    timeout-minutes: ` and digits "
+                "alone" % (caps,)]
+    cap, faults = int(m.group(1)), []
+    if cap < SERVED_CAP_FLOOR:
+        faults.append("the served-pages job's cap is %d minutes, under the rule's %d for the slowest measured job (%d s plus "
+                      "600 s, rounded up to a multiple of 5 minutes)" % (cap, SERVED_CAP_FLOOR, SLOWEST_SERVED_JOB_S))
+    comment = " ".join(l.strip(" \t")[1:].strip(" \t") for l in block[:block.index(caps[0])]
+                       if l.lstrip(" \t").startswith("#"))
+    said = RULE_SENTENCE.findall(comment)
+    if len(said) != 1:
+        faults.append("the served-pages job's comment before its cap line holds %d sentences `<m> min <s> s plus 10 minutes "
+                      "is <m> min <s> s, so <N>.`, where check 4 reads one" % len(said))
+        return faults
+    m1, s1, m2, s2, n = (int(x) for x in said[0])
+    if m1 * 60 + s1 != SLOWEST_SERVED_JOB_S:
+        faults.append("the comment's slowest job is %d min %d s, not SLOWEST_SERVED_JOB_S (%d s): a newly measured job "
+                      "changes the constant too" % (m1, s1, SLOWEST_SERVED_JOB_S))
+    if m2 * 60 + s2 != m1 * 60 + s1 + 600:
+        faults.append("the comment's sum is %d min %d s, not %d min %d s plus 10 minutes" % (m2, s2, m1, s1))
+    if n != cap:
+        faults.append("the comment's sentence ends `so %d.`, and the cap line says %d" % (n, cap))
+    return faults
+
+
 class ServedPagesJob(unittest.TestCase):
     def assertNoFaults(self, faults, why):
         if faults:
@@ -226,20 +288,39 @@ class ServedPagesJob(unittest.TestCase):
             "one that runs true under it reads green. Rename the other job; if the name itself changed on purpose, update "
             "SERVED_NAME_TEXT, which EXPECTED_SERVED_JOB reads."))
 
+    def test_4_the_served_cap_meets_the_rule_for_the_slowest_measured_job(self):
+        self.assertNoFaults(check_served_cap_floor(raw()), (
+            "The served-pages job's cap in ci.yml does not meet the rule that sized it, or its comment's arithmetic does not "
+            "match the cap and SLOWEST_SERVED_JOB_S (above). The cap is the slowest measured job plus 10 minutes, rounded up "
+            "to a multiple of 5 (the Shell job's rule): a cap under it cancels a job that runs as long as one already did. "
+            "A cap lowered on purpose (the step made faster, say) measures the slowest job again from runs at the faster "
+            "head and changes SLOWEST_SERVED_JOB_S with it, said in the commit; a slower job measured since changes "
+            "SLOWEST_SERVED_JOB_S, the comment's sentence and the cap together."))
+
 
 class EachCheckRedsOnItsDefect(unittest.TestCase):
     """Every check against a synthetic workflow built from the module's constants: green as built, red on each change planted
     into it: a one-field edit in each job, the served step put back in the extension job, a second setup-node in the served
-    job, an env on the served step, a step writing GITHUB_ENV before it, a working-directory change, and the rest below."""
-    CHECKS = (check_served_job, check_extension_job, check_served_name_once_in)
+    job, an env on the served step, a step writing GITHUB_ENV before it, a working-directory change, a cap and its comment's
+    sentence lowered together under the rule, and the rest below."""
+    CHECKS = (check_served_job, check_extension_job, check_served_name_once_in, check_served_cap_floor)
+    # The served job's cap line as the literal writes it, and its minutes.
+    CAP_LINE = [l for l in EXPECTED_SERVED_JOB if l.startswith("    timeout-minutes: ")][0]
+    CAP = int(CAP_LINE.rsplit(" ", 1)[1])
+    # The rule's sentence in the synthetic job's comment, folded over two lines as ci.yml's comment may fold it: the
+    # slowest job's time, its sum with 10 minutes, and the cap.
+    RULE_LINES = ("    # the rule's arithmetic: %d min %d s plus 10 minutes is" % divmod(SLOWEST_SERVED_JOB_S, 60),
+                  "    #   %d min %d s, so %d." % (divmod(SLOWEST_SERVED_JOB_S + 600, 60) + (CAP,)))
 
-    @staticmethod
-    def synthetic():
+    @classmethod
+    def synthetic(cls):
         ext = list(EXPECTED_EXTENSION_JOB)
         ext[1:1] = ["# a comment at the top level's column", "  # a comment at a job key's column", "    # a comment"]
         ext[-1:-1] = ["        # a comment deeper than the step"]
         served = list(EXPECTED_SERVED_JOB)
         served[4:4] = ["    # a comment before the cap's neighbours"]
+        at = served.index(cls.CAP_LINE)
+        served[at:at] = list(cls.RULE_LINES)
         at = served.index("      - name: " + SERVED_STEP)
         served[at + 1:at + 1] = ["        # the step's own comment"]
         return "\n".join(["name: CI", "on: [push]", "jobs:", "  python:", "    runs-on: ubuntu-latest", ""] + ext + served)
@@ -270,7 +351,29 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
         served_wd = "        working-directory: ${{ github.workspace }}"
         moved = list(EXPECTED_SERVED_JOB[EXPECTED_SERVED_JOB.index("      - uses: actions/setup-python@v5"):-1])
         bench = "        run: node --test tests/ui-bench.test.mjs"
+        cap, cap_line = self.CAP, self.CAP_LINE
+        rule_1, rule_2 = self.RULE_LINES
         plants = (
+            (check_served_cap_floor, "the cap line dropped", "served", cap_line, []),
+            (check_served_cap_floor, "the cap quoted, not a plain integer", "served", cap_line,
+             ["    timeout-minutes: '%d'" % cap]),
+            (check_served_cap_floor, "the cap as an expression", "served", cap_line, ["    timeout-minutes: ${{ %d }}" % cap]),
+            (check_served_cap_floor, "the cap with a comment on its line", "served", cap_line, [cap_line + "  # minutes"]),
+            (check_served_cap_floor, "a second cap line", "served", "    runs-on: ubuntu-latest",
+             ["    runs-on: ubuntu-latest", "    timeout-minutes: %d" % (cap + 30)]),
+            (check_served_cap_floor, "the cap lowered alone, under the rule", "served", cap_line,
+             ["    timeout-minutes: %d" % (SERVED_CAP_FLOOR - 5)]),
+            (check_served_cap_floor, "the cap raised alone, its sentence left behind", "served", cap_line,
+             ["    timeout-minutes: %d" % (cap + 5)]),
+            (check_served_cap_floor, "the sentence's cap changed alone", "served", rule_2,
+             [rule_2.replace("so %d." % cap, "so %d." % (cap + 5))]),
+            (check_served_cap_floor, "the sentence's sum changed alone", "served", rule_2,
+             [rule_2.replace(" s, so ", "0 s, so ")]),
+            (check_served_cap_floor, "the sentence's slowest job changed alone", "served", rule_1,
+             [rule_1.replace(" min ", "0 min ", 1)]),
+            (check_served_cap_floor, "the sentence's first half dropped", "served", rule_1, []),
+            (check_served_cap_floor, "the sentence written twice", "served", rule_2, [rule_2, rule_1, rule_2]),
+            (check_served_cap_floor, "the job's key renamed", "served", "  served-pages:", ["  served-page:"]),
             (check_served_job, "the served cap 60 to 61, a one-field edit", "served", "    timeout-minutes: 60",
              ["    timeout-minutes: 61"]),
             (check_extension_job, "the extension cap 17 to 18, a one-field edit", "ext", "    timeout-minutes: 17",
@@ -331,6 +434,30 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
                 out = self.plant(src, where, anchor, new)
                 self.assertNotEqual(out, src, "the plant landed")
                 self.assertNotEqual(check(out), [], "%s: %s is red" % (label, check.__name__))
+
+    def test_check_4_reds_a_cap_lowered_with_its_sentence_on_the_floor_alone(self):
+        """The defect check 4 exists for: the cap line and the comment's sentence lowered together, the synthetic form of
+        ci.yml and EXPECTED_SERVED_JOB edited together, which check 1 reads as green. The one fault is the floor's, so the
+        floor is what reds it: a minute under the floor is red, the floor and a cap above it, each with its sentence, are
+        green."""
+        rule_2 = self.RULE_LINES[1]
+        for minutes, faults in ((SERVED_CAP_FLOOR - 1, 1), (SERVED_CAP_FLOOR - 5, 1), (SERVED_CAP_FLOOR - 15, 1),
+                                (SERVED_CAP_FLOOR, 0), (SERVED_CAP_FLOOR + 5, 0)):
+            with self.subTest(minutes=minutes):
+                out = self.plant(self.synthetic(), "served", self.CAP_LINE, ["    timeout-minutes: %d" % minutes])
+                out = self.plant(out, "served", rule_2, [rule_2.replace("so %d." % self.CAP, "so %d." % minutes)])
+                got = check_served_cap_floor(out)
+                self.assertEqual(len(got), faults, got)
+                if faults:
+                    self.assertIn("under the rule's %d" % SERVED_CAP_FLOOR, got[0])
+
+    def test_check_4_reads_the_sentence_before_the_cap_line_only(self):
+        rule_1, rule_2 = self.RULE_LINES
+        out = self.plant(self.synthetic(), "served", rule_1, [])
+        out = self.plant(out, "served", rule_2, [])
+        self.assertNotEqual(check_served_cap_floor(out), [], "no sentence is red")
+        moved = self.plant(out, "served", self.CAP_LINE, [self.CAP_LINE, rule_1, rule_2])
+        self.assertIn("holds 0 sentences", " ".join(check_served_cap_floor(moved)), "a sentence after the cap line is not read")
 
     def test_a_twin_in_another_workflow_file_reds_check_3(self):
         src = self.synthetic()

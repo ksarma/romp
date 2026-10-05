@@ -1065,15 +1065,21 @@ jobs:
     # 3 s, the cache 3 s, Chromium 1 s, and the job's own set-up and post steps.
     # The cap is the slowest measured job plus 10 minutes, rounded up to a multiple of 5, the rule
     # the Shell job's cap comment states. Read at 11:47 UTC on 2026-10-05, this workflow's runs
-    # since this job's first, on 2026-09-28, hold 255 completed jobs of this name, cancelled ones
-    # among them, and the slowest with a measured length (a job cancelled at a cap has none) took
-    # 49 min 11 s, in run 37212676524 (batch PR 970's checks, batch/2026-10-04b; it concluded
-    # failure, which still gives a measured length). The same PR's checks at two later heads took
-    # 47 min 35 s (run 37252801761) and 48 min 8 s (run 37265609611). All three ran on the public
-    # runner; each job's time is the jobs API's. 49 min 11 s plus 10 minutes is 59 min 11 s, so 60.
-    # Two of the 255 were cancelled at the 50-minute cap, so they ran longer by an amount not
-    # measured (neither has a log): run 36898691471 (2026-10-01) and run 37293073638 (fork PR 978's
-    # checks, 2026-10-05).
+    # since this job's first, on 2026-09-28, hold 246 completed jobs of this name, cancelled ones
+    # among them. The jobs API lists 255 records of this name when every run attempt is listed
+    # (filter=all): re-running a run's failed jobs lists the run's already-finished job of this
+    # name again in the later attempt, with the same times and runner, and nine of the 255 are
+    # such copies. Listing only each run's latest attempt, the API's default, gives 242. The slowest
+    # with a measured length (a job cancelled at a cap has none) took 49 min 11 s, in run
+    # 37212676524 (batch PR 970's checks, batch/2026-10-04b; it concluded failure, which still
+    # gives a measured length). The same PR's checks at two later heads took 47 min 35 s (run
+    # 37252801761) and 48 min 8 s (run 37265609611). All three ran on the public runner; each
+    # job's time is the jobs API's. 49 min 11 s plus 10 minutes is 59 min 11 s, so 60.
+    # Two of the 246 were cancelled at the 50-minute cap, so they ran longer by an amount not
+    # measured (neither cancelled job has a log): job 110492093901 of run 36898691471
+    # (2026-10-01), and job 111708325878, the first attempt of run 37293073638 (fork PR 978's
+    # checks, 2026-10-05). That run's second attempt re-ran the job, which succeeded in 40 min
+    # 12 s, so the run concluded success and its default job listing shows only that job.
     # Here the 10 minutes are the step's own 600 s per-test timeout, so the margin past it is the
     # rounding alone. The step's other rule (the python job's), the phase plus the 600 s per-test
     # timeout plus the time before the step, gives 3548 s for run 37212676524 (its step's 2926 s,
@@ -1094,6 +1100,10 @@ jobs:
     # batch as any other red does.
     # tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal (every key,
     # step and field, the cap included), so a change here changes that literal too, on purpose.
+    # It also holds the cap at or above the rule's figure for the slowest measured job it records
+    # (SLOWEST_SERVED_JOB_S), and holds the rule's sentence above (the job's time, plus 10 minutes,
+    # the sum, and the cap) to that job's time and to this line, so a lower cap, or a newly
+    # measured slowest job, changes that module too.
     timeout-minutes: 60
     defaults:
       run:
@@ -1143,7 +1153,8 @@ jobs:
         # as "optional", which the switch leaves alone (WebKit's system libraries would need apt, which
         # this step does not run; see the install step above). The matrix jobs are unchanged: still no
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
-        # the job's one long phase (1930 s at the fork's main 1d591384e, against the job's cap above),
+        # the job's one long phase (2926 s of the job's 49 min 11 s in run 37212676524, the run the cap above is
+        # sized from; it took 1930 s in run 36388144219, before it had a job of its own),
         # and every served lab added grows it, so the next growth should be visible by name. Two additions on 2026-09-20
         # (the maintainer's round 1 of the wsBytesByHost review), both pinned by tests/test_served_labs_under_ci.py: the pytest line
         # names tests/test_relay_dial_declares_held_pair.py by file, a raw-socket kernel leg that needs the dist
