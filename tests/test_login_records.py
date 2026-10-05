@@ -1075,7 +1075,7 @@ class StoredLoginPick(_Backend):
         logs = []
         self.be._log = lambda m, problem=False: logs.append(m)
         sid = self.be.spawn("n", "/tmp")
-        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "a dead explicit stored-login default seeds nothing")
+        self.assertFalse("auth" in sb.read_reg(self.be.state_dir, sid), "a dead explicit stored-login default seeds nothing")
         # the row's wording, pinned on the selected row (round 1 of the review of fork PR #819, tests-3 and kernel-5: the
         # stored-login branch of _note_seed_skipped was rewritten with no test that failed before it): it names the
         # machine's default billing and the Set default billing submenu, and no longer a remembered pick or a pick on a session

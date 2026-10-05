@@ -1005,8 +1005,11 @@ the patterns, the scrub's cost and the hook end to end.
 `tests/test_env_mapping_assert_census.py` holds the assertion rule over every
 test module by AST: it fails on an assertion, message or bare `assert` that
 renders an environment mapping of a shape it reads (`os.environ`, a captured
-child `env`, a `dict(os.environ, ...)` copy, a call that returns one), names
-the fix, and lists in its docstring the shapes it cannot see.
+child `env`, a `dict(os.environ, ...)` copy, a call that returns one), or a
+container that holds one under an `env` key (the SDK launch options, a launch
+shape, a spawn spec, a registry entry), or that checks a variable is absent
+with `assertIsNone(env.get(name))`, which prints the value when it is present.
+It names the fix, and lists in its docstring the shapes it cannot see.
 
 **A lab kernel's environment is built from a list of names, and the file a
 relaunch reads from carries a shorter list.** Every module that boots a hermetic

@@ -182,7 +182,7 @@ class SpawnSecrets(unittest.TestCase):
         self.assertEqual(sorted(secrets), ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"])
         self.assertTrue(secrets["CLAUDE_CODE_OAUTH_TOKEN"] == self.tok, "the returned value is the login's token")
         for name in sb.AUTH_ENV_NAMES:
-            self.assertNotIn(name, json.dumps(spec), "no credential name survives in the spec")
+            self.assertFalse(name in json.dumps(spec), "no credential name survives in the spec")
         self.assertEqual(sb.split_spawn_secrets({"sid": SID}), {}, "a spec with no env: nothing to move")
         plain = {"env": {"ROMP_SID": SID, "PATH": "/usr/bin"}}
         self.assertEqual(sb.split_spawn_secrets(plain), {})
@@ -282,7 +282,7 @@ class SpawnSecrets(unittest.TestCase):
                         "the returned values are the overlay's")
         text = json.dumps(spec)
         for v in (val, key, op):
-            self.assertNotIn(v, text, "no moved value survives in the spec")
+            self.assertFalse(v in text, "no moved value survives in the spec")
         self.assertEqual(sb.spawn_env_secret_names({"ROMP_SID": SID, "NOTES_ENDPOINT": "x"}), [], "nothing credential-shaped: nothing to move")
         self.assertEqual(sb.spawn_env_secret_names({"ANTHROPIC_API_KEY": ""}), ["ANTHROPIC_API_KEY"], "the three leave whatever their value")
         self.assertEqual(sb.spawn_env_secret_names(None), [], "no overlay: nothing to move")
@@ -395,7 +395,7 @@ class SpawnSecrets(unittest.TestCase):
         self.assertEqual(secrets, {"NOTES_API_TOKEN": str(num), "NOTES_API_KEY": str(["a", "b"])},
                          "a credential-shaped name moves whatever its value's type, as text for the host's environment")
         self.assertTrue(spec["env"] == {"ROMP_SID": SID, "X_FLAG": True}, "the plain values stay")
-        self.assertNotIn(str(num), json.dumps(spec), "the value is gone from the spec")
+        self.assertFalse(str(num) in json.dumps(spec), "the value is gone from the spec")
         self.assertEqual(sb.split_spawn_secrets({"env": {"CLAUDE_CODE_OAUTH_TOKEN": None}}), {"CLAUDE_CODE_OAUTH_TOKEN": ""},
                          "a login name moves whatever its value; None rides as the empty string, never the word None")
         spec = {"env": {"EMPTY_TOKEN": None}}
@@ -437,7 +437,8 @@ class SpawnSecrets(unittest.TestCase):
         secrets = sb.split_spawn_secrets(spec)
         self.assertEqual(secrets, {"notes_api_token": val, "Notes_Api_Key": key}, "moved under their own spelling, values byte for byte")
         self.assertTrue(spec["env"] == {"ROMP_SID": SID, "empty_token": "", "editor_tokenizer": "x"}, "the lowercase and the empty names stay in the spec")
-        self.assertNotIn(val, json.dumps(spec)); self.assertNotIn(key, json.dumps(spec))
+        self.assertFalse(val in json.dumps(spec), "the token's value is gone from the spec")
+        self.assertFalse(key in json.dumps(spec), "the key's value is gone from the spec")
         written, handed, _ = self._spawn_road({"ROMP_SID": SID, "notes_api_token": val})
         self.assertTrue(written["env"] == {"ROMP_SID": SID}, "the file omits the lowercase name")
         self.assertNotIn(val, (Path(self.state) / "hosts" / SID / "spawn.json").read_text())
@@ -4945,7 +4946,7 @@ class HostProcess(unittest.TestCase):
         probe, seen = self._env_probe_cli()
         tok = "synthetic-login-token-" + uuid.uuid4().hex
         host, sock, spec = self._start(host_env={"CLAUDE_CODE_OAUTH_TOKEN": tok}, cli_path=probe)
-        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", json.dumps(spec), "the spec the host read carries no token")
+        self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in json.dumps(spec), "the spec the host read carries no token")
         k = self._one_turn(sock)
         self.assertEqual(open(seen).read(), "present", "the CLI inherited the token from the host's environment")
         journal = list(orphan_journal(os.path.join(self.state, "hosts", SID)))
@@ -4973,7 +4974,7 @@ class HostProcess(unittest.TestCase):
         holder = {"sid": SID, "env": dict(self._overlay(), NOTES_ENDPOINT="http://notes.test", NOTES_API_TOKEN=val)}
         secrets = sb.split_spawn_secrets(holder)          # the kernel's split over the overlay, the spec's env its remainder
         host, sock, spec = self._start(host_env=secrets, cli_path=probe, env=holder["env"])
-        self.assertNotIn("NOTES_API_TOKEN", json.dumps(spec), "the spec the host read carries no such name: the split moved it")
+        self.assertFalse("NOTES_API_TOKEN" in json.dumps(spec), "the spec the host read carries no such name: the split moved it")
         self.assertEqual(spec["env"].get("NOTES_ENDPOINT"), "http://notes.test", "the plain name stays in the spec")
         blob = "".join(q.read_bytes().decode("utf-8", "replace") for q in (Path(self.state) / "hosts").rglob("*") if q.is_file())
         self.assertNotIn(val, blob, "the value is in no file under hosts/")

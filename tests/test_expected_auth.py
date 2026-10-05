@@ -359,7 +359,7 @@ class LoginPickNeedsALogin(_Declared):
         self.assertFalse(self.be.set_auth(sid, "login"),
                          "refuse loudly at pick time — the box demonstrably lacks the credential")
         reg = sb.read_reg(Path(self.d), sid)
-        self.assertNotIn("auth", reg or {}, "a refused pick flips nothing")
+        self.assertFalse("auth" in (reg or {}), "a refused pick flips nothing")
         self.assertFalse((reg or {}).get("authPending"), "…and opens no pending window")
         self.assertNotEqual(sb._declared_auth(Path(self.d))[1], "pick",
                             "…and leaves no remembered-default trace (the Q3 marker stays honest)")

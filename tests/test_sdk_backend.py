@@ -1444,7 +1444,7 @@ class SetModelModePure(unittest.TestCase):
         # the prior state may be ABSENT (a session on the account default, no remembered model):
         # the revert removes the keys it wrote rather than parking a null or the refused value
         sid = self.be.spawn("m", self.d)
-        self.assertNotIn("model", sb.read_reg(self.d, sid))
+        self.assertFalse("model" in sb.read_reg(self.d, sid), "no model pick before the refused one")
         self.assertNotIn("model", sb.read_sdk_defaults(self.d))
         sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
         self.be.sessions[sid] = sess
@@ -1460,7 +1460,7 @@ class SetModelModePure(unittest.TestCase):
         sess.set_model_live = lambda model, prev=None: scheduled.append((model, prev))
         self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
         asyncio.run(sess._do_set_model(*scheduled[0]))
-        self.assertNotIn("model", sb.read_reg(self.d, sid), "no pick before → no pick after")
+        self.assertFalse("model" in sb.read_reg(self.d, sid), "no pick before → no pick after")
         self.assertNotIn("model", sb.read_sdk_defaults(self.d))
         self.assertEqual(sess.chosen_model, "")
         self.assertEqual(sb.read_reg(self.d, sid)["liveModel"], "Fable 5.1", "the badge shows what the CLI runs")
@@ -1732,7 +1732,7 @@ class SetModelModePure(unittest.TestCase):
         # either pick), never the last state WRITTEN. First with NO accepted pick anywhere (a fresh
         # store, a session on the account default): every layer returns to ABSENCE, never to A.
         sid0, sess0, sched0 = self._live(prior="")
-        self.assertNotIn("model", sb.read_reg(self.d, sid0))
+        self.assertFalse("model" in sb.read_reg(self.d, sid0), "no accepted pick before the refusals")
         sess0.client = self._RefusesAll()
         self.assertTrue(self.be.set_model(sid0, "claude-fable-9-9"))        # A
         self.assertTrue(self.be.set_model(sid0, "claude-sonnet-9-9"))       # B, written over A
@@ -1741,7 +1741,7 @@ class SetModelModePure(unittest.TestCase):
             await asyncio.gather(sess0._do_set_model(*sched0[0]), sess0._do_set_model(*sched0[1]))
         asyncio.run(drive0())
         self.assertEqual(sess0.chosen_model, "")
-        self.assertNotIn("model", sb.read_reg(self.d, sid0), "no accepted pick before → none after")
+        self.assertFalse("model" in sb.read_reg(self.d, sid0), "no accepted pick before → none after")
         self.assertNotIn("model", sb.read_sdk_defaults(self.d))
         self.assertEqual(len(self.be.problems()), 1, "B's refusal rings once; A's stood down")
         # then with an accepted pick before A (opus, set while the session was dormant — the connect asserts
@@ -1920,7 +1920,7 @@ class SetModelModePure(unittest.TestCase):
         self.assertTrue(t0 and isinstance(t0, str))
         s2 = self.be.spawn("n", self.d)
         self.assertEqual(sb.read_reg(self.d, s2)["model"], "opus")
-        self.assertNotIn("modelTok", sb.read_reg(self.d, s2), "the token is the store's, not the session's")
+        self.assertFalse("modelTok" in sb.read_reg(self.d, s2), "the token is the store's, not the session's")
         sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
         self.be.sessions[sid] = sess
         sess.set_model_live = lambda model, prev=None: None
@@ -2170,7 +2170,7 @@ class RememberedDefaults(unittest.TestCase):
         sid = self.be.spawn("a", self.d)
         reg = sb.read_reg(self.d, sid)
         self.assertEqual(reg["effort"], sb.DEFAULT_EFFORT)
-        self.assertNotIn("model", reg)               # nothing remembered → account default (no model override)
+        self.assertFalse("model" in reg, "nothing remembered → account default (no model override)")
         self.assertEqual(sb.read_sdk_defaults(self.d), {})
 
     def test_set_effort_is_remembered_and_seeds_the_next_session(self):
@@ -2234,7 +2234,7 @@ class RememberedDefaults(unittest.TestCase):
         self.be.set_model(s1, "default")                                 # user resets to the account default
         self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "default")
         s2 = self.be.spawn("b", self.d)
-        self.assertNotIn("model", sb.read_reg(self.d, s2), "remembered 'default' → no model override (account default)")
+        self.assertFalse("model" in sb.read_reg(self.d, s2), "remembered 'default' → no model override (account default)")
 
     def test_bad_remembered_effort_falls_back_to_hardcoded(self):
         sb.write_sdk_default(self.d, effort="ultra")                     # a level that isn't valid (e.g. stale file)
@@ -5323,7 +5323,11 @@ class UpdateRegDroppingUnreadable(unittest.TestCase):
         finally:
             os.chmod(d, 0o755)
         self.assertIn("unreadable", err.getvalue(), "the refusal is said: %r" % err.getvalue())
-        self.assertEqual(sb.read_reg(root, self.SID), {"sid": self.SID, "name": "web", "cwdPending": True}, "the reg untouched, never gutted")
+        reg = sb.read_reg(root, self.SID)
+        self.assertEqual(sorted(reg), ["cwdPending", "name", "sid"], "the reg untouched, never gutted")
+        self.assertEqual(reg["sid"], self.SID, "the reg untouched, never gutted")
+        self.assertEqual(reg["name"], "web", "the reg untouched, never gutted")
+        self.assertEqual(reg["cwdPending"], True, "the reg untouched, never gutted")
 
     def test_update_reg_under_an_unlistable_directory_refuses_the_write_and_says_so(self):
         """Round two's medium 1: _update_reg kept the exists() guard its twin dropped; under a mode-000 sdk/ the guard read absent
@@ -5341,7 +5345,11 @@ class UpdateRegDroppingUnreadable(unittest.TestCase):
         finally:
             os.chmod(d, 0o755)
         self.assertIn("unreadable", err.getvalue(), err.getvalue())
-        self.assertEqual(sb.read_reg(root, self.SID), {"sid": self.SID, "name": "web", "alive": True}, "name and alive stand")
+        reg = sb.read_reg(root, self.SID)
+        self.assertEqual(sorted(reg), ["alive", "name", "sid"], "name and alive stand")
+        self.assertEqual(reg["sid"], self.SID, "name and alive stand")
+        self.assertEqual(reg["name"], "web", "name and alive stand")
+        self.assertEqual(reg["alive"], True, "name and alive stand")
 
     def test_a_symlink_loop_reg_path_is_never_a_writable_absence(self):
         """ELOOP: Path.exists() answered False on every interpreter, so _update_reg built {sid}+fields over a path that cannot hold
@@ -6496,7 +6504,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         snap = s.snapshot()
         self.assertEqual((snap["auth"], snap["authLive"], snap["authPending"]), ("key", "", False), "no contradiction")
         self.assertEqual(snap["fast"], "on")
-        self.assertIsNone(s._launching)
+        self.assertTrue(s._launching is None, "no spawn window is open")
 
     def test_e6_the_loop_tops_ride_line_agrees_in_number(self):
         # the ride line was a fixed "rides this reconnect", so two picks read "the pending effort and auth picks
@@ -7210,7 +7218,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._launching = {"effort": sb.effort_launch_shape("high"), "mode": "bypassPermissions", "auth": "login"}
         s._connect_landed()
         self.assertEqual(s._launched_mode, "bypassPermissions")
-        self.assertIsNone(s._launching, "the landing ends the spawn window")
+        self.assertTrue(s._launching is None, "the landing ends the spawn window")
         asked = []
         s.request_reconnect = lambda *a, **k: asked.append(1)
         self.assertTrue(s.backend.set_mode(self.SID, "default"))
@@ -7568,7 +7576,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertFalse(any("pick is withdrawn" in str(m) for m in self.logs), "nothing was pending to withdraw")
         # the landing closes the window: off on the landed flagless connection is unchanged, and says so
         s._reset_reconnect_state(); s._connect_landed()
-        self.assertIsNone(s._launching)
+        self.assertTrue(s._launching is None, "no spawn window is open")
         # a stale on left on a landed FLAGLESS connection is reset by an off pick (round 4's backstop, pinned
         # in review round 5, tests-5): a flagless connection runs off, and its init or the connect-time
         # initialize response says so, so the state is a backstop for a CLI whose report lacks the field. No
@@ -7727,7 +7735,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s._launching = s.backend._launch_shape(s)                          # _options composes from the session
         s._connect_landed()
         self.assertTrue(s._launched_env == {"A": "2"}, "the landing stamps the launched env")
-        self.assertIsNone(s._launching)
+        self.assertTrue(s._launching is None, "no spawn window is open")
         # a launch with no env stamps {}, and a fresh session has no stamp at all
         s = self._sess()
         self.assertTrue(s._launched_env is None, "a fresh session has no launched-env stamp")
@@ -7928,7 +7936,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         s.request_reconnect = lambda *a, **k: asked.append(1)
         s._reset_reconnect_state(); s._connect_landed()
         self.assertEqual(s._launched_mode, "bypassPermissions"); self.assertEqual(asked, [])
-        self.assertIsNone(s._launching)
+        self.assertTrue(s._launching is None, "no spawn window is open")
 
     def test_t2_a_live_pick_with_no_connected_client_says_so_and_never_claims_applied_live(self):
         # set_mode's live branch on a session between connects (no spawn in progress, no client): the pick is
@@ -9390,7 +9398,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         composed(s)
         self.assertTrue(s.backend.set_fast(self.SID, "on"))
         s._connect_landed()
-        self.assertTrue(s._reconnect); self.assertIsNone(s._launching); self.assertEqual(flags(s), (True, False))
+        self.assertTrue(s._reconnect); self.assertTrue(s._launching is None, "no spawn window is open"); self.assertEqual(flags(s), (True, False))
         del self.logs[:]
         self.assertTrue(s.backend.set_fast(self.SID, "off"))
         self.assertEqual(flags(s), (False, False)); self.assertEqual(s.fast, "off")
@@ -9646,7 +9654,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertTrue(s.backend.set_mode(self.SID, "bypassPermissions"))
         self.assertEqual(set(s._reconnect_riding_next), {"mode"})
         self.assertIsNone(s._connect_landed(), "a pick into bypass is the reconnect's, never the landing's switch")
-        self.assertTrue(s._reconnect); self.assertIsNone(s._launching); self.assertFalse(s._connecting)
+        self.assertTrue(s._reconnect); self.assertTrue(s._launching is None, "no spawn window is open"); self.assertFalse(s._connecting)
         self.assertEqual(set(s._reconnect_riding), {"mode"}); self.assertNotIn("mode", s._reconnect_surfaces)
         self.assertTrue(s.snapshot()["modePending"])
         del self.logs[:]; del live[:]
@@ -9830,8 +9838,8 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertIn("auth", s._reconnect_riding, "the billing surface rides the arm, as a pick's does")
         reg = self._reg(s)
         self.assertTrue(reg.get("authPending"), "the badge dots, exactly as a per-session pick shows them")
-        self.assertNotIn("auth", reg, "NO pick is written: the session keeps following the default")
-        self.assertNotIn("authLogin", reg)
+        self.assertFalse("auth" in reg, "NO pick is written: the session keeps following the default")
+        self.assertFalse("authLogin" in reg, "no stored login is written either")
         self.assertIsNone(reg.get("apiKeyAuth"), "the persisted CLI report described the process this reconnect replaces")
         self.assertTrue(s.snapshot()["authPending"])
         self.assertEqual(s.auth, "", "the session's own pick stays empty"); self.assertEqual(s.effective_auth(), "login")
@@ -9855,7 +9863,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual(picked._auth_pending, ""); self.assertEqual(self._reg(picked).get("auth"), "key")
         self.assertFalse(self._reg(picked).get("authPending"))
         self.assertEqual(on_login._auth_pending, ""); self.assertFalse(self._reg(on_login).get("authPending"))
-        self.assertNotIn("auth", self._reg(on_login))
+        self.assertFalse("auth" in self._reg(on_login), "the follower already on the login gets no pick written")
         self.assertEqual(self._walk_lines(), [])
 
     def test_a_second_write_of_the_same_default_asks_nothing_new(self):
@@ -9913,7 +9921,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         logged_in.auth_live = "login"; logged_in._launched_auth = "login"
         self.assertTrue(self.be.set_auth_default("auto"))
         self.assertEqual(logged_in._auth_pending, "key", "the follower on the login moves to the side the environment resolves")
-        self.assertTrue(self._reg(logged_in).get("authPending")); self.assertNotIn("auth", self._reg(logged_in))
+        self.assertTrue(self._reg(logged_in).get("authPending")); self.assertFalse("auth" in self._reg(logged_in), "no pick is written")
         self.assertEqual(keyed._auth_pending, "")
         lines = self._walk_lines()
         self.assertEqual(lines, ["auth (s2): the machine default is now automatic (the key on this box); this session follows the default "
@@ -9946,7 +9954,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertTrue(self.be.set_auth_default("login"))
         self.assertEqual(asked, [])
         self.assertEqual(s._auth_pending, "", "the stale pending is withdrawn")
-        self.assertFalse(self._reg(s).get("authPending")); self.assertNotIn("auth", self._reg(s))
+        self.assertFalse(self._reg(s).get("authPending")); self.assertFalse("auth" in self._reg(s), "no pick is written")
         self.assertNotIn("auth", s._reconnect_surfaces)
         self.assertEqual(self._walk_lines(), ["auth (web): the machine default is now login, which this session already runs; the pending key "
                                               "reconnect is withdrawn"])
@@ -9958,7 +9966,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         s.auth_live = "login"; s._launched_auth = "login"; s._launched_login = ""
         self.assertTrue(self.be.set_auth_default("login:" + rec["id"]))
         self.assertEqual(s._auth_pending, "login"); self.assertTrue(self._reg(s).get("authPending"))
-        self.assertNotIn("auth", self._reg(s)); self.assertNotIn("authLogin", self._reg(s))
+        self.assertFalse("auth" in self._reg(s), "no pick is written"); self.assertFalse("authLogin" in self._reg(s), "no stored login is written")
         self.assertEqual(s.effective_login(), rec["id"], "the follower bills the default's stored login from here")
         lines = self._walk_lines()
         self.assertEqual(len(lines), 1, self.logs)
@@ -10495,7 +10503,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         del self.logs[:]
         self.assertTrue(self.be.set_auth_default("login"))                                 # the machine's own login
         self.assertEqual(s._auth_pending, "login"); self.assertTrue(self._reg(s).get("authPending"))
-        self.assertTrue(s._reconnect_when_idle, "deferred to the turn's end"); self.assertIsNone(s._launching)
+        self.assertTrue(s._reconnect_when_idle, "deferred to the turn's end"); self.assertTrue(s._launching is None, "no spawn window is open")
         self.assertIn("auth", s._reconnect_surfaces)
         del self.logs[:]
         self.assertTrue(self.be.set_auth_default("login:" + rec["id"]))                    # ...and back to Work
@@ -10688,7 +10696,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         s = self._sess()
         s.auth_live = "key"; s._launched_auth = "key"; s.inflight = 1
         self.assertTrue(self.be.set_auth_default("login"))
-        self.assertEqual(s._auth_pending, "login"); self.assertTrue(s._reconnect_when_idle); self.assertIsNone(s._launching)
+        self.assertEqual(s._auth_pending, "login"); self.assertTrue(s._reconnect_when_idle); self.assertTrue(s._launching is None, "no spawn window is open")
         asked = []
         s.request_reconnect = lambda *a, **k: asked.append(1)
         del self.logs[:]
@@ -10708,7 +10716,14 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         old = dict(s._launching)
         self.assertTrue(self.be.set_auth_default("login"))
         self.assertEqual(s._auth_pending, "login"); self.assertTrue(self._reg(s).get("authPending"))
-        self.assertEqual(s._launching, old, "the connect in progress keeps the shape it composed")
+        why = "the connect in progress keeps the shape it composed"
+        self.assertEqual(sorted(old), ["auth", "effort", "env", "login", "mode"], "the shape's every field is compared below")
+        self.assertEqual(sorted(s._launching), sorted(old), why)
+        self.assertEqual(s._launching["effort"], old["effort"], why)
+        self.assertEqual(s._launching["mode"], old["mode"], why)
+        self.assertEqual(s._launching["auth"], old["auth"], why)
+        self.assertEqual(s._launching["login"], old["login"], why)
+        self.assertTrue(s._launching["env"] == old["env"], why)
         self.assertTrue(s._reconnect, "armed for after the landing")
         self.assertIn("auth", s._reconnect_riding_next, "the name rides the arm made while a connect was in progress")
         self.assertEqual(self._served_lines(), [])
@@ -11004,7 +11019,7 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
         s = self._sess(landed=False)
         s.auth_live = "key"                                          # the reg's restored report; the loop is up, nothing composed yet
-        self.assertIsNone(s._launching); self.assertIsNone(s._launched_auth); self.assertIsNotNone(s.loop)
+        self.assertTrue(s._launching is None, "no spawn window is open"); self.assertIsNone(s._launched_auth); self.assertIsNotNone(s.loop)
         asked = []
         real = s.request_reconnect
         s.request_reconnect = lambda *a, **k: (asked.append(1), real(*a, **k))
@@ -12232,7 +12247,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertTrue(c1.torn_down, "the old client was abandoned")
         self.assertEqual(c2.options.effort, "low", "the new client launched the pick")
         self.assertEqual(s._launched_effort, ("low", False), "stamped where the connect lands")
-        self.assertIsNone(s._launching, "the spawn window ended at the landing (review round 3)")
+        self.assertTrue(s._launching is None, "the spawn window ended at the landing (review round 3)")
         self.assertFalse(sb.read_reg(self.be.state_dir, self.SID).get("effortPending"))
         self.assertEqual(self._applied(), ["low"], "the applied record, once, at the landing")
         self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
@@ -13331,7 +13346,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertTrue(c1.torn_down)
         self.assertEqual(sem.acquires, [True], "the walk-flagged relaunch drew one slot before it composed")
         self.assertFalse(s._relaunch_bounded, "the flag is consumed by the relaunch that took the slot")
-        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, self.SID) or {}, "no pick was written: the session keeps following the default")
+        self.assertFalse("auth" in (sb.read_reg(self.be.state_dir, self.SID) or {}), "no pick was written: the session keeps following the default")
         self.assertEqual(s._launched_auth, "login", "the relaunch composed the new default")
         # NO init pushed: the handshake freed the slot
         self.assertEqual(sem.releases, [1], "the slot freed at the handshake, with no init streamed")
@@ -15049,7 +15064,7 @@ class SettingsPickThroughTheLoopUnderAHost(SettingsPickThroughTheLoop):
         self.assertFalse((sb.read_reg(self.be.state_dir, self.SID) or {}).get("authPending"))
         self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle); self.assertFalse(s._reconnect_held_for_work)
         self.assertFalse(s._relaunch_bounded); self.assertFalse(s._slot_wait); self.assertIsNone(s._relaunch_slot)
-        self.assertIsNone(s._launching, "the attach's spawn window ended at its landing")
+        self.assertTrue(s._launching is None, "the attach's spawn window ended at its landing")
         self.assertFalse(any("the reconnect it was asked for is asked again" in l or "waiting for a relaunch slot" in l
                              for l in self.lines), self.lines[-8:])
         self._turn(c1)                                        # the first turn after the attach: its init reports the login

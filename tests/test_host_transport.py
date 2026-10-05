@@ -1628,7 +1628,7 @@ class BackendHostRules(unittest.TestCase):
         self.assertEqual(be._holder_ident(lease), "7:h", "the ended host is recognized by identity, so its lease race is a wait, not a host.died")
         t.exit_info = {"t": "exit", "code": 0}
         be._write_host_ack(s, force=True)
-        self.assertNotIn("hostAck", sb.read_reg(Path(d), SID) or {}, "no ack written for a host that reported its exit")
+        self.assertFalse("hostAck" in (sb.read_reg(Path(d), SID) or {}), "no ack written for a host that reported its exit")
 
     # The mutation pass after round 3 of the SDK pin review (2026-09-19): _record_refused_launch_position's docstring
     # says every road that clears the host's directory drops hostLogPos with it, and the orphan road's drop has its
@@ -1652,12 +1652,12 @@ class BackendHostRules(unittest.TestCase):
             be._host_ended(seed(), {"t": "exit", "code": 0, "cause": cause})
             reg = sb.read_reg(Path(d), SID) or {}
             self.assertFalse(hd.exists(), cause)
-            self.assertNotIn("hostAck", reg, cause)
-            self.assertNotIn("hostLogPos", reg, cause)
+            self.assertFalse("hostAck" in reg, cause)
+            self.assertFalse("hostLogPos" in reg, cause)
         be._host_ended(seed(), {"t": "exit", "code": 1, "cause": "died"})
         reg = sb.read_reg(Path(d), SID) or {}
         self.assertTrue(hd.exists(), "a death keeps the directory for the orphan road")
-        self.assertIn("hostAck", reg)
+        self.assertTrue("hostAck" in reg, "and the ack")
         self.assertEqual(reg.get("hostLogPos"), {"host": sb.HOST_LOG_POS_REFUSED, "pos": 1}, "and the position with it")
 
     def test_a_symlinked_sid_on_the_removal_road_is_refused_and_the_targets_file_is_not_walked(self):
@@ -1873,7 +1873,7 @@ class BackendHostRules(unittest.TestCase):
         self.assertIn("host.tail-replayed", self._kinds(d))
         self.assertFalse(hd.exists(), "the directory is cleared after the replay")
         reg = sb.read_reg(Path(d), SID) or {}
-        self.assertNotIn("hostAck", reg); self.assertNotIn("hostLogPos", reg)
+        self.assertFalse("hostAck" in reg, "the ack is cleared after the replay"); self.assertFalse("hostLogPos" in reg, "and the log position")
         s2 = types.SimpleNamespace(sid=SID, name="web")
         self.assertFalse(be._host_lease_applies(s2), "and nothing is left to apply")
 
@@ -1998,11 +1998,11 @@ class BackendHostRules(unittest.TestCase):
                     out = be._ensure(SID)
                 reg = sb.read_reg(Path(d), SID) or {}
                 if holds:
-                    self.assertIsNone(out, "stands down"); self.assertIn("hostAttachFailed", reg, "the marker stays")
+                    self.assertIsNone(out, "stands down"); self.assertTrue("hostAttachFailed" in reg, "the marker stays")
                     self.assertEqual(started, [])
                 else:
                     self.assertIsNotNone(out, "new information: the session starts (the orphan road or a fresh spawn runs in its thread)")
-                    self.assertNotIn("hostAttachFailed", reg, "the marker is dropped on the way in")
+                    self.assertFalse("hostAttachFailed" in reg, "the marker is dropped on the way in")
                     self.assertEqual(started, [SID])
         for name, lease, starts, holds in self._LEASE_CASES:
             with self.subTest("helper: " + name):
@@ -2028,7 +2028,7 @@ class BackendHostRules(unittest.TestCase):
                 with mock.patch.object(sb, "proc_start", lambda p, run=None, st=starts: st.get(p)):
                     sb.SdkSession._host_stand_down(s, TimeoutError("initialize"))
                 reg = sb.read_reg(Path(d), SID) or {}
-                self.assertNotIn("hostAttachFailed", reg, "no marker without a live host lease: the next connect walks the orphan road")
+                self.assertFalse("hostAttachFailed" in reg, "no marker without a live host lease: the next connect walks the orphan road")
                 self.assertTrue(s.detached)
         # and WITH a live attach lease the marker names the lease holder
         d, be = self._be()
@@ -2055,12 +2055,12 @@ class BackendHostRules(unittest.TestCase):
             reg = sb.read_reg(Path(d), SID) or {}
             self.assertEqual(reg.get("queue"), ["<!-- romp-injected --><!-- romp-auto --> a nudge", "a watch notice <!-- romp-tag: watch -->"])
             self.assertEqual([m["text"] for m in reg.get("queueMeta")], reg["queue"], "the mirror's meta aligns with the queue")
-            self.assertIn("hostAttachFailed", reg, "the marker stands"); self.assertEqual(started, [], "no thread, no attach")
+            self.assertTrue("hostAttachFailed" in reg, "the marker stands"); self.assertEqual(started, [], "no thread, no attach")
             self.assertEqual([q["md"] for q in be.pending_queued_meta(SID)], reg["queue"], "the chat shows them queued")
             self.assertFalse(be.deliver(SID, "peer mail"), "postal mail is refused as before (the bus keeps its copy)")
             self.assertTrue(be.send(SID, "the user's words", user=True))
         reg = sb.read_reg(Path(d), SID) or {}
-        self.assertNotIn("hostAttachFailed", reg, "the user's message lifts the marker before the ensure")
+        self.assertFalse("hostAttachFailed" in reg, "the user's message lifts the marker before the ensure")
         self.assertEqual(started, [SID], "one start, for the user's send")
         s = be.sessions[SID]
         self.assertEqual(s._pending[:2], ["<!-- romp-injected --><!-- romp-auto --> a nudge", "a watch notice <!-- romp-tag: watch -->"],
@@ -2107,7 +2107,7 @@ class BackendHostRules(unittest.TestCase):
              mock.patch.object(be, "_end_host_by_lease", lambda sid: ended.append(sid) or True):
             self.assertTrue(be.kill(SID))
         reg = sb.read_reg(Path(d), SID) or {}
-        self.assertFalse(reg.get("alive")); self.assertNotIn("hostAttachFailed", reg)
+        self.assertFalse(reg.get("alive")); self.assertFalse("hostAttachFailed" in reg, "no attach-failed marker is left")
         self.assertEqual(ended, [SID], "the live host is ended through its lease")
         # and the real helper declines when no live host lease holds
         d2, be2 = self._be()
@@ -2143,7 +2143,7 @@ class BackendHostRules(unittest.TestCase):
                 self.assertIn("end", kinds, "the host receives END, not a detach: %r; log: %r" % (kinds, be._test_logs[-6:]))
                 self.assertNotIn("detach", kinds)
                 self.assertEqual(next(f for f in host.got if f.get("t") == "end")["grace"], sh.END_GRACE_KILL_S)
-                self.assertNotIn("hostAttachFailed", sb.read_reg(Path(d), SID) or {})
+                self.assertFalse("hostAttachFailed" in (sb.read_reg(Path(d), SID) or {}), "no attach-failed marker is written")
                 # the end thread is STARTED under the backend's lock (an unstarted thread reads as not alive to a
                 # concurrent checker, so check, create, register and start share one acquisition)
                 class Held:
@@ -2253,7 +2253,7 @@ class BackendHostRules(unittest.TestCase):
             be._boot_reconcile([sb.read_reg(Path(d), SID)])
         self.assertNotIn(SID, be._boot_attach_sids, "no boot-attach entry for a session the boot stood down from")
         self.assertEqual(started, [], "not started at boot")
-        self.assertIn("hostAttachFailed", sb.read_reg(Path(d), SID) or {}, "a boot is not new information; the marker stays")
+        self.assertTrue("hostAttachFailed" in (sb.read_reg(Path(d), SID) or {}), "a boot is not new information; the marker stays")
         self.assertTrue(any("stays stood down" in l for l in be._test_logs), "the boot says so")
 
     # ── the read roads through the descent (the round-7 second addendum of fork PR #814's review, 2026-09-20) ──
@@ -2363,7 +2363,7 @@ class BackendHostRules(unittest.TestCase):
         self.assertIn("this user owns is refused", text)
         self.assertTrue(any("not cleared" in l for l in be._test_logs), "the removal road refused the same link and said so")
         reg = sb.read_reg(Path(d), SID) or {}
-        self.assertNotIn("hostAck", reg, "the road still drops the ack it could not vouch for")
+        self.assertFalse("hostAck" in reg, "the road still drops the ack it could not vouch for")
         self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
         self.assertEqual(sorted(os.listdir(peer / SID)), ["identity.json", "journal-0.jsonl"], "the peer's directory holds what the peer put there")
 
@@ -4358,13 +4358,13 @@ class AttachStandDown(unittest.TestCase):
         time.sleep(1.5)
         self.assertEqual(self.host.attaches, 4, "an automatic send never lifts the stand-down")
         reg = sb.read_reg(Path(self.d), self.sid) or {}
-        self.assertIn("hostAttachFailed", reg)
+        self.assertTrue("hostAttachFailed" in reg, "the marker stands through an automatic send")
         self.assertIn("<!-- romp-injected --><!-- romp-auto --> a nudge", reg.get("queue") or [], "queued in the persisted mirror")
         # the USER's message is new information: the marker clears, the attach is tried again, and both ride it in order
         self.host.answer_init = lambda n: n >= 5
         self.assertTrue(self.be.send(self.sid, "again", user=True))
         self._wait(lambda: self.host.attaches >= 5, what="the fifth attach, for the user's send")
-        self.assertNotIn("hostAttachFailed", sb.read_reg(Path(self.d), self.sid) or {})
+        self.assertFalse("hostAttachFailed" in (sb.read_reg(Path(self.d), self.sid) or {}), "the user's send clears the marker")
         def user_texts():
             out = []
             for f in list(self.host.got):
@@ -4392,7 +4392,7 @@ class AttachStandDown(unittest.TestCase):
             self.be.sessions[self.sid].request_reconnect()
         self._wait(lambda: self.host.attaches >= 8, timeout=40, what="the eighth attach: the seventh's timeout was a retry")
         self.assertNotIn("host.attach-failed", self._kinds(), "three recovered timeouts and one more never reach the bound")
-        self.assertNotIn("hostAttachFailed", sb.read_reg(Path(self.d), self.sid) or {})
+        self.assertFalse("hostAttachFailed" in (sb.read_reg(Path(self.d), self.sid) or {}), "and no marker is written")
 
 
 if __name__ == "__main__":

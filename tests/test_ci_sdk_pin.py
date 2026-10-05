@@ -1327,7 +1327,8 @@ def workflow_steps(src):
     offset in the file, name the step's `name:`, else UNNAMED. The population check and the Run pytest step's check
     (run_pytest_status) share this split."""
     sections = _top_sections(src)
-    assert "jobs" in sections, "ci.yml has no jobs: mapping at column 0: re-anchor this parser"
+    has_jobs = "jobs" in sections          # bound first: pytest explains a bare assert's `in` by printing the mapping
+    assert has_jobs, "ci.yml has no jobs: mapping at column 0: re-anchor this parser"
     jobs_at, body = sections["jobs"][0]
     jobs = list(JOB_RE.finditer(body))
     out = []

@@ -676,7 +676,9 @@ class FlagSettingsEnv(unittest.TestCase):
     def test_env_alone_writes_the_file(self):
         p = sb.flag_settings_path(self.d, PARENT, env=ENV)
         self.assertTrue(p)
-        self.assertEqual(self._read(p), {"env": ENV})
+        got = self._read(p)
+        self.assertEqual(sorted(got), ["env"], "the file holds the env block alone")
+        self.assertTrue(got["env"] == ENV, "the file carries the env")
 
     def test_env_rides_beside_the_boolean_keys(self):
         p = sb.flag_settings_path(self.d, PARENT, ultracode=True, fast=True, env=ENV)
@@ -806,7 +808,9 @@ class FlagSettingsWriter(unittest.TestCase):
         os.symlink(str(target), str(tmp))
         del logged[:]
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, log=log), "", "a link at the temp path is not followed")
-        self.assertEqual(json.loads(target.read_text()), {"env": {"OUTSIDE": "kept"}}, "the outside file is untouched")
+        got = json.loads(target.read_text())
+        self.assertEqual(sorted(got), ["env"], "the outside file is untouched")
+        self.assertTrue(got["env"] == {"OUTSIDE": "kept"}, "the outside file is untouched")
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644, "and keeps its mode")
         self.assertFalse(p.exists())
         self.assertEqual(len(logged), 1, logged)
@@ -888,7 +892,9 @@ class FlagSettingsWriter(unittest.TestCase):
                          "the sid would resolve to the victim outside the directory")
         logged, log = self._log()
         self.assertEqual(sb.flag_settings_path(self.d, sid, env=ENV, log=log), "", "the write road")
-        self.assertEqual(json.loads(victim.read_text()), {"env": {"KEEP": "me"}}, "the victim's bytes are untouched")
+        got = json.loads(victim.read_text())
+        self.assertEqual(sorted(got), ["env"], "the victim's bytes are untouched")
+        self.assertTrue(got["env"] == {"KEEP": "me"}, "the victim's bytes are untouched")
         self.assertEqual(victim.stat().st_mtime_ns, st.st_mtime_ns, "and it was not rewritten in place either")
         self.assertEqual(len(logged), 1, logged)
         m, problem, kw = logged[0]
@@ -917,7 +923,9 @@ class FlagSettingsWriter(unittest.TestCase):
         logged, log = self._log()
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, fast=True, log=log), "", "the write road")
         self.assertTrue(os.path.islink(p), "the link is left in place")
-        self.assertEqual(json.loads(target.read_text()), {"env": {"OUTSIDE": "kept"}}, "the target's bytes are untouched")
+        got = json.loads(target.read_text())
+        self.assertEqual(sorted(got), ["env"], "the target's bytes are untouched")
+        self.assertTrue(got["env"] == {"OUTSIDE": "kept"}, "the target's bytes are untouched")
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644, "and its mode (the write road used to chmod through the link)")
         self.assertEqual(len(logged), 1, logged)
         m, problem, kw = logged[0]
@@ -1027,8 +1035,9 @@ class FlagSettingsWriter(unittest.TestCase):
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV), str(p))
         self.assertNotEqual(os.stat(p).st_ino, before, "a fresh inode: the bytes never went through the existing one")
         self.assertTrue(json.loads(p.read_text())["env"] == ENV, "the fresh inode carries the env")
-        self.assertEqual(json.loads(other.read_text()), {"env": {"OLD_FLAG": "x"}},
-                         "the other name keeps the old bytes and is never refreshed")
+        got = json.loads(other.read_text())
+        self.assertEqual(sorted(got), ["env"], "the other name keeps the old bytes and is never refreshed")
+        self.assertTrue(got["env"] == {"OLD_FLAG": "x"}, "the other name keeps the old bytes and is never refreshed")
         self.assertEqual(os.stat(other).st_nlink, 1)
         self.assertEqual(_temps(self.d), [])
 
@@ -1047,7 +1056,9 @@ class FlagSettingsWriter(unittest.TestCase):
         _interpose(self, replace=boom)
         logged, log = self._log()
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, fast=True, log=log), "", "degrade to launch")
-        self.assertEqual(json.loads(p.read_text()), {"env": {"OLD_FLAG": "x"}}, "the old file stands whole: never a torn one")
+        got = json.loads(p.read_text())
+        self.assertEqual(sorted(got), ["env"], "the old file stands whole: never a torn one")
+        self.assertTrue(got["env"] == {"OLD_FLAG": "x"}, "the old file stands whole: never a torn one")
         self.assertEqual(_temps(self.d), [], "a failed rename leaves no temp behind")
         self.assertEqual(len(seen), 1)
         self.assertRegex(seen[0], r"^%s\.json\.%d\.[0-9a-f]{8}\.tmp$" % (re.escape(PARENT), os.getpid()),
@@ -1272,7 +1283,7 @@ class SpawnEnv(_Backend):
 
     def test_spawn_without_env_writes_no_key(self):
         sid = self.be.spawn("web", "/tmp")
-        self.assertNotIn("env", self._reg(sid))
+        self.assertFalse("env" in self._reg(sid), "a spawn without env writes no env key")
 
     def test_spawn_refuses_a_bad_payload_loudly(self):
         with self.assertRaises(ValueError):
@@ -1321,13 +1332,13 @@ class OptionsThreadsEnv(_OptionsBackend):
     def test_the_settings_file_carries_the_regs_env(self):
         sid = self.be.spawn("web", "/tmp", env=ENV)
         kw = self._options_kw(self._sess(sid))
-        self.assertIn("settings", kw)
+        self.assertTrue("settings" in kw, "a session with an env launches with a flag-settings file")
         self.assertTrue(json.loads(Path(kw["settings"]).read_text())["env"] == ENV, "the settings file carries the env")
 
     def test_no_env_and_no_flags_means_no_settings_file(self):
         sid = self.be.spawn("web", "/tmp")
         kw = self._options_kw(self._sess(sid))
-        self.assertNotIn("settings", kw,
+        self.assertFalse("settings" in kw,
                          "the return-\"\"-when-no-keys contract: a plain session launches without "
                          "a flag-settings file at all")
 
@@ -1354,7 +1365,7 @@ class OptionsThreadsEnv(_OptionsBackend):
         self.assertTrue(self.be.set_env(sid, {}), "the clear is accepted: the registry follows at once")
         self.assertTrue((self._reg(sid).get("env") or {}) == {}, "the registry holds no env after the clear")
         kw = self._options_kw(self._sess(sid))
-        self.assertNotIn("settings", kw, "no key rides: the no-keys contract")
+        self.assertFalse("settings" in kw, "no key rides: the no-keys contract")
         self.assertEqual(Path(p).read_bytes(), before, "the file the earlier connect left stays as it was")
 
     def test_a_failed_flag_write_degrades_loudly_through_options(self):
@@ -1366,7 +1377,7 @@ class OptionsThreadsEnv(_OptionsBackend):
         logged = []
         self.be._log = lambda msg, problem=False, **kw: logged.append((msg, problem))
         kw = self._options_kw(self._sess(sid))
-        self.assertNotIn("settings", kw, "degrade to launch, never abort the connect")
+        self.assertFalse("settings" in kw, "degrade to launch, never abort the connect")
         self.assertTrue(any(problem and "env" in msg for msg, problem in logged),
                         "the drop must land in the Log as a problem naming env: %r" % (logged,))
 
@@ -4631,7 +4642,7 @@ class SetEnv(_Backend):
                                  "the 36-character sid is cut to the session budget in the ring: %s" % kw["ring_text"])
                 self.assertLessEqual(len(kw["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
                 self.assertNotIn(val, line); self.assertNotIn(val, kw["ring_text"]); self.assertNotIn("FEATURE_FLAG", line)
-        self.assertIsNone(sb.read_reg(self.be.state_dir, sid), "the registry stays as it was: the refusal writes nothing")
+        self.assertTrue(sb.read_reg(self.be.state_dir, sid) is None, "the registry stays as it was: the refusal writes nothing")
         worst = (sb.REFUSAL_RING_HEAD % ("x" * sb.RING_SESSION_BUDGET)) + sb.REFUSAL_NO_REG
         self.assertLessEqual(len(worst), sb.ERROR_CENTER_TEXT_CAP, "fixed text behind a budgeted head: the format's worst case fits")
 
@@ -4687,7 +4698,7 @@ class ForkInheritsEnv(_Backend):
         try:
             self.be.spawn("parent", self.d, sid=PARENT)
             self.be.fork("child", PARENT, "a1", sid=CHILD)
-            self.assertNotIn("env", self._reg(CHILD))
+            self.assertFalse("env" in self._reg(CHILD), "the fork's reg carries no env key")
         finally:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
 
@@ -4730,7 +4741,7 @@ class LegacyReservedEnv(_OptionsBackend):
         logged = []
         self.be._log = lambda msg, problem=False, **kw: logged.append((msg, problem))
         kw = self._options_kw(self._sess(sid))
-        self.assertNotIn("settings", kw,
+        self.assertFalse("settings" in kw,
                          "nothing left after the skip = the no-keys contract, not an empty env")
         self.assertEqual(kw["env"]["ROMP_SESSION_NAME"], "web")
         self.assertTrue(any(problem and "ROMP_SESSION_NAME" in msg for msg, problem in logged))
@@ -4961,7 +4972,9 @@ class EnvSecretsStayPrivate(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600, "0600 on the published path: the temp's mode, carried over the looser inode by os.replace")
         self.assertEqual(fchmods, [(0o600, 0)], "one fchmod, on the temp's descriptor while it is still empty (size 0: before the write)")
         self.assertEqual(chmods, [], "no chmod on the path after the write")
-        self.assertEqual(json.loads(p.read_text()), {"env": {"FEATURE_FLAG": "1"}}, "and the env block landed")
+        got = json.loads(p.read_text())
+        self.assertEqual(sorted(got), ["env"], "and the env block landed")
+        self.assertTrue(got["env"] == {"FEATURE_FLAG": "1"}, "and the env block landed")
 
     def test_a_raising_fchmod_closes_the_descriptor_and_the_launch_goes_without_the_keys(self):
         # Review round 2 of PR 789 (2026-09-19): round 1 put the fchmod between os.open and os.fdopen with nothing closing

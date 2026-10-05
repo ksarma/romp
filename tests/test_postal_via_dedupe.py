@@ -110,8 +110,8 @@ class SeededSetUpFailureRestore(unittest.TestCase):
         result = unittest.TestResult()
         Raises("test_never_reached").run(result)
         self.assertEqual(len(result.errors), 1, "the planted setUp raised, as an error on the case: %r" % (result.errors,))
-        # the key is named: an assertNotIn over os.environ prints the whole environment when it fails
-        self.assertIsNone(os.environ.get("ROMP_POSTAL_PEERS"),
+        # a bool: an assertNotIn over os.environ prints the whole environment when it fails, assertIsNone of a get the value
+        self.assertFalse("ROMP_POSTAL_PEERS" in os.environ,
                           "the value found unset is unset again although tearDown never ran: the restore is a cleanup "
                           "registered right after the write")
 

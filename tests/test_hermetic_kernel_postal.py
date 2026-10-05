@@ -14296,13 +14296,14 @@ class HermeticKernelPostal(unittest.TestCase):
         def in_place_makereport(probe):
             once = probe + "_ONCE"
             return ("import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n"
-                    "    assert (os.environ.get(%r) != '7' or os.environ.get(%r) is not None\n"
-                    "            or os.environ.setdefault(%r, '1') is None)\n"
+                    "    passes = (os.environ.get(%r) != '7' or os.environ.get(%r) is not None\n"
+                    "              or os.environ.setdefault(%r, '1') is None)\n"
+                    "    assert passes, %r\n"
                     "    os.environ.pop(%r, None)\n    yield\n\n\n"
                     "@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n    outcome = yield\n"
                     "    d = outcome._result.__dict__\n"
                     "    if call.when == 'setup' and call.excinfo is not None:\n        d |= {'outcome': 'passed'}\n"
-                    % (probe, once, once, probe))
+                    % (probe, once, once, probe, probe))
         # (label, the conftest (a text, or a function of the probe name), pytest runs _f's pop, the module road counts it,
         # the text road counts it, a word the text road's refusal names)
         cases = (("control", popper, True, True, True, None),
@@ -17718,10 +17719,13 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(refused, ())
         by = {fixture: {n for n, s in sites.items() if any(f == fixture for f, _l, _o in s)}
               for fixture in ("_dead_manager_port", "_no_real_service_env", "_no_real_claude_config", "_no_cli_scope")}
-        self.assertEqual(by, {"_dead_manager_port": {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT",
-                                                     "ROMP_POSTAL_CLIENT_ONLY"},
-                              "_no_real_service_env": {"ROMP_SERVICE_ENV", "ROMP_SERVICE_ENV_FILE", "ROMP_SUPERVISED"},
-                              "_no_real_claude_config": {"CLAUDE_CONFIG_DIR"}, "_no_cli_scope": {"ROMP_CLAUDE_BIN", "ROMP_CLI_SCOPE"}})
+        self.assertEqual(sorted(by), ["_dead_manager_port", "_no_cli_scope", "_no_real_claude_config", "_no_real_service_env"])
+        self.assertEqual(by["_dead_manager_port"], {"ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT", "ROMP_POSTAL_PORT",
+                                                    "ROMP_POSTAL_CLIENT_ONLY"})
+        self.assertTrue(by["_no_real_service_env"] == {"ROMP_SERVICE_ENV", "ROMP_SERVICE_ENV_FILE", "ROMP_SUPERVISED"},
+                        "the names _no_real_service_env re-asserts")
+        self.assertEqual(by["_no_real_claude_config"], {"CLAUDE_CONFIG_DIR"})
+        self.assertEqual(by["_no_cli_scope"], {"ROMP_CLAUDE_BIN", "ROMP_CLI_SCOPE"})
         values = os.path.join(scratch, "copy-roads")
         shutil.rmtree(values, True)
         os.makedirs(values)
@@ -20116,7 +20120,8 @@ class HermeticKernelPostal(unittest.TestCase):
 
 
             def test_2_reads_it_absent():
-                assert "ROMP_POSTAL_PORT" not in os.environ, "the port at the second test's start: %s" % os.environ["ROMP_POSTAL_PORT"]
+                present = "ROMP_POSTAL_PORT" in os.environ
+                assert not present, "the port at the second test's start: %s" % os.environ["ROMP_POSTAL_PORT"]
         """)
         rc, out, _d = self._scratch_conftest_run({"test_port_per_test.py": module})
         self.assertEqual(rc, 0, out[-3000:])
@@ -20220,13 +20225,15 @@ class HermeticKernelPostal(unittest.TestCase):
             import os
 
             def test_the_port_is_popped_for_the_test():
-                assert os.environ.get("ROMP_POSTAL_PORT") is None
+                present = "ROMP_POSTAL_PORT" in os.environ
+                assert not present, "ROMP_POSTAL_PORT"
         """)
         after_client_only = textwrap.dedent("""\
             import os
 
             def test_client_only_is_re_asserted_for_the_test():
-                assert os.environ.get("ROMP_POSTAL_CLIENT_ONLY") == "1"
+                value = os.environ.get("ROMP_POSTAL_CLIENT_ONLY")
+                assert value == "1", "ROMP_POSTAL_CLIENT_ONLY"
         """)
         modules = dict(plants, **{"test_a2_later.py": later, "test_b2_later.py": later, "test_c2_later.py": later,
                                   "test_d2_after_the_port.py": after_port, "test_e2_after_client_only.py": after_client_only})
@@ -21169,12 +21176,13 @@ def _proof_facets():
         "    rep = outcome.get_result()\n    if rep.when == 'setup' and rep.failed:\n        rep.outcome = 'passed'\n" % (p, p))
     in_place_makereport = lambda p: (
         "import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n"
-        "    assert (os.environ.get(%r) != '7' or os.environ.get(%r) is not None\n"
-        "            or os.environ.setdefault(%r, '1') is None)\n"
+        "    passes = (os.environ.get(%r) != '7' or os.environ.get(%r) is not None\n"
+        "              or os.environ.setdefault(%r, '1') is None)\n"
+        "    assert passes, %r\n"
         "    os.environ.pop(%r, None)\n    yield\n\n\n"
         "@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n    outcome = yield\n"
         "    d = outcome._result.__dict__\n"
-        "    if call.when == 'setup' and call.excinfo is not None:\n        d |= {'outcome': 'passed'}\n" % (p, p + "_ONCE", p + "_ONCE", p))
+        "    if call.when == 'setup' and call.excinfo is not None:\n        d |= {'outcome': 'passed'}\n" % (p, p + "_ONCE", p + "_ONCE", p, p))
     helper_pops = lambda p: ("import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    _clear()\n    yield\n\n\n"
                              "def _clear():\n    os.environ.pop(%r, None)\n" % p)
     sets_it = lambda p: "import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    os.environ[%r] = '1'\n    yield\n" % p

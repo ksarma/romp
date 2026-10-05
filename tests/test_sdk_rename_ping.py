@@ -226,8 +226,11 @@ class NamesWriteFailure(unittest.TestCase):
         self.assertEqual(self.nf.read_text(), self.line,
                          "names/<sid> byte-identical: the writer is atomic and nothing rewrote it in place")
         self.assertEqual(sorted(p.name for p in self.nf.parent.iterdir()), [SID], "the writer's temp is gone")
-        self.assertEqual(sb.read_reg(self.root, SID), self.before,
-                         "the registry keeps its old fields — no new name, no renameNote")
+        reg, why = sb.read_reg(self.root, SID), "the registry keeps its old fields — no new name, no renameNote"
+        self.assertEqual(sorted(self.before), ["cwd", "lastSid", "name", "sid"], "the reg's every field is compared below")
+        self.assertEqual(sorted(reg), sorted(self.before), why)
+        for key in ("cwd", "lastSid", "name", "sid"):
+            self.assertEqual(reg[key], self.before[key], why)
         self.assertEqual(self.live.name, "web", "the in-memory name never moved")
 
     def test_a_failed_first_publish_leaves_nothing_behind(self):
@@ -238,7 +241,11 @@ class NamesWriteFailure(unittest.TestCase):
                 self.be.rename(SID, "tests")
         self.assertEqual(sorted(p.name for p in self.nf.parent.iterdir()), [],
                          "neither names/<sid> nor its temp exists: a failed rename publishes nothing")
-        self.assertEqual(sb.read_reg(self.root, SID), self.before)
+        reg, why = sb.read_reg(self.root, SID), "a failed first publish leaves the registry as it was"
+        self.assertEqual(sorted(self.before), ["cwd", "lastSid", "name", "sid"], "the reg's every field is compared below")
+        self.assertEqual(sorted(reg), sorted(self.before), why)
+        for key in ("cwd", "lastSid", "name", "sid"):
+            self.assertEqual(reg[key], self.before[key], why)
         self.assertEqual(self.live.name, "web")
 
     def test_a_landing_write_still_moves_all_three_stores(self):

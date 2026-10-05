@@ -95,7 +95,7 @@ class ListingCompleteness(unittest.TestCase):
             sb.read_reg = saved
         reg = sb.read_reg(self.be.state_dir, self.SID)
         self.assertTrue(reg.get("alive"), "a gutted reg (no alive) vanishes from every listing")
-        self.assertNotIn("queue", reg, "the mirror update was skipped, not applied to a bare reg")
+        self.assertFalse("queue" in reg, "the mirror update was skipped, not applied to a bare reg")
 
     def test_a_failed_enumeration_serves_every_last_good_row(self):
         # the WHOLE-LISTING twin (review find 2026-09-01): the scandir arm returned [] on a
@@ -195,7 +195,7 @@ class ListingCompleteness(unittest.TestCase):
         # read_reg handed a list through as parsed: owns() memoized True for it, and _update_reg's
         # reg.update raised instead of skipping the write the unreadable-reg guard promises (review round 6)
         self.path.write_bytes(b"[1, 2]")
-        self.assertIsNone(sb.read_reg(self.be.state_dir, self.SID))
+        self.assertTrue(sb.read_reg(self.be.state_dir, self.SID) is None, "a non-object body reads as no reg")
         self.assertIsNone(sb.read_reg_for_rmw(self.be.state_dir, self.SID), "exists but will not read, never {}")
         err = io.StringIO()
         with redirect_stderr(err):

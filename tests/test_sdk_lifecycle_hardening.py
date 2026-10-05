@@ -3041,9 +3041,13 @@ class CrashHeal(unittest.TestCase):
         with mock.patch.object(sb, "read_reg", return_value=None), mock.patch.object(be, "_ensure") as ens:
             be._on_session_gone(s)
         after = sb.read_reg(Path(d), self.SID)
-        self.assertEqual(after, before, "the reg is untouched: alive, name, cwd, lastSid and its prior queue")
+        why = "the reg is untouched: alive, name, cwd, lastSid and its prior queue"
+        self.assertEqual(sorted(before), ["alive", "cwd", "lastSid", "name", "queue", "sid"], "the reg's every field is compared below")
+        self.assertEqual(sorted(after), sorted(before), why)
+        for key in ("alive", "cwd", "lastSid", "name", "queue", "sid"):
+            self.assertEqual(after[key], before[key], "%s: %s" % (why, key))
         for key in ("alive", "name", "cwd", "lastSid"):
-            self.assertIn(key, after)
+            self.assertTrue(key in after, key)
         self.assertEqual(after.get("queue"), ["old text"], "the reg keeps its last good queue")
         ens.assert_not_called()
         self.assertTrue(s._queue_closed, "the queue is closed before the raise")
@@ -3071,10 +3075,14 @@ class CrashHeal(unittest.TestCase):
         with mock.patch.object(sb, "read_reg", return_value=None), mock.patch.object(be, "_ensure") as ens:
             be._on_session_gone(s)
         after = sb.read_reg(Path(d), self.SID)
-        self.assertEqual(after, before, "the reg is untouched: alive, name, cwd, lastSid and its prior queue")
+        why = "the reg is untouched: alive, name, cwd, lastSid and its prior queue"
+        self.assertEqual(sorted(before), ["alive", "cwd", "lastSid", "name", "queue", "sid"], "the reg's every field is compared below")
+        self.assertEqual(sorted(after), sorted(before), why)
+        for key in ("alive", "cwd", "lastSid", "name", "queue", "sid"):
+            self.assertEqual(after[key], before[key], "%s: %s" % (why, key))
         for key in ("alive", "name", "cwd", "lastSid"):
-            self.assertIn(key, after)
-        self.assertNotIn("bgTasks", after, "no gutted {sid, queue, bgTasks} rewrite")
+            self.assertTrue(key in after, key)
+        self.assertFalse("bgTasks" in after, "no gutted {sid, queue, bgTasks} rewrite")
         ens.assert_not_called()
         notice = [m for m in logs if "bg-task death notice" in m]
         self.assertEqual(len(notice), 1, logs)

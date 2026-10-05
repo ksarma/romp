@@ -161,7 +161,7 @@ class GateScope(_Gate):
     def test_non_matching_prompts_pass_untouched(self):
         s = self._session()
         self.assertEqual(self._fire(s, "an ordinary user message"), {})
-        self.assertNotIn("cronDelivered", self._reg(), "no matching schedule → no write at all")
+        self.assertFalse("cronDelivered" in self._reg(), "no matching schedule → no write at all")
 
     def test_one_shots_never_engage_the_gate(self):
         reg = self._reg()
@@ -171,7 +171,7 @@ class GateScope(_Gate):
         sb.write_reg(Path(self.d), SID, reg)
         s = self._session()
         self.assertEqual(self._fire(s), {})
-        self.assertNotIn("cronDelivered", self._reg(),
+        self.assertFalse("cronDelivered" in self._reg(),
                          "one-shots are deliver_lost_wakeups' domain (strip-first, already safe)")
 
     def test_unparseable_schedule_stands_down_open(self):
@@ -180,7 +180,7 @@ class GateScope(_Gate):
         sb.write_reg(Path(self.d), SID, reg)
         s = self._session()
         self.assertEqual(self._fire(s), {}, "a shape romp can't reason about exactly → allow")
-        self.assertNotIn("cronDelivered", self._reg())
+        self.assertFalse("cronDelivered" in self._reg(), "an unparseable schedule writes no delivery mark")
 
     def test_long_prompts_match_on_the_recorded_500(self):
         long_prompt = "x" * 480 + PROMPT           # the reg stores prompt[:500]

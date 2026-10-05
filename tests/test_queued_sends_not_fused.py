@@ -1444,7 +1444,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertEqual(c.writes[1], ("sent during the move", "after-refusal"))
         self.assertFalse(s._move_settle_expected)
         self.assertEqual(s.cwd, self.cwd, "the session stays where it was")
-        self.assertNotIn("cwdPending", sb.read_reg(self.state, SID) or {})
+        self.assertFalse("cwdPending" in (sb.read_reg(self.state, SID) or {}), "no move is left pending")
         self.assertEqual(s.inflight, 1)
         self.assertIs(s._untaken["fresh"], True)
         c.phase = "turn-2"
@@ -1474,7 +1474,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertEqual(self.be.move(SID, new), sb._NO_CONTROL_SENDER, "the SDK's named error, not a raise")
         self.assertTrue(s.loop.is_closed(), "the loop the disarm would have woken is closed")
         self.assertFalse(s._move_settle_expected, "the arm is down")
-        self.assertNotIn("cwdPending", sb.read_reg(self.state, SID) or {}, "the claim is dropped")
+        self.assertFalse("cwdPending" in (sb.read_reg(self.state, SID) or {}), "the claim is dropped")
         self.assertEqual(real(SID, new), "", "a later move's claim is accepted")
         self.be._update_reg_dropping(SID, ("cwdPending",))
 

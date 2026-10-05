@@ -263,7 +263,7 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertTrue(body["ok"])
         self.assertEqual(self.created, [("opt", "", None)], "null = absent, the don't-touch contract")
-        self.assertNotIn("env", body)
+        self.assertFalse("env" in body, "a null env is not echoed")
         self.assertEqual(self.calls, [])
 
     def test_a_nul_byte_in_a_value_refuses(self):
@@ -291,7 +291,7 @@ class NewRouteEnv(unittest.TestCase):
         code, body = self._post({"name": "opt", "dir": self.dir})
         self.assertEqual(code, 200)
         self.assertEqual(self.created, [("opt", "", None)])
-        self.assertNotIn("env", body)
+        self.assertFalse("env" in body, "no env asked, none echoed")
         self.assertEqual(self.calls, [], "nothing asked, nothing re-asserted")
 
     def test_existing_session_reasserts_through_set_env(self):
@@ -332,10 +332,10 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual((code, code2), (200, 200), "the open itself stands: the session runs, one pref was refused")
         for b in (body, body2):
             self.assertTrue(b["ok"] and b["existing"])
-            self.assertNotIn("env", b, "a refused pick is never echoed as applied, the clear-all included")
+            self.assertFalse("env" in b, "a refused pick is never echoed as applied, the clear-all included")
             self.assertEqual(b.get("envRefused"), km._env_refusal())
             self.assertIn("per-session env", b["envRefused"])
-            self.assertNotIn(val, json.dumps(b), "the echo carries nothing of the pick")
+            self.assertFalse(val in json.dumps(b), "the echo carries nothing of the pick")
         self.assertEqual(self.calls, [("env", SID, {}), ("env", SID, {"NOTES_ENDPOINT": val})], "the setter was asked, and said no")
         lines = [ln for ln in err.getvalue().splitlines() if "refused" in ln]
         self.assertEqual(len(lines), 2, "one stderr line per refusal, as the effort leg writes")

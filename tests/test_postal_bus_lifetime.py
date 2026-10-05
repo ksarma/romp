@@ -114,8 +114,8 @@ class KernelUpSeamRestore(unittest.TestCase):
         result = unittest.TestResult()
         KernelUp("test_false_under_the_no_kernel_test_seam").run(result)
         self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
-        # the key is named: an assertNotIn over os.environ prints the whole environment when it fails
-        self.assertIsNone(os.environ.get("ROMP_SESSIONS_FILE"),
+        # a bool: an assertNotIn over os.environ prints the whole environment when it fails, assertIsNone of a get the value
+        self.assertFalse("ROMP_SESSIONS_FILE" in os.environ,
                           "KernelUp's seam test put ROMP_SESSIONS_FILE back the way it found it, unset")
 
 

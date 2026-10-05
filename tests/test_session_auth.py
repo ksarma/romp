@@ -223,11 +223,16 @@ class OptionsInjection(_OptionsHarness):
         # process still running, and a session that has not launched still takes every pick (2026-09-09;
         # the landing stamp since review round 1)
         s = self._sess(5, auth="key", effort="ultracode", mode="plan")
-        self.assertIsNone(s._launching)
+        self.assertTrue(s._launching is None, "no spawn window before the first connect")
         self.assertIsNone(s._launched_effort); self.assertIsNone(s._launched_mode); self.assertIsNone(s._launched_auth)
         kw = self._options_kw(s)
-        self.assertEqual(s._launching, {"effort": sb.effort_launch_shape("ultracode"), "mode": "plan", "auth": "key", "login": "", "env": {}},
-                         "the shape's `login` is the stored login the launch carries: empty for the key and the machine's own (T346)")
+        why = "the shape's `login` is the stored login the launch carries: empty for the key and the machine's own (T346)"
+        self.assertEqual(sorted(s._launching), ["auth", "effort", "env", "login", "mode"], why)
+        self.assertEqual(s._launching["effort"], sb.effort_launch_shape("ultracode"), why)
+        self.assertEqual(s._launching["mode"], "plan", why)
+        self.assertEqual(s._launching["auth"], "key", why)
+        self.assertEqual(s._launching["login"], "", why)
+        self.assertTrue(s._launching["env"] == {}, why)
         self.assertEqual(s._launching["effort"], (kw["effort"], True), "the value handed to the CLI plus the ultracode key")
         self.assertIsNone(s._launched_effort, "nothing is stamped until the connect lands")
         s._connect_landed()
@@ -714,7 +719,7 @@ class FallbackBothWays(_Keyed):
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
         self.be.login_ok = lambda: False
         sid = self.be.spawn("n", "/tmp")
-        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "unpicked: bills the key by the box's fallback")
+        self.assertFalse("auth" in sb.read_reg(self.be.state_dir, sid), "unpicked: bills the key by the box's fallback")
         self.assertEqual(self.be.default_auth(sb.read_reg(self.be.state_dir, sid)), "key")
         self.be.spawn("m", "/tmp")
         rows = [p["text"] for p in self.be.problems(20) if "the machine's default billing is the login" in p["text"]]
@@ -729,7 +734,7 @@ class FallbackBothWays(_Keyed):
         self._no_helper()
         self.be.login_ok = lambda: True
         sid = self.be.spawn("k", "/tmp")
-        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid))
+        self.assertFalse("auth" in sb.read_reg(self.be.state_dir, sid), "unpicked: the spawn writes no pick")
         rows = [p["text"] for p in self.be.problems(20) if "the machine's default billing is the API key" in p["text"]]
         self.assertEqual(len(rows), 1)
         self.assertIn("configure apiKeyHelper in", rows[0]); self.assertNotIn("the pick", rows[0])
@@ -786,7 +791,7 @@ class PickNotSeededSaysSo(_OptionsHarness):
         finally:
             self.be._log_cb = cb
         reg = sb.read_reg(self.be.state_dir, sid)
-        self.assertNotIn("auth", reg, "a follower: the flag-less pick seeded nothing")
+        self.assertFalse("auth" in reg, "a follower: the flag-less pick seeded nothing")
         return sid, reg, lines, self.be.problems(50)[before:]
 
     def test_a_plain_login_pick_with_a_helper_moves_the_bill_to_the_key_and_the_spawn_says_so(self):
@@ -995,7 +1000,7 @@ class DeclaredLoginOnAHelperBox(_Keyed):
         self.assertTrue(self.be.key_available, "the fixture helper is configured: the box has a key side")
         sid = self.be.spawn("n", "/tmp")
         reg = sb.read_reg(self.be.state_dir, sid)
-        self.assertNotIn("auth", reg, "no pick anywhere: the session is unpicked")
+        self.assertFalse("auth" in reg, "no pick anywhere: the session is unpicked")
         s = sb.SdkSession(self.be, reg)
         self.assertEqual(s.effective_auth(), "key", "the helper bills every unpicked session, whatever the box declares")
         self.assertEqual(self.be.default_auth({}), "key", "the picker's default says the same")
@@ -1011,7 +1016,7 @@ class DeclaredLoginOnAHelperBox(_Keyed):
         snap = s.snapshot()
         self.assertEqual((snap["auth"], snap["authLive"], snap["authPicked"]), ("key", "key", False))
         reg = sb.read_reg(self.be.state_dir, sid)
-        self.assertNotIn("auth", reg, "the reg carries no pick the user never made")
+        self.assertFalse("auth" in reg, "the reg carries no pick the user never made")
         self.assertIs(reg.get("apiKeyAuth"), True, "the report itself persists, as for any keyed landing")
 
     def test_the_same_box_declaring_key_is_quiet(self):
@@ -1039,7 +1044,7 @@ class SetAuth(_Keyed):
         # explicit default stands is seeded with it as a pick of its own (three lines down) and a later move does not
         # reach it (round 1 of the reviewer's review, 2026-09-18: the comment overstated followership)
         sid2 = self.be.spawn("m", "/tmp")
-        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid2), "a follower, not a pick of the remembered side")
+        self.assertFalse("auth" in sb.read_reg(self.be.state_dir, sid2), "a follower, not a pick of the remembered side")
         self.assertTrue(self.be.set_auth_default("login"))
         sid3 = self.be.spawn("o", "/tmp")
         self.assertEqual(sb.read_reg(self.be.state_dir, sid3).get("auth"), "login", "the EXPLICIT default seeds a new session")
@@ -1076,7 +1081,7 @@ class SetAuth(_Keyed):
         the explicit seed when this box can bill it; the launch applies it next time; the marks agree at once."""
         u = self.be.spawn("u", "/tmp")
         reg = sb.read_reg(self.be.state_dir, u)
-        self.assertNotIn("auth", reg)
+        self.assertFalse("auth" in reg, "the spawn writes no pick: u is unpicked")
         self.assertEqual(self.be.default_auth(reg), "key", "the helper rule before any explicit default")
         live = sb.SdkSession(self.be, reg)
         self.assertEqual(live.effective_auth(), "key")
@@ -1189,7 +1194,7 @@ class SetAuth(_Keyed):
         self.assertEqual(self.be.last_auth_refusal, sb._cred.WHY_NO_HELPER, "the refusal names its reason")
         rows = [p["text"] for p in self.be.problems(10) if sb._cred.WHY_NO_HELPER in p["text"]]
         self.assertEqual(len(rows), 1, "…in the problem ring too")
-        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "nothing half-applied")
+        self.assertFalse("auth" in sb.read_reg(self.be.state_dir, sid), "nothing half-applied")
 
     def test_refuses_a_login_pick_on_a_box_with_no_login_naming_the_reason(self):
         sid = self.be.spawn("n", "/tmp")
@@ -1231,7 +1236,7 @@ class SetAuth(_Keyed):
         sid = self.be.spawn("n", "/tmp")                              # spawned before the default: a follower (a spawn after it would be seeded)
         sb.write_sdk_default(self.be.state_dir, auth="login", authExplicit=True)
         self.be._update_reg(sid, authPending=True, effortPending=True, apiKeyAuth=True)
-        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid))
+        self.assertFalse("auth" in sb.read_reg(self.be.state_dir, sid), "a follower carries no pick")
         s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
         reg = sb.read_reg(self.be.state_dir, sid)
         self.assertTrue(reg.get("authPending"), "the follower's ask stands on the reg")

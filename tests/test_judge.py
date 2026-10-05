@@ -6893,7 +6893,7 @@ class IndexTierLever(unittest.TestCase):
             jd._judge_run("fable", "SYS", "payload", judge="planner", tier="triage")
         cmd, env = self.calls[0]
         self.assertNotIn("--effort", cmd, "triage keeps its own default (no flag unless the gear says so)")
-        self.assertIsNone(env.get("MAX_THINKING_TOKENS"))
+        self.assertFalse("MAX_THINKING_TOKENS" in env, "MAX_THINKING_TOKENS")
 
 
 class AliasHeadDrift(unittest.TestCase):
@@ -7027,7 +7027,7 @@ class AliasHeadDrift(unittest.TestCase):
         cmd, env, err = self._run("haiku", {"claude-haiku-4-6-20260301": {"outputTokens": 200}},
                                   tier="triage", judge="planner")
         self.assertNotIn("--effort", cmd, "triage keeps its own default")
-        self.assertIsNone(env.get("MAX_THINKING_TOKENS"))
+        self.assertFalse("MAX_THINKING_TOKENS" in env, "MAX_THINKING_TOKENS")
         self.assertEqual(len(self._drift_lines(err)), 1)
         self.assertEqual(jd._ALIAS_SERVED.get("haiku"), (4, 6))
         cmd, env, err = self._run("haiku")
