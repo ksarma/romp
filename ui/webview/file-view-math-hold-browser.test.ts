@@ -38,7 +38,8 @@
 // sentence, and the pane is the only root put into the body across the release, so the repaint never ran before it, the order the
 // re-check rests on: the landing's hold is built before mathHold, so its release runs first (the review's round 3, tests-1: the end
 // state alone passed with mathHold built first, the note painted and then covered); in the URL viewer a press on Raw across the
-// retry's success keeps the Raw pick's rows, the one paint after the release).
+// retry's success keeps the Raw pick's rows, the one paint after the release, and so does a press on Raw over a held open across
+// the first arrival, the loader standing under the press, the re-check's held half (the review's round 3, tests-2)).
 // Nothing in the body moves under the press either: the arrival leaves a failed load's sources in both viewers' bodies to the held repaint (math.ts
 // MATH_REPAINT_ATTR), so a press on a link below two display formulas, held across the retry's success, clicks the link, still in
 // the page, and its fragment lands, in both viewers (before, the in-place re-fill grew the formulas and the release met another
@@ -770,6 +771,39 @@ test("chromium: the URL viewer: a failed load's sources shown, a press on Raw he
     const pressed = (await overNow(page)).pressed;
     assert.ok(pressed.includes("Raw") && !pressed.includes("Rendered"), "under the pressed Raw button: " + JSON.stringify(pressed));
     assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+// the held half of the same re-check (the review's round 3, tests-2): the arrival's repaint of a held paint stands down when a paint
+// since the settle ended the hold, here the Raw pick the release clicks
+test("chromium: the URL viewer: a held open, a press on Raw held across the renderer's arrival: the loader stands under the press, and the release's Raw pick paints the rows, the arrival's parked repaint standing down: one paint", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: NOTE }, "serve", g, requests, null, { url: URL_PATH, urls: { [ORIGIN + URL_PATH]: NOTE } });
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+    await frames(page, 4);
+    assert.deepEqual([(await overNow(page)).loader, (await overNow(page)).md], [true, false], "held at the open: the loader, no note");
+    const raw = page.locator("#romp-fileview button.fileview-btn", { hasText: /^Raw$/ });
+    const box = await raw.boundingBox();
+    assert.ok(box, "the Raw button to press");
+    // every paint of the body from the press on: a swap of its children (the URL viewer fires no seam paint)
+    await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; (window as any).__swaps = 0; new MutationObserver((recs) => { if (recs.some((r) => r.addedNodes.length)) (window as any).__swaps++; }).observe(b, { childList: true }); });
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    g.open();
+    await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+    await frames(page, 6);
+    const under = await overNow(page);
+    await page.mouse.up();
+    await frames(page, 10);
+    const after = await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; return { rows: b.querySelectorAll(".fv-cl").length, md: !!b.querySelector(".fileview-md"), katex: b.querySelectorAll(".katex").length, swaps: (window as any).__swaps }; });
+    assert.ok(after.rows > 0 && !after.md && after.katex === 0, "the Raw pick's rows stand, no Rendered paint over them: " + JSON.stringify(after));
+    assert.deepEqual([under.loader, under.md], [true, false], "under the press the loader stood and no note was in the body: the arrival's repaint was parked, not run: " + JSON.stringify(under));
+    assert.equal(after.swaps, 1, "one paint from the press on, the Raw pick's: the parked repaint found the hold ended by a paint since the settle and painted nothing: " + JSON.stringify(after));
+    const pressed = (await overNow(page)).pressed;
+    assert.ok(pressed.includes("Raw") && !pressed.includes("Rendered"), "under the pressed Raw button: " + JSON.stringify(pressed));
+    assert.equal(requests.length, 1);
     assert.deepEqual(errors, []);
   });
 });
