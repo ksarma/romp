@@ -22,12 +22,13 @@
 // handles by bringing its splash down and wearing the refusal's words on the rail's restart button, so the lab lives on.
 // Then the drop cue on the card's glyph (cfg.tunnelsDrop, a host that was up answering down): a drop with the card closed,
 // the glyph read at the card's next opening, and a drop with the card open, the glyph read while its flash runs.
-// Then Usage with no reading, on a page of its own at cfg.actsViewport: the shell's GET /usage/fleet (the main frame's) answers
-// no rows, so the shell holds no reading (the rail's readout, which renders over the readings, read empty as the premise); the
-// card opened from the bar's Settings, its Usage button read (disabled, its sub-line), a click at its centre, and after a
-// settle (an absence has no event to wait on) the card, the Usage modal and the phoneAct messages the shell heard read; then a
-// reading arrives (the lab's own GET /usage payload posted to the shell as the timeline posts it, the shell's later pulls let
-// through), the card closed and opened again, Usage read again, and one click on it, its effect read.
+// Then Usage with no reading, on a page of its own at cfg.actsViewport: the shell's usage pull (the main frame's GET under
+// /usage/) answers no rows, so the shell holds no reading (the rail's readout, which renders over the readings, read empty as
+// the premise); the card opened from the bar's Settings, its Usage button read (disabled, its sub-line), a click at its
+// centre, and after a settle (an absence has no event to wait on) the card, the Usage modal and the phoneAct messages the
+// shell heard read; then a reading arrives (the lab's own GET /usage payload posted to the shell as the timeline posts it,
+// the shell's later pulls let through), the card closed and opened again, Usage read again, and one click on it, its effect
+// read.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -320,10 +321,11 @@ try {
   }
   // Usage with no reading, then with one: the card asks the shell at each opening
   {
-    let empty = true, fleet = 0;
-    const { context, page } = await boot(false, (pg) => pg.route("**/usage/fleet", (route) => {
+    // the shell's usage pull is its one GET under /usage/ (the route the usage script's pull reads); /usage itself is let through
+    let empty = true, pulls = 0;
+    const { context, page } = await boot(false, (pg) => pg.route((url) => url.pathname.startsWith("/usage/"), (route) => {
       if (route.request().frame() !== pg.mainFrame() || !empty) return route.continue();
-      fleet++;
+      pulls++;
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) });
     }));
     const [w, h] = cfg.actsViewport;
@@ -333,9 +335,9 @@ try {
     await frames(page);
     const nr = { vp: [w, h] };
     // the premise: the shell's boot pull got the empty answer, and its readout holds nothing
-    for (let i = 0; i < 150 && fleet < 1; i++) await sleep(100);
+    for (let i = 0; i < 150 && pulls < 1; i++) await sleep(100);
     await frames(page);
-    nr.premise = { fleet, readout: await page.evaluate(() => { const r = document.getElementById("rail-usage"); return r ? r.innerHTML : null; }) };
+    nr.premise = { pulls, readout: await page.evaluate(() => { const r = document.getElementById("rail-usage"); return r ? r.innerHTML : null; }) };
     await page.evaluate(() => { window.__mtabsActs = []; window.addEventListener("message", (e) => { if (e.data && e.data.romp === "phoneAct") window.__mtabsActs.push(e.data.act); }); });
     const gear = (await read(page)).controls.find((c) => c.key === "settings");
     if (!gear) throw new Error("no Settings on the bar (the no-reading leg)");

@@ -76,16 +76,16 @@ manager's shape, RESTART_REFUSAL, so the lab kernel stays up, and the shell's ha
 refusal's words on the rail's restart button); no click but that one makes a POST /restart. Then the drop cue (TUNNELS_DROP,
 a host that was up answering with no kernel): with the card closed the poll drops the host, and at the card's next opening
 its glyph carries no flash; then the host comes back and drops again with the card open, and the glyph's flash runs. Then
-Usage with no reading, on a page whose shell's GET /usage/fleet answers no rows (the rail's readout, which renders over the
-readings, read empty as the leg's premise): the card opened from the bar's Settings shows Usage disabled with the line
-USAGE_NONE; a click at its centre leaves the card open, opens no Usage modal and posts no phoneAct (read after a settle: an
-absence has no event to wait on), and the line still shows; then a reading arrives (the lab's own GET /usage payload posted
-to the shell as the timeline posts it, the shell's later pulls let through), and at the card's next opening Usage is enabled
-with no line, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then a desktop window, where
-the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell, the gear) and
-their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear clicked at its
-centre, shows no row of moved actions (not displayed, its buttons boxless: the rail has its own). MTABS_FIT_DUMP, a
-directory, keeps each engine's raw readings there.
+Usage with no reading, on a page whose shell's usage pull (its GET under /usage/) answers no rows (the rail's readout, which
+renders over the readings, read empty as the leg's premise): the card opened from the bar's Settings shows Usage disabled
+with the line USAGE_NONE; a click at its centre leaves the card open, opens no Usage modal and posts no phoneAct (read after
+a settle: an absence has no event to wait on), and the line still shows; then a reading arrives (the lab's own GET /usage
+payload posted to the shell as the timeline posts it, the shell's later pulls let through), and at the card's next opening
+Usage is enabled with no line, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then a desktop
+window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell,
+the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
+clicked at its centre, shows no row of moved actions (not displayed, its buttons boxless: the rail has its own).
+MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
 
 Red at the wrap-only head, in all three engines: its bar shows six actions, it wraps where one row is owed (at 375 and
 390px, and at 414 in Chromium; its row fits 414 in WebKit and Firefox and 430 in all three), and its card has no row of
@@ -371,7 +371,7 @@ def _no_reading_problems(engine, nr):
     out = []
     where = "%s Usage with no reading at %dx%d" % (engine, nr["vp"][0], nr["vp"][1])
     pre = nr.get("premise") or {}
-    if pre.get("fleet", 0) < 1 or pre.get("readout") != "":
+    if pre.get("pulls", 0) < 1 or pre.get("readout") != "":
         out.append("%s: the shell holds a reading before the card opens (the leg's premise): %r" % (where, pre))
     first = nr.get("first")
     if not first or first.get("disabled") is not True or not first.get("line") or first["line"].get("shown") is not True \
