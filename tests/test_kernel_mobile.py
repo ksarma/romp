@@ -2485,19 +2485,38 @@ _BELLS = ("mbell", "rail-bell")
 _NAMES_A_BELL = re.compile(r"(?<![\w-])(?:mbell|rail-bell)(?![\w-])")
 
 
+# The attribute name an attribute selector starts with, past any whitespace and a namespace prefix (`*|`, `|`); the caller compares
+# it case-insensitively, as a browser matches attribute names in an HTML page. In `[lang|=en]` the | belongs to the |= operator.
+_ATTR_NAME = re.compile(r"\[\s*(?:(?:[\w-]*|\*)\|(?!=))?([\w-]+)")
+
+
 def _bell_rule_classes(html):
-    """{bell id: classes} that the served shell's CSS rules name on the bell: every class in a compound that carries the bell's id,
+    r"""{bell id: classes} that the served shell's CSS rules name on the bell: every class in a compound that carries the bell's id,
     inside :not() and the other functional pseudo-classes as well (`#mbell:not(.on) .bell-slash` names `on` on #mbell), read from the
     parsed rules (served_css.rules). A class the bell's markup gives it counts too, since served_css reads no attributes of other
     elements: a rule naming one on a bell by id (`#mbell.mact`) would read as a class no script sets and turn the census red, the
-    safe side; no rule does."""
+    safe side; no rule does.
+
+    A compound carries a bell's id here only as `#mbell` or `#rail-bell` written plainly. Four spellings could reach a bell, or put a
+    class on one, past that read, and each is refused loudly in every rule, so a rule spelled that way fails the census instead of
+    passing it unread (T10's fix pass, 2026-10-05: `[id=mbell].busy{opacity:.45}` planted in the phone block had passed): an id
+    attribute selector in any compound, whatever its case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`,
+    `[ID$=bell i]`); a class attribute selector in a compound that carries a bell's id; a `[` that starts no attribute name this read
+    can parse; and a CSS escape anywhere in a selector (`#\6d bell`, `.bu\73 y`). BellRuleReader pins each refusal. A rule that
+    reaches a bell with no id at all (through a tag, a markup class such as `.mact`, or another attribute) is not read here."""
     named = {b: set() for b in _BELLS}
     for rule in served_css.rules(html):
+        assert "\\" not in rule.selector, "a rule spells a selector with a CSS escape (%r); this census reads plain spellings only" % rule.selector
         for member in served_css.members(rule.selector):
             for comp in served_css._split_top(re.sub(r"\s*([>+~])\s*", r"\1", member), " >+~"):
+                attrs = [_ATTR_NAME.match(comp, m.start()) for m in re.finditer(r"\[", comp)]
+                assert all(attrs), "a rule's attribute selector starts no attribute name this census reads (%r)" % rule.selector
+                attrs = {a.group(1).lower() for a in attrs}
+                assert "id" not in attrs, ("a rule selects by the id attribute (%r), which can reach a bell without #mbell or #rail-bell; "
+                                           "name a bell by its #id" % rule.selector)
                 for b in _BELLS:
                     if re.search(r"#%s(?![\w-])" % re.escape(b), comp):
-                        assert "[class" not in comp, "a rule selects #%s by its class attribute (%r); read it into this census" % (b, rule.selector)
+                        assert "class" not in attrs, "a rule selects #%s by its class attribute (%r); read it into this census" % (b, rule.selector)
                         named[b] |= set(re.findall(r"\.([\w-]+)", re.sub(r"\[[^\]]*\]", "", comp)))
     return named
 
@@ -2608,6 +2627,43 @@ class BellStateClassCensus(unittest.TestCase):
         self.assertEqual(self.out["pending"], ["all", "turns", "dev"], "each row with its request pending wears its own busy")
         for path in ("/notify-all", "/notify-turns", "/push/subscribe", "/push/unsubscribe", "/push/test"):
             self.assertIn(path, self.out["posts"], "the run sent %s" % path)
+
+
+class BellRuleReader(unittest.TestCase):
+    """The census's rule half (_bell_rule_classes) on synthetic sheets: a plain spelling is read, plain attribute selectors pass,
+    and each spelling that could reach a bell, or put a class on one, past the plain read is refused by its own assertion (T10's
+    fix pass, 2026-10-05). The first case is the plant that had passed the census when it sat in the served shell's phone block."""
+
+    @staticmethod
+    def _read(css):
+        return _bell_rule_classes("<!doctype html><html><head><style>%s</style></head><body></body></html>" % css)
+
+    def test_a_plain_spelling_is_read_and_plain_attribute_selectors_pass(self):
+        self.assertEqual(self._read("#mtabs #mbell.busy{opacity:.45}"
+                                    ".rail-acts>#rail-bell:not(.on) svg{opacity:1}"
+                                    "#mtabs button[data-pane=feed][hidden],:lang(en) [lang|=en],[*|title]{display:none}"),
+                         {"mbell": {"busy"}, "rail-bell": {"on"}})
+
+    def test_each_spelling_past_the_plain_read_is_refused_by_its_own_assertion(self):
+        cases = (
+            ("[id=mbell].busy", "id attribute"),          # the plant that had passed the census
+            ('#mtabs [id="rail-bell"].busy', "id attribute"),
+            ("[ID='mbell' i].busy", "id attribute"),
+            ("[ id = mbell ].busy", "id attribute"),
+            ("[*|id=mbell].busy", "id attribute"),
+            ("[id$=bell].busy", "id attribute"),
+            (":is([id=mbell]).busy", "id attribute"),
+            ("#mbell[class~=busy]", "class attribute"),
+            ("#mbell[CLASS~=busy]", "class attribute"),
+            ("#mbell[ class ~= busy ]", "class attribute"),
+            ("#mbell[=busy]", "starts no attribute name"),
+            (r"[\69 d=mbell].busy", "CSS escape"),
+            (r"#mbell.bu\73 y", "CSS escape"),
+            (r"#\6d bell.busy", "CSS escape"),
+        )
+        for sel, why in cases:
+            with self.subTest(sel=sel), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(sel + "{opacity:.45}")
 
 
 # A node stand-in for the phone with the shell socket in view: the fit harness's window plus a mutable copy of the
