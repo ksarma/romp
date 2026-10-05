@@ -22,7 +22,8 @@
 // A takeover of the body ends the hold (the review's round 2, correctness-1): a reload answered 404 while a paint is held paints its
 // pane, and the renderer's arrival, a success or a failure, leaves the pane standing with the seam's error() keeping its sentence
 // (before, the arrival painted the last text over it); the editor entered while held stays through the arrival, and its Cancel
-// lands the open's offset in the Raw rows, as an exit before the arrival does (before, the arrival spent the offset into the editor).
+// lands the open's offset in the Raw rows, as an exit before the arrival does (before, the arrival spent the offset into the editor),
+// both with the editor's chunk answered at once and with it held past the arrival, so the renderer meets the editor's loader.
 // The arrival's repaint waits out a press on the card through a hold of its own (the review's round 2, ui-1): a press on an Outline
 // row held across a retry's success lands its pick, its row still in the page at the click, and the note is laid out after the
 // release; a reload landing parked under a press survives an arrival in the same press and paints the new text at the release; a
@@ -45,9 +46,10 @@ type Answer = "serve" | "404";
 /** The viewer opened in the Files pane over `docs` with its bundle by src; the chunk's URL answered under `chunk` (one answer, or
  *  one per request in order, the last repeating), every answer held by `g` and the n-th by `more.gates[n]`; `openOpts` is
  *  openFileView's third argument (an `at` target). `more` passes openViewer's url, urls, raw, waitFor and before through (the
- *  URL viewer, a saved Raw preference, a page global installed before the open). */
+ *  URL viewer, a saved Raw preference, a page global installed before the open); `more.editor` holds the editor chunk's 404 until
+ *  it opens, so the editor's own loader stands in the body meanwhile. */
 async function open(browser: any, docs: Record<string, string>, chunk: Answer | Answer[], g: Gate | null, requests: string[], openOpts: Record<string, unknown> | null = null,
-  more: { gates?: (Gate | null)[]; url?: string; urls?: Record<string, string>; raw?: boolean; waitFor?: string; before?: (page: any) => Promise<void> } = {}) {
+  more: { gates?: (Gate | null)[]; url?: string; urls?: Record<string, string>; raw?: boolean; waitFor?: string; before?: (page: any) => Promise<void>; editor?: Gate } = {}) {
   return openViewer(browser, "pane", 900, 700, {
     docs, bundleSrc: "/dist/files.js?v=3", waitFor: more.waitFor || ".fileview-body", openOpts, url: more.url, urls: more.urls, raw: more.raw,
     // the editor's chunk is answered with a 404, so Edit opens the plain fallback editor (the editor-entry scene) and never runs the page as a script
@@ -65,6 +67,11 @@ async function open(browser: any, docs: Record<string, string>, chunk: Answer | 
         if (answer === "404" || "error" in c) return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" });
         return route.fulfill({ status: 200, contentType: "text/javascript", body: c.js });
       });
+      // registered after openViewer's own route, so it answers the editor's chunk first: the same 404, once the gate opens
+      if (more.editor) {
+        const eg = more.editor;
+        await page.route((u: URL) => u.pathname === "/dist/editor-chunk.js", async (route: any) => { await eg.promise; return route.fulfill({ status: 404, contentType: "text/plain", body: "not found" }); });
+      }
       if (more.before) await more.before(page);
     },
   });
@@ -396,35 +403,55 @@ for (const answer of ["serve", "404"] as const) {
   });
 }
 
-test("chromium: the editor entered while a math note opened at an offset is held keeps the body through the renderer's arrival, and its Cancel lands the open's offset in the Raw rows", { timeout: 60000 }, async (t) => {
-  await inBrowser(t, async (browser) => {
-    const g = gate(); const requests: string[] = [];
-    const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, { at: { offset: TARGET_OFFSET } });
-    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
-    await frames(page, 6);
-    assert.equal((await landing(page)).loader, true, "held at the open");
-    await page.locator('#romp-fileview button[aria-label="Edit"]').click();
-    await page.waitForFunction(() => !!document.querySelector(".fileview-body > textarea.fileview-editor"), null, { timeout: 10000 });   // the plain fallback editor: the editor's chunk answers 404
-    await frames(page, 4);
-    g.open();
-    await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
-    await frames(page, 8);
-    const ed = await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; return { editor: !!b.querySelector(":scope > textarea.fileview-editor"), md: !!b.querySelector(".fileview-md"), loader: !!b.querySelector(".fileview-load"), rows: b.querySelectorAll(".fv-cl").length }; });
-    assert.deepEqual(ed, { editor: true, md: false, loader: false, rows: 0 }, "the editor holds the body through the arrival: " + JSON.stringify(ed));
-    await page.locator("#romp-fileview button.fileview-btn", { hasText: /^Cancel$/ }).click();
-    await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
-    await frames(page, 6);
-    const raw = await page.evaluate(() => {
-      const b = document.querySelector(".fileview-body") as HTMLElement;
-      const bt = b.getBoundingClientRect().top;
-      const r = Array.from(b.querySelectorAll(".fv-cl")).find((x) => (x.textContent || "").includes("Target paragraph here.")) as HTMLElement | undefined;
-      return { scrollTop: b.scrollTop, clientHeight: b.clientHeight, target: r ? { top: Math.round(r.getBoundingClientRect().top - bt), bottom: Math.round(r.getBoundingClientRect().bottom - bt) } : null };
+// The editor's entry takes the body in two steps, its loader while the editor chunk loads and then the editor (here the plain
+// fallback, the chunk answering 404): the chunk answered at once, so the fallback stands before the renderer arrives, and the chunk
+// held past the arrival, so the renderer meets the editor's loader (the check of round 2's pass: enterEdit's loader endHold, the one
+// that ends the hold when the chunk is slow, went unpinned while the 404 came at once).
+for (const editorChunk of ["answered at once", "held past the renderer's arrival"] as const) {
+  test(`chromium: the editor entered while a math note opened at an offset is held, its chunk ${editorChunk}, keeps the body through the renderer's arrival, and its Cancel lands the open's offset in the Raw rows`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      const g = gate(); const requests: string[] = [];
+      const slow = editorChunk !== "answered at once";
+      const eg = slow ? gate() : null;
+      const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, { at: { offset: TARGET_OFFSET } }, eg ? { editor: eg } : {});
+      await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+      await frames(page, 6);
+      assert.equal((await landing(page)).loader, true, "held at the open");
+      await page.locator('#romp-fileview button[aria-label="Edit"]').click();
+      const editorNow = (): Promise<{ editor: boolean; loader: boolean; md: boolean; rows: number }> => page.evaluate(() => { const b = document.querySelector(".fileview-body")!; return { editor: !!b.querySelector(":scope > textarea.fileview-editor"), loader: !!b.querySelector(":scope > .fileview-load"), md: !!b.querySelector(".fileview-md"), rows: b.querySelectorAll(".fv-cl").length }; });
+      if (slow) {
+        await page.waitForFunction(() => !!document.querySelector('script[src*="editor-chunk.js"]'), null, { timeout: 10000 });   // the editor's loader up, its chunk out
+      } else {
+        await page.waitForFunction(() => !!document.querySelector(".fileview-body > textarea.fileview-editor"), null, { timeout: 10000 });   // the plain fallback editor: the editor's chunk answers 404
+      }
+      await frames(page, 4);
+      const before = await editorNow();
+      assert.deepEqual(before, slow ? { editor: false, loader: true, md: false, rows: 0 } : { editor: true, loader: false, md: false, rows: 0 }, "the editor's entry holds the body: " + JSON.stringify(before));
+      g.open();
+      await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+      await frames(page, 8);
+      const ed = await editorNow();
+      assert.deepEqual(ed, before, "the editor's entry holds the body through the arrival: " + JSON.stringify(ed));
+      if (eg) {
+        eg.open();
+        await page.waitForFunction(() => !!document.querySelector(".fileview-body > textarea.fileview-editor"), null, { timeout: 10000 });
+        await frames(page, 4);
+      }
+      await page.locator("#romp-fileview button.fileview-btn", { hasText: /^Cancel$/ }).click();
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+      await frames(page, 6);
+      const raw = await page.evaluate(() => {
+        const b = document.querySelector(".fileview-body") as HTMLElement;
+        const bt = b.getBoundingClientRect().top;
+        const r = Array.from(b.querySelectorAll(".fv-cl")).find((x) => (x.textContent || "").includes("Target paragraph here.")) as HTMLElement | undefined;
+        return { scrollTop: b.scrollTop, clientHeight: b.clientHeight, target: r ? { top: Math.round(r.getBoundingClientRect().top - bt), bottom: Math.round(r.getBoundingClientRect().bottom - bt) } : null };
+      });
+      assert.ok(raw.scrollTop > 0 && raw.target !== null && raw.target.top >= 0 && raw.target.bottom <= raw.clientHeight, "the Cancel's Raw paint lands the open's offset: its row in view: " + JSON.stringify(raw));
+      assert.equal(requests.length, 1);
+      assert.deepEqual(errors, []);
     });
-    assert.ok(raw.scrollTop > 0 && raw.target !== null && raw.target.top >= 0 && raw.target.bottom <= raw.clientHeight, "the Cancel's Raw paint lands the open's offset: its row in view: " + JSON.stringify(raw));
-    assert.equal(requests.length, 1);
-    assert.deepEqual(errors, []);
   });
-});
+}
 
 // ── the arrival's repaint waits out a press on the card (the review's round 2, ui-1), through its own hold ──
 
