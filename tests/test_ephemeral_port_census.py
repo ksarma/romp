@@ -644,7 +644,8 @@ def interval(node, bound=None, steps=None):
     each to an int, so at a step that K is one it does not bound; and, for a value that reads a name with a binding the
     census does not record, it calls again with `bound` holding only the names every binding of which the census
     records, so that K reads unbounded there. offset_base() hands it the values of its own `bound`, each name it reads
-    holding one of its ints at a time."""
+    holding one of its values at a time, an int or any other constant (a float, a string or bytes reads only inside
+    int(), and None only at a randrange's stop)."""
     bound = bound or {}
     steps = bound if steps is None else steps
     if isinstance(node, ast.Constant) and isinstance(node.value, int):
