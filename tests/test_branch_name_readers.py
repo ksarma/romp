@@ -192,6 +192,7 @@ CLASSIFIED = {
     ".github/workflows/ci.yml": ((NOT_A_READ,), "github.ref in the concurrency group, which GitHub evaluates for a run "
                                                 "and no test runs; tests/test_ci_workflow_concurrency.py evaluates the "
                                                 "expression over values it gives"),
+    ".github/workflows/docs.yml": ((NOT_A_READ,), "github.ref in the concurrency group, which GitHub alone evaluates"),
     ".github/workflows/ledger.yml": ((NOT_A_READ,), "github.ref in the concurrency group, which GitHub alone evaluates"),
     "kernel/kernel.py": ((READS, SYNTHETIC, NOT_A_READ),
                          "_tree_branch reads the branch of a session's directory, and _checkout_branch the install's "
@@ -257,6 +258,8 @@ CLASSIFIED = {
                                                              "values it gives; reads no repository"),
     "tests/test_converge_main_branch.py": ((SYNTHETIC, NOT_A_READ), "symbolic-ref --short HEAD of the checkout setUp "
                                                                     "builds (self.checkout); a comment"),
+    "tests/test_docs_workflow_pins.py": ((NOT_A_READ,), "an expected text: docs.yml's concurrency group, matched "
+                                                        "against the workflow file's text; reads no repository"),
     "tests/test_env_value_redaction.py": ((NOT_A_READ,), "GitHub's variables set to values the test gives, in an "
                                                          "environment it builds, for the redaction of their values"),
     "tests/test_federated_linkdrop_mint.py": ((SYNTHETIC,), "git worktree list of the repository the case builds "
