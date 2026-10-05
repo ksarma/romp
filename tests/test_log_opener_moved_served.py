@@ -8,12 +8,14 @@ palette's log.open and the mobile bar's #merr are unchanged; the Log's own behav
 Two guards: SourcePins runs everywhere; ServedOpener boots the hermetic kernel, loads the dashboard, and drives
 the gear's button in the settings iframe, the /settings page that hosts the gear since 2026-09-10 (skips loudly
 without the extension deps or a Playwright browser). It also reads the button's unread count in both themes: the phone
-triangle's red in each (feed.css --log-unread, 2026-10-04), at 3:1 or better on the count's ground. An opacity under 1, a
-filter other than none or a mix-blend-mode other than normal on any box from the count up to the settings page's root fails
-that read loudly, since each changes how the colours the read takes are drawn (the round-2 review, 2026-10-04): a mutant
-that plants an opacity of 0.3 on the count, on its button (the count's ground), on body or on html, or
-`filter: opacity(.45)` or `mix-blend-mode: multiply` on the count, on its button or on html, turns it red through the
-ground error that names the box and the property, not through the ratio.
+triangle's red in each (feed.css --log-unread, 2026-10-04), at 3:1 or better on the count's ground. Any box from the count
+up to the settings page's root whose drawing composites it with what lies behind it or dims it fails that read loudly (the
+round-2 review's rule, 2026-10-05): an opacity under 1, a filter or a backdrop-filter other than none, a mix-blend-mode
+other than normal, or a mask-image other than none, each read in its -webkit- form too where the engine reports one, since
+each can change how the colours the read takes are drawn. A mutant that plants an opacity of 0.3 on the count, on its
+button (the count's ground), on body or on html, or `filter: opacity(.45)`, `backdrop-filter: brightness(.45)`,
+`mix-blend-mode: multiply` or a `mask-image` gradient at alpha .45 on the count, on its button or on html, turns it red
+through the ground error that names the box and the property, not through the ratio.
 All fixtures synthetic.
 """
 import inspect
@@ -151,18 +153,32 @@ const readCount = () => feed.evaluate(async () => {
     }
   }
   if (!ground && !groundError) groundError = "no box from the count up has an opaque background";
-  // then the read of how the boxes are drawn (the round-2 review, 2026-10-04, which ruled in the filter and the blend mode
-  // beside the opacity): an opacity under 1, a computed filter other than none or a mix-blend-mode other than normal on any
-  // box from the count up to this document's root, body and html among them, changes how the count is drawn against its
-  // ground, or the count and its ground together against what is behind them, so the two computed colours are not what
-  // the screen shows; the first such box is named with the property and the ratio is never measured (an unreadable value
-  // fails the same way). The settings page is an iframe: the shell's boxes around it (#f-settings and up) belong to
-  // another document, and this read does not reach them
+  // then the read of how the boxes are drawn, against one rule (ruled in the round-2 review, 2026-10-05): no box from the
+  // count up to this document's root, body and html among them, may be drawn so that it composites with what lies behind
+  // it or dims. Such drawing can change how the count is drawn against its ground, or the count and its ground together
+  // against what is behind them, so the two computed colours may not be what the screen shows. The CSS that does, as this
+  // read takes it: an opacity under 1, a filter or a backdrop-filter other than none, a mix-blend-mode other than normal,
+  // a mask-image other than none. The first box with any of them is named with the property and its value, whatever the
+  // value's effect (an identity filter fails too), and the ratio is never measured. Each property after the opacity is
+  // read in its standard form and in its -webkit- form wherever the engine reports that form, so an engine that reports
+  // only the prefixed one is read as well; a property reported in neither form, or an unreadable opacity, fails the same
+  // way. Paint effects outside the rule are not read, among them visibility, clip-path, a mask-border, a text fill colour
+  // (-webkit-text-fill-color) and a box off this path drawn over the count. The settings page is an iframe: the shell's
+  // boxes around it (#f-settings and up) belong to another document, and this read does not reach them
+  const DRAWN = [["filter", "none"], ["backdrop-filter", "none"], ["mix-blend-mode", "normal"], ["mask-image", "none"]];
+  const drawn = (st) => {
+    if (!(parseFloat(st.opacity) >= 1)) return "an opacity of " + st.opacity;
+    for (const [prop, flat] of DRAWN) {
+      const forms = [prop, "-webkit-" + prop].map((p) => [p, st.getPropertyValue(p)]).filter((f) => f[1] !== "");
+      if (!forms.length) return "an unreadable " + prop;
+      const off = forms.find((f) => f[1] !== flat);
+      if (off) return "a " + off[0] + " of " + off[1].slice(0, 120);
+    }
+    return null;
+  };
   for (let el = n; el && !groundError; el = el.parentElement) {
-    const st = getComputedStyle(el);
-    if (!(parseFloat(st.opacity) >= 1)) groundError = "an opacity of " + st.opacity + " on " + tagOf(el);
-    else if (st.filter !== "none") groundError = "a filter of " + st.filter + " on " + tagOf(el);
-    else if (st.mixBlendMode !== "normal") groundError = "a mix-blend-mode of " + st.mixBlendMode + " on " + tagOf(el);
+    const why = drawn(getComputedStyle(el));
+    if (why) groundError = why + " on " + tagOf(el);
   }
   return { text: n.textContent, hidden: n.hidden, color: getComputedStyle(n).color, ground, groundOf, groundError,
            light: document.body.classList.contains("theme-light"), settled, animations: mine.length };

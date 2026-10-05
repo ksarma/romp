@@ -25,8 +25,8 @@
 // the muted steps log, the newer and the older (mutedListed, mutedOlderListed; the list is re-rendered only while the Log is
 // open, so these are read at the open steps), and those two entries' stored seen flags (mutedSeen, mutedOlderSeen, null
 // before they are logged), and the triangle's ground: the computed background of the first box from #merr up whose background
-// is opaque (ground, groundOf), or why none could be read or measured (groundError; among the reasons, an opacity under 1, a
-// filter other than none or a blend mode other than normal on any box from #merr up to the document's root). Prints one
+// is opaque (ground, groundOf), or why none could be read or measured (groundError; among the reasons, a box from #merr up to
+// the document's root whose drawing composites it with what lies behind it or dims it). Prints one
 // `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip). Never touches a
 // live kernel: cfg.healthz names the LAB port and is asserted before any request. No sessions, no real data.
 import { createRequire } from "node:module";
@@ -121,12 +121,11 @@ const snap = async (name) => {
     // the triangle's ground: the first box from #merr up (the button itself first) whose computed background is opaque, so a
     // background set later on the button, or a translucent bar, is read and never assumed. A partly transparent background,
     // a background image, an unreadable colour or no opaque box at all is groundError, which the Python side fails on at
-    // every step where it measures the ratio. So is an opacity under 1, a computed filter other than none or a mix-blend-mode
-    // other than normal on any box from #merr up to the document's root (the round-2 review, 2026-10-04, which ruled in the
-    // filter and the blend mode beside the opacity): on #merr each changes how the triangle is drawn against its ground, and
-    // on the ground or any box above it, body and html among them, how the triangle and its ground are drawn together
-    // against what is behind them, so the two computed colours are not what the screen shows, and the ratio is never
-    // measured from them
+    // every step where it measures the ratio. So is any box from #merr up to the document's root whose drawing composites it
+    // with what lies behind it or dims it (the rule below, ruled in the round-2 review, 2026-10-05): on #merr such drawing
+    // can change how the triangle is drawn against its ground, and on the ground or any box above it, body and html among
+    // them, how the triangle and its ground are drawn together against what is behind them, so the two computed colours
+    // may not be what the screen shows, and the ratio is never measured from them
     const tagOf = (el) => el.id ? "#" + el.id : el.tagName.toLowerCase();
     let ground = null, groundOf = null, groundError = null;
     for (let el = m; el && !ground && !groundError; el = el.parentElement) {
@@ -142,14 +141,29 @@ const snap = async (name) => {
       }
     }
     if (!ground && !groundError) groundError = "no box from #merr up has an opaque background";
-    // then every box from #merr up to the document's root, the ground and every box above it among them: the first box whose
-    // opacity is under 1, whose filter is not none or whose blend mode is not normal is named with the property (an
-    // unreadable value fails the same way)
+    // then every box from #merr up to the document's root, the ground and every box above it among them, against one rule:
+    // a box's drawing must not composite it with what lies behind it or dim it. The CSS that does, as this read takes it: an
+    // opacity under 1, a filter or a backdrop-filter other than none, a mix-blend-mode other than normal, a mask-image other
+    // than none. The first box with any of them is named with the property and its value, whatever the value's effect (an
+    // identity filter fails too). Each property after the opacity is read in its standard form and in its -webkit- form
+    // wherever the engine reports that form, so an engine that reports only the prefixed one is read as well; a property
+    // reported in neither form, or an unreadable opacity, fails the same way. Paint effects outside the rule are not read,
+    // among them visibility, clip-path, a mask-border, the paint of #merr's own children and a box off this path drawn over
+    // the triangle
+    const DRAWN = [["filter", "none"], ["backdrop-filter", "none"], ["mix-blend-mode", "normal"], ["mask-image", "none"]];
+    const drawn = (st) => {
+      if (!(parseFloat(st.opacity) >= 1)) return "an opacity of " + st.opacity;
+      for (const [prop, flat] of DRAWN) {
+        const forms = [prop, "-webkit-" + prop].map((p) => [p, st.getPropertyValue(p)]).filter((f) => f[1] !== "");
+        if (!forms.length) return "an unreadable " + prop;
+        const off = forms.find((f) => f[1] !== flat);
+        if (off) return "a " + off[0] + " of " + off[1].slice(0, 120);
+      }
+      return null;
+    };
     for (let el = m; el && !groundError; el = el.parentElement) {
-      const st = getComputedStyle(el);
-      if (!(parseFloat(st.opacity) >= 1)) groundError = "an opacity of " + st.opacity + " on " + tagOf(el);
-      else if (st.filter !== "none") groundError = "a filter of " + st.filter + " on " + tagOf(el);
-      else if (st.mixBlendMode !== "normal") groundError = "a mix-blend-mode of " + st.mixBlendMode + " on " + tagOf(el);
+      const why = drawn(getComputedStyle(el));
+      if (why) groundError = why + " on " + tagOf(el);
     }
     let mutedSeen = null, mutedOlderSeen = null;
     try {
