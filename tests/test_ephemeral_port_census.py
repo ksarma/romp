@@ -258,13 +258,15 @@ module) has no binding here, and the census does not see the value such a settin
   and to 50000, or to 1000 and to 40000, or to 40000 and to "x", with or without BASE = f() beside them, is built on
   40000, and so are BASE * 1 + i and, with BASE bound to "40000" and to "50000", int(BASE) + i. Where the names of one
   operand can take their values more than 256 ways (EACH), the operand is read once instead, each name holding every
-  value it is read by, a span that holds every way's reading: the sum counts as built on the lowest value of that span
-  in the range when the span reaches the range, an over-read where no one way is in it, and on 32768 when that reading
-  gives none and the operand holds a ** or a <<, whose cap at 2**4096 can leave the wide reading empty where one way has
-  a value. A name with a binding the census does not record is also read unbounded (BOUND), so with K bound to 30000 and
-  by K = f(), 40000 + K, which reads 70000 by K's int, is built on 40000, and so are 40000 - K and 40000 + 90002 // K.
-  interval() reads a bool as the int it is, True as 1 and False as 0 (random.randrange(True, 50000) is 1-49999), and a
-  float only through int() of it or of a name bound to it (above).
+  value it is read by. Where that reading gives a span, the span holds the constant each way reads, and the sum counts
+  as built on the lowest value of that span in the range when the span reaches the range, an over-read where no one way
+  is in it. It can give none where one way reads a constant, since **, <<, >>, &, | and ^ (GATED) are not read over an
+  operand that can be negative, nor ** and << past 2**4096, and a wider operand can be either (A | B, with A over -1 to
+  40000, is not read, where A at 40000 and B at 0 give 40000); so the sum counts as built on 32768 when that reading
+  gives none and the operand holds one of those six. A name with a binding the census does not record is also read
+  unbounded (BOUND), so with K bound to 30000 and by K = f(), 40000 + K, which reads 70000 by K's int, is built on
+  40000, and so are 40000 - K and 40000 + 90002 // K. interval() reads a bool as the int it is, True as 1 and False as 0
+  (random.randrange(True, 50000) is 1-49999), and a float only through int() of it or of a name bound to it (above).
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -673,8 +675,9 @@ def interval(node, bound=None, steps=None):
     each to an int, so at a step that K is one it does not bound; and, for a value that reads names with a binding the
     census does not record, it calls again for each mix of leaving such names out of `bound` or not, so that each reads
     unbounded in some reading and by its ints in another. offset_base() hands it the values of its own `bound`, each
-    name it reads holding one of its values at a time, an int or any other constant (a float, a string or bytes reads
-    only inside int(), and None only at a randrange's stop)."""
+    name it reads holding one of its values at a time, or every one of them at once for an operand with more ways than
+    EACH, an int or any other constant (a float, a string or bytes reads only inside int(), and None only at a
+    randrange's stop)."""
     bound = bound or {}
     steps = bound if steps is None else steps
     if isinstance(node, ast.Constant) and isinstance(node.value, int):
@@ -823,6 +826,12 @@ UNARY = {
 OPERATOR_LIMITS = {
     ast.Div: "true division gives a float, which no port is, and int() of one is not read (int(90002 / 2))",
     ast.MatMult: "Python raises for @ over ints"}
+# The operators of BINARY that can give a reading over operands and none over wider ones: **, <<, >>, &, | and ^ are not
+# read over an operand that can be negative, nor ** and << past 2**BIG, and a wider operand can be either (A | 0 reads
+# 40000 with A at 40000 and nothing with A over -1 to 40000). offset_base() counts an operand that holds one where its
+# reading past EACH gives none; Operators checks that every other operator holds over wider operands the reading it
+# gives over narrower ones, and that each of these can lose it.
+GATED = (ast.Pow, ast.LShift, ast.RShift, ast.BitAnd, ast.BitOr, ast.BitXor)
 
 
 def _random_span(name, ivs):
@@ -937,8 +946,9 @@ def offset_base(node, bound=None, each=None):
     mix: 40000 + K, with K bound to 30000 and by K = f(), which interval() reads as 70000 by K's int and not at all
     with K unbounded, is built on 40000. An operand with more ways than EACH to take its names' values is read once,
     each name holding every value it is read by, and the sum counts as built on the lowest value of that span in the
-    range when the span reaches it (it holds every way's reading, so this over-reads only), or on 32768 when it gives
-    no reading and holds a ** or a <<, whose cap at 2**BIG can leave a wide reading empty where one way has a value."""
+    range when the span reaches it (a span holds the constant each way reads, so this over-reads only), or on 32768 when
+    it gives no reading and holds an operator of GATED, which can give none over those wider operands where one way
+    reads a constant."""
     bound, each = bound or {}, each or {}
     if isinstance(node, ast.Call) and _callee(node.func) in ("str", "int") and len(node.args) == 1 and not node.keywords:
         return offset_base(node.args[0], bound, each)
@@ -953,10 +963,9 @@ def offset_base(node, bound=None, each=None):
             if ways > EACH:                         # once, each name holding every value it is read by: their spans
                 iv = interval(side, {**bound, **{k: [ast.Constant(v) for v in _values(each, k)] for k in names}})
                 if iv and min(iv[:2]) <= HIGH and max(iv[:2]) >= LOW:
-                    return max(min(iv[:2]), LOW)    # it holds every way's reading: an over-read where none is in range
-                if iv is None and any(isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Pow, ast.LShift))
-                                      for n in ast.walk(side)):
-                    return LOW                      # a ** or << past 2**BIG can leave the spans unread, one way not
+                    return max(min(iv[:2]), LOW)    # it holds each way's constant: an over-read where none is in range
+                if iv is None and any(isinstance(n, ast.BinOp) and isinstance(n.op, GATED) for n in ast.walk(side)):
+                    return LOW                      # an operator of GATED can leave the spans unread, one way not
             else:
                 for table in _each_value(side, bound, each):
                     iv = interval(side, table)
@@ -2764,11 +2773,15 @@ class Plants(unittest.TestCase):
         past that it reads the operand once, each name holding every value it is read by (THE RULE). Pinned by counting
         the interval() calls offset_base() makes itself, never by time: with A, B and C each bound by a loop over 40 ints
         and by a call, A + B + C + worker costs at most EACH calls for each operand it reads (six), where reading every
-        way costs 40**3 + 40**2 + 3 * 40 + 1 = 65721; the sum is not counted either way (green). Past the cap the span
-        holds every way's reading, so it only over-reads: with each name over 0 to 19 and 70000 to 70019, no way is in
-        the range and the span 0-210057 reaches it, red, an over-read. A ** or a << past 2**BIG leaves the span unread
-        where one way has a value, so such an operand counts too: 2 ** (A + B + C) + worker, A over 15 and 5000 to
-        5038, B and C over 0 to 39, is red, as 2 ** 15 is 32768."""
+        way costs 40**3 + 40**2 + 3 * 40 + 1 = 65721; the sum is not counted either way (green). Past the cap a span
+        holds the constant each way reads, so it only over-reads: with each name over 0 to 19 and 70000 to 70019, no way
+        is in the range and the span 0-210057 reaches it, red, an over-read. An operator of GATED can leave the spans
+        unread where one way reads a constant, so an operand that holds one counts too: 2 ** (A + B + C) + worker, A
+        over 15 and 5000 to 5038, B and C over 0 to 39, is red, as 2 ** 15 is 32768 and 2 ** 5000 passes 2**BIG; and so
+        is each operator of GATED over a name bound to a negative int: (A | B) + worker, A over -1, 40000 and 2 to 16
+        and B over 0 to 15, 272 ways, as 40000 | 0 is 40000 (with A over one value fewer, 256 ways, it is read way by
+        way, as built on 40000), and, over 380 or 400 ways, A & B, A ^ B, A >> B, A << B and A ** B, as 40000 & 65535,
+        40000 ^ 0, 80000 >> 1, 5 << 13 and 2 ** 15 are in the range."""
         lo = LOW + 7232                                                            # 40000, built at run time
         opens = "                # %d opens the file\n" % lo
 
@@ -2802,12 +2815,26 @@ class Plants(unittest.TestCase):
         self.assertLessEqual(calls[0], operands * EACH, "offset_base() made %d interval() calls" % calls[0])
         self.assertGreater(calls[0], 0)
         self.assertGreen("test_x.py", src)
-        for label, src in (
-                ("past the cap, no way in the range, an over-read", names(gapped, gapped, gapped) + "port = A + B + C + worker"),
+        signed = [-1, lo] + list(range(2, 20))     # A over -1, 40000 and 2 to 19: a span that can be negative
+        for label, src, n in (
+                ("past the cap, no way in the range, an over-read", names(gapped, gapped, gapped) + "port = A + B + C + worker",
+                 LOW),
                 ("past the cap, ** past 2**BIG", names([15] + list(range(5000, 5039)), small, small)
-                 + "port = 2 ** (A + B + C) + worker")):
+                 + "port = 2 ** (A + B + C) + worker", LOW),
+                ("past the cap, | over a name bound to a negative int, 272 ways",
+                 names(signed[:17], list(range(16))) + "port = (A | B) + worker", LOW),
+                ("at the cap, the same read way by way, 256 ways",
+                 names(signed[:16], list(range(16))) + "port = (A | B) + worker", lo),
+                ("past the cap, &", names(signed, [HIGH] + list(range(1, 20))) + "port = (A & B) + worker", LOW),
+                ("past the cap, ^", names(signed, list(range(20))) + "port = (A ^ B) + worker", LOW),
+                ("past the cap, >>", names([-8, 2 * lo] + list(range(2, 20)), list(range(20)))
+                 + "port = (A >> B) + worker", LOW),
+                ("past the cap, << over a name bound to a negative int",
+                 names([-1, 5] + list(range(6, 23)), list(range(20))) + "port = (A << B) + worker", LOW),
+                ("past the cap, ** over a name bound to a negative int",
+                 names([-2, 2] + list(range(3, 20)), list(range(20))) + "port = (A ** B) + worker", LOW)):
             with self.subTest(label):
-                self.assertRed("test_plant.py", src + opens, "an assignment to port, an offset from %d" % LOW, n=LOW)
+                self.assertRed("test_plant.py", src + opens, "an assignment to port, an offset from %d" % n, n=n)
 
     def test_the_step_table_reaches_a_randrange_nested_anywhere(self):
         """interval() reads a name at a randrange's step, and anywhere inside one, by `steps`, which holds a name only
@@ -4106,6 +4133,39 @@ class Operators(unittest.TestCase):
         self.assertEqual(outside, [], "a value Python computes outside interval()'s reading")
         self.assertEqual(unread, [], "operands THE RULE reads, not read")
         self.assertEqual(interval(ast.parse("not f()", mode="eval").body), (0, 1, True))
+
+    def test_an_operator_outside_gated_holds_over_wider_operands_its_reading_over_narrower_ones(self):
+        """offset_base() past EACH reads an operand with each name holding every value at once, and stands on that span
+        holding the constant each way reads, or counts the operand when it holds an operator of GATED (THE RULE). For
+        each operator of BINARY and UNARY outside GATED, over every pair of operands drawn from intervals whose ends are
+        -7, -1, 0, 2, 15 and 5000 (never reversed), and every pair of wider operands that hold them, a reading over the
+        narrower operands leaves a reading over the wider ones, and the wider reading holds it. Each operator of GATED
+        loses its reading over some wider operands here, so GATED names none it does not need."""
+        ends = (-7, -1, 0, 2, 15, 5000)
+        ivs = [(a, b, a != b) for a in ends for b in ends if a <= b]
+        pairs = [(n, w) for w in ivs for n in ivs if w[0] <= n[0] and n[1] <= w[1]]   # n inside w
+
+        def holds(narrow, wide):
+            return narrow is None or (wide is not None and wide[0] <= narrow[0] and narrow[1] <= wide[1])
+        lost, losing = [], set()
+        for cls, read in sorted(BINARY.items(), key=lambda kv: kv[0].__name__):
+            op = cls()
+            for left, wider_left in pairs:
+                for right, wider_right in pairs:
+                    if not holds(read(op, left, right), read(op, wider_left, wider_right)):
+                        losing.add(cls)
+                        if cls not in GATED:
+                            lost.append("%s %s %s, wider %s and %s"
+                                        % (left[:2], cls.__name__, right[:2], wider_left[:2], wider_right[:2]))
+        for cls, read in sorted(UNARY.items(), key=lambda kv: kv[0].__name__):
+            for operand, wider in pairs:
+                if not holds(read(operand), read(wider)):
+                    lost.append("%s %s, wider %s" % (cls.__name__, operand[:2], wider[:2]))
+        self.assertGreater(len(pairs), len(ivs))
+        self.assertEqual(lost[:5], [], "%d readings over narrower operands lost or not held over wider ones"
+                         % len(lost))
+        self.assertEqual(sorted(c.__name__ for c in set(GATED) - losing), [], "in GATED, yet never loses a reading")
+        self.assertEqual(sorted(c.__name__ for c in set(GATED) - set(BINARY)), [], "in GATED, not read by interval()")
 
 
 class SentinelPorts(unittest.TestCase):
