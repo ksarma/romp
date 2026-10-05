@@ -196,11 +196,10 @@ class KernelWiring(unittest.TestCase):
         # its timeline lane still offers the gpt-… choices — and a pick sends "/model gpt-…" for a sid no backend
         # owns (CodexBackend.owns says False once dead; backend_for answers _UNOWNED). That pick is vouched for the
         # unowned route too, so it reaches the route's refusal arm like a dead SDK lane's "/model opus": the client
-        # hears the refusal (on the timeline's settingRefused frame with the sid and the head's flag since the
-        # catch-up fold's delta review, 2026-09-18: the timeline page renders no warn, and the chat read one as an
-        # in-flight create's verdict) and nothing is stamped. Before this the gpt-… vouch asked only the live Codex
-        # backend, the route answered False, and the sendCommand arm handed the text to _UNOWNED.send, whose refusal
-        # is a stderr line the client never hears (review find, 2026-09-11).
+        # hears the refusal on the settingRefused frame (gesture command, the sid, the command head's word as the
+        # flag, so the lane's pending dim ends on it) and nothing is stamped. Before the 2026-09-11 find, the gpt-…
+        # vouch asked only the live Codex backend, the route answered False, and the sendCommand arm handed the text
+        # to _UNOWNED.send, whose refusal is a stderr line the client never hears.
         cx = FakeBackend(); cx._owned = set()                      # the Codex backend is up; this session of its own is dead
         saved, saved_name, saved_sid_of, saved_resolve = km._codex, km._name_of, km._sid_of, km._resolve_sid
         km._codex = lambda: cx

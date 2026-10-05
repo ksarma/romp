@@ -816,8 +816,11 @@ test("road 1, every checkout, a rule over the tree: every file git lists at the 
   const full = new Map<string, { label: string; units: Unit[]; span: [number, number] }>();
   const sec = sectionUnits();
   full.set("plans/markdown-viewer.md", { label: "plans/markdown-viewer.md (the follow-on section)", units: sec, span: [sectionLine, sec[sec.length - 1].endLine] });
-  const links = paragraphAt(read("docs/guide.md"), "**Links in a file.**", "the guide's Links in a file paragraph");
-  full.set("docs/guide.md", { label: "docs/guide.md (Links in a file)", units: links.units, span: links.span });
+  // the guide's Links in a file paragraph is docs/reference.md's "### Links inside a file" since fold 4 made docs/guide.md the
+  // project's front page and moved every fork paragraph to the reference beside its topic (CLAUDE.md "The documentation front
+  // pages"): one paragraph under the heading, with no bold lead, so the record is read there by its first words
+  const links = paragraphAt(read("docs/reference.md"), "Wherever the viewer shows a file's text", "the guide's Links in a file paragraph, the reference's Links inside a file");
+  full.set("docs/reference.md", { label: "docs/reference.md (Links inside a file)", units: links.units, span: links.span });
   const pointer = paragraphAt(read("plans/file-browser.md"), "Since 2026-09-19 the viewer keeps a trail of its own", "the browser plan's pointer paragraph");
   full.set("plans/file-browser.md", { label: "plans/file-browser.md (the pointer)", units: pointer.units, span: pointer.span });
   const faults: string[] = [];

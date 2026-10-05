@@ -37,7 +37,7 @@ km = load_source("romp_kernel_stale", os.path.join(BIN, "romp-kernel"))
 
 
 def _row(**kw):
-    r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 51000, "bus_port": 51001,
+    r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "bus_port": 2,
          "token": "tok", "trust": "trusted", "status": "up", "detail": "", "sids": [],
          "fails": 0, "next_try": 0, "kernel_sha": "abc1234", "proc": None}
     r.update(kw)

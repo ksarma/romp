@@ -9977,10 +9977,11 @@ def _reassert_sites(src=None, where=None):
     return {name: frozenset(s) for name, s in sites.items()}, tuple(refused)
 
 
-_REASSERT_SENTINEL = "45678"
+_REASSERT_SENTINEL = "7"
 #   the value the execution proof's probe module writes to each name at its import and its second test writes again:
 #   one no licence covers and no fixture of tests/conftest.py writes, so a probe test that reads it read a write the
-#   conftest did not re-assert over
+#   conftest did not re-assert over; below 1024 and in no band a test binds (tests/test_ephemeral_port_census.py, THE
+#   SENTINELS), as are this module's other read-back values, 8 and 9
 
 _REASSERT_PROBE = textwrap.dedent('''\
     import _collections_abc, json, os, re, sys, unittest
@@ -13237,7 +13238,7 @@ class HermeticKernelPostal(unittest.TestCase):
             self.assertEqual(_leak_writers(records_of(conftest_with(other), "conftest.py"), leg), ["conftest.py"],
                              "a floor module's client-only of %r is not the floor value: a writer" % value)
             self.assertEqual(_leak_writers(records_of("import os\n" + other, "__init__.py"), leg), ["__init__.py"])
-        values = {"ROMP_POSTAL_PEERS": "0", "ROMP_POSTAL_PORT": "45678", "ROMP_SESSIONS_FILE": "sessions.json", "ROMP_POSTAL_HOST": "TESTHOST"}
+        values = {"ROMP_POSTAL_PEERS": "0", "ROMP_POSTAL_PORT": "7", "ROMP_SESSIONS_FILE": "sessions.json", "ROMP_POSTAL_HOST": "TESTHOST"}
         self.assertEqual(sorted(values), sorted(set(LEAK_NAMES) - {leg}), "every leak name other than client-only is planted")
         for name, value in sorted(values.items()):
             write = 'os.environ["%s"] = "%s"\n' % (name, value)
@@ -13318,10 +13319,11 @@ class HermeticKernelPostal(unittest.TestCase):
                              ('os.environ["ROMP_MODEL_CATALOG"] = "on"', "licensed for the value 'off' alone"),
                              ('os.environ["ROMP_CLI_SCOPE"] = "1"', "licensed for the value '0' alone"),
                              ('os.environ["ROMP_MODELS_URL"] = "https://api.example.invalid/v1/models"', "not one this licence covers"),
-                             # the reviewer's ruling of round 1 on fork PR #894: a live loopback port, and a bare mkdtemp as
-                             # the state dir, each passed before
-                             ('os.environ["ROMP_MODELS_URL"] = "http://127.0.0.1:45678/v1/models"',
-                              "the value 'http://127.0.0.1:45678/v1/models' is not one this licence covers"),
+                             # the reviewer's ruling of round 1 on fork PR #894: a loopback port other than 9 (a live one
+                             # passed before; the condition reads the port, not whether anything listens), and a bare
+                             # mkdtemp as the state dir, each passed before
+                             ('os.environ["ROMP_MODELS_URL"] = "http://127.0.0.1:7/v1/models"',
+                              "the value 'http://127.0.0.1:7/v1/models' is not one this licence covers"),
                              ('os.environ["ROMP_MODELS_URL"] = "http://127.0.0.1:19/v1/models"', "not one this licence covers"),
                              ('os.environ["ROMP_STATE_DIR"] = tempfile.mkdtemp()', "the value tempfile.mkdtemp() is not one this licence covers"),
                              ('_ROOT = tempfile.mkdtemp()\nos.environ["ROMP_STATE_DIR"] = _ROOT',
@@ -13572,17 +13574,17 @@ class HermeticKernelPostal(unittest.TestCase):
                          "test_a_port_one_test_sets_is_gone_when_the_next_test_starts")
         pop = '    os.environ.pop("ROMP_POSTAL_PORT", None)\n'
         for what, src in (("a conditional write", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop +
-                           "    if os.environ.get('CI'):\n        os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n"),
+                           "    if os.environ.get('CI'):\n        os.environ['ROMP_POSTAL_PORT'] = '7'\n    yield\n"),
                           ("a write after the yield", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop +
-                           "    yield\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n"),
+                           "    yield\n    os.environ['ROMP_POSTAL_PORT'] = '7'\n"),
                           ("a setdefault", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop +
-                           "    os.environ.setdefault('ROMP_POSTAL_PORT', '45678')\n    yield\n"),
+                           "    os.environ.setdefault('ROMP_POSTAL_PORT', '7')\n    yield\n"),
                           ("a session-scoped fixture's write", "@pytest.fixture(autouse=True)\ndef _p():\n" + pop + "    yield\n"
-                           "@pytest.fixture(autouse=True, scope='session')\ndef _s():\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n"),
+                           "@pytest.fixture(autouse=True, scope='session')\ndef _s():\n    os.environ['ROMP_POSTAL_PORT'] = '7'\n    yield\n"),
                           ("a write in a fixture that is not autouse, the bare decorator", "@pytest.fixture(autouse=True)\ndef _p():\n"
-                           + pop + "    yield\n@pytest.fixture\ndef _n():\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n"),
+                           + pop + "    yield\n@pytest.fixture\ndef _n():\n    os.environ['ROMP_POSTAL_PORT'] = '7'\n    yield\n"),
                           ("a write in a fixture that is not autouse, the called decorator", "@pytest.fixture(autouse=True)\ndef _p():\n"
-                           + pop + "    yield\n@pytest.fixture(scope='module')\ndef _n():\n    os.environ['ROMP_POSTAL_PORT'] = '45678'\n    yield\n")):
+                           + pop + "    yield\n@pytest.fixture(scope='module')\ndef _n():\n    os.environ['ROMP_POSTAL_PORT'] = '7'\n    yield\n")):
             src = "import os, pytest\n" + src
             self.assertEqual(("ROMP_POSTAL_PORT" in _conftest_reasserted_names(src).removals,
                               "ROMP_POSTAL_PORT" in _conftest_fixture_env_writes(src),
@@ -13747,11 +13749,11 @@ class HermeticKernelPostal(unittest.TestCase):
         Accepted: the fixture's own name= literal that nothing else registers or binds, that name= equal to the def's own
         name (bound once, by the def), and another fixture registered by name= under a different name."""
         probe = "ROMP_PROBE_REASSERT"
-        module = ("import os\n\n\ndef test_1_sets_the_name():\n    os.environ[%r] = '45678'\n\n\n"
+        module = ("import os\n\n\ndef test_1_sets_the_name():\n    os.environ[%r] = '7'\n\n\n"
                   "def test_2_reads_it():\n    print('SEEN=%%s' %% os.environ.get(%r))\n" % (probe, probe))
         popper = "import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    os.environ.pop(%r, None)\n    yield\n" % probe
         shadowed = popper + "\n\n@pytest.fixture(autouse=True, name='_f')\ndef _g():\n    yield\n"
-        self.assertIn("SEEN=45678", self._synthetic_conftest_run(shadowed, module), "a fixture registered over _f by name=: _f's pop never ran")
+        self.assertIn("SEEN=7", self._synthetic_conftest_run(shadowed, module), "a fixture registered over _f by name=: _f's pop never ran")
         self.assertIn("SEEN=None", self._synthetic_conftest_run(popper, module), "the control: _f alone pops the name before each test")
         self.assertEqual((_conftest_reasserted_names(shadowed).removals, _conftest_reasserted_names(popper).removals),
                          (frozenset(), frozenset({probe})), "the reader follows the run: the shadowed pop is no re-assert")
@@ -13800,7 +13802,7 @@ class HermeticKernelPostal(unittest.TestCase):
         for i, (label, conftest_src, helpers, probe) in enumerate(cases):
             sub = os.path.join(d, "c%d" % i)
             os.mkdir(sub)
-            module = ("import os\n\n\ndef test_1_sets_the_name():\n    os.environ[%r] = '45678'\n\n\ndef test_2_reads_it():\n"
+            module = ("import os\n\n\ndef test_1_sets_the_name():\n    os.environ[%r] = '7'\n\n\ndef test_2_reads_it():\n"
                       "    print('SEEN[%s]=%%s' %% os.environ.get(%r))\n" % (probe, label, probe))
             for name, text in dict(helpers, **{"conftest.py": conftest_src, "test_case_%d.py" % i: module}).items():
                 with open(os.path.join(sub, name), "w", encoding="utf-8") as f:
@@ -13867,7 +13869,7 @@ class HermeticKernelPostal(unittest.TestCase):
                             "    yield\n\n\n" % probe + extra, probe)
             cases.append((label, texts[label][0], helpers, probe))
         seen = self._synthetic_conftest_dirs_run(cases)
-        self.assertEqual(seen, dict({"control": "None"}, **{label: "None" if kind == "refused-safe" else "45678"
+        self.assertEqual(seen, dict({"control": "None"}, **{label: "None" if kind == "refused-safe" else "7"
                                                             for label, _e, _h, kind in roads}),
                          "the control's _f pops its name before each test; under each road but the fixture object imported "
                          "under a name that sorts first, _f's pop never ran")
@@ -13937,7 +13939,7 @@ class HermeticKernelPostal(unittest.TestCase):
                 os.mkdir(home)
                 with open(os.path.join(home, "__init__.py"), "w", encoding="utf-8"):
                     pass
-            module = ("import json, os\n\n\n%s\n\ndef test_1_sets_the_name():\n    os.environ[%r] = '45678'\n\n\n"
+            module = ("import json, os\n\n\n%s\n\ndef test_1_sets_the_name():\n    os.environ[%r] = '7'\n\n\n"
                       "def test_2_reads_it():\n"
                       "    print('SEEN[%s]=%%s' %% os.environ.get(%r))\n\n\n"
                       "def test_3_reads_the_conftest(request):\n"
@@ -14093,7 +14095,7 @@ class HermeticKernelPostal(unittest.TestCase):
             run.append((label, texts[label][0], helpers, probe) + (("%s%02d" % (packages[label], i),) if label in packages else ()))
         got = self._registration_cases_run(run)
         self.assertEqual({label: got[label][0] for label, *_ in cases},
-                         {label: "None" if runs else "45678" for label, _e, _h, _d, runs, _c, _w in cases},
+                         {label: "None" if runs else "7" for label, _e, _h, _d, runs, _c, _w in cases},
                          "THE PREMISE: `_f`'s pop ran before the second test in the control and the three cases pytest runs it "
                          "in, and never under the others")
         for label, _extra, _helpers, _decorator, runs, counts, word in cases:
@@ -14293,7 +14295,7 @@ class HermeticKernelPostal(unittest.TestCase):
             return "import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    os.environ.pop(%r, None)\n    yield\n\n\n" % probe
 
         def failing(probe):
-            return ("import os, pytest\n\n_ONCE = []\n\n\ndef _boom():\n    if os.environ.get(%r) == '45678' and not _ONCE:\n"
+            return ("import os, pytest\n\n_ONCE = []\n\n\ndef _boom():\n    if os.environ.get(%r) == '7' and not _ONCE:\n"
                     "        _ONCE.append(1)\n        raise RuntimeError('boom')\n\n\n"
                     "@pytest.fixture(autouse=True)\ndef _f():\n    _boom()\n    os.environ.pop(%r, None)\n    yield\n\n\n"
                     "@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n    outcome = yield\n"
@@ -14314,7 +14316,7 @@ class HermeticKernelPostal(unittest.TestCase):
         def in_place_makereport(probe):
             once = probe + "_ONCE"
             return ("import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n"
-                    "    assert (os.environ.get(%r) != '45678' or os.environ.get(%r) is not None\n"
+                    "    assert (os.environ.get(%r) != '7' or os.environ.get(%r) is not None\n"
                     "            or os.environ.setdefault(%r, '1') is None)\n"
                     "    os.environ.pop(%r, None)\n    yield\n\n\n"
                     "@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n    outcome = yield\n"
@@ -14374,7 +14376,7 @@ class HermeticKernelPostal(unittest.TestCase):
             got.update(self._registration_cases_run(run))
         cases += alone
         self.assertEqual({label: got[label][0] for label, *_ in cases},
-                         {label: "None" if runs else "45678" for label, _c, runs, _m, _t, _w in cases},
+                         {label: "None" if runs else "7" for label, _c, runs, _m, _t, _w in cases},
                          "THE PREMISE: `_f`'s pop ran in the control and beside the listed hook that does nothing, and never "
                          "under each other case")
         for label, _conftest, runs, module_counts, text_counts, word in cases:
@@ -14848,7 +14850,7 @@ class HermeticKernelPostal(unittest.TestCase):
                                                  {}, "ROMP_PROBE_FLAG_P%d" % i)
                                                 for i, (label, before, condition) in enumerate(roads)])
         self.assertEqual({label: premise[label][0] for label, _b, _c in roads},
-                         {label: "None" if label.endswith("not given") else "45678" for label, _b, _c in roads},
+                         {label: "None" if label.endswith("not given") else "7" for label, _b, _c in roads},
                          "THE PREMISE: in a child that passes %s, `_f`'s pop never ran under each road on the flag given "
                          "and ran under each road on it not given" % flag)
 
@@ -17529,7 +17531,7 @@ class HermeticKernelPostal(unittest.TestCase):
         which no child can match at any cost. The witness is V2: a copy of tests/conftest.py with a
         listed pytest_collectreport that takes _dead_manager_port out of each test with a mark. The proof grants every
         name the filter counts, the four that fixture re-asserts among them, and a real run of the same copy, beside a
-        module that writes ROMP_KERNEL_PORT at its import, reads the module's '45678' in a marked test and the floor,
+        module that writes ROMP_KERNEL_PORT at its import, reads the module's '7' in a marked test and the floor,
         '1', in the unmarked control after it."""
         sites, refused = _reassert_sites()
         self.assertEqual(refused, ())
@@ -17549,7 +17551,7 @@ class HermeticKernelPostal(unittest.TestCase):
             f.write(planted)
         shutil.copy(os.path.join(HERE, "credential_patterns.py"), os.path.join(tests_dir, "credential_patterns.py"))
         with open(os.path.join(tests_dir, "test_witness.py"), "w", encoding="utf-8") as f:
-            f.write("import json, os, pytest\n\nos.environ['ROMP_KERNEL_PORT'] = '45678'\n\n\n"
+            f.write("import json, os, pytest\n\nos.environ['ROMP_KERNEL_PORT'] = '7'\n\n\n"
                     "def _record(key):\n    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), key + '.json'), 'w') as f:\n"
                     "        json.dump(os.environ.get('ROMP_KERNEL_PORT'), f)\n\n\n"
                     "@pytest.mark.filterwarnings('default')\ndef test_1_marked():\n    _record('marked')\n\n\n"
@@ -17566,7 +17568,7 @@ class HermeticKernelPostal(unittest.TestCase):
                     reads[key] = json.load(f)
             except OSError:
                 reads[key] = "no read"
-        self.assertEqual(reads, {"marked": "45678", "control": "1"},
+        self.assertEqual(reads, {"marked": "7", "control": "1"},
                          "THE WITNESS RUN: the marked test reads the module-level write the proof granted, the control the floor "
                          "(rc %d): %s" % (r.returncode, (r.stdout + r.stderr)[-3000:]))
 
@@ -17588,14 +17590,14 @@ class HermeticKernelPostal(unittest.TestCase):
         every name the filter counts. Real runs of the same copy, beside four stand-in test modules (the fourth named
         test_kernel_env_floor.py) and a fifth, test_witness.py, which writes ROMP_KERNEL_PORT, ROMP_CLI_SCOPE,
         ROMP_MODEL_CATALOG, ROMP_SUPERVISED and CLAUDE_CONFIG_DIR at its import: each test records the five values, and
-        each stand-in's then sets each to '45678' and leaves it, as a test can (the probe's shape), so a test whose
+        each stand-in's then sets each to '7' and leaves it, as a test can (the probe's shape), so a test whose
         fixture does not run reads the value the module-level write or the test before it left. The fifth value's floor
         is the directory the run's conftest makes, a new name each run, compared here as 'the floor'. Handed the
-        directory: the witness reads '45678' for the first three and the floor for the last two, unset for the fourth,
+        directory: the witness reads '7' for the first three and the floor for the last two, unset for the fourth,
         since no module follows it, and the directory for the fifth, since it is not third; each stand-in reads the floor
-        for the first two, '1' and '0', since no stand-in follows the module of that name or is fifth, and '45678' for
-        the third; for the fourth the first stand-in, which four modules follow, reads '45678', and the other three,
-        which fewer follow, read the floor; for the fifth the third stand-in, the module collected third, reads '45678',
+        for the first two, '1' and '0', since no stand-in follows the module of that name or is fifth, and '7' for
+        the third; for the fourth the first stand-in, which four modules follow, reads '7', and the other three,
+        which fewer follow, read the floor; for the fifth the third stand-in, the module collected third, reads '7',
         and the other three read the floor. Handed the five files: every test reads the floor 'off' for the third, and
         the rest as handed the directory."""
         sites, refused = _reassert_sites()
@@ -17631,10 +17633,10 @@ class HermeticKernelPostal(unittest.TestCase):
         for module in modules:
             with open(os.path.join(tests_dir, module + ".py"), "w", encoding="utf-8") as f:
                 f.write("import json, os\n\n"
-                        + ("for _n in %r:\n    os.environ[_n] = '45678'\n\n\n" % (names,) if module == "test_witness" else "\n")
+                        + ("for _n in %r:\n    os.environ[_n] = '7'\n\n\n" % (names,) if module == "test_witness" else "\n")
                         + "def test_reads():\n    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), %r), 'w') as f:\n"
                           "        json.dump([os.environ.get(n) for n in %r], f)\n" % (module + ".json", names)
-                        + ("" if module == "test_witness" else "    for n in %r:\n        os.environ[n] = '45678'\n" % (names,)))
+                        + ("" if module == "test_witness" else "    for n in %r:\n        os.environ[n] = '7'\n" % (names,)))
         child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and k not in names}
         child["PYTHONPATH"] = os.pathsep.join(p for p in (os.path.dirname(HERE), child.get("PYTHONPATH")) if p)
         child["TMPDIR"] = root
@@ -17653,7 +17655,7 @@ class HermeticKernelPostal(unittest.TestCase):
                     runs[form][module] = row[:4] + ["the floor" if made else row[4]]
                 except OSError:
                     runs[form][module] = "no read (rc %d): %s" % (r.returncode, (r.stdout + r.stderr)[-2000:])
-        leak = "45678"
+        leak = "7"
         floor = "the floor"
         self.assertEqual(runs, {"the directory": dict({m: ["1", "0", leak, None, floor] for m in ("test_a_2", "test_kernel_env_floor")},
                                                       test_a_1=["1", "0", leak, leak, floor], test_a_3=["1", "0", leak, None, leak],
@@ -17907,8 +17909,8 @@ class HermeticKernelPostal(unittest.TestCase):
         module = ("import os\n\n\ndef test_1_requests_it(_n):\n    pass\n\n\n"
                   "def test_2_does_not():\n    print('SEEN=%%s' %% os.environ.get(%r))\n" % (probe,))
         for decorator in ("@pytest.fixture", "@pytest.fixture(scope='function')"):
-            conftest_src = "import os, pytest\n\n\n%s\ndef _n():\n    os.environ[%r] = '45678'\n    yield\n" % (decorator, probe)
-            self.assertIn("SEEN=45678", self._synthetic_conftest_run(conftest_src, module),
+            conftest_src = "import os, pytest\n\n\n%s\ndef _n():\n    os.environ[%r] = '7'\n    yield\n" % (decorator, probe)
+            self.assertIn("SEEN=7", self._synthetic_conftest_run(conftest_src, module),
                           "%s: the write outlives the test that requested the fixture" % decorator)
             got = _conftest_reasserted_names(conftest_src)
             self.assertEqual((probe in _conftest_fixture_env_writes(conftest_src), probe in _conftest_fixture_env_names(conftest_src),
@@ -18844,18 +18846,18 @@ class HermeticKernelPostal(unittest.TestCase):
         floors = (("the real conftest", None), ("a conftest that floors client-only", _conftest_with_the_client_only_floor()))
         # the six probes run at once, each a fresh interpreter over planted files of its own, and each is read in its order
         outs = _at_once([self._tunnels_probe_job(_plant(_tunnels_source(), lines)) for _label, lines in writes]
-                        + [self._tunnels_probe_job(_plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_PORT"] = "45678"\n'
+                        + [self._tunnels_probe_job(_plant(_tunnels_source(), 'os.environ["ROMP_POSTAL_PORT"] = "7"\n'
                                                                              'os.environ["ROMP_POSTAL_CLIENT_ONLY"] = "on"\n'))]
                         + [self._tunnels_probe_job(planted, conftest_text=conftest_text) for _label, conftest_text in floors])
         for (label, _lines), out in zip(writes, outs[:3]):
             self.assertEqual(out["after_import"]["ROMP_POSTAL_PEERS"], "0", "%s: the probe sees a module-level write at import" % label)
             self.assertEqual(out["after_cleanups"]["ROMP_POSTAL_PEERS"], "1", "%s: the planted copy's own cleanup still restores the shell's value" % label)
         out = outs[3]
-        self.assertEqual(out["after_import"]["ROMP_POSTAL_PORT"], "45678", "the probe sees the port written at import")
+        self.assertEqual(out["after_import"]["ROMP_POSTAL_PORT"], "7", "the probe sees the port written at import")
         self.assertNotEqual(out["before_import"]["ROMP_POSTAL_CLIENT_ONLY"], "on", "the planted client-only value is not the floor's, so the write is visible")
         self.assertEqual(out["after_import"]["ROMP_POSTAL_CLIENT_ONLY"], "on", "the probe sees client-only written at import")
-        self.assertEqual(out["bus_port_at_import"], 45678, "...and the kernel read it at import: the bus a stray revive would start binds it")
-        self.assertEqual(out["after_cleanups"]["ROMP_POSTAL_PORT"], "45678", "the planted copy's cleanup puts the import-time value back, which is the leak")
+        self.assertEqual(out["bus_port_at_import"], 7, "...and the kernel read it at import: the bus a stray revive would start tries to bind it")
+        self.assertEqual(out["after_cleanups"]["ROMP_POSTAL_PORT"], "7", "the planted copy's cleanup puts the import-time value back, which is the leak")
         for (label, conftest_text), out in zip(floors, outs[4:]):
             if conftest_text is not None:
                 self.assertEqual(out["before_import"]["ROMP_POSTAL_CLIENT_ONLY"], "1", "the copy of conftest floors client-only")
@@ -19607,15 +19609,15 @@ class HermeticKernelPostal(unittest.TestCase):
             ("the saved mapping made under an if", "the saved mapping", under_if(shape["saved_made"]), "is made by one statement that runs before the call"),
             # ...a kick in the window or the wrapper (the verifier's second notify and Popen of the postal service inside
             # the try passed every pin but, on some runs, the executed one), one per clause of the window rule
-            ("a second notify inside the try", "in the try", 'km._notify_bus_peer("TESTHOST", 50002, True)', window),
+            ("a second notify inside the try", "in the try", 'km._notify_bus_peer("TESTHOST", 2, True)', window),
             ("a Popen of the postal service inside the try", "in the try",
              'km.subprocess.Popen([sys.executable, "bin/romp-postal-service", "ensure"]).wait()', window),
             ("another kernel call between the install and the trio", "after the install", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
             ("another kernel call between the rebind and the install", "before the install", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
             ("an assertion inside the try that calls the kernel", "in the try", 'self.assertFalse(km._notify_bus_origin_trust("TESTHOST", "directed"))', window),
-            ("a second notify statement inside the try", "in the try", 'self.assertFalse(km._notify_bus_peer("TESTHOST", 50003, True))', window),
+            ("a second notify statement inside the try", "in the try", 'self.assertFalse(km._notify_bus_peer("TESTHOST", 3, True))', window),
             ("the notify statement calling a second notify", "the notify",
-             'self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, True) or km._notify_bus_peer("TESTHOST", 50003, True))', window),
+             'self.assertFalse(km._notify_bus_peer("TESTHOST", 2, True) or km._notify_bus_peer("TESTHOST", 3, True))', window),
             ("another kernel call in the finally before the wait", "before the wait", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
             ("km.BUS_PORT put back from a kernel call before the wait", "before the wait",
              'km.BUS_PORT = km._notify_bus_origin_trust("TESTHOST", "directed")', window),
@@ -19631,9 +19633,9 @@ class HermeticKernelPostal(unittest.TestCase):
             # (with beside() reading no lambda's body, every pin passed), and the saved mapping's items() read outside
             # the restore (with any items() call taken as the restore's read, every pin passed)
             ("a second notify in the wait statement's own argument", "the wait",
-             '%(ended)s = %(event)s.wait(km._notify_bus_peer("TESTHOST", 50003, True) or 60)', window),
+             '%(ended)s = %(event)s.wait(km._notify_bus_peer("TESTHOST", 3, True) or 60)', window),
             ("a second notify in a try of the finally, before the wait it holds", "the wait",
-             'try:\n    km._notify_bus_peer("TESTHOST", 50003, True)\nfinally:\n    %(ended)s = %(event)s.wait(60)', window),
+             'try:\n    km._notify_bus_peer("TESTHOST", 3, True)\nfinally:\n    %(ended)s = %(event)s.wait(60)', window),
             ("an assertion inside the try whose lambda runs a kernel call and raises", "in the try",
              'self.assertRaises(ZeroDivisionError, lambda: km._notify_bus_origin_trust("TESTHOST", "directed") / 0)', window),
             ("the saved mapping's items read after the try", "after the try", "_planted = %(saved_env)s.items()",
@@ -19644,7 +19646,7 @@ class HermeticKernelPostal(unittest.TestCase):
             # at that end, the wait's calls read from its positional arguments alone, or the notify statement's
             # comprehension from its first argument alone, every pin passed)
             ("a decorator on the wrapper that runs a second notify after it", "the wrapper def",
-             '@(lambda f: lambda: (f(), km._notify_bus_peer("TESTHOST", 50003, True)))', undecorated),
+             '@(lambda f: lambda: (f(), km._notify_bus_peer("TESTHOST", 3, True)))', undecorated),
             ("a decorator on the fake that replaces it with the real run", "the fake def", "@(lambda f: km.subprocess.run)", undecorated),
             ("a decorator on the road that makes another kernel call", "the road def",
              '@(lambda f: lambda *a: (km._notify_bus_origin_trust("TESTHOST", "directed"), f(*a))[1])', undecorated),
@@ -19653,18 +19655,18 @@ class HermeticKernelPostal(unittest.TestCase):
              window),
             ("a kernel call as the finally's first statement", "the finally's first", 'km._notify_bus_origin_trust("TESTHOST", "directed")', window),
             ("a second notify in the wait's timeout keyword", "the wait",
-             '%(ended)s = %(event)s.wait(timeout=km._notify_bus_peer("TESTHOST", 50003, True) or 60)', window),
+             '%(ended)s = %(event)s.wait(timeout=km._notify_bus_peer("TESTHOST", 3, True) or 60)', window),
             ("the notify run twice by a comprehension in the notify statement's second argument", "the notify",
-             'self.assertEqual([False, False], [km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)], "planted")', window),
+             'self.assertEqual([False, False], [km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)], "planted")', window),
             ("the notify run twice by a comprehension in a keyword argument of the notify statement", "the notify",
-             'self.assertEqual([False, False], second=[km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)])', window),
+             'self.assertEqual([False, False], second=[km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)])', window),
             # round 2's twenty-eighth commit on fork PR #894 (the re-verifier's findings on the twenty-seventh): two
             # plants that _repeats reading a lambda's body alone refuses, harmless ones (with that part skipped, every
             # pin passed, and its docstring said no plant could tell)
             ("a lambda holding a call-free list comprehension handed to the notify statement as its msg", "the notify",
-             'self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, True), msg=(lambda: [p for p in (1, 2)]))', window),
+             'self.assertFalse(km._notify_bus_peer("TESTHOST", 2, True), msg=(lambda: [p for p in (1, 2)]))', window),
             ("a lambda holding a call-free set comprehension as the notify's own argument", "the notify",
-             'self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, (lambda: {p for p in (1, 2)})))', window))
+             'self.assertFalse(km._notify_bus_peer("TESTHOST", 2, (lambda: {p for p in (1, 2)})))', window))
         lines = cls_src.splitlines(keepends=True)
 
         def with_args(fn, args):           # the one-line header of a def of the test, its parameters replaced
@@ -19710,7 +19712,7 @@ class HermeticKernelPostal(unittest.TestCase):
                  _plant_at(cls_src, shape["wait"], 'try:\n    km._notify_bus_origin_trust("TESTHOST", "directed")\nfinally:\n    pass', "before"),
                  [wait_line, wait_line + 1, wait_line + 3]),
                 ("a second notify statement after the test's own",
-                 _plant_at(cls_src, shape["notify"], 'self.assertFalse(km._notify_bus_peer("TESTHOST", 50003, True))', "after"), [notify_end + 1])):
+                 _plant_at(cls_src, shape["notify"], 'self.assertFalse(km._notify_bus_peer("TESTHOST", 3, True))', "after"), [notify_end + 1])):
             with self.assertRaises(AssertionError, msg="%s: the pin passed it" % label) as caught:
                 self._guard_shape(planted)
             self.assertIn("other statements at lines %s)" % named, str(caught.exception), "%s: the message names each statement of the window that runs "
@@ -19721,11 +19723,11 @@ class HermeticKernelPostal(unittest.TestCase):
         # wrapper's, every pin passed). Both written out here, not read from what the pin reads, so a kind dropped from
         # _REPEATS or a row dropped from the name rule leaves its plant passing; held equal to them after each loop, so
         # one added without a plant fails the test
-        repeats = (("a list comprehension", ast.ListComp, '[km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)], [False, False]'),
-                   ("a set comprehension", ast.SetComp, '{km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)}, {False}'),
+        repeats = (("a list comprehension", ast.ListComp, '[km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)], [False, False]'),
+                   ("a set comprehension", ast.SetComp, '{km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)}, {False}'),
                    ("a dict comprehension", ast.DictComp,
-                    '{p: km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)}, {50002: False, 50003: False}'),
-                   ("a generator expression", ast.GeneratorExp, '(*(km._notify_bus_peer("TESTHOST", p, True) for p in (50002, 50003)),), (False, False)'))
+                    '{p: km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)}, {2: False, 3: False}'),
+                   ("a generator expression", ast.GeneratorExp, '(*(km._notify_bus_peer("TESTHOST", p, True) for p in (2, 3)),), (False, False)'))
         for what, _, args in repeats:
             with self.assertRaises(AssertionError, msg="the notify run twice by %s: the pin passed it" % what) as caught:
                 self._guard_shape(_plant_at(cls_src, shape["notify"], 'self.assertEqual(%s, "planted")' % args, "replace"))
@@ -19758,14 +19760,14 @@ class HermeticKernelPostal(unittest.TestCase):
         # not set), and the port the notify dials changed before the window, the test's own km.BUS_PORT = 1 rewritten
         # and a second assignment before the rebind (the re-verifier's on the twenty-seventh; the executed pin reds on
         # each)
-        notify_call = 'km._notify_bus_peer("TESTHOST", 50002, True)'
+        notify_call = 'km._notify_bus_peer("TESTHOST", 2, True)'
         port_set = [s for s in shape["fn"].body if _assign_to(s, ["km", "BUS_PORT"]) and isinstance(s.value, ast.Constant)]
         self.assertEqual([ast.unparse(s) for s in port_set], ["km.BUS_PORT = 1"], "the guard test sets km.BUS_PORT = 1 once, in a statement of its own body")
         self.assertEqual(cls_src.count(notify_call), 1, "the guard test's notify call is written once as %s" % notify_call)
         truth = _plant_at(cls_src, shape["rebind"], "class _K:\n    def __bool__(_s):\n        km._ensure_postal_bus()\n"
                           "        return True\n_k = _K()", "before").replace(notify_call, notify_call.replace("True", "_k"))
         timeout = _plant_at(_plant_at(cls_src, shape["wait"], "%(ended)s = %(event)s.wait(_t)" % names, "replace"), shape["rebind"],
-                            'class _T:\n    def __gt__(_s, o):\n        km._notify_bus_peer("TESTHOST", 50003, True)\n        return True\n\n'
+                            'class _T:\n    def __gt__(_s, o):\n        km._notify_bus_peer("TESTHOST", 3, True)\n        return True\n\n'
                             "    def __float__(_s):\n        return 60.0\n_t = _T()", "before")
         for label, planted in (("the real revive on a thread through km.threading before the rebind",
                                 _plant_at(cls_src, shape["rebind"], "km.threading.Thread(target=km._revive_postal_bus, daemon=True).start()", "before")),
@@ -20051,10 +20053,10 @@ class HermeticKernelPostal(unittest.TestCase):
 
     def test_the_dead_bus_port_holds_for_each_test_and_comes_back_after_it(self):
         """conftest's _dead_bus_port, run: a child pytest (a copy of tests/conftest.py) over a module that registers two
-        synthetic modules, the shapes loaded in-process at import, romp_kernel_restore_probe with BUS_PORT 45678 and
-        romp_postal_restore_probe with HOST 127.0.0.1 and BASE http://127.0.0.1:45678, and reads both from every phase
+        synthetic modules, the shapes loaded in-process at import, romp_kernel_restore_probe with BUS_PORT 7 and
+        romp_postal_restore_probe with HOST 127.0.0.1 and BASE http://127.0.0.1:7, and reads both from every phase
         around its one test. The test reads DEAD_BUS_PORT in both: the fixture holds the dead port for the test. Every
-        read outside the test's own window reads 45678 in both: setUpModule, a module-scoped fixture's setup and teardown,
+        read outside the test's own window reads 7 in both: setUpModule, a module-scoped fixture's setup and teardown,
         setUpClass, tearDownClass, tearDownModule, and a thread the test starts that reads after the test's teardown. So
         the port and the URL are put back by the fixture's own cleanup, as the ruling of round 1 on fork PR #894 asks, and
         neither is left dead outside a test; and the windows conftest's paragraph "What this does not reach" names (the
@@ -20064,9 +20066,9 @@ class HermeticKernelPostal(unittest.TestCase):
             import json, os, sys, threading, types, unittest
             import pytest
             _km = types.ModuleType("romp_kernel_restore_probe")
-            _km.BUS_PORT = 45678
+            _km.BUS_PORT = 7
             _pm = types.ModuleType("romp_postal_restore_probe")
-            _pm.HOST, _pm.BASE = "127.0.0.1", "http://127.0.0.1:45678"
+            _pm.HOST, _pm.BASE = "127.0.0.1", "http://127.0.0.1:7"
             sys.modules["romp_kernel_restore_probe"], sys.modules["romp_postal_restore_probe"] = _km, _pm
             _seen = {}
             _after = threading.Event()
@@ -20115,7 +20117,7 @@ class HermeticKernelPostal(unittest.TestCase):
             seen = json.load(f)
         from tests import conftest
         dead = getattr(conftest, "DEAD_BUS_PORT", "conftest.DEAD_BUS_PORT")
-        live = [45678, "http://127.0.0.1:45678"]
+        live = [7, "http://127.0.0.1:7"]
         self.assertEqual(seen, {"test": [dead, "http://127.0.0.1:%s" % dead], "setUpModule": live, "module fixture": live,
                                 "setUpClass": live, "a thread after the test": live, "tearDownClass": live,
                                 "module fixture teardown": live, "tearDownModule": live},
@@ -20126,15 +20128,16 @@ class HermeticKernelPostal(unittest.TestCase):
         """THE EXECUTED CHECK behind the static pin on conftest's per-test pop of ROMP_POSTAL_PORT (the reviewer's ruling of
         round 1 on fork PR #894; test_conftest_re_asserts_the_names_the_re_asserted_licences_rest_on reads the pop where it
         stands): a child pytest over a copy of tests/conftest.py and a module whose first test sets the port to a
-        non-default value (45678, the value that, with the run's hermetic marker beside it, licenses a bind under a test)
-        and leaves it, and whose second test reads it absent. Both pass: conftest pops the name before every test. A
+        non-default value (7, the value that, with the run's hermetic marker beside it, licenses a bind under a test; below
+        1024, so on Linux at the default the bind itself is refused) and leaves it, and whose second test reads it absent.
+        Both pass: conftest pops the name before every test. A
         conftest that sets the port instead, to any value, or that drops the pop, fails the second test."""
         module = textwrap.dedent("""\
             import os
 
 
             def test_1_sets_the_port_and_leaves_it():
-                os.environ["ROMP_POSTAL_PORT"] = "45678"
+                os.environ["ROMP_POSTAL_PORT"] = "7"
 
 
             def test_2_reads_it_absent():
@@ -20223,7 +20226,7 @@ class HermeticKernelPostal(unittest.TestCase):
                 import os
 
                 def tearDownModule():
-                    os.environ["ROMP_POSTAL_PORT"] = "45679"
+                    os.environ["ROMP_POSTAL_PORT"] = "8"
 
                 def test_one():
                     pass
@@ -20328,7 +20331,7 @@ class HermeticKernelPostal(unittest.TestCase):
                     pass
         """) % (tuple(k for k in watched if floor[k] is None and k != "ROMP_POSTAL_PORT"),)
         shell = {name: "-".join(("shell", name.lower(), "value")) for name in watched}
-        shell["ROMP_POSTAL_PORT"] = "45681"
+        shell["ROMP_POSTAL_PORT"] = "9"
         for label, env in (("a clean shell", clean), ("a shell carrying all six", shell)):
             rc, out, found = run(shape, env)
             self.assertEqual(found, floor, "%s: setUpModule finds the floor: %s" % (label, out[-6000:]))
@@ -21184,14 +21187,14 @@ def _proof_facets():
     def later(text):
         return lambda p: popper(p) + text.replace("__QUOTED__", '"%s"' % p).replace("__NAME__", repr(p))
     failing = lambda p: (
-        "import os, pytest\n\n_ONCE = []\n\n\ndef _boom():\n    if os.environ.get(%r) == '45678' and not _ONCE:\n"
+        "import os, pytest\n\n_ONCE = []\n\n\ndef _boom():\n    if os.environ.get(%r) == '7' and not _ONCE:\n"
         "        _ONCE.append(1)\n        raise RuntimeError('boom')\n\n\n"
         "@pytest.fixture(autouse=True)\ndef _f():\n    _boom()\n    os.environ.pop(%r, None)\n    yield\n\n\n"
         "@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n    outcome = yield\n"
         "    rep = outcome.get_result()\n    if rep.when == 'setup' and rep.failed:\n        rep.outcome = 'passed'\n" % (p, p))
     in_place_makereport = lambda p: (
         "import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n"
-        "    assert (os.environ.get(%r) != '45678' or os.environ.get(%r) is not None\n"
+        "    assert (os.environ.get(%r) != '7' or os.environ.get(%r) is not None\n"
         "            or os.environ.setdefault(%r, '1') is None)\n"
         "    os.environ.pop(%r, None)\n    yield\n\n\n"
         "@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n    outcome = yield\n"
@@ -21267,7 +21270,7 @@ def _proof_facets():
             "@pytest.fixture(autouse=True)\ndef _f():\n    os.environ.pop(__NAME__, None)\n    yield\n"), {}, False),
         ("itself: the fixture sets the name where the reader counted a pop", sets_it, {}, False),
         ("itself: the fixture's pop, then another fixture writes the probe's value back", later(
-            "@pytest.fixture(autouse=True)\ndef _z():\n    os.environ[__NAME__] = '45678'\n    yield\n"), {}, False),
+            "@pytest.fixture(autouse=True)\ndef _z():\n    os.environ[__NAME__] = '7'\n    yield\n"), {}, False),
         ("setup: the fixture pops in the first test's setup and after every test, never in a later test's setup",
          lambda p: ("import os, pytest\n\n\n@pytest.fixture(autouse=True)\ndef _f():\n    if not _RUNS:\n"
                     "        os.environ.pop(%r, None)\n    _RUNS.append(1)\n    yield\n    os.environ.pop(%r, None)\n\n\n"

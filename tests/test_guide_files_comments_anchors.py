@@ -89,7 +89,8 @@ def _probe(text, quote):
 
 class GuideAnchors(unittest.TestCase):
     def test_the_guide_says_a_comment_on_repeated_text_stays_where_it_was_put(self):
-        guide = _flat(_read("docs", "guide.md"))
+        # the fork's Files text is in docs/reference.md since fold 4 (CLAUDE.md "The documentation front pages")
+        guide = _flat(_read("docs", "reference.md"))
         self.assertIn("a comment on text that occurs more than once stays on the occurrence you chose", guide)
         # ...and qualifies it with the one case the panel cannot keep it, said in the panel's own terms (the tag's text).
         # The pin ends where the guide turns to what the person does about the guess: that sentence is pinned in

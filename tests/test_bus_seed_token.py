@@ -116,7 +116,7 @@ class _Harness(unittest.TestCase):
     """Two fakes on loopback (bus, peer /version), the kernel's remote polls stubbed, one supervisor pass on
     demand. Every module seam is restored on the way out."""
     STUBS = ("_port_open", "_poll_remote_sessions", "_poll_remote_version", "_poll_remote_usage",
-             "_poll_remote_views", "_maybe_auto_push", "_adopt_peer_settings", "_pending_tag_rows",
+             "_poll_remote_views", "_maybe_auto_push", "_propose_peer_settings", "_pending_tag_rows",
              "_pr_watch_tick", "_watch_tick", "_conserve_tick", "_primary_addr", "_tunnel_wake", "BUS_PORT")
 
     def setUp(self):
@@ -137,7 +137,7 @@ class _Harness(unittest.TestCase):
         km._poll_remote_usage = lambda r: None
         km._poll_remote_views = lambda r: None
         km._maybe_auto_push = lambda r: None
-        km._adopt_peer_settings = lambda host, rver: None
+        km._propose_peer_settings = lambda host, rver: None
         km._pending_tag_rows = lambda: []
         km._pr_watch_tick = km._watch_tick = km._conserve_tick = lambda now: None
         km._primary_addr = lambda: "10.0.0.1"
@@ -165,7 +165,7 @@ class _Harness(unittest.TestCase):
     def _row(self, **over):
         # a checked-in peer: no ssh of ours to supervise, so the pass goes straight to the polls
         r = {"host": "TESTHOST", "checkin_peer": True, "kernel_port": 29855,
-             "local_port": self.ver.server_address[1], "bus_port": 50002, "token": SECRET,
+             "local_port": self.ver.server_address[1], "bus_port": 2, "token": SECRET,
              "status": "up", "trust": "directed"}
         r.update(over)
         km._remotes[r["host"]] = r
@@ -194,7 +194,7 @@ class ANewBusIsRetoldEveryPeer(_Harness):
         self._row()
         self._pass()
         self.assertEqual(len(_FakeBus.POSTED), 1, "a row the bus has not been told about: one notify")
-        self.assertEqual(_FakeBus.POSTED[0], {"host": "TESTHOST", "port": 50002, "up": True,
+        self.assertEqual(_FakeBus.POSTED[0], {"host": "TESTHOST", "port": 2, "up": True,
                                               "token": SECRET, "trust": "directed"})
         self._pass()
         self.assertEqual(len(_FakeBus.POSTED), 1, "same bus, nothing changed: the memo holds")
@@ -226,7 +226,7 @@ class ANewBusIsRetoldEveryPeer(_Harness):
 
     def test_noticing_a_new_bus_voids_the_memo_for_every_row(self):
         self._row()
-        self._row(host="OTHERHOST", bus_port=50003)
+        self._row(host="OTHERHOST", bus_port=3)
         self._pass()
         self.assertEqual(sorted(p["host"] for p in _FakeBus.POSTED), ["OTHERHOST", "TESTHOST"])
         _FakeBus.SNAP = {"peers": {}, "epoch": 1001}
@@ -244,6 +244,7 @@ class TheSeedLearnsNoTokenAndTheNotifySuppliesIt(_Harness):
         pm.KERNEL_BASE = "http://127.0.0.1:%d" % self.kern.server_address[1]
         pm._peer_threads_reconcile = lambda host: None      # the dialer is not under test
         pm.PEERS.clear()
+        pm._inbound_links.clear()
 
     def tearDown(self):
         pm.KERNEL_BASE, pm._peer_threads_reconcile, saved = self._pm_saved
@@ -258,7 +259,7 @@ class TheSeedLearnsNoTokenAndTheNotifySuppliesIt(_Harness):
         self._row(trust="trusted")
         pm._seed_peers_from_kernel()
         row = pm.PEERS["TESTHOST"]
-        self.assertEqual((row["port"], row["up"], row["trust"]), (50002, True, "trusted"))
+        self.assertEqual((row["port"], row["up"], row["trust"]), (2, True, "trusted"))
         self.assertEqual(row["token"], "", "the payload the seed reads has no token in it...")
         self.assertEqual(len(_FakeKernel.SERVED), 1)
         self.assertNotIn(SECRET, _FakeKernel.SERVED[0], "...because the page reads the same payload")
@@ -274,7 +275,7 @@ class TheSeedLearnsNoTokenAndTheNotifySuppliesIt(_Harness):
         payload, status = pm.peer_update(body)                 # what the bus does with that body
         self.assertEqual(status, 200, payload)
         row = pm.PEERS["TESTHOST"]
-        self.assertEqual((row["port"], row["up"], row["trust"], row["token"]), (50002, True, "trusted", SECRET),
+        self.assertEqual((row["port"], row["up"], row["trust"], row["token"]), (2, True, "trusted", SECRET),
                          "the seeded row keeps its port, up-state and trust and gains the token")
 
 
