@@ -138,21 +138,28 @@ of the name (a call's result, a parameter, an import, B = A) is not seen, adding
   by its parameter's name (randint's a and b, randrange's start, stop and step, randbelow's exclusive_upper_bound; a
   keyword that names none is passed over), and the call is read by the arguments that fill its parameters from the
   first up to the first left empty: random.randint(a=40000, b=50000) counts as random.randint(40000, 50000) does,
-  randrange(start=S) reads as randrange(S), and neither randint(b=N) nor randrange(stop=E) is read. Two shapes Python
-  refuses for the way the arguments are passed are not read: a keyword that names a parameter a positional argument
-  fills (random.randint(40000, 50000, a=1)), and a randrange whose stop is left empty and whose step is given
+  randrange(start=S) reads as randrange(S), and neither randint(b=N) nor randrange(stop=E) is read. A ** mapping names
+  no parameter, yet can fill any parameter left empty: beside a randrange's start and stop, with its step left empty,
+  it is read as a step interval() does not bound (below), and beside any other parameter left empty the call is not
+  read, since what the call returns then depends on what the mapping holds (random.randrange(30000, **kw) returns
+  values up to 29999 when kw is empty, and up to 49999 when kw holds a stop of 50000). Two shapes Python refuses for
+  the way the arguments are passed are not read: a keyword that names a parameter a positional argument fills
+  (random.randint(40000, 50000, a=1)), and a randrange whose stop is left empty and whose step is given
   (random.randrange(start=50000, step=7)), unless that step is the int 1 written there, randrange's default and the one
   step Python takes without a stop: random.randrange(start=50000, step=1) reads as randrange(50000), and with a step
   that is 1 only at run time (a name bound to 1) the call is not read. A randrange(start, stop[, step]) whose start and
-  stop are bounded is read by one rule, whether or not interval() bounds its step (a step left out is 1): a positive
+  stop are bounded is read by one rule, whether or not interval() bounds its step (a step left out is 1, and one a **
+  mapping can give is unbounded): a positive
   step returns values from start up to stop less one, a negative step values from stop plus one up to start, and a step
   of 0 raises. So, with start from s_lo to s_hi and stop from e_lo to e_hi, a step that is never negative is read as
   s_lo to e_hi - 1, any other step that is never positive as e_lo + 1 to s_hi, and every remaining step, one that can
   take either sign or one interval() does not bound, as the span holding both, min(s_lo, e_lo + 1) to
   max(s_hi, e_hi - 1). random.randrange(40000, 50000, k) is 40000-49999, by keyword too
   (random.randrange(40000, stop=50000, step=k)); random.randrange(50000, 40000, k) and
-  random.randrange(50000, 40000, -7) are 40001-50000; and random.randrange(40000 + os.getpid() % 61,
-  40020 + os.getpid() % 21, k) is 40000-40060, and 40021-40060 with a step of -7. Each reading holds every value the
+  random.randrange(50000, 40000, -7) are 40001-50000; random.randrange(40000 + os.getpid() % 61,
+  40020 + os.getpid() % 21, k) is 40000-40060, and 40021-40060 with a step of -7; and
+  random.randrange(30000 + os.getpid() % 5000, 30000, **kw) is 30000-34999 whatever kw holds, by keyword too
+  (random.randrange(start=30000 + os.getpid() % 5000, stop=30000, **kw)). Each reading holds every value the
   call can return, and can hold values it never returns (a step of 7 returns values 7 apart). Where Python refuses a
   call for every value its start, stop and step can take, the reading still stands, an over-read: a step of 0 is read
   with the steps that are never negative (random.randrange(40000, 50000, 0) is 40000-49999); a positive step from a
@@ -222,7 +229,9 @@ these turns its plant red, and the example leaves this list.
   a value in a position whose form THE RULE's values leave out: a name with no binding the census records (BOUND: a
   parameter, a name another module binds, B after B = A), an attribute (cfg.p after cfg.p = N), a container's element
   (CFG["a"]), a call's result other than str() or int() around a bounded value and the random calls (pick(),
-  random.choice((N, M))), a name bound to anything but one int literal inside a display that is the position's value
+  random.choice((N, M))), a random call with a parameter left empty that a ** mapping beside it can fill
+  (random.randrange(50000, **kw), random.randrange(start=50000, step=1, **kw)), a name bound to anything but one int
+  literal inside a display that is the position's value
   or in a loop's sequence (P = "N", then {"ports": [P]}; P bound to 1 and to N, then for host, port in (("h", P),)), an
   f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a sum or difference in the
   range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__ replaced at run time); a
@@ -515,10 +524,10 @@ def interval(node, bound=None):
     constant read as 0 to the constant less one, and randint(a, b), randrange(stop), randrange(start, stop[, step]) and
     randbelow(n) over bounded arguments read as the values each can return, each argument given by position or by its
     parameter's name (_random_args()). randrange(start, stop[, step]) is read by its step's sign, the step bounded or
-    not (a step left out is 1): start's lowest value to stop's highest less one for a step that is never negative,
-    stop's lowest plus one to start's highest for any other step that is never positive, and the span holding both for
-    the rest, a step that can take either sign or one interval() does not bound (THE RULE). computed is True when an
-    unknown took part."""
+    not (a step left out is 1, and one a ** mapping can give is unbounded): start's lowest value to stop's highest less
+    one for a step that is never negative, stop's lowest plus one to start's highest for any other step that is never
+    positive, and the span holding both for the rest, a step that can take either sign or one interval() does not bound
+    (THE RULE). computed is True when an unknown took part."""
     bound = bound or {}
     if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
         return node.value, node.value, False
@@ -574,19 +583,29 @@ def interval(node, bound=None):
 def _random_args(call):
     """The arguments of a random call (RANDOM_CALLS) in its parameters' order, up to the first parameter left empty: each
     positional argument in its place, then each keyword in the place of the parameter it names (randint(a=A, b=B) is
-    randint(A, B)), a keyword that names no parameter passed over; None when an argument is starred, the positional
-    arguments outnumber the parameters, or Python refuses the call for the way its arguments are passed: a keyword names
-    a parameter a positional argument fills, or a randrange's stop is left empty and its step is given as anything but
-    the int 1 written there (randrange's default step, the one step Python takes without a stop)."""
+    randint(A, B)), a keyword that names no parameter passed over. A ** mapping can fill any parameter left empty, at
+    run time: beside a randrange's start and stop it fills the step, given as the keyword node that passes the mapping,
+    which is no expression, so interval() never bounds it whatever the mapping holds; with any other parameter left
+    empty beside it, None. None too when an argument is starred, the positional arguments outnumber the parameters, or
+    Python refuses the call for the way its arguments are passed: a keyword names a parameter a positional argument
+    fills, or a randrange's stop is left empty and its step is given as anything but the int 1 written there
+    (randrange's default step, the one step Python takes without a stop)."""
     params = RANDOM_CALLS[_callee(call.func)]
     if len(call.args) > len(params) or any(isinstance(a, ast.Starred) for a in call.args):
         return None
-    got = dict(zip(params, call.args))
+    got, mapping = dict(zip(params, call.args)), None
     for kw in call.keywords:
-        if kw.arg in got:
+        if kw.arg is None:
+            mapping = kw                            # a ** mapping: it names no parameter, yet can fill any
+        elif kw.arg in got:
             return None                             # Python: got multiple values for argument
-        if kw.arg in params:
+        elif kw.arg in params:
             got[kw.arg] = kw.value
+    if mapping is not None:
+        if "start" in got and "stop" in got:
+            got.setdefault("step", mapping)         # the step the mapping can give: unbounded, so the span holding both
+        if len(got) < len(params):
+            return None                             # a parameter only the mapping can fill: its value is unknown
     step = got.get("step")
     if step is not None and "stop" not in got \
             and not (isinstance(step, ast.Constant) and type(step.value) is int and step.value == 1):
@@ -1801,6 +1820,39 @@ class Plants(unittest.TestCase):
         with self.subTest("a negative constant"):
             self.assertGreen("test_x.py", 'port = -%d\n' % lo)
 
+    def test_a_mapping_beside_a_randrange_s_start_and_stop_is_read_as_an_unbounded_step(self):
+        """A ** mapping names no parameter, yet can fill any parameter left empty. Beside a randrange's start and stop,
+        with its step left empty, it is read as a step interval() does not bound, by the span holding both, and each
+        red plant asserts the span the census reports. A start of 30000 to 34999 and a stop of 30000 read 30000-34999:
+        by position, with a display that gives a step of -7 (CPython returns values from 30001 to 34999 there), with
+        start and stop by keyword, and with the stop by keyword after the mapping. So does a mapping whose name the
+        module also binds to an int, since the census never reads what the mapping holds. 7d1bdcda6 passed the mapping
+        over, read each of those as randrange(start, stop), from 30000 up to 29999, and reported none of them. A start
+        of 50000 and a stop of 40000 read 40001-50000, where 7d1bdcda6 reported 50000-39999. A call whose parameters
+        are all filled without the mapping is read as it is: randint(40000, 50000, **kw) is 40000-50000, and
+        randrange(40000, 50000, 7, **kw) is 40000-49999. A call with any other parameter left empty beside a mapping is
+        not read; WHAT IT CANNOT SEE lists it, with green plants."""
+        lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
+        s = LOW - 2768                                                             # 30000, built at run time
+        for label, src, span, first in (
+                ("a mapping beside start and stop", 'port = random.randrange(%d + os.getpid() %% 5000, %d, **kw)\n' % (s, s),
+                 (s, s + 4999), LOW),
+                ("a display that gives a step of -7",
+                 'port = random.randrange(%d + os.getpid() %% 5000, %d, **{"step": -7})\n' % (s, s), (s, s + 4999), LOW),
+                ("start and stop by keyword",
+                 'port = random.randrange(start=%d + os.getpid() %% 5000, stop=%d, **kw)\n' % (s, s), (s, s + 4999), LOW),
+                ("the stop by keyword after the mapping",
+                 'port = random.randrange(%d + os.getpid() %% 5000, **kw, stop=%d)\n' % (s, s), (s, s + 4999), LOW),
+                ("a mapping whose name the module also binds to an int",
+                 'kw = 7\n\n\ndef go(kw):\n    port = random.randrange(%d + os.getpid() %% 5000, %d, **kw)\n' % (s, s),
+                 (s, s + 4999), LOW),
+                ("start above stop", 'port = random.randrange(%d, %d, **kw)\n' % (hi, lo), (lo + 1, hi), lo + 1),
+                ("randint with both its parameters filled", 'port = random.randint(%d, %d, **kw)\n' % (lo, hi), (lo, hi), lo),
+                ("randrange with its step filled", 'port = random.randrange(%d, %d, 7, **kw)\n' % (lo, hi), (lo, hi - 1),
+                 lo)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, "computed into %d-%d" % span, n=first)
+
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
         that reads one turns its subtest red, and the example leaves the docstring's list."""
@@ -1822,6 +1874,12 @@ class Plants(unittest.TestCase):
                  'PROBE = "bus.peer_update({\'port\': __VALUE__})"\n'
                  'subprocess.run([sys.executable, "-c", PROBE.replace("__VALUE__", "%d")])\n' % n),
                 ("a call other than the random calls", "test_x.py", 'port = random.choice((%d, %d))\n' % (n, n + 1)),
+                ("a randrange with its stop left empty beside a ** mapping", "test_x.py",
+                 'port = random.randrange(%d, **kw)\n' % n),
+                ("a randrange with its stop left empty beside a ** mapping, its start by keyword and a step of 1", "test_x.py",
+                 'port = random.randrange(start=%d, step=1, **kw)\n' % n),
+                ("a randrange from a start below the range with its stop left empty beside a ** mapping", "test_x.py",
+                 'port = random.randrange(%d, **kw)\n' % (LOW - 2768)),
                 ("an unbounded computed port with no constant of a sum in the range", "test_x.py",
                  'port = base + i\nother_port = %d * k\n' % n),
                 ("a host that is no loopback or wildcard literal", "test_x.py",
