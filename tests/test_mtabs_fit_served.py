@@ -37,7 +37,10 @@ wrap only where it still cannot.
   with the line "No reading yet" under its name, and a tap on it leaves the card open; with a reading, Usage is enabled and
   opens the panel. The card asks the shell at each opening, through the usage script's own test over its readings
   (window.__rompUsageReading, the check the panel's opener makes), so a reading that arrives between two openings shows at
-  the second.
+  the second. The Remote kernels glyph sits on its button's own fill, and every colour it wears reads at 3:1 or more (a
+  graphic, romp-manager's call 7) on the card and on that fill in both themes: in the light theme its dialing grey and
+  needs-you red are darker than the shell's (feed.css's --rn-wait and --rn-warn, #777777 and #dc3f46 where the shell has
+  #8a8a8a and #e5484d, which read 2.59 and 2.94:1 on that theme's button fill, #e7ded2).
 - The fallback. The action cluster is one element (.mtabs-acts) and the bar may wrap: where the tabs and the three actions
   left do not fit one row (below 322px in Chromium and 318px in WebKit and Firefox, so at 320px in Chromium and not in the
   other two; below 358px in Chromium and 353px in WebKit and Firefox with the Files tab on, so at 320px in all three), the
@@ -81,8 +84,11 @@ renders over the readings, read empty as the leg's premise): the card opened fro
 with the line USAGE_NONE; a click at its centre leaves the card open, opens no Usage modal and posts no phoneAct (read after
 a settle: an absence has no event to wait on), and the line still shows; then a reading arrives (the lab's own GET /usage
 payload posted to the shell as the timeline posts it, the shell's later pulls let through), and at the card's next opening
-Usage is enabled with no line, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then a desktop
-window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell,
+Usage is enabled with no line, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then the
+Remote kernels glyph's colours in the dark and the light theme (THEMES), each on a page of its own at 390px: in the card
+opened from the bar's Settings, every colour the glyph can wear (GLYPH: the button lit and attaching, a node connected,
+dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
+colour read with its class set and the element's transitions off. Then a desktop window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell,
 the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
 clicked at its centre, shows no row of moved actions (not displayed, its buttons boxless: the rail has its own).
 MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
@@ -98,7 +104,8 @@ tap closing the card to open nothing) and under a mutant that reads the state on
 reading that arrived later never enables Usage. The fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
-closed flashed the glyph at the card's next opening. Runs in the "Browser-backed served-page tests (pytest)" step of the
+closed flashed the glyph at the card's next opening. The contrast pin is red at the shell's literals in the light theme, in
+all three engines: the dialing grey #8a8a8a reads 2.59:1 and the needs-you red #e5484d 2.94:1 on the button's fill. Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
 ROMP_SERVED_TESTS_ENGINES (CI declares chromium; a developer's box runs all three).
@@ -112,6 +119,7 @@ import json
 import lab_dist
 import lab_ports
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -151,6 +159,11 @@ BAR_ACTS = ("merr", "mbell", "settings")   # the three left on it, in their orde
 # manager's refusal shape, so the shell's restart handler runs to its end (splash down, these words on the rail's button)
 RESTART_REFUSAL = "synthetic refusal: the lab kernel stays up"
 USAGE_NONE = "No reading yet"   # the card's line under a disabled Usage (gear.js), the words a person reads
+# the themes the Remote kernels glyph's colours are measured in, by the gear's theme ids: the dark default and the light theme
+# (no rule in feed.css or gear.css reads the Yatharth dark theme's class, so the default stands for both dark themes)
+THEMES = (("dark", "classic"), ("light", "yatharth-light"))
+GLYPH = ("lit", "attaching", "connected", "dialing", "needs you")   # every colour the glyph can wear, as the driver names them
+GLYPH_FLOOR = 3.0   # the contrast a graphic needs (WCAG's non-text 3:1), against the card's background and the button's fill
 DESKTOP = (1280, 800)
 RAIL = ((821, 800), (1100, 800))   # the desktop rail: just past the phone query's 820px, and a laptop
 # the shell's own /tunnels poll in the moved-actions leg: two synthetic hosts, one connected and one with no kernel (the glyph
@@ -431,6 +444,65 @@ def _rail_problems(engine, rail):
     return out
 
 
+def _rgba(v):
+    """A computed colour, 'rgb(r, g, b)' or 'rgba(r, g, b, a)' (commas or the spaced form), -> (r, g, b, a); anything else is a
+    failure, not a guess."""
+    m = re.fullmatch(r"rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)", (v or "").strip())
+    assert m, "not an rgb() colour: %r" % (v,)
+    a = 1.0 if m.group(4) is None else float(m.group(4)) / (100.0 if m.group(5) else 1.0)
+    return (float(m.group(1)), float(m.group(2)), float(m.group(3)), a)
+
+
+def _over(fg, bg):
+    """fg composited over the opaque bg."""
+    return tuple(fg[i] * fg[3] + bg[i] * (1 - fg[3]) for i in range(3)) + (1.0,)
+
+
+def _contrast(a, b):
+    """WCAG's contrast ratio of two opaque colours."""
+    def lum(c):
+        ch = [x / 255.0 for x in c[:3]]
+        ch = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in ch]
+        return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+    x, y = lum(a), lum(b)
+    return (max(x, y) + 0.05) / (min(x, y) + 0.05)
+
+
+def _hex(c):
+    return "#" + "".join("%02x" % int(round(x)) for x in c[:3])
+
+
+def _contrast_problems(engine, contrast):
+    """Each colour the Remote kernels glyph wears reads at GLYPH_FLOOR or more against the card's background and against the
+    button's own fill (the glyph sits on the button), in the dark and the light theme."""
+    out = []
+    for name, theme in THEMES:
+        where = "%s Remote kernels glyph, %s theme (%s)" % (engine, name, theme)
+        t = contrast.get(name)
+        if not t:
+            out.append("%s: not read" % where)
+            continue
+        if t.get("light") is not (name == "light"):
+            out.append("%s: the settings document's theme-light class is %r (the leg's premise)" % (where, t.get("light")))
+        if not t.get("rowShown"):
+            out.append("%s: the card's row of moved actions is not shown (the leg's premise)" % where)
+        try:
+            card = _rgba(t.get("card"))
+            if card[3] != 1:
+                out.append("%s: the card's background is not opaque (%r), so what lies under it is unmeasured" % (where, t.get("card")))
+                continue
+            fill = _over(_rgba(t.get("fill")), card)
+            for k in GLYPH:
+                col = _rgba((t.get("colours") or {}).get(k))
+                on_card, on_fill = _contrast(_over(col, card), card), _contrast(_over(col, fill), fill)
+                if on_card < GLYPH_FLOOR or on_fill < GLYPH_FLOOR:
+                    out.append("%s: %s, %s, reads %.2f:1 on the card (%s) and %.2f:1 on the button's fill (%s), under %g:1" % (
+                        where, k, _hex(_over(col, fill)), on_card, _hex(card), on_fill, _hex(fill), GLYPH_FLOOR))
+        except AssertionError as e:
+            out.append("%s: unreadable: %s" % (where, e))
+    return out
+
+
 class MtabsFit(unittest.TestCase):
     """One lab kernel for every leg (setUpClass); each leg is one driver run in one engine."""
     maxDiff = None
@@ -473,7 +545,7 @@ class MtabsFit(unittest.TestCase):
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "settleMs": 100,
                "viewports": [list(v) for v in PORTRAIT + LANDSCAPE], "dynamicViewport": list(DYNAMIC),
                "actsViewport": list(ACTS), "moved": list(MOVED), "restartRefusal": RESTART_REFUSAL,
-               "tunnels": TUNNELS, "tunnels2": TUNNELS2, "tunnelsDrop": TUNNELS_DROP,
+               "tunnels": TUNNELS, "tunnels2": TUNNELS2, "tunnelsDrop": TUNNELS_DROP, "themes": [list(t) for t in THEMES],
                "desktopViewport": list(DESKTOP), "railViewports": [list(v) for v in RAIL],
                "result": os.path.join(self.lab, "result-%s.json" % engine)}
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)
@@ -539,6 +611,7 @@ class MtabsFit(unittest.TestCase):
         problems += _problems(where, d["after"])
         problems += _acts_problems(engine, r["acts"])
         problems += _no_reading_problems(engine, r.get("noReading") or {"vp": list(ACTS)})
+        problems += _contrast_problems(engine, r.get("contrast") or {})
         self.assertEqual([tuple(x["vp"]) for x in r["rail"]], list(RAIL), engine + ": every rail width was read")
         problems += _rail_problems(engine, r["rail"])
         self.assertEqual(r["desktop"]["display"], "none", engine + ": the desktop shows no phone bar: %r" % (r["desktop"],))

@@ -29,6 +29,11 @@
 // shell heard read; then a reading arrives (the lab's own GET /usage payload posted to the shell as the timeline posts it,
 // the shell's later pulls let through), the card closed and opened again, Usage read again, and one click on it, its effect
 // read.
+// Then the Remote kernels glyph's colours, on a page of its own per theme (cfg.themes: the theme written to the store before
+// the page parses, as the gear writes it) at cfg.actsViewport: the card opened from the bar's Settings, and in it the card's
+// background, the button's own fill (the glyph sits on it) and each colour the glyph can wear, as computed values: the
+// button lit and attaching (its colour, the strokes' currentColor) and each node's fill as connected, dialing and needs you,
+// each read with that class set on the element and the element's transitions off, then put back.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -112,10 +117,12 @@ const read = (page) => page.evaluate("(" + READ.toString() + ")()");
 const settingsFrameOf = (page) => page.frames().find((f) => f !== page.mainFrame() && /\/settings(\?|$)/.test(f.url()));
 const frames = (page) => page.evaluate(() => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => res()))));
 
-// a phone page on one tab set, booted: the bar laid out, the boot splash gone (the panes' first ready, or its backstop), the webfont in
-async function boot(files, before) {
+// a phone page on one tab set (and, given one, in one theme), booted: the bar laid out, the boot splash gone (the panes' first
+// ready, or its backstop), the webfont in
+async function boot(files, before, theme) {
   const context = await browser.newContext({ ...phone, viewport: { width: 390, height: 844 } });
-  if (files) await context.addInitScript(() => { try { localStorage.setItem("romp:settings", JSON.stringify({ showFilesControl: true })); } catch (e) { /* no store */ } });
+  const stored = { ...(files ? { showFilesControl: true } : {}), ...(theme ? { theme } : {}) };
+  if (Object.keys(stored).length) await context.addInitScript((s) => { try { localStorage.setItem("romp:settings", JSON.stringify(s)); } catch (e) { /* no store */ } }, stored);
   const page = await context.newPage();
   page.on("pageerror", (e) => { if (out.errors.length < 40) out.errors.push(String(e).slice(0, 300)); });
   if (before) await before(page);
@@ -399,6 +406,46 @@ try {
       nr.clicked = await shellNow(sf);
     }
     out.noReading = nr;
+    await context.close();
+  }
+  // the Remote kernels glyph's colours in each theme, against the card's background and the button's fill (the Python side
+  // composites and measures): the card opened from the bar's Settings, each colour read with its class set and put back
+  out.contrast = {};
+  for (const [name, theme] of cfg.themes || []) {
+    const { context, page } = await boot(false, null, theme);
+    const [w, h] = cfg.actsViewport;
+    await page.setViewportSize({ width: w, height: h });
+    await frames(page);
+    await sleep(cfg.settleMs || 100);
+    await frames(page);
+    const gear = (await read(page)).controls.find((c) => c.key === "settings");
+    if (!gear) throw new Error("no Settings on the bar (the contrast leg, " + name + ")");
+    await page.mouse.click(gear.left + gear.w / 2, gear.top + gear.h / 2);
+    await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+    const sf = settingsFrameOf(page);
+    if (!sf) throw new Error("no settings frame after the click (the contrast leg, " + name + ")");
+    await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+    await frames(page);
+    out.contrast[name] = await sf.evaluate(() => {
+      const row = document.getElementById("rs-pacts"), card = document.querySelector("#rsettings .rs-card");
+      const net = document.getElementById("rs-pact-net"), me = net && net.querySelector(".rn-me");
+      const res = { light: document.body.classList.contains("theme-light"), rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none",
+                    card: card ? getComputedStyle(card).backgroundColor : null, fill: null, colours: {} };
+      if (!net || !me) return res;
+      // one colour: the element's transitions off (the button's colour and fill fade over 0.12s), the class set, the computed
+      // value read, and everything put back
+      const readAs = (el, set, prop) => { const was = el.getAttribute("class"), tr = el.style.transition;
+        el.style.transition = "none"; set(); const v = getComputedStyle(el)[prop];
+        if (was === null) el.removeAttribute("class"); else el.setAttribute("class", was);
+        el.style.transition = tr; return v; };
+      res.fill = readAs(net, () => {}, "backgroundColor");
+      res.colours.lit = readAs(net, () => net.classList.add("on"), "color");
+      res.colours.attaching = readAs(net, () => net.classList.add("busy"), "color");
+      res.colours.connected = readAs(me, () => me.setAttribute("class", "rn-me rn-ok"), "fill");
+      res.colours.dialing = readAs(me, () => me.setAttribute("class", "rn-me rn-wait"), "fill");
+      res.colours["needs you"] = readAs(me, () => me.setAttribute("class", "rn-me rn-warn"), "fill");
+      return res;
+    });
     await context.close();
   }
   // the desktop rail at each width: the actions pinned at its right end, shown ones only (the bell once the push script reveals it)

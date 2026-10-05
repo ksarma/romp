@@ -144,6 +144,7 @@
   --outbound-line: #8a8a8a;   /* the viewer's outbound dress line, mirrored byte-equal from styles.css (4.83:1 on --bg; theme-parity.test.ts holds the pair) */
   --rn-wait: #8a8a8a;   /* the Remote kernels glyph's dialing node (a host attached and not answering), byte-equal to the shell's
                          .rn-wait (kernel.py): the settings card's copy of the glyph (gear.css #rs-pact-net, iOS item 4g) reads it */
+  --rn-warn: #e5484d;   /* ...and its needs-you node (a host with no kernel), byte-equal to the shell's .rn-warn */
   --detail-bg: rgba(255, 255, 255, 0.05);
 
   /* Relevance category colors — single source, the CLASSIC identity-palette hexes
@@ -184,7 +185,10 @@ body.theme-light {
   --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
   --card-border: rgba(0, 0, 0, 0.10);
   --outbound-line: #6b645a;   /* mirrored from styles.css (4.90:1 on the page) */
-  --rn-wait: #8a8a8a;   /* the same in this theme, as the shell's .rn-wait literal is */
+  --rn-wait: #777777;   /* darker than the shell's #8a8a8a, which reads 2.59:1 on this theme's button fill (--btn-bg, under the card's
+                           glyph): 3.36:1 there and 4.13:1 on the card (--surface-raised), the same grey lower in OKLCH lightness */
+  --rn-warn: #dc3f46;   /* darker than the shell's #e5484d (2.94:1 on that fill): 3.26:1 there and 4.00:1 on the card, the same
+                           OKLCH hue and chroma lower in lightness; each glyph colour needs 3:1 on both (a graphic) */
   --detail-bg: rgba(0, 0, 0, 0.04);
   --rel-done: #3E7D0E;       /* the light ok-green (matches --green) */
   --rel-decision: #1478B8;   /* the classic blue, darkened to read on cream */

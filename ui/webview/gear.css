@@ -68,16 +68,18 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    _LANDING_REMOTES_JS paintIcon through mnet): the accent when a host is connected and while one attaches, the connector
    dashes marching while it attaches, each node's colour (connected, dialing, needs you) and the red flash when a host drops
    while the card is open (a drop while it is closed leaves the class on a page that runs no animation, and the kernel clears
-   it when the card opens, so the flash never plays late). The values are the kernel's own rules for that glyph (.rn-ok, .rn-wait and .rn-warn, .rail-act.on and .busy, the
+   it when the card opens, so the flash never plays late). The rules are the kernel's own for that glyph (.rn-ok, .rn-wait and .rn-warn, .rail-act.on and .busy, the
    rnet-drop and rnet-march keyframes), restated because this page loads none of the shell's stylesheet; the node colours
-   through tokens: the accent, feed.css's --rn-wait (the shell's dialing grey) and the blocked red, --st-blocked-bg, each
-   with the shell's literal as its fallback and the same value in both themes as the shell's rule */
+   through tokens, each with the shell's literal as its fallback: the accent, and feed.css's --rn-wait and --rn-warn, the
+   dialing grey and the needs-you red, the shell's literals in the dark theme and darker in the light one, where the
+   shell's two read under 3:1 on the button's fill. Every colour the glyph wears reads at 3:1 or more (a graphic) on the
+   card and on that fill in both themes, measured in the served card by tests/test_mtabs_fit_served.py */
 #rs-pact-net.on, #rs-pact-net.busy { color: var(--accent, #9cd2ff); }
 #rs-pact-net.busy svg path { stroke-dasharray: 3 3; animation: rs-pact-march 0.9s linear infinite; }
 @keyframes rs-pact-march { to { stroke-dashoffset: -6; } }
 #rs-pact-net .rn-ok { fill: var(--accent, #9cd2ff); }
 #rs-pact-net .rn-wait { fill: var(--rn-wait, #8a8a8a); }
-#rs-pact-net .rn-warn { fill: var(--st-blocked-bg, #e5484d); }
+#rs-pact-net .rn-warn { fill: var(--rn-warn, #e5484d); }
 #rs-pact-net.rn-drop { animation: rs-pact-drop 0.42s ease-in-out 3; }
 @keyframes rs-pact-drop { 0%, 100% { box-shadow: none; } 50% { background: rgba(229, 72, 77, 0.45); box-shadow: 0 0 0 2px rgba(229, 72, 77, 0.9); } }
 #rsver { white-space: pre-line; }
