@@ -23,7 +23,11 @@ private repository under <state dir>/sweeps/trees that reads the batcher's objec
 `git clone --shared` does, holds no branch or tag of theirs and names no remote (shallow where their repository was
 when the run started: the runner reads its shallow file before the first leg, and every checkout gets that copy, so a
 leg that writes the file changes no later job's checkout; the runner reads the file again after the last leg, below),
-checked out at the sha with hooks off (make_checkout),
+holds one ref, refs/remotes/origin/main, at the commit their origin/main named when the run started (the runner reads
+that ref once, before the first leg, and writes the commit it read into every checkout, so a leg that moves the ref in
+its own checkout or in their repository moves no later job's; with no origin/main there, no checkout holds one; the
+result records the commit, runner.checkout.main, null without one; main_snapshot), checked out at the sha with hooks off
+(make_checkout),
 every runner git call made with GIT_* removed, git's global and system configuration off and refs/replace ignored, and
 each call into a repository made with that repository named explicitly (GitRepo; the 02:43Z ruling, item 1(b)): GIT_DIR,
 GIT_COMMON_DIR and GIT_WORK_TREE set, and GIT_CEILING_DIRECTORIES at the directory above the work tree, so git looks for
@@ -36,8 +40,8 @@ first leg. A --tree must itself hold .git: one that does not exist, or whose .gi
 never resolved to a repository that encloses it (the closing check wf_3b100f5e-b38, its item 1); only with no --tree
 does the runner look up from the current directory for the nearest directory holding .git, so there, and only there, a
 tree whose .git is gone resolves to a repository that encloses it, when one does. It copies none of the batcher's
-repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or replace refs, so the legs see the
-sha's tree plus the tool installs, and
+repository config, attributes, excludes, hooks, sparse patterns, index flags, refs or replace refs, origin/main's
+commit as read before the first leg aside, so the legs see the sha's tree plus the tool installs, and
 nothing from the checkout's parents. Before any leg the runner verifies the first checkout against `git ls-tree -r
 <sha>` (every path, executable bit, symlink target and blob), and refuses (exit 2, nothing recorded) on a
 difference or on node_modules, package.json, tsconfig.json or jsconfig.json in any ancestor directory, which
@@ -65,11 +69,16 @@ the next run's checkouts would read it. A shallow file that is not a regular fil
 symlink, whatever it points to) is never opened by the runner, and no git the runner starts reads one the check found:
 one there when the run starts refuses it before the runner's first git call that parses commits, and one a leg leaves
 makes the run invalid at that re-read, each naming the file and its type (cannot_read; the closing check's item 1).
-These lstat checks, of the shallow file and of the clone's .git, HEAD, config and info/exclude, see each file as it is
-when the runner checks it. One swapped in after the check, by a process still running then (one that outlived its leg,
-in the stated outside below, or any other process of the batcher's user), is still never read by the runner, whose own
-reads open with O_NONBLOCK and O_NOFOLLOW and read only a regular file (open_regular), but a git the runner starts
-after the check opens it by name and can wait on it; that wait ends at the bound below.
+These lstat checks, of the shallow file, of the batcher's loose origin/main file (main_ref_checked) and of the clone's
+.git, HEAD, config and info/exclude, see each file as it is when the runner checks it. One swapped in after the check,
+by a process still running then (one that outlived its leg, in the stated outside below, or any other process of the
+batcher's user), is still never read by the runner, whose own reads open with O_NONBLOCK and O_NOFOLLOW and read only a
+regular file (open_regular), but a git the runner starts after the check opens it by name and can wait on it; that
+wait ends at the time bound below. git reads origin/main's loose file whole and follows a symbolic ref in it, so a
+symlink to /dev/zero, or a sparse file too large for the memory limit below, swapped in there is read until that limit
+ends the read, on Linux, and the run is refused naming the limit and the files git may have met (main_snapshot); off
+Linux no git has that limit, and such a read runs until the time bound or the machine's memory ends it. A symbolic ref
+to a readable ref swapped in there is followed, and that ref's commit taken.
 
 The runner's own files that a leg can reach (it finds the state dir from its own log's path, and the pytest and served
 legs run inside their venvs) are created or opened without waiting too (the verify pass at PR 926's build head, its code
@@ -98,6 +107,43 @@ markers, the venvs' build logs and the two locks. The eighth is scripts/batch.py
 clone's common dir: only as a regular file and without waiting, and otherwise the command stops, naming the file
 (read_state).
 
+Every file the runner reads itself has a size limit as well, but for the two named below (/proc/<pid>/stat and
+get-pip.py), and so does read_state (round 1 of PR 959, ruling A's class): a file is read only when fstat gives it at
+most its limit, and no more than the limit and one byte is read of it, so a sparse file of any size, which costs a leg
+nothing on disk, or one that grows while it is read, is never read to its end. The limits, each with its measurement at
+its constant, or the format that sets it where there was nothing to measure: a result or a venv's marker, JSON_FILE_MAX
+(16 MiB);
+a checkout's marker, MARKER_MAX (4 KiB); the pytest leg's log, which deps_skipped reads whole, LOG_MAX (128 MiB);
+ci.yml and a file a sed line of an install step reads, CHECKOUT_FILE_MAX (16 MiB); npm's package.json and builtin file,
+NPM_FILE_MAX (1 MiB); the batcher's shallow file, SHALLOW_FILE_MAX (16 MiB); its loose MAIN_REF file and its HEAD,
+REF_FILE_MAX (4 KiB); a checkout's HEAD, config and info/exclude, GIT_STATE_MAX (64 KiB); and the batch state,
+batch.py's STATE_MAX (1 MiB). Two readers read in pieces of 1 MiB, so their memory is one piece whatever the size, and
+their limit bounds the time the read takes: the bats leg's log, whose lines are counted (a count needs every line),
+LOG_COUNT_MAX (1 GiB), and a file the runner hashes, a venv's file or an ignored file of a checkout,
+HASHED_FILE_MAX (1 GiB). A tracked file of a checkout is read only when fstat gives it its blob's size, as git ls-tree
+gives it, and then no more than that (_entry_faults), and pytest's and node's counts are read from a log's last LOG_TAIL
+bytes alone. Past its limit each reader does what it does with a file it cannot read, naming the size where it names
+why: a result is unreadable and kept, named by check, batch.py verify and the next run's refusal; a venv's marker reads
+as no finished build, naming its size, so the venv is built again; a checkout's marker reads as no marker; the pytest
+leg's log makes the served leg red, naming it and its size; a bats log counts no test, which the verdict reads as red
+for a leg that exited 0, and the leg's summary names the log's size; ci.yml, a sed line's file and npm's builtin file
+refuse the run, naming each, and a package.json reads as one that does not name npm, which the refusal that follows
+names with its size; a venv's file is a venv that cannot be read, named (built again before the first leg, the run's
+invalid mark after a leg); an ignored file is one no excuse matches; and the batch state stops batch.py, naming it.
+Three reads have no limit of their own: /proc/<pid>/stat, whose size the kernel bounds; get-pip.py, which the runner
+itself fetched into a directory of the build's that no leg has seen; and the output of the processes other than git that
+the runner starts and reads (a probe's, a tool's version), which their time limits end but no size limit does. A git
+call's output has one (GIT_OUTPUT_MAX, below). And one cost is a stated residual, not a limit (the 16:04Z ruling on PR
+959): the time hashing takes across many files. HASHED_FILE_MAX bounds each file, and a leg can leave as many files just
+under it as it likes where the runner hashes them (ignored files in its checkout, files in a venv), sparse ones costing
+it nothing on disk, each of which costs the runner the time to hash one of that size: about 0.7 s for 1 GiB, at 1,475
+MiB/s (measured on 2026-10-03 on this project's 60-core sweep machine at a load of 27, under nice 19), so a thousand of
+them hold each read of them about 12 minutes. The hashing costs time, not memory; but the runner also holds an entry for
+each file it walks, in the checkout (_disk_paths, and check-ignore's input built from it) and in a venv (venv_tree),
+with no limit on their number, so many small files a leg leaves cost it memory as well (until check-ignore's output
+passes GIT_OUTPUT_MAX, which ends that call). A leg that leaves so many files can be seen in its checkout or venv, and
+the run can be stopped.
+
 Every git call the runner makes into a repository is made in run_git, the one helper that starts such a call
 (tests/test_git_call_census.py holds every place this file starts a process to a named allowlist, on which the one git
 started elsewhere is tool_versions' git --version, run in a leg's environment, which reads no repository and has that
@@ -121,9 +167,26 @@ neither index nor info/exclude, so it reports the recorded verdict. The re-read 
 run that reaches the bound, and the shallow file's re-read after the last leg are the runner's producers of invalid; the
 legs after any of the first three do not run.
 
-The batcher's tree is read for its HEAD sha and branch only, so it need not be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
-during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
-untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
+Every such git also has a memory limit, on Linux (round 1 of PR 959, ruling A): run_git starts it with its address
+space capped at GIT_MEMORY, 1 GiB, so a git that reads without end (a symlink to /dev/zero, a sparse file, or a symbolic
+ref leading to either, where git reads a ref, which it reads whole and unchecked) fails when an allocation reaches the
+limit, within a second, and the call raises GitMemory, which is handled as a call at the time bound is: a refusal before
+the run is recorded and in check, the run's invalid mark during the run, naming the call and the limit. The limit is far
+above what a real run's calls need (the comment at GIT_MEMORY gives the measurement). Off Linux no git has one, since
+macOS does not enforce RLIMIT_AS, and each run records that (runner.git_memory null, runner.git_memory_why).
+
+And every such git's output has a limit, on every platform (the 16:04Z ruling on PR 959, ruling A's class): run_git reads
+its stdout and stderr, and writes its input, in one selector loop with no thread, and holds at most GIT_OUTPUT_MAX,
+64 MiB, of each stream, so a git that prints more (check-ignore asked about files without end a leg left, ls-tree of a
+tree object a leg rewrote in the batcher's object store) is ended with its process group as at the time bound, and the
+call raises GitOutput, naming the call, the stream and the limit, which is handled as a call at the time bound is. The
+limit is far above what a real call prints (the comment at GIT_OUTPUT_MAX gives the measurement).
+
+The batcher's tree is read for its HEAD sha and branch, and its repository for its shallow file, before the first leg
+and again after the last (shallow_snapshot, shallow_moved), and for its refs/remotes/origin/main, before the first leg
+and never again (main_ref_checked, main_snapshot). It need not be clean: the runner prints how many uncommitted edits
+it holds (git status), which are not swept, and nothing done there during a run reaches a leg. Nor do its ignored
+files: a stale dist/ or out-tests/, bytecode, node_modules, or an untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
 length the deepest session-host socket path depends on, is unchanged, the run's and each leg's own. Each checkout is
 removed when its job's legs end, and TMPDIR (the run's, and the running leg's) and the checkout in use are removed on
 every exit path: SIGTERM, SIGHUP and SIGINT (Ctrl-C) stop each leg's process group, the runner exiting 128 plus the signal's
@@ -313,8 +376,11 @@ recorded under another; the hash covers what the runner itself sets, that the se
 block, and the shape each leg runs in (its own TMPDIR, HOME and state root; one checkout per ci.yml job, the steps it
 groups by), so a result written before round 2's fixes, whose legs shared one TMPDIR, HOME, state root and checkout,
 reads as recorded under another (decision 15), and so does one written before the pdf-smoke leg, since the hash names
-every leg's set values and step (the owner's build question 4); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
-in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups).
+every leg's set values and step (the owner's build question 4), and one written before each checkout held origin/main,
+since what a checkout holds is part of that shape (LEG_CHECKOUT); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
+in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups), nor
+the commit a checkout's origin/main names, which is the batcher's when the run started and is recorded
+(runner.checkout.main).
 The result also records the versions of node, npm, bats, git and gitleaks the legs found, and, per
 leg, the names it left in its private HOME (runner.home_left, {leg: names}; a setup's are in its own record), with
 home_empty true when no leg and no setup left anything; recorded only.
@@ -325,10 +391,23 @@ leaves there reaches a later leg. Nothing it leaves in its checkout reaches a le
 legs start from a fresh clone verified against the sha's tree: no file in the clone's .git (a hook, info/attributes,
 info/exclude, config, a ref or refs/replace, packed-refs, objects/info/alternates) and no ignored file (bytecode,
 node_modules, dist). Nor does a branch or tag a leg writes into the batcher's repository, which it can find through
-its clone's alternates: each clone holds the sha alone, no branch and no tag of that repository (make_checkout), as
-CI's checkout fetches the pushed sha alone, and names no remote, so a plain `git fetch` in a later job copies none. Nor
-does a shallow file a leg writes there: each clone gets the one the runner read before the first leg (shallow_snapshot;
-the narrow landing delta's ruling 8). That file does reach the next run, whose snapshot reads it, so every checkout of
+its clone's alternates: each clone holds no branch and no tag of that repository (make_checkout), and names no remote,
+so a `git fetch` in a later job copies none. CI's checkout differs here: in every job a leg stands in for,
+actions/checkout fetches the one commit as the remote-tracking ref of the run's branch (so those checkouts lack MAIN_REF
+except in a run on main; ci.yml's secret-scan job, which no leg stands in for, fetches all of history), and in every job
+it creates the run's branch, as a local branch, at the commit it checks out, while the runner's clone is detached at the
+sha, so a test that reads the current branch's name gets the run's branch in CI and none in the sweep
+(tests/test_branch_name_readers.py lists the tests that read it). Nor does a move
+of origin/main, in the batcher's repository or in the leg's own clone: each clone's refs/remotes/origin/main is written
+at the commit the runner read from the batcher's origin/main before the first leg (main_snapshot), and no ref is read
+again for a later clone. A move in the batcher's repository does reach the next run, whose snapshot reads the ref as
+the leg left it, and, unlike a change to the shallow file (below), it marks no run invalid, since a fetch of origin
+into the batcher's repository during a run, theirs or another process's, moves it as a leg can, and a re-read after
+the last leg could not tell the two apart: such a mark would void sound runs. So a leg that moves it changes what the
+next run's checkouts hold (moved forward, it narrows what a test that reads main scans there), nothing marks that, and
+the next run's result records the commit its checkouts held (runner.checkout.main). Nor does a
+shallow file a leg writes into the batcher's repository: each clone gets the one the runner read before the first leg
+(shallow_snapshot; the narrow landing delta's ruling 8). That file does reach the next run, whose snapshot reads it, so every checkout of
 that run reads it as it now stands, cut where the leg's file says, or not shallow at all when the leg removed it, and
 the batcher's repository stays as the leg left it: the runner writes nothing there and does not restore it, and instead the run in which the file changed is invalid, naming it (shallow_moved; the
 owner's question 2 after the merge of main), unless that run ends before the re-read after its last leg (stopped, or
@@ -428,6 +507,9 @@ import json
 import os
 import random
 import re
+import resource
+import select
+import selectors
 import shlex
 import shutil
 import signal
@@ -670,6 +752,11 @@ TOOL_CONFIG_OFF = {"npm_config_globalconfig": os.devnull, "GIT_CONFIG_NOSYSTEM":
 # records its presence and sha256 (npm_builtin).
 NPM_BUILTIN = "npmrc"
 NPM_BUILTIN_KEYS = ("prefix",)
+# The most bytes the runner reads of npm's package.json and of its builtin file (npm_builtin), each at its real path, as
+# read_regular reads it: a leg can write both where npm's package is user-writable (above). Measured 2026-10-03: the
+# package.json of npm 10.9.8, the npm on the PATH of the sweeps measured, is 6,706 bytes, and Homebrew's builtin file
+# holds one prefix line; 1 MiB is over 150 times the first.
+NPM_FILE_MAX = 1 << 20
 # The box floor, which CI does not need: every port variable the tree reads is set to a dead port, so leg code its own
 # suite does not floor cannot reach a live manager, kernel, dashboard or postal bus on this machine (each falls back to
 # the live deployment's port when unset). XDG_STATE_HOME, the state root, is private per run (leg_sets).
@@ -1001,13 +1088,25 @@ def no_checkout_runs(runs):
     return [i + 1 for i, r in enumerate(runs) if not checkout_recorded(r)]
 
 
+# The most bytes the runner reads of a JSON document under the state dir (_json_regular): a result, and a venv's marker,
+# which records the venv's whole tree. The largest real ones, measured 2026-10-03 across the sweeps' state dirs (22
+# results, 36 venv markers): a venv marker of 713,621 bytes (the pytest leg's venv, 3,775 files) and a result of 75,843
+# bytes; 16 MiB is over 23 times the first. json.loads holds a document as Python objects several times its size, so the
+# limit bounds that memory as well.
+JSON_FILE_MAX = 16 << 20
+
+
 def _json_regular(path):
     """The JSON document in the regular file at `path`, read through open_regular, so a FIFO or a symlink there (a leg
     reaches the state dir: its own log's path, in /proc/self/fd/1, is under it; a venv's marker is inside the venv the
     leg runs in) raises Unreadable, an OSError, naming what it is, and is never opened (the verify pass at PR 926's
-    build head, its code finding 1); FileNotFoundError when nothing is there, ValueError when the bytes are not UTF-8
-    JSON."""
-    data = read_regular(path)
+    build head, its code finding 1), and only when fstat gives it at most JSON_FILE_MAX bytes, of which no more are read,
+    so a larger one, a sparse file of any size included, raises Unreadable naming its size, and is not read (round 1 of
+    PR 959, ruling A's class); FileNotFoundError when nothing is there, ValueError when the bytes are not UTF-8 JSON. Each
+    caller reads Unreadable as it reads any file it cannot read: assess names the result and why, and that it is kept
+    until moved aside; load_history refuses the run the same way; newest_for_branch passes over it; and a venv's marker
+    reads as no finished build, naming why it cannot be read, so the venv is built again (_venv_check)."""
+    data = read_regular(path, JSON_FILE_MAX)
     if data is None:
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), path)
     return json.loads(data.decode("utf-8"))
@@ -1243,13 +1342,46 @@ def excuse_contradiction(repo, result, sha, subject="HEAD"):
 # clone, the checkout, the verification) runs with every GIT_* variable of its environment removed and git's global and
 # system configuration off, so no inherited GIT_DIR, GIT_CONFIG_*, GIT_TEMPLATE_DIR or config file changes what it
 # reads; refs/replace is ignored; and the per-user attributes and excludes files git reads by default
-# (~/.config/git/attributes and ignore) are pointed at an empty file, since a global `* text eol=crlf` there would change
-# what a checkout writes, and a directory rule in the ignore file would shadow a tracked .gitignore's rule in the re-read
-# after a leg. fsmonitor and the untracked cache are off, over the repository's own config too: the notice's git status
-# runs in the batcher's repository, whose config could name an fsmonitor hook or turn the untracked cache on.
+# (~/.config/git/attributes and ignore) are pointed at an empty file, since a global `* text eol=crlf` there would
+# change what a checkout writes, and a directory rule in the ignore file would shadow a tracked .gitignore's rule in the
+# re-read after a leg. fsmonitor and the untracked cache are off, over the repository's own config too: the notice's git
+# status runs in the batcher's repository, whose config could name an fsmonitor hook or turn the untracked cache on. The
+# four after core.untrackedCache (the pack window caps, core.preloadIndex and index.threads) keep what a call needs
+# under the memory limit (GIT_MEMORY) from growing with the size of a pack, or varying
+# with the threads git starts: git maps a pack in windows of core.packedGitWindowSize, 1 GiB by default on a 64-bit
+# machine, up to core.packedGitLimit in all, and each window counts against the limit, so with the defaults a call that
+# read one object needed a little more than the largest pack it touched (304 MiB and up over this project's 289 MiB
+# pack, measured 2026-10-03); and git status's index preload starts a thread per 500 index entries, up to 20, each
+# reserving a stack and a malloc arena of its own, so its need at one limit changed from run to run (it failed at a
+# limit it had passed at). index.threads=false, one thread, does the same for the index read itself, over the
+# repository's own config, which git reads on one thread unless index.threads is set there: set, with 20,000 index
+# entries or more, git status started threads to read it, and at the limit a thread that could not start failed it with
+# "unable to create load_cache_entries thread: Resource temporarily unavailable", which is not what OUT_OF_MEMORY
+# recognizes, so the notice was dropped (measured the same day in a 30,000-entry repository: with the setting set there,
+# git status failed so at limits between 16 and 106 MiB and passed at limits below some of those; with
+# index.threads=false it failed only at 16 MiB and below, as GitMemory). Where git status writes the index back, it
+# leaves out the extensions threaded reads use, which that repository's own git writes again. A checkout still holds
+# each blob below core.bigFileThreshold (512 MiB, git's default, since a checkout reads no config of the batcher's)
+# whole while it writes it, so its need grows with the largest such blob in the tree: with the caps, on synthetic
+# repositories, a checkout needed 141 MiB beside one 64 MiB blob, 397 MiB beside one 256 MiB blob and 541 MiB beside one
+# 400 MiB blob, and 141 MiB beside the 256 and 400 MiB blobs with core.bigFileThreshold lowered to 100 MiB, above which
+# git streams a blob (measured 2026-10-03). These are performance settings: the job's checkout took the same time with
+# them, 0.68 to 0.72 s, and git status in the batcher's tree 4 ms longer without the preload (0.013 s against 0.009 s;
+# measured the same day). core.warnAmbiguousRefs is off for every call, over the repository's own config too: with it on
+# (git's default), git resolving a name, or a full object id, also opens each other name git's rev-parse rules give it
+# (<git dir>/<name>, refs/<name>, refs/tags/<name>, refs/heads/<name>, refs/remotes/<name> and
+# refs/remotes/<name>/HEAD), to warn that the name is ambiguous, and a symlink to /dev/zero at any of them was read
+# until the memory limit: rev-parse HEAD's and git status's at refs/tags/HEAD and the rest (round 1 of PR 959's build
+# review, exact-3), and the excuse rule's cat-file -e <sha>:<path> at refs/tags/<sha> and the rest (round 1's
+# spot-check, S4, git 2.43.0, 2026-10-03). No runner call reads that warning: git prints it on stderr and resolves the
+# name as it does with the setting off, by the first rule that finds one. The setting also decides how strictly
+# for-each-ref's refname:short and rev-parse --abbrev-ref shorten a name, and the runner makes neither call. It does not
+# stop git checkout <sha>, which make_checkout runs in the fresh clone under GIT_MEMORY, from looking the id up as a ref
+# name first under every rule (round 1 of PR 959, V5): that clone holds no ref the runner did not write.
 GIT_NEUTRAL = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_NO_REPLACE_OBJECTS": "1"}
 GIT_NEUTRAL_CONFIG = (("core.attributesFile", os.devnull), ("core.excludesFile", os.devnull), ("core.fsmonitor", "false"),
-                      ("core.untrackedCache", "false"))
+                      ("core.untrackedCache", "false"), ("core.packedGitWindowSize", "32m"), ("core.packedGitLimit", "128m"),
+                      ("core.preloadIndex", "false"), ("index.threads", "false"), ("core.warnAmbiguousRefs", "false"))
 
 # The 02:43Z ruling, item 1(a): every git call the runner makes into a repository has a bounded wait, GIT_BOUND seconds,
 # and is made through run_git, the one helper that makes one (tool_versions' git --version, which reads no repository,
@@ -1267,6 +1399,51 @@ GIT_NEUTRAL_CONFIG = (("core.attributesFile", os.devnull), ("core.excludesFile",
 # the batcher's tree, ls-tree, cat-file and check-ignore over the 4626 ignored paths npm ci and the two builds leave.
 # tests/test_git_call_census.py holds every place this file starts a process to a named allowlist, run_git first.
 GIT_BOUND = 120
+
+# Round 1 of PR 959, ruling A: every git call the runner makes through run_git (tool_versions' git --version, which
+# reads no repository, aside) has a memory limit beside GIT_BOUND's time limit, its address space (RLIMIT_AS) set to
+# GIT_MEMORY bytes in the child before git runs (run_git), since GIT_BOUND bounds a call's time and not its memory: git
+# reads a loose ref file whole and unchecked, so a symlink to /dev/zero there, a sparse file of any size, or a symbolic
+# ref leading to either, grows git's memory without end well inside 120 s (both rev-parse and show-ref took more than
+# 1 GiB in under 2 s, the round's evidence). Under the limit such a git fails when an allocation reaches it, and the
+# call raises GitMemory, naming it. Every call gets the limit, not only those into the batcher's repository: a
+# checkout's calls read the batcher's object store, and the batcher's own objects/info/alternates, through the
+# checkout's alternates file, so the repository a call names does not separate the calls that can meet such a file from
+# those that cannot. The figure, measured on 2026-10-03 with git 2.43.0 on a scratch clone of this project used as the
+# batcher (its own packs: 8, 408 MiB in all, the largest 289 MiB; 3333 tracked files), by bisecting to 1 MiB the
+# smallest limit at which each call class run_git makes succeeds, with GIT_NEUTRAL_CONFIG's pack caps: a job's checkout
+# of the whole tree needed 252 MiB, the most; ls-tree 82 MiB; git status 50 MiB; update-ref, the peel of origin/main's
+# object id and check's rev-parse of the commit 49 MiB; the excuse rule's cat-file 47 MiB; show-ref --verify 15 MiB;
+# find_repo's discovery, the HEAD reads, show-ref --exists, git init, hash-object and check-ignore over 22,000 paths 8
+# to 9 MiB (git starts in 8 MiB). Without the caps the checkout needed 413 MiB, git status 403 MiB and every other call
+# that reads an object 304 MiB or more, a little over the largest pack. GIT_MEMORY is four times the checkout's need for
+# this tree, whose largest blob is about 6 MB (a blob just under core.bigFileThreshold would bring that need to about
+# 650 MiB, extrapolated from the blob figures in GIT_NEUTRAL's comment, still under it); at it a rev-parse HEAD reading
+# /dev/zero failed in 0.49 s, at 908 MiB resident (measured the same day). A runner started under a lower RLIMIT_AS
+# passes its own on instead (git_memory_limit), never raising it. Off Linux run_git sets none: macOS accepts RLIMIT_AS
+# and does not enforce it (the closing check's verify, code finding 3), so a limit there would read as a bound that
+# holds; each run records that (runner.git_memory null, with runner.git_memory_why), as it records runner.subreaper off
+# Linux, and there a git that reads without end past main_ref_checked's refusals is ended by GIT_BOUND alone.
+GIT_MEMORY = 1 << 30
+
+# The 16:04Z ruling on PR 959 (ruling A's class: leg-controlled data held in the runner's memory): the most bytes run_git
+# holds of what one git call prints, on its stdout and on its stderr each. What a git prints grows with what it reads,
+# and a leg can make that as large as it likes where the runner's git reads it: the files a leg leaves in its checkout,
+# which the re-read hands git check-ignore, the tree object of the sha, which a leg can rewrite in the batcher's object
+# store and the next checkout's ls-tree lists, or untracked files in the batcher's tree, which git status lists. Before
+# this limit run_git held all of it (communicate). The figure, measured on 2026-10-03 with git 2.43.0 on a scratch clone
+# of this project at the head of PR 959 (3321 tracked files), as the most each call class run_git makes printed:
+# check-ignore over the 4579 ignored paths npm ci and the two builds leave in vscode-extension (listed from a tree that
+# has them) 508,455 bytes, from 310,688 bytes of input, and over 22,000 paths 2,302,818 bytes; ls-tree -r -l of the
+# whole tree 328,704 bytes; git status with every tracked file changed 134,945 bytes; every other call 73 bytes or
+# less; and no call printed a byte on stderr. 64 MiB is 132 times the largest real output and 29 times the one over
+# 22,000 paths.
+GIT_OUTPUT_MAX = 64 << 20
+# How much run_git reads from a git's pipe at a time, and the most it writes to git's stdin at a time: a write of at
+# most PIPE_BUF bytes to a pipe the selector says is writable does not wait, which is how subprocess's communicate
+# writes too.
+_GIT_READ = 1 << 16
+_GIT_WRITE = select.PIPE_BUF
 
 
 class GitRepo(collections.namedtuple("GitRepo", "work_tree git_dir common_dir ceiling")):
@@ -1289,9 +1466,29 @@ class GitRepo(collections.namedtuple("GitRepo", "work_tree git_dir common_dir ce
 
 
 class GitBound(Refused):
-    """A git call the runner started that did not end within GIT_BOUND seconds, killed with its process group. It is a
-    Refused, so before a run is recorded it refuses the run (exit 2), as it does check; during a run _run_locked records
-    it as the run's invalid mark, naming the call."""
+    """A git call the runner started that met one of run_git's bounds: it did not end within GIT_BOUND seconds and was
+    killed with its process group, or (GitMemory) it failed when an allocation reached the memory limit (GIT_MEMORY), or
+    (GitOutput) it printed more than GIT_OUTPUT_MAX bytes on a stream and was killed with its process group. It
+    is a Refused, so before a run is recorded it refuses the run (exit 2), as it does check; during a run _run_locked
+    records it as the run's invalid mark, naming the call. Its text names the call, the directory it ran in and the
+    bound; `call` holds the call's words, `limit` the bound in words and `what` what the git did at it, for a refusal that
+    names the files the call may have been reading (main_snapshot, head_unread)."""
+
+    def __init__(self, text, call="", limit="", what=""):
+        super().__init__(text)
+        self.call, self.limit, self.what = call, limit, what
+
+
+class GitMemory(GitBound):
+    """A git call the runner started that failed when an allocation reached the memory limit run_git set on it
+    (GIT_MEMORY): what git prints then (OUT_OF_MEMORY) is on its stderr. A GitBound, so every place that handles one
+    handles this the same way."""
+
+
+class GitOutput(GitBound):
+    """A git call the runner started that printed more than GIT_OUTPUT_MAX bytes on its stdout or its stderr: run_git
+    ends it with its process group, as at GIT_BOUND, and raises this naming the call, the stream and the limit. A
+    GitBound, so every place that handles one handles this the same way."""
 
 
 def checkout_repo(path):
@@ -1311,6 +1508,105 @@ def _git_env(repo):
     return env
 
 
+def git_memory_limit(platform=None):
+    """(the address-space limit in bytes run_git sets on every git it starts, or None; why there is none, or None):
+    GIT_MEMORY, or the runner's own soft or hard RLIMIT_AS where either is lower, since a git inherits the runner's limit
+    and run_git never raises it; None off Linux (`platform`, default sys.platform), where RLIMIT_AS is not enforced
+    (GIT_MEMORY's comment). Each run records both (runner.git_memory, runner.git_memory_why)."""
+    platform = sys.platform if platform is None else platform
+    if not platform.startswith("linux"):
+        return None, ("the runner runs on %s, and only Linux enforces RLIMIT_AS, so no git it starts has a memory limit; "
+                      "GIT_BOUND still ends each call at %d s" % (platform, GIT_BOUND))
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    return min([GIT_MEMORY] + [n for n in (soft, hard) if n != resource.RLIM_INFINITY]), None
+
+
+def memory_text(n):
+    """`n` bytes in words, for a refusal: whole MiB where it is one, else KiB."""
+    return "%d MiB" % (n >> 20) if n % (1 << 20) == 0 else "%d KiB" % (n >> 10)
+
+
+# How run_git starts a git with the memory limit: /bin/sh sets RLIMIT_AS with ulimit -v (in KiB; soft and hard, so the
+# git cannot raise it) and execs git in its own place, so the git keeps the pid, session and process group run_git
+# started, with git's own arguments ("$@"; the program, "git", is $0, so scripts/batch.py's run_tool starts its scripts
+# through the same shell). A shell that cannot set the limit runs no git: it exits 125 after LIMIT_FAILED, which run_git
+# refuses by name. Why a shell rather than preexec_fn with resource.setrlimit
+# (measured on 2026-10-03, 100 calls of git rev-parse HEAD on each of Python 3.10, 3.12, 3.13 and 3.14t): a preexec_fn
+# makes subprocess fork the whole Python process where it would otherwise use vfork, which cost 1.4 to 1.9 ms more per
+# call from a small process and 74 to 78 ms more from one holding 1 GiB (as a test process can), where the shell cost
+# 0.53 to 0.63 ms more either way; and a preexec_fn runs Python in the child between fork and exec, which the subprocess
+# documentation warns can deadlock where the parent has threads. The runner has none (the census in
+# tests/test_sweep_runner.py, test_the_leg_is_the_one_child_the_runner_waits_for_while_a_leg_runs, holds that), nor has
+# batch.py, but a test process that calls run_git directly does (pytest-timeout's timer thread, under
+# --timeout-method=thread), and the shell does not care. dash, /bin/sh on Debian and Ubuntu, and bash both have
+# ulimit -v.
+LIMIT_FAILED = "the shell could not set the memory limit (ulimit -v)"
+_LIMITED = 'ulimit -v %%d || { echo "%s" >&2; exit 125; }; exec "$0" "$@"' % LIMIT_FAILED
+
+# What git prints when an allocation fails at the memory limit, by the format strings in git 2.43.0's own binary, each a
+# whole line (OUT_OF_MEMORY): its allocation wrappers' "Out of memory, malloc failed (tried to allocate <n> bytes)",
+# "calloc failed", "realloc failed", "strdup failed" and "getdelim failed" (a planted read of a loose ref printed the
+# realloc text), and "Out of memory? fdopen failed" with the C library's words for ENOMEM after it; a zlib call that
+# failed for want of memory, by its name ("inflateInit: out of memory (no message)", or "inflate: out of memory");
+# "mmap failed" with git's hint and the C library's words, where git could not map a file (a planted sparse packed-refs
+# printed that text alone); the same tail after "<index>: unable to map index file", where <index> is the index of the
+# repository the call names (INDEX_OUT_OF_MEMORY; a planted sparse index printed it); and the loader's "failed to map
+# segment from shared object" when git cannot start at all (exit 127). The texts no planted read reaches are pinned by
+# name (tests/test_sweep_runner.py, MemoryBound's OUT_OF_MEMORY_TEXTS). run_git reads a failure as the limit's only when
+# git died (exit 128, git's die; 127, the shell's when the loader could not map git; or a signal, the shell's exec
+# having put git in its place) and the first line it printed is, whole, one of those lines (_out_of_memory_line). The
+# first line, because git writes its own words first there and any path or value it quotes, which a leg can choose,
+# after them, so a newline in that path or value cannot start a line of the leg's choosing that is read; and the whole
+# line, because a template with an open field lets a leg's text fill it. Before round 1 of PR 959, V2, every line was
+# read, and one that started with "fatal: " or "error: " and merely ended with ": Out of memory" or ": Cannot allocate
+# memory" was the limit's: a path under a directory swapped for a symlink, named with a newline and "fatal: Out of
+# memory, ..." after it, made git check-ignore die with that text at the start of its second line, and a config value
+# with an escaped newline ("x: Out of memory\nmore") in the batcher's .git/config, which a leg can write through its
+# clone's alternates, made find_repo's discovery die with "bad numeric config value 'x: Out of memory" on its first;
+# both were read as GitMemory, whose remedy tells you to remove a symlink to /dev/zero. Before round 1's spot-check, S6,
+# any failure whose stderr held the words anywhere was read so. What the rule gives up, each of which reaches the caller
+# as a plain git failure with what git printed (uncommitted_count reads it as no count), never as GitMemory: a real
+# failure at the limit whose memory line follows a warning or another line; a C library that words ENOMEM otherwise than
+# glibc's "Cannot allocate memory" (musl's "Out of memory"), or translates it into a language other than English; a map
+# failure in a template not listed ("packfile <path> cannot be mapped", whose path a leg can choose, among them); a
+# thread git could not start at the limit ("Resource temporarily unavailable", which a limit on processes gives too),
+# which GIT_NEUTRAL_CONFIG's index settings keep git status from starting, and which batch.py's fetch meets at a limit
+# far below GIT_MEMORY (at 50 MiB, in a clone of main six weeks behind its remote: exit 128, "error: cannot create async
+# thread: Resource temporarily unavailable", git 2.43.0, 2026-10-04); and a failure at the limit in a git that another
+# git started and reports with an exit of its own: git fetch exits 1 when its check that it received every object, a
+# rev-list, fails at the limit after index-pack has passed it, printing git's memory line or a packfile map line first
+# and "did not send all necessary objects" after it (batch.py's fetch meets it, measured with git 2.43.0 on 2026-10-04,
+# MALLOC_ARENA_MAX unset).
+MAP_OUT_OF_MEMORY = ", check sys.vm.max_map_count and/or RLIMIT_DATA: Cannot allocate memory"
+OUT_OF_MEMORY = (
+    re.compile(r"fatal: Out of memory, (?:malloc|calloc|realloc|strdup|getdelim) failed"
+               r"(?: \(tried to allocate \d+ bytes\))?"),
+    re.compile(r"fatal: Out of memory\? fdopen failed: Cannot allocate memory"),
+    re.compile(r"(?:fatal|error): (?:inflate|inflateInit|inflateEnd|deflate|deflateInit|deflateInit2|deflateEnd): "
+               r"out of memory(?: \([^()]*\))?"),
+    re.compile(r"fatal: mmap failed" + re.escape(MAP_OUT_OF_MEMORY)),
+)
+INDEX_OUT_OF_MEMORY = "fatal: %s: unable to map index file" + MAP_OUT_OF_MEMORY
+LOADER_OUT_OF_MEMORY = "failed to map segment from shared object"
+
+
+def _out_of_memory_line(returncode, said, index=None):
+    """The first non-empty line of `said`, what a git run_git started printed on stderr, when it says git failed at the
+    memory limit, or None (OUT_OF_MEMORY's comment): only when `returncode` says git died (128, 127 or a signal), and
+    only when that line is, whole, one of OUT_OF_MEMORY's lines, INDEX_OUT_OF_MEMORY for `index` (the index file of the
+    repository the call names, or None for a call that names none), or at exit 127 a line that ends with the loader's
+    words. A path or value git quotes in its first line, which a leg can choose, comes after git's own words there, so
+    neither a newline in it nor the words it holds makes a line of the leg's choosing read as the limit's; the cost is
+    that a memory line after another line, and a wording the templates do not hold, are read as plain failures."""
+    if returncode not in (128, 127) and returncode >= 0:
+        return None
+    first = next((line.strip() for line in said.splitlines() if line.strip()), "")
+    if any(t.fullmatch(first) for t in OUT_OF_MEMORY) or (index is not None and first == INDEX_OUT_OF_MEMORY % index) \
+            or (returncode == 127 and first.endswith(LOADER_OUT_OF_MEMORY)):
+        return first
+    return None
+
+
 def run_git(repo, *args, input=None, text=True, cwd=None):
     """`git <args>` in the repository `repo` names (a GitRepo), as a CompletedProcess: the one way the runner starts git.
     It runs with the runner's neutral git (_git_env), in `cwd` (default: the work tree), stdin closed unless `input` is
@@ -1320,28 +1616,127 @@ def run_git(repo, *args, input=None, text=True, cwd=None):
     the git is started and raised then, inside the same try, so no git the runner started outlives the call. That holds
     under every command, each of which installs the stop handlers (main), and in batch.py's process, which runs this
     function through the module sweep_reader loads and binds that module's hold to its own handlers' (the closing check
-    wf_fb19febe-36b, its item 4)."""
+    wf_fb19febe-36b, its item 4). On Linux it also has GIT_MEMORY bytes of address space (git_memory_limit), set by the
+    shell that execs it (_LIMITED), and one that fails with what git prints when an allocation reaches the limit
+    (OUT_OF_MEMORY) raises GitMemory naming the call and the limit: a read without end (a symlink to /dev/zero where git
+    reads a ref) fails there, in under a second, instead of taking the machine's memory until GIT_BOUND. Only a git that
+    died, with a line it writes for that failure as the first line it printed, is read so (_out_of_memory_line). Its
+    stdout and stderr are read, and its input written, through one selector loop with no thread (_git_streams), at most
+    GIT_OUTPUT_MAX bytes of each stream, and GIT_BOUND's deadline is kept in that loop; a git that prints more is ended
+    with its process group as at the bound, and GitOutput is raised naming the call, the stream and the limit."""
     argv = ["git", *args]
+    where = cwd or repo.work_tree
+    limit, _why = git_memory_limit()
+    launch = argv if limit is None else ["/bin/sh", "-c", _LIMITED % (limit >> 10), *argv]
     _hold_stops()
     try:
-        p = subprocess.Popen(argv, cwd=cwd or repo.work_tree, env=_git_env(repo), text=text, start_new_session=True,
+        p = subprocess.Popen(launch, cwd=where, env=_git_env(repo), text=text, start_new_session=True,
                              stdin=subprocess.DEVNULL if input is None else subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE)
     except BaseException:
         _release_stops()
         raise
+    deadline = time.monotonic() + GIT_BOUND
     try:
         _release_stops()
-        out, err = p.communicate(input, timeout=GIT_BOUND)
+        out, err = _git_streams(p, input, deadline, text)
     except BaseException as e:
         _end_git(p)
         if isinstance(e, subprocess.TimeoutExpired):
-            raise GitBound("git %s in %s did not end within %d s and was killed" % (" ".join(args), cwd or repo.work_tree,
-                                                                                     GIT_BOUND)) from None
+            raise GitBound("git %s in %s did not end within %d s and was killed" % (" ".join(args), where, GIT_BOUND),
+                           " ".join(args), "the %d s time limit (GIT_BOUND)" % GIT_BOUND,
+                           "did not end within %d s and was killed" % GIT_BOUND) from None
+        if isinstance(e, _PastOutputLimit):
+            size = memory_text(GIT_OUTPUT_MAX)
+            what = "printed more than %s on its %s and was killed" % (size, e.stream)
+            raise GitOutput("git %s in %s printed more than %s on its %s, the most the runner reads of one git call "
+                            "(GIT_OUTPUT_MAX), and was killed; remove what made it print so much there (files a leg left "
+                            "where the call reads, or an object it rewrote) and sweep again"
+                            % (" ".join(args), where, size, e.stream), " ".join(args),
+                            "the %s output limit (GIT_OUTPUT_MAX)" % size, what) from None
         if isinstance(e, Stopped):
             e.ended_git = True
         raise
+    if limit is not None and p.returncode != 0:
+        said = (err if text else err.decode("utf-8", "replace")).strip()
+        if p.returncode == 125 and LIMIT_FAILED in said:
+            raise Refused("git %s in %s did not run: %s, so the runner did not start it without one (%s)"
+                          % (" ".join(args), where, LIMIT_FAILED, said))
+        line = _out_of_memory_line(p.returncode, said,
+                                   None if repo.git_dir is None else os.path.join(repo.git_dir, "index"))
+        if line is not None:
+            bound = "the %s memory limit (GIT_MEMORY)" % memory_text(limit)
+            what = "ran out of memory and failed (%s)" % line
+            raise GitMemory("git %s in %s reached %s the runner sets on each git call into a repository and failed (%s); "
+                            "remove what it read without end there (a symlink to /dev/zero, an oversized file or a "
+                            "symbolic ref leading to one, where git reads a ref, packed-refs, the index, a config file, "
+                            "objects/info/alternates or the shallow file) and sweep again"
+                            % (" ".join(args), where, bound, line), " ".join(args), bound, what)
     return subprocess.CompletedProcess(argv, p.returncode, out, err)
+
+
+class _PastOutputLimit(Exception):
+    """_git_streams' word to run_git that a git printed more than GIT_OUTPUT_MAX bytes on `stream`."""
+
+    def __init__(self, stream):
+        super().__init__(stream)
+        self.stream = stream
+
+
+def _git_streams(p, input, deadline, text):
+    """(stdout, stderr) of the git `p` run_git started, read through one selector loop with no thread (the census in
+    tests/test_sweep_runner.py holds the runner to none): each stream until its end, at most GIT_OUTPUT_MAX bytes of
+    each, while `input` (None for none) is written to git's stdin as the pipe takes it, so a git that prints while it
+    reads never waits on a full pipe while the runner waits on it. Raises _PastOutputLimit naming the stream past the
+    limit, and subprocess.TimeoutExpired once time.monotonic() passes `deadline`, before the streams end or before git
+    exits after them; run_git ends the git on either, and on any other exception (a stop signal's Stopped, raised out of
+    the selector's wait). With `text` (`p` started with text=True) the streams are decoded as subprocess decodes them,
+    with the encoding and errors of p's pipes and universal newlines, and `input` encoded the same way."""
+    held, got = {p.stdout: [], p.stderr: []}, {p.stdout: 0, p.stderr: 0}
+    names = {p.stdout: "stdout", p.stderr: "stderr"}
+    codecs = {f: (f.encoding, f.errors) for f in (p.stdout, p.stderr)} if text else None
+    data, offset = memoryview(b""), 0
+    if input is not None:
+        data = memoryview(input.encode(p.stdin.encoding, p.stdin.errors) if text else input)
+    sel = selectors.DefaultSelector()
+    with sel:
+        for f in (p.stdout, p.stderr):
+            sel.register(f, selectors.EVENT_READ)
+        if input is not None:
+            if data:
+                sel.register(p.stdin, selectors.EVENT_WRITE)
+            else:
+                p.stdin.close()
+        while sel.get_map():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise subprocess.TimeoutExpired(p.args, GIT_BOUND)
+            for key, _events in sel.select(left):
+                f = key.fileobj
+                if f is p.stdin:
+                    try:
+                        offset += os.write(f.fileno(), data[offset:offset + _GIT_WRITE])
+                    except BrokenPipeError:
+                        offset = len(data)
+                    if offset >= len(data):
+                        sel.unregister(f)
+                        f.close()
+                    continue
+                piece = os.read(f.fileno(), min(_GIT_READ, GIT_OUTPUT_MAX + 1 - got[f]))
+                if not piece:
+                    sel.unregister(f)
+                    f.close()
+                    continue
+                held[f].append(piece)
+                got[f] += len(piece)
+                if got[f] > GIT_OUTPUT_MAX:
+                    raise _PastOutputLimit(names[f])
+    p.wait(timeout=max(deadline - time.monotonic(), 0))
+    out, err = b"".join(held[p.stdout]), b"".join(held[p.stderr])
+    if text:
+        out, err = [b.decode(*codecs[f]).replace("\r\n", "\n").replace("\r", "\n")
+                    for f, b in ((p.stdout, out), (p.stderr, err))]
+    return out, err
 
 
 # How long a git the runner ends (at the bound, or on a stop) has after SIGTERM to its process group before what is left of
@@ -1477,9 +1872,11 @@ def uncommitted_count(repo):
     when git status fails. Only a notice reads it: the legs run in a private checkout of the sha, so these edits are not
     swept. It runs with the runner's neutral git like every other runner git call (_git_env; round 2, fresh-4), so no
     core.fsmonitor hook or untracked-cache setting of the batcher's configuration runs or writes in their repository;
-    with the per-user excludes file off, the count includes files only the batcher's global excludes hide, which are
-    not swept either. A git status that does not end within GIT_BOUND raises GitBound, which refuses the run (a FIFO a
-    leg of an earlier run left at the batcher's index or info/exclude, read by no git of that run)."""
+    with the per-user excludes file off, the count includes files only the batcher's global excludes hide, which are not
+    swept either. A git status that does not end within GIT_BOUND raises GitBound, which refuses the run (a FIFO a leg
+    of an earlier run left at the batcher's index or info/exclude, read by no git of that run). Like every runner git it
+    runs with core.warnAmbiguousRefs off (GIT_NEUTRAL_CONFIG), so it reads HEAD alone and none of the names beside it
+    that rev-parse's rules give (refs/HEAD, refs/tags/HEAD and the rest), as cmd_run's read of HEAD does."""
     p = run_git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all", text=False)
     if p.returncode != 0:
         return None
@@ -1587,14 +1984,66 @@ def open_regular(path):
         raise
 
 
-def read_regular(path):
+def read_regular(path, limit):
     """The bytes of the regular file at `path`, or None when there is none, read through open_regular: one that is not a
-    regular file raises Unreadable naming why, and is never read; any other OSError propagates."""
+    regular file raises Unreadable naming why, and is never read; one fstat gives more than `limit` bytes (a sparse file
+    included, which costs a leg nothing on disk) raises Unreadable naming its size, and is not read, and no more than
+    limit + 1 bytes are read of any; any other OSError propagates. The limit has no default: every file the runner reads
+    whole is read with a limit of its own (round 1 of PR 959, ruling A's class). The file is read in one read of the
+    size fstat gave and a byte, since Python allocates what a read asks for before it reads: f.read(limit + 1) cost the
+    limit's memory whatever the file held, and with LOG_MAX at 128 MiB that ended the runner in a MemoryError under
+    tests/test_sweep_runner.py's LargeLog cap. A file that grew after the fstat is read on in pieces of at most 1 MiB,
+    up to the limit and a byte."""
     f = open_regular(path)
     if f is None:
         return None
     with f:
-        return f.read()
+        size = os.fstat(f.fileno()).st_size
+        if size > limit:
+            raise Unreadable("%d bytes, more than the %d the runner reads" % (size, limit))
+        data = f.read(size + 1)
+        if len(data) > size:
+            pieces, got = [data], len(data)
+            while got <= limit:
+                piece = f.read(min(limit + 1 - got, 1 << 20))
+                if not piece:
+                    break
+                pieces.append(piece)
+                got += len(piece)
+            data = b"".join(pieces)
+    if len(data) > limit:
+        raise Unreadable("more than the %d bytes the runner reads" % limit)
+    return data
+
+
+# The most bytes the runner hashes of one file it digests in chunks (_hash_regular): a file of a venv (venv_tree) and an
+# ignored file of a checkout (_file_digest). The largest real ones, measured 2026-10-03: the Claude Agent SDK's bundled
+# claude binary in the pytest leg's venv, 232,059,192 bytes, the largest of any venv in the sweeps' state dirs, and in the
+# extension's node_modules a file of 33,974,784 bytes; 1 GiB is over four times the first. The chunks hold the runner's
+# memory to one piece of 1 MiB whatever the size, and the limit bounds the time (a sparse file of 768 MiB was hashed in
+# 0.56 s, measured 2026-10-03 at a load of about 50): before it, a sparse file of any size, which costs a leg nothing on
+# disk, was read to its end.
+HASHED_FILE_MAX = 1 << 30
+
+
+def _hash_regular(f, limit):
+    """The sha256 hex digest of the regular file open as `f`, read in chunks of at most 1 MiB, and only when fstat gives it
+    at most `limit` bytes, of which no more are read: Unreadable naming its size when fstat gives more, with nothing read,
+    and naming the limit when more than `limit` bytes are there to read (a file that grew after the fstat)."""
+    size = os.fstat(f.fileno()).st_size
+    if size > limit:
+        raise Unreadable("%d bytes, more than the %d the runner reads" % (size, limit))
+    h = hashlib.sha256()
+    left = limit + 1
+    while left > 0:
+        chunk = f.read(min(left, 1 << 20))
+        if not chunk:
+            break
+        h.update(chunk)
+        left -= len(chunk)
+    if left == 0:
+        raise Unreadable("more than the %d bytes the runner reads" % limit)
+    return h.hexdigest()
 
 
 # The flags open_lock opens a lock file with: created when absent, and opened without waiting (O_NONBLOCK: a FIFO opens
@@ -1647,11 +2096,20 @@ def shallow_checked(repo):
         raise Refused("the shallow file of the repository at %s cannot be read (%s: %s)" % (repo.work_tree, path, why))
 
 
+# The most bytes the runner reads of the batcher's shallow file (_read_shallow): it holds an object id and a newline per
+# commit at a shallow boundary (41 bytes, 65 under sha256), so 16 MiB holds over 250,000 of them. git reads that file a
+# line at a time, so a sparse file of any size costs a git call little (it stops at the first line that names no
+# object), and before this bound the runner read the whole of one into its own memory, under no limit (run_git's limit
+# is on the gits it starts, not on the runner).
+SHALLOW_FILE_MAX = 16 << 20
+
+
 def _read_shallow(path):
     """The bytes of the shallow file at `path`, or None when there is none. It is read through cannot_read, by
-    read_regular: one that is not a regular file raises OSError (Unreadable) naming its type, and is never read; any
-    other OSError propagates."""
-    return read_regular(path)
+    read_regular, and only when fstat gives it at most SHALLOW_FILE_MAX bytes, of which no more are read: one that is not
+    a regular file raises OSError (Unreadable) naming its type, and a larger one, a sparse file included, naming its
+    size, and neither is read; any other OSError propagates."""
+    return read_regular(path, SHALLOW_FILE_MAX)
 
 
 def shallow_snapshot(repo):
@@ -1662,7 +2120,8 @@ def shallow_snapshot(repo):
     would reach every later job (the narrow landing delta's ruling 8). After the last leg the runner reads the file
     again (shallow_moved), and a file that differs from this snapshot makes the run invalid. A shallow file that exists
     and cannot be read refuses the run, naming it: one that is not a regular file is never read (_read_shallow), and
-    cmd_run has refused it already, before its first git call that reads it (shallow_checked)."""
+    cmd_run has refused it already, before its first git call that reads it (shallow_checked), and one larger than
+    SHALLOW_FILE_MAX is not read either, and is named by its size."""
     path = shallow_path(repo)
     try:
         return _read_shallow(path)
@@ -1706,16 +2165,244 @@ def shallow_moved(path, snapshot):
             "then, %s now); the next run's checkouts would read it" % (path, _shallow_words(snapshot), _shallow_words(now_)))
 
 
-def make_checkout(repo, sha, shallow):
+# The one ref of the batcher's repository whose commit a job's checkout holds, under the same name (main_snapshot). A test
+# that reads main finds it there as it would in the batcher's own clone: tests/gitleaks-config.bats' history case, as
+# fork PR 954 scopes it, scans the history a shallow clone holds, whatever refs it has (so in CI's depth-1 checkout,
+# the one commit), and otherwise the commits HEAD adds over origin/main where the clone has that ref, and all of HEAD's
+# history where it has no origin/main, whether or not it has a local main. In a checkout with no ref (each one before
+# this ref was written), that scan went past the 180 s the bats leg allows a test (BATS_TEST_TIMEOUT) over 13,766
+# commits: 208 s at a load of 45.7 to 47.6, and 364 s held to one core (a CPUQuota of 100%), measured 2026-10-03. In a
+# checkout holding the ref, the same case under PR 954's test scanned the 171 commits a branch added over origin/main
+# and ended in 2.4 s (measured 2026-10-03); under a test that reads no ref it scans all of HEAD's history either way.
+MAIN_REF = "refs/remotes/origin/main"
+# The most bytes the runner reads of a loose ref file (read_ref_file): one holds an object id and a newline (41 bytes,
+# 65 under sha256) or "ref: " and a ref name, and git accepts trailing whitespace, so the bound is generous rather than
+# exact (the round's correctness-2, its refuter's correction). git reads a loose ref file whole; the runner reads no
+# larger one, a sparse file of any size included, and names its size instead (main_ref_checked refuses it).
+REF_FILE_MAX = 4096
+_OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def read_ref_file(path):
+    """The bytes of the loose ref file at `path`, or None when there is none: read through open_regular (cannot_read,
+    then O_NOFOLLOW and O_NONBLOCK, then fstat), and only when fstat gives it at most REF_FILE_MAX bytes, of which no more
+    are read. Unreadable naming why otherwise: one that is not a regular file, by its type; a larger one, by its size.
+    Any other OSError propagates."""
+    f = open_regular(path)
+    if f is None:
+        return None
+    with f:
+        size = os.fstat(f.fileno()).st_size
+        if size > REF_FILE_MAX:
+            raise Unreadable("%d bytes, more than the %d a ref file holds, and git reads a loose ref file whole"
+                             % (size, REF_FILE_MAX))
+        data = f.read(REF_FILE_MAX + 1)
+    if len(data) > REF_FILE_MAX:
+        raise Unreadable("more than the %d bytes a ref file holds, and git reads a loose ref file whole" % REF_FILE_MAX)
+    return data
+
+
+def main_ref_checked(repo):
+    """Refused, naming the file and why, when the batcher's repository holds MAIN_REF as a loose ref file,
+    <common dir>/refs/remotes/origin/main, that the runner does not let git read. git reads that file whole and with no
+    check of its type: a symlink whose target is not a ref name it opens and reads to the end, so with one to /dev/zero
+    its memory grows until the read fails (git 2.43, measured 2026-10-03), a sparse regular file of any size reads as that
+    many zero bytes, a FIFO it waits on, and a symbolic ref ("ref: <name>") it follows, unchecked, to the file of the ref
+    it names, which can be any of these. So this refuses, the file read once through read_ref_file: one that
+    cannot_read says cannot be read (a FIFO, a symlink to /dev/zero or to anything else, a directory or a device), by its
+    type; one fstat gives more than REF_FILE_MAX bytes, by its size; and one whose bytes begin with "ref:", a symbolic
+    ref, by its target, since no fetch writes origin/main as one (the round's correctness-1, as its refuters corrected
+    it). A leg can leave such a file there, finding the batcher's repository through its clone's alternates, and the next
+    run's main_snapshot reads it. cmd_run calls this beside shallow_checked, before any git call but find_repo's
+    discovery, and main_snapshot calls it again before its own reads. No file there (the ref packed, or absent, or a ref
+    storage other than loose files) passes. It refuses <common dir>/packed-refs too, by its type (packed_refs_checked).
+    A file swapped in after this check, which git then opens by name, is not seen here: it meets the bounds run_git sets
+    on each git (GIT_MEMORY, GIT_BOUND), and main_snapshot names it among the files git may have met."""
+    path = os.path.join(repo.common_dir, *MAIN_REF.split("/"))
+    try:
+        data = read_ref_file(path)
+    except OSError as e:
+        why = str(e) if isinstance(e, Unreadable) else "it could not be read: %s" % (e.strerror or e)
+        data = None
+    else:
+        why = None
+        if data is not None and data.startswith(b"ref:"):
+            why = ("a symbolic ref, to %s, which git would follow unchecked; no fetch writes one"
+                   % (data[4:].decode("utf-8", "replace").strip() or "nothing"))
+    if why is not None:
+        raise Refused("the batcher's %s in the repository at %s cannot be read (%s: %s); remove it (a fetch of origin "
+                      "writes it again) and sweep again" % (MAIN_REF, repo.work_tree, path, why))
+    packed_refs_checked(repo)
+
+
+def packed_refs_checked(repo):
+    """Refused, naming the file and its type, when the batcher's repository's <common dir>/packed-refs exists and
+    cannot_read says it cannot be read. git reads that file for any ref with no loose file (origin/main when it is
+    packed, HEAD's branch when that is), so a FIFO there it waits on, and a symlink to /dev/zero git 2.43 read as no
+    packed refs at all (origin/main then read as absent). Its type only, since a real packed-refs can be large: a sparse
+    one meets run_git's memory limit at the first git that reads it: head_unread names it when HEAD's branch is packed,
+    main_snapshot when MAIN_REF is, and otherwise uncommitted_count's git status meets it first, refused with run_git's
+    own text, which names the call. A symlink is refused whatever it
+    leads to, a regular file holding the packed refs included, which git reads through, as a symlinked loose ref file is
+    (main_ref_checked); before round 1 of PR 959 such a symlink was read through, and a run with one swept as any other
+    (round 1's spot-check, S7). cmd_run calls this through main_ref_checked, before any git call but find_repo's
+    discovery, and cmd_check before its read of HEAD, which reads that file when HEAD's branch is packed: with a FIFO
+    there that read waited until GIT_BOUND (round 1's spot-check, S9)."""
+    packed = os.path.join(repo.common_dir, "packed-refs")
+    why = cannot_read(packed)
+    if why is not None:
+        raise Refused("the batcher's packed refs in the repository at %s cannot be read (%s: %s); git writes that file "
+                      "only as a regular file and reads it for any ref with no loose file, origin/main and HEAD's branch "
+                      "among them: replace it with the regular file it stands for, or remove it, which drops the refs it "
+                      "held, and sweep again" % (repo.work_tree, packed, why))
+
+
+def main_snapshot(repo):
+    """The commit the batcher's origin/main (MAIN_REF) names now, or None when their repository has no such ref. The
+    runner reads it once, before the first leg, and writes that commit into every job's checkout as the checkout's own
+    MAIN_REF (make_checkout), never the live ref: a leg can find the batcher's repository through its clone's alternates
+    and move the ref there, and a checkout that read it again would hold what the leg wrote. It is read by its exact
+    full name alone, with run_git in `repo` (round 1 of PR 959, ruling B): `show-ref --verify --hash MAIN_REF`, which
+    reads that ref and no other (its loose file, else packed-refs), then the object id it gives peeled to its commit
+    with `rev-parse --verify --quiet <oid>^{commit}`, which, for a full object id with core.warnAmbiguousRefs off, as
+    every runner git has it (GIT_NEUTRAL_CONFIG), reads no ref (strace, 2026-10-03). The read before it, `rev-parse
+    --verify --quiet MAIN_REF^{commit}`, expanded the name by git's rev-parse rules (ref_rev_parse_rules in git's
+    refs.c) and opened refs/<name>, refs/tags/<name>, refs/heads/<name>, refs/remotes/<name> and
+    refs/remotes/<name>/HEAD beside the exact file: a branch or tag under such a name (`git tag
+    refs/remotes/origin/main` makes one) was taken for origin/main when the exact ref was absent or could not be read,
+    and a symlink to /dev/zero at any of them was read without end.
+    When the exact read gives no commit, `show-ref --exists MAIN_REF` tells an absent ref (exit 2: None) from one that
+    is there and names no commit (exit 0: at a missing object, a blob or a tree) or cannot be read (exit 1: a ref file
+    git cannot parse). Those two refuse the run, naming the ref and every answer, and so does any other answer: reading
+    such a ref as absent would quietly give every checkout no main, and a test that reads main would then read something
+    else than it does in the batcher's clone. `show-ref --verify` alone exits 128 for an absent ref, for one at a
+    missing object and for one git cannot parse (git 2.43, measured 2026-10-03), so it does not tell them apart. Before
+    these reads main_ref_checked refuses a loose ref file, or a packed-refs, git would read without end or wait on; a
+    git call here that meets one of run_git's bounds all the same (a file swapped in after that check: a symlink to
+    /dev/zero reaches GIT_MEMORY, a FIFO GIT_BOUND; or a sparse packed-refs, which reaches GIT_MEMORY) refuses the run
+    naming the call and the bound, every file of the repository the three calls open or look for as one git may have
+    met, those of them that are not regular files when it refuses, and the remedy (main_bound_text, main_files). A
+    symbolic ref to a readable ref swapped in after the check is followed, and its commit taken, by the same gap. Every
+    command and option here is in git 1.7.2 (-c came in it), but show-ref --exists, which came in git 2.43.0: an older
+    git exits 129 on it (a usage error), so with a git from 2.31 to 2.42 a run whose exact read gives no commit, an
+    absent origin/main included, is refused, naming the git version the runner needs rather than the ref; a run whose
+    origin/main resolves never asks, and runs. A git older than 2.31 never reaches here: find_repo's rev-parse
+    --path-format=absolute came in 2.31.0 and refuses every run first, and GIT_CONFIG_COUNT, which carries
+    GIT_NEUTRAL_CONFIG, came in the same release (GIT_CONFIG_GLOBAL in 2.32.0)."""
+    main_ref_checked(repo)
+    p = q = oid = None
+    try:
+        p = run_git(repo, "show-ref", "--verify", "--hash", MAIN_REF)
+        oid = p.stdout.strip()
+        if p.returncode == 0 and _OBJECT_ID.fullmatch(oid):
+            q = run_git(repo, "rev-parse", "--verify", "--quiet", oid + "^{commit}")
+            commit = q.stdout.strip()
+            if q.returncode == 0 and _OBJECT_ID.fullmatch(commit):
+                return commit
+        e = run_git(repo, "show-ref", "--exists", MAIN_REF)
+    except GitBound as b:
+        raise type(b)(main_bound_text(repo, b, oid if oid and _OBJECT_ID.fullmatch(oid) else None), b.call, b.limit,
+                      b.what) from None
+    if p.returncode != 0 and e.returncode == 2:
+        return None
+    if e.returncode == 129:
+        # git's first line alone ("error: unknown option `exists'"): the usage text show-ref prints after it is fifteen
+        # lines (git 2.42.0) that say nothing more about the git the runner needs
+        raise Refused("the runner tells an absent %s from one it cannot read with `git show-ref --exists`, which this git "
+                      "does not have (show-ref exited 129: %s); sweep with git 2.43 or later"
+                      % (MAIN_REF, (e.stderr.strip() or e.stdout.strip() or "no output").splitlines()[0]))
+
+    def said(r):
+        return r.stderr.strip() or r.stdout.strip() or "no output"
+    raise Refused("the batcher's %s in the repository at %s names no commit the runner can read (show-ref --verify exited "
+                  "%d: %s; %sshow-ref --exists exited %d: %s); fetch origin or remove the ref, and sweep again"
+                  % (MAIN_REF, repo.work_tree, p.returncode, said(p),
+                     "" if q is None else "rev-parse of its object exited %d: %s; " % (q.returncode, said(q)),
+                     e.returncode, said(e)))
+
+
+def main_files(repo, oid=None):
+    """(files, ref_file): every file of the batcher's repository that main_snapshot's three git calls open, or look for
+    and would open, in the order git meets them (strace of the three calls, with the runner's environment, in a
+    repository and in a linked worktree of it, the ref loose and packed, git 2.43.0, 2026-10-03): the git dir's HEAD
+    and commondir, the common dir's HEAD in a linked worktree, config, shallow, info/grafts, objects/info/alternates,
+    objects/info/commit-graph, objects/info/commit-graphs/commit-graph-chain, objects/pack/multi-pack-index, the loose
+    object the ref names (by `oid`, when the call that met the bound came after the read that gave it, else under
+    objects/), and last the file git reads the ref from, `ref_file`: its loose file when there is one, else packed-refs,
+    which git reads for a ref with no loose file (show-ref --verify, measured the same day)."""
+    common, gd = repo.common_dir, repo.git_dir
+    files = [os.path.join(gd, "HEAD"), os.path.join(gd, "commondir")]
+    if not same_dir(gd, common):
+        files.append(os.path.join(common, "HEAD"))
+    files += [os.path.join(common, *f.split("/")) for f in
+              ("config", "shallow", "info/grafts", "objects/info/alternates", "objects/info/commit-graph",
+               "objects/info/commit-graphs/commit-graph-chain", "objects/pack/multi-pack-index")]
+    files.append(os.path.join(common, "objects", oid[:2], oid[2:]) if oid
+                 else "the loose object the ref names, under %s" % os.path.join(common, "objects"))
+    loose = os.path.join(common, *MAIN_REF.split("/"))
+    ref_file = loose if os.path.lexists(loose) else os.path.join(common, "packed-refs")
+    return files + [ref_file], ref_file
+
+
+def main_bound_text(repo, b, oid=None):
+    """main_snapshot's refusal when one of its git calls met one of run_git's bounds (`b`, a GitBound): the call, the
+    bound and what git did at it, then every file main_files names as one git may have met, worded as possibilities,
+    since git opens many files with the ref and the bound does not say which one it met, then those of them that are
+    not regular files when the refusal is made (cannot_read, an lstat each: a hint, since a file can change again in the
+    meantime), and the remedy: find the one that is not a regular file and repair or remove it, the ref's own loose file
+    being one a fetch of origin writes again, and packed-refs one that holds every packed ref. Before round 1 of PR 959,
+    V4, the refusal named the ref's file, and objects/info/alternates, as the files git met, and told you to remove the
+    ref's file, when what a process swapped in after main_ref_checked was the shallow file or the config, which a
+    regular ref file had not met."""
+    files, ref_file = main_files(repo, oid)
+    odd = []
+    for f in files:
+        why = cannot_read(f) if os.path.isabs(f) else None
+        if why:
+            odd.append("%s (%s)" % (f, why))
+    if ref_file.endswith(os.sep + "packed-refs"):
+        own = ("if it is packed-refs, %s, repair it rather than remove it, since it holds every packed ref of the "
+               "repository, branches and tags too (a fetch of origin writes origin/main again)" % ref_file)
+    else:
+        own = "if it is the ref's own file, %s, remove it, since a fetch of origin writes the ref again" % ref_file
+    now = ("; of them, these are not regular files now (an lstat each after the call, so one can have changed since): "
+           "%s" % ", ".join(odd)) if odd else ""
+    return ("the batcher's %s in the repository at %s could not be read within %s: git %s %s. git opens these files of "
+            "the repository with the ref, or looks for them, and the one it met can be any of them: %s%s. Find the one "
+            "that is not a regular file (a FIFO, a symlink, or a sparse or oversized file) and repair or remove it; "
+            "%s; and sweep again" % (MAIN_REF, repo.work_tree, b.limit, b.call, b.what, ", ".join(files), now, own))
+
+
+def make_checkout(repo, sha, shallow, main):
     """(path, marker, seconds): a private repository at <state dir>/sweeps/trees/<sha12>-<random> that reads the
     batcher's objects (their common dir's objects, named in its objects/info/alternates, as `git clone --shared` names
-    them) and holds none of their refs, with no remote, then `checkout -q --detach <sha>` there with hooks off: the sha
-    alone among refs, with no branch and no tag, as CI's checkout fetches the pushed sha alone (its history is the
-    batcher's repository's, not CI's depth 1: whole through the alternates, or cut at the shallow file below), so a
-    branch or tag a leg writes
+    them) and holds none of their refs, with no remote (its one ref, MAIN_REF, is written from the snapshot `main`
+    below), then `checkout -q --detach <sha>` there with hooks off: no branch and no tag, where CI's checkout holds the
+    run's branch, created at the pushed sha it fetches (this checkout's history is the batcher's repository's, not CI's
+    depth 1: whole through the alternates, or cut at the shallow file below), so a branch or tag a leg writes
     into the batcher's repository reaches no later job's checkout (the focused re-check's ruling 4: a clone copied every
     branch and tag, and such refs crossed to every later job; and its land check, finding 1: an `origin` naming their
-    common dir let a plain `git fetch` copy them). `shallow` is the batcher's shallow file as shallow_snapshot read it
+    common dir let a plain `git fetch` copy them). `main` is the commit the batcher's origin/main named when
+    main_snapshot read it before the first leg (None: they had none, and the checkout holds no MAIN_REF); when it is not
+    None it is written as the checkout's MAIN_REF, refs/remotes/origin/main, before the checkout, with `update-ref`
+    through run_git in the checkout, which logs the write in the ref's reflog, as git logs a write to a remote-tracking
+    ref in a repository with a work tree (core.logAllRefUpdates' default), and as the checkout below logs HEAD's move:
+    one entry, as a fetch leaves on the remote-tracking ref it writes, CI's checkout on the ref of the branch it fetches.
+    CI's job checkouts hold no origin/main except in a run on main itself, where the sweep's hold it whenever the
+    batcher's repository does:
+    actions/checkout@v4, at its default depth 1 in every job a leg stands in for (.github/workflows/ci.yml), fetches the
+    one commit as the remote-tracking ref of the branch the run is on (a batch branch's, in the run land reads), so a run
+    on main (the weekly schedule, or a dispatch on main) holds it at the commit it checks out, and a batch branch's run
+    holds none. A test that reads origin/main can therefore behave differently in the sweep than in CI; one
+    that first checks whether its clone is shallow (fork PR 954's history case does) takes its shallow-clone handling
+    in CI whether or not origin/main is there (round 1 of PR 959, ruling D; tests/test_origin_main_readers.py lists the
+    tests that read origin/main).
+    update-ref rather than a write of the loose ref file,
+    as the alternates and shallow files are written: git writes the ref in whichever ref storage its init chose, where a
+    loose file is right only for the files backend, and refuses a commit it cannot find through the alternates rather
+    than leave a ref naming nothing; it costs one git call per checkout. A leg that moves that ref, in its own checkout
+    or in the batcher's repository, moves no later job's, since each checkout gets the snapshot and no checkout's ref is
+    read again. `shallow` is the batcher's shallow file as shallow_snapshot read it
     before the first leg (None: their repository was not shallow then); when it is not None it becomes the checkout's
     shallow file, so the checkout is shallow as a `git clone --shared` of their repository would have been when the run
     started (the land check, finding 2), and a shallow file a leg writes there later reaches no job's checkout of this
@@ -1765,6 +2452,13 @@ def make_checkout(repo, sha, shallow):
             if shallow is not None:
                 with open(os.path.join(path, ".git", "shallow"), "wb") as f:
                     f.write(shallow)
+        if p.returncode == 0 and main is not None:
+            # the batcher's origin/main as main_snapshot read it before the first leg, the one ref of theirs a checkout
+            # holds, so a test that reads main finds it; never re-read from their repository, where a leg can move it
+            ref = run_git(checkout_repo(path), "update-ref", MAIN_REF, main)
+            if ref.returncode != 0:
+                raise Refused("could not write %s at %s into a private clone of %s: %s"
+                              % (MAIN_REF, short(main), short(sha), (ref.stderr or ref.stdout).strip()))
         if p.returncode == 0:
             p = git(checkout_repo(path), "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
         if p.returncode != 0:
@@ -1849,12 +2543,21 @@ def _listdir(d):
         return []
 
 
+# The most bytes the runner reads of a checkout's marker (_read_marker): make_checkout writes the checkout's sha and a
+# newline, 41 bytes (65 under sha256), and nothing else of the runner writes one, so the bound is generous rather than
+# exact, as REF_FILE_MAX is. No marker was left to measure in the sweeps' state dirs on 2026-10-03: every run removes its
+# checkouts and their markers.
+MARKER_MAX = 4096
+
+
 def _read_marker(path):
     """The sha a checkout's marker holds, or None when there is none, it holds no sha, or it cannot be read: read
     through open_regular, so a FIFO or a symlink there (a leg reaches <state dir>/sweeps/trees from its log's path) is
-    not opened and reads as no marker (the verify pass at PR 926's build head, its code finding 1)."""
+    not opened and reads as no marker (the verify pass at PR 926's build head, its code finding 1), and only when fstat
+    gives it at most MARKER_MAX bytes, of which no more are read, so a larger one, a sparse file of any size included,
+    is not read and reads as no marker too (round 1 of PR 959, ruling A's class)."""
     try:
-        data = read_regular(path)
+        data = read_regular(path, MARKER_MAX)
     except OSError:
         return None
     text = data.decode("utf-8", "replace").strip() if data is not None else ""
@@ -1862,16 +2565,17 @@ def _read_marker(path):
 
 
 def tree_entries(path, sha):
-    """{path bytes: (mode, oid)} of every entry `git ls-tree -r -z <sha>` lists (files, symlinks, gitlinks)."""
-    p = run_git(checkout_repo(path), "ls-tree", "-r", "-z", sha, text=False)
+    """{path bytes: (mode, oid, size)} of every entry `git ls-tree -r -l -z <sha>` lists (files, symlinks, gitlinks);
+    size is the blob's size in bytes, None for a gitlink, which has none."""
+    p = run_git(checkout_repo(path), "ls-tree", "-r", "-l", "-z", sha, text=False)
     if p.returncode != 0:
         raise Refused("git ls-tree failed in the checkout of %s: %s" % (short(sha), p.stderr.decode("utf-8", "replace").strip()))
     entries = {}
     for rec in p.stdout.split(b"\0"):
         if rec:
             meta, name = rec.split(b"\t", 1)
-            mode, _typ, oid = meta.split()
-            entries[name] = (mode, oid.decode("ascii"))
+            mode, _typ, oid, size = meta.split()
+            entries[name] = (mode, oid.decode("ascii"), None if size == b"-" else int(size))
     return entries
 
 
@@ -1884,13 +2588,29 @@ def _blob_id(data, oid):
     return h.hexdigest()
 
 
+def _file_blob_id(f, size, oid):
+    """The git blob id of the regular file open as `f`, whose fstat gave `size` bytes, read in chunks of at most 1 MiB
+    and never more than size + 1 bytes in all, so the runner holds no more than one chunk; None when the file did not
+    hold exactly `size` bytes while it was read."""
+    h = hashlib.new("sha1" if len(oid) == 40 else "sha256")
+    h.update(b"blob %d\0" % size)
+    left = size + 1
+    while left > 0:
+        chunk = f.read(min(left, 1 << 20))
+        if not chunk:
+            break
+        h.update(chunk)
+        left -= len(chunk)
+    return h.hexdigest() if left == 1 else None
+
+
 def _entry_faults(path, entries):
     """{class: [paths]} for the tracked entries: missing (absent, or a gitlink that is not a directory), content (a
     regular file whose bytes are not the blob's, or a path that is no longer a file), mode (the executable bit), symlink
     (a symlink whose target differs, or one checked out as anything else, or a file that became a symlink)."""
     root = os.fsencode(path)
     out = {"missing": [], "content": [], "mode": [], "symlink": []}
-    for name, (mode, oid) in entries.items():
+    for name, (mode, oid, bsize) in entries.items():
         full = os.path.join(root, name)
         try:
             st = os.lstat(full)
@@ -1921,14 +2641,19 @@ def _entry_faults(path, entries):
         if f is None:
             out["missing"].append(name)
             continue
+        # a file whose size is not the blob's is a content fault with nothing read, and one whose size is is hashed in
+        # chunks: a leg that leaves a sparse file of any size costs the runner neither its size in memory nor the time
+        # to read it
         with f:
-            if _blob_id(f.read(), oid) != oid:
+            size = os.fstat(f.fileno()).st_size
+            if size != bsize or _file_blob_id(f, size, oid) != oid:
                 out["content"].append(name)
     return out
 
 
 def _disk_paths(path):
-    """Every file and symlink under the checkout (the clone's own .git excluded), as path bytes relative to it."""
+    """Every file and symlink under the checkout (the clone's own .git excluded), as path bytes relative to it: an entry
+    per file, with no limit on their number (a stated residual: the module docstring's paragraph on size limits)."""
     root = os.fsencode(path)
     found = set()
     for d, dirs, files in os.walk(root):
@@ -1949,7 +2674,7 @@ def verify_checkout(path, sha, entries):
     """[(class, [paths])] where the fresh checkout differs from the sha's tree: every tracked entry as _entry_faults
     reads it, and any file on disk that is not a tracked entry (extra). Empty: the checkout is the sha's tree."""
     faults = _entry_faults(path, entries)
-    faults["extra"] = sorted(_disk_paths(path) - {n for n, (mode, _oid) in entries.items() if mode != b"160000"})
+    faults["extra"] = sorted(_disk_paths(path) - {n for n, (mode, _oid, _size) in entries.items() if mode != b"160000"})
     return [(k, sorted(faults[k])) for k in ("missing", "extra", "content", "mode", "symlink") if faults[k]]
 
 
@@ -1964,6 +2689,9 @@ DEPS_PRODUCTS = b"vscode-extension/node_modules/"
 # config, its excludes): a leg that changes one, or replaces .git itself, changes the re-read's verdict. Each is checked
 # with cannot_read before the runner, or a git it starts, reads it (git_state_unreadable, the closing check's item 2).
 GIT_STATE_FILES = ("HEAD", "config", os.path.join("info", "exclude"))
+# The most bytes the runner reads of one GIT_STATE_FILES file: a fresh checkout's are a few hundred bytes each, and a
+# larger one (a sparse file a leg truncated to any size costs nothing on disk) is named by its size and not read.
+GIT_STATE_MAX = 1 << 16
 
 
 def git_dir_replaced(path):
@@ -1983,10 +2711,19 @@ def git_dir_replaced(path):
 
 def git_state_unreadable(path):
     """[path bytes] naming each GIT_STATE_FILES file of the private clone at `path` that cannot_read says cannot be read,
-    with its type (".git/info/exclude: a FIFO, not a regular file"); empty when each is a regular file or absent."""
+    with its type (".git/info/exclude: a FIFO, not a regular file"), or that is a regular file larger than GIT_STATE_MAX,
+    with its size; empty when each is a regular file of at most that size, or absent."""
     out = []
     for name in GIT_STATE_FILES:
-        why = cannot_read(os.path.join(path, ".git", name))
+        full = os.path.join(path, ".git", name)
+        why = cannot_read(full)
+        if why is None:
+            try:
+                size = os.lstat(full).st_size
+            except OSError:
+                size = 0
+            if size > GIT_STATE_MAX:
+                why = "%d bytes, more than the %d the runner reads" % (size, GIT_STATE_MAX)
         if why is not None:
             out.append(os.fsencode("%s: %s" % (os.path.join(".git", name), why)))
     return out
@@ -1995,8 +2732,8 @@ def git_state_unreadable(path):
 def git_state(path):
     """{name: value} for the private clone's .git: its identity (a directory, its device and inode) and the bytes of each
     GIT_STATE_FILES file (None when absent), each read through cannot_read, by read_regular: one that is not a regular
-    file is never read, and its value names why, which no file's bytes equal. The re-read after every leg compares it
-    with the one taken before the first leg."""
+    file, or is larger than GIT_STATE_MAX, is never read, and its value names why, which no file's bytes equal. The
+    re-read after every leg compares it with the one taken before the first leg."""
     g = os.path.join(path, ".git")
     try:
         st = os.lstat(g)
@@ -2005,7 +2742,7 @@ def git_state(path):
     out = {".git": (stat.S_ISDIR(st.st_mode), st.st_dev, st.st_ino)}
     for name in GIT_STATE_FILES:
         try:
-            out[os.path.join(".git", name)] = read_regular(os.path.join(g, name))
+            out[os.path.join(".git", name)] = read_regular(os.path.join(g, name), GIT_STATE_MAX)
         except Unreadable as e:
             out[os.path.join(".git", name)] = "cannot be read: %s" % e
         except OSError:
@@ -2021,7 +2758,7 @@ def tracked_ignored(path, entries, paths):
     in the clone excuses nothing."""
     if not paths:
         return set(), None
-    sources = {n for n, (mode, _oid) in entries.items() if mode in (b"100644", b"100755") and os.path.basename(n) == b".gitignore"}
+    sources = {n for n, (mode, _oid, _size) in entries.items() if mode in (b"100644", b"100755") and os.path.basename(n) == b".gitignore"}
     # A path that starts with ":" reads to git as pathspec magic, which check-ignore refuses; "./" in front keeps it a
     # path, and the name git echoes back is mapped to the path walked.
     asked = {(b"./" + n if n.startswith(b":") else n): n for n in paths}
@@ -2042,7 +2779,9 @@ def _file_digest(path, rel):
     """What a file under the checkout holds, to tell one a leg changed: a symlink's target, a regular file's sha256, or
     None, which no excuse matches: when it is gone, cannot be read, or is anything else (a FIFO, a device, a directory).
     The file is read through open_regular, so none of those is opened and none can make the read wait (the verify pass
-    at PR 926's build head, its code finding 5: a FIFO there was opened and waited for a writer)."""
+    at PR 926's build head, its code finding 5: a FIFO there was opened and waited for a writer), and hashed by
+    _hash_regular, so one larger than HASHED_FILE_MAX, a sparse file of any size included, is not read and is None as
+    well (round 1 of PR 959, ruling A's class)."""
     full = os.path.join(os.fsencode(path), rel)
     try:
         if os.path.islink(full):
@@ -2050,11 +2789,8 @@ def _file_digest(path, rel):
         f = open_regular(full)
         if f is None:
             return None
-        h = hashlib.sha256()
         with f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-        return h.hexdigest()
+            return _hash_regular(f, HASHED_FILE_MAX)
     except OSError:
         return None
 
@@ -2064,7 +2800,7 @@ def ignored_now(path, entries):
     tracked .gitignore ignores, tracked_ignored): read before the deps leg (and a group's npm ci setup), so the re-read
     after it excuses what a leg before it in its checkout left and still counts what npm ci added or changed. Empty
     when git's read fails, which excuses nothing."""
-    tracked = {n for n, (mode, _oid) in entries.items() if mode != b"160000"}
+    tracked = {n for n, (mode, _oid, _size) in entries.items() if mode != b"160000"}
     ignored, _err = tracked_ignored(path, entries, sorted(_disk_paths(path) - tracked))
     return {n: _file_digest(path, n) for n in ignored or ()}
 
@@ -2091,7 +2827,7 @@ def recheck_checkout(path, sha, entries, before, only_under=None, known=None):
     if unreadable:
         return [("cannot be read", unreadable)]
     faults = _entry_faults(path, entries)
-    tracked = {n for n, (mode, _oid) in entries.items() if mode != b"160000"}
+    tracked = {n for n, (mode, _oid, _size) in entries.items() if mode != b"160000"}
     extra = sorted(_disk_paths(path) - tracked)
     ignored, err = tracked_ignored(path, entries, extra)
     if ignored is None:
@@ -2557,10 +3293,13 @@ def _tokenized(name, leg, value, ctx):
 # at the narrow landing delta's ruling 8 (that shallow file as it stood when the run started, since a leg's write to it
 # no longer reaches a later job): each is a change in what a job's checkout holds. The re-read of that file after the last
 # leg (shallow_moved) changes no leg's environment and no checkout, only which runs read invalid, so it left the hash.
+# It moved again, under the same rule, when each clone came to hold refs/remotes/origin/main at the commit the batcher's
+# origin/main named when the run started (main_snapshot), the clone no longer the sha alone among refs.
 LEG_SCRATCH = "each leg: a fresh TMPDIR of its own, HOME and XDG_STATE_HOME under it, removed when the leg ends"
-LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone of the sha alone, no branch, no "
-                "tag and no remote, shallow where the batcher's repository was when the run started, in the job's step "
-                "order, npm ci where the job runs it; each job's legs their own")
+LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone of the sha, no branch, no tag "
+                "and no remote, holding refs/remotes/origin/main at the commit the batcher's origin/main named when the "
+                "run started (none when it had none), shallow where the batcher's repository was when the run started, "
+                "in the job's step order, npm ci where the job runs it; each job's legs their own")
 
 
 def leg_env_doc(ctx):
@@ -2669,16 +3408,25 @@ def npm_builtin(ctx):
     build question 3; before it such an npm recorded root None and the run went on). No npm on the PATH records npm
     None: there is then no builtin file for any leg to read. Raises
     Refused, naming the file and the keys, when the file sets any key but NPM_BUILTIN_KEYS: every line that is not
-    blank or a comment (`;` or `#`) must be `prefix = <value>`, so a section, a bare key or any other key is refused."""
+    blank or a comment (`;` or `#`) must be `prefix = <value>`, so a section, a bare key or any other key is refused.
+    Each file is read at its real path (a symlink there is followed, as npm follows it) through read_regular, at most
+    NPM_FILE_MAX bytes of it (round 1 of PR 959, ruling A's class): a builtin file that is no regular file, or is larger,
+    is refused naming it and why, and a package.json that is either reads as one that does not name npm, which the
+    refusal when no package.json names npm then names, with why, after its own words."""
     npm = shutil.which("npm", path=ctx["path"])
     rec = {"npm": npm, "root": None, "path": None, "present": False, "sha256": None, "keys": []}
     if not npm:
         return rec
     d = os.path.dirname(os.path.realpath(npm))
+    unread = []
     for cand in (d, os.path.dirname(d)):
+        pj = os.path.realpath(os.path.join(cand, "package.json"))
         try:
-            with open(os.path.join(cand, "package.json"), encoding="utf-8") as f:
-                named = json.load(f).get("name") == "npm"
+            data = read_regular(pj, NPM_FILE_MAX)
+            named = data is not None and json.loads(data.decode("utf-8")).get("name") == "npm"
+        except Unreadable as e:
+            unread.append("%s cannot be read (%s)" % (pj, e))
+            named = False
         except (OSError, ValueError, AttributeError):
             named = False
         if named:
@@ -2689,18 +3437,17 @@ def npm_builtin(ctx):
                       "directory of its real path nor the one above it holds a package.json naming npm, so the runner "
                       "cannot find npm's builtin config file (npmrc in that package), which npm reads in every npm leg "
                       "before any other config file and which nothing turns off; put an npm installed as npm's installs "
-                      "lay it out (bin/npm a link to lib/node_modules/npm/bin/npm-cli.js) first on PATH"
-                      % (npm, os.path.realpath(npm)))
+                      "lay it out (bin/npm a link to lib/node_modules/npm/bin/npm-cli.js) first on PATH%s"
+                      % (npm, os.path.realpath(npm), "".join("; " + u for u in unread)))
     path = os.path.join(rec["root"], NPM_BUILTIN)
     rec["path"] = path
     try:
-        with open(path, "rb") as f:
-            data = f.read()
-    except FileNotFoundError:
-        return rec
+        data = read_regular(os.path.realpath(path), NPM_FILE_MAX)
     except OSError as e:
         raise Refused("npm's builtin config file %s cannot be read (%s); npm reads it in every npm leg, so the runner reads "
                       "it first" % (path, e))
+    if data is None:
+        return rec
     rec.update(present=True, sha256=hashlib.sha256(data).hexdigest())
     keys = []
     for line in data.decode("utf-8", "replace").splitlines():
@@ -2992,10 +3739,32 @@ def _bre(bre, where):
     return "".join(out)
 
 
+# The most bytes the runner reads of a file of the fresh checkout that it reads itself before the first leg: ci.yml
+# (_checkout_text, for read_install_plan, read_served_step and leg_groups) and the file a sed line of an install step reads
+# (read_sed). Measured 2026-10-03: ci.yml is 80,927 bytes, the file the SDK step's sed line reads (kernel/session_host.py)
+# 108,878, and the largest tracked file 6,027,193 (kernel/kernel.py), which a sed line could name; 16 MiB is over twice
+# that. The checkout was verified against the sha's tree just before, so each holds the sha's bytes unless a process
+# outside the run (docs/batching.md names the kinds that can outlive a leg) put another file there since.
+CHECKOUT_FILE_MAX = 16 << 20
+
+
+def _checkout_text(path):
+    """The text of the checkout's regular file at `path` as open(path, encoding="utf-8").read() gives it (UTF-8, every
+    line ending read as a newline), read through read_regular: one that is not a regular file raises Unreadable naming
+    its type, and one fstat gives more than CHECKOUT_FILE_MAX bytes, naming its size, and neither is read (round 1 of
+    PR 959, ruling A's class); FileNotFoundError when nothing is there, UnicodeDecodeError when the bytes are not
+    UTF-8."""
+    data = read_regular(path, CHECKOUT_FILE_MAX)
+    if data is None:
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), path)
+    return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+
+
 def read_sed(checkout, script, rel, where):
     r"""What `sed -n SCRIPT FILE` prints, less its trailing newlines as $(...) takes it, for the one script shape
     read_run reads, s/RE/\1/p (RE by _bre), over FILE, a relative path that stays inside the checkout: every line RE
-    matches, with the match replaced by its first group."""
+    matches, with the match replaced by its first group. FILE is read through read_regular, at most CHECKOUT_FILE_MAX
+    bytes of it: one that is no longer a regular file, or is larger, is refused naming it and why, and is not read."""
     m = re.fullmatch(r"s/((?:[^/\\]|\\.)*)/\\1/p", script)
     if not m:
         raise Refused("%s: the sed script %r is not s/RE/\\1/p, the one form the runner reads" % (where, script))
@@ -3009,8 +3778,13 @@ def read_sed(checkout, script, rel, where):
         raise Refused("%s: the sed expression %r does not compile (%s)" % (where, m.group(1), e))
     if rx.groups < 1:
         raise Refused("%s: the sed expression %r has no group for \\1" % (where, m.group(1)))
-    with open(real, "rb") as f:
-        lines = f.read().decode("utf-8", "surrogateescape").split("\n")
+    try:
+        data = read_regular(real, CHECKOUT_FILE_MAX)
+    except OSError as e:
+        raise Refused("%s: sed reads %s, which cannot be read (%s)" % (where, rel, e))
+    if data is None:
+        raise Refused("%s: sed reads %s, which is not a file in the checkout" % (where, rel))
+    lines = data.decode("utf-8", "surrogateescape").split("\n")
     if lines and lines[-1] == "":
         lines.pop()
     printed = []
@@ -3099,8 +3873,7 @@ def read_install_plan(checkout, sha):
     nor a top-level key (workflow_job; a comment line, at any indent, is skipped)."""
     where = "%s at %s" % (CI_WORKFLOW, short(sha))
     try:
-        with open(os.path.join(checkout, CI_WORKFLOW), encoding="utf-8") as f:
-            text = f.read()
+        text = _checkout_text(os.path.join(checkout, CI_WORKFLOW))
     except (OSError, UnicodeDecodeError) as e:
         raise Refused("%s cannot be read (%s); the pytest leg's environment is built from its %s job's install steps"
                       % (where, e, CI_PYTHON_JOB))
@@ -3245,8 +4018,7 @@ def read_served_step(checkout, sha):
     neither a comment, the next job's line nor a top-level key is refused (workflow_job)."""
     where = "%s at %s" % (CI_WORKFLOW, short(sha))
     try:
-        with open(os.path.join(checkout, CI_WORKFLOW), encoding="utf-8") as f:
-            text = f.read()
+        text = _checkout_text(os.path.join(checkout, CI_WORKFLOW))
     except (OSError, UnicodeDecodeError) as e:
         raise Refused("%s cannot be read (%s); the served leg's files and switches are read from its step %r"
                       % (where, e, SERVED_STEP))
@@ -3378,8 +4150,7 @@ def leg_groups(checkout, sha, legs, npm=True):
     cannot be read or holds no job with a leg's step."""
     where = "%s at %s" % (CI_WORKFLOW, short(sha))
     try:
-        with open(os.path.join(checkout, CI_WORKFLOW), encoding="utf-8") as f:
-            text = f.read()
+        text = _checkout_text(os.path.join(checkout, CI_WORKFLOW))
     except (OSError, UnicodeDecodeError) as e:
         raise Refused("%s cannot be read (%s); the legs are grouped by the job that holds each one's step" % (where, e))
     jobs = workflow_jobs(text)
@@ -3569,7 +4340,10 @@ def _build_venv(venv, python, base, steps, env, log, tmpdir, where):
 def venv_tree(venv):
     """{relative path: entry} of every directory, file and symlink under the venv, links not followed, less the build's
     marker (SDK_MARKER, SERVED_MARKER): ["dir", mode], ["link", target], ["file", mode, size, sha256 of its bytes], or
-    ["other", its file type]. OSError when a directory or file cannot be read."""
+    ["other", its file type]. OSError when a directory or file cannot be read, a file larger than HASHED_FILE_MAX
+    included (a sparse file of any size): Unreadable naming it and its size, and it is not read (_hash_regular; round 1
+    of PR 959, ruling A's class). An entry per path, with no limit on their number (a stated residual: the module
+    docstring's paragraph on size limits)."""
     def fail(e):
         raise e
     out = {}
@@ -3591,11 +4365,12 @@ def venv_tree(venv):
                 f = open_regular(full)
                 if f is None:
                     raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), full)
-                h = hashlib.sha256()
                 with f:
-                    for chunk in iter(lambda: f.read(1 << 20), b""):
-                        h.update(chunk)
-                out[key] = ["file", stat.S_IMODE(st.st_mode), st.st_size, h.hexdigest()]
+                    try:
+                        digest = _hash_regular(f, HASHED_FILE_MAX)
+                    except Unreadable as e:
+                        raise Unreadable("%s: %s" % (full, e)) from None
+                out[key] = ["file", stat.S_IMODE(st.st_mode), st.st_size, digest]
             else:
                 out[key] = ["other", stat.S_IFMT(st.st_mode)]
     return out
@@ -3819,6 +4594,8 @@ def _venv_check(spec, venv, vpy, key, base, env):
     None)."""
     try:
         marker = _json_regular(os.path.join(venv, spec["marker"]))
+    except Unreadable as e:
+        return "no finished build: its marker cannot be read (%s)" % e, None, None
     except (OSError, ValueError):
         return "no finished build", None, None
     if not isinstance(marker, dict) or marker.get("key") != key:
@@ -4039,7 +4816,8 @@ def deps_skipped(path, served_files, others=None):
     belongs to). `others`, a list when given, gets [node id, reason] of every other skip outside `served_files`, the ones
     DEPS_SKIP did not select, so a deps reason it misses can be seen in the record rather than run in no leg unnoticed.
     (None, why) when the set is not known, and the served leg, which would run it, is then red naming why rather than
-    run without it: the log cannot be read; it holds no closing summary line (pytest did not finish, so its summary of
+    run without it: the log cannot be read (absent; or not a regular file, or larger than LOG_MAX, each named with the
+    log's path and why: _read_log); it holds no closing summary line (pytest did not finish, so its summary of
     skips is not whole); it holds more than one short-summary header line (a skip reason or a failure message can quote
     one, and which one opens pytest's own summary is then not known: read from the last, a quoted header followed by a
     quoted skip line dropped every skip before it with no refusal); or its short summary holds a line this reader does
@@ -4051,7 +4829,10 @@ def deps_skipped(path, served_files, others=None):
     message that runs on to a line of a kind the reader reads is read as that kind, and a skip's reason is cut there, so
     words after that line are not matched; and one that runs on to a line starting with "=" or shaped like the closing
     line is cut there too, that line's own words not read (the module docstring discloses all three)."""
-    data = _read_log(path) if path else None
+    try:
+        data = _read_log(path) if path else None
+    except OSError as e:
+        return None, "the pytest leg's log cannot be read (%s: %s)" % (path, e)
     if data is None:
         return None, "the pytest leg's log cannot be read"
     if not PYTEST_SUMMARY.findall(data):
@@ -4185,15 +4966,35 @@ PYTEST_SUMMARY = re.compile(r"^=*\s*(\d+ (?:failed|passed|skipped|errors?|desele
 NODE_COUNT = re.compile(r"^(?:#|\u2139) (pass|fail) (\d+)\s*$", re.M)
 
 
+# The most bytes the runner reads of a leg's log whole (_read_log: deps_skipped's read of the pytest leg's log). A full
+# sweep's passing pytest leg log is about 200 KB (the largest of 24 measured 2026-10-03 across the sweeps' state dirs
+# was 199,707 bytes; one of 20,396 tests was 199,604), but each failing test adds its section: measured 2026-10-03 with
+# a git that always fails first on PATH and the leg's flags, 464,134 bytes for 191 failures and 27 errors, about 2.1 KB
+# each, with failure sections of about 3 KB at the median and up to 25 KB. A run where every test fails writes about
+# 43 MB at 2.1 KB a failure and about 84 MB at 4 KiB; 128 MiB is above both, so a log that only reports many failures is
+# read and the served leg still runs (at 16 MiB, about 7,900 failures blocked it). deps_skipped holds about three times
+# the log at its peak: measured 2026-10-03 for a log of 127 MiB, about 400 MB of RSS on CPython 3.12 and 460 MB on
+# free-threaded 3.14. A larger log, a sparse one included (a leg can truncate its own stdout to any size), is not read,
+# and deps_skipped names its size. The largest log of any leg there, npm test's at 3,732,196 bytes, is read by its tail
+# alone (_log_tail).
+LOG_MAX = 128 << 20
+# The most bytes of a log the bats count reads through in pieces (_bats_counts). The largest real bats leg log, measured
+# 2026-10-03 across the sweeps' state dirs, was 346,890 bytes (of 23); a failing leg's own huge log must still have its
+# counts written (tests/test_sweep_runner.py's LargeLog, whose leg writes 256 MiB of filler), so the limit is 1 GiB, four
+# times that. The pieces hold the memory to one of LOG_PIECE whatever the size, and the limit bounds the time (a sparse
+# log of 768 MiB was counted in 0.58 s, measured 2026-10-03 at a load of about 50): before it a sparse log of any size
+# was read to its end.
+LOG_COUNT_MAX = 1 << 30
+
+
 def _read_log(path):
-    """The whole log at `path`, decoded, or None when it cannot be read: read through open_regular, so a log a leg
-    replaced with a FIFO or a symlink (a leg finds its own log's path in /proc/self/fd/1) is not read and reads as None,
-    never as a wait or a read without end (the verify pass at PR 926's build head, its code finding 1). deps_skipped
-    reads the pytest leg's log so, after run_leg has closed its own descriptor."""
-    try:
-        data = read_regular(path)
-    except OSError:
-        return None
+    """The whole log at `path`, decoded, or None when nothing is there: read through open_regular, so a log a leg
+    replaced with a FIFO or a symlink (a leg finds its own log's path in /proc/self/fd/1) is not read and raises
+    Unreadable (an OSError) naming what is there, never a wait or a read without end (the verify pass at PR 926's build
+    head, its code finding 1), and only when fstat gives it at most LOG_MAX bytes, of which no more are read, so a larger
+    one, a sparse file of any size included, raises Unreadable naming its size, and is not read (round 1 of PR 959, ruling
+    A's class). deps_skipped reads the pytest leg's log so, after run_leg has closed its own descriptor, and names why."""
+    data = read_regular(path, LOG_MAX)
     return data.decode("utf-8", "replace") if data is not None else None
 
 
@@ -4267,8 +5068,14 @@ def _bats_counts(log):
     """(ok, not ok): the log's lines that start `ok ` and `not ok ` (bats' TAP results), counted while the log is read
     in pieces of LOG_PIECE bytes, each pattern searched with the bytes before the piece that could start a match
     carried over, so a line split across two pieces is counted once and memory stays bounded whatever the log's size;
-    None when the log cannot be read. `log` is the descriptor run_leg holds or a path (_log_reader). The log's start
-    counts as a line start, as `^` reads it in a multiline regex."""
+    None when nothing is there or a read fails. `log` is the descriptor run_leg holds or a path (_log_reader); a path
+    that is not a regular file raises Unreadable naming what is there (open_regular). The log's start counts as a line
+    start, as `^` reads it in a multiline regex. A count needs every line, so the log is read in pieces rather than by its
+    tail, and only when its size, read by seeking to its end, is at most LOG_COUNT_MAX, of which no more is read: a
+    larger log, a sparse one included, is not read, and one with more than LOG_COUNT_MAX bytes there to read (it grew
+    after the size was read) stops there, so the time the count takes is bounded as its memory is (round 1 of PR 959,
+    ruling A's class); each raises Unreadable, naming the size or the limit, which count_tests reads as no count and
+    summarize_log names."""
     pats = {b"\nok ": 0, b"\nnot ok ": 0}
     carry = {p: b"\n" for p in pats}
     try:
@@ -4276,15 +5083,25 @@ def _bats_counts(log):
         if f is None:
             return None
         with f:
-            while True:
-                piece = f.read(LOG_PIECE)
+            size = f.seek(0, os.SEEK_END)
+            if size > LOG_COUNT_MAX:
+                raise Unreadable("%d bytes, more than the %d the runner reads" % (size, LOG_COUNT_MAX))
+            f.seek(0)
+            left = LOG_COUNT_MAX + 1
+            while left > 0:
+                piece = f.read(min(LOG_PIECE, left))
                 if not piece:
                     break
+                left -= len(piece)
                 for p in pats:
                     buf = carry[p] + piece
                     pats[p] += buf.count(p)
                     # a match cannot lie wholly inside the carry, which is one byte shorter than the pattern
                     carry[p] = buf[-(len(p) - 1):]
+            if left == 0:
+                raise Unreadable("more than the %d bytes the runner reads" % LOG_COUNT_MAX)
+    except Unreadable:
+        raise
     except OSError:
         return None
     return pats[b"\nok "], pats[b"\nnot ok "]
@@ -4295,10 +5112,14 @@ def count_tests(name, log):
     (PYTEST_LEGS; failed counts failures and errors, so a skip the served step's switch turned into a failure counts),
     bats' `ok` and `not ok` lines, node's last `pass` and `fail` counts. (None, None) when the log holds no count, which
     the verdict reads as no test ran. Memory stays bounded whatever the log's size: pytest's and node's counts are read
-    from the log's tail (_log_tail), bats' lines counted while it streams (_bats_counts). `log` is the descriptor
-    run_leg holds or a path."""
+    from the log's tail (_log_tail), bats' lines counted while it streams (_bats_counts), which reads no bats log larger
+    than LOG_COUNT_MAX and counts none there (its Unreadable is read here as no count, and summarize_log names it).
+    `log` is the descriptor run_leg holds or a path."""
     if name == "bats":
-        counts = _bats_counts(log)
+        try:
+            counts = _bats_counts(log)
+        except Unreadable:
+            counts = None
         return counts if counts is not None else (None, None)
     data = _log_tail(log)
     if data is None:
@@ -4320,9 +5141,13 @@ def count_tests(name, log):
 def summarize_log(name, log):
     """A display-only summary: pytest's last result line (the pytest and served legs), bats' ok and not-ok counts,
     node's pass and fail counts; read with the same bounded memory as count_tests, from `log`, the descriptor run_leg
-    holds or a path."""
+    holds or a path. A bats log the count cannot read (larger than LOG_COUNT_MAX, or a path that is not a regular file)
+    is summarized as not counted, naming why, so the leg's line says why the verdict found no test."""
     if name == "bats":
-        counts = _bats_counts(log)
+        try:
+            counts = _bats_counts(log)
+        except Unreadable as e:
+            return "not counted, its log cannot be read (%s)" % e
         return "%d ok, %d not ok" % counts if counts is not None else None
     data = _log_tail(log)
     if data is None:
@@ -4435,6 +5260,40 @@ def script_blob(repo):
     return p.stdout.strip() if p.returncode == 0 else None
 
 
+def head_unread(repo, e):
+    """The refusal for a read of the batcher's HEAD that met one of run_git's bounds (`e`, a GitBound; the round's
+    rev-parse HEAD item, ruled into PR 959 with ruling A): cmd_run's (rev-parse HEAD, symbolic-ref) and cmd_check's
+    (rev-parse --verify -q HEAD, before its reads of the commit). It names HEAD's file, the branch ref HEAD names and the
+    file git reads that ref from, the bound and the remedy: the ref's loose file when it is there, and packed-refs when it
+    is not (the branch packed), where git reads it then. git reads the branch's loose ref file whole and unchecked, as it
+    reads origin/main's (main_ref_checked), so a symlink to /dev/zero there reaches GIT_MEMORY and a FIFO there
+    GIT_BOUND, and a sparse packed-refs reaches GIT_MEMORY. The runner reads HEAD itself for the branch's name, through
+    read_ref_file, so a HEAD that is not a regular file, or is too large, is named as such and not read."""
+    head = os.path.join(repo.git_dir, "HEAD")
+    try:
+        data = read_ref_file(head)
+    except OSError as x:
+        names = "%s, which the runner cannot read either (%s)" % (head, x)
+    else:
+        text = (data or b"").decode("utf-8", "replace").strip()
+        if text.startswith("ref:"):
+            ref = text[4:].strip()
+            loose = os.path.join(repo.common_dir, *ref.split("/"))
+            if not ref.startswith("refs/heads/"):
+                where = "a ref outside refs/heads/"
+            elif os.path.lexists(loose):
+                where = loose
+            else:
+                where = "which has no loose file, so git reads it from %s" % os.path.join(repo.common_dir, "packed-refs")
+            names = "%s, and the branch it names, %s, %s" % (head, ref, where)
+        else:
+            names = "%s, which names no branch" % head
+    return ("the batcher's HEAD in the repository at %s could not be read within %s (%s: git %s %s); remove or repair "
+            "the file git was reading (git reads a symlink to /dev/zero, or an oversized or sparse file, until a limit "
+            "stops it, and waits on a FIFO; removing packed-refs drops the refs it holds), and sweep again"
+            % (repo.work_tree, e.limit, names, e.call, e.what))
+
+
 def parse_flakes(values, only):
     """{leg: known-flake entry} from the --flake values. `LEG=TEXT` names its leg; a bare TEXT names every --leg leg
     that has no named one, and is refused on a full run, which must say which leg each flake is for."""
@@ -4471,8 +5330,24 @@ def cmd_run(args):
     # The batcher's shallow file, checked here, before any git call that parses commits, since git reads it first (the
     # closing check's item 1): one that is not a regular file refuses the run, naming it.
     shallow_checked(batcher)
-    sha = git(batcher, "rev-parse", "HEAD")
-    branch = git(batcher, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
+    # The batcher's origin/main, the same way: a loose ref file there that is not a regular file, is larger than a ref
+    # file holds or holds a symbolic ref refuses the run, naming it, before any git call could read it
+    # (main_ref_checked; main_snapshot reads the ref before the first leg, and nothing reads it after).
+    main_ref_checked(batcher)
+    # HEAD and the branch it names, read under run_git's bounds like every git call: a read of them that meets one (the
+    # branch's loose ref file a symlink to /dev/zero or a FIFO) refuses the run naming both files (head_unread). The
+    # read of HEAD runs with core.warnAmbiguousRefs off, as every runner git does (GIT_NEUTRAL_CONFIG), and the branch
+    # is read with a plain symbolic-ref, its short name taken by removing refs/heads/: with that setting on (git's
+    # default) rev-parse HEAD also tried refs/HEAD, refs/tags/HEAD, refs/heads/HEAD, refs/remotes/HEAD and
+    # refs/remotes/HEAD/HEAD, to warn of an ambiguous name, and symbolic-ref --short tried <git dir>/main, refs/main and
+    # refs/tags/main for a branch named main, so a symlink to /dev/zero at any of those names refused the run naming
+    # files git was not reading (round 1 of PR 959's build review, exact-3).
+    try:
+        sha = git(batcher, "rev-parse", "HEAD")
+        ref = git(batcher, "symbolic-ref", "-q", "HEAD", check=False).stdout.strip()
+        branch = (ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref) or None
+    except GitBound as e:
+        raise type(e)(head_unread(batcher, e), e.call, e.limit, e.what) from None
     wraps = parse_wraps(args.wrap)
     only = list(dict.fromkeys(args.leg or []))
     for name in only:
@@ -4484,8 +5359,9 @@ def cmd_run(args):
                       "as a known flake); anything else is a failure: fix it and sweep the new head")
     if only and set(flakes) - set(only):
         raise Refused("--flake names %s, which this --leg re-run does not run" % ", ".join(sorted(set(flakes) - set(only))))
-    # The batcher's tree is read for its HEAD sha and its branch only: the legs run in a private checkout of the sha,
-    # so uncommitted edits there are not swept, and the batcher is told so.
+    # The batcher's tree is read for its HEAD sha and its branch, and its repository for its shallow file (before the
+    # first leg and again after the last) and its origin/main (before the first leg and never again): the legs run in a
+    # private checkout of the sha, so uncommitted edits there are not swept, and the batcher is told so.
     dirty = uncommitted_count(batcher)
     if dirty:
         print("sweep %s: %s has %d uncommitted edit%s (git status); they are not swept: the legs run in a private "
@@ -4600,6 +5476,11 @@ def _run_locked(args, batcher, sha, branch, python, wraps, only, path, flakes=No
            "legs": {}, "verdict": "running", "red": [], "invalid": None}
     if not _subreaper:
         run["runner"]["subreaper_why"] = _subreaper_why
+    # The memory limit run_git sets on each git (git_memory_limit; round 1 of PR 959, ruling A), recorded as the subreaper
+    # is: off Linux none, with the reason.
+    run["runner"]["git_memory"], memory_why = git_memory_limit()
+    if memory_why is not None:
+        run["runner"]["git_memory_why"] = memory_why
     base_legs = {}
     if only:
         rec, why = effective(data)
@@ -4723,7 +5604,11 @@ def _run_locked(args, batcher, sha, branch, python, wraps, only, path, flakes=No
         # after the last leg it is read again at the same path against this snapshot (shallow_moved).
         shallow_file = shallow_path(batcher)
         shallow = shallow_snapshot(batcher)
-        checkout, marker, create_s = make_checkout(batcher, sha, shallow)
+        # The batcher's origin/main, read once here, the same way: every job's checkout holds this commit as its own
+        # refs/remotes/origin/main (None: no checkout holds one), so a leg that moves the ref, in its checkout or in the
+        # batcher's repository, moves no later job's (main_snapshot).
+        main_sha = main_snapshot(batcher)
+        checkout, marker, create_s = make_checkout(batcher, sha, shallow, main_sha)
         _plant_for_tests(checkout)
         t0 = time.monotonic()
         entries = tree_entries(checkout, sha)
@@ -4776,7 +5661,7 @@ def _run_locked(args, batcher, sha, branch, python, wraps, only, path, flakes=No
         grecs = [{"job": g["job"], "legs": list(g["legs"]), "path": None, "create_s": None, "verify_s": None, "setup": None}
                  for g in groups]
         grecs[0].update(path=checkout, create_s=create_s, verify_s=verify_s)
-        run["runner"]["checkout"] = {"form": "clone", "per": "ci.yml job", "files": len(entries), "groups": grecs}
+        run["runner"]["checkout"] = {"form": "clone", "per": "ci.yml job", "main": main_sha, "files": len(entries), "groups": grecs}
         if not only:
             run["order"] = [n for g in groups for n in g["legs"]]
         os.makedirs(logdir, mode=0o700, exist_ok=True)
@@ -4843,7 +5728,7 @@ def _run_locked(args, batcher, sha, branch, python, wraps, only, path, flakes=No
                     # rewrote an object of the sha in the batcher's repository, whose objects the clone reads) makes the run
                     # invalid rather than refusing it.
                     try:
-                        checkout, marker, create_s = make_checkout(batcher, sha, shallow)
+                        checkout, marker, create_s = make_checkout(batcher, sha, shallow, main_sha)
                         t0 = time.monotonic()
                         faults = verify_checkout(checkout, sha, entries)
                         if faults:
@@ -5001,12 +5886,29 @@ def cmd_check(args):
     # Before the first git call that parses a commit, as in cmd_run: rev-parse's ^{commit} reads the shallow file, so
     # one that is not a regular file refuses here, naming it, instead of waiting (the closing check's verify, code 2).
     shallow_checked(repo)
+    # packed-refs the same way, before the read of HEAD below, which reads that file when HEAD's branch is packed: one
+    # that is not a regular file refuses here, naming it, where a FIFO held that read until GIT_BOUND (round 1's
+    # spot-check, S9; packed_refs_checked).
+    packed_refs_checked(repo)
+    # HEAD's ref alone first, as cmd_run reads it: rev-parse of HEAD with no ^{commit} reads HEAD and the ref file of
+    # the branch it names (packed-refs when that has no loose file) and neither the shallow file nor an object, so a
+    # bound met here is that file's, and the refusal names it (head_unread); the reads of the commit below, which also
+    # read the shallow file and the objects, keep run_git's refusal, which names the call. Its result is not used: those
+    # reads refuse a HEAD that names no commit. Each read runs with core.warnAmbiguousRefs off, as every runner git does
+    # (GIT_NEUTRAL_CONFIG), which stops rev-parse at the first name its rules find rather than trying the rest to warn
+    # of an ambiguous one; a --sha is still found by those rules, a branch or tag name included.
+    try:
+        git(repo, "rev-parse", "--verify", "-q", "HEAD", check=False)
+    except GitBound as e:
+        raise type(e)(head_unread(repo, e), e.call, e.limit, e.what) from None
     sha = git(repo, "rev-parse", "--verify", (args.sha or "HEAD") + "^{commit}")
     subject = "HEAD" if not args.sha or args.sha == "HEAD" else sha[:10]
     branch = args.branch
     if branch is None and sha == git(repo, "rev-parse", "--verify", "HEAD^{commit}"):
-        # verify names the batch branch and plan the member's head branch; for the tree's own HEAD that is its branch
-        branch = git(repo, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
+        # verify names the batch branch and plan the member's head branch; for the tree's own HEAD that is its branch,
+        # read as cmd_run reads it
+        ref = git(repo, "symbolic-ref", "-q", "HEAD", check=False).stdout.strip()
+        branch = (ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref) or None
     a = assess(sha, subject=subject, branch=branch, tree_hint=tree)
     line, ok = a["line"], a["case"] == "pass"
     if ok:
@@ -5040,7 +5942,9 @@ def main(argv=None):
                                    "invalid." % (", ".join(LEGS), MEASURED_TEXT))
     p.add_argument("--tree", metavar="DIR", help="the repository whose HEAD is swept, the directory holding its .git, which "
                                                  "is not looked up from (default: the nearest directory at or above the "
-                                                 "current one holding a .git); read for its HEAD sha and branch only")
+                                                 "current one holding a .git); read for its HEAD sha and branch, its "
+                                                 "shallow file (before the first leg and again after the last) and its "
+                                                 "refs/remotes/origin/main (before the first leg and never again)")
     p.add_argument("--python", metavar="PATH", help="the interpreter the pytest leg's venv is built from (default: the one running "
                                                     "this script); the pytest leg runs in that venv, under <state "
                                                     "dir>/sweeps/sdk/<key>, which holds what the install steps of the sha's "
