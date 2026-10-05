@@ -104,14 +104,23 @@ OUT_DIR = os.environ.get("CONN_LOG_OUT", "")
 
 
 def pane_labels():
-    """kernel.py's _PANE_ORDER read as text, key to label: the six pane documents the shell serves iframes for, and the names
-    the entries give them."""
+    """kernel.py's hand-written panes read as text, key to label: the six pane documents the shell serves iframes for and the
+    desktop loads at boot, and the names the entries give them. Since upstream PR 1919 (in fork main through the fold 965, the
+    landing merge with batch 970) _PANE_ORDER holds no literal pairs: it is derived from _CODE_PANES (asserted below, so the
+    labels follow the source the Log's names come from), and _CODE_PANES also holds the experimental Artifacts pane, which the
+    generic build serves with no document unless the gear turns it on and it comes on screen, and no leg here does either. So
+    the six are _HAND_PANES, each labelled by its _CODE_PANES record. Every read fails loudly on an empty match (the shape of
+    tests/test_return_from_background_served.py's km_pane_order)."""
     src = Path(os.path.join(ROOT, "kernel", "kernel.py")).read_text(encoding="utf-8")
-    m = re.search(r"^_PANE_ORDER = \((.*?)\)\n", src, re.S | re.M)
-    assert m, "kernel.py defines _PANE_ORDER"
-    pairs = dict(re.findall(r'\("([a-z]+)", "([^"]+)"\)', m.group(1)))
-    assert len(pairs) == 6 and {"chat", "feed"} <= set(pairs), pairs
-    return pairs
+    assert re.search(r"^_PANE_ORDER = .*\bfor p in _CODE_PANES\b", src, re.M), "kernel.py derives _PANE_ORDER from _CODE_PANES"
+    m = re.search(r"^_CODE_PANES = tuple\(.*?\n\)\)\n", src, re.S | re.M)
+    assert m, "kernel.py defines _CODE_PANES"
+    titles = dict(re.findall(r'\{"id": "([a-z]+)", "title": "([^"]+)"', m.group(0)))
+    h = re.search(r"^_HAND_PANES = \(([^)]*)\)", src, re.M)
+    assert h, "kernel.py defines _HAND_PANES"
+    hand = re.findall(r'"([a-z]+)"', h.group(1))
+    assert len(hand) == 6 and {"chat", "feed"} <= set(hand) and set(hand) <= set(titles), (hand, titles)
+    return {k: titles[k] for k in hand}
 
 
 SLOW_MS = 5500   # the slow legs' handshake: the Feed, fourth of the panes in the desktop's line, opens 22 s after its dial, past the latest its connect cut can come (15 s and one 5 s watchdog tick)
