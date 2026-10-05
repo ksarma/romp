@@ -400,7 +400,7 @@ runs each check of _TreeChecks as a subtest, so no scheduler sends them to two w
 pytest-xdist split the class across the two workers of CI's 3.14t cell had both build the derivation at once, about 2.1 to
 2.5 GiB each, and CI's 3.14t command under a 16.5 GiB cap with no swap (the cell's runner has 16 GB) was killed by the cap
 (2026-10-04; reproduced with the split forced, 2026-10-05). TheTreeChecksAreOnePytestItem pins the one item by pytest's
-own collection.
+own collection, and that the item runs every check once inside a subtest named for it.
 A second census in the same process that reads kernel/kernel.py or another
 product file through the helper gets this census's parse (a tree test holds that from this side). WHAT A DERIVATION LEAVES
 ALIVE stays for the process: its results, the modules, units and trees they hold, the helper modules and the product
@@ -5173,7 +5173,8 @@ class _TreeChecks:
     Before the cut in _Tree a build took 2.1 to 2.5 GiB per process on 3.14t, and in a run whose two workers both built it,
     CI's 3.14t command was killed by a 16.5 GiB cap with no swap (2026-10-04). The cost: a check is a subtest, not a node id
     of its own (no -k on one check, one --durations line for all of them), and a cleanup a check registers runs at the end of
-    the one item. TheTreeChecksAreOnePytestItem pins the one item by pytest's own collection."""
+    the one item. TheTreeChecksAreOnePytestItem pins the one item by pytest's own collection, and that the item runs every
+    check once inside a subtest named for it."""
 
     def test_every_loop_or_waiting_thread_a_test_starts_is_stopped_on_every_exit_path(self):
         tails, unread, stale, _bounded = tail_only(self.rows)
@@ -5660,20 +5661,23 @@ class TheBuildDropsEachRowlessModuleAtItsTurn(unittest.TestCase):
     (_imported_test_modules) does not read, so the helper index holds test_z_hidden from test_a_first's walk on;
     test_b_quiet and test_q_quiet start none and nothing imports them; test_c_named starts none and test_m_late, which sorts
     after it, imports it on an import line and starts a thread one of its functions makes; test_e_early starts none and is
-    parsed before the build, an earlier reader's parse. Held: the hook runs once per module, in the population's order; the
+    parsed before the build, an earlier reader's parse; test_k_product starts none and calls the planted product's spawner,
+    so its one result is an informational row. Held: the hook runs once per module, in the population's order; the
     build drops test_b_quiet and test_q_quiet and nothing else; each has left the cache by the end of its own turn and is in it
     at no later turn, so the build never holds the trees no result holds (a drop at the end of the build would hold them all);
     every other planted module is in the cache after the build, and each planted module was parsed once (test_m_late's import
     does not parse test_c_named a second time); and the list joins read module by module equal list_join_cleanups over the
     whole population, test_a_first's inline join among them. Each part of the cut reds a line here when it is undone: the
     PC.clear, the drop at the module's turn, the import guard (a second parse of test_c_named), the earlier-reader guard, the
-    helper-index guard, the early return for a module a row holds, and the list joins."""
+    helper-index guard, the early return for a module a result holds (test_a_first and test_m_late by their rows,
+    test_k_product by its informational row), and the list joins."""
 
     QUIET = "import unittest\n\n\nclass %s(unittest.TestCase):\n    def test_x(self):\n        self.assertTrue(1)\n"
     MAKER = "import threading\n\n\ndef make():\n    return threading.Thread(target=int, daemon=True)\n"
     PLANT = (
         ("tests/__init__.py", ""),
-        ("kernel/kernel.py", "import threading\n\n\ndef _producer():\n    while True:\n        pass\n"),
+        ("kernel/kernel.py", "import threading\n\n\ndef _producer():\n    while True:\n        pass\n\n\n"
+                             "def spawn():\n    t = threading.Thread(target=_producer)\n    t.start()\n    return t\n"),
         ("tests/test_a_first.py", "import threading\nimport unittest\nfrom tests import (\n    test_z_hidden,\n)\n\n\n"
                                   "class A(unittest.TestCase):\n    def test_a(self):\n        t = test_z_hidden.make()\n        t.start()\n"
                                   "        self.addCleanup(t.join, 1)\n\n    def test_b(self):\n"
@@ -5682,6 +5686,8 @@ class TheBuildDropsEachRowlessModuleAtItsTurn(unittest.TestCase):
         ("tests/test_b_quiet.py", QUIET % "B"),
         ("tests/test_c_named.py", MAKER),
         ("tests/test_e_early.py", QUIET % "E"),
+        ("tests/test_k_product.py", "import unittest\n\nkm = load_source(\"km\", \"kernel/kernel.py\")\n\n\n"
+                                    "class K(unittest.TestCase):\n    def test_k(self):\n        km.spawn()\n"),
         ("tests/test_m_late.py", "import unittest\nimport test_c_named as TC\n\n\nclass M(unittest.TestCase):\n    def test_m(self):\n"
                                  "        t = TC.make()\n        t.start()\n        self.addCleanup(t.join, 1)\n"),
         ("tests/test_q_quiet.py", QUIET % "Q"),
@@ -5721,6 +5727,8 @@ class TheBuildDropsEachRowlessModuleAtItsTurn(unittest.TestCase):
         names = [os.path.basename(p) for p in tree.paths]
         self.assertEqual({os.path.basename(st.unit.module.path) for st, _shape, _where in tree.rows}, {"test_a_first.py", "test_m_late.py"},
                          "the plant's rows come from the two modules that start threads")
+        self.assertEqual({os.path.basename(r.unit.module.path) for r in tree.extras["product_starts"]}, {"test_k_product.py"},
+                         "the plant's one informational row, a thread the product starts on a test's call, comes from test_k_product")
         self.assertEqual([n for n, _cached in turns], names, "census hands every module to the hook once, in the population's order")
         self.assertEqual([os.path.basename(p) for p in tree.dropped], self.DROPPED,
                          "the build drops exactly the modules no row holds, no earlier reader parsed, no test module imports and the "
@@ -5742,7 +5750,28 @@ class TheTreeChecksAreOnePytestItem(unittest.TestCase):
     exactly one item of ThreadStopCensus, test_the_tree_derivation, and no item named for a check of _TreeChecks in any class,
     so no scheduler can hand the derivation's checks to two workers. Keyed on those node ids, never on the module's count,
     which would red on every test added here. A mutant that makes _TreeChecks a TestCase reds the second assertion, and one
-    that has ThreadStopCensus inherit _TreeChecks reds the first."""
+    that has ThreadStopCensus inherit _TreeChecks reds the first. The second case holds the one item's body: run on a
+    stand-in TestCase whose subTest records, with every check of _TreeChecks replaced by a recorder (each restored by a
+    cleanup registered before the change), test_the_tree_derivation enters a subtest named for each check, in name order,
+    calls that check inside it and leaves it, every check once, so a loop that runs fewer checks, or a check outside its
+    subtest, reds there."""
+
+    class _Recorder:
+        """The stand-in TestCase: subTest(check=...) records its entry and exit; the checks record their calls here too."""
+        def __init__(self):
+            self.events = []
+
+        def subTest(self, **params):
+            rec = self
+
+            class _Sub:
+                def __enter__(self):
+                    rec.events.append(("enter", params.get("check")))
+
+                def __exit__(self, *exc):
+                    rec.events.append(("exit", params.get("check")))
+                    return False
+            return _Sub()
 
     def test_pytest_collects_the_checks_over_the_derivation_as_one_item(self):
         rel = os.path.relpath(os.path.realpath(__file__), ROOT)
@@ -5756,6 +5785,18 @@ class TheTreeChecksAreOnePytestItem(unittest.TestCase):
                          "ThreadStopCensus is one pytest item, so one worker builds the derivation")
         self.assertEqual([i for i in ids if i.rsplit("::", 1)[-1] in checks], [],
                          "a check of _TreeChecks is an item of its own, which a scheduler can send to another worker")
+
+    def test_the_one_item_runs_every_check_once_inside_a_subtest_named_for_it(self):
+        checks = sorted(n for n in vars(_TreeChecks) if n.startswith("test_"))
+        self.assertTrue(checks, "_TreeChecks holds no check")
+        rec = self._Recorder()
+        for name in checks:
+            self.addCleanup(setattr, _TreeChecks, name, vars(_TreeChecks)[name])
+            setattr(_TreeChecks, name, lambda case, name=name: case.events.append(("call", name)))
+        ThreadStopCensus.test_the_tree_derivation(rec)
+        self.assertEqual(rec.events, [e for name in checks for e in (("enter", name), ("call", name), ("exit", name))],
+                         "the one item enters a subtest named for each check of _TreeChecks, in name order, calls that check inside it "
+                         "and leaves it, every check once")
 
 
 class ParseCacheKeyAndLock(unittest.TestCase):
