@@ -3,6 +3,9 @@
   "cancel-in-progress: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/batch/') }}",
   "group: ci-${{ github.event_name }}-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.sha || github.ref }}"
  ],
+ ".github/workflows/docs.yml": [
+  "group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}"
+ ],
  ".github/workflows/ledger.yml": [
   "group: ledger-${{ github.ref }}"
  ],
@@ -211,6 +214,9 @@
  "tests/test_converge_main_branch.py": [
   "# the maintainer's shape: an earlier converge left HEAD detached at an older sha; main sits",
   "r = fixture_git(self.checkout, \"symbolic-ref\", \"-q\", \"--short\", \"HEAD\", check=False)   # exits 1 when detached"
+ ],
+ "tests/test_docs_workflow_pins.py": [
+  "self.assertRegex(self.src, r\"(?m)^  group: \" + re.escape(\"${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}\") + r\"$\")"
  ],
  "tests/test_env_value_redaction.py": [
   "\"GITHUB_HEAD_REF\": \"feature/a-long-branch-name\", \"GITHUB_BASE_REF\": \"main-of-a-long-name\",",
