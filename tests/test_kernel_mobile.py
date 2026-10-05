@@ -134,12 +134,13 @@ class LandingShell(unittest.TestCase):
         # hidden on mobile). data-act buttons on the bar; each routes to the existing machinery. Since iOS item 4g
         # (2026-10-05) net and usage are not on the bar: the settings card shows them on the phone (gear.js #rs-pacts) and
         # posts phoneAct, which runs the same A-map handlers (tests/test_mtabs_fit_served.py clicks them in three engines).
+        # The bar's buttons by their opening markup over the whole page (the page carries `data-act=usage` elsewhere, in the API
+        # health detail's link, so the act alone would not say which control): no Usage or Remote kernels button on the bar.
         html = km._landing()
-        bar = html[html.index("<nav id=mtabs>"):html.index("</nav>", html.index("<nav id=mtabs>"))]
-        for act in ("data-act=settings", "data-act=restart"):
-            self.assertIn(act, bar)
-        for act in ("data-act=net", "data-act=usage"):
-            self.assertNotIn(act, bar)
+        for act in ("<button class=mact data-act=settings ", "<button class=mact data-act=restart "):
+            self.assertIn(act, html)
+        self.assertNotIn("<button class=mact data-act=net ", html)
+        self.assertNotIn("<button class=mact data-act=usage ", html)
         # ICONS, not words (the user 2026-07-11): settings wears the desktop rail's own gear glyph, net its
         # network-tree SVG; usage gets the theme's own motif — two stacked fill bars at different levels
         # the settings icon is the SAME gear the desktop rail uses (U+26ED ⛭), not the outlined star it had

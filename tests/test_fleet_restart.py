@@ -379,14 +379,28 @@ class GlyphSaysTheFleetState(unittest.TestCase):
         self.assertIn("if(!ts.length)return null;", self.js)
 
     def test_both_glyphs_carry_paintable_nodes_and_the_colours_are_defined(self):
+        # the rail glyph is the page's; the phone's copy left the bottom bar for the settings card in iOS item 4g (2026-10-05), so
+        # it is gear.js's markup, painted by the same paintIcon through mnet, with its colours restated in gear.css (that page
+        # loads none of the shell's sheet); tests/test_mtabs_fit_served.py reads the painted copy against the rail's in a browser
         html = km._landing()
-        self.assertEqual(html.count("class=rn-me"), 2, "the rail glyph and the mobile one")
-        self.assertEqual(html.count("class=rn-a"), 2)
-        self.assertEqual(html.count("class=rn-b"), 2)
+        self.assertEqual(html.count("class=rn-me"), 1, "the rail glyph (the phone's copy is in the settings card)")
+        self.assertEqual(html.count("class=rn-a"), 1)
+        self.assertEqual(html.count("class=rn-b"), 1)
         self.assertIn(".rn-ok{fill:var(--accent)}", html)
         self.assertIn(".rn-wait{fill:#8a8a8a}", html)
         self.assertIn(".rn-warn{fill:#e5484d}", html)
         self.assertIn("paintNodes(icon,nodes)", html)
+        self.assertIn("paintNodes(m,nodes)", html)   # the phone's copy, found by mnet
+        ui = os.path.join(os.path.dirname(HERE), "ui", "webview")
+        with open(os.path.join(ui, "gear.js"), encoding="utf-8") as fh:
+            gear = fh.read()
+        with open(os.path.join(ui, "gear.css"), encoding="utf-8") as fh:
+            gear_css = fh.read()
+        for node in ("class=rn-me", "class=rn-a", "class=rn-b"):
+            self.assertEqual(gear.count(node), 1, node + " in the settings card's Remote kernels glyph")
+        self.assertIn("#rs-pact-net .rn-ok { fill: var(--accent, #9cd2ff); }", gear_css)
+        self.assertIn("#rs-pact-net .rn-wait { fill: #8a8a8a; }", gear_css)
+        self.assertIn("#rs-pact-net .rn-warn { fill: #e5484d; }", gear_css)
 
     def test_the_tooltip_says_the_verdict_in_words(self):
         # the colour is the glance; the words behind it are one hover away (progressive disclosure)
