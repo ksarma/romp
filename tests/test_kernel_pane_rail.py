@@ -237,9 +237,14 @@ class PaneRailTest(unittest.TestCase):
         # the motion cue (the user 2026-07-12): while any tunnel is authorizing/connecting/starting the
         # glyph turns accent and its connector dashes MARCH — class-driven off the same /tunnels poll
         # (event-based: it clears the moment every tunnel settles), armed optimistically on Attach click
-        # so the icon moves the instant the user acts. The mobile Net button carries the same classes.
+        # so the icon moves the instant the user acts. The phone's Remote kernels button carries the same classes, in the
+        # settings card since iOS item 4g, where gear.css styles them (#rs-pact-net.busy).
         self.assertIn("@keyframes rnet-march", self.html)
-        self.assertIn(".rail-act.busy svg path,#mtabs .mact.busy svg path{stroke-dasharray:3 3;", self.html)
+        self.assertIn(".rail-act.busy svg path{stroke-dasharray:3 3;", self.html)
+        # the bar's half of these rules (#mtabs .mact.busy) styled the bar's Remote kernels button, which left the bar in iOS
+        # item 4g; nothing else on the bar takes busy (the bell's script toggles only on, _LANDING_PUSH_JS), so the selector
+        # would style nothing. A source pin: it guards the dead selector's absence, not a behaviour
+        self.assertNotIn("#mtabs .mact.busy", self.html, "no rule for a busy state nothing on the bar takes")
         self.assertIn("icon.classList.toggle('busy',busy)", self.html)
         # an automatic remote update in flight ALSO marches the icon (the user 2026-07-24): that background
         # push replaced a mid-screen prompt, so the motion is how it announces itself

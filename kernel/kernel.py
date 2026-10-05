@@ -76011,10 +76011,10 @@ def _landing():
             # icon visibly "does something" during the seconds an attach takes. Class-driven off the same
             # /tunnels poll that lights .on (event-based; it clears the moment every tunnel settles). The
             # phone's copy carries the same classes: on the bottom bar until iOS item 4g, in the settings card since
-            # (gear.css restates these rules for #rs-pact-net). On the bar the #mtabs selectors now reach the bell alone,
-            # whose busy and on states (_LANDING_PUSH_JS) they style as before.
-            ".rail-act.busy,#mtabs .mact.busy{color:var(--accent)}"
-            ".rail-act.busy svg path,#mtabs .mact.busy svg path{stroke-dasharray:3 3;animation:rnet-march 0.9s linear infinite}"
+            # (gear.css restates these rules for #rs-pact-net). The bar's #mtabs .mact.busy selectors went with it: nothing
+            # left on the bar takes busy (the bell's script toggles only on, _LANDING_PUSH_JS).
+            ".rail-act.busy{color:var(--accent)}"
+            ".rail-act.busy svg path{stroke-dasharray:3 3;animation:rnet-march 0.9s linear infinite}"
             "@keyframes rnet-march{to{stroke-dashoffset:-6}}"
             "#mtabs .mact.on{color:var(--accent)}"   # lit like the rail icon: the phone's Net button until iOS item 4g, the bell's on state now (which #mtabs #mbell.on also lights)
             # a centered modal (like settings/help), shell-native so it renders over collapsed panes too.
