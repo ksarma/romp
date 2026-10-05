@@ -2489,6 +2489,12 @@ _NAMES_A_BELL = re.compile(r"(?<![\w-])(?:mbell|rail-bell)(?![\w-])")
 # it case-insensitively, as a browser matches attribute names in an HTML page. `[lang|=en]` reads as `lang`: no name follows its |.
 _ATTR_NAME = re.compile(r"\[\s*(?:(?:[\w-]*|\*)\|)?([\w-]+)")
 
+# The at-rules whose prelude can hold a selector, compared case-insensitively, as CSS compares at-rule and function names: @scope
+# (its root and limit are selectors) and @custom-selector by name, and the selector() test any condition can carry (@supports, @when,
+# @else). @import's supports() is refused with every @import by served_css, and @page's page selectors name pages, not elements.
+_AT_HOLDS_A_SELECTOR = re.compile(r"@(scope|custom-selector)(?![\w-])", re.I)
+_SELECTOR_TEST = re.compile(r"(?<![\w-])selector\s*\(", re.I)
+
 
 def _bell_rule_classes(html):
     r"""{bell id: classes} that the served shell's CSS rules name on the bell: every class in a compound that carries the bell's id,
@@ -2497,15 +2503,42 @@ def _bell_rule_classes(html):
     elements: a rule naming one on a bell by id (`#mbell.mact`) would read as a class no script sets and turn the census red, the
     safe side; no rule does.
 
-    A compound carries a bell's id here only as `#mbell` or `#rail-bell` written plainly. Four spellings could reach a bell, or put a
-    class on one, past that read, and each is refused loudly in every rule, so a rule spelled that way fails the census instead of
-    passing it unread (T10's fix pass, 2026-10-05: `[id=mbell].busy{opacity:.45}` planted in the phone block had passed): an id
-    attribute selector in any compound, whatever its case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`,
-    `[ID$=bell i]`); a class attribute selector in a compound that carries a bell's id; a `[` that starts no attribute name this read
-    can parse; and a CSS escape anywhere in a selector (`#\6d bell`, `.bu\73 y`). BellRuleReader pins each refusal. A rule that
-    reaches a bell with no id at all (through a tag, a markup class such as `.mact`, or another attribute) is not read here."""
+    The census reads the forms it models and refuses the ones it does not, each by its own assertion anywhere in the served CSS, so a
+    rule spelled past the read fails the census instead of passing it unread (T10's fix pass, 2026-10-05: `[id=mbell].busy{opacity:.45}`
+    planted in the phone block had passed; review round 1, the same day: `@scope (#mbell){:scope.busy{opacity:.45}}` and
+    `#mbell/**/.busy{opacity:.45}` had passed too). It models a style rule's own selector, a bell's id written there plainly as `#mbell`
+    or `#rail-bell`, and the attribute selectors whose name it can read. It refuses an id attribute selector in any compound, whatever
+    its case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`, `[ID$=bell i]`); a class attribute selector in a
+    compound that carries a bell's id; a `[` that starts no attribute name this read can parse; a CSS escape in a selector or an at-rule
+    prelude (`#\6d bell`, `.bu\73 y`, `@\73 cope`); a comment inside a selector; and an at-rule whose prelude can hold a selector:
+    @scope, whose prelude selects the elements its block styles, @custom-selector, and a selector() test (@supports, @when, @else).
+    The comment is refused rather than read because served_css blanks a comment to spaces, which this read takes as a descendant
+    combinator, while a browser drops it (`#mbell/**/.busy` is one compound to a browser); served_css's blanking stays as it is, since
+    the other censuses read it. The preludes are read from each style element's text rather than from the rules' `at`, since a
+    @custom-selector statement, or an @scope block holding only declarations, leaves served_css no rule to carry one. BellRuleReader
+    pins each refusal. A rule that reaches a bell with no id at all (through a tag, a markup class such as `.mact`, or another
+    attribute) is not read here, a stated limit."""
+    blocks = served_css.style_blocks(html)
+    for _, css in blocks:
+        for at in re.finditer(r"@[^{};]*", served_css.css_code(css)):   # every at-rule's prelude, up to its block or its ;
+            prelude = at.group(0).strip()
+            name = _AT_HOLDS_A_SELECTOR.match(prelude)
+            assert not name, ("an @%s rule (%r) holds a selector in its prelude, which can reach a bell past this census; it reads "
+                              "rules' own selectors only" % (name.group(1).lower(), prelude))
+            assert not _SELECTOR_TEST.search(prelude), "an at-rule prelude holds a selector() test (%r); this census reads rules' own selectors only" % prelude
+            assert "\\" not in prelude, "an at-rule prelude is spelled with a CSS escape (%r); this census reads plain spellings only" % prelude
+    uncommented = html   # the page with each style element's comments removed, where served_css blanks them to spaces
+    for start, css in reversed(blocks):
+        kept, at = "", 0
+        for s, e in served_css.css_comment_spans(css):
+            kept, at = kept + css[at:s], e
+        uncommented = uncommented[:start] + kept + css[at:] + uncommented[start + len(css):]
+    rules, bare = served_css.rules(html), served_css.rules(uncommented)
+    assert len(bare) == len(rules), "the served CSS parses to %d rules with its comments blanked and %d with them removed" % (len(rules), len(bare))
     named = {b: set() for b in _BELLS}
-    for rule in served_css.rules(html):
+    for rule, plain in zip(rules, bare):
+        assert rule.selector == plain.selector, ("a rule's selector holds a comment (%r, read here as %r): served_css blanks it to spaces, "
+                                                 "a descendant combinator, where a browser drops it" % (plain.selector, rule.selector))
         assert "\\" not in rule.selector, "a rule spells a selector with a CSS escape (%r); this census reads plain spellings only" % rule.selector
         for member in served_css.members(rule.selector):
             for comp in served_css._split_top(re.sub(r"\s*([>+~])\s*", r"\1", member), " >+~"):
@@ -2664,6 +2697,27 @@ class BellRuleReader(unittest.TestCase):
         for sel, why in cases:
             with self.subTest(sel=sel), self.assertRaisesRegex(AssertionError, re.escape(why)):
                 self._read(sel + "{opacity:.45}")
+
+    def test_a_comment_in_a_selector_and_an_at_rule_holding_a_selector_are_refused_by_name(self):
+        # each passed this reader unrefused before review round 1's fix (2026-10-05); the first five are that round's plants, each a rule
+        # a browser applies to the bell as #mbell.busy, the @scope ones unread in a prelude and the comment read as a descendant combinator
+        cases = (
+            ("@scope (#mbell){:scope.busy{opacity:.45}}", "an @scope rule"),
+            ("@scope ([id=mbell]){:scope.busy{opacity:.45}}", "an @scope rule"),
+            (r"@scope (#\6d bell){:scope.busy{opacity:.45}}", "an @scope rule"),
+            ("#mtabs #mbell/**/.busy{opacity:.45}", "holds a comment"),
+            (".busy/**/#mbell{opacity:.45}", "holds a comment"),
+            ("@scope (#mbell){&.busy{opacity:.45}}", "an @scope rule"),
+            ("@scope (#mbell.busy){opacity:.45}", "an @scope rule"),    # declarations straight in the block: served_css records no rule
+            ("@media (max-width:640px){@SCOPE (#mtabs) to (.x){#mbell.busy{opacity:.45}}}", "an @scope rule"),
+            ("@custom-selector :--bell #mbell;:--bell.busy{opacity:.45}", "an @custom-selector rule"),
+            ("@supports selector(#mbell.busy){#mtabs .x{opacity:.45}}", "selector() test"),
+            (r"@\73 cope (#mbell){:scope.busy{opacity:.45}}", "CSS escape"),
+            ("#mtabs #mbell/* the dim */.busy,#rail-bell{opacity:.45}", "holds a comment"),
+        )
+        for css, why in cases:
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(css)
 
 
 # A node stand-in for the phone with the shell socket in view: the fit harness's window plus a mutable copy of the
