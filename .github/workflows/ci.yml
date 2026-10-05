@@ -19,12 +19,16 @@ name: CI
 # runner has 4 CPUs and 16 GB. Run 36716348831, a dispatch of 2026-09-30, ran on the public runner;
 # by that rule its Linux jobs come to 214 minutes, all of this workflow a batch push runs (211 in the
 # dispatch before it, run 36664031774). On the private runner each Linux Python interpreter runs as
-# SHARD_COUNT jobs (tests/conftest.py), three today, each running one worker over one shard of the test
+# SHARD_COUNT jobs (tests/conftest.py), four today, each running one worker over one shard of the test
 # files: two workers peak at 10.9 GB (the Run pytest step gives the measurement), and one worker
-# running the whole suite outgrew 8 GB in a local run, as did the larger of two shards (the python
-# job's cap comment gives those measurements; this file ran the cells on one worker each, on the
-# premise that one worker fits, until the first of them). The estimate for the shards (2026-10-05):
-# each shard job is that shard's measured one-worker phase (the python job's cap comment: 3.12's own
+# running the whole suite outgrew 8 GB in a local run, as did the larger of two shards, and the
+# largest of three passed the 5 GB a shard's worker is held to (the python job's cap comment gives
+# those measurements; this file ran the cells on one worker each, on the premise that one worker
+# fits, until the first of them). The estimate below is for three shards (2026-10-05); the four
+# shards are not measured yet, and their measured phases replace it. A fourth shard adds five jobs,
+# one per interpreter, each adding its time before and after the Run pytest step and its rounding
+# to a whole minute, while the test files' own time is split four ways instead of three. The
+# three-shard estimate: each shard job is that shard's measured one-worker phase (the python job's cap comment: 3.12's own
 # for 3.12, and 3.14t's, the slower, for 3.10, 3.11, 3.13 and 3.14t) plus the time before and after
 # the Run pytest step in that interpreter's cell of run 37212676524 (batch/2026-10-04b, 18 to 27 s
 # before and 2 to 3 s after), each job rounded up to a whole minute: 12, 17 and 42 minutes for an
@@ -146,7 +150,7 @@ jobs:
     # dispatch); on the dispatch of 2026-09-30 (run 36664031774) the macOS 3.10 and 3.13 cells were
     # both cancelled at this cap, 3555 s and 3598 s into their pytest steps, so the macOS suite now
     # runs longer than the ceiling allows.
-    # Linux: each interpreter runs as SHARD_COUNT jobs (tests/conftest.py), three today, one for each shard of the test
+    # Linux: each interpreter runs as SHARD_COUNT jobs (tests/conftest.py), four today, one for each shard of the test
     # files (the matrix's shard axis below; tests/conftest.py's CI's shards section states the rule that puts each file
     # in one shard), and each job runs ONE worker over its shard on the private runner (2 CPUs and 8 GB; the Run pytest
     # step says why). The shards exist because one worker running the whole suite does not fit 8 GB. A local measurement
@@ -160,31 +164,35 @@ jobs:
     # Two shards did not fit either. Measured the same way on 2026-10-05 (1-minute load 21 to 54), shard 1's pytest
     # phase was 1098 s on 3.12 and 1211 s on 3.14t, its worker peaking at 4.01 and 4.51 GB resident, but shard 2's
     # worker reached 6.66 GB resident on 3.12 (the scope's peak, page cache included, 6.92 GB), past the 6 GB a shard
-    # may take on an 8 GB runner, which leaves the rest to the runner's own system. So the count is three.
+    # may take on an 8 GB runner, which leaves the rest to the runner's own system. So the count went to three.
+    # Three shards fit, with too little room. Measured on 2026-10-05 the same way: the Run pytest step's command at this
+    # branch with the cell's ROMP_TESTS_SHARD, on a fresh checkout, under a CPUQuota of 200 percent and an 8 GiB memory
+    # cap with no swap, with bats, zsh, gitleaks and perf off PATH as on the runner, on a shared machine whose 1-minute
+    # load was 27 to 80. The pytest phase on 3.12 and on 3.14t, then the worker's peak resident memory on each (the
+    # scope's peak, page cache included, in brackets): shard 1, 661 s and 678 s, 2.99 and 3.05 GB (3.16 and 3.24); shard
+    # 2, 930 s and 981 s, 3.04 and 2.89 GB (3.82 and 3.32); shard 3, 2348 s and 2459 s, 5.38 and 5.60 GB (5.57 and
+    # 5.81). No worker was killed. By the rule below the three phases gave caps of 25, 30 and 55 (678 + 600 + 27 =
+    # 1305 s, 981 + 600 + 27 = 1608 s and 2459 + 600 + 27 = 3086 s). Shard 3's worker was over 5 GB, the target set on
+    # 2026-10-05 for each shard's worker, which keeps about 1 GB of the 6 GB for the files' growth, so the count is four
+    # (tests/conftest.py's CI's shards section says what follows if a shard of four still passes 5 GB).
     # Each shard's cap is T230b's rule for its own phase: the shard's one-worker pytest phase, plus the 600 s per-test
     # timeout, plus the time before the step, rounded up to a multiple of 5 minutes, in the expression's matrix.shard
-    # clauses, one figure for each shard. The three shards were measured on 2026-10-05 the same way: the Run pytest
-    # step's command at this branch with the cell's ROMP_TESTS_SHARD, on a fresh checkout, under a CPUQuota of 200
-    # percent and an 8 GiB memory cap with no swap, with bats, zsh, gitleaks and perf off PATH as on the runner, on a
-    # shared machine whose 1-minute load was 27 to 80. The pytest phase on 3.12 and on 3.14t, then the worker's peak
-    # resident memory on each (the scope's peak, page cache included, in brackets): shard 1, 661 s and 678 s, 2.99 and
-    # 3.05 GB (3.16 and 3.24); shard 2, 930 s and 981 s, 3.04 and 2.89 GB (3.82 and 3.32); shard 3, 2348 s and 2459 s,
-    # 5.38 and 5.60 GB (5.57 and 5.81). No worker was killed. Each cap takes the slower interpreter's phase, 3.14t's for
-    # every shard, and the 27 s before the step in the 3.14t cell of run 37212676524 (batch/2026-10-04b, job
-    # 111476102341, on the public runner): shard 1, 678 + 600 + 27 = 1305 s, so 25; shard 2, 981 + 600 + 27 = 1608 s,
-    # so 30; shard 3, 2459 + 600 + 27 = 3086 s, so 55. Each cap is confirmed on the new repo's first CI run, whose jobs
-    # give the private runner's own phases and setup times. Each step's time is the jobs API's. Shard 3 holds the
-    # slowest and largest files and has the least room: its worker is 0.4 GB under the 6 GB a shard may take, so a
-    # fourth shard is the next step when it grows past that.
-    # Before the shards were measured, each shard's cap held 90, the figure the whole suite's estimated one-worker phase
-    # gave: the slowest finished two-worker Linux cell, the 3.10 cell of run 37208049133 (a dispatch of fork PR 959's
-    # branch on 2026-10-04, job 111453304880), 2312 s in its pytest step, scaled by the serial ratio measured on four
-    # CPUs (1437 s against 739 s, the Run pytest step's measurement) to 4496 s, and 4496 + 600 + 25 = 5121 s, about
-    # 85 min 21 s, so 90 (the 25 s before the step is that job's on the public runner). With two workers on the public
-    # runner the same rule gave 50 (the 3.14t cell of run 37158350467: 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the
-    # Linux cap from 2026-10-02 to 2026-10-04, after the 40 fork PR 926's branch set on 2026-09-30 from run 36664031774
-    # and the 35 main had before that PR.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 25 || matrix.shard == '2' && 30 || 55 }}
+    # clauses, one figure for each shard. Each cap takes the slower interpreter's phase, and the time before the step is
+    # the 27 s in the 3.14t cell of run 37212676524 (batch/2026-10-04b, job 111476102341, on the public runner).
+    # PLACEHOLDER: no shard's phase is measured yet at four shards, and each shard's figure, 90, is the cap the whole
+    # suite's estimated one-worker phase gave, held until the four shards are measured because a shard runs a part of
+    # that suite; it is not a shard's figure. tests/test_ci_bats_bound.py is red until each shard's measured phase
+    # replaces the placeholder there and here. Each cap is then confirmed on the new repo's first CI run, whose jobs give
+    # the private runner's own phases and setup times. Each step's time is the jobs API's.
+    # The placeholder, 90, is also the figure each shard's cap held before the three shards were measured. The whole
+    # suite's estimated one-worker phase gave it: the slowest finished two-worker Linux cell, the 3.10 cell of run
+    # 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880), 2312 s in its pytest step,
+    # scaled by the serial ratio measured on four CPUs (1437 s against 739 s, the Run pytest step's measurement) to
+    # 4496 s, and 4496 + 600 + 25 = 5121 s, about 85 min 21 s, so 90 (the 25 s before the step is that job's on the
+    # public runner). With two workers on the public runner the same rule gave 50 (the 3.14t cell of run 37158350467:
+    # 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux cap from 2026-10-02 to 2026-10-04, after the 40 fork PR
+    # 926's branch set on 2026-09-30 from run 36664031774 and the 35 main had before that PR.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 90 || matrix.shard == '2' && 90 || matrix.shard == '3' && 90 || 90 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -200,7 +208,7 @@ jobs:
         # section), and the Run pytest step hands it the cell's shard, so it skips the other shards' files. The axis
         # lists 1 to SHARD_COUNT (tests/test_ci_shards.py holds it to the constant, and the shards to a partition of
         # the files).
-        shard: ['1', '2', '3']
+        shard: ['1', '2', '3', '4']
         exclude:
           # macOS runs 3.10 and 3.13 alone, as before the shards (the header says why), and unsharded (below)
           - os: macos-latest
@@ -217,6 +225,8 @@ jobs:
             shard: '2'
           - os: macos-latest
             shard: '3'
+          - os: macos-latest
+            shard: '4'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

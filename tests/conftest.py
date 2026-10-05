@@ -2377,8 +2377,11 @@ def pytest_collectreport(report):
 # that parse the tree) across the shards in about equal parts, and it needs no upkeep; a list of heavy files would need
 # a per-file memory measurement to write and would go stale as files grow. Whether the split holds each shard under the
 # runner's budget is the measurement in ci.yml's python job comment. Two shards did not: on 2026-10-05, under the
-# runner's shape, shard 2's worker reached 6.66 GB on 3.12, past the 6 GB a shard may take on an 8 GB runner, so the
-# count is three.
+# runner's shape, shard 2's worker reached 6.66 GB on 3.12, past the 6 GB a shard may take on an 8 GB runner. Three
+# did not meet the target set the same day, 5 GB for each shard's worker, which keeps about 1 GB of the 6 GB for the
+# files' growth: shard 3's worker reached 5.38 GB on 3.12 and 5.60 GB on 3.14t. So the count is four. If a shard of
+# four still passes 5 GB, the heavy files cluster under the hash, and the rule becomes a stated weighted one: a short
+# list of the heaviest modules, each with its measured peak, one to a shard, and the rest by this hash.
 # WHERE IT ACTS: pytest_ignore_collect below, when the run's environment names a shard (SHARD_ENV, set by ci.yml's Run
 # pytest step from the matrix's shard axis on the ubuntu-latest cells, and empty on the macOS cells, which run every
 # file), skips every test file of the other shards before pytest imports it, so a shard's process never imports another
@@ -2396,7 +2399,7 @@ def pytest_collectreport(report):
 # but the tests package (tests/test_hermetic_kernel_postal.py's direct-import allowlist), and that file's rule holds
 # this file's keyed reads (of the environment, of pytest's options) to literal keys, which is why SHARD_ENV is spelled
 # out where it is read. That file also lists pytest_ignore_collect among the hooks this file may implement.
-SHARD_COUNT = 3   # the one constant: ci.yml's shard axis lists 1 to SHARD_COUNT (tests/test_ci_shards.py holds it)
+SHARD_COUNT = 4   # the one constant: ci.yml's shard axis lists 1 to SHARD_COUNT (tests/test_ci_shards.py holds it)
 SHARD_ENV = "ROMP_TESTS_SHARD"   # the variable a run names its shard by (spelled as a literal where it is read)
 SHARD_REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 

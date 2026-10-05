@@ -73,13 +73,15 @@ class BatsStepBound(unittest.TestCase):
 # swap, had its one worker killed by the memory cap once on 3.12 and twice on 3.14t). Each shard's cap is T230b's rule
 # (the pytest phase plus the per-test timeout plus the time before the step, rounded up to a multiple of 5 minutes;
 # rule_minutes) for that shard's one-worker phase, held against ci.yml by PythonJobCeiling below.
-# Each entry is the shard's one-worker pytest phase in seconds, measured on 2026-10-05 under the private runner's shape
-# (a CPUQuota of 200 percent, an 8 GiB memory cap, no swap; ci.yml's python job comment has the run), the slower of
-# 3.12 and 3.14t, read from pytest's summary line and rounded up: 3.14t's for each shard (3.12's were 661, 930 and
-# 2348). None marks a shard whose phase is not measured (a shard SHARD_COUNT adds), and
-# test_each_shards_cap_is_the_rules_figure_for_its_phase is red while any shard's phase is None. Each cap is confirmed
-# on the new repo's first CI run.
-SHARD_PHASE_S = {1: 678, 2: 981, 3: 2459}
+# Each entry is the shard's one-worker pytest phase in seconds under the private runner's shape (a CPUQuota of 200
+# percent, an 8 GiB memory cap, no swap; ci.yml's python job comment has the run), the slower of 3.12 and 3.14t, read
+# from pytest's summary line and rounded up. None marks a shard whose phase is not measured (a shard SHARD_COUNT adds),
+# and test_each_shards_cap_is_the_rules_figure_for_its_phase is red while any shard's phase is None.
+# PLACEHOLDER: no shard's phase is measured yet at four shards (2026-10-05). The three shards measured that day, 678,
+# 981 and 2459 s on 3.14t (661, 930 and 2348 s on 3.12), are a record in ci.yml's comment, not entries here: a file's
+# shard moved with the count. Measuring a shard means setting its entry to the measured seconds, and ci.yml's figure
+# for that shard and its comment to match. Each cap is confirmed on the new repo's first CI run.
+SHARD_PHASE_S = {1: None, 2: None, 3: None, 4: None}
 # what ci.yml's cap for a shard holds while that shard's phase is a placeholder, and each shard held until the shards
 # were measured: the cap the whole suite's estimated
 # one-worker phase gave (WHOLE_SUITE_ESTIMATE_INPUTS: the slowest finished two-worker Linux cell, the 3.10 cell of run
@@ -222,8 +224,8 @@ class PythonJobCeiling(unittest.TestCase):
                          "5058 s, about 84 min 18 s, so 85")
         self.assertEqual(rule_minutes(4496, 600, 25), 90, "the whole suite's one-worker estimate: 5121 s, about 85 min 21 s, "
                          "so 90, the placeholder each shard's cap held until the shards were measured")
-        self.assertEqual([rule_minutes(p, 600, 27) for p in (678, 981, 2459)], [25, 30, 55], "each shard's measured "
-                         "figure: 1305 s, 1608 s and 3086 s, so 25, 30 and 55")
+        self.assertEqual([rule_minutes(p, 600, 27) for p in (678, 981, 2459)], [25, 30, 55], "the three shards' measured "
+                         "figures: 1305 s, 1608 s and 3086 s, so 25, 30 and 55")
         self.assertEqual(rule_minutes(3000 - 632, 600, 32), 50, "exactly 50 minutes stays 50")
         self.assertEqual(rule_minutes(3001 - 632, 600, 32), 55, "a second past 50 minutes is 55")
 
