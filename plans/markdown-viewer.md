@@ -9589,7 +9589,7 @@ skips at launch (the gate-before-adoption section's Tests paragraph states that 
 tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), and a source pin in a leg runs there without a browser; the
 legs kept off the roster are ui/webview/file-figure-open-engines-browser.test.ts, which launches WebKit and Firefox,
 since the roster's job installs Chromium alone, and ui/webview/file-figure-open-browser.test.ts, whose whole run outlasts
-both of the step's bounds, its five minutes and the script's 240 s per file, so it runs locally alone, and raising the
+both of the step's bounds, its five minutes and the script's per-file bound, so it runs locally alone, and raising the
 step's bound, which sits in the workflow file, is the owner's choice (the coordinator's ruling on the roster after the
 file review's round 19); what gates the follow-on where landing is gated is the rostered legs' browser scenarios, its
 source pins, the node modules beside each leg in the Test step (their node cases; a browser scenario inside a node

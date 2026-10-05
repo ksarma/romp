@@ -885,18 +885,21 @@ test('the step is bounded twice: its own timeout-minutes fits the margin under t
   }
   assert.deepEqual(boundReds(sources, ms), [], 'the check\'s guarantee: no timeout: value the bound pin reads in a rostered source (boundReds\' docstring) reaches the script\'s per-file bound (' + ms + ' ms). A value spelled outside what it reads is not held here, and its leg meets what any leg whose file outlasts the bound meets: the script kills the file\'s node process and every process under it, and its cut red names the bundle and the bound, not the test. The file bound cuts a file\'s whole run, so a leg whose timed tests together outlast it is cut all the same: a leg\'s whole-file seconds are measured in the PR\'s body, not here');
   assert.ok(ms + grace < bound * 60 * 1000, 'the script\'s per-file bound (' + ms + ' ms) and its grace (' + grace + ' ms) together are under the step\'s bound (' + bound + ' min = ' + bound * 60 * 1000 + ' ms), so a hung file that starts with the step is killed and named, and a node --test that outlives the kill is killed too, before the step is cut (a leg queued behind others gets its bound from its own start, so one that starts late can be cut by the step first)');
-  // the figures the comments state, held to the script's defaults: the step comment's default bound, its grace after the
-  // bound and its edge (the step's bound less the bound and the grace, in seconds), and the script's edge and the two
-  // defaults its header states. Each text is folded at its line breaks and # markers to one space before it is read, so a
-  // reflow of a comment moves nothing here and a change of a default without its figures is red
+  // the figures the comments state, held to the script's defaults, each as it is spelled: the step comment's default
+  // bound, its grace after the bound, and its edge (the step's bound less the bound and the grace, in seconds) beside
+  // the grace that sentence names again; and the script's edge, where its knobs comment gives it and where that comment
+  // says this test holds it, and the two defaults its header states. Each text is folded at its line breaks and #
+  // markers to one space before it is read, so a reflow of a comment moves nothing here and a change of a default
+  // without its figures is red
   const fold = (text) => text.replace(/\n\s*#\s?/g, ' ');
   const stepText = fold(comment), scriptText = fold(read(SCRIPT));
   const edge = bound * 60 - (ms + grace) / 1000;
   const figures = [
     ['the step comment', stepText, 'default ' + ms + ' ms'],
     ['the step comment', stepText, grace / 1000 + ' s after the bound'],
-    ['the step comment', stepText, '(' + edge + ' s today)'],
+    ['the step comment', stepText, 'that ' + grace / 1000 + ' s (' + edge + ' s today)'],
     ['the script', scriptText, edge + ' s at the defaults'],
+    ['the script', scriptText, 'holds the ' + edge + ' s here'],
     ['the script', scriptText, 'ROMP_BROWSER_LEGS_FILE_MS (default ' + ms + ')'],
     ['the script', scriptText, 'ROMP_BROWSER_LEGS_GRACE_MS (default ' + grace + ')'],
   ].filter(([, text, figure]) => !text.includes(figure)).map(([where, , figure]) => where + ': ' + figure);
