@@ -55,8 +55,9 @@ by K = f(), 20000 + K % 20000 reads 20007 and, as an unknown operand of % by 200
 40007 and is a sum built on 40000 (offset_base(), below); where the value gives no reading with the name unbounded (a
 bare name at a randrange's start or stop), the reading by its recorded ints stands alone. So anywhere but at a step
 the census reads each int a binding it records gives a name, and not a value a binding it does not record gives, unless
-the value bounds that name's every value as these do, nor a None, a float or a string a binding it records gives, none
-of which interval() reads (WHAT IT CANNOT SEE gives examples). Inside a class Python reads a
+the value bounds that name's every value as these do, nor a float or a string a binding it records gives, which
+interval() does not read, nor a None, which it reads only at a randrange's stop, as the stop left empty (below; WHAT IT
+CANNOT SEE gives examples). Inside a class Python reads a
 name written with two leading underscores and not two trailing ones as another (__K in class C is _C__K), so a binding
 of either spelling binds the name a read of the other sees: once such a name is written anywhere in a class statement,
 the census counts both spellings among the names with a binding it does not record, wherever the module reads them,
@@ -189,7 +190,11 @@ no binding here, and the census does not see the value such a setting gives it (
   run time (a name bound to 1, +1, int(1)) is not read (WHAT IT CANNOT SEE). A stop written as None, randrange's own
   default, is a stop left empty, once a keyword that repeats it is refused: random.randrange(50000, None) and
   random.randrange(50000, None, 1) read as randrange(50000), while random.randrange(50000, None, 7) and
-  random.randrange(40000, None, stop=50000), which Python refuses, are not read. A randrange(start, stop[, step]) whose
+  random.randrange(40000, None, stop=50000), which Python refuses, are not read. A stop that is a name a binding the
+  census records gives None is read so too, with its step left out or the int 1 written there, and the call reads as
+  the span holding that reading and the one by the name's ints: with E bound to None, random.randrange(45001, E) reads
+  as randrange(45001), 0-45000, and so does random.randrange(45001, F) with F bound to 1000, to None and by F = f(),
+  the span holding randrange(45001, 1000)'s reading and randrange(45001)'s. A randrange(start, stop[, step]) whose
   start and stop are bounded is read by one rule, whether or not interval() bounds its step (a step left out is 1, and
   one a ** mapping can give is unbounded): a positive step returns values from start up to stop less one, a negative
   step values from stop plus one up to start, and a step of 0 raises. So, with start from s_lo to s_hi and stop from
@@ -205,10 +210,11 @@ no binding here, and the census does not see the value such a setting gives it (
   every value random's randrange can return for the call, except where a name it takes a value for is also set with no
   binding form, or a name called Random or SystemRandom holds an instance (both in WHAT IT CANNOT SEE), or a binding
   the census does not record gives a name in its start or stop a value it does not read (BOUND), or a binding the
-  census records gives such a name a value interval() does not read and the call takes: a None, which randrange takes
-  as a stop left empty, a float, which randrange takes on 3.10 and 3.11 and int() takes everywhere, or a digit string,
-  which int() takes (each in WHAT IT CANNOT SEE); and it can hold values it never returns (a step of 7 returns values 7
-  apart). At a step it takes a value for a name only when the census records every binding of it, each to an int.
+  census records gives such a name a value interval() does not read and the call takes: a None at a stop beside a step
+  that is 1 only at run time, a float, which randrange takes on 3.10 and 3.11 and int() takes everywhere, or a digit
+  string, which int() takes (each in WHAT IT CANNOT SEE); and it can hold values it never returns (a step of 7
+  returns values 7 apart). At a step it takes a value for a name only when the census records every binding of it,
+  each to an int.
   Where Python refuses a call for every value its start, stop and step can take, the reading still stands, an over-read:
   a step of 0 is read with the steps that are never negative (random.randrange(40000, 50000, 0) is 40000-49999); a
   positive step from a start never below its stop, or a negative one from a start never above it, is read as a span with
@@ -285,7 +291,8 @@ these turns its plant red, and the example leaves this list.
   parameter, a name another module binds, B after B = A), an attribute (cfg.p after cfg.p = N), a container's element
   (CFG["a"]), a call's result other than str() or int() around a bounded value and the random calls (pick(),
   random.choice((N, M))), a random call with a parameter left empty that a ** mapping beside it can fill
-  (random.randrange(50000, **kw), random.randrange(start=50000, step=1, **kw)), a name interval() does not bound
+  (random.randrange(50000, **kw), random.randrange(start=50000, step=1, **kw), and random.randrange(50000, E, **kw)
+  with E bound to None, a stop the name can leave empty), a name interval() does not bound
   inside a display that is the position's value or in a loop's sequence (P = "N", then {"ports": [P]}, the census
   recording no int for P), an f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a
   sum or difference in the range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__
@@ -311,14 +318,10 @@ these turns its plant red, and the example leaves this list.
   a digit string bound to a name beside an int and a binding the census does not record, which int() takes, where the
   name reads by its ints alone: with E bound to 1000, to "45010" and by E = f(), random.randrange(45001, int(E)) reads
   E as 1000 and is not counted, though CPython returns values from 45001 to 45009 for E = "45010";
-  a name bound to None at a randrange's stop, which Python takes as a stop left empty, alone, which interval() does not
-  read (E = None, then random.randrange(45001, E), which CPython reads as random.randrange(45001)), or beside an int
-  and a binding the census does not record, where the name reads by its ints alone (with F bound to 1000, to None and
-  by F = f(), random.randrange(45001, F) reads F as 1000 and is not counted, though CPython returns values from 0 to
-  45000 for F = None);
   a random call with an argument passed through a * sequence (random.randrange(*(N, M)), random.randint(*[N, M]));
   a randrange with its stop left empty and a step that is 1 only at run time, which Python takes (ONE = 1, then
-  random.randrange(start=50000, step=ONE); random.randrange(50000, step=+1));
+  random.randrange(start=50000, step=ONE); random.randrange(50000, step=+1); E = None, then random.randrange(50000,
+  E, ONE));
   a host that THE RULE does not take for one (("TESTHOST", N), HTTPConnection(self.host, N)), a name bound to the
   empty string, even in a tuple (H = "", then (H, N)), and the empty string itself before a port in a call (serve("",
   N)); the port beside it is read only when another rule reads it;
@@ -626,12 +629,15 @@ def interval(node, bound=None, steps=None):
     (THE RULE). A bool is the int it is (True 1, False 0). computed is True when an unknown took part, or a name's
     values differ. `bound` maps a name to the values it reads by, and `steps` does the same at a randrange's step and
     anywhere inside one (`bound` when not given): the span from the lowest int among them to the highest, a None, a
-    float or a string among them adding nothing, and no reading when none is an int. literal() hands it as `bound`
-    every value the census records for each name (BOUND), so a name bound to 7, to 9 and by K = f() reads 7-9, and as
-    `steps` the values of each name every binding of which the census records, each to an int, so at a step that K is
-    one it does not bound; and, for a value that reads a name with a binding the census does not record, it calls again
-    with `bound` holding only the names every binding of which the census records, so that K reads unbounded there.
-    offset_base() hands it the values of its own `bound`, each name it reads holding one of its ints at a time."""
+    float or a string among them adding nothing, and no reading when none is an int. A randrange's stop that is a name
+    with None among its values in `bound` is also read as a stop left empty, randrange's default, when the step is left
+    out or is the int 1 written there, and the call reads as the span holding both readings. literal() hands it as
+    `bound` every value the census records for each name (BOUND), so a name bound to 7, to 9 and by K = f() reads 7-9,
+    and as `steps` the values of each name every binding of which the census records, each to an int, so at a step
+    that K is one it does not bound; and, for a value that reads a name with a binding the census does not record, it
+    calls again with `bound` holding only the names every binding of which the census records, so that K reads
+    unbounded there. offset_base() hands it the values of its own `bound`, each name it reads holding one of its ints at
+    a time."""
     bound = bound or {}
     steps = bound if steps is None else steps
     if isinstance(node, ast.Constant) and isinstance(node.value, int):
@@ -644,24 +650,14 @@ def interval(node, bound=None, steps=None):
     if isinstance(node, ast.Call) and _callee(node.func) in ("str", "int") and len(node.args) == 1 and not node.keywords:
         return interval(node.args[0], bound, steps)
     if isinstance(node, ast.Call) and _callee(node.func) in RANDOM_CALLS:
-        name = _callee(node.func)
-        ivs = [interval(a, steps if name == "randrange" and i == 2 else bound, steps)   # a step reads by `steps`
-               for i, a in enumerate(_random_args(node) or ())]
-        k = len(ivs)
-        if name == "randrange" and k in (2, 3) and ivs[0] and ivs[1]:   # THE RULE's one reading, by the step's sign
-            (a, b, _), (c, d, _) = ivs[:2]
-            step = ivs[2] if k == 3 else (1, 1, False)
-            if step and step[0] >= 0:               # never negative: from start up to stop less one (a step of 0 raises)
-                return a, d - 1, True
-            if step and step[1] <= 0:               # never positive: from stop plus one up to start
-                return c + 1, b, True
-            return min(a, c + 1), max(b, d - 1), True   # either sign, or unbounded: the span holding both
-        if ivs and all(ivs):
-            if name == "randint" and k == 2:
-                return ivs[0][0], ivs[1][1], True
-            if name in ("randrange", "randbelow") and k == 1:
-                return 0, ivs[0][1] - 1, True
-        return None
+        name, args = _callee(node.func), _random_args(node) or []
+        calls, stop = [args], (args[1] if name == "randrange" and len(args) > 1 else None)
+        if isinstance(stop, ast.Name) and any(isinstance(x, ast.Constant) and x.value is None for x in bound.get(stop.id, ())) \
+                and (len(args) == 2 or _the_int_one(args[2])):
+            calls.append(args[:1])                  # a stop the name leaves empty, randrange's own default None
+        got = [r for r in (_random_span(name, [interval(a, steps if name == "randrange" and i == 2 else bound, steps)
+                                               for i, a in enumerate(c)]) for c in calls) if r]   # a step reads by `steps`
+        return (min(r[0] for r in got), max(r[1] for r in got), True) if got else None
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd):
         return interval(node.operand, bound, steps)   # +7 is 7
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
@@ -690,6 +686,31 @@ def interval(node, bound=None, steps=None):
                 return 0, d - 1, ca or cb
             return (a % c, b % c, ca or cb) if a == b else (0, c - 1, ca or cb)
     return None
+
+
+def _random_span(name, ivs):
+    """(lo, hi, True) for the random call `name` over the intervals of its arguments `ivs` (_random_args()'s order),
+    else None: THE RULE's reading of each call."""
+    k = len(ivs)
+    if name == "randrange" and k in (2, 3) and ivs[0] and ivs[1]:   # THE RULE's one reading, by the step's sign
+        (a, b, _), (c, d, _) = ivs[:2]
+        step = ivs[2] if k == 3 else (1, 1, False)
+        if step and step[0] >= 0:                   # never negative: from start up to stop less one (a step of 0 raises)
+            return a, d - 1, True
+        if step and step[1] <= 0:                   # never positive: from stop plus one up to start
+            return c + 1, b, True
+        return min(a, c + 1), max(b, d - 1), True   # either sign, or unbounded: the span holding both
+    if ivs and all(ivs):
+        if name == "randint" and k == 2:
+            return ivs[0][0], ivs[1][1], True
+        if name in ("randrange", "randbelow") and k == 1:
+            return 0, ivs[0][1] - 1, True
+    return None
+
+
+def _the_int_one(node):
+    """True when `node` writes the int 1 itself, the one step Python takes with a stop left empty."""
+    return isinstance(node, ast.Constant) and type(node.value) is int and node.value == 1
 
 
 def _random_args(call):
@@ -729,8 +750,7 @@ def _random_args(call):
         if len(got) < len(params):
             return None                             # a parameter only the mapping can fill: its value is unknown
     step = got.get("step")
-    if step is not None and "stop" not in got \
-            and not (isinstance(step, ast.Constant) and type(step.value) is int and step.value == 1):
+    if step is not None and "stop" not in got and not _the_int_one(step):
         return None                                 # Python refuses it unless the step is 1 at run time; only a written 1 is read
     out = []
     for p in params:
@@ -2620,6 +2640,36 @@ class Plants(unittest.TestCase):
                                  % (label, got, src))
                 self.assertTrue(self._hits("test_plant.py", src), "%s: no hit\n%s" % (label, src))
 
+    def test_a_name_bound_to_none_at_a_randrange_s_stop_reads_as_a_stop_left_empty(self):
+        """A stop that is a name a binding the census records gives None reads, beside the reading by the name's ints,
+        as a stop left empty, randrange's own default, as a stop written as None does, when the step is left out or is
+        the int 1 written there; the call reads as the span holding both (THE RULE). Each red plant was not counted
+        where the census read such a name by its ints alone: E bound to None reads random.randrange(45001, E) as
+        randrange(45001), 0-45000, and so with a step of 1 and with the stop by keyword; F bound to 1000, to None and by
+        F = f() reads random.randrange(45001, F) as 0-45000, where randrange(45001, 1000) alone reads 45001-999, not
+        counted; and E bound to None and to 50000 reads random.randrange(40000, E) as 0-49999. Python refuses a stop
+        left empty beside any other step, and a None start, and each stays unread, green: E bound to None with a step of
+        7 or of True, and random.randrange(S, 45001) with S bound to None."""
+        lo, hi, n = LOW + 7232, LOW + 17232, _n()                                  # 40000, 50000 and 45001, built at run time
+        for label, src, why in (
+                ("a stop bound to None", 'E = None\nport = random.randrange(%d, E)\n' % n, "computed into 0-%d" % (n - 1)),
+                ("a stop bound to None, a step of 1", 'E = None\nport = random.randrange(%d, E, 1)\n' % n,
+                 "computed into 0-%d" % (n - 1)),
+                ("a stop bound to None, by keyword", 'E = None\nport = random.randrange(%d, stop=E)\n' % n,
+                 "computed into 0-%d" % (n - 1)),
+                ("a stop bound to an int, to None and by a call", 'F = 1000\nF = None\nF = f()\nport = random.randrange(%d, F)\n'
+                 % n, "computed into 0-%d" % (n - 1)),
+                ("a stop bound to None and to an int", 'E = None\nE = %d\nport = random.randrange(%d, E)\n' % (hi, lo),
+                 "computed into 0-%d" % (hi - 1))):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=LOW)
+        for label, src in (
+                ("a stop bound to None, a step of 7", 'E = None\nport = random.randrange(%d, E, 7)\n' % n),
+                ("a stop bound to None, a step of True", 'E = None\nport = random.randrange(%d, E, True)\n' % n),
+                ("a start bound to None", 'S = None\nport = random.randrange(S, %d)\n' % n)):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", src)
+
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
         that reads one turns its subtest red, and the example leaves the docstring's list."""
@@ -2648,14 +2698,12 @@ class Plants(unittest.TestCase):
                  'row = {"port": int(P)}\n' % (n + 9, n, n)),
                 ("a digit string bound to a name beside an int and a binding the census does not record", "test_x.py",
                  'E = 1000\nE = "%d"\nE = f()\nport = random.randrange(%d, int(E))\n' % (n + 9, n)),
-                ("a name bound to None at a randrange's stop, alone or beside an int and a binding it does not record",
-                 "test_x.py", 'E = None\nport = random.randrange(%d, E)\nF = 1000\nF = None\nF = f()\n'
-                 'port = random.randrange(%d, F)\n' % (n, n)),
                 ("a random call with an argument passed through a * sequence", "test_x.py",
                  'port = random.randrange(*(%d, %d))\nport = random.randrange(%d, *[%d])\nport = random.randint(*[%d, %d])\n'
                  % (n, n + 9, n, n + 9, n, n + 9)),
                 ("a randrange with its stop left empty and a step that is 1 only at run time", "test_x.py",
-                 'ONE = 1\nport = random.randrange(start=%d, step=ONE)\nport = random.randrange(%d, step=+1)\n' % (n, n)),
+                 'ONE = 1\nport = random.randrange(start=%d, step=ONE)\nport = random.randrange(%d, step=+1)\n'
+                 'E = None\nport = random.randrange(%d, E, ONE)\n' % (n, n, n)),
                 ("an attribute", "test_x.py", 'cfg.p = %d\nrow = {"port": cfg.p}\n' % n),
                 ("a name bound to a digit string, inside a display that is the position's value", "test_x.py",
                  'P = "%d"\nrow = {"ports": [P]}\n' % n),
@@ -2671,6 +2719,8 @@ class Plants(unittest.TestCase):
                  'port = random.randrange(start=%d, step=1, **kw)\n' % n),
                 ("a randrange from a start below the range with its stop left empty beside a ** mapping", "test_x.py",
                  'port = random.randrange(%d, **kw)\n' % (LOW - 2768)),
+                ("a randrange whose stop is a name bound to None, beside a ** mapping", "test_x.py",
+                 'E = None\nport = random.randrange(%d, E, **kw)\n' % _n()),
                 ("an unbounded computed port with no constant of a sum in the range", "test_x.py",
                  'port = base + i\nother_port = %d * k\n' % n),
                 ("a host that is no loopback or wildcard literal", "test_x.py",
@@ -2994,7 +3044,9 @@ class RandrangeAgainstCPython(unittest.TestCase):
         as the interval's lowest value plus K % its width, or its highest less K % its width, K bound to an int and by
         K = f(): since K % the width lies in the interval whatever K holds, the start or stop takes the values K gives
         for its int, for 0 and for the width less one, and for two seeded ints no binding gives, and THE RULE reads it,
-        with K unbounded, as the whole interval (BOUND)."""
+        with K unbounded, as the whole interval (BOUND). Then, for each of NONE_FORMS, a stop name bound to None alone,
+        beside an int, and beside an int and by a call, taking None and the int, with the exceptions a stop left empty
+        beside a step other than 1 raises."""
         rng, out = random.Random(self.SEED + 3), []
 
         def near():
@@ -3025,6 +3077,15 @@ class RandrangeAgainstCPython(unittest.TestCase):
                 out.append(("the %s, a name with a binding the census does not record under %% by a constant" % role,
                             takes if role == "start" else s, e if role == "start" else takes, rng.choice(self.STEP_SHAPES),
                             rng.choice(self.FORMS), {"pre": ["%s = %d" % (name, v), "%s = f()" % name], role: written}))
+        for form, k in self.NONE_FORMS:
+            for others in ((), ("an int",), ("an int", "a call")):
+                c, name = near(), "RN%d" % len(out)
+                ints = [near()] if others else []
+                out.append(("a stop name bound to None", (c, c + rng.randint(0, 40)), [None] + ints,
+                            (k, None if k is None else [ast.literal_eval(k)]), form,
+                            {"pre": ["%s = None" % name] + ["%s = %d" % (name, x) for x in ints]
+                             + (["%s = f()" % name] if "a call" in others else []), "stop": name,
+                             "raises": (ValueError, TypeError)}))
         return out
 
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
@@ -3041,10 +3102,11 @@ class RandrangeAgainstCPython(unittest.TestCase):
         Then come the bindings _mixed() writes: a name bound to ints the census records and also by each binding form
         it does not record, and a name Python mangles in a class, as the step, the start or the stop; and last those
         _recorded() writes: a name every binding of which the census records, bound to several ints, as the step, the
-        start or the stop, and a start or stop under % by a constant of a name with a binding the census does not
-        record. The census reads them as one module, each call on a line of its own after the lines that bind its
-        names (in the class's body where the call reads the name there). For each call the test samples start and stop
-        at each end of their intervals and at a seeded value between (or each value they take), and the step at each end, a
+        start or the stop, a start or stop under % by a constant of a name with a binding the census does not record,
+        and a stop name bound to None. The census reads them as one module, each call on a line of its own after the
+        lines that bind its names (in the class's body where the call reads the name there). For each call the test
+        samples start and stop at each end of their intervals and at a seeded value between (or each value they take),
+        and the step at each end, a
         seeded value between, and -1, 0 and 1 where the step can take them (an unbounded step takes STEPS, a step name
         each value it is bound to), and runs CPython's Random.randrange, the function random.randrange is bound to,
         three times: with its draw pinned to the lowest and to the highest (_RandrangeEnds), and with a seeded draw.
