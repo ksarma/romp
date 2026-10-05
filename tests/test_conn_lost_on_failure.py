@@ -8,7 +8,7 @@ waits in the Log's `lost` until the event that says the reconnect failed, a dial
 socket that reopens first drops it unwritten. A close the connect cut made (a timer) fails nothing while another socket of the
 page is open (the review of item 4b, 2026-10-03: on a slow network the dials a return makes together wait in line for their
 handshakes, and the last of them reached the cut while every handshake was succeeding), and a close the page's own unload made
-fails nothing (review round 1, 2026-10-04: Firefox delivers those closes to the unloading page). Five pieces, each executed
+fails nothing (review round 1, 2026-10-04: Firefox delivers those closes to the unloading page). Six pieces, each executed
 here under node against the code as served:
 
   ShimFailureWord        kernel/kernel.py _shim: a dial that never opened posts {romp:'wsFail',app,cut} to the shell after
@@ -41,6 +41,11 @@ here under node against the code as served:
                          (window.__rompNotLeaving), a pane's or a column's open (its up word), and pageshow each clear the
                          latch, so a navigation that did not unload hides no later outage; a pane's wsFresh clears
                          nothing. The same DOM stub.
+  ThePaneSourceCheckComesFirst
+                         _LANDING_BOOT_JS's window.__rompPaneSourceOk with _LANDING_ERRS_JS (the landing merge with fork
+                         main, batch 970): a wsFail or wsState word whose source is not a protocol pane of the page is
+                         refused before any of the Log's own handling, so it writes, drops, clears and starts nothing; the
+                         panes' own words write as before. The same DOM stub, with the boot script's real check.
 
 One census besides, read from the source and not executed: NotLeavingCallSites holds window.__rompNotLeaving to one
 definition, the Log's, and three callers, the shell link's dial, open and frame, and finds no caller under ui/ or
@@ -1156,6 +1161,131 @@ class AnUnloadsClosesFailNothing(unittest.TestCase):
         self.assertEqual(self.out["leavingFourth"], [self.FEED, self.CHAT, self.SPLIT2, self.SPLIT3])
         self.assertEqual(self.out["afterPageshow"], [self.FEED, self.CHAT, self.SPLIT2, self.SPLIT3, self.SESSIONS],
                          "the page is shown again (a back-forward restore): the Sessions pane's failure is written")
+
+
+# ---- the pane protocol's source check runs before the Log's own handling (the landing merge with fork main, batch 970) ----
+# the boot script's real check needs the page's origin and its iframes; the frames are this page's panes, one a split column,
+# and a URL pane (data-protocol=none), a plain iframe that cannot speak the protocol
+SOURCE_PAGE = r"""
+global.location = { origin: 'https://TESTHOST' };
+function mkWin(name, col) { return { name: name, col: col || '' }; }
+const CHAT_WIN = mkWin('chat'), FEED_WIN = mkWin('feed'), TIMELINE_WIN = mkWin('timeline'), COL2_WIN = mkWin('col2', '2');
+const URL_WIN = mkWin('urlPane'), STRANGER = mkWin('stranger'), NESTED = mkWin('nested');
+const FRAMES = [CHAT_WIN, FEED_WIN, TIMELINE_WIN, COL2_WIN].map((w) => ({ contentWindow: w, getAttribute: () => null }))
+  .concat([{ contentWindow: URL_WIN, getAttribute: (a) => (a === 'data-protocol' ? 'none' : null) }]);
+document.querySelectorAll = (s) => (s === 'iframe' ? FRAMES : []);
+"""
+
+SOURCE_DRIVER = r"""
+const out = {};
+const realNotify = window.__rompNotify, CONN = [];
+window.__rompNotify = function (kind, text) { if (kind === 'conn') CONN.push(String(text)); return realNotify.apply(this, arguments); };
+const COLOF = [];   // each source a listener asked the column map about: a word refused at the check reaches no line after it
+window.__rompColOf = (src) => { COLOF.push(src === window ? 'shell' : (src && src.name) || String(src)); return (src && src.col) || ''; };
+const ORIGIN = location.origin;
+function from(src, data, origin) { (WL['message'] || []).forEach((f) => f({ data: data, source: src, origin: origin === undefined ? ORIGIN : origin })); }
+function fire(k) { (WL[k] || []).forEach((f) => f({})); }
+const snap = () => CONN.slice();
+// the forgers, each failing the check on one ground
+const FOREIGN = [
+  ['stranger', STRANGER, ORIGIN],                          // a window this page holds no iframe for
+  ['urlPane', URL_WIN, ORIGIN],                            // a URL pane's iframe
+  ['shell', window, ORIGIN],                               // the shell's own window
+  ['nested', NESTED, ORIGIN],                              // a frame nested inside a pane, not an iframe of this page
+  ['otherOrigin', CHAT_WIN, 'https://elsewhere.invalid'],  // a protocol pane's window, from another origin
+  ['noSource', undefined, ORIGIN],                         // a message with no source
+];
+out.checkIsTheBootScripts = String(window.__rompPaneSourceOk).indexOf("querySelectorAll('iframe')") >= 0;
+out.ok = { chatPane: window.__rompPaneSourceOk({ source: CHAT_WIN, origin: ORIGIN }) };
+FOREIGN.forEach(([k, s, o]) => { out.ok[k] = window.__rompPaneSourceOk({ source: s, origin: o }); });
+// A. a forged failure word: the chat pane's own drop waits, and each forger's wsFail for it is refused at the check
+from(CHAT_WIN, { romp: 'wsState', app: 'chat', state: 'down' });
+COLOF.length = 0;
+FOREIGN.forEach(([k, s, o]) => from(s, { romp: 'wsFail', app: 'chat', cut: false }, o));
+out.forgedFail = { conn: snap(), colOf: COLOF.slice() };
+from(CHAT_WIN, { romp: 'wsFail', app: 'chat', cut: false });   // the chat pane's own failure word writes the entry that waited
+out.ownFail = { conn: snap(), colOf: COLOF.slice() };
+// B. a forged up word while the page is leaving: it clears neither the latch nor the Feed's waiting drop
+from(FEED_WIN, { romp: 'wsState', app: 'feed', state: 'down' });
+fire('beforeunload');
+FOREIGN.forEach(([k, s, o]) => from(s, { romp: 'wsState', app: 'feed', state: 'up' }, o));
+from(FEED_WIN, { romp: 'wsFail', app: 'feed', cut: false });   // the unload's close of the Feed's dial
+out.forgedUpWhileLeaving = snap();
+fire('pageshow');                                             // the page stayed
+from(FEED_WIN, { romp: 'wsFail', app: 'feed', cut: false });   // the Feed's drop still waits: no forged up dropped it
+out.afterPageshow = snap();
+// C. a forged down word starts no drop: the shell's refused dial fails every waiting entry, and none waits
+FOREIGN.forEach(([k, s, o]) => from(s, { romp: 'wsState', app: 'timeline', state: 'down' }, o));
+window.__rompLinkFailed(false);
+out.forgedDown = snap();
+// D. a split column's own words, through the column map, still write under the column's key
+COLOF.length = 0;
+from(COL2_WIN, { romp: 'wsState', app: 'chat', state: 'down' });
+from(COL2_WIN, { romp: 'wsFail', app: 'chat', cut: false });
+out.column = { conn: snap(), colOf: COLOF.slice() };
+console.log(JSON.stringify(out));
+"""
+
+
+class ThePaneSourceCheckComesFirst(unittest.TestCase):
+    """The landing merge with fork main (batch 970, which brought upstream's pane registry in the fold 965): every message
+    listener of the shell reads the boot script's fail-closed check, window.__rompPaneSourceOk(e), as its first statement, so
+    a {romp:...} word acts only when its immediate source is a same-origin iframe of the page that speaks the protocol. The
+    merge put that check first in the Log's wsFail listener, ahead of the leaving latch and the rest of the Log's handling, and
+    took upstream's opening line for the wsState listener, ahead of the latch clear on an up word. Executed here with the
+    boot script's real check in place of the DOM stub's: a word from a window the page holds no iframe for, a URL pane, the
+    shell itself, a frame nested in a pane, another origin or no source writes no entry, drops no waiting entry, clears no
+    latch and starts no drop, and reaches no line after the check (the column map is never asked about it); the panes' own
+    words, a split column's included, write as before. The check's position as the FIRST statement is held by
+    tests/test_pane_registry.py's listener census: the latch read and the check are both early returns with no effect, so
+    their order between themselves has no behaviour to execute."""
+
+    @classmethod
+    def setUpClass(cls):
+        script = _errc.HARNESS + SOURCE_PAGE + _errc.km._LANDING_BOOT_JS + _errc.km._LANDING_ERRS_JS + SOURCE_DRIVER
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(script)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, "the Log's JS threw: " + r.stderr[:800]
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    CHAT = "Kernel connection lost: Chat pane (reconnecting)"
+    FEED = "Kernel connection lost: Feed pane (reconnecting)"
+    SPLIT2 = "Kernel connection lost: chat split 2 (reconnecting)"
+
+    def test_the_check_is_the_boot_scripts_and_rules_on_each_forger(self):
+        self.assertIs(self.out["checkIsTheBootScripts"], True, "the boot script's definition replaced the DOM stub's")
+        self.assertEqual(self.out["ok"], {"chatPane": True, "stranger": False, "urlPane": False, "shell": False, "nested": False,
+                                          "otherOrigin": False, "noSource": False},
+                         "a protocol pane passes and each forger fails, so the steps below read the check, not a stub")
+
+    def test_a_forged_failure_word_is_refused_before_the_logs_handling(self):
+        self.assertEqual(self.out["forgedFail"], {"conn": [], "colOf": []},
+                         "no forger's wsFail writes the chat pane's waiting entry, and none reaches the column map, the first "
+                         "line after the latch and the word's own checks: the source check ran before them")
+        self.assertEqual(self.out["ownFail"], {"conn": [self.CHAT], "colOf": ["chat"]},
+                         "the chat pane's own failure word writes the entry, which waited through the forgeries")
+
+    def test_a_forged_up_word_clears_neither_the_latch_nor_a_waiting_drop(self):
+        self.assertEqual(self.out["forgedUpWhileLeaving"], [self.CHAT],
+                         "after beforeunload a forged up word is refused before the latch clear: the unload's close of the "
+                         "Feed's dial writes nothing")
+        self.assertEqual(self.out["afterPageshow"], [self.CHAT, self.FEED],
+                         "the Feed's drop still waited (no forged up marked it up), so its failure after pageshow is written")
+
+    def test_a_forged_down_word_starts_no_drop(self):
+        self.assertEqual(self.out["forgedDown"], [self.CHAT, self.FEED],
+                         "the shell's refused dial fails every waiting entry, and no forged down word left one for the "
+                         "Sessions pane")
+
+    def test_a_split_columns_own_words_still_write_under_its_key(self):
+        self.assertEqual(self.out["column"], {"conn": [self.CHAT, self.FEED, self.SPLIT2], "colOf": ["col2", "col2"]},
+                         "the column's down word and failure word each pass the check and ask the column map, and the "
+                         "failure writes the column's entry")
 
 
 if __name__ == "__main__":
