@@ -16448,7 +16448,7 @@ class TheHeaderBlockIsReadForACrOrLf(unittest.TestCase):
         forms = (("arg", "_probe_hv", "", "_probe_hv"), ("del", "", "            if p is None:\n                del _probe_hv\n", "_probe_hv"),
                  ("cls", "", "            class _ProbeHc(object):\n                pass\n", "str(_ProbeHc)"),
                  ("imp", "", "            import os as _probe_ho\n", "_probe_ho.sep"),
-                 ("exc", "", "            try:\n                pass\n            except ValueError as _probe_he:\n                p = str(_probe_he)\n", "p"),
+                 ("exc", "", "            try:\n                pass\n            except ValueError as _probe_he:\n                pass\n", "str(_probe_he)"),
                  ("mas", "", "            match p:\n                case _probe_hm:\n                    pass\n", "str(_probe_hm)"),
                  ("mst", "", "            match p:\n                case [*_probe_hs]:\n                    pass\n", "str(_probe_hs)"),
                  ("mmp", "", "            match p:\n                case {**_probe_hr}:\n                    pass\n", "str(_probe_hr)"))
