@@ -43,7 +43,9 @@
 // The repaint opens the Outline again as a reload's landing does (the review's round 3, ui-1): a press on the Outline button held
 // across a retry's success leaves the popover open after the release, holding the keyboard (before, the click opened it and the
 // parked repaint's paint closed it); with the popover up, the press's click closes it and the repaint leaves it closed; and with no
-// press under way the repaint closes an open popover, as every paint does.
+// press under way the repaint closes an open popover, as every paint does. The held branch reopens it too: a reload's paint held over
+// a note with no formula keeps that note's Outline button, and a press on it held across the arrival leaves the popover open after
+// the release, listing the laid-out note's headings.
 // Nothing in the body moves under the press either: the arrival leaves a failed load's sources in both viewers' bodies to the held repaint (math.ts
 // MATH_REPAINT_ATTR), so a press on a link below two display formulas, held across the retry's success, clicks the link, still in
 // the page, and its fragment lands, in both viewers (before, the in-place re-fill grew the formulas and the release met another
@@ -751,6 +753,64 @@ test("chromium: the Files pane's viewer: a popover up with no press under way: t
     assert.deepEqual([after.popover, after.expanded, after.bodyFocused], [false, "false", true], "the arrival's repaint closed the popover and opened nothing, the keyboard handed to the body: " + JSON.stringify(after));
     assert.equal(after.paints, before.paints + 1, "the arrival repainted the note, once");
     assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+// The held branch of the same reopen (the review's round 3: with no scene driving it, openOutline() moved into the shown branch alone
+// passed every scene above). A held paint over an earlier one keeps that paint's Outline button (renderBody hides it before the paint
+// only for the editor or when no text is in hand, and a held paint returns before syncOutline), so a note with no formula, painted at
+// once with its button shown, then a reload whose text holds a formula, made before the renderer is in, puts the button under the
+// reader's pointer while the paint is held. The click at the release opens the popover over the held-over paint's headings; the
+// arrival's run then paints the held text, lands, and opens it again on the laid-out note's.
+const HEADED = "# Plain\n\nNo formula here.\n\n## Before\n\nThe first text.\n";
+const HEADED_MATH = "# Ratios\n\nThe ratio $\\frac{a}{b}$ holds.\n\n## Second\n\n$$\\sum_{i=0}^{n} i^2$$\n\n## Third\n\nAfter the formulas.\n";
+
+test("chromium: the Files pane's viewer: a press on the Outline button held across the renderer's arrival over a reload's held paint: the release's click opens the popover, and the parked repaint of the held paint leaves it open on the laid-out note, holding the keyboard", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: HEADED }, "serve", g, requests);
+    await paintsReach(page, 1);
+    await frames(page, 4);
+    assert.deepEqual(requests, [], "a note with no formula fetches no chunk");
+    const fetched = await page.evaluate(() => (window as any).__fetches);
+    await page.evaluate(([p, text, mt]: [string, string, string]) => { (window as any).__docs[p] = text; (window as any).__mtime = mt; (window as any).__seam.reload(); }, [REPORT, HEADED_MATH, MT2]);
+    await page.waitForFunction((n: number) => (window as any).__fetches > n, fetched, { timeout: 10000 });
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]') && !!document.querySelector(".fileview-body > .fileview-math-wait"), null, { timeout: 10000 });
+    await frames(page, 4);
+    const held = await page.evaluate(() => {
+      const b = document.querySelector(".fileview-body")!;
+      const btn = document.querySelector(".fileview-outline-btn") as HTMLElement;
+      return { wait: !!b.querySelector(":scope > .fileview-math-wait"), button: !btn.hidden && btn.getBoundingClientRect().width > 0, katex: b.querySelectorAll(".katex").length, paints: (window as any).__paints - (window as any).__reflows };
+    });
+    assert.deepEqual(held, { wait: true, button: true, katex: 0, paints: 1 }, "the reload's paint is held over the first paint, the loader up, and the first paint's Outline button still shows: " + JSON.stringify(held));
+    // each popover put into the page from here on, by the headings its rows list when it goes in
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__opened = [];
+      new MutationObserver((recs) => { for (const r of recs) r.addedNodes.forEach((n) => { if (n instanceof HTMLElement && n.classList.contains("fileview-outline")) w.__opened.push(Array.from(n.querySelectorAll(".fileview-outline-row")).map((x) => (x.textContent || "").trim())); }); })
+        .observe(document.body, { childList: true, subtree: true });
+    });
+    await pressOutlineButton(page);
+    const paints0 = (await outlineNow(page)).paints;
+    g.open();
+    await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+    await frames(page, 6);
+    const under = await outlineNow(page);
+    const loaderUnder = await page.evaluate(() => !!document.querySelector(".fileview-body > .fileview-math-wait"));
+    await page.mouse.up();
+    await frames(page, 8);
+    const after = await outlineNow(page);
+    const rows = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-outline .fileview-outline-row")).map((r) => (r.textContent || "").trim()));
+    assert.deepEqual([after.popover, after.focused, after.expanded], [true, true, "true"], "after the release the popover stands, holding the keyboard: the click opened it, and the parked repaint of the held paint, whose paint closes it, opened it again: " + JSON.stringify(after));
+    assert.deepEqual(rows, ["Ratios", "Second", "Third"], "the popover lists the laid-out note's headings: " + JSON.stringify(rows));
+    const opened = await page.evaluate(() => (window as any).__opened);
+    assert.deepEqual(opened, [["Plain", "Before"], ["Ratios", "Second", "Third"]], "two popovers across the release: the click's, over the held-over paint's headings, then the run's after its paint: " + JSON.stringify(opened));
+    assert.deepEqual([under.popover, under.paints, loaderUnder], [false, paints0, true], "under the press no popover yet, nothing painted and the loader still up: the held paint's repaint was parked: " + JSON.stringify({ under, loaderUnder }));
+    assert.equal(after.paints, paints0 + 1, "the release ran the repaint, once");
+    const b = await overNow(page);
+    assert.deepEqual([b.katex, b.src, b.loader], [2, 0, false], "the note laid out under the popover, the loader gone: " + JSON.stringify(b));
+    assert.deepEqual(requests, ["/dist/math-chunk.js?v=3"], "one request, sent by the reload's paint");
     assert.deepEqual(errors, []);
   });
 });
