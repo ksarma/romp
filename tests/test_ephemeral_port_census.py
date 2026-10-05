@@ -44,14 +44,16 @@ name, read from the ast (a call's result, B = A, 0 - 7, an augmented assignment,
 anything but a display, a with or except target, a parameter, an import, a function's or class's name, a del, a global
 or nonlocal statement, a match capture), and any binding form the census does not classify, which it counts among
 these (unrecorded_bindings()). Such a binding takes no value away from the hop, a host, a template or offset_base()
-(HOST = "127.0.0.1", then HOST = os.environ["H"], leaves HOST a host), but interval() reads a name only when the
-census records every binding of it: K bound to 7 and by K = f() is a name interval() does not bound, and beside a star
-import, which binds names the module's text does not write, it bounds no name. Inside a class Python reads a name
+(HOST = "127.0.0.1", then HOST = os.environ["H"], leaves HOST a host), but literal(), which reads each position's value,
+hands interval() only the names the census records every binding of (offset_base(), below, hands it every value the
+census records): K bound to 7 and by K = f() is a name that reading does not bound, and beside a star import, which
+binds names the module's text does not write, it bounds no name. Inside a class Python reads a name
 written with two leading underscores and not two trailing ones as another (__K in class C is _C__K), so a binding of
 either spelling binds the name a read of the other sees: once such a name is written anywhere in a class statement, the
 census counts both spellings among the names with a binding it does not record, wherever the module reads them, unless
-the class's name is underscores alone, which mangles nothing. A name set by no binding form (globals()["K"] = f(), or
-mod.K = f() in another module) has no binding here.
+the class's name is underscores alone, which mangles nothing. A name a module sets with no binding form
+(globals()["K"] = f(), exec("K = f()"), setattr(sys.modules[__name__], "K", f()), or mod.K = f() in another module) has
+no binding here, and the census does not see the value such a setting gives it (WHAT IT CANNOT SEE).
   In Python, read by AST (scan_python), the positions:
     a value under a dict key that names a port ({"port": N}, {"local_port": N}, {"busPort": N}; a key names a port when
     one of its words, split at underscores, other punctuation and camelCase, is "port" or "ports": "report" does not;
@@ -139,8 +141,9 @@ mod.K = f() in another module) has no binding here.
   newline after the colon ends the address ("http://127.0.0.1:" and a newline, then + str(N), is not read), and a NUL
   character the source writes is read as an ordinary character, never as a placeholder ("http://", a NUL and a colon,
   then + str(N), is not read).
-  An expression counts when it is bounded and can reach the range: interval() bounds int constants, a name with
-  exactly one binding, to an int, signed or not, and, over bounded operands, str() and int(), a unary minus or plus (-7,
+  An expression counts when it is bounded and can reach the range: interval() bounds int constants, a name with exactly
+  one binding, to an int, signed or not (in offset_base(), below, a name the census records one int for, whatever its
+  other bindings), and, over bounded operands, str() and int(), a unary minus or plus (-7,
   +7), + - and *, and // and % by a positive constant; it reads an unknown operand of % by a positive constant as 0 to
   the constant less one, and a call to randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n)
   over bounded arguments (random's and secrets', by the callee's name; a randrange's step may be unbounded, below) as
@@ -180,9 +183,11 @@ mod.K = f() in another module) has no binding here.
   40020 + os.getpid() % 21, k) is 40000-40060, and 40021-40060 with a step of -7; random.randrange(40000, 1000, K),
   with K bound to 7 and by K = f(), is 1001-40000; and
   random.randrange(30000 + os.getpid() % 5000, 30000, **kw) is 30000-34999 whatever kw holds, by keyword too
-  (random.randrange(start=30000 + os.getpid() % 5000, stop=30000, **kw)). Each reading holds every value the
-  call can return wherever every binding of each name in the call's start, stop and step is one the census records
-  (BOUND; interval() bounds no other name), and can hold values it never returns (a step of 7 returns values 7 apart).
+  (random.randrange(start=30000 + os.getpid() % 5000, stop=30000, **kw)). Each reading holds every value random's
+  randrange can return for the call, except where a name it takes a value for is also set with no binding form, or a
+  name called Random or SystemRandom holds an instance (both in WHAT IT CANNOT SEE), and can hold values it never
+  returns (a step of 7 returns values 7 apart); it takes a value for a name only when the census records every binding
+  of it (BOUND).
   Where Python refuses a call for every value its start, stop and step can take, the reading still stands, an over-read:
   a step of 0 is read with the steps that are never negative (random.randrange(40000, 50000, 0) is 40000-49999); a
   positive step from a start never below its stop, or a negative one from a start never above it, is read as a span with
@@ -267,6 +272,10 @@ these turns its plant red, and the example leaves this list.
   a name or attribute called Random or SystemRandom that holds an instance (Random = random.Random(), then
   Random.randint(N, M); cfg.SystemRandom.randint(N, M)), whose first argument is taken for the instance, in THE BIND
   BANDS' draws too;
+  a name a module sets with no binding form beside a binding the census records (K = 7, then globals()["K"] = -7,
+  exec("K = -7"), setattr(sys.modules[__name__], "K", -7), or mod.K = -7 in another module), read by the values the
+  census records alone: random.randrange(40000, 1000, K) reads K as 7 and is not counted, though CPython returns values
+  from 1001 to 40000;
   a float where the census reads an int, which a random call takes on 3.10 and 3.11 (random.randrange(40000.0, 50000))
   and int() takes everywhere (int(45001.0));
   a random call with an argument passed through a * sequence (random.randrange(*(N, M)), random.randint(*[N, M]));
@@ -575,7 +584,8 @@ def interval(node, bound=None):
     for any other step that is never positive, and the span holding both for the rest, a step that can take either sign
     or one interval() does not bound (THE RULE). A bool is the int it is (True 1, False 0). computed is True when an
     unknown took part. literal() hands it as `bound` only the names every binding of which the census records (BOUND),
-    so a name bound to 7 and by K = f() is one it does not bound."""
+    so in a position's reading a name bound to 7 and by K = f() is one it does not bound; offset_base() hands it every
+    value the census records, so there it bounds such a name by its one recorded int."""
     bound = bound or {}
     if isinstance(node, ast.Constant) and isinstance(node.value, int):
         return int(node.value), int(node.value), False
@@ -2186,10 +2196,11 @@ class Plants(unittest.TestCase):
                 self.assertRed("test_plant.py", src, "computed into %d-%d" % span, n=first)
 
     def test_a_name_with_a_binding_the_census_does_not_record_is_unbounded(self):
-        """interval() reads a name only when the census records every binding of it (BOUND), so a name bound to an int
-        and also by a binding the census does not record reads as unbounded, for each such binding form
-        (UNRECORDED_FORMS, and UNRECORDED_FORMS_312 on 3.12 and later, where they parse). As a step it reads as the
-        span holding both signs: each red plant binds K to 7 and by the form, and random.randrange(40000, 1000, K)
+        """A position's reading through interval() bounds a name only when the census records every binding of it
+        (BOUND), so a name bound to an int and also by a binding the census does not record reads as unbounded there,
+        for each such binding form (UNRECORDED_FORMS, and UNRECORDED_FORMS_312 on 3.12 and later, where they parse). As
+        a step it reads as the span holding both signs: each red plant binds K to 7 and by the form, and
+        random.randrange(40000, 1000, K)
         reads 1001-40000, where 3d5b30b85 read K as 7, the call as 40000-999, and reported nothing (CPython returns
         values from 1001 to 40000 when K is negative). As a start or a stop it is not read: random.randrange(S, 50000)
         with S bound to 40000 and by the form, and random.randrange(40000, E) with E bound to 50000 and by the form, are
@@ -2322,6 +2333,9 @@ class Plants(unittest.TestCase):
                 ("a name or attribute called Random or SystemRandom that holds an instance", "test_x.py",
                  'Random = random.Random()\nport = Random.randint(%d, %d)\ncfg.SystemRandom = random.SystemRandom()\n'
                  'port = cfg.SystemRandom.randint(%d, %d)\n' % (n, n + 9, n, n + 9)),
+                ("a name a module sets with no binding form beside a binding the census records", "test_x.py",
+                 'K = 7\nglobals()["K"] = -7\nexec("K = -7")\nsetattr(sys.modules[__name__], "K", -7)\n'
+                 'port = random.randrange(%d, 1000, K)\n' % n),
                 ("a float where the census reads an int", "test_x.py",
                  'port = random.randrange(%d.0, %d)\nrow = {"port": int(%d.0)}\n' % (n, n + 9, n)),
                 ("a random call with an argument passed through a * sequence", "test_x.py",
@@ -2416,6 +2430,9 @@ class Plants(unittest.TestCase):
                  'TMPL = "km._notify_bus_peer(\'h\', %d, %%(up)s)"\n' % n)):
             with self.subTest(label):
                 self.assertGreen(name, src)
+        with self.subTest("a name another module sets with no binding form beside a binding the census records"):
+            self._write(os.path.join("tests", "test_y.py"), "import plant_k\nplant_k.K = -7\n")
+            self.assertGreen("plant_k.py", "K = 7\nport = random.randrange(%d, 1000, K)\n" % n)
         with self.subTest("a file whose only number in the range follows an escape sequence"):
             self.assertGreen("test_x.py", 'env = {"ROMP_POSTAL_PORT": "\\t%d"}\n' % n)
             self.assertRed("test_plant.py", 'env = {"ROMP_POSTAL_PORT": "\\t%d"}\nX = %d\n' % (n, n + 1),
