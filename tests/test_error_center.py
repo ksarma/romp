@@ -151,8 +151,9 @@ out.afterMute = { stored: STORE['romp:errFilters'], n: notes().length,
 EL['rerr-fgrid'].children[0].fire('click');
 out.afterUnmute = { red: EL['rail-errs']._cls.has('has'), rows: EL['rerr-list'].children.length,
   chip: EL['rerr-list'].children[0].children[0].textContent, num: bellNum() };
-// 12) past nine unread the in-bell count yields to '+' (a two-glyph "10" can't fit the body). The popover, open since step 5,
-// is closed first: an entry that arrives while it is open lands seen (the arrival rule, 2026-10-03), so nothing would be unread
+// 12) past nine unread the count in the Log's triangle yields to '+' (a two-glyph "10" can't fit the body). The popover,
+// open since step 5, is closed first: an entry that arrives while it is open lands seen (the arrival rule, 2026-10-03), so
+// nothing would be unread
 window.__rompCloseErrs();
 for (let i = 0; i < 12; i++) post({ romp: 'notify', kind: 'warn', text: 'distinct problem ' + i });
 out.afterMany = { num: bellNum() };
