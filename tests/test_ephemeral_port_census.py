@@ -176,7 +176,8 @@ not seen, adding no value and taking none away (HOST = "127.0.0.1", then HOST = 
   randrange over generated calls. A sum or difference with an unbounded operand counts when one of its operands alone
   is a constant expression (one interval() bounds with no unknown in it) whose value is in the range, found through
   str(), int() and a unary plus and down a chain of sums and differences: 40000 + i is built on 40000, and so is
-  40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read.
+  40000 * 1 + i (offset_base()); one with no such operand (base + i) is not read. interval() reads a bool as the int
+  it is, True as 1 and False as 0 (random.randrange(True, 50000) is 1-49999), and a float not at all.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -247,6 +248,8 @@ these turns its plant red, and the example leaves this list.
   else K holds;
   an unbound random method spelled on anything but random.Random or random.SystemRandom, whose instance then fills
   start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
+  a float where the census reads an int, which a random call takes on 3.10 and 3.11 (random.randrange(40000.0, 50000))
+  and int() takes everywhere (int(45001.0));
   a host that THE RULE does not take for one (("TESTHOST", N), HTTPConnection(self.host, N)), a name bound to the
   empty string, even in a tuple (H = "", then (H, N)), and the empty string itself before a port in a call (serve("",
   N)); the port beside it is read only when another rule reads it;
@@ -547,14 +550,15 @@ def interval(node, bound=None):
     its step's sign, the step bounded or not (a step left out is 1, and one a ** mapping can give is unbounded): start's
     lowest value to stop's highest less one for a step that is never negative, stop's lowest plus one to start's highest
     for any other step that is never positive, and the span holding both for the rest, a step that can take either sign
-    or one interval() does not bound (THE RULE). computed is True when an unknown took part."""
+    or one interval() does not bound (THE RULE). A bool is the int it is (True 1, False 0). computed is True when an
+    unknown took part."""
     bound = bound or {}
-    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
-        return node.value, node.value, False
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return int(node.value), int(node.value), False
     if isinstance(node, ast.Name) and len(bound.get(node.id, ())) == 1:
         lit = bound[node.id][0]
-        if isinstance(lit, ast.Constant) and isinstance(lit.value, int) and not isinstance(lit.value, bool):
-            return lit.value, lit.value, False
+        if isinstance(lit, ast.Constant) and isinstance(lit.value, int):
+            return int(lit.value), int(lit.value), False
         return None
     if isinstance(node, ast.Call) and _callee(node.func) in ("str", "int") and len(node.args) == 1 and not node.keywords:
         return interval(node.args[0], bound)
@@ -1926,6 +1930,24 @@ class Plants(unittest.TestCase):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why, n=first)
 
+    def test_a_bool_reads_as_its_int(self):
+        """interval() reads a bool as the int it is, True as 1 and False as 0, as randrange and randint take it. Each red
+        plant asserts what the census reports: randrange(True, 50000) is 1-49999, by keyword too and through a name
+        bound to True; randint(False, 40000) is 0-40000; and 32767 + True is a constant expression, 32768. e50adc775
+        read none of them. A float stays unread (WHAT IT CANNOT SEE)."""
+        lo, hi, n = LOW + 7232, LOW + 17232, _n()                                  # 40000, 50000 and 45001, built at run time
+        for label, src, why, first in (
+                ("a randrange from True", 'port = random.randrange(True, %d)\n' % hi, "computed into 1-%d" % (hi - 1), LOW),
+                ("a randrange from True by keyword", 'port = random.randrange(start=True, stop=%d)\n' % hi,
+                 "computed into 1-%d" % (hi - 1), LOW),
+                ("a randrange from a name bound to True", 'B = True\nport = random.randrange(B, %d)\n' % hi,
+                 "computed into 1-%d" % (hi - 1), LOW),
+                ("a randint from False", 'port = random.randint(False, %d)\n' % lo, "computed into 0-%d" % lo, LOW),
+                ("a sum with True", 'port = %d + True                # %d opens the file\n' % (LOW - 1, n),
+                 "a constant expression", LOW)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+
     def test_a_random_call_spelled_on_the_class_takes_its_instance_first(self):
         """A random call spelled on random.Random or random.SystemRandom, an unbound method, passes its instance first,
         and the census drops it before reading the arguments. Each red plant asserts the span the census reports:
@@ -2004,6 +2026,8 @@ class Plants(unittest.TestCase):
                  % (n, n)),
                 ("an unbound random method spelled on anything but random.Random or random.SystemRandom", "test_x.py",
                  'port = type(rng).randrange(rng, %d, %d)\nport = MyRandom.randrange(rng, %d, %d)\n' % (n, n + 9, n, n + 9)),
+                ("a float where the census reads an int", "test_x.py",
+                 'port = random.randrange(%d.0, %d)\nrow = {"port": int(%d.0)}\n' % (n, n + 9, n)),
                 ("an attribute", "test_x.py", 'cfg.p = %d\nrow = {"port": cfg.p}\n' % n),
                 ("a name bound to a digit string, inside a display that is the position's value", "test_x.py",
                  'P = "%d"\nrow = {"ports": [P]}\n' % n),
