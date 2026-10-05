@@ -41,10 +41,32 @@ name: CI
 # since 2026-09-21, when batches began to land daily, about 58 a month at that rate), so about 82
 # dollars a month at 30 runs and about 159 at 58. A manual run, Linux alone by default (below), bills
 # about 453 minutes, about 2.72 dollars, and at last month's pace of 29 manual runs that is about 79
-# dollars a month, so about 161 dollars a month in all at 30 batch runs and about 238 at 58. The
-# other jobs' times are the public runner's, on 4 CPUs, so
-# on the private runner's 2 they are a floor. The estimate made for one worker per cell, before the
-# first measurement: by the serial ratio measured on four CPUs (1437 s against 739 s) the cells of
+# dollars a month, so about 161 dollars a month for this workflow at 30 batch runs and about 238 at 58.
+# The repository's other workflows add about 5,200 minutes a month at the pace of the week to
+# 2026-10-04, about 31 dollars (tests/test_ci_cost_estimate.py holds these sums to their inputs):
+# secret-scan.yml on each push that is not a batch push, about 910 a month (212 in that week, counted
+# as this workflow's pull_request runs on branches other than batch branches, 199, and its runs on
+# pushes to main, 13, while main's copy of this file ran on both), at 3 billed minutes a run (75 over
+# its 25 runs in that week), about 2,730 minutes; pr-tier.yml on each pull request opened, reopened,
+# labeled or unlabeled, 534 runs in that week at 1 billed minute each (all 45 sampled), about 2,290
+# minutes a month; ledger.yml, pr-orphans.yml and docs.yml on pushes to main, 36 runs and 43 billed
+# minutes in that week, about 180 minutes a month; and tier-policy.yml, whose one job is skipped
+# outside the project's repository (its job-level if:), so its runs bill nothing. So about 192
+# dollars a month in all at 30 batch runs and about 269 at 58. These dollars are the list price of
+# every minute: the owner of a private repository pays only for the minutes past its plan's included
+# allowance, which GitHub documents as 50,000 minutes a month for Enterprise Cloud, on standard
+# GitHub-hosted runners such as these (read 2026-10-05). That allowance is charged to the
+# repository's owner, so the owner's other private repositories draw on it too, and this
+# repository's estimate, about 32,000 to 44,800 minutes a month (30 to 58 batch runs at 456, 29
+# manual runs at 453 and the other workflows' 5,200), would use a large part of it. The times of this
+# workflow's other Linux jobs are the public runner's, on 4 CPUs and 16 GB. A local measurement on
+# 2026-10-05, under a systemd CPUQuota of 200 percent against 400 percent, found their longest steps
+# barely slower on 2 CPUs: a sample of the served-page tests ran 539 s against 554 s, and two samples
+# of the bats suites ran 9 percent longer and 17 percent shorter (the second moved by the machine's
+# load). Two things are not measured: the private runner's 8 GB memory limit and its speed per core.
+# The first private batch run confirms the Served pages and Shell caps, as it does the shard caps. The
+# estimate made for one worker per cell, before the first measurement: by the serial ratio measured on
+# four CPUs (1437 s against 739 s) the cells of
 # run 36716348831 would take about 40 to 53 minutes each, and those of run 37158350467 about 61 to
 # 74, so a batch run's Linux jobs would bill about 325 minutes by run 36716348831 and about 444 by
 # run 37158350467, whose Linux jobs bill 279 on the public runner (each cell's pytest step scaled by
