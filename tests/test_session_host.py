@@ -5129,7 +5129,7 @@ class HostProcess(unittest.TestCase):
             with mock.patch.object(subprocess, "Popen", side_effect=capture("spawn")):
                 with self.assertRaises(Captured):
                     self._start()
-        self.assertNotIn("ROMP_SDK_SITE", seen["probe"], "the probe asks what the interpreter and PYTHONPATH give, with no site")
+        self.assertFalse("ROMP_SDK_SITE" in seen["probe"], "the probe asks what the interpreter and PYTHONPATH give, with no site")
         for slot in ("probe", "spawn"):
             lost = sorted(name for name, value in markers.items() if seen[slot].get(name) != value)
             self.assertEqual(lost, [], "the %s's environment does not carry this process's value of %s: a child started "

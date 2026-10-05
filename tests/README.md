@@ -1008,8 +1008,14 @@ renders an environment mapping of a shape it reads (`os.environ`, a captured
 child `env`, a `dict(os.environ, ...)` copy, a call that returns one), or a
 container that holds one under an `env` key (the SDK launch options, a launch
 shape, a spawn spec, a registry entry), or that checks a variable is absent
-with `assertIsNone(env.get(name))`, which prints the value when it is present.
+with `assertIsNone(env.get(name))`, `assertIsNone(os.getenv(name))` or the
+`pop` and `setdefault` spellings, which print the value when it is present.
 It names the fix, and lists in its docstring the shapes it cannot see.
+The census does not see a traceback's locals: pytest's `-l` (`--showlocals`)
+and unittest's `--locals` print every local of a failing frame, an
+environment copy included, whatever the assertion renders. In that output, as
+in the rest of a pytest report, the hook redacts values of 16 characters or
+more; shorter values, and every value under unittest, print in the clear.
 
 **A lab kernel's environment is built from a list of names, and the file a
 relaunch reads from carries a shorter list.** Every module that boots a hermetic
