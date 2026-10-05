@@ -76636,9 +76636,9 @@ def _landing():
             ".rerr-del:hover{opacity:1}"
             ".rerr-empty{padding:16px 12px;color:#6e7681;text-align:center;font-size:11px}"
             # The per-kind filter bar (the user 2026-07-28): a vertical white "show" label on the left, then
-            # the toggles in an even GRID — 8 kinds over the minimum 2 rows x 4 equal columns, every chip the
-            # same cell width, instead of one ragged wrapping row. The toggles ARE the chips — lit means
-            # shown, dimmed (with a dashed edge, a second cue beyond opacity) means muted.
+            # the toggles in an even GRID (the #rerr-fgrid rule below sets the columns), every chip the same
+            # cell width, instead of one ragged wrapping row. The toggles ARE the chips: lit means shown,
+            # dimmed (with a dashed edge, a second cue beyond opacity) means muted.
             "#rerr-filters{display:flex;align-items:stretch;gap:9px;padding:8px 12px;border-bottom:1px solid #2a2a2a;flex:0 0 auto}"
             ".rerr-flabel{writing-mode:vertical-rl;transform:rotate(180deg);text-align:center;color:#e8eaed;"
             "font-size:9px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;user-select:none}"

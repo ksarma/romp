@@ -415,8 +415,8 @@ class ErrorCenterWiring(unittest.TestCase):
         # 'not sent' shares the follow-up-failed red: both mean a message of yours didn't land
         self.assertIn(".rerr-chip.k-nudge,.rerr-chip.k-undelivered{color:#ff6a6a", html)
         # the per-kind filter bar sits between header and list, chips doubling as the toggles: a
-        # vertical white "show" label, then an even 4-column grid (8 kinds -> the minimum 2 rows,
-        # every chip the same cell width) instead of one ragged wrapping row (the user 2026-07-28)
+        # vertical white "show" label, then an even grid, every chip the same cell width, instead of
+        # one ragged wrapping row (the user 2026-07-28)
         self.assertIn("<div id=rerr-filters><span class=rerr-flabel>show</span><div id=rerr-fgrid></div></div>", html)
         self.assertIn("writing-mode:vertical-rl", html)
         # ...in as many equal columns as fit at the chip column's width (96px) or more each, five at most, so a phone's
