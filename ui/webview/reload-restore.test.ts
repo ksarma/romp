@@ -75,3 +75,21 @@ test("landActive's landing consumes the record for the active tab first, then fa
   // maintainer's round 3 ruling B: land-active-keep.test.ts executes the roads)
   assert.match(body, /else if \(!v\.shown \|\| v\.stick\) writeScroll\(content, content\.scrollHeight, "land-bottom", true\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*else if \(!\(held && restoreScrollAnchor\(content, v, held\)\) && !\(moved && \(restoreReadingLine\(content, v, moved\) \|\| restoreScrollAnchor\(content, v, moved\)\)\)\) \{ untakeMeasure\(v, figures\); writeScroll\(content, v\.scrollTop, "land-saved"\); \}/);
 });
+
+test("every write of the keep offset writes the reader's line beside it, in the same statement line (pendingAnchorKeepAt's declaration: set with pendingAnchorKeepY, cleared wherever it is cleared)", () => {
+  // the census reads every assignment to pendingAnchorKeepY in render.ts (an `=` that is not `==`; the declaration's typed `let` and the
+  // `!= null` reads are no writes) and asks the same line's code, its trailing comment cut, for an assignment to pendingAnchorKeepAt, so a
+  // site added anywhere later is named here or reds. What it guards is the declaration's rule: a line left from an earlier keep is never
+  // READ while the offset is null (scrollToAnchor reads it only under a non-null offset, and every write of a non-null offset writes the
+  // line too, which this census also holds), so a miss is a broken invariant, not a misplaced reader; the line's landing itself executes
+  // in scroll-to-anchor-roads.test.ts and land-active-keep.test.ts
+  const lines = RENDER.split("\n");
+  const writes: { at: number; code: string }[] = [];
+  lines.forEach((line, i) => {
+    const code = line.replace(/\s\/\/.*$/, "");
+    for (const _ of code.matchAll(/\bpendingAnchorKeepY\s*=(?!=)/g)) writes.push({ at: i + 1, code });
+  });
+  assert.ok(writes.length >= 10, `the census finds the writes it is about (found ${writes.length}): the reload restore's arm and its release, keepPlaceAcrossWindow's arm and its release, chatHead's re-arm, scrollToAnchor's consume, the pass's clear, cancelLanding's reset and chatWindow's two re-arms`);
+  const unpaired = writes.filter((w) => !/\bpendingAnchorKeepAt\s*=(?!=)/.test(w.code)).map((w) => `render.ts:${w.at}: ${w.code.trim().slice(0, 160)}`);
+  assert.deepEqual(unpaired, [], "a write of pendingAnchorKeepY with no write of pendingAnchorKeepAt on its line");
+});

@@ -21275,7 +21275,7 @@ function chatWindow(msg: any) {
       if (!cancelled) { landTrail.push("window-unplaced"); vscodeApi?.postMessage({ type: "locateDiag", id: msg.id, ok: false, trail: landTrail.slice(), anchor: anchorUuid, kind: "unplaced" }); }
       const seekCovers = !!seek && seek.sid === msg.id && seek.uuid === anchorUuid;
       if (!cancelled && anchorUuid && ask.nav && !seekCovers && (olderOnServer(s) || loadingOlder.has(msg.id))) {
-        pendingAnchor = anchorUuid; pendingAnchorIntent = null; pendingAnchorT = ask.t; pendingAnchorKind = ask.kind; flashedAnchor = null; pendingAnchorKeepY = null; anchorPendingOlder = false;
+        pendingAnchor = anchorUuid; pendingAnchorIntent = null; pendingAnchorT = ask.t; pendingAnchorKind = ask.kind; flashedAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; anchorPendingOlder = false;
         showActive();
       }
     }
