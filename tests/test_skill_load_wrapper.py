@@ -14,7 +14,9 @@ import contextlib
 import io
 import json
 import os
+import sys
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -280,7 +282,7 @@ class LatchStamps(unittest.TestCase):
 
 class HealOlderStores(unittest.TestCase):
     """build_feed over a store the old parse minted: the skill-load top nests, never hosts, and a blocked one
-    keeps its card with the face."""
+    keeps its card with the face. Two tests pin _feed itself: its capture holds build_feed's writes alone."""
 
     def setUp(self):
         km._downtime[:] = []
@@ -328,10 +330,54 @@ class HealOlderStores(unittest.TestCase):
             {"rompUuid": SID, "seq": len(nodes), "lastNode": last, "nodes": nodes, "placements": {}, "status": status or {}}))
 
     def _feed(self):
+        """One build_feed, with err holding what the build wrote to stderr. The kernel's two session backends are built
+        first, outside the capture, as tests/test_feed_session_started.py's _feed builds them (its docstring says why):
+        the first _sdk() and _codex() calls in a process construct them, and the SdkBackend's one-time boot lines
+        landed in err for whichever test here built the feed first in its process. The module stayed green only because
+        every check here on a first capture is an assertIn or an assertNotIn of the feed's own words, which those lines
+        do not contain; built here, they cannot reach an assertEqual on err either. Pinned by the two tests below that
+        call _first_call_outside."""
+        km._sdk()
+        km._codex()
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             f = km.build_feed(NOW)
         return {a["itemId"]: a for a in f["asks"] if a["sid"] == SID}, err.getvalue()
+
+    def _first_call_outside(self, name, label):
+        """km.<name> replaced by a stand-in that writes a line per call made on this thread, the feed built under an outer
+        capture over a store holding the ask alone (nothing to heal, so build_feed writes no line of its own): the first
+        call, _feed's own (the one that builds the singleton), writes outside err, and err holds the line of every call
+        build_feed made and nothing else. Calls from other threads go straight to the real function: the backends'
+        threads may call _sdk() or _codex() while a test runs, and their lines are not this test's."""
+        ask = SID + ":g1"
+        self._store({ask: self._node(ask, "Add retries to the notes-api client", promptUuid="u1", askAnchor="human")})
+        outer, calls, me, real = io.StringIO(), [], threading.get_ident(), getattr(km, name)   # calls: (index, outside the capture)
+
+        def recorder():
+            if threading.get_ident() == me:
+                i = len(calls)
+                calls.append((i, sys.stderr is outer))
+                sys.stderr.write("%s: %s (synthetic)\n" % (label, "construction" if i == 0 else "call %d" % i))
+            return real()
+
+        setattr(km, name, recorder)
+        self.addCleanup(setattr, km, name, real)
+        with contextlib.redirect_stderr(outer):
+            asks, err = self._feed()
+        inside = [i for i, out in calls if not out]
+        self.assertTrue(calls and calls[0][1], "the first %s() call, the one that builds the singleton, runs outside the capture" % name)
+        self.assertTrue(inside, "build_feed calls %s() inside the capture, so this test tells the two apart" % name)
+        self.assertEqual(err, "".join("%s: call %d (synthetic)\n" % (label, i) for i in inside),
+                         "err holds the line of every %s() call build_feed made, and not the construction call's" % name)
+        self.assertIn("%s: construction (synthetic)\n" % label, outer.getvalue())
+        self.assertEqual(set(asks), {ask})
+
+    def test_the_first_sdk_call_logs_outside_the_capture_and_every_later_one_inside(self):
+        self._first_call_outside("_sdk", "sdk-backend")
+
+    def test_the_first_codex_call_logs_outside_the_capture_and_every_later_one_inside(self):
+        self._first_call_outside("_codex", "codex-backend")
 
     def _old_store(self, **skill_kw):
         ask, skill, late, own = SID + ":g1", SID + ":g2", SID + ":g3", SID + ":g4"
