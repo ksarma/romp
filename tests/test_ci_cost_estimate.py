@@ -28,11 +28,14 @@ Pins over ci.yml's header comment (its comment lines before `on:`, joined into o
 At the commit before these pins, all four are red: the header named secret-scan.yml alone of the other workflows, stated
 161 and 238 dollars as the total in all, said nothing of an allowance, and had no sentence on the first private batch run.
 5. THE TWO PREMISES (TheTwoPremises, 2026-10-05): the python job's shard caps take each unmeasured interpreter's projected
-   phase where it is the largest (tests/test_ci_bats_bound.py, governing_phase), and this estimate bills those
-   interpreters' shard jobs at the slower measured phase. Caps do not bill, so the estimate's figures stand, but the header
-   says in one sentence that the two take different phases, and what a batch run would bill at the projected ones, by the
-   estimate's own method. The shard jobs' 337 is derived here too, from the same phases and the cells' times. Red at the
-   commit before it: the header had no such sentence.
+   phase where it is the largest (tests/test_ci_bats_bound.py, governing_phase), and since the slowest-run rule of the
+   same day those are the projections of each shard's slower 3.12 run of the two runs of four shards (the hash-alone run
+   and the weighted run), where this estimate bills those interpreters' shard jobs at the weighted run's slower measured
+   phase. Caps do not bill, so the estimate's figures stand, but the header says in one sentence that the two take
+   different phases, and what a batch run would bill at the caps' projected ones, by the estimate's own method. The shard
+   jobs' 337 is derived here too, from the same phases and the cells' times. Red at the commit before it: the header had
+   no such sentence. The figures moved with the caps' basis: 482 minutes, 26 more than the estimate, at the weighted
+   run's projections, the caps' basis until the slowest-run rule.
 Text pins: they hold what the header says and that its sums agree with the inputs here, not what GitHub bills; the first
 private batch run's billed minutes are the measurement."""
 import math
@@ -108,9 +111,10 @@ def derived():
 # interpreter is charged beside its phase: tests/test_ci_bats_bound.py's CELL_EDGE_S, where the caps' time before the
 # step is derived from the same figures
 CELL_EDGE_S = bound.CELL_EDGE_S
-# the stated figures: a batch run's minutes with each unmeasured interpreter's shard jobs at its own projected phases, and
-# that figure less the estimate's batch run; exact, since each job is rounded up to a whole minute before the sum
-PROJECTED_STATED = {"projected batch run minutes": 482, "projected difference": 26}
+# the stated figures: a batch run's minutes with each unmeasured interpreter's shard jobs at its own projected phases, the
+# ones the caps take (the projections of each shard's slower 3.12 run of the two rounds), and that figure less the
+# estimate's batch run; exact, since each job is rounded up to a whole minute before the sum
+PROJECTED_STATED = {"projected batch run minutes": 500, "projected difference": 44}
 
 
 def shard_job_minutes(phases, py):
@@ -120,16 +124,26 @@ def shard_job_minutes(phases, py):
     return [math.ceil((phases[k] + before + after) / 60) for k in sorted(phases)]
 
 
+def caps_projection_base():
+    """{shard: seconds}: each shard's slower 3.12 phase of the measured rounds (tests/test_ci_bats_bound.py's
+    MEASURED_RUNS), the 3.12 phase whose projection is the largest of the shard's projections the caps take."""
+    rounds = list(bound.MEASURED_RUNS.values())
+    return {k: max(r["3.12"][k] for r in rounds) for k in rounds[0]["3.12"]}
+
+
 def shard_jobs_total(projected):
-    """The shard jobs' minutes for one batch run: 3.12 and 3.14t at their own measured phases, and each unmeasured
-    interpreter at the slower measured phase (the estimate; projected False) or at its own projected phase (projected
-    True), the phases tests/test_ci_bats_bound.py holds."""
-    total = sum(shard_job_minutes(bound.SHARD_PHASE_312_S, "3.12")) + sum(shard_job_minutes(bound.SHARD_PHASE_314T_S, "3.14t"))
+    """The shard jobs' minutes for one batch run: 3.12 and 3.14t at their own phases in the weighted run, and each
+    unmeasured interpreter at the weighted run's slower phase of the two (the estimate; projected False) or at its own
+    projected phase as the caps take it, the projection of each shard's slower 3.12 run (projected True), the phases
+    tests/test_ci_bats_bound.py holds."""
+    w312, w314t = bound.SHARD_PHASE_312_WEIGHTED_S, bound.SHARD_PHASE_314T_WEIGHTED_S
+    total = sum(shard_job_minutes(w312, "3.12")) + sum(shard_job_minutes(w314t, "3.14t"))
+    base = caps_projection_base()
     for py in bound.UNMEASURED:
         if projected:
-            phases = {k: bound.projected_phase(k, py) for k in bound.SHARD_PHASE_312_S}
+            phases = {k: bound.projected_phase(k, py, base) for k in base}
         else:
-            phases = bound.SHARD_PHASE_S
+            phases = {k: max(w312[k], w314t[k]) for k in w312}
         total += sum(shard_job_minutes(phases, py))
     return total
 
@@ -264,10 +278,24 @@ class TheTwoPremises(unittest.TestCase):
         self.assertTrue(span in text, "the header states the range of the cells' times before and after the Run pytest "
                         "step (%r)" % span)
 
+    def test_the_caps_projection_base_is_each_shards_slower_312_run(self):
+        # the base the projected figure scales: the slowest 3.12 run of each shard over every round, which is what the
+        # caps' governing phase projects (the largest projection of a shard is that of its largest 3.12 phase)
+        base = caps_projection_base()
+        self.assertEqual(sorted(base), sorted(bound.SHARD_PHASE_312_WEIGHTED_S), "a base for each shard")
+        self.assertEqual(len(bound.MEASURED_RUNS), 2, "re-anchor: the header's sentence speaks of two runs")
+        for k, s in sorted(base.items()):
+            with self.subTest(shard=k):
+                self.assertEqual(s, max(bound.SHARD_PHASE_312_HASH_ALONE_S[k], bound.SHARD_PHASE_312_WEIGHTED_S[k]))
+                for py in bound.UNMEASURED:
+                    self.assertEqual(bound.projected_phase(k, py, base),
+                                     max(bound.projected_phase(k, py, r["3.12"]) for r in bound.MEASURED_RUNS.values()),
+                                     "the projection of the slower 3.12 run is the largest of the rounds' projections")
+
     def test_the_shard_jobs_figure_is_its_derivation(self):
         self.assertEqual(shard_jobs_total(False), SHARD_JOBS_MIN, "the estimate's twenty shard jobs: 3.12 and 3.14t at "
-                         "their own phases and 3.10, 3.11 and 3.13 at the slower measured phase, each job with its cell's "
-                         "times before and after the step, rounded up to a whole minute")
+                         "their own phases in the weighted run and 3.10, 3.11 and 3.13 at its slower measured phase, each "
+                         "job with its cell's times before and after the step, rounded up to a whole minute")
 
     def test_each_projected_figure_is_its_derivation(self):
         d = projected_derived()
@@ -277,9 +305,9 @@ class TheTwoPremises(unittest.TestCase):
                 self.assertEqual(figure, d[name], "%s: stated %d, derived %d" % (name, figure, d[name]))
 
     def test_the_header_says_so_in_one_sentence(self):
-        # the sentence that names the projected phases states which interpreters, that the caps take the projected phases
-        # and the estimate the measured ones, the minutes a batch run would bill at the projected phases, and the
-        # difference from the estimate's batch run
+        # the sentence that names the projected phases states which interpreters, that the caps take the projections of
+        # each shard's slower 3.12 run of the two runs and the estimate the weighted run's measured phases, the minutes a
+        # batch run would bill at the caps' projected phases, and the difference from the estimate's batch run
         text = header()
         sentences = [x for x in re.split(r"(?<=\.) ", text) if "projected phases" in x]
         self.assertEqual(len(sentences), 1, "one sentence of the header names the projected phases: %r" % sentences)
@@ -289,9 +317,9 @@ class TheTwoPremises(unittest.TestCase):
         batch = STATED["batch run minutes"][0]
         want = (
             "take different phases for %s:" % bound.english(bound.UNMEASURED),
-            "the caps take their projected phases",
-            "the estimate the measured ones",
-            "a batch run would bill about %d minutes, %d %s than the estimate's %d" % (
+            "the caps take their projected phases of each shard's slower 3.12 run of the two runs of four shards",
+            "the estimate the weighted run's measured ones",
+            "at those projected phases a batch run would bill about %d minutes, %d %s than the estimate's %d" % (
                 n, abs(diff), "more" if diff >= 0 else "fewer", batch),
         )
         for piece in want:

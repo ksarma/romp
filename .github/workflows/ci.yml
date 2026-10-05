@@ -37,9 +37,10 @@ name: CI
 # in run 37128151383). With secret-scan.yml's copy, about 3 minutes (below), a batch run bills about
 # 456 minutes (471 with three shards). At 0.006 dollars a minute, GitHub's posted rate for its Linux
 # 2-core x64 runner (read 2026-10-05), that is about 2.74 dollars a run. The caps and this estimate
-# take different phases for 3.10, 3.11 and 3.13: the caps take their projected phases (the python
-# job's cap comment), the estimate the measured ones, and at the projected phases a batch run would
-# bill about 482 minutes, 26 more than the estimate's 456. The fork had 30 CI runs on
+# take different phases for 3.10, 3.11 and 3.13: the caps take their projected phases of each shard's
+# slower 3.12 run of the two runs of four shards (the python job's cap comment), the estimate the
+# weighted run's measured ones, and at those projected phases a batch run would bill about 500
+# minutes, 44 more than the estimate's 456. The fork had 30 CI runs on
 # batch branches in the 30 days to 2026-10-04 and none in the 30 days before (23 in September; 27
 # since 2026-09-21, when batches began to land daily, about 58 a month at that rate), so about 82
 # dollars a month at 30 runs and about 159 at 58. A manual run, Linux alone by default (below), bills
@@ -233,29 +234,35 @@ jobs:
     # 1237 s and 1204 s, 2.74 and 2.75 GB (3.08 and 2.99). No worker was killed in any of these runs. Each phase is
     # pytest's summary figure rounded up to the second, on a shared machine whose load moves it: shard 2 on 3.12 took
     # 1482 s in the hash-alone run and 1220 s in this one, over the same files.
-    # Each shard's cap is T230b's rule for its governing phase: that phase, plus the 600 s per-test timeout, plus the time
-    # before the step, rounded up to a multiple of 5 minutes, in the expression's matrix.shard clauses, one figure for
-    # each shard. A shard's governing phase is the largest of its measured phase, the slower of 3.12's and 3.14t's above,
-    # and its projected phase on each interpreter not measured locally, 3.10, 3.11 and 3.13: the shard's 3.12 phase times
-    # that interpreter's Run pytest seconds over 3.12's in run 37212676524 (batch/2026-10-04b, on the public runner),
-    # rounded up to the second. A projection, not a measurement. In that run the Run pytest steps took 1639 s on 3.10,
-    # 1554 s on 3.11, 1248 s on 3.12 and 1422 s on 3.13, so 3.10's projection is the largest on every shard, and it passes
-    # each measured phase. The time before the step is the 27 s in the 3.14t cell of that run (job 111476102341), the
-    # longest of its five Linux cells. So: shard 1, 3.10 projected, 529 s on 3.12 times 1639/1248 is 695 s, and
-    # 695 + 600 + 27 = 1322 s, so 25; shard 2, 3.10 projected, 1220 s on 3.12 times 1639/1248 is 1603 s, and
-    # 1603 + 600 + 27 = 2230 s, so 40; shard 3, 3.10 projected, 614 s on 3.12 times 1639/1248 is 807 s, and
-    # 807 + 600 + 27 = 1434 s, so 25; shard 4, 3.10 projected, 1237 s on 3.12 times 1639/1248 is 1625 s, and
-    # 1625 + 600 + 27 = 2252 s, so 40. At the hash-alone run's 1482 s for shard 2 on 3.12, the same rule gives 45 (3.10
-    # projected 1947 s, and 1947 + 600 + 27 = 2574 s): shard 2 keeps 40 only while its 3.12 phase is 1350 s or less. Shard
-    # 3's sum, 1434 s, is the closest of the four to its cap, 66 s under its 25 minutes, past which the rule gives 30; at
-    # the hash-alone run's 661 s on 3.12 (a run of the shard with 3 fewer tests) it is 1496 s, 4 s under. The measured
-    # phases alone (679, 1451, 614 and 1237 s) gave 25, 35, 25 and 35: the projections raise shard 2 from 35 to 40 and
-    # shard 4 from 35 to 40, and leave shards 1 and 3 at 25. The caps take the projections (decided 2026-10-05): a higher
-    # cap costs nothing on a normal run, since billing counts only the minutes a job uses, and a timeout shows as a
-    # cancelled, red job. tests/test_ci_bats_bound.py holds each cap to its governing phase and this comment to the
-    # figures. Each cap is re-derived from the first run on the private repository's 2-CPU runners, whose jobs give the
-    # private runner's own phases and setup times; the fork's public runners have more CPUs, so the fork's CI times are
-    # not that measurement. Each step's time is the jobs API's.
+    # Each shard's cap is T230b's rule for its governing phase, then the margin rule: the phase, plus the 600 s per-test
+    # timeout, plus the time before the step, rounded up to a multiple of 5 minutes, and then 5 minutes more when that
+    # leaves less than 60 s between the sum and the cap. The figures are in the expression's matrix.shard clauses, one
+    # for each shard. Both the margin rule and the governing phase's use of each shard's slowest run (below) were
+    # decided on 2026-10-05, because a margin under a minute is far inside the run-to-run variation measured above
+    # (shard 2's two 3.12 phases over the same files differ by 21 percent), and a higher cap costs nothing on a normal
+    # run, since billing counts only the minutes a job uses, and about 5 billed minutes on a wedged one (3 cents at the
+    # header's rate), where a timeout shows as a cancelled, red job and costs a rerun. A shard's governing phase is the
+    # largest of every measured run of the shard above, in both runs of four shards, the hash-alone run and the weighted
+    # run, on 3.12 and 3.14t, and of each of those runs' projected phase on each interpreter not measured locally, 3.10,
+    # 3.11 and 3.13: the run's 3.12 phase times that interpreter's Run pytest seconds over 3.12's in run 37212676524
+    # (batch/2026-10-04b, on the public runner), rounded up to the second. A projection, not a measurement. In that run
+    # the Run pytest steps took 1639 s on 3.10, 1554 s on 3.11, 1248 s on 3.12 and 1422 s on 3.13, so 3.10's projection
+    # is the largest on every shard, and it passes each measured run. The time before the step is the 27 s in the 3.14t
+    # cell of that run (job 111476102341), the longest of its five Linux cells. So, for each shard, the run that
+    # governs, its projection, the sum, the margin under the rule's figure and the cap: shard 1, 3.10 projected from the
+    # hash-alone run's 553 s on 3.12, times 1639/1248 is 727 s, and 727 + 600 + 27 = 1354 s, so 25, a margin of 146 s;
+    # shard 2, 3.10 projected from the hash-alone run's 1482 s on 3.12, times 1639/1248 is 1947 s, and 1947 + 600 + 27 =
+    # 2574 s, so 45, a margin of 126 s; shard 3, 3.10 projected from the hash-alone run's 661 s on 3.12, times 1639/1248
+    # is 869 s, and 869 + 600 + 27 = 1496 s, so 25 by the rule, a margin of 4 s, under 60 s, so 30; shard 4, 3.10
+    # projected from the weighted run's 1237 s on 3.12, times 1639/1248 is 1625 s, and 1625 + 600 + 27 = 2252 s, so 40,
+    # a margin of 148 s. Shards 1 and 4 ran different files in the two runs: tests/test_thread_stop_census.py ran in
+    # shard 4 in the hash-alone run and in shard 1 in the weighted run, whose files are the ones CI runs. The caps count
+    # both runs; counting the weighted run alone would change neither cap: shard 1's governing phase would be 695 s
+    # (3.10 projected from the weighted run's 529 s on 3.12), and 695 + 600 + 27 = 1322 s, still 25, and shard 4's cap
+    # already comes from the weighted run. Each cap is re-derived from the first run on the private repository's 2-CPU
+    # runners, whose jobs give the private runner's own phases and setup times; the fork's public runners have more
+    # CPUs, so the fork's CI times are not that measurement. Each step's time is the jobs API's.
+    # tests/test_ci_bats_bound.py holds each cap to its governing phase and the rule, and this comment to the figures.
     # 90 is the figure each shard's cap held before the shards were measured. The whole suite's estimated one-worker
     # phase gave it: the slowest finished two-worker Linux cell, the 3.10 cell of run
     # 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880), 2312 s in its pytest step,
@@ -264,7 +271,7 @@ jobs:
     # public runner). With two workers on the public runner the same rule gave 50 (the 3.14t cell of run 37158350467:
     # 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux cap from 2026-10-02 to 2026-10-04, after the 40 fork PR
     # 926's branch set on 2026-09-30 from run 36664031774 and the 35 main had before that PR.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 25 || matrix.shard == '2' && 40 || matrix.shard == '3' && 25 || 40 }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 25 || matrix.shard == '2' && 45 || matrix.shard == '3' && 30 || 40 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.

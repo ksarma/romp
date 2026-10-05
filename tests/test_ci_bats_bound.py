@@ -67,43 +67,64 @@ class BatsStepBound(unittest.TestCase):
         self.assertIn("--print-output-on-failure", self.cmd)
 
 
-# Each shard's cap (2026-10-04): ci.yml's Linux Python cells run as SHARD_COUNT (tests/conftest.py) one-worker jobs, one for
-# each shard of the test files, since one worker running the whole suite does not fit the private runner's 8 GB (a local
-# run of the Run pytest step's command on 2026-10-04, under a CPUQuota of 200 percent and an 8 GiB memory cap with no
-# swap, had its one worker killed by the memory cap once on 3.12 and twice on 3.14t). Each shard's cap is T230b's rule
-# (the pytest phase plus the per-test timeout plus the time before the step, rounded up to a multiple of 5 minutes;
-# rule_minutes) for that shard's governing phase (governing_phase, below), held against ci.yml by PythonJobCeiling below.
-# Each SHARD_PHASE_S entry is the shard's one-worker pytest phase in seconds under the private runner's shape (a CPUQuota
-# of 200 percent, an 8 GiB memory cap, no swap; ci.yml's python job comment has the run), the slower of 3.12 and 3.14t
-# (SHARD_PHASE_312_S and SHARD_PHASE_314T_S), each read from pytest's summary line and rounded up. None marks a shard
-# whose phase is not measured (a shard SHARD_COUNT adds), and test_each_shards_cap_is_the_rules_figure_for_its_phase is
-# red while any shard's phase is None.
-# The four shards at the weighted rule (tests/conftest.py's CI's shards section), measured on 2026-10-05: shard 1, 529 s
-# on 3.12 and 679 s on 3.14t; shard 2, 1220 s and 1451 s; shard 3, 614 s and 409 s; shard 4, 1237 s and 1204 s. The
-# earlier counts' phases (three shards, and four by the hash alone) are a record in ci.yml's comment, not entries here: a
-# file's shard moved with the count and with the rule. Re-measuring a shard means setting its entries to the measured
-# seconds, and ci.yml's figure for that shard and its comment to match.
+# Each shard's cap (2026-10-04; its rule 2026-10-05): ci.yml's Linux Python cells run as SHARD_COUNT (tests/conftest.py)
+# one-worker jobs, one for each shard of the test files, since one worker running the whole suite does not fit the private
+# runner's 8 GB (a local run of the Run pytest step's command on 2026-10-04, under a CPUQuota of 200 percent and an 8 GiB
+# memory cap with no swap, had its one worker killed by the memory cap once on 3.12 and twice on 3.14t). Each shard's cap
+# is ruled_cap's figure for the shard's governing phase (governing_phase, below), held against ci.yml by PythonJobCeiling
+# below: T230b's rule (the pytest phase plus the per-test timeout plus the time before the step, rounded up to a multiple
+# of 5 minutes; rule_minutes), then 5 minutes more when that leaves less than MARGIN_FLOOR_S between the sum and the cap.
+# The governing phase is the largest of every measured run of the shard and of each run's projections (below). Both were
+# decided on 2026-10-05: each cap comes from its shard's slowest measured run, and a margin under a minute is far inside
+# the run-to-run variation measured (shard 2's two 3.12 runs over the same files differ by 21 percent); a higher cap costs
+# nothing on a normal run and about 5 billed minutes on a wedged one, where a timeout shows as a cancelled, red job and
+# costs a rerun.
+# MEASURED_RUNS holds every measured run of the shards at SHARD_COUNT, by round and interpreter: each the shard's
+# one-worker pytest phase in seconds under the private runner's shape (a CPUQuota of 200 percent, an 8 GiB memory cap,
+# no swap; ci.yml's python job comment has the runs), read from pytest's summary line and rounded up to the second.
+# None marks a shard whose phase is not measured (a shard SHARD_COUNT adds), and
+# test_each_shards_cap_is_the_ruled_figure_for_its_slowest_run is red while any entry is None. The earlier counts'
+# phases (two and three shards) are a record in ci.yml's comment, not entries here: a file's shard moved with the count.
+# A new measurement is a new round here, with ci.yml's figures and comment set to match.
 # The interpreters of the matrix not measured locally (UNMEASURED; with MEASURED, every interpreter of the matrix, which
-# test_every_interpreter_of_the_matrix_is_measured_or_projected holds) each have a projected phase for each shard
-# (projected_phase): the shard's 3.12 phase times the interpreter's ratio to 3.12 in run 37212676524
-# (UNMEASURED_RATIO_STEP_S), rounded up to the second. A projection, not a measurement. Each shard's cap is the rule's
-# figure for its governing phase (governing_phase), the largest of its SHARD_PHASE_S entry and its projections (decided
-# 2026-10-05: a higher cap costs nothing on a normal run, since billing counts the minutes a job uses, and a timeout
-# shows as a cancelled, red job). Each cap is re-derived from the first run on the private repository's 2-CPU runners;
-# the fork's public runners have more CPUs, so their times are not that measurement.
-SHARD_PHASE_S = {1: 679, 2: 1451, 3: 614, 4: 1237}
-# each shard's own phase on 3.12 (the same measurement), the base the unmeasured interpreters' ratios scale
-SHARD_PHASE_312_S = {1: 529, 2: 1220, 3: 614, 4: 1237}
-# each shard's own phase on 3.14t (the same measurement)
-SHARD_PHASE_314T_S = {1: 679, 2: 1451, 3: 409, 4: 1204}
+# test_every_interpreter_of_the_matrix_is_measured_or_projected holds) each have a projected phase for each shard in each
+# round (projected_phase): the round's 3.12 phase times the interpreter's ratio to 3.12 in run 37212676524
+# (UNMEASURED_RATIO_STEP_S), rounded up to the second. A projection, not a measurement. Each cap is re-derived from the
+# first run on the private repository's 2-CPU runners; the fork's public runners have more CPUs, so their times are not
+# that measurement.
+HASH_ALONE = "hash-alone"
+WEIGHTED = "weighted"
+# the run of four shards by the hash alone (2026-10-05; logs measure4-shard<k>-312-c.log and measure4-shard<k>-314t-c.log)
+SHARD_PHASE_312_HASH_ALONE_S = {1: 553, 2: 1482, 3: 661, 4: 1145}
+SHARD_PHASE_314T_HASH_ALONE_S = {1: 559, 2: 1438, 3: 466, 4: 1222}
+# the run of four shards at the weighted rule, the rule CI runs (2026-10-05; logs measure4-shard<k>-312-w.log and
+# measure4-shard<k>-314t-w.log); tests/test_ci_cost_estimate.py bills these phases
+SHARD_PHASE_312_WEIGHTED_S = {1: 529, 2: 1220, 3: 614, 4: 1237}
+SHARD_PHASE_314T_WEIGHTED_S = {1: 679, 2: 1451, 3: 409, 4: 1204}
+# {round: {interpreter: {shard: seconds}}}, the rounds in the order they ran
+MEASURED_RUNS = {
+    HASH_ALONE: {"3.12": SHARD_PHASE_312_HASH_ALONE_S, "3.14t": SHARD_PHASE_314T_HASH_ALONE_S},
+    WEIGHTED: {"3.12": SHARD_PHASE_312_WEIGHTED_S, "3.14t": SHARD_PHASE_314T_WEIGHTED_S},
+}
+# each round's logs (<k> the shard, <py> 312 or 314t), and its name in ci.yml's cap comment
+ROUND_LOG = {HASH_ALONE: "measure4-shard<k>-<py>-c.log", WEIGHTED: "measure4-shard<k>-<py>-w.log"}
+ROUND_NAME = {HASH_ALONE: "the hash-alone run", WEIGHTED: "the weighted run"}
+# the shards whose files differ between the rounds, each with the round whose files are not the ones CI runs:
+# tests/test_thread_stop_census.py ran in shard 4 by the hash alone and runs in shard 1 at the weighted rule (on 3.12, shard
+# 1 ran 4761 tests and then 4837, and shard 4 ran 5189 and then 5113). Shard 2 ran the same 5318 tests in both rounds;
+# shard 3 ran the same files, and 3 more tests in the weighted round, which tests/test_ci_shards.py, a shard 3 file, added
+# between the two.
+OTHER_COMPOSITION = {1: HASH_ALONE, 4: HASH_ALONE}
+# the module whose move made that difference, and its shard in each round
+MOVED_MODULE = ("tests/test_thread_stop_census.py", {HASH_ALONE: 4, WEIGHTED: 1})
 MEASURED = ("3.12", "3.14t")
 # the Run pytest step's seconds in each Linux cell of run 37212676524 (batch/2026-10-04b, two workers on the public runner),
 # the jobs API's figures: each unmeasured interpreter's ratio to 3.12
 UNMEASURED_RATIO_RUN = 37212676524
 UNMEASURED_RATIO_STEP_S = {"3.10": 1639, "3.11": 1554, "3.12": 1248, "3.13": 1422}
 UNMEASURED = ("3.10", "3.11", "3.13")
-# governing_phase's basis for a shard whose governing phase is its SHARD_PHASE_S entry
-MEASURED_BASIS = "measured"
+# the margin rule (2026-10-05): a cap that T230b's rule leaves less than this many seconds above the sum goes up 5 minutes
+MARGIN_FLOOR_S = 60
 # what ci.yml's cap for a shard holds while that shard's phase is a placeholder, and each shard held until the shards
 # were measured: the cap the whole suite's estimated
 # one-worker phase gave (WHOLE_SUITE_ESTIMATE_INPUTS: the slowest finished two-worker Linux cell, the 3.10 cell of run
@@ -126,10 +147,6 @@ CELL_JOB = {"3.10": 111476090366, "3.11": 111476091642, "3.12": 111476073561, "3
 # its first run
 SETUP_CELL = max(CELL_EDGE_S, key=lambda py: CELL_EDGE_S[py][0])
 SETUP_S = CELL_EDGE_S[SETUP_CELL][0]
-# shards 2 and 3's phases on 3.12 in the run of four shards by the hash alone (ci.yml's record of it), which the cap
-# comment's sentence on the margins takes: shard 2 ran the same files there as in the weighted run, and shard 3 ran 3
-# fewer tests
-SHARD_PHASE_312_HASH_ALONE_S = {2: 1482, 3: 661}
 # the steps before Run pytest in the 3.10 cell of run 37208049133 (job 111453304880), the setup the whole suite's
 # estimate used
 WHOLE_SUITE_SETUP_S = 25
@@ -142,14 +159,24 @@ def rule_minutes(phase_s, per_test_s, setup_s):
     return 5 * ((total + 299) // 300)
 
 
-def projected_phase(k, py, base=None, steps=None):
-    """Shard k's projected one-worker phase on the unmeasured interpreter py, in seconds: the shard's 3.12 phase (base,
-    SHARD_PHASE_312_S by default) times py's Run pytest seconds over 3.12's in run UNMEASURED_RATIO_RUN (steps,
+def ruled_cap(phase_s, per_test_s, setup_s, floor_s=MARGIN_FLOOR_S):
+    """(cap, rule, margin) for a pytest phase in seconds: rule is T230b's rule's figure (rule_minutes), margin the seconds
+    between that figure and the sum it rounds up (phase plus per-test timeout plus the time before the step), and cap the
+    figure, or 5 minutes more when the margin is under floor_s (the margin rule, 2026-10-05). Once raised the margin is at
+    least 300 s, past any floor under 5 minutes, so the rule raises once."""
+    total = phase_s + per_test_s + setup_s
+    rule = rule_minutes(phase_s, per_test_s, setup_s)
+    margin = rule * 60 - total
+    return (rule + 5 if margin < floor_s else rule), rule, margin
+
+
+def projected_phase(k, py, base, steps=None):
+    """Shard k's projected one-worker phase on the unmeasured interpreter py, in seconds: the shard's 3.12 phase in one
+    round (base, {shard: seconds}) times py's Run pytest seconds over 3.12's in run UNMEASURED_RATIO_RUN (steps,
     UNMEASURED_RATIO_STEP_S by default), rounded up to the second. A projection, not a measurement. Raises LookupError
     when the shard's 3.12 phase or either step time is missing."""
-    base = SHARD_PHASE_312_S if base is None else base
     steps = UNMEASURED_RATIO_STEP_S if steps is None else steps
-    if base.get(k) is None:
+    if base is None or base.get(k) is None:
         raise LookupError("shard %d has no 3.12 phase to project %s's from" % (k, py))
     for name in (py, "3.12"):
         if steps.get(name) is None:
@@ -158,22 +185,54 @@ def projected_phase(k, py, base=None, steps=None):
     return -(-base[k] * steps[py] // steps["3.12"])
 
 
-def governing_phase(k, measured=None, unmeasured=None, base=None, steps=None):
-    """(seconds, basis) of the phase shard k's cap is T230b's rule for: the largest of the shard's slower measured phase
-    (measured, SHARD_PHASE_S by default) and its projected_phase on each interpreter of unmeasured (UNMEASURED by
-    default). basis is MEASURED_BASIS for the measured phase, which a projection must pass to govern, or else the
-    interpreter whose projection it is (the first in unmeasured's order on a tie). Raises LookupError when the measured
-    phase or any projection's data is missing."""
-    measured = SHARD_PHASE_S if measured is None else measured
+def governing_phase(k, runs=None, unmeasured=None, steps=None):
+    """(seconds, round, interpreter) of the phase shard k's cap is ruled_cap's figure for: the largest of every measured
+    run of the shard (runs, MEASURED_RUNS by default, {round: {interpreter: {shard: seconds}}}) and, in every round, the
+    projected_phase of that round's 3.12 phase on each interpreter of unmeasured (UNMEASURED by default). interpreter is
+    the measured one for a measured run and the projected one for a projection. Every measured run is read before any
+    projection, so a projection must pass each measured run to govern; within each kind the rounds go in runs' order and
+    the interpreters in theirs, and on a tie the first governs. Raises LookupError when runs is empty, a round has no
+    interpreter, any round lacks shard k's phase on any of its interpreters, or a projection's data is missing."""
+    runs = MEASURED_RUNS if runs is None else runs
     unmeasured = UNMEASURED if unmeasured is None else unmeasured
-    if measured.get(k) is None:
-        raise LookupError("shard %d's measured phase is missing or a placeholder" % k)
-    best = (measured[k], MEASURED_BASIS)
-    for py in unmeasured:
-        p = projected_phase(k, py, base, steps)
-        if p > best[0]:
-            best = (p, py)
+    if not runs:
+        raise LookupError("no measured run to take shard %d's phase from" % k)
+    best = None
+    for rnd, by_py in runs.items():
+        if not by_py:
+            raise LookupError("the %s round has no measured interpreter" % rnd)
+        for py, phases in by_py.items():
+            if phases.get(k) is None:
+                raise LookupError("shard %d's phase on %s in the %s round is missing or a placeholder" % (k, py, rnd))
+            if best is None or phases[k] > best[0]:
+                best = (phases[k], rnd, py)
+    for rnd, by_py in runs.items():
+        for py in unmeasured:
+            p = projected_phase(k, py, by_py.get("3.12"), steps)
+            if p > best[0]:
+                best = (p, rnd, py)
     return best
+
+
+def cap_clause(k, runs=None, unmeasured=None, steps=None):
+    """The cap comment's clause for shard k: the run that governs (a measured run, or an unmeasured interpreter's
+    projection of a round's 3.12 phase with its arithmetic), the sum, the rule's figure, the margin under it and, when the
+    margin rule raises it, the cap. The rounds are named by ROUND_NAME."""
+    runs = MEASURED_RUNS if runs is None else runs
+    steps_s = UNMEASURED_RATIO_STEP_S if steps is None else steps
+    gov, rnd, py = governing_phase(k, runs, unmeasured, steps)
+    cap, rule, margin = ruled_cap(gov, PER_TEST_TIMEOUT_S, SETUP_S)
+    if py in runs[rnd]:
+        head = "shard %d, measured, %s's %d s on %s" % (k, ROUND_NAME[rnd], gov, py)
+    else:
+        head = "shard %d, %s projected from %s's %d s on 3.12, times %d/%d is %d s" % (
+            k, py, ROUND_NAME[rnd], runs[rnd]["3.12"][k], steps_s[py], steps_s["3.12"], gov)
+    if cap == rule:
+        tail = ", a margin of %d s" % margin
+    else:
+        tail = " by the rule, a margin of %d s, under %d s, so %d" % (margin, MARGIN_FLOOR_S, cap)
+    return "%s, and %d + %d + %d = %d s, so %d%s" % (head, gov, PER_TEST_TIMEOUT_S, SETUP_S,
+                                                    gov + PER_TEST_TIMEOUT_S + SETUP_S, rule, tail)
 
 
 def english(items):
@@ -222,13 +281,14 @@ class PythonJobCeiling(unittest.TestCase):
     private runner (2 CPUs and 8 GB; tests/test_ci_pytest_workers.py) under a cap of 90, the rule's figure for the whole
     suite's estimated one-worker phase, until a local run found that one worker does not fit 8 GB; since then each Linux
     interpreter runs as SHARD_COUNT (tests/conftest.py) one-worker jobs, one per shard, and each shard has its own cap in
-    the expression, the rule's figure for that shard's governing phase: governing_phase(k), the largest of SHARD_PHASE_S[k]
-    (the slower measured phase) and each unmeasured interpreter's projected phase (decided 2026-10-05, when the
-    projections raised shards 2 and 4 from 35 to 40), with PER_TEST_TIMEOUT_S (600, read back from the Run pytest step's
-    --timeout) and SETUP_S. The pin is equality with rule_minutes of the three, so a cap above the rule's figure is red as
-    well as one below it: past the figure a hung cell holds its run's verdict for nothing, and short of it a stall that
-    begins late in the run on the slowest interpreter is cancelled before the per-test timeout names it. While a shard's
-    phase is a placeholder (None), its cap must be PLACEHOLDER_CAP, ci.yml's comment must carry PLACEHOLDER_MARK, and
+    the expression: ruled_cap of governing_phase(k), the slowest of every measured run of the shard in MEASURED_RUNS and
+    of each unmeasured interpreter's projection of each round's 3.12 phase, with PER_TEST_TIMEOUT_S (600, read back from
+    the Run pytest step's --timeout) and SETUP_S; that is T230b's rule's figure, raised 5 minutes when it leaves less than
+    MARGIN_FLOOR_S under the cap (both decided 2026-10-05, when the slowest runs and the margin rule took shard 2 from 40
+    to 45 and shard 3 from 25 to 30). The pin is equality, so a cap above the ruled figure is red as well as one below
+    it: past the figure a hung cell holds its run's verdict for nothing, and short of it a stall that begins late in the
+    run on the slowest interpreter is cancelled before the per-test timeout names it. While a shard's phase is a
+    placeholder (None in any round), its cap must be PLACEHOLDER_CAP, ci.yml's comment must carry PLACEHOLDER_MARK, and
     the rule case is red, so a placeholder cannot ship as a measured figure."""
     def setUp(self):
         self.count = SHARD_COUNT
@@ -250,56 +310,69 @@ class PythonJobCeiling(unittest.TestCase):
                                 "600 s per-test timeout plus setup is 53 to 54, so a cap below 54 cuts a green run")
         self.assertLessEqual(self.macos, 60, "past an hour a hung macOS cell eats the dispatch")
 
-    def test_every_shard_has_a_cap_and_a_phase_entry(self):
+    def test_every_shard_has_a_cap_and_a_phase_in_every_run(self):
         self.assertEqual(sorted(self.caps), list(range(1, self.count + 1)), "a cap for each shard, 1 to SHARD_COUNT")
-        self.assertEqual(sorted(SHARD_PHASE_S), list(range(1, self.count + 1)), "a phase entry for each shard, 1 to SHARD_COUNT")
-        self.assertEqual(sorted(SHARD_PHASE_312_S), list(range(1, self.count + 1)), "a 3.12 phase entry for each shard")
-        self.assertEqual(sorted(SHARD_PHASE_314T_S), list(range(1, self.count + 1)), "a 3.14t phase entry for each shard")
+        self.assertTrue(MEASURED_RUNS, "no measured run: each shard's cap comes from its measured runs")
+        self.assertEqual(sorted(ROUND_LOG), sorted(MEASURED_RUNS), "a log for each round")
+        self.assertEqual(sorted(ROUND_NAME), sorted(MEASURED_RUNS), "a name in the cap comment for each round")
+        for rnd, by_py in MEASURED_RUNS.items():
+            with self.subTest(round=rnd):
+                self.assertEqual(sorted(by_py), sorted(MEASURED), "the %s round has phases on each measured interpreter"
+                                 % rnd)
+                for py, phases in sorted(by_py.items()):
+                    self.assertEqual(sorted(phases), list(range(1, self.count + 1)), "the %s round's %s phases name each "
+                                     "shard, 1 to SHARD_COUNT" % (rnd, py))
 
     def test_a_placeholder_cap_is_named_one(self):
-        for k, phase in sorted(SHARD_PHASE_S.items()):
-            if phase is None:
-                with self.subTest(shard=k):
-                    self.assertEqual(self.caps[k], PLACEHOLDER_CAP, "shard %d's phase is a placeholder, so its cap is the "
-                                     "placeholder figure %d" % (k, PLACEHOLDER_CAP))
-                    self.assertIn(PLACEHOLDER_MARK, self.joined, "while a shard's phase is a placeholder the cap's comment "
-                                  "says so")
-        if all(phase is not None for phase in SHARD_PHASE_S.values()):
+        placeholders = sorted({k for by_py in MEASURED_RUNS.values() for phases in by_py.values()
+                               for k, phase in phases.items() if phase is None})
+        for k in placeholders:
+            with self.subTest(shard=k):
+                self.assertEqual(self.caps[k], PLACEHOLDER_CAP, "shard %d's phase is a placeholder, so its cap is the "
+                                 "placeholder figure %d" % (k, PLACEHOLDER_CAP))
+                self.assertIn(PLACEHOLDER_MARK, self.joined, "while a shard's phase is a placeholder the cap's comment "
+                              "says so")
+        if not placeholders:
             self.assertNotIn(PLACEHOLDER_MARK, self.joined, "every shard's phase is measured: the cap's comment no longer "
                              "calls them placeholders")
 
-    def test_each_shards_cap_is_the_rules_figure_for_its_phase(self):
+    def test_each_shards_cap_is_the_ruled_figure_for_its_slowest_run(self):
+        # the candidates are built here from MEASURED_RUNS directly, not through governing_phase, and counted, so a
+        # governing_phase that skipped a round, an interpreter or a projection is red, and so is an empty population
+        self.assertTrue(MEASURED_RUNS, "no measured run: each shard's cap comes from its measured runs")
+        for py in UNMEASURED + ("3.12",):
+            self.assertIsNotNone(UNMEASURED_RATIO_STEP_S.get(py), "no Run pytest seconds for %s in run %d: an unmeasured "
+                                 "interpreter's projection needs its ratio to 3.12" % (py, UNMEASURED_RATIO_RUN))
         for k in range(1, self.count + 1):
             with self.subTest(shard=k):
-                phase = SHARD_PHASE_S.get(k)
-                self.assertIsNotNone(phase, "PLACEHOLDER: shard %d's one-worker pytest phase on the private runner's shape (2 "
-                                     "CPUs, 8 GB) is not measured. ci.yml's cap for it is %d, the placeholder figure, not a "
-                                     "measurement. Measure the phase, set SHARD_PHASE_S[%d] to its seconds, and set the cap "
-                                     "and ci.yml's comment to rule_minutes(governing_phase(%d)[0], %d, %d)"
-                                     % (k, self.caps[k], k, k, PER_TEST_TIMEOUT_S, SETUP_S))
-                self.assertIsNotNone(SHARD_PHASE_312_S.get(k), "shard %d has no 3.12 phase, the base each unmeasured "
-                                     "interpreter's projection scales: measure it and set SHARD_PHASE_312_S[%d]" % (k, k))
-                for py in UNMEASURED + ("3.12",):
-                    self.assertIsNotNone(UNMEASURED_RATIO_STEP_S.get(py), "no Run pytest seconds for %s in run %d: an "
-                                         "unmeasured interpreter's projection needs its ratio to 3.12" % (py, UNMEASURED_RATIO_RUN))
-                gov, basis = governing_phase(k)
-                self.assertGreaterEqual(gov, max([phase] + [projected_phase(k, py) for py in UNMEASURED]),
-                                        "the governing phase is the largest of the measured phase and every projection")
-                want = rule_minutes(gov, PER_TEST_TIMEOUT_S, SETUP_S)
-                label = basis if basis == MEASURED_BASIS else "%s projected" % basis
-                self.assertEqual(self.caps[k], want, "shard %d's cap must be T230b's rule for its governing phase (%s): %d s "
-                                 "plus the %d s per-test timeout plus %d s before the step, rounded up to a multiple of 5 "
-                                 "minutes, is %d; ci.yml has %d" % (k, label, gov, PER_TEST_TIMEOUT_S, SETUP_S, want,
-                                                                    self.caps[k]))
+                runs = [(rnd, py, phases.get(k)) for rnd, by_py in MEASURED_RUNS.items() for py, phases in by_py.items()]
+                for rnd, py, phase in runs:
+                    self.assertIsNotNone(phase, "PLACEHOLDER: shard %d's one-worker pytest phase on %s in the %s round, "
+                                         "under the private runner's shape (2 CPUs, 8 GB), is not measured. ci.yml's cap "
+                                         "for it is %d, the placeholder figure, not a measurement. Measure the phase, set "
+                                         "MEASURED_RUNS[%r][%r][%d] to its seconds, and set the cap and ci.yml's comment "
+                                         "to ruled_cap(governing_phase(%d)[0], %d, %d)[0]"
+                                         % (k, py, rnd, self.caps[k], rnd, py, k, k, PER_TEST_TIMEOUT_S, SETUP_S))
+                    self.assertIsNotNone(MEASURED_RUNS[rnd].get("3.12"), "the %s round has no 3.12 phases, the base each "
+                                         "unmeasured interpreter's projection of it scales" % rnd)
+                candidates = [phase for _rnd, _py, phase in runs]
+                candidates += [projected_phase(k, py, by_py["3.12"]) for by_py in MEASURED_RUNS.values()
+                               for py in UNMEASURED]
+                self.assertEqual(len(candidates), len(MEASURED_RUNS) * (len(MEASURED) + len(UNMEASURED)), "every "
+                                 "measured run of the shard, and each unmeasured interpreter's projection of each round's "
+                                 "3.12 phase")
+                gov, rnd, py = governing_phase(k)
+                self.assertEqual(gov, max(candidates), "the governing phase is the slowest of every measured run and "
+                                 "every projection")
+                cap, rule, margin = ruled_cap(gov, PER_TEST_TIMEOUT_S, SETUP_S)
+                label = ("measured on %s in %s" % (py, ROUND_NAME[rnd]) if py in MEASURED
+                         else "%s projected from %s" % (py, ROUND_NAME[rnd]))
+                self.assertEqual(self.caps[k], cap, "shard %d's cap must be the ruled figure for its governing phase "
+                                 "(%s): %d s plus the %d s per-test timeout plus %d s before the step, rounded up to a "
+                                 "multiple of 5 minutes, is %d, a margin of %d s, and 5 minutes more when that margin is "
+                                 "under %d s, so %d; ci.yml has %d" % (k, label, gov, PER_TEST_TIMEOUT_S, SETUP_S, rule,
+                                                                      margin, MARGIN_FLOOR_S, cap, self.caps[k]))
                 self.assertIn("%d s" % gov, self.head, "the cap's comment states shard %d's governing phase, %d s" % (k, gov))
-
-    def test_each_measured_entry_is_the_slower_of_its_two_interpreters(self):
-        for k in range(1, self.count + 1):
-            with self.subTest(shard=k):
-                self.assertIsNotNone(SHARD_PHASE_312_S.get(k), "a 3.12 phase for shard %d" % k)
-                self.assertIsNotNone(SHARD_PHASE_314T_S.get(k), "a 3.14t phase for shard %d" % k)
-                self.assertEqual(SHARD_PHASE_S[k], max(SHARD_PHASE_312_S[k], SHARD_PHASE_314T_S[k]), "shard %d's measured "
-                                 "entry is the slower of its 3.12 and 3.14t phases" % k)
 
     def test_every_interpreter_of_the_matrix_is_measured_or_projected(self):
         # the governing phase takes the max over every unmeasured interpreter, so UNMEASURED is the matrix's interpreters
@@ -314,38 +387,69 @@ class PythonJobCeiling(unittest.TestCase):
                          "matrix's interpreters: one the matrix adds needs a measured phase or a ratio to 3.12")
         self.assertIn("3.12", MEASURED, "the projections scale 3.12's measured phases")
 
-    def test_the_cap_comment_states_each_shards_governing_phase_and_its_basis(self):
-        # The comment states, for each shard, the phase its cap is the rule's figure for and whether that phase is measured
-        # or an unmeasured interpreter's projection (named, with the shard's 3.12 phase and the step times it scales by),
-        # then the rule's sum and the cap; the step times of every interpreter the projections scale by, and their run;
-        # that a projection is not a measurement; which shards the projections raise past the measured phases' figures,
-        # and to what; and the re-derivation from the private repository's first run. Every shard has a governing phase,
-        # so each shard's clauses are held whatever the projections do. A text pin over figures this file derives
-        # (test_each_shards_cap_is_the_rules_figure_for_its_phase holds the caps).
-        base = UNMEASURED_RATIO_STEP_S["3.12"]
+    def test_the_cap_comment_states_the_rule_and_its_reason(self):
+        # the rule as ruled on 2026-10-05: T230b's rule, then 5 minutes more under the margin floor, with the reason in a
+        # clause: the run-to-run variation (shard 2's two 3.12 phases over the same files), and what a cap and a timeout
+        # each cost
+        rule = ("rounded up to a multiple of 5 minutes, and then 5 minutes more when that leaves less than %d s between "
+                "the sum and the cap" % MARGIN_FLOOR_S)
+        self.assertTrue(rule in self.joined, "the cap's comment states T230b's rule and the margin rule (%r)" % rule)
+        lo, hi = sorted((SHARD_PHASE_312_HASH_ALONE_S[2], SHARD_PHASE_312_WEIGHTED_S[2]))
+        variation = "shard 2's two 3.12 phases over the same files differ by %d percent" % round(100 * (hi - lo) / lo)
+        self.assertTrue(variation in self.joined, "the cap's comment gives the variation the margin rule answers (%r)"
+                        % variation)
+        self.assertTrue("shard 2 on 3.12 took %d s in the hash-alone run and %d s in this one, over the same files"
+                        % (SHARD_PHASE_312_HASH_ALONE_S[2], SHARD_PHASE_312_WEIGHTED_S[2]) in self.joined, "the "
+                        "measurement paragraph states shard 2's two 3.12 phases")
+        for piece in ("a higher cap costs nothing on a normal run", "about 5 billed minutes on a wedged one",
+                      "a timeout shows as a cancelled, red job"):
+            with self.subTest(piece=piece):
+                self.assertTrue(piece in self.joined, "the cap's comment gives the rule's reason (%r)" % piece)
+        slowest = "the largest of every measured run of the shard above, in %s runs of four shards, %s, on %s" % (
+            {2: "both"}.get(len(MEASURED_RUNS), "the %d" % len(MEASURED_RUNS)),
+            english([ROUND_NAME[r] for r in MEASURED_RUNS]), english(MEASURED))
+        self.assertTrue(slowest in self.joined, "the cap's comment says the governing phase takes every measured run "
+                        "(%r)" % slowest)
+        self.assertTrue("each interpreter not measured locally, %s" % english(UNMEASURED) in self.joined, "the cap's "
+                        "comment names the interpreters it projects")
+
+    def test_the_cap_comment_records_each_rounds_phases(self):
+        # each round's record in the measurement paragraphs: "shard k, <3.12> s and <3.14t> s"
+        for rnd, by_py in MEASURED_RUNS.items():
+            for k in range(1, self.count + 1):
+                with self.subTest(round=rnd, shard=k):
+                    record = "shard %d, %s" % (k, english(["%d s" % by_py[py][k] for py in MEASURED]))
+                    self.assertTrue(record in self.joined, "ci.yml's record of the %s round states shard %d's phases "
+                                    "(%r)" % (rnd, k, record))
+
+    def test_the_cap_comment_states_each_shards_governing_run_projection_sum_margin_and_cap(self):
+        # For each shard, cap_clause's text: the run that governs (a measured run, or an unmeasured interpreter's
+        # projection of a round's 3.12 phase, named with the phase and the step times it scales by), the sum, the rule's
+        # figure, the margin under it, and the cap when the margin rule raises it; no other run named as the shard's
+        # basis; the step times of every interpreter the projections scale by, and their run; that a projection is not
+        # a measurement; and the re-derivation from the private repository's first run. A text pin over figures this
+        # file derives (test_each_shards_cap_is_the_ruled_figure_for_its_slowest_run holds the caps).
         projected = False
         for k in range(1, self.count + 1):
-            gov, basis = governing_phase(k)
-            total = gov + PER_TEST_TIMEOUT_S + SETUP_S
+            gov, rnd, py = governing_phase(k)
             with self.subTest(shard=k):
-                arithmetic = "%d + %d + %d = %d s, so %d" % (gov, PER_TEST_TIMEOUT_S, SETUP_S, total, self.caps[k])
-                self.assertTrue(arithmetic in self.joined, "the cap's comment states shard %d's sum and cap (%r)"
-                                % (k, arithmetic))
-                others = [py for py in UNMEASURED if py != basis]
-                if basis == MEASURED_BASIS:
-                    self.assertTrue("shard %d, measured" % k in self.joined, "shard %d's governing phase is its measured "
-                                    "one: the cap's comment says so" % k)
+                clause = cap_clause(k)
+                self.assertTrue(clause in self.joined, "the cap's comment states shard %d's governing run, projection, "
+                                "sum, margin and cap (%r)" % (k, clause))
+                self.assertEqual(ruled_cap(gov, PER_TEST_TIMEOUT_S, SETUP_S)[0], self.caps[k], "the clause's cap is the "
+                                 "expression's")
+                if py in MEASURED:
+                    self.assertTrue("shard %d, measured" % k in self.joined)
                 else:
                     projected = True
-                    named = "shard %d, %s projected, %d s on 3.12 times %d/%d is %d s" % (
-                        k, basis, SHARD_PHASE_312_S[k], UNMEASURED_RATIO_STEP_S[basis], base, gov)
-                    self.assertTrue(named in self.joined, "shard %d's governing phase is %s's projection: the cap's "
-                                    "comment names it and its arithmetic (%r)" % (k, basis, named))
-                    self.assertFalse("shard %d, measured" % k in self.joined, "shard %d's governing phase is a projection: "
-                                     "the cap's comment does not call it measured" % k)
-                for py in others:
-                    self.assertFalse("shard %d, %s projected" % (k, py) in self.joined, "%s's projection does not govern "
-                                     "shard %d: the cap's comment does not name it as the basis" % (py, k))
+                    self.assertFalse("shard %d, measured" % k in self.joined, "shard %d's governing phase is a "
+                                     "projection: the cap's comment does not call it measured" % k)
+                for r in MEASURED_RUNS:
+                    for p in UNMEASURED:
+                        if (r, p) != (rnd, py):
+                            self.assertFalse("shard %d, %s projected from %s's" % (k, p, ROUND_NAME[r]) in self.joined,
+                                             "%s's projection of %s does not govern shard %d: the cap's comment does "
+                                             "not name it as the basis" % (p, ROUND_NAME[r], k))
         for py in UNMEASURED + ("3.12",):
             self.assertTrue("%d s on %s" % (UNMEASURED_RATIO_STEP_S[py], py) in self.joined, "the cap's comment states "
                             "%s's Run pytest seconds in run %d, %d s" % (py, UNMEASURED_RATIO_RUN, UNMEASURED_RATIO_STEP_S[py]))
@@ -353,39 +457,12 @@ class PythonJobCeiling(unittest.TestCase):
         if projected:
             self.assertTrue("A projection, not a measurement" in self.joined, "a projection governs a cap: the cap's "
                             "comment says a projection is not a measurement")
-        measured_only = [rule_minutes(SHARD_PHASE_S[k], PER_TEST_TIMEOUT_S, SETUP_S) for k in range(1, self.count + 1)]
-        alone = "The measured phases alone (%s s) gave %s" % (english([SHARD_PHASE_S[k] for k in range(1, self.count + 1)]),
-                                                             english(measured_only))
-        self.assertTrue(alone in self.joined, "the cap's comment states the measured phases' own figures (%r)" % alone)
-        for k in range(1, self.count + 1):
-            raised = "shard %d from %d to %d" % (k, measured_only[k - 1], self.caps[k])
-            with self.subTest(shard=k):
-                if self.caps[k] > measured_only[k - 1]:
-                    self.assertTrue(raised in self.joined, "the projections raise shard %d's cap: the cap's comment says "
-                                    "from what to what (%r)" % (k, raised))
-                else:
-                    self.assertFalse("shard %d from " % k in self.joined, "the projections leave shard %d's cap at %d: "
-                                     "the cap's comment names no raise for it" % (k, self.caps[k]))
-        # the shards the projections leave at the measured phases' figures, named with their caps, one clause per cap
-        unraised = {}
-        for k in range(1, self.count + 1):
-            if self.caps[k] == measured_only[k - 1]:
-                unraised.setdefault(self.caps[k], []).append(k)
-        if unraised:
-            leave = "and leave %s" % english(["shard%s %s at %d" % ("s" if len(ks) > 1 else "", english(ks), cap)
-                                              for cap, ks in sorted(unraised.items())])
-            self.assertTrue(leave in self.joined, "the cap's comment names the shards the projections leave at the "
-                            "measured phases' figures, and those figures (%r)" % leave)
-        else:
-            self.assertFalse("and leave shard" in self.joined, "the projections raise every shard's cap: the cap's "
-                             "comment names no shard as left")
-        # the summary: the interpreter whose projection is the largest on every shard (from projected_phase, the first in
-        # UNMEASURED's order on a tie, the order governing_phase breaks ties in), and whether that projection passes
-        # each measured phase, so that it governs every shard. governing_phase's basis alone cannot say which projection
-        # is the largest: it is MEASURED_BASIS wherever no projection passes the measured phase.
+        # the summary: the interpreter whose projection is the largest on every shard (over every round's projections,
+        # the first in the rounds' and then UNMEASURED's order on a tie, the order governing_phase breaks ties in), and
+        # whether that projection passes each measured run, so that it governs every shard
         largest = set()
         for k in range(1, self.count + 1):
-            phases = [(projected_phase(k, py), py) for py in UNMEASURED]
+            phases = [(projected_phase(k, py, by_py["3.12"]), py) for by_py in MEASURED_RUNS.values() for py in UNMEASURED]
             if phases:
                 top = max(p for p, _py in phases)
                 largest.add(next(py for p, py in phases if p == top))
@@ -403,19 +480,66 @@ class PythonJobCeiling(unittest.TestCase):
             self.assertFalse("is the largest on every shard" in self.joined, "no one interpreter's projection is the "
                              "largest on every shard: the cap's comment does not say one is")
         # "it" is the one interpreter the summary names, so the clause stands only beside that name
-        passes = single is not None and all(governing_phase(k)[1] != MEASURED_BASIS for k in range(1, self.count + 1))
+        passes = single is not None and all(governing_phase(k)[2] == single for k in range(1, self.count + 1))
         if passes:
-            self.assertTrue("and it passes each measured phase" in self.joined, "%s's projection passes the measured "
-                            "phase of every shard: the cap's comment says so" % single)
+            self.assertTrue("and it passes each measured run" in self.joined, "%s's projection passes every measured "
+                            "run of every shard: the cap's comment says so" % single)
         else:
-            self.assertFalse("and it passes each measured phase" in self.joined, "the largest projection does not pass "
-                             "every shard's measured phase, or no one interpreter's is the largest: the cap's comment "
+            self.assertFalse("and it passes each measured run" in self.joined, "the largest projection does not pass "
+                             "every shard's measured runs, or no one interpreter's is the largest: the cap's comment "
                              "does not say it passes each one")
         self.assertTrue("re-derived from the first run on the private repository's 2-CPU runners" in self.joined,
                         "the cap's comment says the caps are re-derived from the private repository's first run")
         self.assertTrue("the fork's public runners have more CPUs, so the fork's CI times are not that measurement"
                         in self.joined, "the cap's comment says why the fork's CI times are not the re-derivation's "
                         "measurement")
+
+    def test_the_cap_comment_says_whether_the_other_composition_changes_a_cap(self):
+        # Shards 1 and 4 ran other files in the hash-alone round than CI runs (OTHER_COMPOSITION). The caps count every
+        # round, as ruled; the comment says whether counting only the rounds with CI's files would change either cap, and
+        # each such shard's figures that way. Red, to be reworded, if it would change one.
+        P, S = PER_TEST_TIMEOUT_S, SETUP_S
+        self.assertTrue(OTHER_COMPOSITION, "re-anchor: no shard ran other files in any round, so the composition "
+                        "sentence goes")
+        module, where = MOVED_MODULE
+        self.assertEqual(sorted(where), sorted(MEASURED_RUNS), "the moved module's shard in each round")
+        self.assertEqual(sorted(set(where.values())), sorted(OTHER_COMPOSITION), "the shards whose files differ are the "
+                         "moved module's shards")
+        others = set(OTHER_COMPOSITION.values())
+        self.assertEqual(len(others), 1, "re-anchor: the shards ran other files in different rounds")
+        other = next(iter(others))
+        kept = {r: v for r, v in MEASURED_RUNS.items() if r != other}
+        self.assertTrue(kept, "re-anchor: no round runs CI's files")
+        shards = sorted(OTHER_COMPOSITION)
+        self.assertEqual(len(shards), 2, "re-anchor: the sentence speaks of two shards ('neither cap')")
+        moved = ("Shards %s ran different files in the two runs: %s ran in shard %d in %s and in shard %d in %s, whose "
+                 "files are the ones CI runs" % (english(shards), module, where[other], ROUND_NAME[other],
+                                                 where[next(iter(kept))], english([ROUND_NAME[r] for r in kept])))
+        self.assertTrue(moved in self.joined, "the cap's comment says which shards ran other files, and why (%r)" % moved)
+        kept_name = english([ROUND_NAME[r] for r in kept])
+        counted = "The caps count both runs; counting %s alone would change neither cap" % kept_name
+        self.assertEqual(len(MEASURED_RUNS), 2, "re-anchor: 'both runs'")
+        for k in shards:
+            with self.subTest(shard=k):
+                gx, rx, px = governing_phase(k, kept)
+                capx, rulex, _mx = ruled_cap(gx, P, S)
+                self.assertEqual(capx, self.caps[k], "re-anchor: counting %s alone changes shard %d's cap from %d to %d, "
+                                 "so the cap's comment must say so" % (kept_name, k, self.caps[k], capx))
+                self.assertEqual(capx, rulex, "re-anchor: counting %s alone, shard %d's cap comes from the margin rule"
+                                 % (kept_name, k))
+                gov, rnd, _py = governing_phase(k)
+                if rnd == other:
+                    desc = ("measured on %s" % px if px in MEASURED else
+                            "%s projected from %s's %d s on 3.12" % (px, ROUND_NAME[rx], kept[rx]["3.12"][k]))
+                    phrase = "shard %d's governing phase would be %d s (%s), and %d + %d + %d = %d s, still %d" % (
+                        k, gx, desc, gx, P, S, gx + P + S, capx)
+                else:
+                    self.assertEqual(gx, gov, "the governing run is in a kept round, so it governs there too")
+                    phrase = "shard %d's cap already comes from %s" % (k, ROUND_NAME[rnd])
+                self.assertTrue(phrase in self.joined, "the cap's comment states shard %d's figures counting %s alone "
+                                "(%r)" % (k, kept_name, phrase))
+        self.assertTrue(counted in self.joined, "the cap's comment says the caps count both runs and that counting the "
+                        "runs with CI's files alone changes neither cap (%r)" % counted)
 
     def test_the_time_before_the_step_is_the_longest_cells_and_the_comment_names_it(self):
         self.assertEqual(sorted(CELL_EDGE_S), sorted(MEASURED + UNMEASURED), "the times before and after the Run pytest "
@@ -431,60 +555,6 @@ class PythonJobCeiling(unittest.TestCase):
             SETUP_S, SETUP_CELL, CELL_JOB[SETUP_CELL], {5: "five"}[len(CELL_EDGE_S)])
         self.assertTrue(setup in self.joined, "the cap's comment names the time before the step, its cell and job, and "
                         "that it is the longest (%r)" % setup)
-
-    def test_the_cap_comment_states_the_margins_and_shard_2s_cap_at_its_slower_measurement(self):
-        # Shard 2's cap rests on the faster of two local 3.12 measurements over the same files (1220 s in the weighted run,
-        # 1482 s in the run by the hash alone), so the comment gives the rule's figure at the slower one, the 3.12 phase
-        # past which shard 2's cap rises, and the shard nearest its cap with its margin, at this measurement and at the
-        # hash-alone run's. A text pin over figures derived here with governing_phase and rule_minutes.
-        P, S = PER_TEST_TIMEOUT_S, SETUP_S
-        hash_alone = SHARD_PHASE_312_HASH_ALONE_S
-        self.assertTrue("shard 2 on 3.12 took %d s in the hash-alone run and %d s in this one, over the same files"
-                        % (hash_alone[2], SHARD_PHASE_312_S[2]) in self.joined, "the measurement paragraph states shard "
-                        "2's two 3.12 phases")
-        gov2, basis2 = governing_phase(2, base=hash_alone)
-        cap2 = rule_minutes(gov2, P, S)
-        self.assertNotEqual(basis2, MEASURED_BASIS, "re-anchor: at the hash-alone 3.12 phase shard 2's measured phase "
-                            "governs, and the sentence names a projection")
-        self.assertGreater(cap2, self.caps[2], "re-anchor: the hash-alone 3.12 phase no longer raises shard 2's cap, so "
-                           "the sentence on it goes")
-        slower = ("At the hash-alone run's %d s for shard 2 on 3.12, the same rule gives %d (%s projected %d s, and "
-                  "%d + %d + %d = %d s)" % (hash_alone[2], cap2, basis2, gov2, gov2, P, S, gov2 + P + S))
-        self.assertTrue(slower in self.joined, "the cap's comment states shard 2's cap at its slower 3.12 measurement "
-                        "(%r)" % slower)
-        # the largest 3.12 phase at which shard 2 keeps its cap
-        keep = SHARD_PHASE_312_S[2]
-        while rule_minutes(governing_phase(2, base={2: keep + 1})[0], P, S) <= self.caps[2]:
-            keep += 1
-            self.assertLess(keep, hash_alone[2], "shard 2 keeps its cap at the hash-alone 3.12 phase: re-anchor")
-        threshold = "shard 2 keeps %d only while its 3.12 phase is %d s or less" % (self.caps[2], keep)
-        self.assertTrue(threshold in self.joined, "the cap's comment states the 3.12 phase past which shard 2's cap "
-                        "rises (%r)" % threshold)
-        # the shard nearest its cap
-        sums = {k: governing_phase(k)[0] + P + S for k in range(1, self.count + 1)}
-        margins = {k: self.caps[k] * 60 - sums[k] for k in sums}
-        nearest = min(margins, key=margins.get)
-        self.assertEqual(list(margins.values()).count(margins[nearest]), 1, "two shards share the smallest margin, %d s: "
-                         "reword the cap comment's sentence on the nearest shard and this pin" % margins[nearest])
-        past = rule_minutes(self.caps[nearest] * 60 + 1 - P - S, P, S)
-        tight = ("Shard %d's sum, %d s, is the closest of the %s to its cap, %d s under its %d minutes, past which the rule "
-                 "gives %d" % (nearest, sums[nearest], {4: "four"}[self.count], margins[nearest], self.caps[nearest],
-                               past))
-        self.assertTrue(tight in self.joined, "the cap's comment states the shard nearest its cap and its margin (%r)"
-                        % tight)
-        self.assertIn(nearest, hash_alone, "re-anchor: the hash-alone run's phase of the nearest shard is not held here")
-        gov_h = governing_phase(nearest, base=hash_alone)[0]
-        sum_h = gov_h + P + S
-        self.assertLess(sum_h, self.caps[nearest] * 60, "at the hash-alone 3.12 phase the nearest shard passes its cap: "
-                        "re-anchor the sentence")
-        hashed = ("at the hash-alone run's %d s on 3.12 (a run of the shard with 3 fewer tests) it is %d s, %d s under"
-                  % (hash_alone[nearest], sum_h, self.caps[nearest] * 60 - sum_h))
-        self.assertTrue(hashed in self.joined, "the cap's comment states the nearest shard's sum at the hash-alone run's "
-                        "3.12 phase (%r)" % hashed)
-        for k, phase in sorted(hash_alone.items()):
-            with self.subTest(shard=k):
-                self.assertTrue("shard %d, %d s and " % (k, phase) in self.joined, "ci.yml's record of the hash-alone "
-                                "run states shard %d's 3.12 phase, %d s" % (k, phase))
 
     def test_the_placeholder_figure_is_the_whole_suites_estimate_and_its_comment_states_it(self):
         cell_s, serial_s, two_worker_s = WHOLE_SUITE_ESTIMATE_INPUTS
@@ -514,7 +584,12 @@ class PythonJobCeiling(unittest.TestCase):
                          "shards' measured figures at the weighted rule: 1306 s, 2078 s, 1241 s and 1864 s, so 25, 35, 25 "
                          "and 35, the caps until 2026-10-05")
         self.assertEqual([rule_minutes(p, 600, 27) for p in (695, 1603, 807, 1625)], [25, 40, 25, 40], "3.10's projected "
-                         "phases: 1322 s, 2230 s, 1434 s and 2252 s, so 25, 40, 25 and 40")
+                         "phases of the weighted run: 1322 s, 2230 s, 1434 s and 2252 s, so 25, 40, 25 and 40, the caps "
+                         "before the slowest run and the margin rule")
+        self.assertEqual([ruled_cap(p, 600, 27) for p in (727, 1947, 869, 1625)],
+                         [(25, 25, 146), (45, 45, 126), (30, 25, 4), (40, 40, 148)], "3.10's projected phases of each "
+                         "shard's slowest run: 1354 s, 2574 s, 1496 s and 2252 s, so 25, 45, 25 and 40 by the rule, with "
+                         "margins of 146, 126, 4 and 148 s, and shard 3's under 60 s, so 25, 45, 30 and 40")
         self.assertEqual(rule_minutes(3000 - 632, 600, 32), 50, "exactly 50 minutes stays 50")
         self.assertEqual(rule_minutes(3001 - 632, 600, 32), 55, "a second past 50 minutes is 55")
 
@@ -537,9 +612,10 @@ class ShardCapsReader(unittest.TestCase):
 
 
 class GoverningPhase(unittest.TestCase):
-    """projected_phase and governing_phase over synthetic data: the projection rounds up, the largest phase governs, a
-    projection that only ties the measured phase does not, every unmeasured interpreter is read, a tie between two
-    projections goes to the first in unmeasured's order, and missing data is refused."""
+    """projected_phase, governing_phase, ruled_cap and cap_clause over synthetic data: the projection rounds up, the
+    largest phase governs over every round and interpreter, the slowest run governs when it is not the first, a
+    projection that only ties a measured run does not, a tie between two projections goes to the first in order, the
+    margin rule raises a cap whose margin is under the floor and only then, and missing data is refused."""
     STEPS = {"3.10": 130, "3.11": 100, "3.12": 100}
 
     def test_the_projection_rounds_up_to_the_second(self):
@@ -547,28 +623,71 @@ class GoverningPhase(unittest.TestCase):
         self.assertEqual(projected_phase(1, "3.10", {1: 101}, self.STEPS), 132, "131.3 s rounds up to 132")
 
     def test_the_largest_phase_governs(self):
-        self.assertEqual(governing_phase(1, {1: 120}, ("3.10", "3.11"), {1: 100}, self.STEPS), (130, "3.10"))
-        self.assertEqual(governing_phase(1, {1: 90}, ("3.11", "3.10"), {1: 100}, self.STEPS), (130, "3.10"),
+        one = {"a": {"3.12": {1: 100}, "3.14t": {1: 120}}}
+        self.assertEqual(governing_phase(1, one, ("3.10", "3.11"), self.STEPS), (130, "a", "3.10"))
+        low = {"a": {"3.12": {1: 100}, "3.14t": {1: 90}}}
+        self.assertEqual(governing_phase(1, low, ("3.11", "3.10"), self.STEPS), (130, "a", "3.10"),
                          "every unmeasured interpreter is read, not the first: a later one's larger projection governs")
         tie = {"3.10": 130, "3.11": 100, "3.12": 100, "3.13": 130}
-        self.assertEqual(governing_phase(1, {1: 90}, ("3.11", "3.10", "3.13"), {1: 100}, tie), (130, "3.10"),
+        self.assertEqual(governing_phase(1, low, ("3.11", "3.10", "3.13"), tie), (130, "a", "3.10"),
                          "two projections tie: the first in unmeasured's order is the basis")
-        self.assertEqual(governing_phase(1, {1: 140}, ("3.10", "3.11"), {1: 100}, self.STEPS), (140, MEASURED_BASIS))
-        self.assertEqual(governing_phase(1, {1: 130}, ("3.10",), {1: 100}, self.STEPS), (130, MEASURED_BASIS),
-                         "a projection must pass the measured phase to govern")
-        self.assertEqual(governing_phase(1, {1: 90}, (), {1: 100}, self.STEPS), (90, MEASURED_BASIS))
+        high = {"a": {"3.12": {1: 100}, "3.14t": {1: 140}}}
+        self.assertEqual(governing_phase(1, high, ("3.10", "3.11"), self.STEPS), (140, "a", "3.14t"))
+        even = {"a": {"3.12": {1: 100}, "3.14t": {1: 130}}}
+        self.assertEqual(governing_phase(1, even, ("3.10",), self.STEPS), (130, "a", "3.14t"),
+                         "a projection must pass the measured run to govern")
+        self.assertEqual(governing_phase(1, low, (), self.STEPS), (100, "a", "3.12"))
+
+    def test_the_slowest_run_governs_when_it_is_not_the_first(self):
+        later_314t = {"a": {"3.12": {1: 100}, "3.14t": {1: 110}}, "b": {"3.12": {1: 90}, "3.14t": {1: 150}}}
+        self.assertEqual(governing_phase(1, later_314t, (), self.STEPS), (150, "b", "3.14t"),
+                         "the second round's 3.14t run is the slowest")
+        later_312 = {"a": {"3.12": {1: 100}, "3.14t": {1: 110}}, "b": {"3.12": {1: 160}, "3.14t": {1: 120}}}
+        self.assertEqual(governing_phase(1, later_312, (), self.STEPS), (160, "b", "3.12"),
+                         "the second round's 3.12 run is the slowest")
+        later_projection = {"a": {"3.12": {1: 100}, "3.14t": {1: 140}}, "b": {"3.12": {1: 120}, "3.14t": {1: 100}}}
+        self.assertEqual(governing_phase(1, later_projection, ("3.10",), self.STEPS), (156, "b", "3.10"),
+                         "the second round's 3.12 phase projects to 156 s, past the first round's 140 s and 130 s")
+        self.assertEqual(governing_phase(1, {"b": later_projection["b"]}, ("3.10",), self.STEPS), (156, "b", "3.10"))
+        self.assertEqual(governing_phase(1, {"a": later_projection["a"]}, ("3.10",), self.STEPS), (140, "a", "3.14t"),
+                         "without the second round the first round's measured run governs")
 
     def test_missing_data_is_refused(self):
         with self.assertRaises(LookupError):
-            governing_phase(1, {1: None}, ("3.10",), {1: 100}, self.STEPS)
+            governing_phase(1, {}, ("3.10",), self.STEPS)
         with self.assertRaises(LookupError):
-            governing_phase(2, {1: 100}, ("3.10",), {1: 100}, self.STEPS)
+            governing_phase(1, {"a": {}}, ("3.10",), self.STEPS)
         with self.assertRaises(LookupError):
-            governing_phase(1, {1: 100}, ("3.13",), {1: 100}, self.STEPS)
+            governing_phase(1, {"a": {"3.12": {1: None}, "3.14t": {1: 100}}}, ("3.10",), self.STEPS)
+        with self.assertRaises(LookupError, msg="a shard missing from the second round alone is refused"):
+            governing_phase(1, {"a": {"3.12": {1: 100}, "3.14t": {1: 100}}, "b": {"3.12": {1: 100}, "3.14t": {2: 100}}},
+                            (), self.STEPS)
+        with self.assertRaises(LookupError, msg="a round with no 3.12 phase has nothing to project"):
+            governing_phase(1, {"a": {"3.12": {1: 100}}, "b": {"3.14t": {1: 100}}}, ("3.10",), self.STEPS)
         with self.assertRaises(LookupError):
-            governing_phase(1, {1: 100}, ("3.10",), {2: 100}, self.STEPS)
+            governing_phase(1, {"a": {"3.12": {1: 100}}}, ("3.13",), self.STEPS)
         with self.assertRaises(LookupError):
             projected_phase(1, "3.10", {1: 100}, {"3.10": 130})
+        with self.assertRaises(LookupError):
+            projected_phase(1, "3.10", None, self.STEPS)
+
+    def test_the_margin_rule(self):
+        self.assertEqual(ruled_cap(727, 600, 27), (25, 25, 146), "1354 s: 25 by the rule, 146 s under, so 25")
+        self.assertEqual(ruled_cap(869, 600, 27), (30, 25, 4), "1496 s: 25 by the rule, 4 s under, so 30")
+        self.assertEqual(ruled_cap(813, 600, 27), (25, 25, 60), "a margin of exactly 60 s is not under 60 s")
+        self.assertEqual(ruled_cap(814, 600, 27), (30, 25, 59), "a margin of 59 s raises the cap")
+        self.assertEqual(ruled_cap(873, 600, 27), (30, 25, 0), "a sum exactly at the cap raises it")
+        self.assertEqual(ruled_cap(874, 600, 27), (30, 30, 299), "a second past 25 minutes is 30 by the rule, 299 s under")
+        self.assertEqual(ruled_cap(727, 600, 27, floor_s=150), (30, 25, 146), "the floor is the argument's")
+
+    def test_cap_clause(self):
+        measured = {HASH_ALONE: {"3.12": {1: 100}, "3.14t": {1: 90}}, WEIGHTED: {"3.12": {1: 110}, "3.14t": {1: 1000}}}
+        self.assertEqual(cap_clause(1, measured), "shard 1, measured, the weighted run's 1000 s on 3.14t, and "
+                         "1000 + 600 + 27 = 1627 s, so 30, a margin of 173 s")
+        raised = {HASH_ALONE: {"3.12": {1: 661}, "3.14t": {1: 466}}, WEIGHTED: {"3.12": {1: 614}, "3.14t": {1: 409}}}
+        self.assertEqual(cap_clause(1, raised), "shard 1, 3.10 projected from the hash-alone run's 661 s on 3.12, times "
+                         "1639/1248 is 869 s, and 869 + 600 + 27 = 1496 s, so 25 by the rule, a margin of 4 s, under "
+                         "60 s, so 30")
 
     def test_english(self):
         self.assertEqual(english([25]), "25")
