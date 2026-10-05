@@ -456,18 +456,18 @@ application/manifest+json, application/octet-stream, image/png and text/plain,
 all but image/png only with a nosniff header); and so is one of those but
 image/png (SNIFF_SCRIPT_TYPES) where no X-Content-Type-Options: nosniff header
 is written beside its Content-Type (an expression statement calling send_header
-on the write's own receiver with exactly two positional string constants and no
-keyword, X-Content-Type-Options in any case and nosniff in any case once
-stripped of spaces and tabs, in the write's block, before any statement there
-that names end_headers or flush_headers (as an attribute, a name or a string
-constant) or, after the write, calls a method of that receiver other than
-send_header, send_response or send_response_only, or hands the receiver to a
-call, and with no other X-Content-Type-Options header, nor a send_header whose
+on a receiver spelled as the write's with exactly two positional string
+constants and no keyword, X-Content-Type-Options in any case and nosniff in any
+case once stripped of spaces and tabs, in the write's block, before any
+statement there that names end_headers or flush_headers (as an attribute, a name
+or a string constant) or, after the write, calls a method of that receiver other
+than send_header, send_response or send_response_only, or hands the receiver to
+a call, and with no other X-Content-Type-Options header, nor a send_header whose
 name is no string constant, before it there or in a statement that runs before
 its block; not read: a compound statement before that block in an enclosing
 block or in a sibling block that runs before that block or an enclosing one (a
-try's body before its finally, a loop's body before its else), a header written
-through a call the census does not follow, a helper
+try's body before its finally, a loop's body before its else), a header written,
+or the header block ended, through a call the census does not follow, a helper
 method of the handler among them, an earlier iteration of a loop around the
 write that writes the header from a branch exclusive with the write's, a
 callable bound outside the write's block under another name, a function that
@@ -493,31 +493,40 @@ a for's iterable, a with's item, a match's subject or a case's guard, an except
 clause's type, a nested class's decorators, bases or keywords), an end_headers
 or a flush_headers outside the write's block (in a statement that runs before
 it, or in the own expressions of a compound statement that holds it), since the
-census reads no order across blocks, or the write's receiver reached after the
-write within the write's own statement, or in a later statement other than as
-the base of a method call on it or as a call's argument, starred or
-double-starred argument or keyword value (through an alias, a bound method held
-under a name, super() or getattr on super(), an attribute read or write, an
-item, a container handed to a call, an operand, a truth test, an f-string, a
-bound method's `__call__`, an unpacking, or a with or a for over it, among
-others); the header values the census reads, a header call's in the write's home
-and a `_send` call's header arguments, take a name a nested scope binds for a
-local, so a module constant of that name is not read there (in the write's home
-a name any nested def, lambda, class or comprehension binds, at a `_send` call a
-comprehension's target in a function around it); and neither reads a header call
-through getattr, an alias, functools.partial or the header buffer
-(`_headers_buffer`), a header or a response line the calling route writes before
-a `_send` call, a second Content-Type spelled other than as a send_header with
-two positional arguments, the first the string constant Content-Type in any
-case, a header a loop writes from names it binds (refused before the nosniff
-header in the write's block, and otherwise unread, a second Content-Type or a CR
-or LF among what it may write), a header a helper method or any other function
-the home calls writes (its header lines lie outside every home), a write to the
-receiver's raw socket through self.connection, or the kernel's own end_headers
-override, which may write a header of its own at any call, outside every home;
-the part before any `;`, stripped and lower-cased, is compared
-with the types a browser runs script from
-(SCRIPT_TYPES: text/html; the XML types text/xml,
+census reads no order across blocks, control leaving the write's block before
+the nosniff header (a return, raise, break or continue, or a statement that
+raises, caught so the headers still end), a name the write's receiver is spelled
+with, bound again after the write (an assignment, a loop, a with or walrus
+target, among others), the nosniff header then going to whatever the name holds,
+or the write's receiver reached after the write within the write's own
+statement, or in a later statement other than as the base of a method call on it
+or as a call's argument, starred or double-starred argument or keyword value
+(through an alias, a bound method held under a name, super() or getattr on
+super(), an attribute read or write, an item, a container handed to a call, an
+operand, a truth test, an f-string, a bound method's `__call__`, an unpacking,
+or a with or a for over it, among others); the header values the census reads, a
+header call's in the write's home and a `_send` call's header arguments, take a
+name a nested scope binds for a local, so a module constant of that name is not
+read there (in the write's home a name any nested def, lambda, class or
+comprehension binds, at a `_send` call a comprehension's target in a function
+around it); and neither reads a header call spelled other than as a call of an
+attribute named send_header, send_response or send_response_only (through
+getattr, an alias, a bound method's `__call__` or `__func__`, functools.partial,
+operator.methodcaller or the header buffer, `_headers_buffer`, among others), a
+header or a response line the calling route writes before a `_send` call or
+before a call of a helper method or any other function that writes the
+Content-Type, a second Content-Type spelled other than as a send_header with two
+positional arguments, the first the string constant Content-Type in any case, a
+header a loop writes from names it binds (where its name is one of them, refused
+by the nosniff test before the nosniff header in the write's block, and
+otherwise unread, a second Content-Type or a CR or LF among what it may write),
+a header a helper method or any other function the home calls writes (its header
+lines lie outside every home) or an end_headers it runs before the write, a
+write to the receiver's raw socket through self.connection, or the kernel's own
+end_headers override, which may write a header of its own at any call, outside
+every home; the part before any `;`, stripped and lower-cased, is compared with
+the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types
+text/xml,
 application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and
 application/xhtml+xml among them; and text/javascript under each name a browser
 takes for JavaScript, application/javascript among them). A script-running
