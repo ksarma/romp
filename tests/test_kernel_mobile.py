@@ -2495,6 +2495,7 @@ _ATTR_NAME = re.compile(r"\[\s*(?:(?:[\w-]*|\*)\|)?([\w-]+)")
 _AT_HOLDS_A_SELECTOR = re.compile(r"@(scope|custom-selector)(?![\w-])", re.I)
 _SELECTOR_TEST = re.compile(r"(?<![\w-])selector\s*\(", re.I)
 _QUOTED = re.compile(r"\"[^\"]*(?:\"|\Z)|'[^']*(?:'|\Z)")   # a quoted string, to its closing quote or the end, in text with no escape
+_URL = re.compile(r"(?<![\w-])url\(\s*(?![\s\"'])([^)]*)", re.I)   # an unquoted url(), to its ) or the end: one token to a browser
 
 
 def _bell_rule_classes(html):
@@ -2510,15 +2511,21 @@ def _bell_rule_classes(html):
     rule spelled past the read fails the census instead of passing it unread (T10's fix pass, 2026-10-05: `[id=mbell].busy{opacity:.45}`
     planted in the phone block had passed; review round 1, the same day: `@scope (#mbell){:scope.busy{opacity:.45}}` and
     `#mbell/**/.busy{opacity:.45}` had passed too, and so had, at that round's fix, `#mtabs #mbell{&.busy{opacity:.45}` left open at
-    the end of a style element and `#mtabs #mbell:not([title=")] "]).busy{opacity:.45}`). It models a style rule's own selector, a bell's id written there
-    plainly as `#mbell` or `#rail-bell`, and the attribute selectors whose name it can read. It refuses an id attribute selector in any
-    compound, whatever its case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`, `[ID$=bell i]`); a class attribute
-    selector in a compound that carries a bell's id; a `[` that starts no attribute name this read can parse; a CSS escape in a
-    selector or an at-rule prelude (`#\6d bell`, `.bu\73 y`, `@\73 cope`); a comment inside a selector; a quoted string in a selector
-    that holds a bracket or paren, which this read's compound split counts as nesting; a `{` inside a style rule's block, a nested
-    rule, which served_css reads as the outer rule's declarations when the outer brace is left off; and an at-rule whose prelude can
-    hold a selector: @scope, whose prelude selects the elements its block styles, @custom-selector, and a selector() test (@supports,
-    @when, @else).
+    the end of a style element, `#mtabs #mbell:not([title=")] "]).busy{opacity:.45}` and
+    `@font-face{font-family:"{"}#mtabs #mbell.busy{opacity:.45}}`). It models a style rule's own selector, a bell's id written there
+    plainly as `#mbell` or `#rail-bell`, and the attribute selectors whose name it can read, over served_css's parse, which reads every
+    brace as a block's edge and every `/*` as a comment's start. It refuses an id attribute selector in any compound, whatever its
+    case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`, `[ID$=bell i]`); a class attribute selector in a compound
+    that carries a bell's id; a `[` that starts no attribute name this read can parse; a comment inside a selector; a quoted string in
+    a selector that holds a bracket or paren, which this read's compound split counts as nesting; a selector whose parentheses or
+    brackets do not balance, which served_css leaves when it cuts a rule at a brace a browser keeps inside them
+    (`#mbell:is([x={}],*).busy`); a selector character outside printable ASCII, which can continue a class or id name past this read
+    (a class `on` followed by a middle dot is not `on` to a browser); a `{` inside a style rule's block, a nested rule, which served_css reads as the outer rule's declarations when the outer
+    brace is left off; anywhere in a style element, a CSS escape (`#\6d bell`, `.bu\73 y`, `@\73 cope`), a quoted string that holds a
+    brace or a newline, and an unquoted url() that holds a brace, a quote or a comment marker, since a browser reads a brace or a
+    comment marker inside an escape, a string or a url() as text, and ends a string at a newline, where served_css reads structure and
+    reads on to the closing quote; and an at-rule whose prelude can hold a selector: @scope, whose prelude selects the elements its
+    block styles, @custom-selector, and a selector() test (@supports, @when, @else).
     The comment is refused rather than read because served_css blanks a comment to spaces, which this read takes as a descendant
     combinator, while a browser drops it (`#mbell/**/.busy` is one compound to a browser); served_css's blanking stays as it is, since
     the other censuses read it. The preludes are read from each style element's text rather than from the rules' `at`, since a
@@ -2527,13 +2534,23 @@ def _bell_rule_classes(html):
     attribute) is not read here, a stated limit."""
     blocks = served_css.style_blocks(html)
     for _, css in blocks:
-        for at in re.finditer(r"@[^{};]*", served_css.css_code(css)):   # every at-rule's prelude, up to its block or its ;
+        code = served_css.css_code(css)   # the element's text, its comments blanked
+        for at in re.finditer(r"@[^{};]*", code):   # every at-rule's prelude, up to its block or its ;
             prelude = at.group(0).strip()
             name = _AT_HOLDS_A_SELECTOR.match(prelude)
             assert not name, ("an @%s rule (%r) holds a selector in its prelude, which can reach a bell past this census; it reads "
                               "rules' own selectors only" % (name.group(1).lower(), prelude))
             assert not _SELECTOR_TEST.search(prelude), "an at-rule prelude holds a selector() test (%r); this census reads rules' own selectors only" % prelude
-            assert "\\" not in prelude, "an at-rule prelude is spelled with a CSS escape (%r); this census reads plain spellings only" % prelude
+        # served_css reads every brace as a block's edge and every /* as a comment's start, and runs a string to its closing quote; a
+        # browser reads a brace or a comment marker inside an escape, a url() or a string as text, and ends a string at a newline
+        k = css.find("\\")
+        assert k < 0, "a style element holds a CSS escape (%r); this census reads plain spellings only" % css[max(0, k - 40):k + 40]
+        for url in _URL.finditer(css):
+            assert not re.search(r"[{}\"']|/\*", url.group(1)), ("an unquoted url() holds a brace, a quote or a comment marker (%r), which a "
+                                                                 "browser reads as part of the url" % url.group(0)[:80])
+        for q in _QUOTED.findall(code):
+            assert not re.search(r"[\n\r\f]", q), "a quoted string holds a newline (%r), where a browser ends the string" % q[:80]
+            assert not re.search(r"[{}]", q), "a quoted string holds a brace (%r), which served_css reads as a block's edge" % q[:80]
     rules, bare = served_css.rules(html), []
     for _, css in blocks:   # each style element's rules again, its comments removed where served_css blanks them to spaces
         kept, at = "", 0
@@ -2545,12 +2562,19 @@ def _bell_rule_classes(html):
     for rule, plain in zip(rules, bare):
         assert rule.selector == plain.selector, ("a rule's selector holds a comment (%r, read here as %r): served_css blanks it to spaces, "
                                                  "a descendant combinator, where a browser drops it" % (plain.selector, rule.selector))
-        assert "\\" not in rule.selector, "a rule spells a selector with a CSS escape (%r); this census reads plain spellings only" % rule.selector
+        assert re.fullmatch(r"[\t\n\f\r\x20-\x7e]*", rule.selector), ("a selector holds a character outside printable ASCII (%r), which "
+                                                                     "can continue a class or id name past this census's read" % rule.selector)
         assert "{" not in rule.declarations, ("a rule's block holds a { (%r {%r}): a nested rule, which served_css reads as this rule's "
                                               "declarations; this census reads rules' own selectors only" % (rule.selector, rule.declarations[:80]))
         for q in _QUOTED.findall(rule.selector):
             assert not re.search(r"[()\[\]]", q), ("a quoted string in a selector holds a bracket or paren (%r), which this census's "
                                                    "compound split counts as nesting" % rule.selector)
+        depth = low = 0
+        for c in rule.selector:
+            depth += (c in "([") - (c in ")]")
+            low = min(low, depth)
+        assert depth == low == 0, ("a selector's parentheses or brackets do not balance (%r): served_css cut the rule at a brace inside "
+                                   "them, which a browser reads as part of the selector" % rule.selector)
         for member in served_css.members(rule.selector):
             for comp in served_css._split_top(re.sub(r"\s*([>+~])\s*", r"\1", member), " >+~"):
                 attrs = [_ATTR_NAME.match(comp, m.start()) for m in re.finditer(r"\[", comp)]
@@ -2769,6 +2793,28 @@ class BellRuleReader(unittest.TestCase):
             ('#mtabs #mbell[title=") "].busy{opacity:.45}', "bracket or paren"),
             ('#mtabs #mbell[title*=")>"].busy{opacity:.45}', "bracket or paren"),
             ("#mtabs #mbell[title='] '].busy{opacity:.45}", "bracket or paren"),
+        )
+        for css, why in cases:
+            with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
+                self._read(css)
+
+    def test_a_brace_or_comment_marker_a_browser_reads_as_text_and_a_non_ascii_selector_are_refused_by_name(self):
+        # The first seven passed this reader unrefused with its nesting and quoted bracket refusals in place (review round 1's fix,
+        # 2026-10-05): a brace inside an escape, a string, a url() or a selector's brackets or parentheses, which served_css reads as
+        # structure, and a comment marker inside a url(), which it reads as a comment, each left a rule unread that Chromium applies to a
+        # busy bell; a class name that runs past this read's \w was read as plain `on`. The last four pin the other clauses by name.
+        cases = (
+            (r"@media (max-width:640px){#mtabs #mbell:not(.x\}).busy{opacity:.45}", "CSS escape"),
+            ('@font-face{font-family:"{"}#mtabs #mbell.busy{opacity:.45}}', "a quoted string holds a brace"),
+            ("#x{background:url(/*)}#mtabs #mbell.busy{opacity:.45}#y{background:url(*/)}", "an unquoted url()"),
+            ("@font-face{src:url(a{b)}#mtabs #mbell.busy{opacity:.45}}", "an unquoted url()"),
+            ("@media (max-width:640px){#mtabs #mbell:is(.x},*).busy{opacity:.45}", "do not balance"),
+            ("#mtabs #mbell:is([x={}],*).busy{opacity:.45}", "do not balance"),
+            ("#mtabs #mbell.on\u00b7{opacity:.45}", "outside printable ASCII"),
+            ('#x{content:"}{" #mbell.busy{opacity:.45}', "a quoted string holds a brace"),
+            ('#x{content:"a\n}#mtabs #mbell.busy{opacity:.45}', "a quoted string holds a newline"),
+            ('#x{background:url(a"b)}#mtabs #mbell.busy{opacity:.45}', "an unquoted url()"),
+            ("#mtabs #mbell:is(#y{},*).busy{opacity:.45}", "do not balance"),
         )
         for css, why in cases:
             with self.subTest(css=css), self.assertRaisesRegex(AssertionError, re.escape(why)):
