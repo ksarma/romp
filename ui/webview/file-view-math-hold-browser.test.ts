@@ -20,7 +20,10 @@
 // notice while the loader stands and lands on its target at the arrival's paint (file-view.ts landTarget stands down while a
 // paint is held; the arrival runs it after its paint), and a Raw pick that ends the hold first lands the offset in the rows.
 // Before, the landing spent the target over the loader: the heading raised 'No section named' and both opens sat at the note's
-// top once the chunk was in.
+// top once the chunk was in. Those scenes, the editor's and a note with no formula whose text lands frames after the open also run
+// in Chromium with classic scrollbars (BARS, below): there the paint brings a scrollbar that narrows the body, and the width hook's
+// repaint kept to the place the paint had read at the top, undoing the landing (the check of round 2's pass; file-view.ts landTarget
+// notes the place each landing lands on).
 // A takeover of the body ends the hold (the review's round 2, correctness-1): a reload answered 404 while a paint is held paints its
 // pane, and the renderer's arrival, a success or a failure, leaves the pane standing with the seam's error() keeping its sentence
 // (before, the arrival painted the last text over it); the editor entered while held stays through the arrival, and its Cancel
@@ -228,8 +231,27 @@ const landing = (page: any): Promise<Landing> => page.evaluate(() => {
     katex: b.querySelectorAll(".katex").length, paints: (window as any).__paints - (window as any).__reflows };
 });
 
+// Scrollbars. Playwright's headless Chromium hides them (--hide-scrollbars), so the body keeps its width when a paint brings the
+// text's overflow; a desktop browser shows a classic one, and so does Playwright's WebKit, and there that paint narrows the body by
+// the scrollbar's width (10 px under the sheet's rule). The width hook's repaint (file-view.ts) then ran a frame or two after the
+// open's landing and seated the place the paint had read at the note's top, so the landing was undone: every held open meets it,
+// the loader standing for frames before the text arrives, and so does an open whose text lands after its first frame, math or none
+// (the check of round 2's pass, first seen in WebKit; the same at fork main). "classic" launches Chromium without that flag
+// (file-view-scrollbar-browser.test.ts's idiom), so CI's one engine runs the width change; each such scene asserts that its paint
+// did narrow the body, so a sheet that stops showing the scrollbar cannot turn it into a scene that never meets the change.
+const BARS = ["hidden", "classic"] as const;
+type Bars = (typeof BARS)[number];
+const barsName = (b: Bars): string => (b === "classic" ? "chromium with classic scrollbars" : "chromium");
+const barsLaunch = (b: Bars): Parameters<typeof inBrowser>[2] => (b === "classic" ? ({ ignoreDefaultArgs: ["--hide-scrollbars"] } as unknown as Parameters<typeof inBrowser>[2]) : {});
+const bodyWidth = (page: any): Promise<number> => page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).clientWidth);
+/** Under classic scrollbars, the paint between the two widths brought the scrollbar: the scene met the width change it pins. */
+const metWidthChange = (bars: Bars, before: number, after: number): void => {
+  if (bars === "classic") assert.ok(after < before, "armed: the paint's scrollbar narrowed the body: " + JSON.stringify({ before, after }));
+};
+
+for (const bars of BARS)
 for (const [name, at] of [["a heading", { heading: "#second" }], ["an offset", { offset: TARGET_OFFSET }]] as const) {
-  test(`chromium: a math note opened at ${name} before the math renderer is in raises no notice while held and lands on its target at the arrival's paint`, { timeout: 60000 }, async (t) => {
+  test(`${barsName(bars)}: a math note opened at ${name} before the math renderer is in raises no notice while held and lands on its target at the arrival's paint`, { timeout: 60000 }, async (t) => {
     await inBrowser(t, async (browser) => {
       assert.ok(TARGET_OFFSET > 0);
       const g = gate(); const requests: string[] = [];
@@ -238,10 +260,12 @@ for (const [name, at] of [["a heading", { heading: "#second" }], ["an offset", {
       await frames(page, 6);   // the frames a spent heading or offset would have run in (spendHeading's, scrollToSourceOffset's)
       const held = await landing(page);
       assert.deepEqual([held.loader, held.paints, held.notice], [true, 0, null], "held: the loader stands and no notice speaks for a target the paint has not reached: " + JSON.stringify(held));
+      const w0 = await bodyWidth(page);
       g.open();
       await paintsReach(page, 1);
       await frames(page, 6);
       const b = await landing(page);
+      metWidthChange(bars, w0, await bodyWidth(page));
       assert.deepEqual([b.loader, b.katex, b.paints, b.notice], [false, 1, 1, null], "one paint, the formula laid out, no notice: " + JSON.stringify(b));
       assert.ok(b.scrollTop > 0, "the note no longer sits at its top: " + JSON.stringify(b));
       if ("heading" in at) {
@@ -251,19 +275,22 @@ for (const [name, at] of [["a heading", { heading: "#second" }], ["an offset", {
       }
       assert.equal(requests.length, 1);
       assert.deepEqual(errors, []);
-    });
+    }, barsLaunch(bars));
   });
 }
 
-test("chromium: a Raw pick while a math note opened at an offset is held paints the rows and lands the offset there; the arrival changes nothing after it", { timeout: 60000 }, async (t) => {
+for (const bars of BARS)
+test(`${barsName(bars)}: a Raw pick while a math note opened at an offset is held paints the rows and lands the offset there; the arrival changes nothing after it`, { timeout: 60000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const g = gate(); const requests: string[] = [];
     const { page, errors } = await open(browser, { [REPORT]: TARGETED }, "serve", g, requests, { at: { offset: TARGET_OFFSET } });
     await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
     await frames(page, 6);
     assert.equal((await landing(page)).loader, true, "held");
+    const w0 = await bodyWidth(page);
     await page.locator(".fileview-seg button", { hasText: "Raw" }).click();
     await frames(page, 6);
+    metWidthChange(bars, w0, await bodyWidth(page));
     const rows = (): Promise<{ rows: number; scrollTop: number; target: { top: number; bottom: number } | null; clientHeight: number; notice: string | null }> => page.evaluate(() => {
       const b = document.querySelector(".fileview-body") as HTMLElement;
       const bt = b.getBoundingClientRect().top;
@@ -282,8 +309,47 @@ test("chromium: a Raw pick while a math note opened at an offset is held paints 
     assert.deepEqual([after.scrollTop, after.rows, after.notice], [raw.scrollTop, raw.rows, null], "the arrival repaints nothing over the Raw view: " + JSON.stringify(after));
     assert.equal(requests.length, 1);
     assert.deepEqual(errors, []);
-  });
+  }, barsLaunch(bars));
 });
+
+// The same landing with no formula at all (the check of round 2's pass: the fault is the landing's, not the hold's): a note whose
+// text lands frames after the open, as on a slow link (its file fetch held here), opened at a heading or an offset. Red at fork main
+// under classic scrollbars, where nothing is held.
+const PLAIN_TARGETED = TARGETED.replace("The ratio $\\frac{a}{b}$ holds.", "The ratio a over b holds.");
+/** Holds the viewer's file fetches (a GET with a path) until `window.__releaseFile()`: installed before the open. */
+const holdFileFetch = async (page: any): Promise<void> => {
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__fileHeld = new Promise((r) => { w.__releaseFile = r; });
+    const f0 = w.fetch;
+    w.fetch = async function (url: string, init: any) { if (String(url).includes("path=") && !(init && init.method === "HEAD")) await w.__fileHeld; return f0.call(this, url, init); };
+  });
+};
+for (const [name, at] of [["a heading", { heading: "#second" }], ["an offset", { offset: PLAIN_TARGETED.indexOf("Target paragraph here.") }]] as const) {
+  test(`chromium with classic scrollbars: a note with no formula whose text lands frames after the open, opened at ${name}, lands on its target`, { timeout: 60000 }, async (t) => {
+    await inBrowser(t, async (browser) => {
+      assert.ok(PLAIN_TARGETED !== TARGETED && !PLAIN_TARGETED.includes("$"), "the note holds no formula");
+      const requests: string[] = [];
+      const { page, errors } = await open(browser, { [REPORT]: PLAIN_TARGETED }, "serve", null, requests, { at }, { before: holdFileFetch });
+      await frames(page, 6);
+      const held = await landing(page);
+      assert.deepEqual([held.loader, held.paints], [true, 0], "the loader stands while the text is out: " + JSON.stringify(held));
+      const w0 = await bodyWidth(page);
+      await page.evaluate(() => (window as any).__releaseFile());
+      await paintsReach(page, 1);
+      await frames(page, 8);
+      const b = await landing(page);
+      metWidthChange("classic", w0, await bodyWidth(page));
+      if ("heading" in at) {
+        assert.ok(b.scrollTop > 0 && b.heading !== null && b.heading >= 0 && b.heading < 60, "the section's heading at the top of the body: " + JSON.stringify(b));
+      } else {
+        assert.ok(b.scrollTop > 0 && b.target !== null && b.target.top >= 0 && b.target.bottom <= b.clientHeight, "the offset's block in view: " + JSON.stringify(b));
+      }
+      assert.deepEqual([b.paints, b.notice, requests.length], [1, null, 0], "one paint, no notice, no chunk: " + JSON.stringify(b));
+      assert.deepEqual(errors, []);
+    }, barsLaunch("classic"));
+  });
+}
 
 for (const viewer of ["file", "url"] as const) {
   test(`chromium: ${viewer === "file" ? "the Files pane's viewer" : "the URL viewer"}: after a failed load the next Rendered paint asks again and paints at once while the retry is out (no loader, the source shown); the retry, served, repaints the note once with KaTeX, the reader's place kept`, { timeout: 60000 }, async (t) => {
@@ -450,8 +516,9 @@ for (const answer of ["serve", "404"] as const) {
 // fallback, the chunk answering 404): the chunk answered at once, so the fallback stands before the renderer arrives, and the chunk
 // held past the arrival, so the renderer meets the editor's loader (the check of round 2's pass: enterEdit's loader endHold, the one
 // that ends the hold when the chunk is slow, went unpinned while the 404 came at once).
+for (const bars of BARS)
 for (const editorChunk of ["answered at once", "held past the renderer's arrival"] as const) {
-  test(`chromium: the editor entered while a math note opened at an offset is held, its chunk ${editorChunk}, keeps the body through the renderer's arrival, and its Cancel lands the open's offset in the Raw rows`, { timeout: 60000 }, async (t) => {
+  test(`${barsName(bars)}: the editor entered while a math note opened at an offset is held, its chunk ${editorChunk}, keeps the body through the renderer's arrival, and its Cancel lands the open's offset in the Raw rows`, { timeout: 60000 }, async (t) => {
     await inBrowser(t, async (browser) => {
       const g = gate(); const requests: string[] = [];
       const slow = editorChunk !== "answered at once";
@@ -480,9 +547,11 @@ for (const editorChunk of ["answered at once", "held past the renderer's arrival
         await page.waitForFunction(() => !!document.querySelector(".fileview-body > textarea.fileview-editor"), null, { timeout: 10000 });
         await frames(page, 4);
       }
+      const w0 = await bodyWidth(page);
       await page.locator("#romp-fileview button.fileview-btn", { hasText: /^Cancel$/ }).click();
       await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
       await frames(page, 6);
+      metWidthChange(bars, w0, await bodyWidth(page));
       const raw = await page.evaluate(() => {
         const b = document.querySelector(".fileview-body") as HTMLElement;
         const bt = b.getBoundingClientRect().top;
@@ -492,7 +561,7 @@ for (const editorChunk of ["answered at once", "held past the renderer's arrival
       assert.ok(raw.scrollTop > 0 && raw.target !== null && raw.target.top >= 0 && raw.target.bottom <= raw.clientHeight, "the Cancel's Raw paint lands the open's offset: its row in view: " + JSON.stringify(raw));
       assert.equal(requests.length, 1);
       assert.deepEqual(errors, []);
-    });
+    }, barsLaunch(bars));
   });
 }
 

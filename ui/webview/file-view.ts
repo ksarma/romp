@@ -2868,7 +2868,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (h === null) return;
     requestAnimationFrame(() => {
       if (wrap.isConnected && unmeasurable()) { pendingHeading = h; return; }   // no box yet: held for the show's repaint (landTarget)
-      if (!wrap.isConnected || scrollToFragment(body, h)) return;
+      if (!wrap.isConnected) return;
+      if (scrollToFragment(body, h)) { notePlace(); return; }   // landed: the place it shows is the one a width repaint seats (landTarget's comment)
       // the section is there but under a plain `hidden` wrapper (an author's stashed section; the landing lifts `until-found` alone, as
       // the browser's own does): no box to land on (scrollToFragment lands nothing), so the note stays at its top and the notice says so
       // (the PR review's round 1: the open landed at the top with no word; "No section named" would be false of it, and the Outline
@@ -4794,10 +4795,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     spendOnMedia();
     keyboardOnLanding();
   };
+  // The offset's landing, a frame after the paint, notes the place it lands on (notePlace), as landRemembered's seat does, and so does
+  // the heading's (spendHeading): the width hook's repaint seats the place last noted, and a paint that changed the body's width (a
+  // classic scrollbar coming with the text's overflow, which headless Chromium hides and desktop browsers and Playwright's WebKit
+  // show) reaches that repaint in the frame after the landing's, its scroll event not yet read, so the repaint seated the place the
+  // paint had read at the note's top and put the note back there (the check of round 2's pass: a math note opened at a heading or an
+  // offset before the renderer was in, Cancel out of the editor, and a Raw pick that ended a hold all landed and were sent back to the
+  // top in WebKit, as was a note with no formula whose text came after the open's first frame, at fork main too; a held paint always
+  // meets it, the loader standing for frames before the text and its scrollbar arrive). The line's landing scrolls in the paint's own
+  // task, before the width's report, and its scroll is read in time (measured: it lands in both engines without a note).
   const landTarget = (): void => {
     if (unmeasurable() || mathHeld) return;   // no box, or a paint held for the math renderer (renderBody): the pendings wait for the paint that can land them
     if (pendingLine !== null) { const n = pendingLine; pendingLine = null; scrollToLine(n); }
-    if (pendingOffset !== null) { const n = pendingOffset; pendingOffset = null; requestAnimationFrame(() => { if (wrap.isConnected) scrollToSourceOffset(n); }); }
+    if (pendingOffset !== null) { const n = pendingOffset; pendingOffset = null; requestAnimationFrame(() => { if (wrap.isConnected) { scrollToSourceOffset(n); notePlace(); } }); }
     if (pendingHeading !== null && (!isMd || fmt.md === "rendered")) spendHeading();
     keyboardOnLanding();
   };
