@@ -150,13 +150,15 @@ const snap = async (name) => {
     // the mask-border's -webkit- form is -webkit-mask-box-image, the only form Chromium reports. A property reported in
     // neither form, or an unreadable opacity, fails the same way, except a mask-border in an engine that supports neither
     // of its forms (CSS.supports), which draws none and is not read: Firefox does not support it. Paint effects outside the
-    // rule, which change the drawn colour without compositing the box, are not read: among them visibility, clip-path, an
-    // inset box-shadow on the ground box, a text-shadow or a -webkit-text-stroke on the triangle's count, the paint of
-    // #merr's own children and a box off this path drawn over the triangle
+    // rule are not read: among them visibility, clip-path, an inset box-shadow on the ground box and a text-shadow or a
+    // -webkit-text-stroke on the triangle's count (these three change the drawn colour without compositing a box), the
+    // paint of #merr's own children and a box off this path drawn over the triangle
     const DRAWN = [["filter", "none"], ["backdrop-filter", "none"], ["mix-blend-mode", "normal"], ["mask-image", "none"],
                    ["mask-border", "none", "-webkit-mask-box-image"]];
     const drawn = (st) => {
-      if (!(parseFloat(st.opacity) >= 1)) return "an opacity of " + st.opacity;
+      const op = parseFloat(st.opacity);
+      if (Number.isNaN(op)) return "an unreadable opacity";
+      if (op < 1) return "an opacity of " + st.opacity;
       for (const [prop, flat, prefixed = "-webkit-" + prop] of DRAWN) {
         if (prop === "mask-border" && ![prop, prefixed].some((p) => CSS.supports(p, flat))) continue;
         const forms = [prop, prefixed].map((p) => [p, st.getPropertyValue(p)]).filter((f) => f[1] !== "");
