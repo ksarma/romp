@@ -2515,23 +2515,23 @@ def _bell_rule_classes(html):
     `@font-face{font-family:"{"}#mtabs #mbell.busy{opacity:.45}}`, and at its closing check
     `@media (x:;@font-face ), all{#mtabs #mbell.busy{opacity:.45}}`). It models a style rule's own selector, a bell's id written there
     plainly as `#mbell` or `#rail-bell`, and the attribute selectors whose name it can read, over served_css's parse, which reads every
-    brace as a block's edge, every `;` outside a declaration block as a statement's end, and every `/*` as a comment's start. It refuses
-    an id attribute selector in any compound, whatever its case, spacing, namespace prefix, operator, quoting or flag (`[id=mbell]`,
-    `[ID$=bell i]`); a class attribute selector in a compound that carries a bell's id; a `[` that starts no attribute name this read
-    can parse; a comment inside a selector; a quoted string in a selector that holds a bracket or paren, which this read's compound
-    split counts as nesting; a selector whose parentheses or brackets do not balance, which served_css leaves when it cuts a rule at a
-    brace a browser keeps inside them (`#mbell:is([x={}],*).busy`); a selector character outside printable ASCII, which can continue a
-    class or id name past this read (a class `on` followed by a middle dot is not `on` to a browser); a `{` inside a style rule's block,
-    a nested rule, which served_css reads as the outer rule's declarations when the outer brace is left off; anywhere in a style
-    element, a CSS escape (`#\6d bell`, `.bu\73 y`, `@\73 cope`), a quoted string that holds a brace or a newline, and an unquoted url()
-    that holds a brace, a quote or a comment marker, since a browser reads a brace or a comment marker inside an escape, a string or a
-    url() as text, and ends a string at a newline, where served_css reads structure and reads on to the closing quote; an at-rule whose
-    prelude can hold a selector: @scope, whose prelude selects the elements its block styles, @custom-selector, and a selector() test
-    (@supports, @when, @else); and an at-rule prelude that holds a quote, or parentheses or brackets that do not balance (a close before
-    its open included), since served_css ends a prelude at a `;` or a brace a browser keeps inside a string, parentheses or brackets and
-    can then record no rule for the block a browser applies (in `@media (x:;@font-face ), all{...}` it skips that block as
-    @font-face's), and a `}` inside a selector's parentheses under an at-rule leaves the at-rule name after it a prelude that closes a
-    paren it never opened (`#mbell:is(.x}@font-face ,*).busy`).
+    brace as a block's edge, every `;` outside a declaration block as a statement's end, and every `/*` outside a quoted string as a
+    comment's start. It refuses an id attribute selector in any compound, whatever its case, spacing, namespace prefix, operator,
+    quoting or flag (`[id=mbell]`, `[ID$=bell i]`); a class attribute selector in a compound that carries a bell's id; a `[` that starts
+    no attribute name this read can parse; a comment inside a selector; a quoted string in a selector that holds a bracket or paren,
+    which this read's compound split counts as nesting; a selector whose parentheses or brackets do not balance, which served_css leaves
+    when it cuts a rule at a brace a browser keeps inside them (`#mbell:is([x={}],*).busy`); a selector character outside printable
+    ASCII, which can continue a class or id name past this read (a class `on` followed by a middle dot is not `on` to a browser); a `{`
+    inside a style rule's block, a nested rule, which served_css reads as the outer rule's declarations when the outer brace is left
+    off; anywhere in a style element, a CSS escape (`#\6d bell`, `.bu\73 y`, `@\73 cope`), a quoted string that holds a brace or a
+    newline, and an unquoted url() that holds a brace, a quote or a comment marker, since a browser reads a brace inside an escape, a
+    string or a url(), and a comment marker inside an escape or a url(), as text, and ends a string at a newline, where served_css reads
+    structure and reads on to the closing quote; an at-rule whose prelude can hold a selector: @scope, whose prelude selects the
+    elements its block styles, @custom-selector, and a selector() test (@supports, @when, @else); and an at-rule prelude that holds a
+    quote, or parentheses or brackets that do not balance (a close before its open included), since served_css ends a prelude at a `;`
+    or a brace a browser keeps inside a string, parentheses or brackets and can then record no rule for the block a browser applies (in
+    `@media (x:;@font-face ), all{...}` it skips that block as @font-face's), and a `}` inside a selector's parentheses under an at-rule
+    leaves the at-rule name after it a prelude that closes a paren it never opened (`#mbell:is(.x}@font-face ,*).busy`).
     The comment is refused rather than read because served_css blanks a comment to spaces, which this read takes as a descendant
     combinator, while a browser drops it (`#mbell/**/.busy` is one compound to a browser); served_css's blanking stays as it is, since
     the other censuses read it. The preludes are read from each style element's text rather than from the rules' `at`, since a
@@ -2576,8 +2576,9 @@ def _bell_rule_classes(html):
             assert depth == low == 0 and not re.search(r"[\"']", prelude), (
                 "an at-rule prelude holds a quote or unbalanced parentheses or brackets (%r): served_css ends a prelude at a ; or a brace a "
                 "browser keeps inside a string, parentheses or brackets, and can then record no rule for a block a browser applies" % prelude)
-        # served_css reads every brace as a block's edge and every /* as a comment's start, and runs a string to its closing quote; a
-        # browser reads a brace or a comment marker inside an escape, a url() or a string as text, and ends a string at a newline
+        # served_css reads every brace as a block's edge and every /* outside a quoted string as a comment's start, and runs a string to
+        # its closing quote; a browser reads a brace inside an escape, a url() or a string, and a comment marker inside an escape or a
+        # url(), as text, and ends a string at a newline
         k = css.find("\\")
         assert k < 0, "a style element holds a CSS escape (%r); this census reads plain spellings only" % css[max(0, k - 40):k + 40]
         for url in _URL.finditer(css):
