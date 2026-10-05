@@ -34,7 +34,8 @@
 # node --test but the bundle check (the roster's reds above, and with a leg in the roster the knobs and the ps reads),
 # and starts no node --test. The tree test's case "the script runs the rostered legs" runs --check as the first
 # argument, and as the second, where it is not read, and its case "the per-file bound through the stub" runs it over
-# each ps the step's run refuses and over a knob it refuses.
+# each ps the step's run refuses, over a knob it refuses, and over an empty roster, where it agrees as the step's run
+# does and makes neither check.
 # How the legs run. Each rostered leg runs as a node --test of its own over that one bundle, ROMP_BROWSER_LEGS_JOBS at a
 # time (by default one less than the CPUs that nproc, or getconf, counts, and at least one, which is node's own
 # --test-concurrency default where no cgroup CPU quota applies, as on CI's hosted runner: node counts the CPUs by

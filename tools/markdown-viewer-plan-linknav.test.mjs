@@ -990,7 +990,7 @@ const legsOffRoster = (files, legs) => files.filter((f) => /^ui\/webview\/[\w-]+
  *  Tests paragraph names it with, for one of two reasons. ENGINES_OFF: a leg that launches an engine the roster's job does not
  *  install, where a test in a rostered file would not run (the file review's round 17, tests-1 with regression-1, and the
  *  coordinator's decision 2 on it: the one gate's tap cells and stacking cells in WebKit and Firefox). BOUNDS_OFF: a leg whose
- *  whole run outlasts both of the step's bounds, its five minutes and the script's per-file bound, so it runs locally alone
+ *  whole run outlasts both of the step's bounds, its timeout and the script's per-file bound, so it runs locally alone
  *  and raising the step's bound is the owner's change to the workflow file (the coordinator's ruling on the roster after the
  *  file review's round 19: the open leg, nearly ten minutes run alone, 586.7 s through the step's own command when node held
  *  the per-file bound). Each is a derived leg whose header carries its words, the plan names it with its own, and it is no
