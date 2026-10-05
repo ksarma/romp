@@ -76945,8 +76945,9 @@ def _landing():
             "<rect class=rn-b x='11' y='11' width='4' height='4' rx='0.6' fill='currentColor'/></svg></div>"
             # the push bell, the desktop twin of #mbell (the user 2026-08-08: a laptop Chrome tab can
             # receive Web Push with no install, but the opt-in bell only rendered on the mobile layout).
-            # Ships hidden; _LANDING_PUSH_JS reveals it wherever the Push API exists and drives both
-            # bells as ONE control (same subscription, same flow). No data-act — it owns its own tap flow.
+            # Ships hidden; _LANDING_PUSH_JS reveals it on every page (since 2026-08-09 it carries the master
+            # switch, which matters where the Push API is missing too) and drives both bells as ONE control
+            # (same subscription, same flow). No data-act: it owns its own tap flow.
             "<div class=rail-act id=rail-bell hidden title=Notifications aria-label=Notifications>"
             "<svg viewBox='0 0 16 16' width='18' height='18'>"
             "<path d='M8 2 C5.7 2 4.3 3.8 4.3 6.2 L4.3 9 L3 11.2 L13 11.2 L11.7 9 L11.7 6.2 C11.7 3.8 10.3 2 8 2 Z'"
