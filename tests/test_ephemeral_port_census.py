@@ -139,7 +139,9 @@ not seen, adding no value and taking none away (HOST = "127.0.0.1", then HOST = 
   is given by position or by its parameter's name (randint's a and b, randrange's start, stop and step, randbelow's
   exclusive_upper_bound; a keyword that names none is passed over), and the call is read by the arguments that fill its
   parameters from the first up to the first left empty: random.randint(a=40000, b=50000) counts as random.randint(40000,
-  50000) does, randrange(start=S) reads as randrange(S), and neither randint(b=N) nor randrange(stop=E) is read. A **
+  50000) does, randrange(start=S) reads as randrange(S), and neither randint(b=N) nor randrange(stop=E) is read. A call
+  spelled on the class, random.Random or random.SystemRandom, takes its first positional argument as the instance
+  (random.Random.randrange(rng, 40000, 50000) is 40000-49999, and so is the call with start= and stop= after rng). A **
   mapping names no parameter, yet can fill any parameter left empty: beside a randrange's start and stop, with its step
   left empty, it is read as a step interval() does not bound (below), and beside any other parameter left empty the call
   is not read, since what the call returns then depends on what the mapping holds (random.randrange(30000, **kw) returns
@@ -243,6 +245,8 @@ these turns its plant red, and the example leaves this list.
   a name bound to one int the census records and also by a binding it does not record (K = 7, then K = f() or
   K *= -1), which interval() reads as that one int, so random.randrange(40000, 1000, K) is read as 40000-999 whatever
   else K holds;
+  an unbound random method spelled on anything but random.Random or random.SystemRandom, whose instance then fills
+  start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
   a host that THE RULE does not take for one (("TESTHOST", N), HTTPConnection(self.host, N)), a name bound to the
   empty string, even in a tuple (H = "", then (H, N)), and the empty string itself before a port in a call (serve("",
   N)); the port beside it is read only when another rule reads it;
@@ -608,11 +612,15 @@ def _random_args(call):
     empty beside it, None. None too when an argument is starred, the positional arguments outnumber the parameters, or
     Python refuses the call for the way its arguments are passed: a keyword names a parameter a positional argument
     fills, or a randrange's stop is left empty and its step is given as anything but the int 1 written there
-    (randrange's default step, the one step Python takes without a stop)."""
-    params = RANDOM_CALLS[_callee(call.func)]
-    if len(call.args) > len(params) or any(isinstance(a, ast.Starred) for a in call.args):
+    (randrange's default step, the one step Python takes without a stop). A call spelled on random.Random or
+    random.SystemRandom passes its instance first, and it is dropped (random.Random.randrange(rng, S, E))."""
+    params, args = RANDOM_CALLS[_callee(call.func)], call.args
+    if isinstance(call.func, ast.Attribute) and _callee(call.func.value) in ("Random", "SystemRandom") and args \
+            and not isinstance(args[0], ast.Starred):
+        args = args[1:]                             # an unbound method spelled on the class: the instance comes first
+    if len(args) > len(params) or any(isinstance(a, ast.Starred) for a in args):
         return None
-    got, mapping = dict(zip(params, call.args)), None
+    got, mapping = dict(zip(params, args)), None
     for kw in call.keywords:
         if kw.arg is None:
             mapping = kw                            # a ** mapping: it names no parameter, yet can fill any
@@ -1918,6 +1926,34 @@ class Plants(unittest.TestCase):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why, n=first)
 
+    def test_a_random_call_spelled_on_the_class_takes_its_instance_first(self):
+        """A random call spelled on random.Random or random.SystemRandom, an unbound method, passes its instance first,
+        and the census drops it before reading the arguments. Each red plant asserts the span the census reports:
+        randrange(rng, 40000, 50000) is 40000-49999, by keyword after the instance too and with a step of 7, four
+        arguments in all; randrange(rng, 50000) is 0-49999; randint(rng, 40000, 50000) is 40000-50000, by keyword too.
+        e50adc775 put the instance in start's place, so it read none of these (a keyword after the instance repeated
+        the start, four arguments outnumbered randrange's three), and with rng bound to 0 elsewhere in the module it
+        read randrange(rng, 1000, 50000) as 0-999 and reported nothing, where CPython returns 1000 to 49999."""
+        lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
+        for label, src, span, first in (
+                ("randrange on random.Random", 'port = random.Random.randrange(rng, %d, %d)\n' % (lo, hi), (lo, hi - 1), lo),
+                ("randrange on random.Random with its start alone", 'port = random.Random.randrange(rng, %d)\n' % hi,
+                 (0, hi - 1), LOW),
+                ("randint on random.Random", 'port = random.Random.randint(rng, %d, %d)\n' % (lo, hi), (lo, hi), lo),
+                ("randint on random.Random by keyword", 'port = random.Random.randint(rng, a=%d, b=%d)\n' % (lo, hi),
+                 (lo, hi), lo),
+                ("randrange on random.SystemRandom by keyword",
+                 'port = random.SystemRandom.randrange(rng, start=%d, stop=%d)\n' % (lo, hi), (lo, hi - 1), lo),
+                ("randrange on Random imported by name, the stop by keyword",
+                 'from random import Random\nport = Random.randrange(rng, %d, stop=%d)\n' % (lo, hi), (lo, hi - 1), lo),
+                ("randrange on random.Random with a step, four arguments",
+                 'port = random.Random.randrange(rng, %d, %d, 7)\n' % (lo, hi), (lo, hi - 1), lo),
+                ("an instance whose name the module also binds to an int",
+                 'def setup():\n    rng = 0\n\n\ndef go():\n    rng = random.Random()\n    port = random.Random.randrange(rng, 1000, %d)\n'
+                 % hi, (1000, hi - 1), LOW)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, "computed into %d-%d" % span, n=first)
+
     def test_a_mapping_beside_a_randrange_s_start_and_stop_is_read_as_an_unbounded_step(self):
         """A ** mapping names no parameter, yet can fill any parameter left empty. Beside a randrange's start and stop,
         with its step left empty, it is read as a step interval() does not bound, by the span holding both, and each
@@ -1966,6 +2002,8 @@ class Plants(unittest.TestCase):
                 ("a name bound to an int and by a binding the census does not record", "test_x.py",
                  'K = 7\nK = f()\nport = random.randrange(%d, 1000, K)\nJ = 7\nJ *= -1\nport = random.randrange(%d, 1000, J)\n'
                  % (n, n)),
+                ("an unbound random method spelled on anything but random.Random or random.SystemRandom", "test_x.py",
+                 'port = type(rng).randrange(rng, %d, %d)\nport = MyRandom.randrange(rng, %d, %d)\n' % (n, n + 9, n, n + 9)),
                 ("an attribute", "test_x.py", 'cfg.p = %d\nrow = {"port": cfg.p}\n' % n),
                 ("a name bound to a digit string, inside a display that is the position's value", "test_x.py",
                  'P = "%d"\nrow = {"ports": [P]}\n' % n),
