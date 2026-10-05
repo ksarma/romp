@@ -16480,8 +16480,9 @@ class TheAllowlistedLambdaWriteIsRead(unittest.TestCase):
     nosniff test before the nosniff header in the write's block, and otherwise unread, a second Content-Type or a CR or LF among what
     it may write), a header a helper method or any other function the home calls writes (its header lines lie outside every home) or
     an end_headers it runs before the write, a write to the receiver's raw socket through self.connection, or the kernel's own
-    end_headers override, which may write a header of its own at any call, outside every home. A value a loop binds is a local, which
-    is not read."""
+    end_headers override, which may write a header of its own at any call, outside every home. A value a loop binds in a function is a
+    local, which is not read, unless a `global` declaration names it; at module level, or so declared, the loop's name is a module name
+    the census does not follow by binding, and a header call handed it is refused by name."""
 
     PAGE = FGH_PAGE
     CRLF = '        self.send_header("X-Probe", "a\\r\\n\\r\\n%s")\n'
@@ -16607,8 +16608,9 @@ class TheHeaderBlockIsReadForACrOrLf(unittest.TestCase):
     nosniff test before the nosniff header in the write's block, and otherwise unread, a second Content-Type or a CR or LF among what
     it may write), a header a helper method or any other function the home calls writes (its header lines lie outside every home) or
     an end_headers it runs before the write, a write to the receiver's raw socket through self.connection, or the kernel's own
-    end_headers override, which may write a header of its own at any call, outside every home. A value a loop binds is a local, which
-    is not read."""
+    end_headers override, which may write a header of its own at any call, outside every home. A value a loop binds in a function is a
+    local, which is not read, unless a `global` declaration names it; at module level, or so declared, the loop's name is a module name
+    the census does not follow by binding, and a header call handed it is refused by name."""
 
     PAGE = FGH_PAGE
     JSON = ('            self.send_header("Content-Type", "application/json")\n            self.send_header("X-Content-Type-Options", "nosniff")\n'

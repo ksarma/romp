@@ -4525,9 +4525,11 @@ def _nosniff_beside(write, home):
     a second Content-Type or a CR or LF among what it may write), a header a helper method or any other function the home calls writes
     (its header lines lie outside every home) or an end_headers it runs before the write, a write to the receiver's raw socket through
     self.connection, or the kernel's own end_headers override, which may write a header of its own at any call, outside every home. A
-    value a loop binds is a local, which is not read. The witnesses of control leaving the write's block are xbr (a break) and xri (a
-    call that raises, caught), and of the receiver's name bound again xrb (an assignment, in a method the route calls), each silent
-    and each refused with its nosniff line deleted (xbr0, xri0 and xrb0; TheNosniffTestReadsNoControlFlowOrRebinding)."""
+    value a loop binds in a function is a local, which is not read, unless a `global` declaration names it; at module level, or so
+    declared, the loop's name is a module name the census does not follow by binding, and a header call handed it is refused by name.
+    The witnesses of control leaving the write's block are xbr (a break) and xri (a call that raises, caught), and of the receiver's
+    name bound again xrb (an assignment, in a method the route calls), each silent and each refused with its nosniff line deleted
+    (xbr0, xri0 and xrb0; TheNosniffTestReadsNoControlFlowOrRebinding)."""
     def nosniff(s):
         c = s.value if isinstance(s, ast.Expr) else None
         return (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "send_header" and len(c.args) == 2
@@ -5976,10 +5978,11 @@ def routes_of(rel, tree, sc, res):
     nosniff header in the write's block, and otherwise unread, a second Content-Type or a CR or LF among what it may write), a
     header a helper method or any other function the home calls writes (its header lines lie outside every home) or an end_headers
     it runs before the write, a write to the receiver's raw socket through self.connection, or the kernel's own end_headers
-    override, which may write a header of its own at any call, outside every home. A value a loop binds is a local, which is not
-    read. Returns the routes, (call, the enclosing function, the class statement the call stands in (the served pass keys the
-    route class on it, never on its name alone: _Served._top_class), the script-running type, the body expression), sorted by
-    line."""
+    override, which may write a header of its own at any call, outside every home. A value a loop binds in a function is a
+    local, which is not read, unless a `global` declaration names it; at module level, or so declared, the loop's name is a
+    module name the census does not follow by binding, and a header call handed it is refused by name. Returns the routes,
+    (call, the enclosing function, the class statement the call stands in (the served pass keys the route class on it, never on
+    its name alone: _Served._top_class), the script-running type, the body expression), sorted by line."""
     ns = res.ns.get(rel) or _NS_NONE   # a file that writes its module namespace through a computed name, or may rewrite it at run
     consts = {} if ns["computed"] or ns["runtime"] else _module_consts(tree)   # time, reads no module constant
     written = {x for x in res.writes.get(rel, {}) if x in consts}   # the module names some code writes after binding them
