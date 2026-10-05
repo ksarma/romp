@@ -21,7 +21,7 @@ equal their literals. The checks here:
 
 1. The served-pages job's block, with its comment-only lines removed and nothing else changed (indentation, trailing blanks
    and every value stay as written), EQUALS EXPECTED_SERVED_JOB: every key, step and field, the served step's env, flags and
-   run block, and the cap (50). The block runs from the job's key line to the next line that starts, after none or two
+   run block, and the cap (60). The block runs from the job's key line to the next line that starts, after none or two
    spaces, with a character other than a blank or `#`, or to the end of the file: this job is the file's last, as
    tests/test_ci_sdk_pin.py requires (it appends synthetic steps at the end of the file and reads them as the served step's
    job's), so its block ends with the empty text after the file's last line feed, and a second trailing line feed is red.
@@ -49,12 +49,19 @@ equal their literals. The checks here:
 A job's key written twice is refused by job_block with the reason (the other module's check 2 states which spellings it
 reads).
 
-The caps in the literals. The served job, 50 minutes: the expected time and half again, the vendored tooling job's rule.
-The step took 1930 s at 1d591384e (1899 s on the fork's run 36425690821 of 2026-09-28, still in the extension job then),
-and the setup the job repeats took about 16 s on main's run (the checkout 6 s, node 1 s, npm ci 3 s, the cache 3 s, Chromium
-1 s, and the job's own set-up and post steps; 22 s on run 36425690821), so the job is about 32 min 30 s and half again about
-49 minutes. 50 also covers the step's other rule, the phase plus the 600 s per-test timeout plus setup (about 42 min 30 s), and
-the three PRs above together (about 329 s more, a job of about 37 min 55 s). The vscode-extension job, 17 minutes: without
+The caps in the literals. The served job, 60 minutes since 2026-10-05: the slowest measured job plus 10 minutes, rounded up
+to a multiple of 5, the rule ci.yml's Shell job states for its cap. Of the 255 completed jobs of this name in ci.yml's runs
+from the job's first, on 2026-09-28, to 11:47 UTC on 2026-10-05, the slowest with a measured length (a job cancelled at a
+cap has none) took 49 min 11 s, in run 37212676524 (batch PR 970's checks; it concluded failure, which still gives a
+measured length); the same PR's checks at two later heads took 47 min 35 s (run 37252801761) and 48 min 8 s (run
+37265609611), all on the public runner, each job's time the jobs API's. 49 min 11 s plus 10 minutes is 59 min 11 s, so 60.
+Two of the 255 were cancelled at the 50-minute cap, longer by an amount not measured: runs 36898691471 and 37293073638.
+The 10 minutes are the step's own 600 s per-test timeout, so the margin past it is the rounding alone: the python job's
+rule for run 37212676524, its step's 2926 s plus the 600 s plus the 22 s before the step, is 3548 s, about 59 min 8 s,
+52 s under 60. Until 2026-10-05 the cap was 50, the expected time and half again (the vendored tooling job's rule): the
+step's 1930 s in run 36388144219 and about 16 s of setup were about 32 min 30 s, and half again about 49 minutes; 50 then
+also covered the phase plus the 600 s per-test timeout plus setup (about 42 min 30 s) and the three PRs above together
+(about 329 s more, a job of about 37 min 55 s). The vscode-extension job, 17 minutes: without
 the served step it took 4 min 45 s on main's run 36555049532 at 6dd80a6e7, the first run on main after the move (about
 4 min 12 s was expected from the steps before the served step at 1d591384e). The job's comment in ci.yml sizes the cap for
 a head that rosters the legs open PRs are known to add, with a Browser legs bound of about that step's time and half
@@ -118,7 +125,7 @@ EXPECTED_SERVED_JOB = (
     "  served-pages:",
     "    name: " + SERVED_NAME_TEXT + "ubuntu-latest)",
     "    runs-on: ubuntu-latest",
-    "    timeout-minutes: 50",
+    "    timeout-minutes: 60",
 ) + _SETUP + _CHROMIUM + (
     "      - uses: actions/setup-python@v5",
     "        with:",
@@ -264,8 +271,8 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
         moved = list(EXPECTED_SERVED_JOB[EXPECTED_SERVED_JOB.index("      - uses: actions/setup-python@v5"):-1])
         bench = "        run: node --test tests/ui-bench.test.mjs"
         plants = (
-            (check_served_job, "the served cap 50 to 51, a one-field edit", "served", "    timeout-minutes: 50",
-             ["    timeout-minutes: 51"]),
+            (check_served_job, "the served cap 60 to 61, a one-field edit", "served", "    timeout-minutes: 60",
+             ["    timeout-minutes: 61"]),
             (check_extension_job, "the extension cap 17 to 18, a one-field edit", "ext", "    timeout-minutes: 17",
              ["    timeout-minutes: 18"]),
             (check_extension_job, "the served step put back in the extension job", "ext", bench, [bench] + moved),

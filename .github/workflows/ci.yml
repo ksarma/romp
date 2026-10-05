@@ -898,11 +898,11 @@ jobs:
     # 41 tests add up to 68.55 s in the step's 26 s), so the sum overstates the legs as timed; it is
     # kept because 931's leg, one file whose tests run in order, was timed on a development box and
     # not on the runner, where it may take longer. A bound of 7 minutes (420 s) is about that step
-    # time and half again, the rule the vendored-tooling and served-pages jobs size their caps by,
-    # applied here to the step's bound. tools/ci-browser-legs.test.mjs holds the step's bound within
-    # the cap less the recorded job time, which counts the step's own seconds as well: 565 s and
-    # 420 s make 16 min 25 s, so 17. The job's own time and half again, about 14 min 8 s, is under it
-    # too.
+    # time and half again, the rule the vendored-tooling job sizes its cap by (as the served-pages
+    # job did until 2026-10-05), applied here to the step's bound. tools/ci-browser-legs.test.mjs
+    # holds the step's bound within the cap less the recorded job time, which counts the step's own
+    # seconds as well: 565 s and 420 s make 16 min 25 s, so 17. The job's own time and half again,
+    # about 14 min 8 s, is under it too.
     # tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal (every key,
     # step and field, the cap included), so a change here changes that literal too, on purpose. The
     # Browser legs step below carries a bound of its own, 5 minutes (its timeout-minutes), the
@@ -1063,10 +1063,28 @@ jobs:
     # marker is absent, as it is after an npm run build, so the first lab built that step's dist
     # again. On main's run the repeated steps took about 16 s: the checkout 6 s, node 1 s, npm ci
     # 3 s, the cache 3 s, Chromium 1 s, and the job's own set-up and post steps.
-    # The cap is the expected time and half again: the step's 1930 s and about 16 s of setup is
-    # about 32 min 30 s, and half again is about 49 minutes, so 50. That also covers the step's
-    # other rule, the phase plus the 600 s per-test timeout plus setup (about 42 min 30 s), and the
-    # three PRs above together (about 329 s more, a job of about 37 min 55 s).
+    # The cap is the slowest measured job plus 10 minutes, rounded up to a multiple of 5, the rule
+    # the Shell job's cap comment states. Read at 11:47 UTC on 2026-10-05, this workflow's runs
+    # since this job's first, on 2026-09-28, hold 255 completed jobs of this name, cancelled ones
+    # among them, and the slowest with a measured length (a job cancelled at a cap has none) took
+    # 49 min 11 s, in run 37212676524 (batch PR 970's checks, batch/2026-10-04b; it concluded
+    # failure, which still gives a measured length). The same PR's checks at two later heads took
+    # 47 min 35 s (run 37252801761) and 48 min 8 s (run 37265609611). All three ran on the public
+    # runner; each job's time is the jobs API's. 49 min 11 s plus 10 minutes is 59 min 11 s, so 60.
+    # Two of the 255 were cancelled at the 50-minute cap, so they ran longer by an amount not
+    # measured (neither has a log): run 36898691471 (2026-10-01) and run 37293073638 (fork PR 978's
+    # checks, 2026-10-05).
+    # Here the 10 minutes are the step's own 600 s per-test timeout, so the margin past it is the
+    # rounding alone. The step's other rule (the python job's), the phase plus the 600 s per-test
+    # timeout plus the time before the step, gives 3548 s for run 37212676524 (its step's 2926 s,
+    # the 600 s and the 22 s before the step), about 59 min 8 s, 52 s under 60: a run whose tests
+    # take more than 52 s longer than that one's, its last test stalled, reaches this cap before
+    # the per-test timeout fires. The header's sentence on the first private batch run names this
+    # job for that run to confirm. Until 2026-10-05 the cap was 50, the expected time and half
+    # again: the step's 1930 s and about 16 s of setup in main's run above were about 32 min 30 s,
+    # and half again about 49 minutes; 50 then also covered the phase plus the 600 s per-test
+    # timeout plus setup (about 42 min 30 s) and the three PRs above together (about 329 s more, a
+    # job of about 37 min 55 s).
     # No strategy key: the job has no matrix, so fail-fast would have no effect (it cancels a
     # matrix's other cells when one fails, and this job has one cell).
     # Last in the file: tests/test_ci_sdk_pin.py appends synthetic steps at the end of the file and
@@ -1076,7 +1094,7 @@ jobs:
     # batch as any other red does.
     # tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal (every key,
     # step and field, the cap included), so a change here changes that literal too, on purpose.
-    timeout-minutes: 50
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: vscode-extension

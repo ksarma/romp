@@ -196,8 +196,8 @@ class CapsTheFirstPrivateRunConfirms(unittest.TestCase):
                     self.assertTrue(any(display in s for s in sentences), "the %s job took %d s of its %d-minute cap in "
                                     "run 37212676524 on 4 CPUs, past half of it, so on 2 it can reach the cap: the header's "
                                     "sentence on the %s names it (%r)" % (job, secs, cap, CONFIRM, display))
-        self.assertTrue(due, "no job is past half its cap: re-read the population (the served-pages job took 2951 s of "
-                        "its 50 minutes in run 37212676524)")
+        self.assertTrue(due, "no job is past half its cap: re-read the population (the served-pages job took 2951 s in "
+                        "run 37212676524, past half of its cap, 50 minutes then and 60 since 2026-10-05)")
 
 
 class TheReadersThemselves(unittest.TestCase):
