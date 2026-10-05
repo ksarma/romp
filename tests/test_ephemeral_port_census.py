@@ -53,20 +53,21 @@ a binding of every name in its module. A position's value that reads a name with
 the name's recorded ints and with the name unbounded, and counts by either reading, their union: with K bound to 7 and
 by K = f(), 20000 + K % 20000 reads 20007 and, as an unknown operand of % by 20000, 20000-39999, and 40000 + K reads
 40007 and is a sum built on 40000 (offset_base(), below); where the value gives no reading with the name unbounded (a
-bare name at a randrange's start or stop), the reading by its recorded ints stands alone. So anywhere but at a step
-the census reads each int a binding it records gives a name, and not a value a binding it does not record gives, unless
-the value bounds that name's every value as these do, nor a float or a string a binding it records gives, which
-interval() reads only inside int(), as CPython's int() of it, nor a None, which it reads only at a randrange's stop, as
-the stop left empty (both below; WHAT IT CANNOT SEE gives examples). Inside a class Python reads a
-name written with two leading underscores and not two trailing ones as another (__K in class C is _C__K), so a binding
-of either spelling binds the name a read of the other sees: once such a name is written anywhere in a class statement,
-the census counts both spellings among the names with a binding it does not record, wherever the module reads them,
-unless the class's name is underscores alone, which mangles nothing. The spelling with the two underscores (__K) then
-reads, wherever the module reads it, by the values the census records under it and under the spelling each class it is
-written in mangles it to (the class's name less its leading underscores): with _C__K bound to 45001, __K read in a
-method of C reads 45001, as CPython does. That is an over-read where the module reads __K outside C, or in a class
-nested in C, which CPython mangles by the innermost class alone; the spelled-out _C__K reads its own values only. A
-name a module sets with no binding form
+bare name at a randrange's start or stop), the reading by its recorded ints stands alone. So interval(), anywhere but
+at a step, reads each int a binding the census records gives a name, and not a value a binding it does not record
+gives, unless the value bounds that name's every value as these do, nor a float or a string a binding it records gives,
+which it reads only inside int(), as CPython's int() of it, nor a None, which it reads only at a randrange's stop, as
+the stop left empty (both below; WHAT IT CANNOT SEE gives examples); the hop counts every value recorded, a string
+wherever a string counts. Inside a class Python reads a name written with two leading underscores and not two trailing
+ones as another (__K in class C is _C__K), so a binding of either spelling binds the name a read of the other sees: once
+such a name is written anywhere in a class statement, the census counts both spellings among the names with a binding
+it does not record, wherever the module reads them, unless the class's name is underscores alone, which mangles
+nothing. The spelling with the two underscores (__K) then reads, wherever the module reads it, in interval(),
+offset_base() and the hop (a host and a template read the spelling written), by the values the census records under it
+and under the spelling each class it is written in mangles it to (the class's name less its leading underscores): with
+_C__K bound to 45001, __K read in a method of C reads 45001, as CPython does. That is an over-read where the module
+reads __K outside C, or in a class nested in C, which CPython mangles by the innermost class alone; the spelled-out
+_C__K reads its own values only. A name a module sets with no binding form
 (globals()["K"] = f(), exec("K = f()"), setattr(sys.modules[__name__], "K", f()), or mod.K = f() in another module) has
 no binding here, and the census does not see the value such a setting gives it (WHAT IT CANNOT SEE).
   In Python, read by AST (scan_python), the positions:
@@ -166,9 +167,9 @@ no binding here, and the census does not see the value such a setting gives it (
   or to 45001.0, or to "x" and to "45001", int(P) is 45001), except at a step, where a name with a value other than
   an int is unbounded, int() around it too; in offset_base(), below, a name by each value the census records for it in
   turn; and, over bounded operands, str() and int(), a unary minus or plus (-7, +7), + - and *, and // and % by a
-  divisor whose every value is positive, of one
-  value or of several: // as the span from the least to the greatest quotient of an end of its left operand by an end of
-  its divisor (90002 // K, with K bound to 2, to 3 and by K = f(), is 30000-45001), % by one value as the remainder
+  divisor whose every value is positive, of one value or of several: // as the span from the least to the greatest
+  quotient of an end of its left operand by an end of its divisor (90002 // K, with K bound to 2, to 3 and by K = f(),
+  is 30000-45001), % by one value as the remainder
   where the left operand is one value and as 0 to the divisor less one otherwise, and % by a divisor of several values
   as 0 to its highest value less one (50000 % K, with K bound to 60000, to 70000 and by K = f(), is 0-69999). It reads
   an unknown operand of % by such a divisor as 0 to the divisor's highest value less one, and
@@ -236,10 +237,10 @@ no binding here, and the census does not see the value such a setting gives it (
   census records for it in turn, whatever its other bindings, a value other than an int adding nothing but inside
   int(): BASE + i, with BASE bound to 40000, or to 40000 and to 50000, or to 1000 and to 40000, or to 40000 and to "x",
   with or without BASE = f() beside them, is built on 40000, and so are BASE * 1 + i and, with BASE bound to "40000"
-  and to "50000", int(BASE) + i. A name with a binding the census does not record
-  is also read unbounded (BOUND), so with K bound to 30000 and by K = f(), 40000 + K, which reads 70000 by K's int, is
-  built on 40000, and so are 40000 - K and 40000 + 90002 // K. interval() reads a bool as the int it is, True as 1 and
-  False as 0 (random.randrange(True, 50000) is 1-49999), and a float not at all.
+  and to "50000", int(BASE) + i. A name with a binding the census does not record is also read unbounded (BOUND), so
+  with K bound to 30000 and by K = f(), 40000 + K, which reads 70000 by K's int, is built on 40000, and so are 40000 - K
+  and 40000 + 90002 // K. interval() reads a bool as the int it is, True as 1 and False as 0
+  (random.randrange(True, 50000) is 1-49999), and a float only through int() of a name bound to it (above).
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -300,11 +301,11 @@ these turns its plant red, and the example leaves this list.
   (CFG["a"]), a call's result other than str() or int() around a bounded value and the random calls (pick(),
   random.choice((N, M))), a random call with a parameter left empty that a ** mapping beside it can fill
   (random.randrange(50000, **kw), random.randrange(start=50000, step=1, **kw), and random.randrange(50000, E, **kw)
-  with E bound to None, a stop the name can leave empty), a name interval() does not bound
-  inside a display that is the position's value or in a loop's sequence (P = "N", then {"ports": [P]}, the census
-  recording no int for P), an f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a
-  sum or difference in the range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__
-  replaced at run time); a rule of its own may still read such a value where it is written;
+  with E bound to None, a stop the name can leave empty), a name interval() does not bound inside a display that is
+  the position's value or in a loop's sequence (P = "N", then {"ports": [P]}, the census recording no int for P), an
+  f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a sum or difference in the range
+  (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__ replaced at run time); a rule of
+  its own may still read such a value where it is written;
   an unbound random method spelled on anything but a name or attribute called Random or SystemRandom, whose instance
   then fills start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
   a name or attribute called Random or SystemRandom that holds an instance (Random = random.Random(), then
@@ -2441,8 +2442,10 @@ class Plants(unittest.TestCase):
         it, in turn: BASE + worker, with BASE bound to 40000 and by BASE = f(), or beside a star import, or to 40000, to
         50000 and by BASE = f(), or to 1000, to 40000 and by BASE = f(), or to 40000, to "x" and by BASE = f(), is an
         offset from 40000, and so is BASE * 1 + worker with BASE bound to 40000, to 50000 and by BASE = f(); 3cdcef0ae
-        counted only the first two. The values a binding the census does not record gives are not read, nor a None, a
-        float or a string a binding it records gives such a name (WHAT IT CANNOT SEE, with green plants)."""
+        counted only the first two. The values a binding the census does not record gives are not read where the
+        position's value gives no reading with the name unbounded, nor a float a binding it records gives such a name
+        at a start or stop (WHAT IT CANNOT SEE, with green plants); a None at a stop and int() of a float or a string
+        read as their own tests show."""
         lo, hi, n = LOW + 7232, LOW + 17232, _n()                                  # 40000, 50000 and 45001, built at run time
         forms = UNRECORDED_FORMS + (UNRECORDED_FORMS_312 if sys.version_info >= (3, 12) else ())
         for label, lines in forms:
@@ -2998,7 +3001,9 @@ class RandrangeAgainstCPython(unittest.TestCase):
     2026-10-05 on fork PR 973: one rule, and a property test in place of one more plant per pass; the closing check
     that day grew the generator with the spellings it found misread or unread, and the owner's calls after it with a
     name bound to ints the census records and by a binding it does not record, with a name Python mangles in a class,
-    and with a name every binding of which the census records, bound to several ints)."""
+    and with the readings the owner's calls after them added: a name every binding of which the census records, bound
+    to several ints, a name with a binding it does not record under % by a constant, a stop name bound to None, int() of
+    a name bound to strings and floats, and a private name read in a method, bound under its mangled spelling)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
