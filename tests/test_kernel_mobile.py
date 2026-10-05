@@ -2499,9 +2499,11 @@ _SELECTOR_TEST = re.compile(r"(?<![\w-])selector\s*\(", re.I)
 def _bell_rule_classes(html):
     r"""{bell id: classes} that the served shell's CSS rules name on the bell: every class in a compound that carries the bell's id,
     inside :not() and the other functional pseudo-classes as well (`#mbell:not(.on) .bell-slash` names `on` on #mbell), read from the
-    parsed rules (served_css.rules). A class the bell's markup gives it counts too, since served_css reads no attributes of other
-    elements: a rule naming one on a bell by id (`#mbell.mact`) would read as a class no script sets and turn the census red, the
-    safe side; no rule does.
+    parsed rules (served_css.rules). Two over-reads follow, each turning the census red, the safe side, and no served rule makes
+    either. A class the bell's markup gives it counts too, since served_css reads no attributes of other elements, so a rule naming one
+    on a bell by id (`#mbell.mact`) reads as a class no script sets. And every class in a compound that excludes or nests a bell reads
+    as named on the bell, the ones a browser tests on another element included: `button:not(#mbell).busy`, `.wrap:has(#mbell) .x`,
+    `#mbell:has(.bell-slash)`, `:is(.wrap #mbell).on` and `#mbell:not(.wrap .x)`; BellStateClassCensus pins those red.
 
     The census reads the forms it models and refuses the ones it does not, each by its own assertion anywhere in the served CSS, so a
     rule spelled past the read fails the census instead of passing it unread (T10's fix pass, 2026-10-05: `[id=mbell].busy{opacity:.45}`
@@ -2652,9 +2654,26 @@ class BellStateClassCensus(unittest.TestCase):
         for b in _BELLS:
             self.assertTrue(self.rule_classes[b], "no served rule names a state class on #%s: the census has nothing to check there" % b)
             self.assertTrue(self.script_classes[b], "the run set no class on #%s: the driver did not reach the bell's writer" % b)
-        dead = {b: sorted(self.rule_classes[b] - self.script_classes[b]) for b in _BELLS if self.rule_classes[b] - self.script_classes[b]}
-        self.assertEqual(dead, {}, "the served CSS names these classes on the bells, and no served script sets them there (the scripts "
-                         "set %s): remove the rules, or wire the state and drive it here" % {b: sorted(self.script_classes[b]) for b in _BELLS})
+        self.assertEqual(self._dead(self.rule_classes), {}, "the served CSS names these classes on the bells, and no served script sets "
+                         "them there (the scripts set %s): remove the rules, or wire the state and drive it here" % {b: sorted(self.script_classes[b]) for b in _BELLS})
+
+    def _dead(self, rule_classes):
+        """The census's verdict on a rule read: {bell id: sorted classes} a rule names on the bell that no served script set there."""
+        return {b: sorted(rule_classes[b] - self.script_classes[b]) for b in _BELLS if rule_classes[b] - self.script_classes[b]}
+
+    def test_a_compound_that_excludes_or_nests_a_bell_turns_the_census_red(self):
+        # the over-read stated beside #mbell.mact in _bell_rule_classes (review round 1, 2026-10-05): every class in such a compound reads
+        # as named on the bell, so a rule spelled this way turns the census red, the safe side; no served rule is spelled so
+        cases = (
+            ("#mtabs button:not(#mbell).busy", {"mbell": ["busy"]}),       # excludes the bell: a browser dims the other busy buttons
+            (".wrap:has(#rail-bell) .x", {"rail-bell": ["wrap"]}),         # the bell inside an ancestor's :has()
+            ("#mbell:has(.bell-slash)", {"mbell": ["bell-slash"]}),        # a class on the bell's own child, inside its :has()
+            (":is(.wrap #mbell).on", {"mbell": ["wrap"]}),                 # a class on an ancestor, behind a combinator inside :is()
+            ("#rail-bell:not(.wrap .x)", {"rail-bell": ["wrap", "x"]}),    # the same inside :not()
+        )
+        for sel, dead in cases:
+            with self.subTest(sel=sel):
+                self.assertEqual(self._dead(BellRuleReader._read(sel + "{opacity:.45}")), dead)
 
     def test_the_run_reached_every_transition_it_drives(self):
         self.assertEqual(self.out["opened"], [True, False, True, False], "each bell opens the popover, a second tap or an outside tap closes it")
