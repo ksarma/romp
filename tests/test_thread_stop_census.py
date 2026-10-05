@@ -399,9 +399,13 @@ RUN (2026-10-05): the checks over the derivation are ONE pytest item, ThreadStop
 runs each check of _TreeChecks as a subtest, so no scheduler sends them to two workers. Before that, a run in which
 pytest-xdist split the class across the two workers of CI's 3.14t cell had both build the derivation at once, about 2.1 to
 2.5 GiB each, and CI's 3.14t command under a 16.5 GiB cap with no swap (the cell's runner has 16 GB) was killed by the cap
-(2026-10-04; reproduced with the split forced, 2026-10-05). TheTreeChecksAreOnePytestItem pins the one item by pytest's own
+(2026-10-04; reproduced less tests/test_cut_turn_tree_kill.py, with the split forced, 2026-10-05).
+TheTreeChecksAreOnePytestItem pins the one item by pytest's own
 collection, that the item runs every check once inside a subtest named for it, and which scopes of this module name the
-derivation (DERIVATION_ROADS: a second reader in any other class reds it).
+derivation (DERIVATION_ROADS: a reference by name from a scope the map does not list for that name reds it; one from a
+listed scope, such as a second _Tree(ROOT) in a plant class or the pin's own class running ThreadStopCensus.setUpClass,
+does not, nor does a getattr on the module object or a reader in another test module: the residuals in
+test_only_the_one_item_reads_the_derivation's docstring).
 A second census in the same process that reads kernel/kernel.py or another
 product file through the helper gets this census's parse (a tree test holds that from this side). WHAT A DERIVATION LEAVES
 ALIVE stays for the process: its results, the modules, units and trees they hold, the helper modules and the product
@@ -5774,9 +5778,11 @@ class TheTreeChecksAreOnePytestItem(unittest.TestCase):
     cleanup registered before the change), test_the_tree_derivation enters a subtest named for each check, in name order,
     calls that check inside it and leaves it, every check once, so a loop that runs fewer checks, or a check outside its
     subtest, reds there. The third case holds every reference in this module to a name that reaches the derivation
-    (tree_census, _Tree, ThreadStopCensus, _TreeChecks), keyed on the scope around it, equal to DERIVATION_ROADS, so a second
-    item in another class that reads or builds the derivation (directly, through a helper, by subclassing or by reusing the one
-    item's setUpClass) reds there."""
+    (tree_census, _Tree, ThreadStopCensus, _TreeChecks), keyed on the scope around it, equal to DERIVATION_ROADS, so a reference
+    by name from a scope the map does not list for that name reds there, which catches a second item in an unlisted class of
+    this module that reads or builds the derivation (directly, through a helper, by subclassing or by reusing the one item's
+    setUpClass); a listed scope may add references unseen, and a reader in another test module is not read (the residuals in the
+    case's docstring)."""
 
     class _Recorder:
         """The stand-in TestCase: subTest(check=...) records its entry and exit; the checks record their calls here too."""
@@ -5806,11 +5812,16 @@ class TheTreeChecksAreOnePytestItem(unittest.TestCase):
     def test_only_the_one_item_reads_the_derivation(self):
         """Every reference in this module to a name that reaches the tree's derivation (tree_census, _Tree, ThreadStopCensus,
         _TreeChecks: a call, a base class, an attribute read), keyed on the scope around it, equals DERIVATION_ROADS, exactly, as
-        UNPARSE_ROADS is held. So no second item can build the derivation on another worker: not by calling tree_census, directly
+        UNPARSE_ROADS is held. So no second item in this module can build the derivation on another worker: not by calling
+        tree_census, directly
         or through a helper, not by building _Tree over the tree beside the memo, not by subclassing ThreadStopCensus or reusing
         its setUpClass, not by running a check of _TreeChecks elsewhere; a new reference reds here until its scope is listed with
         its reason. Not seen, the residuals: the two plant classes may call _Tree on any root, this class may name
-        ThreadStopCensus and _TreeChecks, and a reference that is no ast.Name (getattr on the module object) is not read."""
+        ThreadStopCensus and _TreeChecks, any scope the map lists may add a further reference to a name it is listed for (a
+        second _Tree(ROOT) in a plant class, this class running ThreadStopCensus.setUpClass), a reference that is no ast.Name
+        (getattr on the module object) is not read, and neither is a reader in another test module, an import of
+        ThreadStopCensus included (pytest collects the imported class there as a second copy of the one item): the case reads
+        this module's source alone."""
         _src, tree = PC.source_and_tree(__file__)
         found = {}
 

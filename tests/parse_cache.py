@@ -109,11 +109,12 @@ import as CI does, memory.peak ranged 15.36 to 16.10 GiB from run to run (0.40 t
 anonymous memory, which leaves page cache out, was 15.10 to 15.66 GiB, against 15.81 to 16.08 GiB in the capped runs
 without this collection. Run with PYTHONDONTWRITEBYTECODE=1 over a tree holding no bytecode, which CI does not do, the
 same command at the last of those heads reached the cap with one build of the thread-stop census's derivation, and the
-cap killed it. A run in which xdist split the
-thread-stop census's class across the two workers had both build that census's derivation at once, and the cap killed it
-(2026-10-04, reproduced with the split forced on 2026-10-05); the census's cut and one item address that
-(tests/test_thread_stop_census.py's _Tree and _TreeChecks, 2026-10-05). With both, eight capped runs that completed at
-this pull request's heads of 2026-10-05, each writing bytecode as CI does, four of them with that census's module forced
+cap killed it. A run of CI's 3.14t pytest command as written, tests/test_cut_turn_tree_kill.py included, in which xdist
+split the thread-stop census's class across the two workers had both build that census's derivation at once, and the cap
+killed it (2026-10-04; reproduced less that file, with the split forced, on 2026-10-05); the census's cut and one item
+address that
+(tests/test_thread_stop_census.py's _Tree and _TreeChecks, 2026-10-05). With both, ten capped runs that completed at
+this pull request's heads of 2026-10-05, each writing bytecode as CI does, six of them with that census's module forced
 to split across the two workers, reached memory.peak 14.89 to 15.39 GiB (1.11 to 1.61 GiB under the cap) and peak
 anonymous memory 14.55 to 14.93 GiB. An interpreter without that function (3.10
 to 3.12) is read as having its GIL, so nothing changes on 3.10 or 3.12, nor on a GIL build of 3.13 or later (it reports
