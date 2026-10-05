@@ -42,18 +42,29 @@ here under node against the code as served:
                          latch, so a navigation that did not unload hides no later outage; a pane's wsFresh clears
                          nothing. The same DOM stub.
 
+One census besides, read from the source and not executed: NotLeavingCallSites holds window.__rompNotLeaving to one
+definition, the Log's, and three callers, the shell link's dial, open and frame, and finds no caller under ui/ or
+vscode-extension/src (the light closing check at ed1feaa79, 2026-10-05), so a second caller turns it red.
+
 The composition in real engines (phone and desktop, healthy, slow and failing returns; reloads while a dial is connecting, and a
 204 followed by an outage) is tests/test_conn_lost_log_served.py.
 Synthetic only: no network, no real DOM, no real session data.
 """
+import ast
+import bisect
+import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import tokenize
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
+KERNEL_PY = os.path.join(ROOT, "kernel", "kernel.py")
 sys.path.insert(0, HERE)
 # Hermetic state before the imports below, each of which loads the kernel source at import: the state floor here, and the
 # kernel's own switches (ROMP_KERNEL_NO_OPEN, ROMP_SERVE_TOKEN) are those modules' own writes, made before their loads.
@@ -139,7 +150,8 @@ open();recv({type:"ka"});park();out({words:words()});""")
         # whatever word it would read (the review of call 1's build: a new word posted on each frame, with a Log listener
         # clearing the latch on it, passed a check of the wsState and wsFail words alone). The one exception is a return's
         # first frame of data, which posts wsFresh once, the end of the reconnecting cue; the Log does not clear the latch on
-        # it (AnUnloadsClosesFailNothing, below)
+        # it (AnUnloadsClosesFailNothing, below), and no other listener of the shell's calls the door on it or on anything
+        # else (NotLeavingCallSites, below, holds the door's callers to the shell link's three)
         frames = r"""recv({type:"ka"});recv({type:"caps",caps:["tagEdit"],viewsSeq:null});recv({type:"ka"});sock().onmessage({data:"not json"});"""
         r = _shimret._run(WORDS + r"""
 open();var afterOpen=words(),n=parentPosts.length;
@@ -154,6 +166,491 @@ out({nl:NL,afterOpen:afterOpen,bootFrames:bootFrames,returnFrames:parentPosts.sl
         self.assertEqual(r["bootFrames"], [], "after the boot's open the pane's frames posted nothing to the shell")
         self.assertEqual(r["returnFrames"], [{"romp": "wsFresh"}],
                          "after a return's open they posted wsFresh once, at the first frame of data, and nothing else")
+
+
+# ---- the latch door's callers (the light closing check at ed1feaa79, new-A-1, 2026-10-05) ----
+DOOR = "__rompNotLeaving"
+_JS_PUNCT = re.compile(r">>>=|\.\.\.|===|!==|\*\*=|<<=|>>=|>>>|&&=|\|\|=|\?\?=|=>|==|!=|<=|>=|&&|\|\||\?\?|\?\.(?!\d)|\+\+|--"
+                       r"|[-+*/%&|^]=|\*\*|<<|>>|.", re.S)
+_JS_REGEX_AFTER = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield",
+                   "await"}
+_JS_BLOCK_WORDS = {"if", "for", "while", "switch", "catch", "with"}
+
+
+def _js_lex(src):
+    """A script's tokens as [kind, text, start, end], kind word, num, str (a quoted string's or a template's text, between its
+    delimiters), regex or punct; its comments as (start, end); and the number of templates and substitutions still open at
+    the end (0 for a script read whole). It keeps the comment, string, template and substitution states (a substitution's own
+    braces counted; its closing brace is the punct `}$`) and tells a regex literal from a division by the token before the
+    `/`. A quoted string with no closing quote ends at its line's end, so a stray quote in prose misreads one line at most."""
+    toks, comments, stack = [], [], []   # stack: "t" inside a template's text, or a substitution's brace depth
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if stack and stack[-1] == "t":
+            j = i
+            while j < n and src[j] != "`" and not src.startswith("${", j):
+                j += 2 if src[j] == "\\" else 1
+            toks.append(["str", src[i:j], i, j])
+            if j >= n:
+                break
+            if src[j] == "`":
+                stack.pop()
+                i = j + 1
+            else:
+                stack.append(0)
+                toks.append(["punct", "${", j, j + 2])
+                i = j + 2
+            continue
+        if c.isspace():
+            i += 1
+            continue
+        if src.startswith("//", i) or src.startswith("/*", i):
+            j = src.find("\n", i) if src[i + 1] == "/" else src.find("*/", i + 2)
+            j = n if j < 0 else j if src[i + 1] == "/" else j + 2
+            comments.append((i, j))
+            i = j
+            continue
+        if c in "'\"":
+            j = i + 1
+            while j < n and src[j] not in (c, "\n"):
+                j += 2 if src[j] == "\\" else 1
+            toks.append(["str", src[i + 1:j], i, min(j + 1, n)])
+            i = j + 1
+            continue
+        if c == "`":
+            stack.append("t")
+            i += 1
+            continue
+        p = toks[-1] if toks else None
+        if c == "/" and (p is None or (p[0] == "punct" and p[1] not in (")", "]")) or (p[0] == "word" and p[1] in _JS_REGEX_AFTER)):
+            j, cls = i + 1, False
+            while j < n and src[j] != "\n" and (cls or src[j] != "/"):
+                if src[j] == "\\":
+                    j += 1
+                elif src[j] == "[":
+                    cls = True
+                elif src[j] == "]":
+                    cls = False
+                j += 1
+            j += 1
+            while j < n and (src[j].isalnum() or src[j] in "_$"):
+                j += 1
+            toks.append(["regex", src[i:j], i, j])
+            i = j
+            continue
+        if c.isalpha() or c in "_$" or ord(c) > 127:
+            j = i + 1
+            while j < n and (src[j].isalnum() or src[j] in "_$" or ord(src[j]) > 127):
+                j += 1
+            toks.append(["word", src[i:j], i, j])
+            i = j
+            continue
+        if c.isdigit():
+            j = i + 1
+            while j < n and (src[j].isalnum() or src[j] in "._"):
+                j += 1
+            toks.append(["num", src[i:j], i, j])
+            i = j
+            continue
+        t = _JS_PUNCT.match(src, i).group(0)
+        if stack and t in ("{", "}"):
+            if t == "{":
+                stack[-1] += 1
+            elif stack[-1]:
+                stack[-1] -= 1
+            else:
+                stack.pop()                     # back in the template's text
+                toks.append(["punct", "}$", i, i + 1])
+                i += 1
+                continue
+        toks.append(["punct", t, i, i + len(t)])
+        i += len(t)
+    return toks, comments, len(stack)
+
+
+def _js_brackets(toks):
+    """(each bracket's partner, both ways, by token index; whether every bracket closed its own kind and none was left open)."""
+    pair, stack, whole = {}, [], True
+    for i, t in enumerate(toks):
+        if t[0] == "punct" and t[1] in ("(", "[", "{"):
+            stack.append(i)
+        elif t[0] == "punct" and t[1] in (")", "]", "}"):
+            if not stack or "([{"[")]}".index(t[1])] != toks[stack[-1]][1]:
+                whole = False
+                continue
+            o = stack.pop()
+            pair[o], pair[i] = i, o
+    return pair, whole and not stack
+
+
+def _js_assigned(toks, k):
+    """The member chain assigned at the `=` at index k (`ws.onopen` in `ws.onopen=function`), or ''."""
+    parts, j = [], k - 1
+    while j >= 0 and toks[j][0] == "word":
+        parts.insert(0, toks[j][1])
+        if j >= 2 and toks[j - 1][1] == ".":
+            j -= 2
+        else:
+            break
+    return ".".join(parts)
+
+
+def _js_owner(toks, pair, i):
+    """What the `{` at index i opens: 'function NAME', 'assigned to X.Y' (a function expression or an arrow assigned there),
+    'method NAME', 'a function' (any other function) or 'block'."""
+    p = toks[i - 1][1] if i else ""
+    if p == "=>":
+        k = (pair.get(i - 2, i - 2) if toks[i - 2][1] == ")" else i - 2) - 1   # before the arrow's parameters
+        return "assigned to " + _js_assigned(toks, k) if k >= 0 and toks[k][1] == "=" and _js_assigned(toks, k) else "a function"
+    if p != ")" or i - 1 not in pair:
+        return "block"
+    o = pair[i - 1]
+    f = toks[o - 1] if o else None
+    if not f or f[0] != "word" or f[1] in _JS_BLOCK_WORDS:
+        return "block"
+    if f[1] == "function":
+        k = o - 2
+        return "assigned to " + _js_assigned(toks, k) if k >= 0 and toks[k][1] == "=" and _js_assigned(toks, k) else "a function"
+    return ("function " if o >= 2 and toks[o - 2][1] == "function" else "method ") + f[1]
+
+
+def _js_enclosing(toks, pair, idx):
+    """The functions enclosing the token at idx, outermost first, as [(owner, open brace index)]; blocks are left out."""
+    opens = sorted(k for k in pair if k < idx < pair[k] and toks[k][1] == "{")
+    return [(own, o) for o, own in ((o, _js_owner(toks, pair, o)) for o in opens) if own != "block"]
+
+
+def _js_path(toks, pair, idx):
+    return [own for own, _ in _js_enclosing(toks, pair, idx)]
+
+
+def _js_ref_kind(toks, ti):
+    """(kind, chain start) for the door's reference at token ti (its name, or the string key of a bracket): 'definition' (the
+    name assigned, declared or given as an object key), 'call' (the reference called, plainly or as `?.(`), 'guard' (`X&&X(`
+    or `typeof X==='function'&&X(`, the call that follows being its own site), 'alias' (bound to a local name, as `var nl=X;`)
+    or 'unknown' (any other use: an argument, a ternary, a fallback)."""
+    bracket = toks[ti][0] == "str"
+    a = ti - 1 if bracket else ti
+    e = ti + 2 if bracket else ti + 1          # the token after the reference
+    s = a - 1 if bracket else a
+    while s >= 2 and toks[s - 1][1] in (".", "?.") and toks[s - 2][0] == "word":
+        s -= 2
+    at = lambda k: toks[k][1] if 0 <= k < len(toks) else ""   # noqa: E731
+    called = lambda k: at(k) == "(" or (at(k) == "?." and at(k + 1) == "(")   # noqa: E731
+    if (at(s - 1) == "function" or at(e) in ("=", "||=", "&&=", "??=")
+            or (s == a and not bracket and at(e) == ":" and at(s - 1) in ("{", ","))):
+        return "definition", s
+    if called(e):
+        return "call", s
+    chain = [t[1] for t in toks[s:e]]
+    if at(e) == "&&":
+        nxt = e + 1
+    elif at(s - 1) == "typeof" and at(e) in ("===", "==") and at(e + 1) == "function" and at(e + 2) == "&&":
+        nxt = e + 3
+    else:
+        nxt = None
+    if nxt is not None and [t[1] for t in toks[nxt:nxt + len(chain)]] == chain and called(nxt + len(chain)):
+        return "guard", s
+    if (at(s - 1) == "=" and s >= 2 and toks[s - 2][0] == "word" and at(s - 3) not in (".", "?.")
+            and at(e) in (";", ",", ")", "}", "")):
+        return "alias", s
+    return "unknown", s
+
+
+def _js_alias_sites(toks, pair, bind):
+    """The uses of the local alias bound at token index bind, inside the function that binds it, as [(kind, index)]: 'alias
+    call' for a call (a guard `nl&&nl(` folded into its call), 'unknown' for any other use, and one 'unknown' at the binding
+    when nothing uses it."""
+    name = toks[bind][1]
+    encl = _js_enclosing(toks, pair, bind)
+    lo, hi = (encl[-1][1], pair[encl[-1][1]]) if encl else (0, len(toks))
+    out = []
+    for k in range(lo, hi):
+        if k == bind or toks[k][0] != "word" or toks[k][1] != name or (k and toks[k - 1][1] in (".", "?.")):
+            continue
+        nx = [t[1] for t in toks[k + 1:k + 4]]
+        if nx[:1] == ["("] or nx[:2] == ["?.", "("]:
+            out.append(("alias call", k))
+        elif not (nx[:2] == ["&&", name] and nx[2:3] in (["("], ["?."])):
+            out.append(("unknown", k))
+    return out or [("unknown", bind)]
+
+
+def _door_census(src):
+    """(definitions, sites, prose, whole) for the door in one script's text, read by the code (_js_lex), never by its spelling. A
+    definition is the name assigned, declared or given as an object key. A site is each call, through a member (`.`, `?.`, or
+    a bracket's string key) or the bare global name, plain or optional, a guard `X&&X(` or `typeof X==='function'&&X(` being
+    part of its call; a local alias's calls are sites where they stand; and any other reference (an argument, a key held as a
+    string, an alias the census cannot follow) is a site of its own, so it fails the role check loudly instead of passing
+    unseen. Each is (kind, offset, enclosing functions). prose holds the mentions in comments, strings, regex literals and
+    longer names, none of them a reference. whole says the reading balanced (every bracket closed its own kind, no template
+    left open), so no misread comment, string, regex or template swallowed code: a census of a script read otherwise proves
+    nothing, and the tests below require it."""
+    toks, comments, unclosed = _js_lex(src)
+    pair, whole = _js_brackets(toks)
+    starts = [t[2] for t in toks]
+    defs, sites, prose = [], [], []
+    for m in re.finditer(re.escape(DOOR), src):
+        k = m.start()
+        if any(a <= k < b for a, b in comments):
+            prose.append(("comment", k))
+            continue
+        ti = bisect.bisect_right(starts, k) - 1
+        t = toks[ti] if ti >= 0 and k < toks[ti][3] else None
+        if t is None:
+            sites.append(("unknown", k, []))   # outside every token: a slip of the lexer, never a pass
+            continue
+        if t[0] == "regex" or (t[0] in ("word", "str") and t[1] != DOOR):
+            prose.append((t[0], k))
+            continue
+        if t[0] == "str" and not (ti >= 2 and toks[ti - 1][1] == "[" and ti + 1 < len(toks) and toks[ti + 1][1] == "]"
+                                  and (toks[ti - 2][0] == "word" or toks[ti - 2][1] in (")", "]"))):
+            # the name as a whole string that is not a member's key: a key held for later
+            sites.append(("unknown", k, _js_path(toks, pair, ti)))
+            continue
+        kind, s = _js_ref_kind(toks, ti)
+        if kind == "definition":
+            defs.append((kind, k, _js_path(toks, pair, ti)))
+        elif kind == "alias":
+            sites += [(ak, toks[ai][2], _js_path(toks, pair, ai)) for ak, ai in _js_alias_sites(toks, pair, s - 2)]
+        elif kind != "guard":
+            sites.append((kind, k, _js_path(toks, pair, ti)))
+    return defs, sites, prose, whole and not unclosed
+
+
+def _py_leaves(node):
+    """The operands of a `+` chain, left to right."""
+    out, stack = [], [node]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, ast.BinOp) and isinstance(x.op, ast.Add):
+            stack += [x.right, x.left]
+        else:
+            out.append(x)
+    return out
+
+
+def _py_text(x):
+    """A string literal's text (an f-string's holes as `0`), or None for any other expression."""
+    if isinstance(x, ast.Constant) and isinstance(x.value, str):
+        return x.value
+    if isinstance(x, ast.JoinedStr):
+        return "".join(v.value if isinstance(v, ast.Constant) else "0" for v in x.values)
+    return None
+
+
+def _kernel_door_census():
+    """The door in kernel.py. Each script unit is a string literal, or a `+` chain holding one (read with the ast module, so
+    escapes are decoded and the served text is what is read; any other operand stands in as `0`), named by the variable it
+    is assigned to; docstrings are not script. Returns definitions and sites as (unit's variable, line, kind, enclosing
+    functions), and the mentions counted twice: in the source, and where the census read them (the units, the docstrings
+    and the Python comments), so a mention outside all three fails loudly."""
+    with open(KERNEL_PY, encoding="utf-8") as f:
+        src = f.read()
+    tree = ast.parse(src)
+    docs, units, read = set(), [], [0]
+    lines = sorted({src.count("\n", 0, m.start()) + 1 for m in re.finditer(re.escape(DOOR), src)})
+
+    def visit(node, owner):
+        if hasattr(node, "end_lineno"):   # a node whose lines hold no mention holds no unit naming the door: skipped
+            k = bisect.bisect_left(lines, node.lineno)
+            if k == len(lines) or lines[k] > node.end_lineno:
+                return
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                docs.add(id(first.value))
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            owner = node.targets[0].id
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            owner = node.target.id
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            chain = _py_leaves(node)
+        elif isinstance(node, (ast.Constant, ast.JoinedStr)):
+            chain = [node]
+        else:
+            chain = []
+        texts = [_py_text(x) for x in chain]
+        if any(t is not None for t in texts):
+            if id(node) in docs:
+                read[0] += node.value.count(DOOR)
+                return
+            text, pieces = "", []
+            for x, t in zip(chain, texts):
+                pieces.append((len(text), getattr(x, "lineno", 0)))
+                text += "0" if t is None else t
+            units.append((owner, text, pieces))
+            for x, t in zip(chain, texts):   # the operands that are not literals, and an f-string's holes, may hold units too
+                subs = [x] if t is None else [v for v in x.values if not isinstance(v, ast.Constant)] if isinstance(x, ast.JoinedStr) else []
+                for sub in subs:
+                    visit(sub, owner)
+            return
+        for ch in ast.iter_child_nodes(node):
+            visit(ch, owner)
+
+    visit(tree, "")
+    # the Python comments naming the door, tokenized by the top-level statement that holds the mention's line (or the line
+    # alone, between statements), so the whole file is not tokenized for a handful of lines
+    src_lines, spans = io.StringIO(src).readlines(), []   # split at "\n" alone, as the line numbers above count
+    for st in tree.body:
+        spans.append((min([st.lineno] + [d.lineno for d in getattr(st, "decorator_list", [])]), st.end_lineno))
+    segs = set()
+    for ln in lines:
+        k = bisect.bisect_right(spans, (ln, float("inf"))) - 1
+        segs.add(spans[k] if k >= 0 and spans[k][0] <= ln <= spans[k][1] else (ln, ln))
+    for a, b in sorted(segs):
+        toks = tokenize.generate_tokens(io.StringIO("".join(src_lines[a - 1:b])).readline)
+        read[0] += sum(tok.string.count(DOOR) for tok in toks if tok.type == tokenize.COMMENT)
+    out = {"mentions": src.count(DOOR), "defs": [], "sites": [], "misread": []}
+    for owner, text, pieces in units:
+        if DOOR not in text:
+            continue
+        read[0] += text.count(DOOR)
+        d, s, _, whole = _door_census(text)
+
+        def line(k):
+            start, lineno = max(p for p in pieces if p[0] <= k)
+            return lineno + text.count("\n", start, k)
+        out["defs"] += [(owner, line(k), kind, path) for kind, k, path in d]
+        out["sites"] += [(owner, line(k), kind, path) for kind, k, path in s]
+        if not whole:
+            out["misread"].append((owner, pieces[0][1]))
+    out["read"] = read[0]
+    return out
+
+
+_SCRIPT_EXTS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
+_MARKUP_EXTS = (".html", ".htm", ".xhtml", ".svg")
+
+
+def _tree_door_census(rel):
+    """(script files read, definitions, sites) under ROOT/rel, every file but node_modules and the tests (`*.test.*`), each a
+    (path, kind). A script is read by _door_census, and one it misread (not whole) is a site of its own; markup that names
+    the door is a site of its own too, since the census does not read the scripts inside it; any other file (styles, docs,
+    data) carries no script."""
+    files, defs, sites = 0, [], []
+    for dirpath, dirnames, filenames in os.walk(os.path.join(ROOT, rel)):
+        dirnames[:] = sorted(d for d in dirnames if d != "node_modules")
+        for name in sorted(filenames):
+            if ".test." in name:
+                continue
+            path, low = os.path.join(dirpath, name), name.lower()
+            files += low.endswith(_SCRIPT_EXTS)
+            with open(path, "rb") as f:
+                data = f.read()
+            if DOOR.encode() not in data:
+                continue
+            where = os.path.relpath(path, ROOT)
+            if low.endswith(_SCRIPT_EXTS):
+                d, s, _, whole = _door_census(data.decode("utf-8"))
+                defs += [(where, kind) for kind, _, _ in d]
+                sites += [(where, kind) for kind, _, _ in s] + ([] if whole else [(where, "a script the census misread")])
+            elif low.endswith(_MARKUP_EXTS):
+                sites.append((where, "named in markup, whose scripts this census does not read"))
+    return files, defs, sites
+
+
+# the three callers, by the functions that enclose them in the shell link's script (_LANDING_MOBILE_JS)
+_DOOR_ROLES = {("function shellWS",): "the shell link's dial",
+               ("function shellWS", "assigned to ws.onopen"): "the shell link's open",
+               ("function shellWS", "assigned to ws.onmessage"): "the shell link's frame"}
+
+
+def _door_role(owner, path):
+    if owner != "_LANDING_MOBILE_JS":
+        return None
+    return _DOOR_ROLES.get(tuple(path[-2:])) or _DOOR_ROLES.get(tuple(path[-1:]))
+
+
+class NotLeavingCallSites(unittest.TestCase):
+    """The light closing check at ed1feaa79 (new-A-1, 2026-10-05): the Log's leaving latch clears at each call of
+    window.__rompNotLeaving. ShellLinkFailure, below, executes its three callers (the shell link's dial, its open and each
+    frame on it), and the pin above holds a pane's frames to calling no door. A caller anywhere else went unseen: the
+    check's mutant M7, the reload banner's wsFresh listener (_STALE_JS) calling the door, kept this module green, and a call
+    from a pane's wsFresh, or from any other listener, would widen the unload race call 1 accepted. So the callers are
+    counted here, by the code: kernel.py's script literals, and every script under ui/ and vscode-extension/src but the
+    tests (`*.test.*`). A call spelled with optional chaining, through a bracket's string key, or through a local alias
+    counts; the definition, comments and strings that name the door do not; any other reference is a site of its own and
+    fails the role check; and a script the lexer did not read whole fails too. Stated limit, on the precondition that the
+    sources are written in good faith: a name assembled at run time (`w["__romp" + "NotLeaving"]`), or a call held in a
+    string and run as code, is not read."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.kernel = _kernel_door_census()
+        cls.trees = {rel: _tree_door_census(rel) for rel in ("ui", os.path.join("vscode-extension", "src"))}
+
+    def test_every_mention_in_kernel_py_is_read(self):
+        self.assertGreater(self.kernel["mentions"], 0, "kernel.py names the door")
+        self.assertEqual(self.kernel["read"], self.kernel["mentions"],
+                         "every mention of the door in kernel.py is in a string literal the census read, a docstring or a "
+                         "Python comment: a mention outside them is one the census cannot classify")
+        self.assertEqual(self.kernel["misread"], [], "each script naming the door was read whole (every bracket closed its own "
+                         "kind, no template left open), so no misread comment, string, regex or template hid a call")
+
+    def test_the_door_has_one_definition_the_logs(self):
+        self.assertEqual([(o, kind) for o, _, kind, _ in self.kernel["defs"]], [("_LANDING_ERRS_JS", "definition")],
+                         "window.__rompNotLeaving is defined once, by the Log (_LANDING_ERRS_JS); with no definition found "
+                         "the census below counts nothing it can trust")
+
+    def test_the_door_has_three_callers_the_shell_links_dial_open_and_frame(self):
+        sites = self.kernel["sites"]
+        words = {"call": "a call", "alias call": "a call through a local alias", "unknown": "a reference the census cannot follow"}
+        detail = "; ".join("kernel.py about line %d, %s in %s inside %s: %s" % (
+            ln, words.get(kind, kind), o or "an unnamed literal", " > ".join(p) or "the top level",
+            _door_role(o, p) or "not one of the three") for o, ln, kind, p in sites)
+        roles = sorted(_door_role(o, p) or "not one of the three" for o, _, _, p in sites)
+        self.assertEqual(roles, sorted(_DOOR_ROLES.values()),
+                         "window.__rompNotLeaving has exactly three callers, the shell link's dial, open and frame: a call "
+                         "from a pane's wsFresh, or from any other listener, would widen the unload race call 1 accepted. "
+                         "Found: " + detail)
+
+    def test_no_script_under_ui_or_the_extension_calls_the_door(self):
+        for rel, (files, _, _) in sorted(self.trees.items()):
+            self.assertGreater(files, 0, "the census read scripts under %s" % rel)
+        self.assertEqual({rel: defs + sites for rel, (_, defs, sites) in self.trees.items()}, {rel: [] for rel in self.trees},
+                         "nothing under ui/ or vscode-extension/src defines or calls window.__rompNotLeaving: its callers are "
+                         "the shell link's three, in kernel.py")
+
+    def test_the_census_reads_a_call_by_the_code(self):
+        x = "window." + DOOR
+        cases = [
+            ("the definition", x + "=function(){leaving=false;};", ["definition"], []),
+            ("comments and strings", "// " + x + "()\n/* " + x + "() */var s='" + x + "()',t=`" + x + "()`;", [], []),
+            ("a longer name", x + "Soon();", [], []),
+            ("the guarded call", "try{" + x + "&&" + x + "();}catch(e){}", [], ["call"]),
+            ("a typeof guard", "typeof " + x + "==='function'&&" + x + "();", [], ["call"]),
+            ("optional chaining", x + "?.();", [], ["call"]),
+            ("a bracket", "window['" + DOOR + "']();window[\"" + DOOR + "\"]?.();", [], ["call", "call"]),
+            ("the bare global", DOOR + "();", [], ["call"]),
+            ("a local alias", "var nl=" + x + ";nl&&nl();nl?.();", [], ["alias call", "alias call"]),
+            ("an alias never called", "var nl=" + x + ";", [], ["unknown"]),
+            ("an argument", "setTimeout(" + x + ",0);", [], ["unknown"]),
+            ("a key held as a string", "var k='" + DOOR + "';window[k]();", [], ["unknown"]),
+            ("a regex literal holding a quote", "var r=/'/g;" + x + "();", [], ["call"]),
+            ("a template's substitution", "var t=`a${" + x + "()}b`;" + x + "();", [], ["call", "call"]),
+        ]
+        for label, js, want_defs, want_sites in cases:
+            d, s, _, whole = _door_census(js)
+            self.assertEqual(([kind for kind, _, _ in d], [kind for kind, _, _ in s], whole), (want_defs, want_sites, True), label)
+        # a reading that does not balance is reported, never trusted: the lexer reads a regex literal after `if(a)` as a
+        # division, so its backtick opens a template that swallows the call after it
+        misread = _door_census("if(a)/`/.test(b);" + x + "();")
+        self.assertEqual((misread[1], misread[3]), ([], False), "the call is hidden, and the script is reported as not read whole")
+
+    def test_the_census_names_a_sites_role_by_the_functions_enclosing_it(self):
+        call = "window." + DOOR + "&&window." + DOOR + "();"
+        js = ("(function(){function shellWS(){var ws=new WebSocket('u');" + call + "ws.onopen=function(){" + call + "};"
+              "ws.onmessage=(ev)=>{" + call + "};}window.addEventListener('message',function(e){" + call + "});"
+              "function other(){" + call + "}})();")
+        sites = _door_census(js)[1]
+        dial, opened, frame = _DOOR_ROLES.values()
+        self.assertEqual([_door_role("_LANDING_MOBILE_JS", p) for _, _, p in sites], [dial, opened, frame, None, None],
+                         "the dial in shellWS, the open and the frame in its socket's handlers; a listener and another "
+                         "function are none")
+        self.assertEqual([_door_role("_STALE_JS", p) for _, _, p in sites], [None] * 5,
+                         "a role holds in the shell link's script alone")
 
 
 # ---- the shell link's failure ----

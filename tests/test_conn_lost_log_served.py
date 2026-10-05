@@ -463,8 +463,9 @@ class ConnLostLog(unittest.TestCase):
         request on a fresh connection that the browser closed within about 1 ms of sending it, reported by WebKit as
         "Connection terminated unexpectedly". The crash reporter logged the SIGSEGV 0.12 to 0.20 s after that request in the
         five failures at 3e9c560f5 below (0.13 to 0.17 s in the review's two at 19a19f37e), and the fault comes at or before
-        that line. The crash reporter holds the crashed process, so it exited 1.08 to 1.12 s after the logged SIGSEGV, 1.2 to
-        1.3 s after the request, and the first refused redial came 20 to 30 ms after the exit (review round 2, 2026-10-05).
+        that line. The crash reporter holds the crashed process, so in the five failures at 3e9c560f5 it exited 1.08 to 1.12 s
+        after the logged SIGSEGV, 1.2 to 1.3 s after the request, and the first refused redial came 20 to 30 ms after the exit
+        (review round 2, 2026-10-05).
         Measured at 3e9c560f5 with an instrumented copy of the driver: 5 of 48 WebKit reload legs failed this way (1 of 8 in a
         fresh lab; 1 of 8 in a lab that first ran the whole module in all three engines; 3 of 32 in a fresh lab, one of them
         at the leg's first load). Each failure matched a WPENetworkProcess SIGSEGV in the machine's crash reporter log and
