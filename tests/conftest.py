@@ -2382,14 +2382,17 @@ def pytest_collectreport(report):
 # files' growth: shard 3's worker reached 5.38 GB on 3.12 and 5.60 GB on 3.14t. Four by the hash alone did not either:
 # shard 4's worker reached 4.72 GB on 3.12 and 5.13 GB on 3.14t, and it was one module. In a run of shard 4 on 3.14t
 # that stamped each test's result with the time and sampled the worker every second, the worker was at 2.72 GB when
-# tests/test_thread_stop_census.py began and grew 2.41 GB while it ran; no other file grew any shard's worker by more
-# than 0.4 GB once the shard's collection was done.
-# Why the list: a module that heavy lands where the hash puts it, and the shard it lands in is the one that passes the
-# budget. So the heaviest modules are named, each with its measured peak (the module's own run, the Run pytest step's
+# tests/test_thread_stop_census.py began and its peak rose 2.41 GB while that file ran; no other file raised any shard's
+# worker's peak by more than 0.4 GB once the shard's collection was done (in those runs, one of each shard on 3.14t).
+# Why the list: the hash does not weigh a file, so a module that heavy can land in the shard that is already the fullest
+# where it runs, as it did in shard 4. So the heaviest modules are named, each with its measured peak (the module's own run, the Run pytest step's
 # command with the one file named, under the runner's shape), at most one to a shard, each in the shard whose worker
 # held the least where the module runs (the files run in path order, so a module adds to what the files before it
 # left). A module joins the list when a shard passes 5 GB because of it; tests/test_ci_shards.py holds every entry to
-# a test file that exists and to one entry a shard.
+# a test file that exists and to one entry a shard. The list has one entry: of twelve modules measured alone (the
+# censuses that parse the tree, and the files that raised a shard's peak most), the next heaviest,
+# tests/test_session_env.py, peaked at 0.59 GB on 3.12 and 0.74 GB on 3.14t. At this rule each shard's worker stayed at
+# or under 5 GB on both interpreters, 4.60 GB at most (shard 1 on 3.14t; ci.yml's python job comment has the runs).
 HEAVY_MODULES = {
     # alone: 2.53 GB on 3.12 and 2.81 GB on 3.14t. Shard 1's worker held 1.97 GB on 3.14t where this file runs, the
     # least of the four shards (shard 4's, where the hash put it, held 2.72 GB)

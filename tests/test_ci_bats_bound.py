@@ -77,11 +77,13 @@ class BatsStepBound(unittest.TestCase):
 # percent, an 8 GiB memory cap, no swap; ci.yml's python job comment has the run), the slower of 3.12 and 3.14t, read
 # from pytest's summary line and rounded up. None marks a shard whose phase is not measured (a shard SHARD_COUNT adds),
 # and test_each_shards_cap_is_the_rules_figure_for_its_phase is red while any shard's phase is None.
-# PLACEHOLDER: no shard's phase is measured yet at four shards (2026-10-05). The three shards measured that day, 678,
-# 981 and 2459 s on 3.14t (661, 930 and 2348 s on 3.12), are a record in ci.yml's comment, not entries here: a file's
-# shard moved with the count. Measuring a shard means setting its entry to the measured seconds, and ci.yml's figure
-# for that shard and its comment to match. Each cap is confirmed on the new repo's first CI run.
-SHARD_PHASE_S = {1: None, 2: None, 3: None, 4: None}
+# The four shards at the weighted rule (tests/conftest.py's CI's shards section), measured on 2026-10-05: shard 1, 529 s
+# on 3.12 and 679 s on 3.14t; shard 2, 1220 s and 1451 s; shard 3, 614 s and 409 s; shard 4, 1237 s and 1204 s. Each
+# entry is the slower of its two. The earlier counts' phases (three shards, and four by the hash alone) are a record in
+# ci.yml's comment, not entries here: a file's shard moved with the count and with the rule. Re-measuring a shard means
+# setting its entry to the measured seconds, and ci.yml's figure for that shard and its comment to match. Each cap is
+# confirmed on the new repo's first CI run.
+SHARD_PHASE_S = {1: 679, 2: 1451, 3: 614, 4: 1237}
 # what ci.yml's cap for a shard holds while that shard's phase is a placeholder, and each shard held until the shards
 # were measured: the cap the whole suite's estimated
 # one-worker phase gave (WHOLE_SUITE_ESTIMATE_INPUTS: the slowest finished two-worker Linux cell, the 3.10 cell of run

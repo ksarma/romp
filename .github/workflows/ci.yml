@@ -190,26 +190,38 @@ jobs:
     # 2, 930 s and 981 s, 3.04 and 2.89 GB (3.82 and 3.32); shard 3, 2348 s and 2459 s, 5.38 and 5.60 GB (5.57 and
     # 5.81). No worker was killed. By the rule below the three phases gave caps of 25, 30 and 55 (678 + 600 + 27 =
     # 1305 s, 981 + 600 + 27 = 1608 s and 2459 + 600 + 27 = 3086 s). Shard 3's worker was over 5 GB, the target set on
-    # 2026-10-05 for each shard's worker, which keeps about 1 GB of the 6 GB for the files' growth, so the count is four
-    # (tests/conftest.py's CI's shards section says what follows if a shard of four still passes 5 GB).
+    # 2026-10-05 for each shard's worker, which keeps about 1 GB of the 6 GB for the files' growth, so the count went to
+    # four.
+    # Four shards by the hash alone did not meet the target either. Measured the same way on 2026-10-05 (1-minute load 14
+    # to 61), the pytest phase on 3.12 and on 3.14t, then the worker's peak on each (the scope's peak in brackets): shard
+    # 1, 553 s and 559 s, 2.32 and 2.30 GB (2.55 and 2.64); shard 2, 1482 s and 1438 s, 2.64 and 2.71 GB (3.56 and
+    # 3.35); shard 3, 661 s and 466 s, 2.31 and 2.47 GB (2.42 and 2.60); shard 4, 1145 s and 1222 s, 4.72 and 5.13 GB
+    # (4.86 and 5.28). One module put shard 4 over: tests/test_thread_stop_census.py raised its worker's peak by 2.41 GB.
+    # So the shards follow a weighted rule (tests/conftest.py's CI's shards section): that module is listed for shard 1,
+    # whose worker held the least where it runs, and every other file keeps its hash shard.
+    # Four shards at the weighted rule fit, each worker at or under 5 GB on both interpreters. Measured the same way on
+    # 2026-10-05 (1-minute load 15 to 66): shard 1, 529 s and 679 s, 4.25 and 4.60 GB (4.41 and 4.79); shard 2, 1220 s
+    # and 1451 s, 2.62 and 2.73 GB (3.50 and 3.37); shard 3, 614 s and 409 s, 2.30 and 2.46 GB (2.42 and 2.60); shard 4,
+    # 1237 s and 1204 s, 2.74 and 2.75 GB (3.08 and 2.99). No worker was killed in any of these runs. Each phase is
+    # pytest's summary figure rounded up to the second, on a shared machine whose load moves it: shard 2 on 3.12 took
+    # 1482 s in the hash-alone run and 1220 s in this one, over the same files.
     # Each shard's cap is T230b's rule for its own phase: the shard's one-worker pytest phase, plus the 600 s per-test
     # timeout, plus the time before the step, rounded up to a multiple of 5 minutes, in the expression's matrix.shard
     # clauses, one figure for each shard. Each cap takes the slower interpreter's phase, and the time before the step is
-    # the 27 s in the 3.14t cell of run 37212676524 (batch/2026-10-04b, job 111476102341, on the public runner).
-    # PLACEHOLDER: no shard's phase is measured yet at four shards, and each shard's figure, 90, is the cap the whole
-    # suite's estimated one-worker phase gave, held until the four shards are measured because a shard runs a part of
-    # that suite; it is not a shard's figure. tests/test_ci_bats_bound.py is red until each shard's measured phase
-    # replaces the placeholder there and here. Each cap is then confirmed on the new repo's first CI run, whose jobs give
-    # the private runner's own phases and setup times. Each step's time is the jobs API's.
-    # The placeholder, 90, is also the figure each shard's cap held before the three shards were measured. The whole
-    # suite's estimated one-worker phase gave it: the slowest finished two-worker Linux cell, the 3.10 cell of run
+    # the 27 s in the 3.14t cell of run 37212676524 (batch/2026-10-04b, job 111476102341, on the public runner): shard 1,
+    # 679 + 600 + 27 = 1306 s, so 25; shard 2, 1451 + 600 + 27 = 2078 s, so 35; shard 3, 614 + 600 + 27 = 1241 s, so 25;
+    # shard 4, 1237 + 600 + 27 = 1864 s, so 35. Shard 2's sum is 22 s short of 35 minutes: a slower runner, or a time
+    # before the step past 49 s, would give 40. Each cap is confirmed on the new repo's first CI run, whose jobs give the
+    # private runner's own phases and setup times. Each step's time is the jobs API's.
+    # 90 is the figure each shard's cap held before the shards were measured. The whole suite's estimated one-worker
+    # phase gave it: the slowest finished two-worker Linux cell, the 3.10 cell of run
     # 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880), 2312 s in its pytest step,
     # scaled by the serial ratio measured on four CPUs (1437 s against 739 s, the Run pytest step's measurement) to
     # 4496 s, and 4496 + 600 + 25 = 5121 s, about 85 min 21 s, so 90 (the 25 s before the step is that job's on the
     # public runner). With two workers on the public runner the same rule gave 50 (the 3.14t cell of run 37158350467:
     # 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux cap from 2026-10-02 to 2026-10-04, after the 40 fork PR
     # 926's branch set on 2026-09-30 from run 36664031774 and the 35 main had before that PR.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 90 || matrix.shard == '2' && 90 || matrix.shard == '3' && 90 || 90 }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 25 || matrix.shard == '2' && 35 || matrix.shard == '3' && 25 || 35 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
