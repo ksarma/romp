@@ -67,33 +67,33 @@
 //     process in a session of its own after its parent exited), every process of it read gone before the bound plus the
 //     grace has passed, while three keepers whose launchers exited before the walk (the examples of the rule the
 //     script's header states for what the kill does not reach), and a child of the first, are read still alive then;
-//     so is a cut beside other
-//     legs, two legs at a time with a leg still running at the cut (watching the cut leg's process, so its green does
-//     not rest on timing) and a leg queued behind it, and one leg at a time with a leg queued behind the cut, the cut
-//     leg alone named and the others passing; and so is a TERM to the script with the bound and the grace unset, each
-//     leg's start line read printed while the legs run and their spec output held, and the leg's bound timer read up at
-//     the default bound, before it, after which no process of that leg (its node --test among them) and no timer of the
-//     run is left, the script's output closes within 10 s and the output the script held is printed, the hanging leg's
-//     after a line naming its node --test's exit on the kill, 137; so is a second TERM sent while the EXIT trap holds
-//     the leg's node --test stopped between its stop and its kill (read so by a poll after the first, the script read
-//     not yet exited), after which no process of the leg is left, running or stopped, that leg's output after the same
-//     line, and the run's TMPDIR empty; and so is a SIGKILL to the script, after which the leg's subshell and its
-//     timer, posting through the event pipe's descriptor they inherited, end once the leg and its bound have; and
-//     through the stub: a node --test that outlives the grace is killed and named, after a cut (the leg second in its
-//     roster, one leg at a time, the reds naming it and the leg queued behind it run), beside a leg still running (two
-//     legs at a time, the running leg left to run on and exit 0) and with nothing cut (where the grace's red alone sets
-//     the status), a node --test that has exited and is not yet reaped at the grace's end is not held and its exit is
-//     the leg's status, a node --test that outlives the bound with no process under it, or with only a zombie (a child
-//     that has ended and is not yet reaped) under it, is not cut, the knobs' refusals, the refusal of a ps that cannot
-//     read the process table as the bound reads it (one that exits 127, one that refuses -p, one whose whole-table read
-//     prints 0 for every parent, one that leaves out the script's own process), a run whose parent has exited before
-//     those reads, not refused (through a stand-in ps that shows that parent as 1, and through a launcher that exits
-//     once it has started the script), the count of legs at once read with nproc's OpenMP variables set and unset, the
-//     status of legs that exit differently, and a roster longer than the legs run at once, the most calls running at
-//     once counted and the outputs printed in roster order although the legs finish in another, and, with the real
-//     node, two legs run one at a time under a short bound each get their bound from their own start. A roster line
-//     holding a backslash is held by seen_at's rows, and a tree under a directory whose name holds one by the post-run
-//     key's row, each read as the script's comment above seen_at or above its awk pass states;
+//     so is a cut beside other legs, two legs at a time with a leg still running at the cut (watching the cut leg's
+//     process, so its green does not rest on timing) and a leg queued behind it, and one leg at a time with a leg
+//     queued behind the cut, the cut leg alone named and the others passing; and so is a TERM to the script with the
+//     bound and the grace unset, each leg's start line read printed while the legs run and their spec output held, and
+//     the leg's bound timer read up at the default bound, before it, after which no process of that leg (its node
+//     --test among them) and no timer of the run is left, the script's output closes within 10 s and the output the
+//     script held is printed, the hanging leg's after a line naming its node --test's exit on the kill, 137; so is a
+//     second TERM sent while the EXIT trap holds the leg's node --test stopped between its stop and its kill (read so
+//     by a poll after the first, the script read not yet exited), after which no process of the leg is left, running or
+//     stopped, that leg's output after the same line, and the run's TMPDIR empty; and so is a SIGKILL to the script,
+//     after which the leg's subshell and its timer, posting through the event pipe's descriptor they inherited, end
+//     once the leg and its bound have; and through the stub: a node --test that outlives the grace is killed and named,
+//     after a cut (the leg second in its roster, one leg at a time, the reds naming it and the leg queued behind it
+//     run), beside a leg still running (two legs at a time, the running leg left to run on and exit 0) and with nothing
+//     cut (where the grace's red alone sets the status), a node --test that has exited and is not yet reaped at the
+//     grace's end is not held and its exit is the leg's status, a node --test that outlives the bound with no process
+//     under it, or with only a zombie (a child that has ended and is not yet reaped) under it, is not cut, the knobs'
+//     refusals, the refusal of a ps that cannot read the process table as the bound reads it (one that exits 127, one
+//     that refuses -p, one whose whole-table read prints 0 for every parent, one that leaves out the script's own
+//     process), a run whose parent has exited before those reads, not refused (through a stand-in ps that shows that
+//     parent as 1, and through a launcher that exits once it has started the script), the count of legs at once read
+//     with nproc's OpenMP variables set and unset, the status of legs that exit differently, and a roster longer than
+//     the legs run at once, the most calls running at once counted and the outputs printed in roster order although the
+//     legs finish in another, and, with the real node, two legs run one at a time under a short bound each get their
+//     bound from their own start. A roster line holding a backslash is held by seen_at's rows, and a tree under a
+//     directory whose name holds one by the post-run key's row, each read as the script's comment above seen_at or
+//     above its awk pass states;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
