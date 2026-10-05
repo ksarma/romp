@@ -140,8 +140,10 @@ not seen, adding no value and taking none away (HOST = "127.0.0.1", then HOST = 
   exclusive_upper_bound; a keyword that names none is passed over), and the call is read by the arguments that fill its
   parameters from the first up to the first left empty: random.randint(a=40000, b=50000) counts as random.randint(40000,
   50000) does, randrange(start=S) reads as randrange(S), and neither randint(b=N) nor randrange(stop=E) is read. A call
-  spelled on the class, random.Random or random.SystemRandom, takes its first positional argument as the instance
-  (random.Random.randrange(rng, 40000, 50000) is 40000-49999, and so is the call with start= and stop= after rng). A **
+  spelled on a name or attribute called Random or SystemRandom takes its first positional argument as the instance
+  (random.Random.randrange(rng, 40000, 50000) is 40000-49999, and so is the call with start= and stop= after rng). The
+  class is known by that name alone, as the random calls are by the callee's name, so a call spelled on Random imported
+  by name or on mymod.SystemRandom drops its first argument too, whatever that name holds (WHAT IT CANNOT SEE). A **
   mapping names no parameter, yet can fill any parameter left empty: beside a randrange's start and stop, with its step
   left empty, it is read as a step interval() does not bound (below), and beside any other parameter left empty the call
   is not read, since what the call returns then depends on what the mapping holds (random.randrange(30000, **kw) returns
@@ -249,8 +251,11 @@ these turns its plant red, and the example leaves this list.
   a name bound to one int the census records and also by a binding it does not record (K = 7, then K = f() or
   K *= -1), which interval() reads as that one int, so random.randrange(40000, 1000, K) is read as 40000-999 whatever
   else K holds;
-  an unbound random method spelled on anything but random.Random or random.SystemRandom, whose instance then fills
-  start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
+  an unbound random method spelled on anything but a name or attribute called Random or SystemRandom, whose instance
+  then fills start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
+  a name or attribute called Random or SystemRandom that holds an instance (Random = random.Random(), then
+  Random.randint(N, M); cfg.SystemRandom.randint(N, M)), whose first argument is taken for the instance, in THE BIND
+  BANDS' draws too;
   a float where the census reads an int, which a random call takes on 3.10 and 3.11 (random.randrange(40000.0, 50000))
   and int() takes everywhere (int(45001.0));
   a random call with an argument passed through a * sequence (random.randrange(*(N, M)), random.randint(*[N, M]));
@@ -310,9 +315,10 @@ THE BIND BANDS are derived from THE FILES (bind_bands()):
   try * S, inside a function: S times each try below the most its callers ask for);
   each draw from randint(a, b) with a at or above 1024: a call in Python whose two arguments are int literals, each
   given by position or by its parameter's name as THE RULE reads a random call (_random_args(): randint(a=A, b=B) is
-  randint(A, B), and neither randint(b=B) nor randint(A, B, a=C), which Python refuses, is a draw), since every reader
-  of a random call reads its arguments one way; or the text in a shell file, by position (the probe of
-  tests/free-port.bash);
+  randint(A, B), and neither randint(b=B) nor randint(A, B, a=C), which Python refuses, is a draw; a call spelled on a
+  name or attribute called Random or SystemRandom drops its first argument as the instance, so
+  random.Random.randint(rng, A, B) is randint(A, B)), since every reader of a random call reads its arguments one way;
+  or the text in a shell file, by position (the probe of tests/free-port.bash);
   each block keyed by a test file's name, 'name.test.js': [lo, hi] (tests/manager-ports.js).
 The machine's own fixed ports (the postal bus's, the kernel's, the manager's) are not among them: no test binds them,
 and the two modules write them on purpose, to show the belt and the licences refusing them. A band made any other way
@@ -623,8 +629,10 @@ def _random_args(call):
     Python refuses the call for the way its arguments are passed: a keyword names a parameter a positional argument
     fills, or a randrange's stop is left empty and its step is anything but the int 1 (randrange's default step, the
     one step Python takes without a stop). None as well for a stop left empty beside a step that is 1 only at run time
-    (a name bound to 1, +1), which Python takes: only the int 1 written there is read. A call spelled on random.Random
-    or random.SystemRandom passes its instance first, and it is dropped (random.Random.randrange(rng, S, E))."""
+    (a name bound to 1, +1), which Python takes: only the int 1 written there is read. A call spelled on a name or
+    attribute called Random or SystemRandom passes its instance first, and it is dropped (random.Random.randrange(rng,
+    S, E)); the class is known by that name alone, so a name or attribute so called that holds an instance loses its
+    first argument (WHAT IT CANNOT SEE)."""
     params, args = RANDOM_CALLS[_callee(call.func)], call.args
     if isinstance(call.func, ast.Attribute) and _callee(call.func.value) in ("Random", "SystemRandom") and args \
             and not isinstance(args[0], ast.Starred):
@@ -1959,16 +1967,19 @@ class Plants(unittest.TestCase):
                 self.assertRed("test_plant.py", src, why, n=first)
 
     def test_a_random_call_spelled_on_the_class_takes_its_instance_first(self):
-        """A random call spelled on random.Random or random.SystemRandom, an unbound method, passes its instance first,
-        and the census drops it before reading the arguments. Each red plant asserts the span the census reports:
-        randrange(rng, 40000, 50000) is 40000-49999, by keyword after the instance too and with a step of 7, four
-        arguments in all; randrange(rng, 50000) is 0-49999; randint(rng, 40000, 50000) is 40000-50000, by keyword too.
-        e50adc775 put the instance in start's place, so it read none of these (a keyword after the instance repeated
-        the start, four arguments outnumbered randrange's three), and with rng bound to 0 elsewhere in the module it
-        read randrange(rng, 1000, 50000) as 0-999 and reported nothing, where CPython returns 1000 to 49999."""
+        """A random call spelled on a name or attribute called Random or SystemRandom, an unbound method, passes its
+        instance first, and the census drops it before reading the arguments: the class is known by that name alone, so
+        mymod.Random counts as random.Random does. Each red plant asserts the span the census reports: randrange(rng,
+        40000, 50000) is 40000-49999, on mymod.Random too, by keyword after the instance, and with a step of 7, four
+        arguments in all; randrange(rng, 50000) is 0-49999; randint(rng, 40000, 50000) is 40000-50000, by keyword
+        too. e50adc775 put the instance in start's place, so it read none of these (a keyword after the instance
+        repeated the start, four arguments outnumbered randrange's three); with rng bound to 0 elsewhere in the module
+        it read randrange(rng, 1000, 50000) as 0-999 and reported nothing, where CPython returns 1000-49999."""
         lo, hi = LOW + 7232, LOW + 17232                                           # 40000 and 50000, built at run time
         for label, src, span, first in (
                 ("randrange on random.Random", 'port = random.Random.randrange(rng, %d, %d)\n' % (lo, hi), (lo, hi - 1), lo),
+                ("randrange on an attribute of another module called Random",
+                 'port = mymod.Random.randrange(rng, %d, %d)\n' % (lo, hi), (lo, hi - 1), lo),
                 ("randrange on random.Random with its start alone", 'port = random.Random.randrange(rng, %d)\n' % hi,
                  (0, hi - 1), LOW),
                 ("randint on random.Random", 'port = random.Random.randint(rng, %d, %d)\n' % (lo, hi), (lo, hi), lo),
@@ -2034,8 +2045,12 @@ class Plants(unittest.TestCase):
                 ("a name bound to an int and by a binding the census does not record", "test_x.py",
                  'K = 7\nK = f()\nport = random.randrange(%d, 1000, K)\nJ = 7\nJ *= -1\nport = random.randrange(%d, 1000, J)\n'
                  % (n, n)),
-                ("an unbound random method spelled on anything but random.Random or random.SystemRandom", "test_x.py",
+                ("an unbound random method spelled on anything but a name or attribute called Random or SystemRandom",
+                 "test_x.py",
                  'port = type(rng).randrange(rng, %d, %d)\nport = MyRandom.randrange(rng, %d, %d)\n' % (n, n + 9, n, n + 9)),
+                ("a name or attribute called Random or SystemRandom that holds an instance", "test_x.py",
+                 'Random = random.Random()\nport = Random.randint(%d, %d)\ncfg.SystemRandom = random.SystemRandom()\n'
+                 'port = cfg.SystemRandom.randint(%d, %d)\n' % (n, n + 9, n, n + 9)),
                 ("a float where the census reads an int", "test_x.py",
                  'port = random.randrange(%d.0, %d)\nrow = {"port": int(%d.0)}\n' % (n, n + 9, n)),
                 ("a random call with an argument passed through a * sequence", "test_x.py",
@@ -2494,6 +2509,12 @@ class SentinelPlants(unittest.TestCase):
              % (kw[0] % (b - 2000, b - 1901), kw[1] % (b - 901, b - 1000), kw[2] % (b - 6000, b - 5901),
                 kw[0] % (10, 99), "random.randint(b=%d)" % (b - 7000), "random.randint(%d, %d, a=1)" % (b - 8000, b - 7901)),
              [(b - 2000, b - 1901), (b - 1000, b - 901), (b - 6000, b - 5901)]),
+            ("a draw in Python on a name or attribute called Random or SystemRandom, its first argument the instance",
+             "helper_z.py",
+             "import random\nP = random.Random.randint(rng, %d, %d)\n"
+             "Random = random.Random()\nQ = Random.randint(%d, %d)\nR = cfg.SystemRandom.randint(%d, %d)\n"
+             % (b - 9000, b - 8901, b - 10000, b - 9901, b - 11000, b - 10901),
+             [(b - 9000, b - 8901)]),
             ("a block keyed by a test file's name", "ports-x.js", "const RANGES = {\n  'a.test.js': [%d, %d],\n};\n" % (b - 13000, b - 12489),
              [(b - 13000, b - 12489)]))
         for label, name, text, want in cases:
