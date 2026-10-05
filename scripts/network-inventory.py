@@ -280,17 +280,35 @@ and no keyword, X-Content-Type-Options in any case and nosniff in any case once 
 before any statement there that names end_headers or flush_headers (as an attribute, a name or a string constant) or, after the
 write, calls a method of that receiver other than send_header, send_response or send_response_only, or hands the receiver to a
 call, and with no other X-Content-Type-Options header, nor a send_header whose name is no string constant, before it there or in a
-statement that runs before its block; not read: a compound statement before that block in an enclosing block, a header written
+statement that runs before its block; not read: a compound statement before that block in an enclosing block or in a sibling block
+that runs before that block or an enclosing one (a try's body before its finally, a loop's body before its else), a header written
 through a call the census does not follow, a helper method of the handler among them, an earlier iteration of a loop around the
 write that writes the header from a branch exclusive with the write's, a callable bound outside the write's block under another
-name, a function that reaches the handler through a global, a closure or a frame, and a name computed before the write), at a
+name, a function that reaches the handler through a global, a closure or a frame, a name computed before the write, and the place
+a lambda runs (a Content-Type write in a lambda's body, at a place SERVED_ALLOW names, is read beside the statement that holds the
+lambda)), at a
 `_send` call and at a write outside
 it alike, since without that header a browser runs such a response as a classic script when a page loads it by <script src>, and
 the census reads no body of a type it types as running none; and the header must reach the browser, so a type that runs no script
 is refused by name, at a place SERVED_ALLOW names too, where a header call in the write's home (the definition, or the function
 around a direct write) holds a CR or LF the census reads, before or after the Content-Type, read as a `_send` call's header
-arguments are (a header line holding one ends the header block early, and the Content-Type and the nosniff header after it reach
-the body); the part before any `;`, stripped and lower-cased,
+arguments are, save the names it takes for the home's own, named below (a header line holding one ends the header block early, and
+the Content-Type and the nosniff header after it reach the body); the census claims only the spellings it reads, the nosniff test
+and that read being a regression instrument for the live tree's spellings and not a proof of which headers reach a browser: the
+nosniff test does not read a header call in a compound statement's own expressions (an if's or a while's test, a for's iterable, a
+with's item, a match's subject or a case's guard, an except clause's type, a nested class's decorators, bases or keywords), an
+end_headers or a flush_headers outside the write's block (in a statement that runs before it, or in a compound statement's own
+expressions), since the census reads no order across blocks, or the write's receiver reached after the write through an alias, an
+item, an operand, a bound method's `__call__` or an unpacking; the header values the census reads, a header call's in the write's
+home and a `_send` call's header arguments, take a name a nested scope binds for a local, so a module constant of that name is not
+read there (in the write's home a name any nested def, lambda, class or comprehension binds, at a `_send` call a comprehension's
+target in a function around it); and neither reads a header call through getattr, an alias, functools.partial or the header buffer
+(`_headers_buffer`), a header or a response line the calling route writes before a `_send` call, a second Content-Type spelled
+other than as a send_header with two positional arguments, the first the string constant Content-Type in any case, a header a loop
+writes from names it binds (refused before the nosniff header in the write's block, and otherwise unread, a second Content-Type or
+a CR or LF among what it may write), a header a helper method or any other function the home calls writes (its header lines lie
+outside every home), a write to the receiver's raw socket through self.connection, or the kernel's own end_headers override, which
+may write a header of its own at any call, outside every home; the part before any `;`, stripped and lower-cased,
 is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml`
 suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
@@ -364,7 +382,8 @@ value it read, refusing the call by name as a name the census does not follow by
 constant's value there: a name the module binds more than once or by an annotated assignment, one a function rebinds under a
 `global` declaration or a module-level statement writes, one some code writes after binding it, as a content type's module name is
 read (a container a subscript store or an in-place method changes among them), a top-level import's name anywhere but as an
-attribute's base, and one no module-level statement binds, among them the names the import system and the compiler bind (`__doc__`
+attribute's base or a bare name a call calls, and one no module-level statement binds, among them the names the import system and
+the compiler bind (`__doc__`
 for a docstring, `__annotations__` for an annotation) and site.py's six; a CR or LF the value computes at
 run time, a call's return or a number formatted as a character, is not read, nor is a header value held anywhere else, a local or
 a parameter of a function around the call, an attribute, a call's return or an item, a container a call binds that code changes
@@ -3622,7 +3641,9 @@ def _unbound_text_call(e):
 # whose place it names, its page unread in any form there; any other Content-Type write of the definition is still typed
 # (TheAllowlistExcusesEachWriteItNames). No allowlist entry excuses a Content-Type write with no nosniff header beside it, whatever
 # its type, or a header call in its home holding a CR or LF the census reads (TheAllowlistedWriteIsReadForANosniffHeader,
-# TheHeaderBlockIsReadForACrOrLf: the reviewer's 05:2xZ ruling of 2026-10-05); no entry is keyed on the unread-body refusal itself,
+# TheHeaderBlockIsReadForACrOrLf: the reviewer's 05:2xZ ruling of 2026-10-05), a Content-Type write in a lambda's body among them
+# (TheAllowlistedLambdaWriteIsRead: the entry on its type excuses its refusal before typing alone); no entry is keyed on the
+# unread-body refusal itself,
 # so any other script-running route
 # passes its body
 # as the call's second positional argument or is refused. No entry is keyed on `_send` itself, a call's function or a reference to
@@ -3631,8 +3652,8 @@ def _unbound_text_call(e):
 # before any typing (a call of a `_send` its file binds more than once outside function bodies, or other than by one def statement,
 # or rebinds under a `global` declaration in a function or a class body, a call of a decorated `_send`, a bare call of a `_send` a
 # scope around the call binds or in a module that holds a star import, a call in a lambda's body, and a call whose definition binds
-# its type's parameter again) and a reference to `_send` other than a call the scan reads are excused by none, so no entry leaves a
-# header holding a CR or LF unread. An entry that names nothing in the run, or
+# its type's parameter again) and a reference to `_send` other than a call the scan reads are excused by none, so no entry excuses a
+# header holding a CR or LF that the census reads. An entry that names nothing in the run, or
 # covers a different number of places (distinct source positions), is a SERVED ALLOW line, so a new place under an entry's key
 # is read or named, never excused by it.
 SERVED_ALLOW = {
@@ -3778,6 +3799,9 @@ _ENCLOSED = "a definition inside a function, whose scope the census does not rea
 _LAMBDA = "a lambda around the call, whose scope the census does not read"   # routes_of: a `_send` call, or a Content-Type write outside `_send`, inside a lambda
 _HEADER_ENDED = ("SERVED %s:%d serves a response whose header block a header call in %s ends early (%s at line %d, %s): a Content-Type or "
                  "nosniff header after it reaches the body, which the census does not read")   # judge's refusal (_header_block_crlf, B9)
+_ALLOWED_NO_NOSNIFF = ("SERVED %s:%d writes Content-Type %s in %s with no X-Content-Type-Options: nosniff header beside it: no allowlist "
+                       "entry excuses that, since a browser runs a response of a type it sniffs as a script a page loads by <script src>")   # judge's
+# allowlisted branch and routes_of's lambda branch (_nosniff_beside; A1 (a) of the reviewer's 05:2xZ ruling of 2026-10-05)
 _TYPE_REBOUND = ("a definition that binds %s, the parameter its own Content-Type write names, other than as that parameter (%s), so the "
                  "type it writes need not be the call's")   # routes_of: a `_send` call refused before any typing (_type_rebinding)
 _NOT_SELF = "a receiver the census does not prove self by binding (%s)"   # routes_of: a `<name>._send(...)` call in a class body whose receiver fails the proof (_self_receiver; layer iii of the eleventh round's rulings)
@@ -4455,13 +4479,32 @@ def _nosniff_beside(write, home):
     its finally; a loop's body before its else). A nosniff header after such a statement, under an if or in any other block than the
     write's (a def nested in the definition among them), written on another receiver, through any other method or as anything but an
     expression statement, or with any other arguments, is not beside it, so the type is refused (the (nd) and (ns) plants hold each
-    condition). Not read, the stated limits: a compound statement before the write's block in an enclosing statement list (the
-    live _file_preview range path's `if head:`, which holds a headers loop and a return), a header written through a call the census
+    condition). Not read, the stated limits: a compound statement before the write's block in an enclosing statement list (the live
+    _file_preview range path's `if head:`, which holds a headers loop and a return) or in a sibling block that runs before that block
+    or an enclosing one (a try's body before its finally, a loop's body before its else), a header written through a call the census
     does not follow before the write (a helper method of the handler among them; refusing every call on or handed the receiver there
     refuses the live tree), an earlier iteration of a loop around the write that writes the header from a branch exclusive with the
     write's, a callable bound outside the write's block under another name, a function that reaches the handler through a global, a
-    closure or a frame, and a name computed before the write (their witnesses the (nd) plants ndwc, ndwh, ndwl and ndoa). The search
-    finds the write's block from any root that holds the write, as `home` always does."""
+    closure or a frame, and a name computed before the write (their witnesses the (nd) plants ndwc, ndwb, ndwh, ndwl and ndoa). The
+    search finds the write's block from `home`; a write in no statement of home's body (in a def's decorator, default or annotation,
+    `home` that def) has no nosniff header read beside it, failing closed (TheAllowlistedLambdaWriteIsRead's ddef and lamD). A
+    Content-Type write in a lambda's body, read here at a place SERVED_ALLOW names (routes_of's lambda branch), is read beside the
+    statement that holds the lambda, not where the lambda runs: a stated limit. The census claims only the spellings it reads, the
+    nosniff test and that read being a regression instrument for the live tree's spellings and not a proof of which headers reach a
+    browser: the nosniff test does not read a header call in a compound statement's own expressions (an if's or a while's test, a
+    for's iterable, a with's item, a match's subject or a case's guard, an except clause's type, a nested class's decorators, bases or
+    keywords), an end_headers or a flush_headers outside the write's block (in a statement that runs before it, or in a compound
+    statement's own expressions), since the census reads no order across blocks, or the write's receiver reached after the write
+    through an alias, an item, an operand, a bound method's `__call__` or an unpacking; the header values the census reads, a header
+    call's in the write's home and a `_send` call's header arguments, take a name a nested scope binds for a local, so a module
+    constant of that name is not read there (in the write's home a name any nested def, lambda, class or comprehension binds, at a
+    `_send` call a comprehension's target in a function around it); and neither reads a header call through getattr, an alias,
+    functools.partial or the header buffer (`_headers_buffer`), a header or a response line the calling route writes before a `_send`
+    call, a second Content-Type spelled other than as a send_header with two positional arguments, the first the string constant
+    Content-Type in any case, a header a loop writes from names it binds (refused before the nosniff header in the write's block, and
+    otherwise unread, a second Content-Type or a CR or LF among what it may write), a header a helper method or any other function the
+    home calls writes (its header lines lie outside every home), a write to the receiver's raw socket through self.connection, or the
+    kernel's own end_headers override, which may write a header of its own at any call, outside every home."""
     def nosniff(s):
         c = s.value if isinstance(s, ast.Expr) else None
         return (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "send_header" and len(c.args) == 2
@@ -4515,7 +4558,9 @@ def _nosniff_beside(write, home):
             return stmts, pre
         return None
 
-    stmts, pre = block(home.body, [])
+    got = block(home.body, [])
+    if got is None: return False   # the write in no statement of home's body: in a def's decorator, default or annotation (fails closed)
+    stmts, pre = got
     if any(other(x) for x in pre): return False
     after = False
     for s in stmts:
@@ -4780,7 +4825,8 @@ def _header_const(consts, rebinds, name, strict=True, unfollowed=frozenset(), im
     here (choice 5 of the eleventh round's rulings): the callee set's `isinstance(x.func, ast.Name)`, since the set is read only for
     a Name node, which a callee of any other kind is not (the walk's `isinstance(x, ast.Name)` decides, its own red: dropped, a name
     a constant's value reads is no longer followed, so aet is read). With `strict` false (a module constant a `_send` call hands its
-    definition: _header_crlf) a constant in `unfollowed` (one some code writes after binding it, which routes_of adds: B6 of the
+    definition, or a header call in a Content-Type write's home names: _crlf_read, which _header_crlf and _header_block_crlf share) a
+    constant in `unfollowed` (one some code writes after binding it, which routes_of adds: B6 of the
     owner's check of the second closing check's pass) is not followed, and a name there that is no followed constant refuses the value
     only where it is in `unfollowed` (_unfollowed: a module name the census does not follow by binding, a top-level import's name
     among them), save a call's callee by its name alone and a top-level import's name as an attribute's base (`imports`,
@@ -4807,12 +4853,14 @@ def _header_const(consts, rebinds, name, strict=True, unfollowed=frozenset(), im
 
 
 def _unfollowed(tree, consts, rebinds):
-    """The module names the census does not follow by binding, which _header_crlf refuses in a header value at a `_send` call (NEW-2
-    of the closing check, item 4 of the reviewer's 02:3xZ ruling of 2026-10-04): every name the module binds at module level
+    """The module names the census does not follow by binding, which _header_crlf refuses in a header value at a `_send` call, and
+    _header_block_crlf in a header call in a Content-Type write's home (NEW-2 of the closing check, item 4 of the reviewer's 02:3xZ
+    ruling of 2026-10-04): every name the module binds at module level
     (_module_bound) and every name a function rebinds under a `global` declaration or a module-level statement writes (`rebinds`),
-    unless it is a module constant (_module_consts) that nothing rebinds, a top-level import's name among them since B8 of the owner's
-    check of that pass (the census reads no imported value; _header_crlf and _header_const read such a name only as an attribute's
-    base, _import_names); and every name the module reads that no module-level statement binds and that is no builtin (a name the
+    unless it is a module constant (_module_consts) that nothing rebinds, which no top-level import's name is (since B8 of the owner's
+    check of that pass such a name is one the census does not follow: the census reads no imported value, and _crlf_read, the reader
+    _header_crlf and _header_block_crlf share, and _header_const read such a name only as an attribute's base, _import_names); and
+    every name the module reads that no module-level statement binds and that is no builtin (a name the
     builtins module holds, the names the import system binds in every module and the six site.py adds, _SITE_NAMES, not among them, so
     the set is the same whether or not the census's interpreter imported site), which the census cannot resolve to a value it read (N1
     of the second closing check, item B of the reviewer's ruling
@@ -4832,9 +4880,11 @@ def _unfollowed(tree, consts, rebinds):
 
 def _import_names(tree, rebinds):
     """The names whose every module-level binding is a top-level import statement and that nothing rebinds (`rebinds`: Result.rebinds),
-    which _header_crlf and _header_const read only as an attribute's base (B8 of the owner's check of the second closing check's
-    pass): the census does not read an imported value, so such a name anywhere else in a header value is refused by name, and as an
-    attribute's base it is the stated attribute limit."""
+    which _crlf_read (the reader _header_crlf and _header_block_crlf share) and _header_const read only as an attribute's base (B8 of
+    the owner's check of the second closing check's
+    pass): the census does not read an imported value, so such a name anywhere else in a header value is refused by name, save a
+    call's callee by its name alone, whose return the census does not read, and as an attribute's base it is the stated attribute
+    limit."""
     bound = _module_bound(tree)
     imported = collections.Counter(a.asname or (a.name.split(".")[0] if isinstance(n, ast.Import) else a.name)
                                    for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names)
@@ -4873,11 +4923,30 @@ def _header_block_crlf(home, module, consts, rebinds, unfollowed, imports):
     where the census reads it, or None (B9 of the owner's check of the second closing check's pass, the reviewer's 05:2xZ ruling of
     2026-10-05: every header a route writes is held to the CR or LF rule, since a header line holding one ends the header block early
     and pushes the Content-Type and the nosniff header after it into the body). A header call is a send_header, send_response or
-    send_response_only call on any receiver but a Content-Type write (judge reads that one for a CR or LF before it is typed); each of
-    its arguments is read as _header_crlf reads a `_send` call's (_crlf_read), a name `home` binds (a parameter, a store or delete
-    target, a nested def's or class's name, an import, an except clause's name or a match capture) local to it unless `home` declares
-    it `global`. A header value held anywhere else (a local, an attribute, a call's return, an item) is the stated limit, its witness
-    dwl."""
+    send_response_only call on any receiver but a Content-Type write (judge reads that one for a CR or LF before it is typed, where
+    the census resolves its type; one in a lambda's body, whose type it does not read, is read for none); each of its arguments is
+    read as _header_crlf reads a `_send` call's (_crlf_read), save which names are local: a name bound anywhere under `home` (a
+    parameter, a store or delete target, a nested def's or class's name, an import, an except clause's name or a match capture, in
+    `home` itself or in any def, lambda, class or comprehension nested in it) is local to it unless `home` declares it `global`,
+    whereas _header_crlf reads against the function scopes around the call (_scopes_of, whose bindings hold a comprehension's target
+    and no nested def's or lambda's own names), so a module constant whose name a nested scope binds is not read here: the stated
+    limit. A header value held anywhere else (a local, an attribute, a call's return, an item) is the stated limit, its witness dwl.
+    The census claims only the spellings it reads, the nosniff test and that read being a regression instrument for the live tree's
+    spellings and not a proof of which headers reach a browser: the nosniff test does not read a header call in a compound statement's
+    own expressions (an if's or a while's test, a for's iterable, a with's item, a match's subject or a case's guard, an except
+    clause's type, a nested class's decorators, bases or keywords), an end_headers or a flush_headers outside the write's block (in a
+    statement that runs before it, or in a compound statement's own expressions), since the census reads no order across blocks, or
+    the write's receiver reached after the write through an alias, an item, an operand, a bound method's `__call__` or an unpacking;
+    the header values the census reads, a header call's in the write's home and a `_send` call's header arguments, take a name a
+    nested scope binds for a local, so a module constant of that name is not read there (in the write's home a name any nested def,
+    lambda, class or comprehension binds, at a `_send` call a comprehension's target in a function around it); and neither reads a
+    header call through getattr, an alias, functools.partial or the header buffer (`_headers_buffer`), a header or a response line the
+    calling route writes before a `_send` call, a second Content-Type spelled other than as a send_header with two positional
+    arguments, the first the string constant Content-Type in any case, a header a loop writes from names it binds (refused before the
+    nosniff header in the write's block, and otherwise unread, a second Content-Type or a CR or LF among what it may write), a header
+    a helper method or any other function the home calls writes (its header lines lie outside every home), a write to the receiver's
+    raw socket through self.connection, or the kernel's own end_headers override, which may write a header of its own at any call,
+    outside every home."""
     local = set()
     if not module:
         declared = {k for n in ast.walk(home) if isinstance(n, ast.Global) for k in n.names}
@@ -4926,7 +4995,22 @@ def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed,
     refuses it with `strict` true (NEW-2 of the closing check, item 4 of the reviewer's
     02:3xZ ruling of 2026-10-04). A header value held anywhere else, a local or a parameter of a function around the call, an
     attribute, a call's return or an item, or computed at run time, is not read: the stated limit, its witnesses the (ch) plants chv
-    and chp."""
+    and chp. The census claims only the spellings it reads, the nosniff test and that read being a regression instrument for the live
+    tree's spellings and not a proof of which headers reach a browser: the nosniff test does not read a header call in a compound
+    statement's own expressions (an if's or a while's test, a for's iterable, a with's item, a match's subject or a case's guard, an
+    except clause's type, a nested class's decorators, bases or keywords), an end_headers or a flush_headers outside the write's block
+    (in a statement that runs before it, or in a compound statement's own expressions), since the census reads no order across blocks,
+    or the write's receiver reached after the write through an alias, an item, an operand, a bound method's `__call__` or an
+    unpacking; the header values the census reads, a header call's in the write's home and a `_send` call's header arguments, take a
+    name a nested scope binds for a local, so a module constant of that name is not read there (in the write's home a name any nested
+    def, lambda, class or comprehension binds, at a `_send` call a comprehension's target in a function around it); and neither reads
+    a header call through getattr, an alias, functools.partial or the header buffer (`_headers_buffer`), a header or a response line
+    the calling route writes before a `_send` call, a second Content-Type spelled other than as a send_header with two positional
+    arguments, the first the string constant Content-Type in any case, a header a loop writes from names it binds (refused before the
+    nosniff header in the write's block, and otherwise unread, a second Content-Type or a CR or LF among what it may write), a header
+    a helper method or any other function the home calls writes (its header lines lie outside every home), a write to the receiver's
+    raw socket through self.connection, or the kernel's own end_headers override, which may write a header of its own at any call,
+    outside every home."""
     kw = {k.arg: k.value for k in call.keywords if k.arg}
 
     def arg(name):
@@ -5808,7 +5892,10 @@ def routes_of(rel, tree, sc, res):
     computed at
     run time is not read. Every Content-Type header written outside a `_send` definition (each write whose innermost def is not
     named `_send`, one in a def nested in a `_send` under another name among them) is typed the same way (one in a lambda's body
-    refused by name first, _LAMBDA, since a parameter of the lambda may shadow the type's name), and a script-running
+    refused by name first, _LAMBDA, since a parameter of the lambda may shadow the type's name; at a place SERVED_ALLOW names the
+    entry on its type excuses that refusal alone, its type unread, and the write is still read for a nosniff header beside it,
+    beside the statement that holds the lambda and not where the lambda runs, and its home for a header call holding a CR or LF,
+    each refused by name as at any such place: item 4 of the reviewer's 09:1xZ ruling of 2026-10-05), and a script-running
     one is a SERVED line (the served pass follows a page's text through `_send` alone); a function outside `_send` that answers
     (send_response) more often than it writes a Content-Type header is a SERVED line, the browser typing that body by sniffing
     it. SERVED_ALLOW excuses a place by its function and expression: a `_send` call's place is the function and the call's
@@ -5818,11 +5905,28 @@ def routes_of(rel, tree, sc, res):
     one, each refused by name, the allow hit recorded all the same; and no allowlist entry excuses a Content-Type write with no
     nosniff header beside it, whatever its type (_nosniff_beside; A1 (a) of the reviewer's 05:2xZ ruling of 2026-10-05). Each
     write is judged on its own, so a write the entry does not name is typed and refused as at any other place, and the call is
-    excused whole only where every write's place is named (TheAllowlistExcusesEachWriteItNames); every live definition writes one.
+    excused whole only where every write's place is named (TheAllowlistExcusesEachWriteItNames); every live definition writes one,
+    save the two frame writers (FRAME_WRITERS), which write none.
     No entry is keyed on `_send` itself, a call's function or a reference to it (`self._send`, `_send`, the string `_send` or a
     getattr naming it), so none
     excuses a refusal made by name before any typing above, or a reference to `_send` (the census module's pin over the loaded
-    SERVED_ALLOW, item B of the reviewer's ruling on the second closing check). Returns the routes, (call, the
+    SERVED_ALLOW, item B of the reviewer's ruling on the second closing check). The census claims only the spellings it reads, the
+    nosniff test and that read being a regression instrument for the live tree's spellings and not a proof of which headers reach
+    a browser: the nosniff test does not read a header call in a compound statement's own expressions (an if's or a while's test,
+    a for's iterable, a with's item, a match's subject or a case's guard, an except clause's type, a nested class's decorators,
+    bases or keywords), an end_headers or a flush_headers outside the write's block (in a statement that runs before it, or in a
+    compound statement's own expressions), since the census reads no order across blocks, or the write's receiver reached after
+    the write through an alias, an item, an operand, a bound method's `__call__` or an unpacking; the header values the census
+    reads, a header call's in the write's home and a `_send` call's header arguments, take a name a nested scope binds for a
+    local, so a module constant of that name is not read there (in the write's home a name any nested def, lambda, class or
+    comprehension binds, at a `_send` call a comprehension's target in a function around it); and neither reads a header call
+    through getattr, an alias, functools.partial or the header buffer (`_headers_buffer`), a header or a response line the calling
+    route writes before a `_send` call, a second Content-Type spelled other than as a send_header with two positional arguments,
+    the first the string constant Content-Type in any case, a header a loop writes from names it binds (refused before the nosniff
+    header in the write's block, and otherwise unread, a second Content-Type or a CR or LF among what it may write), a header a
+    helper method or any other function the home calls writes (its header lines lie outside every home), a write to the receiver's
+    raw socket through self.connection, or the kernel's own end_headers override, which may write a header of its own at any call,
+    outside every home. Returns the routes, (call, the
     enclosing function, the class statement the call stands in (the served pass keys the route class on it, never on its name
     alone: _Served._top_class), the script-running type, the body expression), sorted by line."""
     ns = res.ns.get(rel) or _NS_NONE   # a file that writes its module namespace through a computed name, or may rewrite it at run
@@ -5861,9 +5965,7 @@ def routes_of(rel, tree, sc, res):
                                     "what follows is another header or the body, which the census does not read" % (rel, call.lineno, ast.unparse(expr)[:60], where))
             if not _nosniff_beside(write, home):   # A1 (a) of the reviewer's 05:2xZ ruling of 2026-10-05: no allowlist entry excuses a
                 # Content-Type write with no nosniff header beside it, whatever its type (the census types nothing at such a place)
-                res.problems.append("SERVED %s:%d writes Content-Type %s in %s with no X-Content-Type-Options: nosniff header beside it: no "
-                                    "allowlist entry excuses that, since a browser runs a response of a type it sniffs as a script a page loads "
-                                    "by <script src>" % (rel, call.lineno, ast.unparse(expr)[:60] if expr is not None else "no value", where))
+                res.problems.append(_ALLOWED_NO_NOSNIFF % (rel, call.lineno, ast.unparse(expr)[:60] if expr is not None else "no value", where))
             hb = header_block(home)
             if hb is not None:   # B9: nor a header call in its home that ends the header block early
                 res.problems.append(_HEADER_ENDED % (rel, call.lineno, getattr(home, "name", "the module"), ast.unparse(hb[0])[:60], hb[0].lineno, hb[1]))
@@ -6081,6 +6183,17 @@ def routes_of(rel, tree, sc, res):
             if not allowed(where, call.args[1], call):
                 res.problems.append("SERVED %s:%d writes a Content-Type header of %s in %s, %s: the census cannot read the type it writes"
                                     % (rel, call.lineno, ast.unparse(call.args[1])[:60], where, _LAMBDA))
+                continue
+            # an entry on the write's type excuses that refusal alone, its type unread: the write is still read for a nosniff header
+            # beside it and its home for a header call holding a CR or LF, each refused by name as judge's allowlisted branch refuses it
+            # (item 4 of the reviewer's 09:1xZ ruling of 2026-10-05, on A1 (a) and B9 of his 05:2xZ ruling). The nosniff header is read
+            # beside the statement that holds the lambda, not where the lambda runs: the stated limit
+            home = inner if inner is not None else tree
+            if not _nosniff_beside(call, home):
+                res.problems.append(_ALLOWED_NO_NOSNIFF % (rel, call.lineno, ast.unparse(call.args[1])[:60], where))
+            hb = header_block(home)
+            if hb is not None:
+                res.problems.append(_HEADER_ENDED % (rel, call.lineno, getattr(home, "name", "the module"), ast.unparse(hb[0])[:60], hb[0].lineno, hb[1]))
             continue
         judge(call, where, call.args[1], defs, True, call, inner if inner is not None else tree)
     for call, defs, where in sc.responds:

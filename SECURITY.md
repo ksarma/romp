@@ -463,12 +463,16 @@ send_header, send_response or send_response_only, or hands the receiver to a
 call, and with no other X-Content-Type-Options header, nor a send_header whose
 name is no string constant, before it there or in a statement that runs before
 its block; not read: a compound statement before that block in an enclosing
-block, a header written through a call the census does not follow, a helper
+block or in a sibling block that runs before that block or an enclosing one (a
+try's body before its finally, a loop's body before its else), a header written
+through a call the census does not follow, a helper
 method of the handler among them, an earlier iteration of a loop around the
 write that writes the header from a branch exclusive with the write's, a
 callable bound outside the write's block under another name, a function that
-reaches the handler through a global, a closure or a frame, and a name computed
-before the write), at a `_send` call and at a write outside it alike, since
+reaches the handler through a global, a closure or a frame, a name computed
+before the write, and the place a lambda runs (a Content-Type write in a
+lambda's body, at a place SERVED_ALLOW names, is read beside the statement that
+holds the lambda)), at a `_send` call and at a write outside it alike, since
 without
 that header a browser runs such a response as a classic script when a page loads
 it by <script src>, and the census reads no body of a type it types as running
@@ -476,9 +480,35 @@ none; and the header must reach the browser, so a type that runs no script is
 refused by name, at a place SERVED_ALLOW names too, where a header call in the
 write's home (the definition, or the function around a direct write) holds a CR
 or LF the census reads, before or after the Content-Type, read as a `_send`
-call's header arguments are (a header line holding one ends the header block
-early, and the Content-Type and the nosniff header after it reach the body); the
-part before any `;`, stripped and lower-cased, is compared
+call's header arguments are, save the names it takes for the home's own, named
+below (a header line holding one ends the header block early, and the
+Content-Type and the nosniff header after it reach the body); the census claims
+only the spellings it reads, the nosniff test and that read being a regression
+instrument for the live tree's spellings and not a proof of which headers reach
+a browser: the nosniff test does not read a header call in a compound
+statement's own expressions (an if's or a while's test, a for's iterable, a
+with's item, a match's subject or a case's guard, an except clause's type, a
+nested class's decorators, bases or keywords), an end_headers or a flush_headers
+outside the write's block (in a statement that runs before it, or in a compound
+statement's own expressions), since the census reads no order across blocks, or
+the write's receiver reached after the write through an alias, an item, an
+operand, a bound method's `__call__` or an unpacking; the header values the
+census reads, a header call's in the write's home and a `_send` call's header
+arguments, take a name a nested scope binds for a local, so a module constant of
+that name is not read there (in the write's home a name any nested def, lambda,
+class or comprehension binds, at a `_send` call a comprehension's target in a
+function around it); and neither reads a header call through getattr, an alias,
+functools.partial or the header buffer (`_headers_buffer`), a header or a
+response line the calling route writes before a `_send` call, a second
+Content-Type spelled other than as a send_header with two positional arguments,
+the first the string constant Content-Type in any case, a header a loop writes
+from names it binds (refused before the nosniff header in the write's block, and
+otherwise unread, a second Content-Type or a CR or LF among what it may write),
+a header a helper method or any other function the home calls writes (its header
+lines lie outside every home), a write to the receiver's raw socket through
+self.connection, or the kernel's own end_headers override, which may write a
+header of its own at any call, outside every home; the part before any `;`,
+stripped and lower-cased, is compared
 with the types a browser runs script from
 (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and
@@ -595,8 +625,9 @@ module binds more than once or by an annotated assignment, one a function
 rebinds under a `global` declaration or a module-level statement writes, one
 some code writes after binding it, as a content type's module name is read (a
 container a subscript store or an in-place method changes among them), a
-top-level import's name anywhere but as an attribute's base, and one no
-module-level statement binds, among them the names the import system and the
+top-level import's name anywhere but as an attribute's base or a bare name a
+call calls, and one no module-level statement binds, among them the names the
+import system and the
 compiler bind (`__doc__` for a docstring, `__annotations__` for an annotation)
 and site.py's six;
 a CR or LF the value computes at run time, a call's return or a number formatted
