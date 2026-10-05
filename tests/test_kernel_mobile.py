@@ -2570,15 +2570,17 @@ for (const b of [mbell, railBell]) {
   Object.defineProperty(b, 'className', { set(v) { tokens(v).forEach((c) => { got.add(c); add(c); }); }, get() { return ''; } });
   b.setAttribute = (k, v) => { if (String(k).toLowerCase() === 'class') tokens(v).forEach((c) => { got.add(c); add(c); }); setA(k, v); };
 }
-// the kernel's answers: ok by default; FAIL refuses a POST with a 500; HOLD keeps a POST pending until it is released
+// the kernel's answers: ok by default; FAIL refuses a POST with a 500, and REFUSED records the path of each refused POST whose body
+// the script read, which its post() does only for an answer that is not ok (the refusal path); HOLD keeps a POST pending until released
 let FAIL = new Set(), HOLD = false;
-const HELD = [], answered = global.fetch;
+const HELD = [], REFUSED = [], answered = global.fetch;
 global.fetch = (path, init) => {
   const post = !!(init && init.method === 'POST');
   if (post && HOLD) { POSTS.push([path, JSON.parse(init.body)]);
     return new Promise((res) => HELD.push(() => res({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }), text: () => Promise.resolve('{}') }))); }
   if (post && FAIL.has(path)) { POSTS.push([path, JSON.parse(init.body)]);
-    return Promise.resolve({ ok: false, status: 500, json: () => Promise.reject(new Error('not json')), text: () => Promise.resolve('refused in the lab') }); }
+    return Promise.resolve({ ok: false, status: 500, json: () => Promise.reject(new Error('not json')),
+      text: () => { REFUSED.push(path); return Promise.resolve('refused in the lab'); } }); }
   return answered(path, init);
 };
 const ws = () => WSS[WSS.length - 1];
@@ -2606,7 +2608,7 @@ const pane = (k) => bar.querySelector('button[data-pane=' + k + ']');
   Notification.permission = 'denied'; frame({ type: 'notifyAll', on: false }); frame({ type: 'notifyAll', on: true });
   back.fire('click');
   process.stdout.write(JSON.stringify({ set: Object.fromEntries(Object.entries(SET).map(([k, v]) => [k, [...v].sort()])),
-    opened, pending, posts: POSTS.map((p) => p[0]), held: HELD.length }) + '\n');
+    opened, pending, posts: POSTS.map((p) => p[0]), refused: REFUSED, held: HELD.length }) + '\n');
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
 """
 
@@ -2660,6 +2662,9 @@ class BellStateClassCensus(unittest.TestCase):
         self.assertEqual(self.out["pending"], ["all", "turns", "dev"], "each row with its request pending wears its own busy")
         for path in ("/notify-all", "/notify-turns", "/push/subscribe", "/push/unsubscribe", "/push/test"):
             self.assertIn(path, self.out["posts"], "the run sent %s" % path)
+        # the refused leg ran: the answered leg alone sends every path above (review round 1, 2026-10-05)
+        self.assertEqual(self.out["refused"], ["/notify-all", "/notify-turns", "/push/unsubscribe", "/push/subscribe"],
+                         "each row's request was refused once: the master, the turn-finished switch, then This device off and back on")
 
 
 class BellRuleReader(unittest.TestCase):
