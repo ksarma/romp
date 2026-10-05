@@ -74,11 +74,16 @@ not record, wherever the module reads them, unless the class's name is underscor
 spelling with the two underscores (__K) then reads, wherever the module reads it, in interval(), offset_base() and the
 hop (a host and a template read the spelling written), by the values the census records under it and under the spelling
 each class it is written in mangles it to (the class's name less its leading underscores): with _C__K bound to 45001,
-__K read in a method of C reads 45001, as CPython does. That is an over-read where the module reads __K outside C, or in
-a class nested in C, which CPython mangles by the innermost class alone; the spelled-out _C__K reads its own values
-only. A name a module sets with no binding form (globals()["K"] = f(), exec("K = f()"), setattr(sys.modules[__name__],
-"K", f()), or mod.K = f() in another module) has no binding here, and the census does not see the value such a setting
-gives it (WHAT IT CANNOT SEE).
+__K read in a method of C reads 45001, as CPython does. The join is by spelling across the module, so it is an over-read
+wherever CPython reads one spelling and the census others beside it: where the module reads __K outside C; in a class
+nested in C, which CPython mangles by the innermost class alone; and in C itself, where __K reads, beside _C__K's
+values, every value recorded under __K wherever it is bound (at module level and in another class too) and under the
+spelling of every other class that writes __K, where CPython reads _C__K alone (with __K bound to 45001 at module level,
+or with _D__K bound to 45001 and __K written in a class D, __K read in a method of C reads 45001, where CPython raises
+NameError). The spelled-out _C__K reads its own values only, so a binding written as __K inside C is not seen through it
+(WHAT IT CANNOT SEE). A name a module sets with no binding form (globals()["K"] = f(), exec("K = f()"),
+setattr(sys.modules[__name__], "K", f()), or mod.K = f() in another module) has no binding here, and the census does not
+see the value such a setting gives it (WHAT IT CANNOT SEE).
   In Python, read by AST (scan_python), the positions:
     a value under a dict key that names a port ({"port": N}, {"local_port": N}, {"busPort": N}; a key names a port when
     one of its words, split at underscores, other punctuation and camelCase, is "port" or "ports": "report" does not;
@@ -285,6 +290,10 @@ gives it (WHAT IT CANNOT SEE).
   unbounded (BOUND), so with K bound to 30000 and by K = f(), 40000 + K, which reads 70000 by K's int, is built on
   40000, and so are 40000 - K and 40000 + 90002 // K. interval() reads a bool as the int it is, True as 1 and False as 0
   (random.randrange(True, 50000) is 1-49999), and a float only through int() of it or of a name bound to it (above).
+  Over a left operand of several values, % reads by the divisor's part alone (above), also where every value of that
+  operand lies from 0 up to below a positive part, which % gives back unchanged, an over-read: with K bound to 7 and to
+  9, every binding recorded, 20000 + K % 20000 is 20000-39999, where CPython gives 20007 to 20009, and (100 +
+  os.getpid() % 10) % 50000 is 0-49999, where it gives 100 to 109.
   In any file, read as text (text_hits): a non-Python file whole; in Python, each string literal that is not a
   docstring, each literal part of an f-string, each bytes literal, and the code of code text (below), each only when
   its value holds five digits standing alone (FIVE: any five, in the range or not); a string without them is read
@@ -350,6 +359,8 @@ these turns its plant red, and the example leaves this list.
   recording no int for P), an f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a
   sum or difference in the range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__
   replaced at run time); a rule of its own may still read such a value where it is written;
+  int() of str() of a name bound to a string: interval() reads str() of a name as the name, by its ints, and a string
+  gives none (P = "N", then int(str(P)), where CPython gives N; int(P) is read, THE RULE);
   an unbound random method spelled on anything but a name or attribute called Random or SystemRandom, whose instance
   then fills start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
   a name or attribute called Random or SystemRandom that holds an instance (Random = random.Random(), then
@@ -359,6 +370,8 @@ these turns its plant red, and the example leaves this list.
   exec("K = -7"), setattr(sys.modules[__name__], "K", -7), or mod.K = -7 in another module), read by the values the
   census records alone: random.randrange(40000, 1000, K) reads K as 7 and is not counted, though CPython returns values
   from 1001 to 40000;
+  a binding written as __K inside a class C, read through the spelled-out _C__K, which reads its own values only (with
+  __K = N in the body of class C, {"ports": [_C__K]} there reads nothing, where CPython reads N; BOUND);
   a value a binding the census does not record gives a name the census records an int for, where the position's value
   gives no reading with the name unbounded and the name reads by its recorded ints alone (BOUND): with E bound to 1000
   and by E = f(), random.randrange(30000, E) reads E as 1000 and is not counted, though CPython returns values from
@@ -3373,9 +3386,12 @@ class Plants(unittest.TestCase):
         other underscore is (class C_ mangles to _C___K, class C_x to _C_x__K); a class nested in C reads the spelling
         of each class around it, the innermost one's (_D__K, which CPython reads) among them; and with __K bound to 1
         and _C__K to 45001, __K in C reads 1-45001. The census joins the spellings wherever the module reads __K, so __K
-        read outside C reads 45001 too, an over-read (red). A class named only with underscores mangles nothing, and a
-        name ending in two underscores is not private: each stays unread, green (___K bound to 45001 and __K read in
-        class __; _C__K__ bound to 45001 and __K__ read in C)."""
+        read outside C reads 45001 too, an over-read (red), and so does __K read in a method of C with __K bound to 45001
+        at module level alone, or with _D__K bound to 45001 beside a class D that writes __K, where CPython reads
+        _C__K alone and raises NameError (two over-reads THE RULE states, red; the owner's call of 2026-10-05 on fork
+        PR 973). A class named only with underscores mangles nothing, and a name ending in two underscores is not
+        private: each stays unread, green (___K bound to 45001 and __K read in class __; _C__K__ bound to 45001 and
+        __K__ read in C)."""
         lo, hi, n = LOW + 7232, LOW + 17232, _n()                                  # 40000, 50000 and 45001, built at run time
         method = "    def m(self):\n        return {\"ports\": [__K]}\n"
         for label, src, why, first in (
@@ -3400,6 +3416,11 @@ class Plants(unittest.TestCase):
                  "the key 'ports', computed into 1-%d" % n, LOW),
                 ("the name read outside the class too, an over-read",
                  "_C__K = %d\n\n\nclass C:\n    def m(self):\n        return __K\n\n\nrow = {\"ports\": [__K]}\n" % n,
+                 "the key 'ports', a constant expression", n),
+                ("the name bound at module level alone, read in the class, an over-read", "__K = %d\n\n\nclass C:\n" % n
+                 + method, "the key 'ports', a constant expression", n),
+                ("another class's spelling, read in the class, an over-read",
+                 "_D__K = %d\n\n\nclass C:\n" % n + method + "\n\nclass D:\n    __K = f()\n",
                  "the key 'ports', a constant expression", n)):
             with self.subTest(label):
                 self.assertRed("test_plant.py", src, why, n=first)
@@ -3409,6 +3430,19 @@ class Plants(unittest.TestCase):
                  '_C__K__ = %d\n\n\nclass C:\n    def m(self):\n        return {"ports": [__K__]}\n' % n)):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
+
+    def test_a_remainder_over_a_span_below_its_divisor_is_over_read(self):
+        """% reads a left operand that is not one value by the divisor's part alone, also where every value of the left
+        operand lies from 0 up to below the part, which % gives back unchanged: an over-read THE RULE states (the
+        owner's call of 2026-10-05 on fork PR 973), each plant red with the span the census reads. With K bound to 7
+        and to 9, every binding recorded, 20000 + K % 20000 is 20000-39999, where CPython gives 20007 to 20009, and
+        (100 + os.getpid() % 10) % 50000 is 0-49999, where it gives 100 to 109."""
+        c, hi = 20000, LOW + 17232                  # the base and modulus, and 50000 built at run time
+        for label, src, span in (
+                ("a name bound to two ints", "K = 7\nK = 9\nport = %d + K %% %d\n" % (c, c), (c, 2 * c - 1)),
+                ("an expression of several values", "port = (100 + os.getpid() %% 10) %% %d\n" % hi, (0, hi - 1))):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, "an assignment to port, computed into %d-%d" % span, n=LOW)
 
     def test_a_divisor_reads_by_its_positive_and_its_negative_part(self):
         """// and % read a divisor by its positive part and its negative part, each by its ends, as the span holding
@@ -3638,6 +3672,9 @@ class Plants(unittest.TestCase):
                 ("a host that is no loopback or wildcard literal", "test_x.py",
                  's.connect(("TESTHOST", %d))\nconn = HTTPConnection(self.host, %d)\n' % (n, n)),
                 ("a name bound only to the empty string, in a tuple", "test_x.py", 'H = ""\ns.bind((H, %d))\n' % n),
+                ("int() of str() of a name bound to a string", "test_x.py", 'P = "%d"\nport = int(str(P))\n' % n),
+                ("a binding written as __K inside a class, read as _C__K", "test_x.py",
+                 'class C:\n    __K = %d\n    row = {"ports": [_C__K]}\n' % n),
                 ("an and or an or where THE RULE reads something other than a value", "test_x.py",
                  's.connect((h or "127.0.0.1", %d))\nu = (t or "http://127.0.0.1:%%d/") %% %d\n'
                  'v = (b or "http://127.0.0.1:") + str(%d)\nrow = {k or "port": %d}\n'
