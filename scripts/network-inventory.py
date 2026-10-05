@@ -301,38 +301,39 @@ nosniff test does not read a header call in the own expressions of a compound st
 while's test, a for's iterable, a with's item, a match's subject or a case's guard, an except clause's type, a nested class's
 decorators, bases or keywords), an end_headers or a flush_headers outside the write's block (in a statement that runs before it,
 or in the own expressions of a compound statement that holds it), since the census reads no order across blocks, or the write's
-receiver reached after the write other than as the base of a method call on it or as a call's argument, starred or double-starred
-argument or keyword value (through an alias, a bound method held under a name, super() or getattr on super(), an attribute read or
-write, an item, a container handed to a call, an operand, a truth test, an f-string, a bound method's `__call__`, an unpacking, or
-a with or a for over it, among others); the header values the census reads, a header call's in the write's home and a `_send`
-call's header arguments, take a name a nested scope binds for a local, so a module constant of that name is not read there (in the
-write's home a name any nested def, lambda, class or comprehension binds, at a `_send` call a comprehension's target in a function
-around it); and neither reads a header call through getattr, an alias, functools.partial or the header buffer (`_headers_buffer`),
-a header or a response line the calling route writes before a `_send` call, a second Content-Type spelled other than as a
-send_header with two positional arguments, the first the string constant Content-Type in any case, a header a loop writes from
-names it binds (refused before the nosniff header in the write's block, and otherwise unread, a second Content-Type or a CR or LF
-among what it may write), a header a helper method or any other function the home calls writes (its header lines lie outside every
-home), a write to the receiver's raw socket through self.connection, or the kernel's own end_headers override, which may write a
-header of its own at any call, outside every home; the part before any `;`, stripped and lower-cased, is compared with the types a
-browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml`
-suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
-application/javascript among them). A script-running route's page body is the call's second positional argument, read only when
-the call passes it positionally, with no starred argument before it and no `**`, and the definition's one output is its one
-`self.wfile.write(<its second positional parameter>)`, with a signature of positional parameters, none positional-only, with None
-defaults and no annotation, no node in its body of a kind the kernel's Handler._send holds none of, and every statement of its own
-body one of that definition's statement shapes, which the census lists from it (_SEND_SHAPES): a statement's place in the order,
-its kind, each operator, each attribute's name, the codec's name by its value, and each other operand by its class: self (the
-method's first parameter); the page (its second positional parameter); another parameter; a name a loop's target binds, read in
-that loop; a flag, a text name and the header parameter, each a name a preamble role below binds, a flag also where it is an if's
-whole test; any other name a statement stores that is no parameter, a local (a loop's target among them); a constant by its type
-(a string, a bool, an int, None); a builtin by its name (str, len, isinstance and getattr in the shapes below), where neither the
-definition nor the module binds the name, nothing rebinds it (no function binds it under a `global` declaration, no module-level
-statement writes it, and the file does none of the writes listed below that rebind every builtin) and the module holds no star
-import; a module constant (a name one top-level plain assignment binds and nothing else at module level, that nothing rebinds and
-no local or parameter of the definition names, in a module with no star import that writes no name of its module namespace through
-a computed name and may not rewrite it at run time) whose bound text holds no CR or LF as the census reads it (below); an
-attribute on self other than a header method or wfile, one class whatever its name; and page text, which the served pass reads;
-any other name (a parameter a statement stores outside those roles among them) stands in no listed shape.
+receiver reached after the write within the write's own statement, or in a later statement other than as the base of a method call
+on it or as a call's argument, starred or double-starred argument or keyword value (through an alias, a bound method held under a
+name, super() or getattr on super(), an attribute read or write, an item, a container handed to a call, an operand, a truth test,
+an f-string, a bound method's `__call__`, an unpacking, or a with or a for over it, among others); the header values the census
+reads, a header call's in the write's home and a `_send` call's header arguments, take a name a nested scope binds for a local, so
+a module constant of that name is not read there (in the write's home a name any nested def, lambda, class or comprehension binds,
+at a `_send` call a comprehension's target in a function around it); and neither reads a header call through getattr, an alias,
+functools.partial or the header buffer (`_headers_buffer`), a header or a response line the calling route writes before a `_send`
+call, a second Content-Type spelled other than as a send_header with two positional arguments, the first the string constant
+Content-Type in any case, a header a loop writes from names it binds (refused before the nosniff header in the write's block, and
+otherwise unread, a second Content-Type or a CR or LF among what it may write), a header a helper method or any other function the
+home calls writes (its header lines lie outside every home), a write to the receiver's raw socket through self.connection, or the
+kernel's own end_headers override, which may write a header of its own at any call, outside every home; the part before any `;`,
+stripped and lower-cased, is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
+application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and application/xhtml+xml among them; and
+text/javascript under each name a browser takes for JavaScript, application/javascript among them). A script-running route's page
+body is the call's second positional argument, read only when the call passes it positionally, with no starred argument before it
+and no `**`, and the definition's one output is its one `self.wfile.write(<its second positional parameter>)`, with a signature of
+positional parameters, none positional-only, with None defaults and no annotation, no node in its body of a kind the kernel's
+Handler._send holds none of, and every statement of its own body one of that definition's statement shapes, which the census lists
+from it (_SEND_SHAPES): a statement's place in the order, its kind, each operator, each attribute's name, the codec's name by its
+value, and each other operand by its class: self (the method's first parameter); the page (its second positional parameter);
+another parameter; a name a loop's target binds, read in that loop; a flag, a text name and the header parameter, each a name a
+preamble role below binds, a flag also where it is an if's whole test; any other name a statement stores that is no parameter, a
+local (a loop's target among them); a constant by its type (a string, a bool, an int, None); a builtin by its name (str, len,
+isinstance and getattr in the shapes below), where neither the definition nor the module binds the name, nothing rebinds it (no
+function binds it under a `global` declaration, no module-level statement writes it, and the file does none of the writes listed
+below that rebind every builtin) and the module holds no star import; a module constant (a name one top-level plain assignment
+binds and nothing else at module level, that nothing rebinds and no local or parameter of the definition names, in a module with
+no star import that writes no name of its module namespace through a computed name and may not rewrite it at run time) whose bound
+text holds no CR or LF as the census reads it (below); an attribute on self other than a header method or wfile, one class
+whatever its name; and page text, which the served pass reads; any other name (a parameter a statement stores outside those roles
+among them) stands in no listed shape.
 The shapes, each matched by at most as many statements as the kernel's definition holds in it (a constant header by four,
 every other shape by one), `<str>` a string constant and every if and loop with no else: before the end_headers, the stamp
 `<page> = <page text>`; a flag `<flag> = <a bool constant>`; the injection's if, `if getattr(self, <str>, <a bool constant>) and
@@ -4499,19 +4500,20 @@ def _nosniff_beside(write, home):
     (an if's or a while's test, a for's iterable, a with's item, a match's subject or a case's guard, an except clause's type, a
     nested class's decorators, bases or keywords), an end_headers or a flush_headers outside the write's block (in a statement that
     runs before it, or in the own expressions of a compound statement that holds it), since the census reads no order across blocks,
-    or the write's receiver reached after the write other than as the base of a method call on it or as a call's argument, starred or
-    double-starred argument or keyword value (through an alias, a bound method held under a name, super() or getattr on super(), an
-    attribute read or write, an item, a container handed to a call, an operand, a truth test, an f-string, a bound method's
-    `__call__`, an unpacking, or a with or a for over it, among others); the header values the census reads, a header call's in the
-    write's home and a `_send` call's header arguments, take a name a nested scope binds for a local, so a module constant of that
-    name is not read there (in the write's home a name any nested def, lambda, class or comprehension binds, at a `_send` call a
-    comprehension's target in a function around it); and neither reads a header call through getattr, an alias, functools.partial or
-    the header buffer (`_headers_buffer`), a header or a response line the calling route writes before a `_send` call, a second
-    Content-Type spelled other than as a send_header with two positional arguments, the first the string constant Content-Type in any
-    case, a header a loop writes from names it binds (refused before the nosniff header in the write's block, and otherwise unread, a
-    second Content-Type or a CR or LF among what it may write), a header a helper method or any other function the home calls writes
-    (its header lines lie outside every home), a write to the receiver's raw socket through self.connection, or the kernel's own
-    end_headers override, which may write a header of its own at any call, outside every home."""
+    or the write's receiver reached after the write within the write's own statement, or in a later statement other than as the base
+    of a method call on it or as a call's argument, starred or double-starred argument or keyword value (through an alias, a bound
+    method held under a name, super() or getattr on super(), an attribute read or write, an item, a container handed to a call, an
+    operand, a truth test, an f-string, a bound method's `__call__`, an unpacking, or a with or a for over it, among others); the
+    header values the census reads, a header call's in the write's home and a `_send` call's header arguments, take a name a nested
+    scope binds for a local, so a module constant of that name is not read there (in the write's home a name any nested def, lambda,
+    class or comprehension binds, at a `_send` call a comprehension's target in a function around it); and neither reads a header call
+    through getattr, an alias, functools.partial or the header buffer (`_headers_buffer`), a header or a response line the calling
+    route writes before a `_send` call, a second Content-Type spelled other than as a send_header with two positional arguments, the
+    first the string constant Content-Type in any case, a header a loop writes from names it binds (refused before the nosniff header
+    in the write's block, and otherwise unread, a second Content-Type or a CR or LF among what it may write), a header a helper method
+    or any other function the home calls writes (its header lines lie outside every home), a write to the receiver's raw socket
+    through self.connection, or the kernel's own end_headers override, which may write a header of its own at any call, outside every
+    home."""
     def nosniff(s):
         c = s.value if isinstance(s, ast.Expr) else None
         return (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "send_header" and len(c.args) == 2
@@ -4944,19 +4946,20 @@ def _header_block_crlf(home, module, consts, rebinds, unfollowed, imports):
     a compound statement that holds the write's block (an if's or a while's test, a for's iterable, a with's item, a match's subject
     or a case's guard, an except clause's type, a nested class's decorators, bases or keywords), an end_headers or a flush_headers
     outside the write's block (in a statement that runs before it, or in the own expressions of a compound statement that holds it),
-    since the census reads no order across blocks, or the write's receiver reached after the write other than as the base of a method
-    call on it or as a call's argument, starred or double-starred argument or keyword value (through an alias, a bound method held
-    under a name, super() or getattr on super(), an attribute read or write, an item, a container handed to a call, an operand, a
-    truth test, an f-string, a bound method's `__call__`, an unpacking, or a with or a for over it, among others); the header values
-    the census reads, a header call's in the write's home and a `_send` call's header arguments, take a name a nested scope binds for
-    a local, so a module constant of that name is not read there (in the write's home a name any nested def, lambda, class or
-    comprehension binds, at a `_send` call a comprehension's target in a function around it); and neither reads a header call through
-    getattr, an alias, functools.partial or the header buffer (`_headers_buffer`), a header or a response line the calling route
-    writes before a `_send` call, a second Content-Type spelled other than as a send_header with two positional arguments, the first
-    the string constant Content-Type in any case, a header a loop writes from names it binds (refused before the nosniff header in the
-    write's block, and otherwise unread, a second Content-Type or a CR or LF among what it may write), a header a helper method or any
-    other function the home calls writes (its header lines lie outside every home), a write to the receiver's raw socket through
-    self.connection, or the kernel's own end_headers override, which may write a header of its own at any call, outside every home."""
+    since the census reads no order across blocks, or the write's receiver reached after the write within the write's own statement,
+    or in a later statement other than as the base of a method call on it or as a call's argument, starred or double-starred argument
+    or keyword value (through an alias, a bound method held under a name, super() or getattr on super(), an attribute read or write,
+    an item, a container handed to a call, an operand, a truth test, an f-string, a bound method's `__call__`, an unpacking, or a with
+    or a for over it, among others); the header values the census reads, a header call's in the write's home and a `_send` call's
+    header arguments, take a name a nested scope binds for a local, so a module constant of that name is not read there (in the
+    write's home a name any nested def, lambda, class or comprehension binds, at a `_send` call a comprehension's target in a function
+    around it); and neither reads a header call through getattr, an alias, functools.partial or the header buffer (`_headers_buffer`),
+    a header or a response line the calling route writes before a `_send` call, a second Content-Type spelled other than as a
+    send_header with two positional arguments, the first the string constant Content-Type in any case, a header a loop writes from
+    names it binds (refused before the nosniff header in the write's block, and otherwise unread, a second Content-Type or a CR or LF
+    among what it may write), a header a helper method or any other function the home calls writes (its header lines lie outside every
+    home), a write to the receiver's raw socket through self.connection, or the kernel's own end_headers override, which may write a
+    header of its own at any call, outside every home."""
     local = set()
     if not module:
         declared = {k for n in ast.walk(home) if isinstance(n, ast.Global) for k in n.names}
@@ -5010,20 +5013,20 @@ def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed,
     expressions of a compound statement that holds the write's block (an if's or a while's test, a for's iterable, a with's item, a
     match's subject or a case's guard, an except clause's type, a nested class's decorators, bases or keywords), an end_headers or a
     flush_headers outside the write's block (in a statement that runs before it, or in the own expressions of a compound statement
-    that holds it), since the census reads no order across blocks, or the write's receiver reached after the write other than as the
-    base of a method call on it or as a call's argument, starred or double-starred argument or keyword value (through an alias, a
-    bound method held under a name, super() or getattr on super(), an attribute read or write, an item, a container handed to a call,
-    an operand, a truth test, an f-string, a bound method's `__call__`, an unpacking, or a with or a for over it, among others); the
-    header values the census reads, a header call's in the write's home and a `_send` call's header arguments, take a name a nested
-    scope binds for a local, so a module constant of that name is not read there (in the write's home a name any nested def, lambda,
-    class or comprehension binds, at a `_send` call a comprehension's target in a function around it); and neither reads a header call
-    through getattr, an alias, functools.partial or the header buffer (`_headers_buffer`), a header or a response line the calling
-    route writes before a `_send` call, a second Content-Type spelled other than as a send_header with two positional arguments, the
-    first the string constant Content-Type in any case, a header a loop writes from names it binds (refused before the nosniff header
-    in the write's block, and otherwise unread, a second Content-Type or a CR or LF among what it may write), a header a helper method
-    or any other function the home calls writes (its header lines lie outside every home), a write to the receiver's raw socket
-    through self.connection, or the kernel's own end_headers override, which may write a header of its own at any call, outside every
-    home."""
+    that holds it), since the census reads no order across blocks, or the write's receiver reached after the write within the write's
+    own statement, or in a later statement other than as the base of a method call on it or as a call's argument, starred or
+    double-starred argument or keyword value (through an alias, a bound method held under a name, super() or getattr on super(), an
+    attribute read or write, an item, a container handed to a call, an operand, a truth test, an f-string, a bound method's
+    `__call__`, an unpacking, or a with or a for over it, among others); the header values the census reads, a header call's in the
+    write's home and a `_send` call's header arguments, take a name a nested scope binds for a local, so a module constant of that
+    name is not read there (in the write's home a name any nested def, lambda, class or comprehension binds, at a `_send` call a
+    comprehension's target in a function around it); and neither reads a header call through getattr, an alias, functools.partial or
+    the header buffer (`_headers_buffer`), a header or a response line the calling route writes before a `_send` call, a second
+    Content-Type spelled other than as a send_header with two positional arguments, the first the string constant Content-Type in any
+    case, a header a loop writes from names it binds (refused before the nosniff header in the write's block, and otherwise unread, a
+    second Content-Type or a CR or LF among what it may write), a header a helper method or any other function the home calls writes
+    (its header lines lie outside every home), a write to the receiver's raw socket through self.connection, or the kernel's own
+    end_headers override, which may write a header of its own at any call, outside every home."""
     kw = {k.arg: k.value for k in call.keywords if k.arg}
 
     def arg(name):
@@ -5929,22 +5932,22 @@ def routes_of(rel, tree, sc, res):
     block (an if's or a while's test, a for's iterable, a with's item, a match's subject or a case's guard, an except clause's
     type, a nested class's decorators, bases or keywords), an end_headers or a flush_headers outside the write's block (in a
     statement that runs before it, or in the own expressions of a compound statement that holds it), since the census reads no
-    order across blocks, or the write's receiver reached after the write other than as the base of a method call on it or as a
-    call's argument, starred or double-starred argument or keyword value (through an alias, a bound method held under a name,
-    super() or getattr on super(), an attribute read or write, an item, a container handed to a call, an operand, a truth test, an
-    f-string, a bound method's `__call__`, an unpacking, or a with or a for over it, among others); the header values the census
-    reads, a header call's in the write's home and a `_send` call's header arguments, take a name a nested scope binds for a
-    local, so a module constant of that name is not read there (in the write's home a name any nested def, lambda, class or
-    comprehension binds, at a `_send` call a comprehension's target in a function around it); and neither reads a header call
-    through getattr, an alias, functools.partial or the header buffer (`_headers_buffer`), a header or a response line the calling
-    route writes before a `_send` call, a second Content-Type spelled other than as a send_header with two positional arguments,
-    the first the string constant Content-Type in any case, a header a loop writes from names it binds (refused before the nosniff
-    header in the write's block, and otherwise unread, a second Content-Type or a CR or LF among what it may write), a header a
-    helper method or any other function the home calls writes (its header lines lie outside every home), a write to the receiver's
-    raw socket through self.connection, or the kernel's own end_headers override, which may write a header of its own at any call,
-    outside every home. Returns the routes, (call, the enclosing function, the class statement the call stands in (the served pass
-    keys the route class on it, never on its name alone: _Served._top_class), the script-running type, the body expression),
-    sorted by line."""
+    order across blocks, or the write's receiver reached after the write within the write's own statement, or in a later statement
+    other than as the base of a method call on it or as a call's argument, starred or double-starred argument or keyword value
+    (through an alias, a bound method held under a name, super() or getattr on super(), an attribute read or write, an item, a
+    container handed to a call, an operand, a truth test, an f-string, a bound method's `__call__`, an unpacking, or a with or a
+    for over it, among others); the header values the census reads, a header call's in the write's home and a `_send` call's
+    header arguments, take a name a nested scope binds for a local, so a module constant of that name is not read there (in the
+    write's home a name any nested def, lambda, class or comprehension binds, at a `_send` call a comprehension's target in a
+    function around it); and neither reads a header call through getattr, an alias, functools.partial or the header buffer
+    (`_headers_buffer`), a header or a response line the calling route writes before a `_send` call, a second Content-Type spelled
+    other than as a send_header with two positional arguments, the first the string constant Content-Type in any case, a header a
+    loop writes from names it binds (refused before the nosniff header in the write's block, and otherwise unread, a second
+    Content-Type or a CR or LF among what it may write), a header a helper method or any other function the home calls writes (its
+    header lines lie outside every home), a write to the receiver's raw socket through self.connection, or the kernel's own
+    end_headers override, which may write a header of its own at any call, outside every home. Returns the routes, (call, the
+    enclosing function, the class statement the call stands in (the served pass keys the route class on it, never on its name
+    alone: _Served._top_class), the script-running type, the body expression), sorted by line."""
     ns = res.ns.get(rel) or _NS_NONE   # a file that writes its module namespace through a computed name, or may rewrite it at run
     consts = {} if ns["computed"] or ns["runtime"] else _module_consts(tree)   # time, reads no module constant
     written = {x for x in res.writes.get(rel, {}) if x in consts}   # the module names some code writes after binding them
