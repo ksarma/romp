@@ -14,8 +14,8 @@ not parse (PARSE); an import the census does not know, a family module's specifi
 or a require or import on a walked line that the import gate cannot read, each unless JS_ALLOW names it, and an entry there
 that names nothing or covers a different number of places (IMPORT); a road with no table entry or a table entry with no road
 (TABLE); a served route whose content type, receiver, container, callee or text the served pass cannot read, a script-running type
-written outside `_send`, a function that answers outside `_send` more often than it writes a Content-Type header and a `_send`
-definition that writes none and is not a named frame writer, each unless SERVED_ALLOW names it, a reference to `_send` other than
+written outside `_send` and a function that answers outside `_send` more often than it writes a Content-Type header, each unless
+SERVED_ALLOW names it, a `_send` definition that writes none, unless FRAME_WRITERS names it, a reference to `_send` other than
 a call the scan reads (a read of it that is not a call's function, a store or delete of an attribute so named, or a string equal
 to `_send`) and a call of a `_send` its file binds more than once outside function bodies, or other than by one def statement, of
 a decorated `_send` or, bare, in a module that holds a star import, which no entry excuses (none is keyed on `_send` itself), a
@@ -349,17 +349,23 @@ or LF: each string or bytes constant in its value and in the value of each modul
 call calls (`f` in `f(...)`); and so is each argument a `_send` call hands its definition but the page body and the content type
 (read above), positional, starred or keyword, a `**` among them: each string or bytes constant in it, a dict literal's keys and
 values among them, and each name in it that no function scope around the call binds (a name a function there declares `global` is
-the module's, not a binding of that scope): a module constant (a name one top-level plain assignment binds and nothing rebinds),
-read through the module constants its value names, one holding a CR or LF refusing the call by name before it is typed; a
-top-level import's name that nothing rebinds, a builtin's (a name the builtins module holds, the names the import system binds in
-every module not among them) and a bare name a call calls, not read; and any other name, which the census cannot resolve to a
+the module's, not a binding of that scope): a module constant (a name one top-level plain assignment binds, that nothing rebinds
+and no code writes after binding it), read through the module constants its value names, one holding a CR or LF refusing the call
+by name before it is typed; a builtin's name (a name the builtins module holds, the names the import system binds in every module
+and the six site.py adds, copyright, credits, license, exit, quit and help, not among them), a top-level import's name that
+nothing rebinds where it is an attribute's base (the attribute limit below) and a bare name a call calls, not read; and any other
+name, which the census cannot resolve to a
 value it read, refusing the call by name as a name the census does not follow by binding, in the argument or in a module
 constant's value there: a name the module binds more than once or by an annotated assignment, one a function rebinds under a
-`global` declaration or a module-level statement writes, and one no module-level statement binds, among them the names the import
-system and the compiler bind (`__doc__` for a docstring, `__annotations__` for an annotation); a CR or LF the value computes at
+`global` declaration or a module-level statement writes, one some code writes after binding it, as a content type's module name is
+read (a container a subscript store or an in-place method changes among them), a top-level import's name anywhere but as an
+attribute's base, and one no module-level statement binds, among them the names the import system and the compiler bind (`__doc__`
+for a docstring, `__annotations__` for an annotation) and site.py's six; a CR or LF the value computes at
 run time, a call's return or a number formatted as a character, is not read, nor is a header value held anywhere else, a local or
-a parameter of a function around the call, an attribute, a call's return or an item, its witnesses a CR LF
-from chr and one from a `%c` of an int, and a header value held in a local dict and a CR LF a call of chr computes at the call),
+a parameter of a function around the call, an attribute, a call's return or an item, a container a call binds that code changes
+through an alias, or a container handed to a function that writes its parameter, its witnesses a CR LF
+from chr and one from a `%c` of an int, a header value held in a local dict and a CR LF a call of chr computes at the call, and a
+dict a call of dict binds that a helper changes through an alias and a dict handed to a function that writes it),
 and a response that a Content-Type in its
 headers argument, passed
 or defaulted, makes a page is outside the served pass, the call being typed by its content-type argument; nor is code the
@@ -3604,10 +3610,13 @@ def _unbound_text_call(e):
 # script-running type written outside `_send`, a response answered outside `_send` with no Content-Type header, a container the
 # module writes at run time, a receiver or container the pass does not read, a callee the pass does not follow, a bare module name
 # the pass does not read, a name the page function's scope binds in a form the pass refuses, and a file a page reads that the walk
-# does not scan are each a SERVED line unless named here. An entry on a `_send` call's content type excuses the call whole, its
-# page unread in any form; no entry is keyed on the unread-body refusal itself, so any other script-running route passes its body
+# does not scan are each a SERVED line unless named here. An entry on a `_send` call's content type excuses that call at each write
+# whose place it names, its page unread in any form there; any other Content-Type write of the definition is still typed
+# (TheAllowlistExcusesEachWriteItNames); no entry is keyed on the unread-body refusal itself, so any other script-running route
+# passes its body
 # as the call's second positional argument or is refused. No entry is keyed on `_send` itself, a call's function or a reference to
-# it (`self._send`, `_send` or the string `_send`; the census module's pin, NoAllowlistEntryIsKeyedOnSendItself): the refusals made
+# it (`self._send`, `_send`, the string `_send` or a getattr naming it; the census module's pin,
+# NoAllowlistEntryIsKeyedOnSendItself): the refusals made
 # before any typing (a call of a `_send` its file binds more than once outside function bodies, or other than by one def statement,
 # or rebinds under a `global` declaration in a function or a class body, a call of a decorated `_send`, a bare call of a `_send` a
 # scope around the call binds or in a module that holds a star import, a call in a lambda's body, and a call whose definition binds
@@ -3760,6 +3769,9 @@ _TYPE_REBOUND = ("a definition that binds %s, the parameter its own Content-Type
                  "type it writes need not be the call's")   # routes_of: a `_send` call refused before any typing (_type_rebinding)
 _NOT_SELF = "a receiver the census does not prove self by binding (%s)"   # routes_of: a `<name>._send(...)` call in a class body whose receiver fails the proof (_self_receiver; layer iii of the eleventh round's rulings)
 _IMPORT_NAMES = frozenset(("__doc__", "__name__", "__package__", "__spec__", "__loader__"))   # the names the import system binds in every module: no builtins to the served pass
+# the names site.py adds to the builtins (B8 of the owner's check of the second closing check's pass): no builtins to the header reader
+# (_unfollowed), so a header value naming one is refused by name whether or not the census's interpreter imported site
+_SITE_NAMES = frozenset(("copyright", "credits", "license", "exit", "quit", "help"))
 _IMPORT_WHY = "a name the import system binds in every module"
 _SELF_ATTR = "an attribute read on self, which any code may set before the call"   # an attribute of self as a value, a receiver or a container
 _CLASS_ATTR = "a class attribute, which the census does not read as page text"   # _Served._class_root's refusal
@@ -4739,7 +4751,7 @@ _header_step = list   # _header_const's expansion of one module constant, called
 # reads this step from outside the script; without the walk's visited set a cycle of constants loops)
 
 
-def _header_const(consts, rebinds, name, strict=True, unfollowed=frozenset()):
+def _header_const(consts, rebinds, name, strict=True, unfollowed=frozenset(), imports=frozenset()):
     """Why a module constant a `_send` definition reads outside its page text is refused (_send_gate, which takes the reason only for
     a statement in a listed shape, where such a constant is a header value), or None: the gate's guard on a string constant holding a
     CR or LF in a header call, applied where the value is bound. The census reads the constant's value
@@ -4755,9 +4767,11 @@ def _header_const(consts, rebinds, name, strict=True, unfollowed=frozenset()):
     here (choice 5 of the eleventh round's rulings): the callee set's `isinstance(x.func, ast.Name)`, since the set is read only for
     a Name node, which a callee of any other kind is not (the walk's `isinstance(x, ast.Name)` decides, its own red: dropped, a name
     a constant's value reads is no longer followed, so aet is read). With `strict` false (a module constant a `_send` call hands its
-    definition: _header_crlf) a name there that is no such constant refuses the value only where it is in `unfollowed` (_unfollowed: a
-    module name the census does not follow by binding), save a call's callee by its name alone, and any other (a builtin's, a
-    top-level import's nothing rebinds) is not read: the value is read for a CR or
+    definition: _header_crlf) a constant in `unfollowed` (one some code writes after binding it, which routes_of adds: B6 of the
+    owner's check of the second closing check's pass) is not followed, and a name there that is no followed constant refuses the value
+    only where it is in `unfollowed` (_unfollowed: a module name the census does not follow by binding, a top-level import's name
+    among them), save a call's callee by its name alone and a top-level import's name as an attribute's base (`imports`,
+    _import_names: the attribute limit), and any other (a builtin's) is not read: the value is read for a CR or
     LF alone, what it computes at run time the stated limit."""
     seen, todo = set(), [name]
     while todo:
@@ -4767,13 +4781,14 @@ def _header_const(consts, rebinds, name, strict=True, unfollowed=frozenset()):
         v, = _header_step((consts[k],))   # the constant's one value, read once per query (the walk's step)
         # a call's callee by its name alone: the base of a method call's callee (its receiver) is no callee but a value it reads
         callee = {id(x.func) for x in ast.walk(v) if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)}
+        bases = {id(a.value) for a in ast.walk(v) if isinstance(a, ast.Attribute)}   # an attribute's base: a top-level import's name read there
         for x in ast.walk(v):
             if isinstance(x, ast.Constant) and isinstance(x.value, (str, bytes)):
                 if any(c in x.value for c in ((b"\r", b"\n") if isinstance(x.value, bytes) else ("\r", "\n"))):
                     return "whose bound text holds a CR or LF"
             elif isinstance(x, ast.Name):
-                if x.id in consts and x.id not in rebinds: todo.append(x.id)
-                elif (strict or x.id in unfollowed) and id(x) not in callee:
+                if x.id in consts and x.id not in rebinds and (strict or x.id not in unfollowed): todo.append(x.id)
+                elif (strict or x.id in unfollowed) and id(x) not in callee and (strict or x.id not in imports or id(x) not in bases):
                     return "whose bound value reads %s, no module constant the census follows by binding" % x.id
     return None
 
@@ -4782,25 +4797,38 @@ def _unfollowed(tree, consts, rebinds):
     """The module names the census does not follow by binding, which _header_crlf refuses in a header value at a `_send` call (NEW-2
     of the closing check, item 4 of the reviewer's 02:3xZ ruling of 2026-10-04): every name the module binds at module level
     (_module_bound) and every name a function rebinds under a `global` declaration or a module-level statement writes (`rebinds`),
-    unless it is a module constant (_module_consts) that nothing rebinds, or a name whose every module-level binding is a top-level
-    import statement and that nothing rebinds; and every name the module reads that no module-level statement binds and that is no
-    builtin (a name the builtins module holds, the names the import system binds in every module not among them, as the served pass
-    reads them), which the census cannot resolve to a value it read (N1 of the second closing check, item B of the reviewer's ruling
+    unless it is a module constant (_module_consts) that nothing rebinds, a top-level import's name among them since B8 of the owner's
+    check of that pass (the census reads no imported value; _header_crlf and _header_const read such a name only as an attribute's
+    base, _import_names); and every name the module reads that no module-level statement binds and that is no builtin (a name the
+    builtins module holds, the names the import system binds in every module and the six site.py adds, _SITE_NAMES, not among them, so
+    the set is the same whether or not the census's interpreter imported site), which the census cannot resolve to a value it read (N1
+    of the second closing check, item B of the reviewer's ruling
     on it, rule 2: such a header argument refused by name, never skipped): the import system's `__doc__`, the `__annotations__` a
     module annotation binds, and a name nothing binds. So a name bound twice (an assignment and a module-level `+=` among them), one
-    bound by an annotated assignment, one rebound at run time under `global` and a module docstring's `__doc__` are among them."""
+    bound by an annotated assignment, one rebound at run time under `global` and a module docstring's `__doc__` are among them;
+    routes_of adds every module name some code writes after binding it (Result.writes, B6 of that check: a container a write changes
+    is no value the census read)."""
+    bound = _module_bound(tree)
+    real = set(dir(builtins)) - _IMPORT_NAMES - _SITE_NAMES   # the builtins as the served pass reads them, less site.py's names
+    # a name the module reads that no module-level statement binds and that is no builtin: one the import system or the compiler binds
+    # (`__doc__` for a docstring, `__annotations__` for an annotation), one site.py adds, or none, which the census cannot resolve to a
+    # value it read
+    loose = frozenset(n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id not in bound and n.id not in real)
+    return frozenset(k for k in set(bound) | set(rebinds) if (k not in consts or k in rebinds)) | loose
+
+
+def _import_names(tree, rebinds):
+    """The names whose every module-level binding is a top-level import statement and that nothing rebinds (`rebinds`: Result.rebinds),
+    which _header_crlf and _header_const read only as an attribute's base (B8 of the owner's check of the second closing check's
+    pass): the census does not read an imported value, so such a name anywhere else in a header value is refused by name, and as an
+    attribute's base it is the stated attribute limit."""
     bound = _module_bound(tree)
     imported = collections.Counter(a.asname or (a.name.split(".")[0] if isinstance(n, ast.Import) else a.name)
                                    for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names)
-    real = set(dir(builtins)) - _IMPORT_NAMES   # the builtins, as the served pass reads them (no name the import system binds)
-    # a name the module reads that no module-level statement binds and that is no builtin: one the import system or the compiler binds
-    # (`__doc__` for a docstring, `__annotations__` for an annotation), or none, which the census cannot resolve to a value it read
-    loose = frozenset(n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id not in bound and n.id not in real)
-    return frozenset(k for k in set(bound) | set(rebinds) if (k not in consts or k in rebinds)
-                     and not (k not in rebinds and bound.get(k) == imported.get(k))) | loose
+    return frozenset(k for k in imported if k not in rebinds and bound.get(k) == imported[k])
 
 
-def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed, declared=frozenset()):
+def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed, declared=frozenset(), imports=frozenset()):
     """(the argument, why) for the first header value a `_send` call hands the definition it reaches that holds a CR or LF, or None
     (item 2 of the reviewer's 13:2xZ ruling of 2026-10-03; routes_of refuses the call by name before any typing). Read: every
     argument of the call, positional, starred or keyword, `**` among them, but the page body (the argument for the definition's
@@ -4809,13 +4837,16 @@ def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed,
     one for a CR or LF, before it is typed). In each, a string or bytes constant holding a CR or LF, anywhere in it (a dict
     literal's keys and values among them), and each name no function scope around the call binds, a name a function there declares
     `global` (`declared`, which routes_of reads from Result.global_decls) read as the module's and never as a binding of that scope
-    (N2 of the second closing check, item B of the reviewer's ruling on it): a module constant (_module_consts)
-    that nothing rebinds, its bound value read as _header_const reads one with `strict` false, `unfollowed` handed on (each string or
+    (N2 of the second closing check, item B of the reviewer's ruling on it): a module constant (_module_consts) that nothing rebinds
+    and no code writes after binding it, its bound value read as _header_const reads one with `strict` false, `unfollowed` handed on
+    (each string or
     bytes constant in that value and in the value of each module constant it names); and any other name in `unfollowed` (_unfollowed:
-    a name the module binds other than as such a constant, or that a function rebinds, save a top-level import's name nothing rebinds,
-    and a name no module-level statement binds that is no builtin, `__doc__` and `__annotations__` among them), save a call's callee
-    by its name alone, whose return the census does not read, refused by name as a name the census does
-    not follow by binding, as the definition path refuses it with `strict` true (NEW-2 of the closing check, item 4 of the reviewer's
+    a name the module binds other than as such a constant, or that a function rebinds, a top-level import's name among them, and a
+    name no module-level statement binds that is no builtin, `__doc__`, `__annotations__` and site.py's six among them; routes_of adds
+    each name some code writes after binding it), save a call's callee by its name alone, whose return the census does not read, and a
+    top-level import's name as an attribute's base (`imports`, _import_names: the attribute limit), refused by name as a name the
+    census does not follow by binding, or as a top-level import's name whose value the census does not read, as the definition path
+    refuses it with `strict` true (NEW-2 of the closing check, item 4 of the reviewer's
     02:3xZ ruling of 2026-10-04). A header value held anywhere else, a local or a parameter of a function around the call, an
     attribute, a call's return or an item, or computed at run time, is not read: the stated limit, its witnesses the (ch) plants chv
     and chp."""
@@ -4832,15 +4863,17 @@ def _header_crlf(call, pos, kwonly, writes, scopes, consts, rebinds, unfollowed,
     for x in list(call.args) + [k.value for k in call.keywords]:
         if id(x) in skip: continue
         callee = {id(c.func) for c in ast.walk(x) if isinstance(c, ast.Call)}   # a call's callee, read for a name alone: `f` in `f(...)`
+        bases = {id(a.value) for a in ast.walk(x) if isinstance(a, ast.Attribute)}   # an attribute's base: a top-level import's name read there
         for n in ast.walk(x):
             if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)):
                 if any(c in n.value for c in ((b"\r", b"\n") if isinstance(n.value, bytes) else ("\r", "\n"))):
                     return x, "a constant holding a CR or LF"
             elif isinstance(n, ast.Name) and (n.id in declared or not any(n.id in p or n.id in s or n.id in o for p, s, o in scopes)):
-                if n.id in unfollowed and id(n) not in callee:
-                    return x, "the module name %s, no module constant the census follows by binding" % n.id
+                if n.id in unfollowed and id(n) not in callee and not (n.id in imports and id(n) in bases):
+                    return x, (("the module name %s, a top-level import's name, whose value the census does not read" if n.id in imports
+                                else "the module name %s, no module constant the census follows by binding") % n.id)
                 if n.id in consts:
-                    why = _header_const(consts, rebinds, n.id, strict=False, unfollowed=unfollowed)
+                    why = _header_const(consts, rebinds, n.id, strict=False, unfollowed=unfollowed, imports=imports)
                     if why is not None: return x, "the module constant %s, %s" % (n.id, why)
     return None
 
@@ -5708,9 +5741,13 @@ def routes_of(rel, tree, sc, res):
     one is a SERVED line (the served pass follows a page's text through `_send` alone); a function outside `_send` that answers
     (send_response) more often than it writes a Content-Type header is a SERVED line, the browser typing that body by sniffing
     it. SERVED_ALLOW excuses a place by its function and expression: a `_send` call's place is the function and the call's
-    content-type expression, and a definition's own write's the definition and the value it writes; an entry so keyed excuses the
-    whole call, an unread body included, save a content type holding a CR or LF where the census resolves it (the allow hit recorded
-    all the same). No entry is keyed on `_send` itself, a call's function or a reference to it (`self._send`, `_send`), so none
+    content-type expression, and a definition's own write's the definition and the value it writes; an entry so keyed excuses each
+    of the definition's Content-Type writes whose place it names (two writes of the same parameter are one place), an unread body
+    included, save a content type holding a CR or LF where the census resolves it (the allow hit recorded all the same). Each
+    write is judged on its own, so a write the entry does not name is typed and refused as at any other place, and the call is
+    excused whole only where every write's place is named (TheAllowlistExcusesEachWriteItNames); every live definition writes one.
+    No entry is keyed on `_send` itself, a call's function or a reference to it (`self._send`, `_send`, the string `_send` or a
+    getattr naming it), so none
     excuses a refusal made by name before any typing above, or a reference to `_send` (the census module's pin over the loaded
     SERVED_ALLOW, item B of the reviewer's ruling on the second closing check). Returns the routes, (call, the
     enclosing function, the class statement the call stands in (the served pass keys the route class on it, never on its name
@@ -5799,7 +5836,16 @@ def routes_of(rel, tree, sc, res):
     rebound = None   # why every `_send` call of the file is refused when a function or class body binds `_send` under a `global` declaration
     one_def = None   # whether the file binds `_send` outside function bodies at most once, and that once by a def statement direct in a body (_send_bindings)
     anywhere = None   # whether the file names `_send` anywhere but as its calls' called name (_names_send), read for a call that reaches no definition
-    unfollowed = None   # the module names the census does not follow by binding (_unfollowed), read for a header value at a call
+    names = {}   # the per-file sets a header value is read against, built on first use: the module names the census does not follow by
+    # binding (_unfollowed), a module name some code writes after binding it among them (B6 of the owner's check of the second closing
+    # check's pass: a container a write changes is no value the census read), and the top-level imports' names (_import_names, B8)
+
+    def header_names():
+        if not names:
+            names["unfollowed"] = _unfollowed(tree, consts, res.rebinds.get(rel, {})) | written
+            names["imports"] = _import_names(tree, res.rebinds.get(rel, {}))
+        return names["unfollowed"], names["imports"]
+
     for call, defs, where in sc.sends:
         fn = next((x for x in reversed(defs) if not isinstance(x, ast.ClassDef)), None)
         cls = next((x for x in reversed(defs) if isinstance(x, ast.ClassDef)), None)
@@ -5881,11 +5927,11 @@ def routes_of(rel, tree, sc, res):
             continue
         # a header value the call hands the definition, read for a CR or LF (item 2 of the reviewer's 13:2xZ ruling of 2026-10-03: every
         # argument but the page body and the content type, _header_crlf): one found refuses the call by name before any typing
-        if unfollowed is None: unfollowed = _unfollowed(tree, consts, res.rebinds.get(rel, {}))   # once per file
+        unfollowed, imports = header_names()
         # the names a function around the call declares `global` (N2 of the second closing check): the module's names there, never a
         # binding of that function's scope, so a header value naming one is read as a module name
         declared = {k for ds, names in res.global_decls.get(rel, ()) if any(ds[-1] is x for x in defs) for k in names}
-        crlf = _header_crlf(call, pos, a.kwonlyargs, writes, scopes(defs), consts, res.rebinds.get(rel, {}), unfollowed, declared)
+        crlf = _header_crlf(call, pos, a.kwonlyargs, writes, scopes(defs), consts, res.rebinds.get(rel, {}), unfollowed, declared, imports)
         if crlf is not None:   # no allowlist entry excuses it
             res.problems.append("SERVED %s:%d calls _send on %s handing it %s (%s, in %s), which ends the header the definition writes it "
                                 "into: what follows is another header or the body, which the census does not read"

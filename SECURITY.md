@@ -572,24 +572,34 @@ and the content type (read above), positional, starred or keyword, a `**` among
 them: each string or bytes constant in it, a dict literal's keys and values
 among them, and each name in it that no function scope around the call binds (a
 name a function there declares `global` is the module's, not a binding of that
-scope): a module constant (a name one top-level plain assignment binds and
-nothing rebinds), read through the module constants its value names, one holding
-a CR or LF refusing the call by name before it is typed; a top-level import's
-name that nothing rebinds, a builtin's (a name the builtins module holds, the
-names the import system binds in every module not among them) and a bare name a
-call calls, not read; and any other name, which the census cannot resolve to a
+scope): a module constant (a name one top-level plain assignment binds, that
+nothing rebinds and no code writes after binding it), read through the module
+constants its value names, one holding
+a CR or LF refusing the call by name before it is typed; a builtin's name (a
+name the builtins module holds, the names the import system binds in every
+module and the six site.py adds, copyright, credits, license, exit, quit and
+help, not among them), a top-level import's name that nothing rebinds where it
+is an attribute's base (the attribute limit below) and a bare name a call calls,
+not read; and any other name, which the census cannot resolve to a
 value it read, refusing the call by name as a name the census does not follow by
 binding, in the argument or in a module constant's value there: a name the
 module binds more than once or by an annotated assignment, one a function
-rebinds under a `global` declaration or a module-level statement writes, and one
-no module-level statement binds, among them the names the import system and the
-compiler bind (`__doc__` for a docstring, `__annotations__` for an annotation);
+rebinds under a `global` declaration or a module-level statement writes, one
+some code writes after binding it, as a content type's module name is read (a
+container a subscript store or an in-place method changes among them), a
+top-level import's name anywhere but as an attribute's base, and one no
+module-level statement binds, among them the names the import system and the
+compiler bind (`__doc__` for a docstring, `__annotations__` for an annotation)
+and site.py's six;
 a CR or LF the value computes at run time, a call's return or a number formatted
 as a character, is not read, nor is a header value held anywhere else, a local
 or a parameter of a function around the call, an attribute, a call's return or
-an item, its witnesses a CR LF from chr and one from a `%c` of an int, and a
-header value held in a local dict and a CR LF a call of chr computes at the
-call), and a response that a Content-Type in its headers argument, passed
+an item, a container a call binds that code changes through an alias, or a
+container handed to a function that writes its parameter, its witnesses a CR LF
+from chr and one from a `%c` of an int, a header value held in a local dict and
+a CR LF a call of chr computes at the call, and a dict a call of dict binds that
+a helper changes through an alias and a dict handed to a function that writes
+it), and a response that a Content-Type in its headers argument, passed
 or defaulted, makes a page is outside the served pass, the call being typed by
 its content-type argument; nor is code the definition runs through an object it
 is handed (a parameter's methods, its mapping's items, its __str__), code behind
