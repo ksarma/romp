@@ -76585,6 +76585,9 @@ def _landing():
             # no resize (_LANDING_MOBILE_JS). tests/test_mtabs_fit_served.py measures the bar in three engines.
             "#mtabs{flex-wrap:wrap}"
             "#mtabs .mtabs-acts{display:flex;flex:0 0 auto;margin-left:auto}"
+            # the divider's 1px as its width too, not only its flex-basis: WebKit and Firefox size .mtabs-acts by its children's
+            # content widths, where an empty span counts 0, so the box came out 1px short and Settings sat 1px past the edge
+            "#mtabs .mtabs-div{width:1px}"
             # a row of tabs alone keeps the single row's height, which the action buttons set (an 18px glyph with 6px above
             # and below, 30px) and the tabs stretched to; without it a wrapped first row is one 12px label's line tall
             "#mtabs button[data-pane]{min-height:30px}"
