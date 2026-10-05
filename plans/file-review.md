@@ -3611,7 +3611,11 @@ document stands on its own, each with the reasoning it was given.
     `cd` the hook cannot follow (one to a name the shell fills in, `cd -`, `popd`, one inside an if, loop or case body,
     or one to a directory the command cannot enter when the hook runs, which it may make first or which the cd fails
     on, leaving the shell where it was) is refused while the cwd's project is in play, with the reason and the remedy
-    (an absolute target, or a `cd` to a literal directory that exists), where before it was dropped (round 3: one such
+    (an absolute target; the `cd` to a literal directory offered beside it until the after-source fixes of 2026-10-03 is
+    gone from a relative target's remedy, since the mechanism ruling's M2 gives each refusal the one remedy that always
+    lifts it, and a cd did not where the command's own chdir left the directory unknown; it is kept, with no directory
+    option on the command, for an operand of a shell reading a script the guard does not read, a word that may be an
+    option), where before it was dropped (round 3: one such
     `cd` turned a refused write on a tracked file into an allowed one; the cost, a `mkdir -p build && cd build && cmd >
     log.txt` from a tracked cwd, is a deliberate false refusal); one narrowing from the round-1 review, corrected by its
     round 2 and again by round 3 (2026-09-19): a target whose only expansions are `$$` and `${$}`, the shell's process
@@ -3730,7 +3734,14 @@ document stands on its own, each with the reasoning it was given.
     `EXPANDED_NAMES`) anywhere in the command outside a `$`-expansion makes that expansion unreadable for the whole
     command and a bare `cd` or `cd ~` unknown (`bareExpandedNames`). (b) FULLY PARSED OR REFUSED: every wrapper in
     `PREFIXES` is parsed against its own option table (`WRAPPER_OPT`) or the command refuses naming the option (an
-    unknown, abbreviated, glued-unknown or non-literal one), the words after it judged by their own project; a nested
+    unknown, abbreviated, glued-unknown or non-literal one), the words after it judged by their own project (behind
+    nohup or setsid, `filledHead` in the table, a non-literal word is the command name, its operands judged as those of
+    one named by a variable, unless its output goes through `|` to another command, directly or through an enclosing
+    group, subshell or compound: the after-source fixes, 2026-10-03; a command named by a variable keeps the names
+    readable after it when at least one wrapper before it is an external program, `external` in the table, since it
+    then runs in a child process that cannot set this shell's variables, while the directory is judged unknown after it
+    behind any wrapper; the rule is about that command alone, and a literal `cd` or `read` behind a wrapper keeps its
+    own effect: the mechanism ruling, M1); a nested
     chdir composes (`commandOf` returns its `chdirs` in order); `env -S`/`--split-string` and sudo's -e, -i, -s, -R and
     -h are opaque and refused outright, never recursed; `time -o FILE` is a write of FILE. (c) NON-LITERAL LINK SOURCE:
     a symbolic link whose source the guard cannot read or place marks the link name as mutated, so a later write
@@ -3797,7 +3808,8 @@ document stands on its own, each with the reasoning it was given.
     command set to a plain string earlier, at the top level in plain sequence (`recordPlainWord` and `recordSegment`
     since the seventh pass, the readability rule's predicate, which mark a name
     set in a body, a subshell, after `&&`/`||` or in a `{ }` group opened after one of them, by a `read`, a loop, a nameref, an unset or a `+=`, or any name once
-    an eval, a source, an unknown wrapper option or a call of a function the command defines ran, as unreadable); HOME
+    an eval, a source, a command named by a variable (not one with an external program wrapper before it), an
+    unknown wrapper option or a call of a function the command defines ran, as unreadable); HOME
     through the guard's home; PWD through the directory it knows; OLDPWD, `~+` and `~-` through the directory before a
     `cd` in the same command; none of HOME, PWD and OLDPWD once the command names the name outside an expansion or may
     fill it in (`EXPANDED_NAMES` names every name `valueOf` substitutes and `unreadableExpandedNames` returns each the
@@ -4142,7 +4154,8 @@ document stands on its own, each with the reasoning it was given.
     the three shells (112 rows): the two constructs, unquoted, were the only rows a shell wrote that the hook allowed; the
     change turns those three rows to refusals and no other. THE COSTS, each measured with no shell writing: `[[ $a > $b ]]`
     with `$b` unreadable from a tracked cwd is refused as not literal (the non-literal rule for a redirection target; the
-    refusal adds the comparison's remedy, `expr` or a directory outside the project; a `$b` the command set to a plain
+    refusal names the comparison's remedy, the comparison written with `expr`, its one remedy since the after-source fixes'
+    sixth verify round, 2026-10-04, where it named a directory outside the project too; a `$b` the command set to a plain
     string resolves and is judged by its value); the words after a `&&` inside the test (dash skips them when `[[` is not
     found, and they are read as running since a command named `[[` on PATH would run them); `>>` and `<>` onto an
     existing tracked file through a command that is not found (the operator opens the file and writes no byte; the same
@@ -4502,8 +4515,11 @@ document stands on its own, each with the reasoning it was given.
     spelling alone), by a pattern's matches among the paths bound (`../scratch/c?`: the file is made when the command
     runs, so the filesystem cannot expand the pattern at check time), through PATH for a bare name (`ln -s /usr/bin/cp
     ../scratch/c2; PATH=../scratch c2 a b`), and a `cat FILE > DEST` binds DEST as cp does; a head through a HOME the
-    command reassigns, or through a PATH set to a value the resolver does not read, is one the hook cannot read while a
-    path is bound. THE COMPOUND PRODUCER: a keyword compound before the pipe (`for i in 1; do echo 'cp a b'; done |
+    hook cannot read (one the command reassigns, or HOME after an eval, a source, a command named by a variable or a call
+    of a function the command defines) is one
+    the hook cannot read while a path is bound, and one through a PATH the resolver does not read is while a bound path's
+    last component is the head's name (since the after-source fixes, 2026-10-03: before, any bound path, so a copy of a
+    data file beside a mention of PATH refused every later bare command name). THE COMPOUND PRODUCER: a keyword compound before the pipe (`for i in 1; do echo 'cp a b'; done |
     bash`; while, until, if and case alike) prints what the list from its head to its closer prints, and the head runs
     the body a number of times the model does not count, so a printer inside it makes the list UNRESOLVABLE (placed on
     the closer segment that carries the pipe, listOutput naming the head) and a body with no printer stays outside the
@@ -4972,6 +4988,233 @@ document stands on its own, each with the reasoning it was given.
     glued value (`-oFILE`, `-uoFILE`) read as a separate operand is. The guide's pointer names the installer's section
     without the verb the About entry of CONTEXT.md avoids in that paragraph, and the skill's list of known writers
     reads as examples.
+    THE AFTER-SOURCE FIXES (2026-10-03; a session's report and its derivation, every row reproduced in process and in
+    real shells over a synthetic project, and the verify rounds on the build whose rulings are applied here): after a
+    construct that leaves the directory unknown (a `source` or `.` of a file, a command named by a variable, a `cd` to a
+    variable) the guard was wrong both ways. These false allows are closed. A pattern operand of a command named by a
+    variable that the guard could not expand was dropped (the directory not known, or past the caps), so `cd "$d"; "$c"
+    report.m? < /dev/null` truncated the tracked report; it is judged by its spelling where the directory is not known
+    and refused as a target the hook cannot read past the caps (an absolute one whose directory part is itself a
+    pattern among them). A command named by a variable may be `.` or eval, so it makes every later variable read
+    unreadable, as a source does (a member that pipes or is backgrounded aside; the poison is applied just before the
+    segment is recorded, after its own words and redirections were resolved). The operands of a command named by a
+    variable behind a chdir wrapper (`env -C docs nohup "$c" report.md`, and the older `env -C docs -- "$c"
+    report.md`) are judged in the wrapper's directory (`enterChdirs`), where they were judged in the shell's, and under
+    a directory not known where the chdir names a directory the shell fills in or one the command cannot enter. A
+    `time -o FILE` is judged as a write where it went unjudged, each an older false allow: before a wrapper whose
+    filled-in word refuses (`time -o <tracked file> nice "$c" x` from a cwd in no project), before `env -S`, a sudo
+    option read as opaque or flock's `-c` string (from a tracked cwd too for flock), and, relative, before a command
+    named by a variable, whose road had left the directory unknown first (`command time -o ../notes-api/docs/report.md
+    nohup -- "$c" x` from a cwd in no project, and the `time --` and `nice --` spellings); time opens the file before
+    the command runs, so it is judged in the shell's directory and behind the wrappers' chdirs (`wrapperWrites`), on
+    the `env -S`, sudo and flock roads too (AS3-time-o-envC-*, AS3-time-o-rel-envC-*), and not again after that road.
+    flock's `-c` string behind a chdir wrapper (`env -C docs flock <lock> -c 'cp ../base/report.md report.md'`, and
+    the `env --chdir=` and `sudo -D` spellings), an older false allow the third verify round found, is read in the
+    wrapper's directory, where it was read in the shell's (AS3-envC-flock-script and its twins). The false refusals: a `[` is a pattern only where it forms one (formsPattern, asked by
+    expandGlob and mayVanish; a class closing past a `/` counts, since zsh globs it across the slash, and so do `[!]`
+    and `[^]`, which zsh reads as a class of any one character), so a test after such a construct passes; an arm's
+    pattern list of one-word alternatives with no redirection is read as words the shell expands, never as a command
+    (THE CASE PATTERN; its substitutions, arithmetic bodies and assigning expansions still count); behind nohup or
+    setsid a word the shell fills in is the command name (THE FILLED-IN COMMAND), except where its output goes through
+    `|` to another command, directly or through the closer of an enclosing group, subshell or compound
+    (`outputReachesPipe`). THE ROAD is restored behind any wrapper (the mechanism ruling, 2026-10-03, M1,
+    replacing the second and third verify rounds' T2-7 and T3-4, which had dropped it): a program run behind an external
+    wrapper cannot move this shell, but it can change the filesystem a later relative path walks (a symlink it makes),
+    so a relative write after the unread head is refused as a directory not known (AS3-cost-nohup-moves,
+    AS3-nohup-dd-moves, AS3-nohup-then-write, the symlink witness AS3-link-nohup-dd-rel and its env and filled twins).
+    That road is taken after a command named by a variable run in the foreground in this shell; THE UNHELD ROAD exempts
+    a member that pipes into another command, a backgrounded one and one in a subshell or a substitution, which the M3
+    follow-up below discloses. After the program of THE FILLED-IN COMMAND the road is taken wherever it runs:
+    backgrounded, piped, in a `( )` subshell or a backgrounded group, in a `$(..)`, a process substitution, a fresh
+    shell's text, a function body, flock's string, a coproc or a text run behind a chdir wrapper (THE FILESYSTEM ROAD,
+    the sixth verify round's tg-t6-1). Fork main refused those forms as an option nohup does not know, and the round
+    before allowed them while bash and zsh wrote the tracked report through the link. The road is one state every walk
+    of the command shares, re-applied wherever a saved directory state is restored (AS3-fs-*, the controls
+    AS3-ctl-fs-*). Each frame open when the road is taken is marked, the enclosing frames included, so the directory is
+    unknown after the outer close of a group or an if body inside a subshell, or of a subshell inside one (the seventh
+    verify round's tg-m7-3: AS3-fs-nohup-subshell-group, -subshell-if, -subshell-subshell, -group-bg-if). THE ROAD IN A
+    LOOP: a loop body that takes the road runs again after it, so each relative write judged in the body before the road
+    is refused as a directory not known, like the road's later writes (the seventh verify round's tg-m7-2,
+    AS3-fs-loop-*); a loop with no relative word, and one whose road sits in a function it defines and never calls, pass
+    (AS3-ctl-fs-loop-*). A
+    write by an ABSOLUTE path through such a link is judged as spelled, a stated precondition: the guard judges a lexical
+    path, and a link an unread program makes, reached by an absolute path, is outside the model, the same way fork main
+    allows it (AS3-residual-link-nohup-dd-abs). The relative write's own refusal leads there: its one remedy, the target
+    spelled as an absolute path, turns AS3-link-nohup-dd-rel into that allowed row, which bash and zsh run onto the
+    tracked report, so on this shape the remedy does not keep the write off a tracked file (the fifth verify round's
+    T5-9). M3's stopping rule leaves eight false allows fork main also allows as
+    disclosed follow-ups, not fixed here: an unread head that is not THE FILLED-IN COMMAND (a command named by a
+    variable with no wrapper, or behind `--`) takes no road where it is backgrounded, piped, in a `( )` subshell or in a
+    `$(..)`, so a link it makes there is followed by a later relative write while allowed, and bash and zsh write the
+    tracked report (AS3-residual-fs-plain-bg, AS3-residual-fs-plain-pipe, AS3-residual-fs-plain-subshell,
+    AS3-residual-fs-plain-cmdsub, AS3-residual-fs-nohup-dd-bg, AS3-residual-fs-env-dd-bg, AS3-residual-fs-nohup-dd-pipe,
+    AS3-residual-fs-nohup-dd-subshell; the follow-up takes THE FILESYSTEM ROAD, above, for every unread head); a `--`
+    before a lead-bearing wrapper's lead reads the lead as the command
+    (`timeout -- 5 cp a b` reads `5`, AS3-residual-timeout-dd-lead, and so for each wrapper the table gives a lead, one
+    row each, which the rows test derives from the table: flock's lockfile, AS3-residual-flock-dd-lead; taskset's mask,
+    AS3-residual-taskset-dd-lead; chrt's priority, AS3-residual-chrt-dd-lead); a filled-in command behind an external
+    wrapper whose output is piped passes as the unwrapped form does (AS3-residual-nohup-dd-pipe,
+    AS3-residual-env-dd-pipe); a backup side-file run by its explicit path (`cp -b -S zz <prog> <dir>/x; <dir>/xzz ..`)
+    passes, since the guard binds no backup path and the backup narrowing below covers a bare name only
+    (AS8-residual-backup-explicit-path; the follow-up binds the computed backup paths); and a file the command made
+    from a source the guard does not read, run by its absolute path after a construct that leaves the directory
+    unknown, passes, since the bound head is read only where the directory is known though an absolute one needs none
+    (AS8-residual-bound-abs-after-cd; the follow-up reads an absolute head whatever the directory); a loop body is
+    read once, so a relative write in it before a command that moves the shell or makes a link the next pass writes
+    through is judged where the first pass stands, when that command is a literal cd, a literal ln or a command named
+    by a variable that is not THE FILLED-IN COMMAND (AS3-residual-loop-cd, AS3-residual-loop-ln,
+    AS3-residual-loop-plain; the follow-up reads the body again from the state its first walk leaves, as THE ROAD IN
+    A LOOP, above, does for the filled-in word: the seventh verify round's tg-m7-2); a text that another program runs
+    once per file or per input line (find's `-exec`, xargs) can run again after the road it takes, but THE ROAD IN A
+    LOOP reads only a shell's loops, so a relative write before THE FILLED-IN COMMAND in that text is judged where its
+    first run stands, and bash, zsh and dash write the tracked report on the second run, through the link the first
+    run made (AS3-residual-repeat-find-exec, AS3-residual-repeat-xargs; the follow-up reads such a text as THE ROAD IN
+    A LOOP reads a loop body); and a reserved word spelled
+    partly quoted (`i'f'`) is read as the keyword, while the shells look it up as a command name through PATH
+    (AS8-residual-partquoted-keyword; the follow-up reads a reserved word only where no character of it is quoted). THE
+    NAMES stay readable when at least one wrapper before the head is an
+    external program (it runs the head in a child process, which cannot assign this shell's names): a later variable
+    read, a `~/` write and a bare cd after `nohup "$c"` or `nohup -- "$c"` stay as they would without it, and so behind a
+    chain holding an external wrapper whatever else precedes it (`command nohup "$c"`, `nohup command "$c"`:
+    AS3-nohup-no-poison, AS3-nohup-dd-no-poison, AS3-chain-command-nohup-no-poison, AS3-chain-nohup-command-no-poison);
+    behind a wrapper the shell runs itself the names are poisoned (AS3-kept-*, one row per such wrapper). The road holds
+    behind every wrapper of the table (AS3-road-*, one row per wrapper, which the rows test ties to the table: the
+    wrappers the shell runs itself, and the external ones in the form that reaches an unread head, a lead-bearing one as
+    `<wrapper> <lead> -- "$c"`, which the guard reads as the command named by a variable while the program runs a command
+    named `--`, the refuse side; the sixth verify round's tg-m6-4; AS3-road-command-dd-cd-writes where bash's `command`
+    runs the builtin cd, so the later relative write lands on the tracked report) and behind each chain spelling (`command nohup "$c"`, `time
+    nohup "$c"`, `exec nohup "$c"`, `command nohup -- "$c"`: AS3-chain-*-road, with their names rows AS3-chain-*-no-poison,
+    and the link witness AS3-link-chain-command-nohup-rel). A bare command
+    name under a PATH the guard does not read is refused only where a bound path carries that name, or where a backup
+    option (`-b`, `--backup`, `-S`, `--suffix`) on cp, mv, install or ln made a side-file under a name the guard does not
+    follow (S4-3: AS8-backup-*, a row for each option parseCopyOptions reads, each verb COPY_OPT holds and each text the
+    command runs, eval, `bash -c` and a command substitution, and for each form the parser reads, derived from the
+    option's arity: a bare `--backup`, `--suffix` with its value a word of its own, `-S` with its value glued, `-b` and
+    `-S` after another letter of a cluster, the sixth verify round's tg-m6-1, and `-b` as the first letter of one, `cp -bf`,
+    the seventh's tg-m7-6). THE SHELL'S OWN NAME: a bare name that is a
+    builtin or a keyword in bash, zsh and dash alike (ALL_SHELL_BUILTINS) runs before any lookup through PATH, so neither
+    refusal applies to it as the name the shell itself looks up (the sixth verify round's tg-t6-3: `cd` and `export`
+    after a backup were refused, and the full-path remedy names no program for them). The set is exactly the
+    intersection of the three shells' answers; `builtin` is not in it, since dash looks it up through PATH and ran a shell
+    a backup had stashed under that name (the seventh verify round's tg-t7-1, AS8-builtin-dash-builtin-*). The rows test
+    asks each shell present on its runner, and checks a shell absent there against the per-shell lists derived on the box
+    and committed beside the test (SHELL_OWN_DERIVED). The shell's own lookup is the segment's first command word,
+    spelled with no quoting: its head when no wrapper precedes it, or its first wrapper (`exec` and `command` there are
+    builtins). A name a wrapper runs is the wrapper's lookup, however the wrapper is spelled (`exec echo`, `command
+    echo`, `/usr/bin/env echo`, a copy of env the command made: the seventh verify round's tg-m7-4, AS8-builtin-exec-*,
+    AS8-builtin-command-echo, AS8-builtin-slash-*, AS8-builtin-bound-env-echo). A keyword with any character quoted is no
+    keyword, so the shells look `'if'`, `"while"` and `f'or'` up through PATH (AS8-builtin-quoted-*,
+    AS8-builtin-partquoted-for). THE SHELL'S GATE: whether the command may
+    turn a builtin off (bash's `enable`, zsh's `disable` and `zmodload`, BUILTIN_GATES) is a property of the whole
+    command, because a name read before the gate may run after it, on a loop's next pass, in a trap action or in a
+    function called later (the seventh verify round's tg-m7-1 and tg-m7-5, AS8-builtin-gate-*). The gate is set before
+    the walk when the text mentions one of the three as a word anywhere (mentionsBuiltinGate). The walk also sets it when
+    it meets one in a spelling that scan does not read, such as an ANSI-C quote, or meets a text or a command name it
+    does not read run in this shell; each exemption given before that point is then withdrawn and its refusal recorded
+    (gateBuiltins). Stated costs, on the restricted side: a mention no shell runs turns the exemption off too
+    (AS8-builtin-gate-mention-cost); a quoted builtin's name stays refused after a backup (AS8-builtin-quoted-echo-cost);
+    and a builtin's name behind `command`, `builtin`, `time` or `exec` stays refused after a backup (zsh's `command` and
+    dash's `time` look the name up through PATH), with a full-path remedy that names no program for cd or export. THE REMEDIES each name ONE that always lifts the refusal (M2,
+    replacing the context-specific remedies of the rounds before, which did not lift where another construct stood around
+    the command): a command name that is a pattern in a directory not known asks for the name without a pattern after a
+    cd to a literal absolute directory that exists, as a command of its own (not after `&&`), after the last command that
+    leaves the directory unknown (that construct, or a later `source`, `.`, eval, cd to a variable or command named by a
+    variable); a relative target asks for an absolute path; an operand of a command named by a variable asks for the
+    command's literal path and each path it is handed spelled absolute (the literal path alone leaves the operand
+    relative to the directory not known, an absolute path alone leaves an option judged as a path); an operand of a shell
+    reading a script the guard does not read (a piped script, a here-string, an eval's text) asks for a cd to a literal
+    absolute directory that exists, as a command of its own after the last command that leaves the directory unknown,
+    with no directory option on the command itself, since such a shell has no command to name and a word it is handed
+    may be an option, which cannot be spelled as an absolute path (the fifth verify round's T5-2: this kind is split
+    from the relative target's, whose absolute path the round before gave it, and fork main's cd lifted it); where the
+    unread text itself leaves the directory unknown (an earlier command of that text may move the shell), a cd before
+    the command changes nothing, so that refusal asks for the script spelled out with its paths as absolute paths,
+    whatever an earlier construct did (the sixth verify round's tg-m6-3: after a `source` the cd was refused in its turn
+    for the text, and the text spelled out with a relative path for the source; AS6-script-eval-in-text-*); a filled-in wrapper word asks for the word
+    spelled out, and where its output goes through `|` for the command put directly before that `|`, with no redirection
+    and no group, subshell or compound around it (the one shape whose printed text the next command reads); a literal
+    wrapper option asks for its long form where it abbreviates an option the table holds or names one in a form the walk
+    does not parse (one of each list the long form is read from has a row: the seventh verify round's tg-m7-8,
+    AS3-option-held-*; an abbreviation of an option the table refuses outright is that option to the program and takes
+    that option's own refusal, never its long form, which is refused in its turn: tg-m7-7, AS3-option-refuse-abbrev-*), for the command without the wrapper where the table does not hold it at all, and for nothing where
+    that command's output goes through `|`, since dropping the wrapper there led to the T3-7 road (`nice --foo $e '<a cp>' | bash` with
+    the wrapper dropped passed while bash and zsh copied: T5-1, T5-10, and the sixth verify round's tg-t6-2,
+    AS3-option-unheld-*); a not-literal target asks for the path spelled out as an absolute path, and so does a `~/` or
+    `$HOME/` write where HOME cannot be read (T5-13), while one inside `[[ ... ]]` asks for the comparison written with
+    `expr`, which bash, zsh and dash run alike (the sixth verify round's tg-t6-4, AS7-compare-notlit); a bound command name asks for the full path of the program it should run, not a path this
+    command made; a text the guard could not establish asks for the text spelled out. A command named by a variable
+    whose operand is a tracked file is refused with track-edit alone: spelling the command out lifts that refusal only
+    where the command merely reads the file, so it is no remedy that always lifts (T5-6; a cost the sixth verify round
+    accepted: a command named by a variable that only reads a tracked operand gets no hint that spelling it out lets it
+    run). THE PROOF is over every row,
+    not once per kind: the rows test checks each refused row's remedy sentence equal to its kind's one remedy, builds the
+    row's remedied command, mechanically where the remedy is a rewrite and by hand where it asks for a value the row does
+    not give (the word or the program a variable stands for), and requires it allowed, or refused by name for a tracked
+    file the remedied command names, as the text promises; so a kind whose remedy fails one of its rows reds, and a kind
+    with no remedy that always lifts states its refusal and offers none, its first line ending with the cause and the
+    track-edit sentence, nothing between (the sixth verify round's tg-m6-2). Outside that population and older than these
+    fixes, some refusal kinds still name two remedies (the writer's unknown option, whose text names the command without
+    the option and the long form, the sed-script and opaque-script texts and others): a follow-up brings them
+    under M2 (ruled a follow-up with the sixth verify round). A second `-C`, `--chdir` or `-D` in one `env` or
+    `sudo` invocation leaves the directory not known, since GNU applies the last and the guard does not model last-wins
+    (S4-1: AS3-envC-rpt-*, AS3-sudoD-rpt-cp, and the long spellings, AS3-envchdir-rpt-cp, AS3-envC-envchdir-rpt-cp,
+    AS3-envchdir-envC-rpt-cp, AS3-envchdir-rpt-flock and AS3-sudochdir-rpt-cp; a nested `env -C a env -C b` still chains,
+    AS3-ctl-envC-nested-chain). Each refusal that names a chdir option spells it as the command does, in each spelling
+    commandOf reads, the short and the long option with the value glued or a word of its own (AS3-spelled-*, derived from
+    the table's chdir options: the second option of one invocation, a directory the command cannot enter, one the guard
+    cannot resolve; the fifth verify round's tg-m5-7 and the sixth's tg-m6-5).
+    THE COSTS, from a tracked cwd, after a command named by a variable with no external wrapper before it (inside a
+    subshell too, as `(source f)` already was: AS5-cost-subshell), as after a source: a later variable read
+    (AS5-cost-var), a `~/` or `$HOME/` write (AS5-cost-home), a relative write after a bare `cd` (AS5-cost-cd) and a `~/`
+    command name while the command has bound a path (AS5-cost-home-head) are refused. The remedy is the path spelled out
+    as an absolute path, the home directory spelled out for a `~/` or `$HOME/` write, and for the `~/` command name the
+    command the binding stands for with its paths absolute (M2's one remedy each; the literal-path,
+    `&` and literal-value remedies the rounds before offered, which did not lift where a later construct blocked the read,
+    are gone). From a cwd in no project all of them stay allowed. Also: a lone `[` operand of such a command after a
+    directory not known is refused (AS1-side-lone-bracket). The NAMES are kept readable when at least one external
+    wrapper precedes the head (M1; the ROAD above is restored whatever the wrapper), so these costs hold behind a chain
+    the shell runs itself (`command`, `builtin`, `exec`, `time` and zsh's precommand modifiers, a builtin, a keyword or a
+    precommand modifier in one of the three shells: AS3-kept-*, one row per such wrapper) and not behind a chain holding
+    an external program.
+    One cost of the `time -o` judgment: the guard does not order time's option against a later chdir, so a relative
+    file before `env -C <tracked dir>` is judged in both directories and refused by name, though time writes it in the
+    shell's directory (`command time -o report.md env -C <project>/docs flock -c 'true' <lock>` from a cwd in no
+    project, AS3-cost-time-o-over-count; the main road over-counts so by design). The corpus records four of the costs as cost rows with their
+    remedies (a variable read, a `~/` write, a bare `cd`, the subshell form) and five ordinary rows for the shapes these
+    fixes unblock (`nohup` and `setsid` before a command named by a variable, a test and a case pattern after a
+    `source`, a copy beside a mention of PATH). THE RESIDUALS, each pinned in the after-source rows test of
+    `tools/romp-track-bash-guard.test.mjs` with the verdict it has (allowed, with the shells that write, where a write
+    gets through; AS2-residual-paren refused, a false refusal) and each named here by id, which that test checks:
+    behind nohup or setsid a filled-in word has the
+    reach of a command named by a variable, so every form allowed without the wrapper is allowed with it, a filled-in
+    shell reading its script from `-c` (AS3-residual-nohup-c, AS3-residual-setsid-c, AS3-residual-nohup-env-sh-c), from
+    a file (AS3-residual-nohup-file-script), from a pipe as its last member (AS3-residual-nohup-pipe-in,
+    AS3-residual-nohup-pipe-last-c), from a here-document, a here-string or `<` (AS3-residual-nohup-heredoc,
+    AS3-residual-nohup-herestring, AS3-residual-nohup-stdin-file), its output read through a process substitution, a
+    command substitution or a file another command runs (AS3-residual-nohup-procsub, AS3-residual-nohup-cmdsub-eval,
+    AS3-residual-setsid-cmdsub-eval, AS3-residual-nohup-herestring-feed, AS3-residual-nohup-redirect-then-run), written
+    into a process substitution that runs it (AS3-residual-nohup-procsub-out), piped from a place the walk reading the
+    command does not see, a function body whose call's output is piped (AS3-residual-nohup-func-pipe: the body is read
+    where it is defined) or a `bash -c` script whose command's output is piped (AS3-residual-nohup-bashc-pipe: the
+    script is read on its own), taken by a command substitution through a group around it
+    (AS3-residual-nohup-cmdsub-group), or read from a coprocess (AS3-residual-nohup-coproc); each unwrapped twin passes
+    at fork main. Only a `|` the output reaches, directly or through an enclosing
+    group, subshell or compound, keeps the refusal (AS3-nohup-pipe, AS3-setsid-pipe, AS3-nohup-group-pipe,
+    AS3-nohup-subshell-pipe, AS3-nohup-if-pipe, AS3-setsid-group-pipe). The parenthesized case pattern `(a|b)`, bash's
+    extglob and zsh's nested patterns are not read as patterns (the lexer ends a segment at `;;` as at `;`), so after
+    such a construct an arm is refused when an alternative holds `*`, `?` or `[...]` (AS2-residual-paren, a false
+    refusal; drop the leading `(` or cd after the construct) and passes otherwise (AS2-residual-paren-plain); bash's extglob
+    alternation and zsh's nested-pattern alternation are refused the same way (AS2-residual-extglob, AS2-residual-zsh-nested). Three
+    older false allows, found by the verify rounds and not fixed here: a case-pattern alternative that is a
+    substitution reading the case's piped input (`echo '<a cp>' | case x in a|$(bash)) : ;; esac`,
+    AS2-residual-case-alt-reads-stdin: the lexer reads the `|` between alternatives as a pipe; it belongs with the
+    parenthesized-pattern lexer work); a pattern whose directory part is itself a pattern, past the caps, from a cwd in
+    no project (`tee <root>/*/notes/*`, AS4-residual-wild-dir-out, AS4-residual-wild-dir-known-out: its spelled
+    directory is in no project); and, in a known directory, a bracket class across a `/` and a `[!]` or `[^]`, which
+    expandGlob reads by path segment and as text, as bash and dash do, while zsh globs them (`cp ../base/report.md
+    repor[t/x].md` and `cp ../base/report.md repor[!].md` from docs/, and a `./[!]` command name:
+    AS1-residual-zsh-class-across-slash, AS1-residual-zsh-neg-class-target, AS1-residual-zsh-caret-class-target,
+    AS1-residual-zsh-neg-class-head).
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

@@ -100,7 +100,9 @@ test('a cd inside an if, loop or case body leaves the cwd unknown once the body 
   // tracked cwd passed, and a body cd turned a refused write on a tracked file into an allowed one (review round 3,
   // 2026-09-19, by execution in real bash: the body did not run and the copy ran in the project). A literal relative
   // target whose directory is not known is now refused while the cwd's project is in play, with the reason (the cd
-  // sits in a body that may not run) and a remedy (an absolute target, or a cd to a literal directory first); from a
+  // sits in a body that may not run) and a remedy (spell the target as an absolute path; the mechanism ruling
+  // of 2026-10-03, M2, dropped the cd alternative, which did not lift where the directory not known was the command's own
+  // chdir wrapper, and before the after-source fixes it said a cd first); from a
   // cwd in no project it passes as every unreadable target does, and an absolute target after the same body is judged
   // as ever. Both directions, so the rule cannot be met by refusing everything after a body.
   const UNKNOWN_DIR = /the directory it is relative to is not known/;
@@ -116,7 +118,7 @@ test('a cd inside an if, loop or case body leaves the cwd unknown once the body 
     // the reason is the first thing that made the directory unknown: the body for a literal cd, the word for `cd "$d"`
     const why = cmd.includes('"$d"') ? 'an earlier `cd` names "$d", a directory the shell fills in' : 'sits in an if, loop or case body that may not run';
     assert.ok(reason && UNKNOWN_DIR.test(reason) && reason.includes(why), `refused in the tracked project, saying why: ${cmd}: ${reason}`);
-    assert.ok(reason.includes('Spell the target as an absolute path, or cd to a literal directory that exists first'), 'and what to do');
+    assert.ok(reason.includes('Spell the target as an absolute path') && !reason.includes('cd to a literal'), 'and what to do (the one remedy, M2: no cd)');
     assert.ok(!/is not a literal path/.test(reason), 'not the non-literal text: the word is literal, the directory is what is not known');
     assert.ok(reason.includes(`and ${proj} tracks files`), 'naming the project in play');
   }

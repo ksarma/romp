@@ -282,6 +282,32 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
     assert.ok(flat.includes(phrase), `the skill states the third-pass rule: ${phrase}`);
   }
   assert.ok(flat.includes('The allow-by-default for an unmodelled writer is deliberately not flipped') && flat.includes('What it does refuse, while a tracked project is in play'), 'the contract paragraph in full');
+  // the after-source fixes (2026-10-03): the two clauses the developer prose carries (hooks/README.md, docs/install.md), held equal on the
+  // three surfaces so a reword of one alone reds here: the filled-in word behind nohup or setsid (its output through `|` directly or through
+  // an enclosing group, subshell or compound since the second verify round, T2-1), and the command named by a variable among the constructs
+  // after which a name stays opaque; and the remedy for a filled-in wrapper word on the two surfaces that state the wrapper remedy (T2-8).
+  // The mechanism ruling (2026-10-03, M1) restates the first clause: a command named by a variable keeps its names readable when an external
+  // program wrapper precedes it, while the directory is judged unknown after it all the same, which the sixth verify round's tg-t6-1 bounds to
+  // its exact reach (such a command in the foreground in this shell, and the filled-in word behind nohup or setsid wherever it runs); and its M2
+  // gives each refusal one remedy, so the wrapper remedy is the long form for an abbreviated option, the command without the wrapper for an
+  // option the guard does not know (none where its output goes through `|`: the sixth verify round's tg-t6-2), and the word spelled out for a
+  // filled-in word, put directly before any `|` with no redirection and no group, subshell or compound around it (tg-t6-5), with no "drop the
+  // wrapper" anywhere (the fifth verify round's T5-1 and T5-10)
+  const README = fs.readFileSync(path.resolve(HERE, '..', 'hooks', 'README.md'), 'utf8');
+  const INSTALL = fs.readFileSync(path.resolve(HERE, '..', 'docs', 'install.md'), 'utf8');
+  const prose = [SKILL, README, INSTALL].map((t) => t.replace(/\s+/g, ' '));
+  for (const clause of ['behind `nohup` or `setsid`, whose options take no value, a non-literal word is read as the command name, and its operands are judged as for a command named by a variable, unless its output goes through `|` to another command, directly or through an enclosing group, subshell or compound; a command named by a variable keeps its names readable when an external program wrapper (`nohup`, `setsid`, `env`, `nice` and the like, not a shell builtin) precedes it, since it then runs in a child process that cannot set this shell\'s variables, while the directory is judged unknown after it all the same, so a later relative write is refused after such a command run in the foreground in this shell (not backgrounded, not before a `|`, and not in a subshell or a substitution), and after the word behind `nohup` or `setsid` wherever it runs', 'a sourced file or a function call, after a command named by a variable with no external program wrapper before it, a `$(...)`']) {
+    assert.deepEqual(prose.map((t) => t.includes(clause)), [true, true, true], `the skill, hooks/README.md and docs/install.md each carry: ${clause}`);
+  }
+  const REMEDY_TAIL = 'run the command without the wrapper for an option the guard does not know, unless its output goes through `|`, where no remedy is offered; for a word the shell fills in, spell it out as the option or the command it stands for, and where its output goes through `|` put the command directly before it, with no redirection and no group, subshell or compound around it;';
+  const REFUSED_ABBREV = ', except that an abbreviation of an option refused outright (`env --split`) is refused as that option;';   // the seventh verify round's tg-m7-7: its long form is refused in its turn
+  assert.ok(prose[0].includes(`(spell the long form of an abbreviated option${REFUSED_ABBREV} ${REMEDY_TAIL}`) && prose[2].includes(`spell the long form the guard knows of an abbreviated option${REFUSED_ABBREV} ${REMEDY_TAIL}`), 'the skill and docs/install.md give each wrapper option ONE remedy: the long form for an abbreviated one (an abbreviation of an option refused outright refused as that option, the seventh verify round\'s tg-m7-7), the command without the wrapper for one the guard does not know and none where its output goes through `|` (the sixth verify round\'s tg-t6-2), and the word spelled out, put directly before any `|` its output reaches with no redirection and no group, subshell or compound around it, for a filled-in one (M2; tg-t6-5)');
+  // the comparison inside `[[ ]]` names ONE remedy on the three surfaces, the comparison written with `expr` (the sixth verify round's tg-t6-4; the
+  // seventh's tg-t7-3 found hooks/README.md still naming the cwd outside the project beside it, and its tg-m7-9 no pin holding the clause)
+  const COMPARE_CLAUSE = '`[[ $a > $b ]]` with `$b` the guard cannot read refuses from a tracked cwd';
+  assert.deepEqual(prose.map((t) => t.includes(`${COMPARE_CLAUSE}, a stated cost (write the comparison with \`expr\`)`) || t.includes(`${COMPARE_CLAUSE}, a stated cost (the remedy: the comparison written with \`expr\`)`) || t.includes(`${COMPARE_CLAUSE} (the remedy: the comparison written with \`expr\`)`)), [true, true, true], 'the skill, hooks/README.md and docs/install.md each give the comparison its one remedy, `expr`');
+  assert.ok(prose.every((t) => !t.includes('cwd outside the project)') && !t.includes('compare from a directory outside the project')), 'no surface offers a cwd outside the project for the comparison');
+  assert.ok(prose.every((t) => !t.includes('drop the wrapper')), 'no surface says "drop the wrapper" (the fifth verify round\'s T5-1 and T5-10: a dropped wrapper before a filled-in word piped into a shell passed while bash and zsh wrote a tracked file), and the command without the wrapper is offered with its `|` exception alone (REMEDY_TAIL above)');
   const ours = section.slice(section.indexOf('In a project that tracks files, a shell write'), section.indexOf('For ANY change to the file'));
   assert.ok(ours.length > 0 && !/\u2014/.test(ours), 'no em dash in the paragraphs the patch writes (the skill\'s own text below them keeps its own)');
 });

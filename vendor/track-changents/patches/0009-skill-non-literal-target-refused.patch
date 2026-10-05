@@ -93,12 +93,31 @@
 # The property's own text stays on the developer surfaces. The thirty-sixth commit of that round (2026-09-24; the reviewer's
 # verifier) makes the statement's list of known writers read as examples (dd, truncate and sort -o are among the writers the
 # guard knows, and the list had read as the whole set) and names a piped script beside a name and a script among the texts
-# the guard cannot read. The diff below is regenerated from the vendored tree.
+# the guard cannot read.
+# The after-source fixes (2026-10-03) add two clauses to the same paragraph, as hooks/README.md and docs/install.md carry
+# them: behind nohup or setsid, whose options take no value, a non-literal word is read as the command name, as a command
+# named by a variable is, unless its output goes through `|` to another command; and a command named by a variable joins
+# the constructs after which a name stays opaque. Their second verify round (2026-10-03) extends the first clause to output
+# that reaches `|` through an enclosing group, subshell or compound, and gives the remedy for a wrapper word the shell fills
+# in (the option or command it stands for) beside the long form. The mechanism ruling on their later verify rounds
+# (2026-10-03) restates the first clause: a command named by a variable keeps its names readable when an external program
+# wrapper (not a shell builtin) precedes it, since it then runs in a child process that cannot set this shell's variables,
+# while the directory is judged unknown after it all the same, so a later relative write is refused; and it gives each
+# refusal one remedy, so the wrapper remedy is the long form for an unknown or abbreviated option and the word spelled out
+# for a word the shell fills in, with no "drop the wrapper" for either (their fifth verify round, 2026-10-04: dropped from
+# the long-form remedy too, since a dropped wrapper before a filled-in word piped into a shell passed while the shell wrote
+# a tracked file). Their sixth verify round (2026-10-04) states the road's reach (a command named by a variable run in the
+# foreground in this shell, and the filled-in word behind nohup or setsid wherever it runs), gives an option the guard does
+# not know at all the command without the wrapper as its remedy, or none where its output goes through `|`, adds the shape
+# the filled-in word's piped remedy asks for (no redirection and no group, subshell or compound around the command), and
+# gives the comparison inside `[[ ]]` its one remedy, `expr`. Their seventh verify round (2026-10-05) says an abbreviation
+# of a wrapper option the guard refuses outright (`env --split`) is refused as that option, never with the long form as its
+# remedy. The diff below is regenerated from the vendored tree.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..d11199b 100644
+index f7d8bc9..03ff7e2 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,231 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+@@ -59,6 +59,251 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -152,7 +171,25 @@ index f7d8bc9..d11199b 100644
 +`noglob`, `nocorrect` and `-`, which hid the writer behind them) carrying an option it
 +does not parse in full (an
 +unknown, abbreviated or non-literal one, `env --chd=docs`) is refused naming the
-+option (spell the long form, or drop the wrapper), a glued `env -Cdocs` is a chdir,
++option (spell the long form of an abbreviated option, except that an abbreviation of
++an option refused outright (`env --split`) is refused as that option; run the command without the
++wrapper for an option the guard does not know, unless its output goes through `|`,
++where no remedy is offered; for a word the shell fills in, spell it out as the
++option or the command it stands for, and where its output goes through
++`|` put the command directly before it, with no redirection and no group, subshell
++or compound around it; behind
++`nohup` or `setsid`, whose options take no value, a non-literal word is read as the
++command name, and its operands are judged as for a command named by a variable,
++unless its output goes through `|` to another command, directly or through an
++enclosing group, subshell or compound; a command named by a variable keeps its names
++readable when an external program wrapper (`nohup`, `setsid`, `env`, `nice` and the
++like, not a shell builtin) precedes it, since it then runs in a child process that
++cannot set this shell's variables, while the directory is judged unknown after it all
++the same, so a later relative write is refused after such a command run in the
++foreground in this shell (not backgrounded, not before a `|`, and not in a subshell
++or a substitution), and after the word behind `nohup` or `setsid` wherever
++it runs), a glued `env
++-Cdocs` is a chdir,
 +a nested `env -C a env -C b` enters a then b, `env -S` is refused outright and so
 +are sudo's `-e`, `-i`, `-s`, `-R` and `-h`, and `time -o FILE` writes FILE; an `ln
 +-s` with a link whose source is not literal makes the link name unknown, so a
@@ -190,7 +227,7 @@ index f7d8bc9..d11199b 100644
 +producer the guard cannot see, `cat f | bash`, stays unread, as does a script
 +handed to a shell outside the set it reads, busybox sh or ash among them), and since its third fix-up the same day an unquoted here-document body's expansions are read as the commands they run and the expanded body is the consumer's script (a quoted delimiter keeps the body as written), a `$(echo '...')` or a backtick with literal operands is the text it prints where the shell puts it (so `bash -c "$(echo 'cp a b')"` and `$(echo cp) a b` copy), a `${x:-word}` alone is read as a script under its default word, zsh's `=(cmd)` runs its command, a shell fed through a subshell, a group, an if or loop body, a `/dev/stdin` operand, a `<(echo '...')` script, a redirection on the compound's closer or a `-c` script's inner shell reads what was piped or redirected to it, and a copying writer whose one unquoted operand the shell may split into two refuses while a project is in play (a `${...}` word the guard cannot read as a script, a producer outside its output model (since round 6's second commit, 2026-09-21, the model reads a subshell or a group of echo, printf and silent commands as what it prints), a redirection on the closing brace of zsh's brace-body compound and a command whose name is an expansion the resolver never reads stay unread and are named), and
 +`[[ $a > $b ]]` with `$b` the guard cannot read refuses from a tracked cwd, a
-+stated cost (compare from a directory outside the project, or with `expr`); a link the
++stated cost (write the comparison with `expr`); a link the
 +command makes is followed into a numeric name's folder too, and one whose source
 +is not literal refuses a numeric write through it; a python or node path that is
 +a plain string is judged by its text whatever it holds (a `$` is text), while
@@ -215,7 +252,9 @@ index f7d8bc9..d11199b 100644
 +(so `PWD=<dir>; cp x $PWD/docs/report.md` from a tracked cwd is refused as not
 +literal, the reason naming the mention); what stays opaque (a name the command
 +never sets, one set in a body, after `&&`, in a subshell, by a `read`, a loop,
-+an eval, a sourced file or a function call, a `$(...)`) keeps the verdict the
++an eval, a sourced file or a function call, after a command named by a variable
++with no external program wrapper before it, a `$(...)`) keeps
++the verdict the
 +working directory gives it, refused as not literal from a cwd in a tracked
 +project and allowed from a cwd in no project. The principle: a guard is
 +strictest where its subject is and loosest where its subject is not; this

@@ -2210,7 +2210,7 @@ test('review round 3: a literal relative target after a cd the hook cannot follo
       const reason = evaluate(payload(cmd));
       assert.ok(reason && UNKNOWN_DIR.test(reason), `refused, the directory unknown: ${cmd}: ${reason}`);
       assert.ok(reason.includes(why), `saying why: ${cmd}: ${reason.split('\n')[0]}`);
-      assert.ok(reason.includes('Spell the target as an absolute path, or cd to a literal directory that exists first'), 'and the remedy');
+      assert.ok(reason.includes('Spell the target as an absolute path') && !reason.includes('cd to a literal'), 'and the remedy');
       assert.ok(!NOT_LITERAL.test(reason) && reason.includes(`and ${proj} tracks files`) && reason.includes('track-edit'), 'not the non-literal text; the project named; the remedy for a tracked file');
       assert.ok(!ROMP_NOUNS.test(reason.split(proj).join('<project>')) && !/\u2014/.test(reason), 'no romp noun and no em dash');
       assert.deepEqual(targets(cmd), [], `no literal target, the word could not be placed: ${cmd}`);
@@ -3490,7 +3490,7 @@ test('family 6: a cd the guard cannot know ran in this shell leaves the director
   for (const [cmd, why] of cases) {
     const reason = evaluate(payload(cmd));
     assert.ok(reason && UNKNOWN.test(reason) && why.test(reason), `family 6 refused: ${cmd}: ${reason && reason.split('\n')[0]}`);
-    assert.ok(reason.includes('Spell the target as an absolute path, or cd to a literal directory that exists first'), 'the remedy');
+    assert.ok(reason.includes('Spell the target as an absolute path') && !reason.includes('cd to a literal'), 'the remedy');
     assert.ok(!/\u2014/.test(reason) && !ROMP_NOUNS.test(reason.split(proj).join('<p>')), 'no em dash, no romp noun');
   }
   // allowed twins: a relative write to an untracked file after cd docs, and a plain unconditional cd sequence judged by name
@@ -4902,6 +4902,27 @@ test("python's -m ends the option walk with no code in the command (a module's c
 // must keep their verdict; the false refusals the reviewer asked to see priced; the rule itself against constructs the hook does
 // not enumerate; four more live overwrites found with the fix; and the addendum's four items.
 
+// A shell leg whose every process is waited for (the seventh verify round's tg-m7-10, 2026-10-05): the shell runs as the leader of a process group of
+// its own (setsid, which does not fork where its caller leads no group, as the test's own child does not: the group's id is the leg's pid), and after it
+// exits each process left in that group, a background job or a process substitution the shell does not wait for, is waited for, and killed past the
+// leg's time (only the processes the leg started), so none writes into the world the next build makes: AS3-filled-remedy's `nice tee
+// <out>/scratch/x.py > <out>/log 2>&1 &` made its file after its leg had returned in 1 to 3 of 300 legs at load 33 (tg-r-flake-race.log in the
+// review's notes), and a build that removed out/ meanwhile failed with ENOTEMPTY on out/scratch (5 of 467 mutant runs of the round before). Where
+// setsid is not on the runner the shell runs as before and nothing is waited for
+const SETSID = (() => { for (const d of String(process.env.PATH || '').split(':')) { const p = path.join(d || '.', 'setsid'); try { fs.accessSync(p, fs.constants.X_OK); if (fs.statSync(p).isFile()) return p; } catch { /* the next directory */ } } return null; })();
+const ledSpawn = guardedSpawn(SHELL_PROBE, (cmd, args, opts) => (SETSID ? _spawnSync(SETSID, [cmd, ...args], opts) : _spawnSync(cmd, args, opts)));   // the shell checked as this file's spawnSync checks it, then run behind setsid
+const spawnLeg = (shell, argv, opts) => {
+  const r = ledSpawn(shell, argv, opts);
+  if (!SETSID || !r.pid) return r;
+  const tick = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + (opts.timeout || 20000);
+  for (let killed = false; ;) {
+    try { process.kill(-r.pid, 0); } catch { break; }   // ESRCH: no process of the group is left
+    if (!killed && Date.now() > deadline) { killed = true; try { process.kill(-r.pid, 'SIGKILL'); } catch { /* gone meanwhile */ } }
+    Atomics.wait(tick, 0, 0, 10);
+  }
+  return r;
+};
 // The attacker's world, rebuilt before each shell run: home/, notes-api/ (tracks docs/report.md, notes/ and figs/plot.png; an
 // untracked docs/REPORT.MD beside the tracked file; base/report.md, the copy source; scratch/, untracked), web/ (tracks
 // docs/report.md and notes/), out/ (in no project). A row spells {W}, {NA}, {WEB} and {OUT}; `fill` puts the paths in.
@@ -4944,7 +4965,7 @@ const sixthPassWorld = () => {
     build();
     const before = fingerprint();
     const argv = shell === 'bash' ? ['--norc', '--noprofile', '-c', cmd] : shell === 'zsh' ? ['-f', '-c', cmd] : ['-c', cmd];
-    const r = spawnSync(shell, argv, { cwd, input: '', encoding: 'utf8', env, timeout: 20000 });
+    const r = spawnLeg(shell, argv, { cwd, input: '', encoding: 'utf8', env, timeout: 20000 });   // every process the leg started waited for (spawnLeg)
     return { changed: fingerprint() !== before, status: r.status, stderr: String(r.stderr || '').slice(0, 300) };
   };
   build();
@@ -6694,10 +6715,11 @@ test("round 5's fifth addendum: `[[ ... ]]` and `(( ... ))` are read in dash's g
       ['A-ampgt', 'nad', '(( x &> report.md ))', D, ['name', ARITH]],
       ['A-ge-notes', 'na', 'cd notes && (( i++ >= 1 ))', D, ['name', ARITH]],   // the brace matrix's own condition shape from a tracked folder: dash creates notes/=
       // (4) a name as the target: set in the same command it resolves (B2) and refuses by name; never set it is not literal, and the
-      // refusal carries the comparison's remedy beside the path's (the priced cost: `[[ $a > $b ]]` from a tracked cwd)
+      // refusal carries the comparison's one remedy, the comparison written with `expr`, where it carried a cwd outside the project and `expr`
+      // beside the path's (the priced cost: `[[ $a > $b ]]` from a tracked cwd; the sixth verify round's tg-t6-4, M2)
       ['T-name-set', 'nad', 'n=report.md; [[ x > $n ]]', D, ['name', TEST]],
       ['A-name-set', 'nad', 'n=report.md; (( x > $n ))', D, ['name', ARITH]],
-      ['T-name-unset', 'nad', '[[ x > $n ]]', N, ['literal', 'If this is a string comparison, run it from a directory outside that project, or write it with `expr`']],
+      ['T-name-unset', 'nad', '[[ x > $n ]]', N, ['literal', 'Write the comparison with `expr`, its operator quoted']],
       ['T-var-cmp-resolved', 'nad', 'a=b; c=a; [[ $a > $c ]] && echo yes', N, 'allow'],   // both names resolve; dash's target is docs/a, untracked
       // (5) the words after a `&&` or `||` inside the test: a further command in dash (`[[` not found, the `||` branch runs; the `&&` branch
       // is read as running too, the safe side, a cost), with the walk's rules for a command after `&&` or `||`
@@ -9542,7 +9564,7 @@ test("round 6, fourth commit, the rows: a `<` on the descriptor a script operand
       ['R6Q-B-dq-head', 'nad', `cp /usr/bin/cp ../scratch/c2; "../scratch/c2" ${CP.slice(3)}`, A, 'name'],
       ['R6Q-B-glob-head', 'nad', `cp /usr/bin/cp ../scratch/c2; ../scratch/c? ${CP.slice(3)}`, A, 'name'],
       ['R6Q-B-pwd-head', 'nad', `cp /usr/bin/cp ../scratch/c2; "$PWD/../scratch/c2" ${CP.slice(3)}`, A, 'name'],
-      ['R6Q-B-home-head', 'nad', `cp /usr/bin/cp ../scratch/c2; HOME=$PWD/../scratch; ~/c2 ${CP.slice(3)}`, A, ['text', 'a path through HOME, which this command reassigns']],
+      ['R6Q-B-home-head', 'nad', `cp /usr/bin/cp ../scratch/c2; HOME=$PWD/../scratch; ~/c2 ${CP.slice(3)}`, A, ['text', 'a path through HOME, which I cannot read here (the command names HOME outside an expansion']],   // the text gives HOME's reason since the after-source fixes (2026-10-03), where it had said the command reassigns HOME
       ['R6Q-B-cat-copied', 'nad', `cat /usr/bin/cp > ../scratch/c2; chmod +x ../scratch/c2; ../scratch/c2 ${CP.slice(3)}`, A, 'name'],
       ['R6Q-B-ln-path', 'nad', `ln -s /usr/bin/cp ../scratch/c2; PATH=../scratch c2 ${CP.slice(3)}`, A, 'name'],
       ['R6Q-B-untracked-twin', 'nad', `cp /usr/bin/cp ../scratch/c2; '../scratch/c2' ../base/report.md ../scratch/keep.md`, N, 'allow'],
@@ -11202,7 +11224,7 @@ test("round 6, twelfth commit, the rows: zsh's unbraced positional subscript (`$
       // THE B2 BOUNDARY (finding, informational: a path made from a source the resolver does not read, bound and run from a cwd in no project; the eighth class by its words, so a witness row here, not a table row)
       ["S12-b2-which-c2-out", "out", "cp \"$(which cp)\" {OUT}/scratch/c2; PATH={OUT}/scratch:$PATH; c2 {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'allow', null],
       ["S12-b2-command-v-c2-out", "out", "cp \"$(command -v cp)\" {OUT}/scratch/c2; PATH={OUT}/scratch:$PATH; c2 {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'allow', null],
-      ["S12-b2-ctl-which-c2-docs", "nad", "cp \"$(which cp)\" ../scratch/c2; PATH=../scratch:$PATH; c2 ../base/report.md report.md", ["bash", "zsh", "dash"], ['text', "made a path by copying or linking a command"]],
+      ["S12-b2-ctl-which-c2-docs", "nad", "cp \"$(which cp)\" ../scratch/c2; PATH=../scratch:$PATH; c2 ../base/report.md report.md", ["bash", "zsh", "dash"], ['text', "is looked up through a PATH I do not read here, and this command made"]],   // the text names the made path since the after-source fixes (2026-10-03), where it had said the command copied a command
       ["S12-b2-ctl-literal-c2-out", "out", "cp /usr/bin/cp {OUT}/scratch/c2; PATH={OUT}/scratch:$PATH; c2 {NA}/base/report.md {NA}/docs/report.md", ["bash", "zsh", "dash"], 'name', null],
     ];
     const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
@@ -14328,7 +14350,7 @@ test("round 7, twenty-third commit, the rows: THE UNHELD ROAD by construction: e
     const W_BODY = ['text', 'stands in an if, loop, case or function body, or a subshell, and whether it rebinds this shell\'s positional parameters is not known'];   // THE BIND'S FRAME's reasons, through the same door
     const W_PIPE = ['text', 'stands in a pipeline, whose members bash and dash run in a subshell (zsh keeps the last in this shell), and whether it rebinds this shell\'s positional parameters is not known'];
     const W_AND = ['text', 'stands in a command after `&&`, which may not run, and whether it rebinds this shell\'s positional parameters is not known'];
-    const WRAPPER_OPT = ['text', 'wrapper carries the option $v, which I do not read in that spelling'];   // rule (b): a wrapper's option word that is an expansion, as before
+    const WRAPPER_OPT = ['text', 'wrapper carries the option $v, a word the shell fills in when the command runs: it may be an option of the wrapper or the command the wrapper runs'];   // rule (b): a wrapper's option word that is an expansion, as before (the text says the word may be the command since the after-source fixes, 2026-10-03)
     const SEVERAL = ['text', 'stands for a text of several words'];   // THE CONDITIONAL TEXT's splice of a value read, as before
     const PRINTER_SUB = ['text', 'holds a substitution or an arithmetic body whose text I do not read, so the text printed is not known'];   // a printer whose operand is a substitution the resolver did not read: the operand is unresolvable, as before
     const NOT_SET_C = ['text', 'this command does not set `c`, so its value is the shell\'s own, which I do not read'];   // THE PARAMETER'S VALUE: a head refused before the road (the road adds nothing to a head already refused)
@@ -15438,7 +15460,7 @@ test("round 7, twenty-fifth commit, the rows: every row of the ninth residual cl
     for (const [cwd, raw, road] of [['na', '$(command -v cat) docs/report.md', 'its command name is filled in from `$(command -v cat)`, a text I do not read'], ['na', 'cat scratch/other.md | sh -s -- docs/report.md', 'the script its shell reads on its standard input comes from `cat scratch/other.md`, a text I do not read'], ['na', '. "$f" docs/report.md', 'the script it runs is filled in from `"$f"`, a text I do not read']]) {
       w.build();
       const h = w.hook(w.fill(raw), w.cwds[cwd]);
-      assert.ok(h.reason.includes(road) && h.reason.includes('as an operand, so it may write the file silently') && h.reason.includes('Spell the command out (one that only reads the file then runs as usual)'), `the refusal names the road and the operand: ${raw}: ${h.reason.split('\n')[0]}`);
+      assert.ok(h.reason.includes(road) && h.reason.includes('as an operand, so it may write the file silently') && h.reason.includes('Make the change with track-edit instead') && !h.reason.includes('Spell the command out'), `the refusal names the road and the operand: ${raw}: ${h.reason.split('\n')[0]}`);   // track-edit alone since the after-source fixes' fifth verify round (T5-6, under M2): the command spelled out lifts the refusal only where that command merely reads the file
     }
     // where the code lives (the rows above prove what it does; each pin names the rows that red without it)
     const hook = fs.readFileSync(HOOK, 'utf8');
@@ -17433,4 +17455,1368 @@ test("round 8 of fork PR #780 review, sixty-sixth commit, THE STATED LIMIT's roa
     assert.ok(cases.filter(([, label]) => label.startsWith('the control') || label.startsWith('the ratification plant')).every(([, , , ok]) => ok === false), 'every control and plant expects NOT RUN');
     console.log(`# THE STATED LIMIT's roads of round 8: ${got.length} gate calls, ${got.filter((g) => g[2]).length} measured, ${got.filter((g) => !g[2]).length} NOT RUN; by road ${[...new Set(cases.map((c) => c[0]))].map((r) => `${r} ${cases.filter((c) => c[0] === r).length}`).join(', ')}`);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── the after-source fixes (2026-10-03): the guard after a directory it does not follow ──
+//
+// A session's report and its derivation (every row reproduced in process and in real shells over a synthetic project) found the guard
+// wrong both ways after a construct that leaves the directory unknown (a `source` or `.` of a file, a command named by a variable, a
+// `cd` to a variable) and around it. The false allows: a pattern operand of a command named by a variable was dropped when the guard
+// could not expand it (the directory not known, or past the caps), so `cd "$d"; "$c" report.m? < /dev/null` from the root truncated
+// the tracked report while allowed (AS4-*); and a command named by a variable did not make later variable reads unreadable as a
+// `source` does, so `"$PY" <file>; OUT=<project>/out; echo x > "$OUT/report.md"` wrote where the file pointed OUT (AS5-*); and, from the
+// verify round, the operands of such a command behind a chdir wrapper were judged in the shell's directory (AS3-envC-*, AS3-envC-var-*),
+// and a `time -o FILE` before a wrapper word the guard does not read went unjudged (AS3-time-o-*); and, from the second verify round,
+// a filled-in word behind nohup or setsid whose output reached `|` through the closer of a group, a subshell or a compound around it
+// (AS3-nohup-group-pipe and its twins), a `[!]` or `[^]` head zsh globs (AS1-armed-neg-class-*), and a `time -o FILE` before `env -S`, a
+// sudo option read as opaque or flock's `-c` (AS3-time-o-envS-out, AS3-time-o-flock-*, AS3-time-o-sudo-e-out), or a relative one before
+// the road of a command named by a variable (AS3-time-o-rel-*); and, from the third verify round, flock's `-c` string behind a chdir wrapper,
+// read in the shell's directory (AS3-*-flock-script), and a `time -o FILE` behind a chdir on the `env -S`, sudo and flock roads
+// (AS3-time-o-envC-*, AS3-time-o-rel-envC-*); and, from the fourth verify round, a second chdir option in one env or sudo invocation read as
+// a nested one (AS3-*-rpt-*), and a backup option's side-file a later bare name ran (AS8-backup-*); and, from the sixth verify round, a link
+// the program behind nohup's or setsid's filled-in word made where it ran backgrounded, in a subshell or a substitution, followed by a later
+// relative write (AS3-fs-*, THE FILESYSTEM ROAD); and, from the seventh verify round, a relative write before that road in a loop body,
+// which the next pass runs after it (AS3-fs-loop-*, THE ROAD IN A LOOP), a bare name a backup's stash or a written file carries, run from PATH
+// after a builtin was turned off later in the text (AS8-builtin-gate-*, THE SHELL'S GATE), behind a wrapper (AS8-builtin-exec-*, -command-echo,
+// -slash-*, -bound-env-echo), as a quoted keyword (AS8-builtin-quoted-*) and as dash's `builtin` (AS8-builtin-dash-builtin-*), and an
+// abbreviation of a refused wrapper option given the long form (AS3-option-refuse-abbrev-*). The false refusals: a `[` test (AS1-*),
+// a case pattern read as a command name (AS2-*), a wrapper `nohup` or `setsid` before a variable (AS3-*), the poison after a command named by
+// a variable behind a chain holding an external program wrapper (AS3-*-no-poison; the mechanism ruling's M1 keeps the poison behind a wrapper
+// the shell runs itself, AS3-kept-*, and the directory judged unknown after it behind any wrapper, AS3-road-*, AS3-chain-*-road and
+// AS3-*-moves), and a bare command name after a copy and a mention of PATH (AS8-*), a builtin or keyword of every shell among them
+// (AS8-builtin-*, the sixth verify round's tg-t6-3); and the remedies that told the person something that
+// would not work (AS6-*, AS7-*, AS8-*, and the third verify round's AS3-nohup-if-*, AS3-nice-filled-group-pipe, AS8-target-head-unset,
+// AS8-target-two-*, AS8-target-read-and and -body, AS8-target-pwd-unknown, AS8-target-oldpwd, AS6-writer-operand, and the sixth verify round's
+// AS3-option-unheld-*, AS7-compare-*, AS6-script-eval-in-text-*), each refusal now naming
+// ONE remedy, which the census at the end proves on every refused row by its remedied twin (M2). Each row: [id, cwd, command, the shells that write the tracked subset when it runs
+// unguarded (null: the guard alone, its command one no leg runs), the verdict from the cwd ('allow', 'name', ['dir', text], or
+// ['text', text], the text or each text of a list one the refusal must carry, a third element a text or a list of texts it must not
+// carry), the verdict from a cwd in no project (null: not asked)]. The rows whose id holds `-residual-` are DISCLOSED residuals, each
+// pinned with the verdict it has, allowed with the shells that write where a write gets through, refused for the parenthesized case
+// pattern's false refusal (AS2-residual-paren), and named by id in decision 47: the after-source fixes' verify rounds (2026-10-03) ruled
+// each a residual to state, not a road to close in this change.
+// THE SHELL'S OWN NAME's per-shell lists (the seventh verify round's tg-t7-1, derived 2026-10-05 on bash 5.2.21, zsh 5.9 and dash 0.5.12): of the names
+// bash's `compgen -b` and `compgen -k` list, those each shell runs as its own, asked as the census below asks (bash `type -t`, zsh `whence -w`, dash
+// `type`), so the census checks ALL_SHELL_BUILTINS against a shell the runner lacks (CI has no zsh) and against the derivation (their intersection)
+const SHELL_OWN_DERIVED = {
+  bash: ['!', '.', ':', '[', '[[', ']]', 'alias', 'bg', 'bind', 'break', 'builtin', 'caller', 'case', 'cd', 'command', 'compgen', 'complete', 'compopt', 'continue', 'coproc', 'declare', 'dirs', 'disown', 'do', 'done', 'echo', 'elif', 'else', 'enable', 'esac', 'eval', 'exec', 'exit', 'export', 'false', 'fc', 'fg', 'fi', 'for', 'function', 'getopts', 'hash', 'help', 'history', 'if', 'in', 'jobs', 'kill', 'let', 'local', 'logout', 'mapfile', 'popd', 'printf', 'pushd', 'pwd', 'read', 'readarray', 'readonly', 'return', 'select', 'set', 'shift', 'shopt', 'source', 'suspend', 'test', 'then', 'time', 'times', 'trap', 'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unset', 'until', 'wait', 'while', '{', '}'],
+  zsh: ['!', '.', ':', '[', '[[', 'alias', 'bg', 'break', 'builtin', 'case', 'cd', 'command', 'continue', 'coproc', 'declare', 'dirs', 'disown', 'do', 'done', 'echo', 'elif', 'else', 'enable', 'esac', 'eval', 'exec', 'exit', 'export', 'false', 'fc', 'fg', 'fi', 'for', 'function', 'getopts', 'hash', 'history', 'if', 'jobs', 'kill', 'let', 'local', 'logout', 'popd', 'printf', 'pushd', 'pwd', 'read', 'readonly', 'return', 'select', 'set', 'shift', 'source', 'suspend', 'test', 'then', 'time', 'times', 'trap', 'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unset', 'until', 'wait', 'while', '{', '}'],
+  dash: ['!', '.', ':', '[', 'alias', 'bg', 'break', 'case', 'cd', 'command', 'continue', 'do', 'done', 'echo', 'elif', 'else', 'esac', 'eval', 'exec', 'exit', 'export', 'false', 'fg', 'fi', 'for', 'getopts', 'hash', 'if', 'in', 'jobs', 'kill', 'local', 'printf', 'pwd', 'read', 'readonly', 'return', 'set', 'shift', 'test', 'then', 'times', 'trap', 'true', 'type', 'ulimit', 'umask', 'unalias', 'unset', 'until', 'wait', 'while', '{', '}'],
+};
+test("the after-source fixes, the rows: a pattern operand of a command named by a variable is judged by its spelling where the directory is not known and refused past the caps, a command named by a variable makes later variable reads unreadable, a `[` and a case pattern are no pattern the command name stands for, nohup and setsid hand a filled-in word on as the command, a bare name after a copy is looked up through PATH only where a made path carries that name, and each remedy says what works; each with the shells that write", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const N = [];
+    const ENV = '{OUT}/scratch/keep.md';   // a file the guard does not read: sourcing it leaves the directory unknown (its one line runs a command no shell finds)
+    // two texts a command named by a variable may source (`.` read into the variable), written beside the world, which each build keeps:
+    // a DEBUG trap that points OUT at the tracked folder before every later command, and a plain assignment of OUT
+    fs.writeFileSync(path.join(w.W, 'debug-trap.sh'), `trap 'OUT=${w.NA}/docs' DEBUG\n`);
+    fs.writeFileSync(path.join(w.W, 'set-out.sh'), `OUT=${w.NA}/docs\n`);
+    const POISONED = 'an earlier `"$c"`, a command name that stands for a text I do not read, may assign any name';
+    const REMEDY_ABS = 'Spell the path out as an absolute path: ';   // the ONE remedy a not-literal refusal names (the mechanism ruling, 2026-10-03, M2: the literal-value and command-path clauses the rounds before offered, which did not always lift, are gone)
+    const NO_CURE = ['give the variable a literal value', 'name each command named by a variable', 'give each variable'];   // none of the removed cure clauses survives on any refusal
+    const rows = [
+      // item 4 (FIX 3): the pattern operand of a command named by a variable, after a construct that leaves the directory unknown (tee, the
+      // command the variable holds, truncates the tracked report through the pattern); the twins: the same from a cwd in no project, a literal
+      // operand, a known command, a known directory
+      ['AS4-cd-glob', 'na', 'read d <<< docs; read c <<< tee; cd "$d"; "$c" report.m? < /dev/null', BZ, ['dir', 'names report.m?, a relative path']],
+      ['AS4-cd-glob-heredoc-reads', 'na', 'read d <<EOF\ndocs\nEOF\nread c <<EOF\ntee\nEOF\ncd "$d"; "$c" report.m? < /dev/null', A, ['dir', 'names report.m?, a relative path']],
+      ['AS4-source-glob', 'na', `read c <<< tee; source ${ENV}; "$c" docs/report.m? < /dev/null`, BZ, ['dir', 'names docs/report.m?, a relative path']],
+      ['AS4-dot-glob', 'na', `read c <<< tee; . ${ENV}; "$c" docs/report.m? < /dev/null`, BZ, ['dir', 'names docs/report.m?, a relative path']],
+      ['AS4-head-glob', 'na', 'read c <<< tee; "$c" -c x; "$c" docs/report.m? < /dev/null', BZ, ['dir', 'names docs/report.m?, a relative path']],
+      ['AS4-ctl-literal', 'na', 'read d <<< docs; read c <<< tee; cd "$d"; "$c" report.md < /dev/null', BZ, ['dir', 'names report.md, a relative path']],
+      ['AS4-ctl-known-command', 'na', 'read d <<< docs; cd "$d"; tee report.m? < /dev/null', BZ, ['text', 'names report.m?, which is not a literal path']],
+      ['AS4-ctl-known-dir', 'na', 'read c <<< tee; "$c" docs/report.m? < /dev/null', BZ, 'name'],
+      ['AS4-ctl-out-abs', 'out', 'read d <<< docs; read c <<< tee; cd "$d"; "$c" {OUT}/scratch/kee? < /dev/null', N, 'allow', null],
+      // item 5: a command named by a variable may be `.` or eval and assign any name, so the variables read after it are unreadable, as after a
+      // `source` (the value the guard read for OUT is not the one the shell uses: the sourced trap or assignment points it at the tracked folder);
+      // the twins: a backgrounded or piped command (a subshell: it assigns nothing here), the command's own redirection (expanded before it runs),
+      // the same from a cwd in no project (the ruled residual), and the source the rule already read so
+      ['AS5-semi', 'na', 'read c <<< .; "$c" {W}/debug-trap.sh; OUT={NA}/out; echo x > "$OUT/report.md"', BZ, ['text', [`which is not a literal path (${POISONED}, so I do not read \`$OUT\` here)`, REMEDY_ABS], NO_CURE]],
+      ['AS5-newline', 'na', 'read c <<< .\n"$c" {W}/debug-trap.sh\nOUT={NA}/out\necho x > "$OUT/report.md"', BZ, ['text', `which is not a literal path (${POISONED}, so I do not read \`$OUT\` here)`]],
+      ['AS5-before', 'na', 'OUT={NA}/out; read c <<< .; "$c" {W}/set-out.sh; echo x > "$OUT/report.md"', BZ, ['text', `which is not a literal path (${POISONED}, so I do not read \`$OUT\` here)`]],
+      ['AS5-ctl-bg', 'na', 'read c <<< .; "$c" {W}/set-out.sh & OUT={NA}/out; echo x > "$OUT/report.md"', N, 'allow'],
+      ['AS5-ctl-pipe', 'na', 'read c <<< .; "$c" {W}/set-out.sh | cat; OUT={NA}/out; echo x > "$OUT/report.md"', N, 'allow'],
+      ['AS5-ctl-own-redirect', 'na', 'OUT={NA}/docs; read c <<< cat; "$c" {W}/set-out.sh > "$OUT/report.md"', BZ, 'name', 'name'],
+      ['AS5-ctl-own-redirect-untracked', 'na', 'OUT={NA}/scratch; read c <<< cat; "$c" {W}/set-out.sh > "$OUT/log"', N, 'allow'],
+      ['AS5-ctl-source', 'na', `source ${ENV}; OUT={NA}/out; echo x > "$OUT/report.md"`, N, ['text', ['(an earlier `source` may assign any name, so I do not read `$OUT` here)', REMEDY_ABS], NO_CURE]],
+      // item 5's cost, disclosed: from a tracked cwd, after a command named by a variable, a later variable read, a `~/` write and a bare cd are
+      // refused (none writes a tracked file here), and the HOME refusal names the construct; from a cwd in no project each stays allowed
+      ['AS5-cost-var', 'na', 'read c <<< true; "$c" x; OUT={OUT}/o; mkdir -p "$OUT"; echo y > "$OUT/a.txt"', N, ['text', [`(${POISONED}, so I do not read \`$OUT\` here)`, REMEDY_ABS], NO_CURE]],
+      ['AS5-ctl-cost-var-literal-head', 'na', 'read c <<< true; /usr/bin/true x; OUT={OUT}/o; mkdir -p "$OUT"; echo y > "$OUT/a.txt"', N, 'allow'],   // an allowed control: a command named by its literal path takes no poison (not the remedy the refusal gives, which is the path spelled absolute: M2)
+      ['AS5-ctl-cost-var-bg', 'na', 'read c <<< true; "$c" x & OUT={OUT}/o; mkdir -p "$OUT"; echo y > "$OUT/a.txt"', N, 'allow'],   // an allowed control: a backgrounded command assigns nothing here
+      ['AS5-cost-subshell', 'na', 'read c <<< true; ("$c" x); T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', `(${POISONED}, so I do not read \`$T\` here)`]],   // a subshell poisons as \`(source f)\` does: a stated cost
+      ['AS5-cost-home-head', 'na', 'cp /usr/bin/cp ~/c2; read c <<< true; "$c" x; ~/c2 base/report.md docs/other.md', N, ['text', [`\`~/c2\` is a path through HOME, which I cannot read here (${POISONED}), and this command made a path by copying, moving or linking, or by writing it, so which file it names is not known`], 'which this command reassigns']],
+      ['AS5-cost-home-head-mv', 'na', 'mv {OUT}/scratch/keep.md ~/c2; read c <<< true; "$c" x; ~/c2 base/report.md docs/other.md', N, ['text', 'and this command made a path by copying, moving or linking, or by writing it, so which file it names is not known', 'copying or linking a command']],   // a moved data file makes the bound path too (the third verify round's T3-9)   // a \`~/\` command name while a path is bound: a stated cost, its text HOME's reason
+      ['AS5-cost-home', 'na', 'read c <<< true; "$c" x; echo y > ~/a.txt', N, ['text', 'and not after an eval, a source, a command named by a variable with no external program wrapper before it, or a call of a function the command defines']],   // the list says which commands named by a variable (the sixth verify round's tg-t6-6: AS3-nohup-no-home passes)
+      ['AS5-cost-home-remedy', 'na', 'read c <<< true; "$c" x; echo y > {W}/home/a.txt', N, 'allow'],   // the HOME refusal's one remedy followed, the path spelled out as an absolute path (the census below builds this twin for every refused row)
+      ['AS5-cost-cd', 'na', 'read c <<< true; "$c" x; cd; echo y > a.txt', N, ['dir', 'names a.txt, a relative path']],
+      // a second command named by a variable blocks the read too, and an \`&\` on a subshell around the command does not lift the refusal (the verify
+      // round's T2-3 and T2-4); the allowed control names the first by its literal path and backgrounds the second (a command the guard reads, not
+      // the remedy the refusal gives, which is the path spelled absolute: M2)
+      ['AS5-cost-var-two-heads', 'na', 'read c <<< true; "$c" x; "$d" y; OUT={OUT}/o; mkdir -p "$OUT"; echo y > "$OUT/a.txt"', N, ['text', [`(${POISONED}, so I do not read \`$OUT\` here)`, REMEDY_ABS], NO_CURE]],
+      ['AS5-ctl-cost-var-two-heads-literal-bg', 'na', 'read c <<< true; /usr/bin/true x; "$d" y & OUT={OUT}/o; mkdir -p "$OUT"; echo y > "$OUT/a.txt"', N, 'allow'],
+      ['AS5-cost-subshell-bg', 'na', 'read c <<< true; ("$c" x) & T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', [`(${POISONED}, so I do not read \`$T\` here)`, REMEDY_ABS], NO_CURE]],
+    ];
+    // item 1 (FIX 1 and 1b): a `[` is a pattern only where a part of it forms one (an unmatched `[` is text in bash and dash, bash under nullglob
+    // keeping it, a lone `[` is text in zsh too, and zsh stops with "bad pattern" on an unclosed one inside a word, writing nothing: the third
+    // verify round's T3-10), so after a construct that leaves the directory unknown it is neither a pattern the command name stands for nor a word that may
+    // vanish (which made its first operand the command name, its other operands paths); each test form after each construct, nothing written
+    const AFTER = [['source', `source ${ENV}; `], ['dot', `. ${ENV}; `], ['head', '"$PY" -c x; '], ['cd', 'cd "$D"; ']];
+    const TESTS = [
+      ['abs', '[ -f {NA}/results/status.txt ] && echo y'],
+      ['rel', '[ -f results/status.txt ] && echo y'],
+      ['n', '[ -n "$X" ] && echo y'],
+      ['if', 'if [ -f {NA}/results/status.txt ]; then echo y; fi'],
+      ['while', 'while [ ! -f {NA}/docs/report.md ]; do sleep 1; done'],
+      ['or-exit', '[ -f {NA}/results/status.txt ] || exit 1'],
+      ['var-eq', '[ "$X" = done ] && echo y'],
+      ['var-alone', '[ "$X" ] && echo y'],
+      ['var-if', 'if [ "$S" = done ]; then echo y; fi'],
+      ['var-while', 'while [ "$(cat {NA}/docs/report.md)" != NA-ORIG ]; do sleep 1; done'],
+      ['dbrack', '[[ "$a" = "$b" ]] && echo same'],
+    ];
+    for (const [after, prefix] of AFTER) for (const [form, text] of TESTS) rows.push([`AS1-${form}-after-${after}`, 'na', prefix + text, N, 'allow']);
+    rows.push(
+      ['AS1-source-newline', 'na', `source ${ENV}\n[ -f {NA}/results/status.txt ] && echo y`, N, 'allow'],
+      ['AS1-ctl-test', 'na', `source ${ENV}; test -f {NA}/results/status.txt && echo y`, N, 'allow'],
+      ['AS1-ctl-dbrack-f', 'na', `source ${ENV}; [[ -f {NA}/results/status.txt ]] && echo y`, N, 'allow'],
+      // the twins: a command name that is a pattern stays one the guard cannot expand where the directory is not known, a `[` in a target
+      // is the relative path it spells, a `[` the command binds is refused through the binding, and a test's own redirection is a write
+      ['AS1-armed-glob-head', 'na', 'cd "$D"; ./c? a b', N, ['text', '`./c?`']],
+      ['AS1-armed-class-head', 'na', 'cd "$D"; [c]p a b', N, ['text', '`[c]p`']],
+      ['AS1-armed-class-head-source', 'na', `source ${ENV}; [ab] x`, N, ['text', '`[ab]`']],
+      // a class whose `]` comes past a `/` is a pattern too: zsh globs it across the slash (`./c[p/x]` ran the copy ./cx), bash and dash run it as spelled
+      ['AS1-armed-class-across-slash', 'na', `cp /usr/bin/cp cx; source ${ENV}; ./c[p/x] base/report.md docs/report.md`, ['zsh'], ['text', '`./c[p/x]` is a pattern, matched in a directory that is not known']],
+      // a disclosed residual, older than this change: in a known directory a class is read by its path segment, as bash and dash read it, so the
+      // name zsh globs across the slash passes as the literal name it spells (zsh overwrote the tracked report)
+      ['AS1-residual-zsh-class-across-slash', 'nad', 'cp ../base/report.md repor[t/x].md', ['zsh'], 'allow'],
+      // a \`[!]\` or \`[^]\` is a pattern too: zsh reads a class of any one character there (\`./[!]\` ran the copy ./c), bash and dash run it as
+      // spelled (the verify round's G1); and the disclosed residual beside the one above, older than this change: in a known directory it is read
+      // as text, as bash and dash read it, so the one-character name zsh globs passes (zsh overwrote the tracked report, as a command name and as
+      // a target)
+      ['AS1-armed-neg-class-source', 'na', `cp /usr/bin/cp c; source ${ENV}; ./[!] base/report.md docs/report.md`, ['zsh'], ['text', '`./[!]` is a pattern, matched in a directory that is not known']],
+      ['AS1-armed-neg-class-cd', 'na', 'cp /usr/bin/cp c; cd "$D"; ./[!] base/report.md docs/report.md', ['zsh'], ['text', '`./[!]` is a pattern, matched in a directory that is not known']],
+      ['AS1-armed-neg-class-head', 'na', 'cp /usr/bin/cp c; "$PY" -c 0; ./[!] base/report.md docs/report.md', ['zsh'], ['text', '`./[!]` is a pattern, matched in a directory that is not known']],
+      ['AS1-armed-caret-class-source', 'na', `cp /usr/bin/cp c; source ${ENV}; ./[^] base/report.md docs/report.md`, ['zsh'], ['text', '`./[^]` is a pattern, matched in a directory that is not known']],
+      ['AS1-residual-zsh-neg-class-head', 'na', 'cp /usr/bin/cp c; ./[!] base/report.md docs/report.md', ['zsh'], 'allow'],
+      ['AS1-residual-zsh-neg-class-target', 'nad', 'cp ../base/report.md repor[!].md', ['zsh'], 'allow'],
+      ['AS1-residual-zsh-caret-class-target', 'nad', 'cp ../base/report.md repor[^].md', ['zsh'], 'allow'],   // the `[^]` twin of the `[!]` residual, disclosed with no witness until now (the fourth verify round's T4-10): in a known directory it is read as text, as bash and dash read it, while zsh globs the one-character class and overwrote the tracked report
+      ['AS1-armed-redirect-bracket', 'na', 'cd "$D"; echo x > a[b', N, ['dir', 'names a[b, a relative path']],
+      ['AS1-armed-alias', 'na', 'alias [=cp\n[ base/report.md docs/report.md', ['dash'], 'name'],   // zsh reads `[=cp` as a pattern and stops; bash expands no alias here
+      ['AS1-armed-alias-after-source', 'na', `source ${ENV}\nalias [=cp\n[ base/report.md docs/report.md`, ['dash'], ['dir', 'names docs/report.md, a relative path']],
+      ['AS1-armed-func', 'na', '[() { cp "$1" "$2"; }; [ base/report.md docs/report.md', BZ, 'name'],
+      ['AS1-armed-and-write', 'na', `source ${ENV}; [ -f x ] && echo x > {NA}/docs/report.md`, N, 'name', 'name'],
+      ['AS1-armed-redirect-abs', 'na', `source ${ENV}; [ -f x ] > {NA}/docs/report.md`, A, 'name', 'name'],
+      ['AS1-armed-redirect-rel', 'na', `source ${ENV}; [ -f x ] > docs/report.md`, A, ['dir', 'names docs/report.md, a relative path']],
+      // the accepted side effect: a lone `[` operand of a command named by a variable, after a cd the guard does not follow, is the relative
+      // path it spells (it was a pattern the guard dropped)
+      ['AS1-side-lone-bracket', 'na', 'cd "$D"; "$PY" [', N, ['dir', 'names [, a relative path']],
+    );
+    // item 2 (FIX 2a as refined): an arm's pattern list of one-word alternatives is matched, never run, so after a construct that leaves the
+    // directory unknown a pattern is no command name the guard cannot expand; what the words' expansions do still holds (a substitution in a
+    // `${..}` or an arithmetic body runs, an arithmetic body or a `${name::=..}` assigns); a pattern list of another shape is read as before;
+    // the parenthesized pattern `(a|b)` (and bash's extglob, zsh's nested forms) is not read so (FIX 2b, not built: the lexer ends a segment at
+    // `;;` as at `;`), so after such a construct it is refused where an alternative holds `*`, `?` or `[...]` (a false refusal) and passes otherwise
+    const CP_ABS = 'cp {NA}/base/report.md {NA}/docs/report.md';
+    for (const [after, prefix] of AFTER) rows.push([`AS2-pending-after-${after}`, 'na', `${prefix}case "$X" in ""|PENDING*) echo p ;; *) echo d ;; esac`, N, 'allow']);
+    rows.push(
+      ['AS2-later-star', 'na', `source ${ENV}; case "$X" in a) : ;; *) : ;; esac`, N, 'allow'],
+      ['AS2-later-qmark', 'na', `source ${ENV}; case "$X" in a) : ;; ?) : ;; esac`, N, 'allow'],
+      ['AS2-later-glued-star', 'na', `source ${ENV}; case "$X" in a) : ;; *x) : ;; esac`, N, 'allow'],
+      ['AS2-newline', 'na', `source ${ENV}\ncase "$X" in\n  a) echo a ;;\n  *) echo other ;;\nesac`, N, 'allow'],
+      ['AS2-first-own-line', 'na', `source ${ENV}; case "$X" in\n""|PENDING*) echo p ;;\nesac`, N, 'allow'],
+      ['AS2-cmdsub', 'na', `source ${ENV}; Y=$(case "$X" in a) echo 1 ;; *) echo 2 ;; esac)`, N, 'allow'],
+      ['AS2-in-if', 'na', `source ${ENV}; if true; then case "$X" in ""|PENDING*) echo p ;; esac; fi`, N, 'allow'],
+      ['AS2-in-while', 'na', `source ${ENV}; while :; do case "$X" in PENDING*) sleep 1 ;; *) break ;; esac; done`, N, 'allow'],
+      ['AS2-in-function', 'na', `source ${ENV}; f() { case "$1" in a|PENDING*) echo p ;; esac; }; f x`, N, 'allow'],
+      ['AS2-assign-shaped', 'na', 'x=../scratch/other; case "$X" in a|x=report) : ;; esac; echo y > docs/$x.md', N, 'allow'],   // a pattern assigns nothing: x keeps its value, the write lands in scratch/
+      // the twins: a substitution in the pattern (in a `${..}`, an arithmetic body, a backtick, a process substitution, the bare form), an
+      // arithmetic body or zsh's `${name::=..}` assigning, bash's `${name@P}`, a cd or pushd pattern (no cd runs), a tee in an arm's body,
+      // a malformed body, the case's own redirection, the parenthesized pattern (FIX 2b's residual)
+      ['AS2-armed-brace-cmdsub', 'na', `X=b; case "$X" in a|\${x:-$(${CP_ABS})}) : ;; esac`, A, 'name', 'name'],
+      ['AS2-armed-brace-cmdsub-later-arm', 'na', `X=b; case "$X" in a) : ;; \${x:-$(${CP_ABS})}) : ;; esac`, A, 'name', 'name'],
+      ['AS2-armed-brace-cmdsub-newline', 'na', `X=b; case "$X" in\n true|\${x:-$(${CP_ABS})}) : ;;\nesac`, A, 'name', 'name'],   // `true`: a pattern word the program reader knows (it reads the line as a command)
+      ['AS2-armed-arith-cmdsub', 'na', `X=b; case "$X" in a|$(( $(${CP_ABS}) + 1 ))) : ;; esac`, A, 'name', 'name'],
+      ['AS2-armed-cmdsub', 'na', `X=b; case "$X" in a|$(${CP_ABS})) : ;; esac`, A, 'name', 'name'],
+      ['AS2-armed-brace-backtick', 'na', `X=b; case "$X" in a|"\${x:-\`${CP_ABS}\`}") : ;; esac`, A, 'name', 'name'],
+      ['AS2-armed-brace-procsub', 'na', `X=b; case "$X" in a|\${x:-<(${CP_ABS})}) : ;; esac`, ['bash'], 'name', 'name'],   // bash alone performs the process substitution there
+      ['AS2-armed-arith-assign', 'na', 'x=../scratch/other; case "$X" in a|$((x=1))) : ;; esac; echo y > notes/$x.md', A, ['text', 'the command writes `x` through an arithmetic body']],
+      ['AS2-armed-arith-assign-later-arm', 'na', 'x=../scratch/other; case "$X" in a) : ;; $((x=1))) : ;; esac; echo y > notes/$x.md', A, ['text', 'the command writes `x` through an arithmetic body']],
+      ['AS2-armed-zsh-assign', 'na', 'x=scratch; case "$X" in a|${x::=docs}) : ;; esac; echo y > $x/report.md', ['zsh'], ['text', 'the command writes `x` through a `${name=..}`, `${name:=..}` or `${name::=..}` expansion']],
+      ['AS2-armed-prompt', 'na', "x='$(cp base/report.md docs/report.md)'; case \"$X\" in a|${x@P}) : ;; esac", ['bash'], 'name'],
+      ['AS2-armed-cd-first', 'na', 'case "$x" in cd) : ;; esac; echo x > docs/report.md', A, 'name'],
+      ['AS2-armed-cd-later', 'na', 'case "$x" in a) : ;; cd) : ;; esac; echo x > docs/report.md', A, 'name'],
+      ['AS2-armed-pushd', 'na', 'case "$x" in a|pushd) : ;; esac; echo x > docs/report.md', A, 'name'],
+      ['AS2-armed-tee-body', 'na', 'case "$x" in *) echo x | tee docs/report.md ;; esac', A, 'name'],
+      ['AS2-armed-malformed', 'na', 'case "$x" in a) echo x | tee docs/report.md b) : ;; esac', N, 'name'],
+      ['AS2-armed-case-redirect', 'na', `source ${ENV}; case "$X" in a) : ;; *) echo d ;; esac > docs/report.md`, A, ['dir', 'names docs/report.md, a relative path']],
+      ['AS2-residual-paren', 'na', `source ${ENV}; case "$X" in (true|PENDING*) echo p ;; esac`, N, ['text', '`PENDING*`']],   // `true`: a pattern word the program reader knows (it reads the list as a subshell running it)
+      ['AS2-residual-extglob', 'na', `source ${ENV}; case "$X" in @(true|PENDING*)) echo p ;; esac`, N, ['text', '`PENDING*`']],   // bash's extglob alternation, not read as a pattern list (FIX 2b's residual: the fourth verify round's T4-10, a witness for the form decision 47 names refused)
+      ['AS2-residual-zsh-nested', 'na', `source ${ENV}; case "$X" in true|(PENDING*|x)) echo p ;; esac`, N, ['text', '`PENDING*`']],   // zsh's nested-pattern alternation, likewise refused (T4-10)
+      ['AS2-residual-paren-plain', 'na', `source ${ENV}; case "$X" in (true|false) echo p ;; esac`, N, 'allow'],   // words the program reader knows, as above   // a parenthesized list with no \`*\`, \`?\` or \`[...]\` in it passes after such a construct
+      // a disclosed residual, older than this change: an alternative that is a substitution reading the case's piped input (the lexer reads the
+      // \`|\` between alternatives as a pipe, so the substitution's input is read as the previous alternative's output); every shell copies
+      ['AS2-residual-case-alt-reads-stdin', 'na', "echo 'cp base/report.md docs/report.md' | case x in a|$(bash)) : ;; esac", A, 'allow'],
+    );
+    // item 3: behind nohup or setsid (no option of theirs takes a value; what they run is an external program) a filled-in word is the command
+    // name, read as any command named by a variable is (its literal operands judged by name from any cwd), except where its output goes through
+    // \`|\` to another command, by the segment's own operator or through the closer of a \`{ }\` group, a \`( )\` subshell or a compound around it
+    // (an unread printer: the wrapper's refusal stands, and bash and zsh copy; the verify round's T2-1); the other wrappers keep the refusal, its
+    // text saying the word may be the command as well as an option. What nohup and setsid run is an external program, so it cannot assign this
+    // shell's names: no poison after it (the mechanism ruling's M1); it can change the filesystem a later relative path walks, so the directory is
+    // judged unknown after it all the same (the road, below: AS3-cost-nohup-moves is refused as a directory not known), wherever it runs,
+    // backgrounded, piped or in a subshell too (THE FILESYSTEM ROAD, the sixth verify round's tg-t6-1: AS3-fs-*), while an unread head that is not
+    // this word takes the road only in the foreground in this shell (AS3-residual-fs-*)
+    const FILLED = 'a word the shell fills in when the command runs: it may be an option of the wrapper or the command the wrapper runs';
+    const PIPED = (wr) => `\`${wr}\` wrapper runs $e, a word the shell fills in when the command runs, so the command it runs is one I do not read, and it is followed by \`|\`, directly or through an enclosing group, subshell or compound, so its output may reach another command`;   // followed by, so its output MAY reach it (the third verify round's T3-8: a command whose own output is redirected is refused there too)
+    const PIPE_ALONE = 'Spell the command out and put it directly before that `|`, with no redirection and no group, subshell or compound around it: ';   // the ONE remedy for a filled-in command whose output goes through `|` (the mechanism ruling, 2026-10-03, M2: the "move it out of the body" and "drop the wrapper" remedies the rounds before offered did not lift where another construct stood around the command, so the one shape whose printed text the next command reads is the command alone before the `|`)
+    const FILLED_SPELL = 'Spell the word out as the option or the command it stands for';
+    const FILLED_PIPE = `${FILLED_SPELL}, and put the command directly before that \`|\`, with no redirection and no group, subshell or compound around it: `;   // "the command", where the word may stand for an option (the fifth verify round's T5-12)
+    const FOLLOWED = ', and it is followed by `|`, directly or through an enclosing group, subshell or compound, so its output may reach another command';
+    const FS_ROAD = (wr) => `an earlier \`${wr} "$c"\` runs a program I do not read, which may make a link that a later relative path goes through`;   // THE FILESYSTEM ROAD's reason (the sixth verify round's tg-t6-1)   // T3-8's clause in the filled-word text (the fifth verify round's tg-m5-7)
+    rows.push(
+      ['AS3-nohup-bg', 'na', 'nohup "$c" {OUT}/scratch/x.py --outdir {OUT}/res > {OUT}/log 2>&1 &', N, 'allow'],
+      ['AS3-nohup-name', 'na', 'read c <<< tee; nohup "$c" docs/report.md < /dev/null', BZ, 'name'],
+      ['AS3-nohup-name-out', 'out', 'read c <<< tee; nohup "$c" {NA}/docs/report.md < /dev/null', BZ, 'name', null],
+      ['AS3-nohup-pipe', 'nad', "read e <<< echo; nohup $e 'cp ../base/report.md report.md' | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-setsid-bg', 'na', 'setsid "$c" {OUT}/scratch/x.py --outdir {OUT}/res > {OUT}/log 2>&1 &', N, 'allow'],
+      ['AS3-setsid-name', 'na', 'read c <<< tee; setsid -w "$c" docs/report.md < /dev/null', BZ, 'name'],
+      ['AS3-setsid-pipe', 'nad', "read e <<< echo; setsid $e 'cp ../base/report.md report.md' | bash", BZ, ['text', [PIPED('setsid'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      // the \`|\` after the closer of a group, a subshell or a compound around the command (a nested group whose own closer pipes among them); the
+      // control: a group whose closer feeds no pipe
+      ['AS3-nohup-group-pipe', 'nad', "read e <<< echo; { nohup $e 'cp ../base/report.md report.md'; } | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-subshell-pipe', 'nad', "read e <<< echo; ( nohup $e 'cp ../base/report.md report.md' ) | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-if-pipe', 'nad', "read e <<< echo; if true; then nohup $e 'cp ../base/report.md report.md'; fi | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-case-pipe', 'nad', "read e <<< echo; case a in a) nohup $e 'cp ../base/report.md report.md' ;; esac | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-nested-group-pipe', 'nad', "read e <<< echo; { { nohup $e 'cp ../base/report.md report.md'; } | bash; }", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-setsid-group-pipe', 'nad', "read e <<< echo; { setsid $e 'cp ../base/report.md report.md'; } | bash", BZ, ['text', [PIPED('setsid'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-ctl-nohup-group-no-pipe', 'na', 'read c <<< true; { nohup "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1; } > {OUT}/log2; echo done | cat', N, 'allow'],
+      ['AS3-ctl-nohup-later-group-pipe', 'na', 'read c <<< true; nohup "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1; { echo a; } | cat', N, 'allow'],   // a group opened and closed after the command is not around it
+      ['AS3-ctl-nohup-later-loop-pipe', 'na', 'read c <<< true; nohup "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1; for i in 1; do echo a; done | cat', N, 'allow'],   // nor a loop
+      // the third verify round's M3-2, M3-3 and M3-4: each branch of the scan, both ways. Refused: a construct opened and closed INSIDE the piped
+      // group after the command (a group, an if, a subshell: the depth falls back), a subshell's \`)\` whose redirection carries the \`|\`, and a
+      // quoted \`{\` or \`if\` word inside the group (a command named so, which opens nothing); allowed: a later case (its pattern's \`)\` pairs with no
+      // \`(\`), a later \`( )\` and a later \`! { }\` piped (each opened after the command), and a subshell or an if around the command with no
+      // \`|\` after it, the subshell backgrounded too
+      ['AS3-nohup-group-inner-group-pipe', 'nad', "read e <<< echo; { nohup $e 'cp ../base/report.md report.md'; { :; }; } | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-group-inner-if-pipe', 'nad', "read e <<< echo; { nohup $e 'cp ../base/report.md report.md'; if true; then :; fi; } | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-group-inner-subshell-pipe', 'nad', "read e <<< echo; { nohup $e 'cp ../base/report.md report.md'; ( : ); } | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-subshell-redirect-pipe', 'nad', "read e <<< echo; ( nohup $e 'cp ../base/report.md report.md' ) 2>/dev/null | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-subshell-stdout-pipe', 'nad', "read e <<< echo; ( nohup $e 'cp ../base/report.md report.md' ) > /dev/stdout | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-group-quoted-brace-pipe', 'nad', "read e <<< echo; { nohup $e 'cp ../base/report.md report.md'; '{' echo; } | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-group-quoted-if-pipe', 'nad', "read e <<< echo; { nohup $e 'cp ../base/report.md report.md'; 'if' echo; } | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-ctl-nohup-later-case-pipe', 'na', 'read c <<< true; nohup "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1; case a in a) echo a;; esac | cat', N, 'allow'],
+      ['AS3-ctl-nohup-later-subshell-pipe', 'na', 'read c <<< true; nohup "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1; ( echo a ) | cat', N, 'allow'],
+      ['AS3-ctl-nohup-later-negated-group-pipe', 'na', 'read c <<< true; nohup "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1; ! { echo a; } | cat', N, 'allow'],
+      ['AS3-ctl-nohup-subshell-no-pipe', 'na', 'read c <<< true; ( nohup "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1 ); echo done | cat', N, 'allow'],
+      ['AS3-ctl-nohup-subshell-bg', 'na', 'read c <<< true; ( nohup "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1 ) &', N, 'allow'],
+      ['AS3-ctl-nohup-if-no-pipe', 'na', 'read c <<< true; if true; then nohup "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1; fi; echo done | cat', N, 'allow'],
+      // where the \`|\` follows an if, case or loop body around the command, inside a group too (T3-6): the refusal names the one remedy, the command
+      // spelled out alone directly before the \`|\` (PIPE_ALONE, M2); the rows after it are allowed controls, not that remedy: the command spelled out
+      // inside the body is refused in its turn, as the body prints a number of times I do not count, and alone or in a group with nothing else it passes
+      ['AS3-nohup-if-in-group-pipe', 'nad', "read e <<< echo; { if true; then nohup $e 'cp ../base/report.md report.md'; fi; } | bash", BZ, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-if-pipe-ls', 'nad', "read e <<< echo; if true; then nohup $e 'ls'; fi | bash", N, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-nohup-if-pipe-ls-spelled-in-body', 'nad', "if true; then nohup echo 'ls'; fi | bash", N, ['text', 'a `if` runs the echo, printf or cat inside it a number of times I do not count']],
+      ['AS3-ctl-nohup-if-pipe-ls-moved-out', 'nad', "nohup echo 'ls' | bash", N, 'allow'],
+      ['AS3-ctl-nohup-if-pipe-ls-moved-to-group', 'nad', "{ nohup echo 'ls'; } | bash", N, 'allow'],
+      // a command whose own output goes to a file is followed by \`|\` all the same, and the text says that much (T3-8)
+      ['AS3-nohup-own-redirect-pipe', 'nad', "read e <<< echo; nohup $e 'ls' > {OUT}/log | cat", N, ['text', [PIPED('nohup'), PIPE_ALONE], ['drop the wrapper', 'move it out of']]],
+      ['AS3-ctl-nohup-own-redirect-pipe-spelled', 'nad', "nohup echo 'ls' > {OUT}/log | cat", N, 'allow'],   // an allowed control (a redirection to a file before \`| cat\`), not the remedy followed, which drops the redirection
+      ['AS3-nice-filled', 'na', 'nice "$c" {OUT}/scratch/x.py > {OUT}/log 2>&1 &', N, ['text', [`\`nice\` wrapper carries the option "$c", ${FILLED}`, `${FILLED_SPELL}: `], ['drop the wrapper', 'directly before that `|`', 'it is followed by']]],   // not piped: the word spelled out, no "drop the wrapper" (M2's one remedy)
+      ['AS3-filled-remedy', 'na', 'nice tee {OUT}/scratch/x.py > {OUT}/log 2>&1 &', N, 'allow'],   // the filled-in wrapper word's one remedy followed, the word spelled out (AS3-nice-filled's twin in the census below)
+      ['AS3-env-filled', 'na', 'env "$FLAGS" cp base/report.md docs/other.md', N, ['text', [`\`env\` wrapper carries the option "$FLAGS", ${FILLED}`, `${FILLED_SPELL}: `], 'drop the wrapper']],
+      // a literal option the table does not parse names ONE remedy, its long form, and no longer "or drop the wrapper", which reached the T3-7 road
+      // (\`nice --foo $e '<a cp>' | bash\` with the wrapper dropped passed while bash and zsh copied: the fifth verify round's T5-1 and T5-10)
+      ['AS3-option-abbrev', 'na', 'nice --adj=5 cp base/report.md docs/other.md', N, ['text', ['`nice` wrapper carries the option --adj=5, which I do not read in that spelling', 'Spell the option in the long form I know: '], 'drop the wrapper']],
+      // an option the table does not hold at all has no long form the guard knows, so its one remedy is the wrapper dropped, and where the command's
+      // output goes through `|` there is none, since the wrapper dropped passes as a piped command named by a variable while bash and zsh copy (the
+      // sixth verify round's tg-t6-2, T3-7): that refusal states what it refuses and offers track-edit alone
+      ['AS3-option-unheld-short', 'na', 'env -a x cp base/report.md docs/other.md', N, ['text', ['`env` wrapper carries the option -a, which I do not know', 'Run the command without the `env` wrapper: '], ['long form', 'drop the wrapper']]],
+      ['AS3-option-unheld-long', 'na', 'env --argv0=x cp base/report.md docs/other.md', N, ['text', ['`env` wrapper carries the option --argv0=x, which I do not know', 'Run the command without the `env` wrapper: '], 'long form']],
+      ['AS3-option-unheld-numactl', 'na', 'numactl -T cp base/report.md docs/other.md', N, ['text', ['`numactl` wrapper carries the option -T, which I do not know', 'Run the command without the `numactl` wrapper: '], 'long form']],
+      ['AS3-option-unheld-pipe', 'nad', "read e <<< echo; nice --foo $e 'cp ../base/report.md report.md' | bash", N, ['text', ['`nice` wrapper carries the option --foo, which I do not know', FOLLOWED], ['Run the command without', 'long form']]],
+      ['AS3-option-unheld-pipe-ls', 'nad', "env -a x echo 'ls' | bash", N, ['text', ['`env` wrapper carries the option -a, which I do not know', FOLLOWED], ['Run the command without', 'long form']]],
+      // each list `held` reads, by an abbreviation of a long option in it (the seventh verify round's tg-m7-8: flagLong, optLong, the script option), a
+      // held option whose output goes through `|`, which keeps its long form, and an empty name, which abbreviates no option (`--=x`: the unheld text)
+      ['AS3-option-held-flag', 'na', 'env --deb cp base/report.md docs/other.md', N, ['text', ['`env` wrapper carries the option --deb, which I do not read in that spelling', 'Spell the option in the long form I know: '], 'Run the command without']],
+      ['AS3-option-held-opt', 'na', 'env --block=INT cp base/report.md docs/other.md', N, ['text', ['`env` wrapper carries the option --block=INT, which I do not read in that spelling', 'Spell the option in the long form I know: '], 'Run the command without']],
+      ['AS3-option-held-script', 'na', "flock {OUT}/scratch/lk --comm='cp base/report.md docs/other.md'", N, ['text', ['`flock` wrapper carries the option --comm=cp base/report.md docs/other.md, which I do not read in that spelling', 'Spell the option in the long form I know: '], 'Run the command without']],
+      ['AS3-option-held-piped', 'nad', "nice --adj=5 echo 'cp ../base/report.md report.md' | bash", A, ['text', ['`nice` wrapper carries the option --adj=5, which I do not read in that spelling', 'Spell the option in the long form I know: '], 'Make the change with track-edit instead']],
+      ['AS3-option-unheld-empty-name', 'na', 'env --=x cp base/report.md docs/other.md', N, ['text', ['`env` wrapper carries the option --=x, which I do not know', 'Run the command without the `env` wrapper: '], 'long form']],
+      // an abbreviation of an option the table refuses outright is that option to the program, so it takes that option's own refusal and never the long
+      // form as its remedy, which is refused in its turn (the seventh verify round's tg-m7-7; the census below asks the same of every refused long option)
+      ['AS3-option-refuse-abbrev-env', 'na', "env --split='cp base/report.md docs/report.md'", A, ['text', ['its `env --split` hands the rest of the command to a splitter or a shell of its own', 'Spell the command without `env --split`: '], ['long form', 'Run the command without']]],
+      ['AS3-option-refuse-abbrev-sudo', 'na', 'sudo --edi docs/other.md', null, ['text', ['its `sudo --edi` hands the rest of the command to a splitter or a shell of its own', 'Spell the command without `sudo --edi`: '], ['long form', 'Run the command without']]],
+      ['AS3-nice-filled-pipe', 'na', 'nice "$c" {OUT}/scratch/x.py | cat', N, ['text', [`\`nice\` wrapper carries the option "$c", ${FILLED}`, FOLLOWED, FILLED_PIPE], ['`nice` wrapper runs', 'drop the wrapper']]],   // piped: the word spelled out AND put directly before the `|` (M2); the word may be an option of nice, so not the "runs" wording (the verify round's G7)
+      ['AS3-nice-filled-group-pipe', 'nad', "read e <<< echo; { nice $e 'cp ../base/report.md report.md'; } | bash", BZ, ['text', [`\`nice\` wrapper carries the option $e, ${FILLED}`, FILLED_PIPE], 'drop the wrapper']],   // dropping the wrapper would pass, and bash and zsh copy (T3-7); M2's one remedy is the word before the `|`
+      ['AS3-nice-filled-group-pipe-ls', 'nad', "read e <<< echo; { nice $e 'ls'; } | bash", N, ['text', FILLED_PIPE, 'drop the wrapper']],
+      ['AS3-ctl-nice-filled-group-pipe-ls-spelled', 'nad', "nice echo 'ls' | bash", N, 'allow'],   // the ONE remedy followed: the word spelled, the command directly before the `|` (M2)
+      // the mechanism ruling (2026-10-03, M1): the ROAD is restored behind any wrapper, THE FILLED-IN COMMAND's spelling included, since a
+      // program run behind an external wrapper cannot move this shell but can change the filesystem a later relative path walks (a symlink), so a
+      // relative write after the unread head is refused as a directory not known (`nohup "$c" x; echo y > scratch/a.txt`, a cost until the rounds
+      // before, is refused again). The NAMES stay readable when at least one wrapper before the head is an EXTERNAL program (it runs the head in a
+      // child process, which cannot assign this shell's names): a later variable read, a `~/` write and a bare cd after `nohup "$c"` or `nohup -- "$c"`
+      // stay as they would without it; behind a wrapper the shell runs itself (time, command, builtin, exec, noglob, nocorrect, -) the names are
+      // poisoned (the kept rows below)
+      ['AS3-cost-nohup-moves', 'na', 'nohup "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],   // M1: the road restored behind nohup (scratch/a.txt untracked, so no shell writes a tracked file; a cost)
+      ['AS3-nohup-no-poison', 'na', 'read c <<< true; nohup "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS3-setsid-no-poison', 'na', 'read c <<< true; setsid -w "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS3-nohup-no-home', 'na', 'read c <<< true; nohup "$c" x; echo y > ~/a.txt', N, 'allow'],
+      ['AS3-nohup-no-cd', 'na', 'read c <<< true; nohup "$c" x; cd; echo y > a.txt', N, 'allow'],
+      ['AS3-nohup-then-write', 'na', 'read c <<< true; nohup "$c" x; echo y > docs/report.md', BZ, ['dir', 'names docs/report.md, a relative path'], 'allow'],   // M1: the road restored, so a relative write to the tracked report is refused as a directory not known (bash and zsh write; from a cwd in no project it is dropped)
+      // M1's symlink witness (the fourth verify round's S4-2, closed by the restored road): an unread command behind an external wrapper can make a
+      // link from an untracked directory into a tracked one, so a later relative write through it is refused as a directory not known; a write by an
+      // ABSOLUTE path through such a link is judged by its spelling (the stated precondition: the guard judges a path as spelled where no command it
+      // reads made the link), so it passes while the shells write the tracked file
+      ['AS3-link-nohup-dd-rel', 'na', 'read c <<< ln; nohup -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-link-nohup-filled-rel', 'na', 'read c <<< ln; nohup "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-link-env-dd-rel', 'na', 'read c <<< ln; env -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-residual-link-nohup-dd-abs', 'na', 'read c <<< ln; nohup -- "$c" -s ../docs scratch/lnk; echo y > {NA}/scratch/lnk/report.md', BZ, 'allow'],   // the stated precondition: an absolute write through a link an unread program makes is judged as spelled (decision 47)
+      ['AS3-link-chain-command-nohup-rel', 'na', 'read c <<< ln; command nohup "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],   // the road behind a chain holding an external wrapper (the fifth verify round's tg-m5-3)
+      // THE FILESYSTEM ROAD (the sixth verify round's tg-t6-1): the program behind nohup's or setsid's filled-in word may make the link from any
+      // process, so the road holds backgrounded, in a backgrounded group, in a subshell, a `$(..)`, a process substitution, a fresh shell's text, a
+      // function body, flock's string, a coproc and a text run behind a chdir wrapper (each refused at fork main, as an option nohup does not know,
+      // and allowed in the round before while bash and zsh wrote the tracked report); piped, the filled-in refusal stands; the controls: each with
+      // no later relative write passes
+      ['AS3-fs-nohup-bg', 'na', 'read c <<< ln; nohup "$c" -s ../docs scratch/lnk & wait; echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-setsid-bg', 'na', 'read c <<< ln; setsid -w "$c" -s ../docs scratch/lnk & wait; echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('setsid')]]],
+      ['AS3-fs-nohup-group-bg', 'na', 'read c <<< ln; { nohup "$c" -s ../docs scratch/lnk; } & wait; echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-subshell', 'na', 'read c <<< ln; ( nohup "$c" -s ../docs scratch/lnk ); echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-cmdsub', 'na', 'read c <<< ln; x=$(nohup "$c" -s ../docs scratch/lnk); echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-procsub', 'na', 'read c <<< ln; cat <(nohup "$c" -s ../docs scratch/lnk); echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-bashc', 'na', "bash -c 'read c <<< ln; nohup \"$c\" -s ../docs scratch/lnk'; echo y > scratch/lnk/report.md", A, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-func-bg', 'na', 'read c <<< ln; f() { nohup "$c" -s ../docs scratch/lnk & }; f; wait; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-fs-nohup-flock-script', 'na', "echo ln > {OUT}/scratch/cn; flock {OUT}/scratch/lk -c 'read c < {OUT}/scratch/cn; nohup \"$c\" -s ../docs scratch/lnk'; echo y > scratch/lnk/report.md", A, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-envC-bashc', 'na', "env -C {NA} bash -c 'read c <<< ln; nohup \"$c\" -s ../docs scratch/lnk'; echo y > scratch/lnk/report.md", A, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-coproc', 'na', 'read c <<< ln; coproc { nohup "$c" -s ../docs scratch/lnk; }; wait; echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-pipe', 'na', 'read c <<< ln; nohup "$c" -s ../docs scratch/lnk | cat; echo y > scratch/lnk/report.md', BZ, ['text', '`nohup` wrapper runs "$c", a word the shell fills in when the command runs, so the command it runs is one I do not read']],
+      ['AS3-ctl-fs-nohup-bg', 'na', 'read c <<< ln; nohup "$c" -s ../docs scratch/lnk & wait; echo y > {OUT}/a.txt', N, 'allow'],
+      ['AS3-ctl-fs-setsid-bg', 'na', 'read c <<< ln; setsid -w "$c" -s ../docs scratch/lnk & wait; echo y > {OUT}/a.txt', N, 'allow'],
+      ['AS3-ctl-fs-nohup-group-bg', 'na', 'read c <<< ln; { nohup "$c" -s ../docs scratch/lnk; } & wait; echo y > {OUT}/a.txt', N, 'allow'],
+      ['AS3-ctl-fs-nohup-subshell', 'na', 'read c <<< ln; ( nohup "$c" -s ../docs scratch/lnk ); echo y > {OUT}/a.txt', N, 'allow'],
+      ['AS3-ctl-fs-nohup-cmdsub', 'na', 'read c <<< ln; x=$(nohup "$c" -s ../docs scratch/lnk); echo y > {OUT}/a.txt', N, 'allow'],
+      // a function body is a definition: the road taken inside it holds where the function is called (cdFunctions), not after the definition, nor
+      // after a subshell holding the definition
+      ['AS3-ctl-fs-nohup-func-uncalled', 'na', 'read c <<< ln; f() { nohup "$c" -s ../docs scratch/lnk & }; echo y > scratch/lnk/report.md', N, 'allow'],
+      ['AS3-ctl-fs-nohup-func-uncalled-subshell', 'na', 'read c <<< ln; ( f() { nohup "$c" -s ../docs scratch/lnk & }; ); echo y > scratch/lnk/report.md', N, 'allow'],
+      // the road taken in a frame inside another whose close restores the directory: each frame open when it is taken is marked, so the outer close
+      // re-applies it too (the seventh verify round's tg-m7-3: a group in a subshell, an if body in a subshell, a subshell in a subshell, an if body in a
+      // backgrounded group, each refused while bash and zsh wrote the tracked report under a mutant that kept the innermost mark alone)
+      ['AS3-fs-nohup-subshell-group', 'na', 'read c <<< ln; ( { nohup "$c" -s ../docs scratch/lnk; } ); echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-subshell-if', 'na', 'read c <<< ln; ( if true; then nohup "$c" -s ../docs scratch/lnk; fi ); echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-subshell-subshell', 'na', 'read c <<< ln; ( ( nohup "$c" -s ../docs scratch/lnk ) ); echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-nohup-group-bg-if', 'na', 'read c <<< ln; { if true; then nohup "$c" -s ../docs scratch/lnk; fi; } & wait; echo y > scratch/lnk/report.md', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      // THE ROAD IN A LOOP (the seventh verify round's tg-m7-2): a loop body that takes the road runs again after it, so a relative write before the
+      // filled-in head in the body is refused as a directory not known (bash and zsh wrote the tracked report through the link on the second pass; fork
+      // main refused each, reading the word as an option nohup does not know); the controls: a loop whose paths are all absolute, and one whose road
+      // sits in a function it defines and never calls
+      ['AS3-fs-loop-for', 'na', 'read c <<< ln; for i in 1 2; do echo y > scratch/lnk/report.md; nohup "$c" -s ../docs scratch/lnk; done', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-loop-setsid', 'na', 'read c <<< ln; for i in 1 2; do echo y > scratch/lnk/report.md; setsid -w "$c" -s ../docs scratch/lnk; done', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('setsid')]]],
+      ['AS3-fs-loop-bg', 'na', 'read c <<< ln; for i in 1 2; do echo y > scratch/lnk/report.md; nohup "$c" -s ../docs scratch/lnk & wait; done', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-loop-while', 'na', 'read c <<< ln; n=0; while [ $n -lt 2 ]; do echo y > scratch/lnk/report.md; nohup "$c" -s ../docs scratch/lnk; n=$((n+1)); done', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-loop-until', 'na', 'read c <<< ln; n=0; until [ $n -ge 2 ]; do echo y > scratch/lnk/report.md; nohup "$c" -s ../docs scratch/lnk; n=$((n+1)); done', BZ, ['dir', ['names scratch/lnk/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-ctl-fs-loop-absolute', 'na', 'read c <<< ln; for i in 1 2; do echo y > {OUT}/a.txt; nohup "$c" {OUT}/scratch/keep.md {OUT}/lnk; done', N, 'allow'],   // no relative word at all: an option word of the head is one too (THE UNREAD OPERAND reads every word as a path)
+      ['AS3-ctl-fs-loop-write-before', 'na', 'read c <<< ln; echo y > scratch/a.txt; for i in 1 2; do nohup "$c" {OUT}/scratch/keep.md {OUT}/lnk; done', N, 'allow'],   // a relative write before the loop runs once, before any pass: the loop reads again only its own body's
+      ['AS3-ctl-fs-loop-func-uncalled', 'na', 'read c <<< ln; for i in 1 2; do echo y > scratch/lnk/report.md; f() { nohup "$c" -s ../docs scratch/lnk & }; done', N, 'allow'],
+      // DISCLOSED (M3's stopping rule; the seventh verify round's tg-m7-2): a loop body whose earlier relative write runs, on the next pass, after a
+      // command later in the body that moves the shell or makes a link (a literal cd, a literal ln, a command named by a variable that is not THE
+      // FILLED-IN COMMAND) is read once, at fork main as here, so the shells write through the move or the link; a follow-up, named in decision 47
+      ['AS3-residual-loop-plain', 'na', 'read c <<< ln; for i in 1 2; do echo y > scratch/lnk/report.md; "$c" -s ../docs scratch/lnk; done', BZ, 'allow'],
+      ['AS3-residual-loop-cd', 'na', 'for i in 1 2; do echo y > report.md; cd docs; done', A, 'allow'],
+      ['AS3-residual-loop-ln', 'na', 'for i in 1 2; do echo y > scratch/lnk/report.md; ln -s ../docs scratch/lnk; done', A, 'allow'],
+      // DISCLOSED (M3's stopping rule; the seventh verify round's fixer, by probe): a text that another program runs once per file or per input
+      // line (find's -exec, xargs) can run again after the road it takes, but THE ROAD IN A LOOP reads only a shell's loops, so a relative write
+      // before THE FILLED-IN COMMAND in that text is judged where its first run stands, at fork main as here, and the second run writes the tracked
+      // report through the link the first run made (all three shells, since the text runs in bash; run once, it writes nothing); a follow-up, each
+      // named in decision 47
+      ['AS3-residual-repeat-find-exec', 'na', "touch {OUT}/scratch/k2.md; find {OUT}/scratch -name '*.md' -exec bash -c 'read c <<< ln; echo y > scratch/lnk/report.md; nohup \"$c\" -s ../docs scratch/lnk' \\;", A, 'allow'],
+      ['AS3-residual-repeat-xargs', 'na', "printf 'true\\ntrue\\n' | xargs -n1 bash -c 'read c <<< ln; echo y > scratch/lnk/report.md; nohup \"$c\" -s ../docs scratch/lnk'", A, 'allow'],   // input lines that name a program on every runner: the evidence gate reads the lines piped toward the shell as its commands, and lines naming no program left the legs NOT RUN (each line is the text's $0 to bash, unused)
+      // DISCLOSED (M3's stopping rule): the same shapes with an unread head that is not THE FILLED-IN COMMAND (unwrapped, or behind `--`) take no road
+      // there, at fork main as here, so bash and zsh write the tracked report while allowed; a follow-up, each named in decision 47
+      ['AS3-residual-fs-plain-bg', 'na', 'read c <<< ln; "$c" -s ../docs scratch/lnk & wait; echo y > scratch/lnk/report.md', BZ, 'allow'],
+      ['AS3-residual-fs-plain-pipe', 'na', 'read c <<< ln; "$c" -s ../docs scratch/lnk | cat; echo y > scratch/lnk/report.md', BZ, 'allow'],
+      ['AS3-residual-fs-plain-subshell', 'na', 'read c <<< ln; ( "$c" -s ../docs scratch/lnk ); echo y > scratch/lnk/report.md', BZ, 'allow'],
+      ['AS3-residual-fs-plain-cmdsub', 'na', 'read c <<< ln; x=$("$c" -s ../docs scratch/lnk); echo y > scratch/lnk/report.md', BZ, 'allow'],
+      ['AS3-residual-fs-nohup-dd-bg', 'na', 'read c <<< ln; nohup -- "$c" -s ../docs scratch/lnk & wait; echo y > scratch/lnk/report.md', BZ, 'allow'],
+      ['AS3-residual-fs-env-dd-bg', 'na', 'read c <<< ln; env -- "$c" -s ../docs scratch/lnk & wait; echo y > scratch/lnk/report.md', BZ, 'allow'],
+      ['AS3-residual-fs-nohup-dd-pipe', 'na', 'read c <<< ln; nohup -- "$c" -s ../docs scratch/lnk | cat; echo y > scratch/lnk/report.md', BZ, 'allow'],
+      ['AS3-residual-fs-nohup-dd-subshell', 'na', 'read c <<< ln; ( nohup -- "$c" -s ../docs scratch/lnk ); echo y > scratch/lnk/report.md', BZ, 'allow'],
+      // the names stay readable behind external wrappers alone, the `--` spellings among them (M1): a later variable read, a `~/` write and a bare cd
+      ['AS3-nohup-dd-no-poison', 'na', 'read c <<< true; nohup -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS3-nohup-dd-no-home', 'na', 'read c <<< true; nohup -- "$c" x; echo y > ~/a.txt', N, 'allow'],
+      ['AS3-nohup-dd-no-cd', 'na', 'read c <<< true; nohup -- "$c" x; cd; echo y > a.txt', N, 'allow'],
+      ['AS3-env-dd-no-poison', 'na', 'read c <<< true; env -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS3-env-dd-no-home', 'na', 'read c <<< true; env -- "$c" x; echo y > ~/a.txt', N, 'allow'],
+      ['AS3-env-dd-no-cd', 'na', 'read c <<< true; env -- "$c" x; cd; echo y > a.txt', N, 'allow'],
+      ['AS3-nice-dd-no-poison', 'na', 'read c <<< true; nice -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS3-nice-dd-no-home', 'na', 'read c <<< true; nice -- "$c" x; echo y > ~/a.txt', N, 'allow'],
+      ['AS3-nice-dd-no-cd', 'na', 'read c <<< true; nice -- "$c" x; cd; echo y > a.txt', N, 'allow'],
+      ['AS3-chain-command-nohup-no-poison', 'na', 'read c <<< true; command nohup -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],   // M1: a chain holding an external wrapper (nohup) keeps the names, whatever else precedes it (`command nohup "$c"` qualifies)
+      ['AS3-chain-nohup-command-no-poison', 'na', 'read c <<< true; nohup command -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      // M1's four spellings (the fifth verify round's tg-m5-3): each keeps the names readable after it (a later variable read allowed) and takes the
+      // road (a later relative write refused as a directory not known)
+      ['AS3-chain-command-nohup-filled-no-poison', 'na', 'read c <<< true; command nohup "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS3-chain-command-nohup-filled-road', 'na', 'read c <<< true; command nohup "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-chain-time-nohup-no-poison', 'na', 'read c <<< true; time nohup "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS3-chain-time-nohup-road', 'na', 'read c <<< true; time nohup "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-chain-exec-nohup-no-poison', 'na', 'read c <<< true; exec nohup "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS3-chain-exec-nohup-road', 'na', 'read c <<< true; exec nohup "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-chain-command-nohup-road', 'na', 'read c <<< true; command nohup -- "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-nohup-dd-moves', 'na', 'read c <<< true; nohup -- "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],   // M1: the road restored (scratch/a.txt untracked; a cost)
+      // behind a wrapper the shell runs itself (not external), the names ARE poisoned: a later variable read is refused as not literal (M1's names
+      // predicate; the kept rows, one per non-external wrapper, which the census below ties to the table). Writers N (the T write lands in out/, untracked)
+      ['AS3-kept-time-dd', 'na', 'read c <<< true; time -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', [`${POISONED}, so I do not read \`$T\` here`, REMEDY_ABS], NO_CURE]],
+      ['AS3-kept-command-dd', 'na', 'read c <<< true; command -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', [`${POISONED}, so I do not read \`$T\` here`, REMEDY_ABS], NO_CURE]],
+      ['AS3-kept-builtin-dd', 'na', 'read c <<< true; builtin -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', [`${POISONED}, so I do not read \`$T\` here`, REMEDY_ABS], NO_CURE]],
+      ['AS3-kept-exec-dd', 'na', 'read c <<< true; exec -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', [`${POISONED}, so I do not read \`$T\` here`, REMEDY_ABS], NO_CURE]],
+      ['AS3-kept-noglob-dd', 'na', 'read c <<< true; noglob -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', [`${POISONED}, so I do not read \`$T\` here`, REMEDY_ABS], NO_CURE]],
+      ['AS3-kept-nocorrect-dd', 'na', 'read c <<< true; nocorrect -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', [`${POISONED}, so I do not read \`$T\` here`, REMEDY_ABS], NO_CURE]],
+      ['AS3-kept-minus-dd', 'na', 'read c <<< true; - -- "$c" x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', [`${POISONED}, so I do not read \`$T\` here`, REMEDY_ABS], NO_CURE]],
+      // and the ROAD behind each of them (the fifth verify round's tg-m5-2: the kept rows pinned it until the round before turned them into names rows):
+      // a relative write after the unread head refused as a directory not known, one row per non-external wrapper (the census below ties both row
+      // sets to the table), and one whose write lands in the tracked report where bash's \`command\` runs the builtin cd
+      ['AS3-road-time-dd', 'na', 'read c <<< true; time -- "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-road-command-dd', 'na', 'read c <<< true; command -- "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-road-builtin-dd', 'na', 'read c <<< true; builtin -- "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-road-exec-dd', 'na', 'read c <<< true; exec -- "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-road-noglob-dd', 'na', 'read c <<< true; noglob -- "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-road-nocorrect-dd', 'na', 'read c <<< true; nocorrect -- "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-road-minus-dd', 'na', 'read c <<< true; - -- "$c" x; echo y > scratch/a.txt', N, ['dir', 'names scratch/a.txt, a relative path']],
+      ['AS3-road-command-dd-cd-writes', 'na', 'read c <<< cd; command -- "$c" docs; echo y > report.md', ['bash'], ['dir', 'names report.md, a relative path']],   // zsh's \`command\` finds no external cd, and dash has no \`<<<\`
+      // and behind each external wrapper, in the form that reaches an unread head (the sixth verify round's tg-m6-4; the census below ties the road rows
+      // to every wrapper of the table): a link made in an untracked directory into the tracked one, then a relative write through it, which bash and
+      // zsh land on the tracked report; a lead-bearing wrapper as `<wrapper> <lead> -- "$c"`, which the guard reads as the command named by a variable
+      // while the program runs a command named `--` (no shell writes: the guard's reading is the refuse side); sudo asked of the guard alone
+      ['AS3-road-env-dd', 'na', 'read c <<< ln; env -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-nice-dd', 'na', 'read c <<< ln; nice -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-nohup-dd', 'na', 'read c <<< ln; nohup -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-setsid-dd', 'na', 'read c <<< ln; setsid -w -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-ionice-dd', 'na', 'read c <<< ln; ionice -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-stdbuf-dd', 'na', 'read c <<< ln; stdbuf -oL -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-numactl-dd', 'na', 'read c <<< ln; numactl -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', BZ, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-timeout-dd', 'na', 'read c <<< ln; timeout 5 -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', N, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-flock-dd', 'na', 'read c <<< ln; flock {OUT}/scratch/lk -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', N, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-taskset-dd', 'na', 'read c <<< ln; taskset 0x1 -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', N, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-chrt-dd', 'na', 'read c <<< ln; chrt -o 0 -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', N, ['dir', 'names scratch/lnk/report.md, a relative path']],
+      ['AS3-road-sudo-dd', 'na', 'read c <<< ln; sudo -- "$c" -s ../docs scratch/lnk; echo y > scratch/lnk/report.md', null, ['dir', 'names scratch/lnk/report.md, a relative path'], null],
+      // the operands are words the command takes in the wrapper's directory: a chdir before nohup or setsid (env -C, sudo -D), or before a
+      // command named by a variable behind \`--\`, is entered first (tee, the command the variable holds, truncates the tracked report there);
+      // sudo's row is asked of the guard alone (no leg runs sudo)
+      ['AS3-envC-nohup-name', 'na', 'read c <<< tee; env -C docs nohup "$c" report.md < /dev/null', BZ, 'name'],
+      ['AS3-envC-setsid-name', 'na', 'read c <<< tee; env -C docs setsid -w "$c" report.md < /dev/null', BZ, 'name'],
+      ['AS3-sudoD-nohup-name', 'na', 'read c <<< tee; sudo -D docs nohup "$c" report.md < /dev/null', null, 'name', null],
+      ['AS3-envC-dashdash-name', 'na', 'read c <<< tee; env -C docs -- "$c" report.md < /dev/null', BZ, 'name'],
+      ['AS3-envC-nohup-dashdash-name', 'na', 'read c <<< tee; env -C docs nohup -- "$c" report.md < /dev/null', BZ, 'name'],
+      ['AS3-ctl-envC-nohup-untracked', 'na', 'read c <<< tee; env -C docs nohup "$c" other.md < /dev/null', N, 'allow'],
+      // flock's \`-c\` string runs in the wrappers' directory too, so it is read there (the third verify round's tg-s3-1, an older false allow:
+      // bash, zsh and dash overwrote the tracked report); a directory the shell fills in leaves it unknown; the control writes an untracked file
+      ['AS3-envC-flock-script', 'na', "env -C docs flock {OUT}/scratch/lk -c 'cp ../base/report.md report.md'", A, 'name'],
+      ['AS3-envchdir-flock-script', 'na', "env --chdir=docs flock {OUT}/scratch/lk -c 'cp ../base/report.md report.md'", A, 'name'],
+      ['AS3-sudoD-flock-script', 'na', "sudo -D docs flock {OUT}/scratch/lk -c 'cp ../base/report.md report.md'", null, 'name', null],
+      ['AS3-envC-var-flock-script-dir', 'na', "read d <<< docs; env -C \"$d\" flock {OUT}/scratch/lk -c 'cp ../base/report.md report.md'", BZ, ['dir', ['names report.md, a relative path', 'an earlier `env -C` names "$d", a directory the shell fills in']]],
+      ['AS3-ctl-envC-flock-script-untracked', 'na', "env -C docs flock {OUT}/scratch/lk -c 'cp ../base/report.md other.md'", N, 'allow'],
+      // S4-1 (the fourth verify round, a false allow this round's flock fix opened and the operand and plain roads carried): GNU env and sudo apply the
+      // LAST of one invocation's -C/--chdir/-D, relative to where that invocation starts, while the guard chains them, so a second one in a single
+      // invocation leaves the directory not known (the restricted side; a nested `env -C a env -C b` still chains, the control). bash, zsh and dash
+      // overwrote the tracked report through the first form
+      ['AS3-envC-rpt-flock', 'na', "env -C {OUT} -C . flock {OUT}/scratch/lk -c 'cp base/report.md docs/report.md'", A, ['dir', ['names docs/report.md, a relative path', 'follows another directory option of the same `env`']]],
+      ['AS3-envC-rpt-cp', 'na', 'env -C {OUT} -C . cp base/report.md docs/report.md', A, ['dir', ['names docs/report.md, a relative path', 'follows another directory option of the same `env`']]],
+      ['AS3-envC-rpt-nohup', 'na', 'read c <<< tee; env -C {OUT} -C . nohup "$c" docs/report.md < /dev/null', BZ, ['dir', ['names docs/report.md, a relative path', 'follows another directory option of the same `env`']]],
+      ['AS3-sudoD-rpt-cp', 'na', 'sudo -D {OUT} -D . cp base/report.md docs/report.md', null, ['dir', ['names docs/report.md, a relative path', 'follows another directory option of the same `sudo`']], null],
+      // the long spellings (the fifth verify round's tg-m5-1): a repeated \`--chdir\`, \`--chdir\` mixed with \`-C\` either way, the flock form, and sudo's;
+      // the refusal spells the option as the command does, a glued value as its one word (tg-m5-7), and so does its sibling for a directory the
+      // command cannot enter
+      ['AS3-envchdir-rpt-cp', 'na', 'env --chdir={OUT} --chdir=. cp base/report.md docs/report.md', A, ['dir', ['names docs/report.md, a relative path', 'an earlier `env --chdir=.` follows another directory option of the same `env`']]],
+      ['AS3-envC-envchdir-rpt-cp', 'na', 'env -C {OUT} --chdir=. cp base/report.md docs/report.md', A, ['dir', ['names docs/report.md, a relative path', 'an earlier `env --chdir=.` follows another directory option of the same `env`']]],
+      ['AS3-envchdir-envC-rpt-cp', 'na', 'env --chdir={OUT} -C . cp base/report.md docs/report.md', A, ['dir', ['names docs/report.md, a relative path', 'an earlier `env -C .` follows another directory option of the same `env`']]],
+      ['AS3-envchdir-rpt-flock', 'na', "env --chdir={OUT} --chdir=. flock {OUT}/scratch/lk -c 'cp base/report.md docs/report.md'", A, ['dir', ['names docs/report.md, a relative path', 'an earlier `env --chdir=.` follows another directory option of the same `env`']]],
+      ['AS3-sudochdir-rpt-cp', 'na', 'sudo --chdir={OUT} --chdir=. cp base/report.md docs/report.md', null, ['dir', ['names docs/report.md, a relative path', 'an earlier `sudo --chdir=.` follows another directory option of the same `sudo`']], null],
+      ['AS3-envchdir-nodir-cp', 'na', 'env --chdir=nodir cp base/report.md docs/report.md', N, ['dir', ['names docs/report.md, a relative path', 'an earlier `env --chdir=nodir` names a directory the command cannot enter']]],
+      ['AS3-ctl-envC-nested-chain', 'na', 'env -C {OUT} env -C {OUT}/scratch cp {NA}/base/report.md x.txt', N, 'allow'],   // a nested env still chains (two invocations), the control
+      // tg-m4-1: the chdirs entered for flock's string are LEFT AFTER it (fromDir), so a later relative write is judged in the shell's directory,
+      // not the wrapper's; the discriminator is a relative write that is tracked only under the wrapper's directory
+      ['AS3-flock-chdir-left-rel', 'na', 'env -C docs flock {OUT}/scratch/lk -c true; echo x > report.md', N, 'allow'],   // report.md is tracked only under docs; judged in na it is untracked
+      ['AS3-ctl-flock-later-tracked', 'na', 'env -C docs flock {OUT}/scratch/lk -c true; echo x > docs/report.md', A, 'name'],   // and a later write that names the tracked file by its real relative path is refused by name
+      // tg-m4-5: a nested chdir on the flock road (`env -C a env -C b flock -c`), an older false allow this change closes (the string is read behind both)
+      ['AS3-envC-nested-flock', 'na', "env -C scratch env -C ../docs flock {OUT}/scratch/lk -c 'cp ../base/report.md report.md'", A, 'name'],
+      ['AS3-ctl-envC-nested-flock-untracked', 'na', "env -C scratch env -C ../docs flock {OUT}/scratch/lk -c 'cp ../base/report.md other.md'", N, 'allow'],
+      // a chdir the guard cannot follow (a directory the shell fills in, one the command cannot enter) leaves the operands' directory unknown: refused
+      // as a relative path under a directory not known (the verify round's G2; with d=docs, tee truncates the tracked report)
+      ['AS3-envC-var-nohup-dir', 'na', 'read d <<< docs; read c <<< tee; env -C "$d" nohup "$c" report.md < /dev/null', BZ, ['dir', ['names report.md, a relative path', 'an earlier `env -C` names "$d", a directory the shell fills in']]],
+      ['AS3-envC-var-setsid-dir', 'na', 'read d <<< docs; read c <<< tee; env -C "$d" setsid -w "$c" report.md < /dev/null', BZ, ['dir', ['names report.md, a relative path', 'an earlier `env -C` names "$d", a directory the shell fills in']]],
+      ['AS3-envC-var-dashdash-dir', 'na', 'read d <<< docs; read c <<< tee; env -C "$d" -- "$c" report.md < /dev/null', BZ, ['dir', ['names report.md, a relative path', 'an earlier `env -C` names "$d", a directory the shell fills in']]],
+      ['AS3-sudoD-var-nohup-dir', 'na', 'read d <<< docs; read c <<< tee; sudo -D "$d" nohup "$c" report.md < /dev/null', null, ['dir', ['names report.md, a relative path', 'an earlier `sudo -D` names "$d", a directory the shell fills in']]],
+      ['AS3-envC-nodir-nohup-dir', 'na', 'read c <<< tee; env -C nodir nohup "$c" report.md < /dev/null', N, ['dir', ['names report.md, a relative path', 'an earlier `env -C nodir` names a directory the command cannot enter']]],
+      // the head's chdirs are entered for its operands alone: a later write is judged in the shell's directory (the verify round's G5)
+      ['AS3-envC-dd-bg-later-write', 'na', 'read c <<< tee; env -C docs -- "$c" other.md < /dev/null & echo x > docs/report.md', BZ, 'name'],
+      ['AS3-ctl-envC-dd-bg-later-untracked', 'na', 'read c <<< tee; env -C docs -- "$c" other.md < /dev/null & echo x > report.md', N, 'allow'],
+      // behind nohup's filled-in word, backgrounded, THE FILESYSTEM ROAD leaves the directory unknown after it (the sixth verify round's tg-t6-1), so the
+      // later relative write is refused for that, the tracked one and the untracked one alike (the G5 pin above is the `--` spelling's, which takes no
+      // road there, a disclosed residual)
+      ['AS3-envC-nohup-bg-later-write', 'na', 'read c <<< tee; env -C docs nohup "$c" other.md < /dev/null & echo x > docs/report.md', BZ, ['dir', ['names docs/report.md, a relative path', FS_ROAD('nohup')]]],
+      ['AS3-fs-envC-nohup-bg-later-untracked', 'na', 'read c <<< tee; env -C docs nohup "$c" other.md < /dev/null & echo x > report.md', N, ['dir', ['names report.md, a relative path', FS_ROAD('nohup')]]],
+      // a \`time -o FILE\` before nohup or setsid, or before another wrapper whose filled-in word refuses, writes FILE (GNU time; bash's and zsh's
+      // own \`time\` take no -o, so \`command time\` reaches the program in every shell); from a cwd in no project, refused by name
+      ['AS3-time-o-nohup-out', 'out', 'time -o {NA}/docs/report.md nohup "$c" x', ['dash'], 'name', null],
+      ['AS3-time-o-nohup-command-out', 'out', 'command time -o {NA}/docs/report.md nohup "$c" x', A, 'name', null],
+      ['AS3-time-o-nice-out', 'out', 'time -o {NA}/docs/report.md nice "$c" x', ['dash'], 'name', null],
+      ['AS3-time-o-nice-command-out', 'out', 'command time -o {NA}/docs/report.md nice "$c" x', A, 'name', null],
+      ['AS3-time-o-envC-nice-out', 'out', 'env -C {NA}/docs time -o report.md nice "$c" x', A, 'name', null],   // behind a chdir the file is written in the wrapper's directory
+      // a relative \`time -o FILE\` is opened in the shell's directory before the command runs, so it is judged there, before the road of a command
+      // named by a variable leaves the directory unknown (the verify round's G3: nohup's and setsid's filled-in word, and the \`--\` spellings, which
+      // take that road), and where a chdir comes after it (G4); the twin: an untracked one from a tracked cwd passes (it was refused for the
+      // directory the command itself might move to)
+      ['AS3-time-o-rel-nohup-out', 'out', 'command time -o ../notes-api/docs/report.md nohup "$c" x', A, 'name', null],
+      ['AS3-time-o-rel-setsid-out', 'out', 'command time -o ../notes-api/docs/report.md setsid "$c" x', A, 'name', null],
+      ['AS3-time-o-rel-nohup-dashdash-out', 'out', 'command time -o ../notes-api/docs/report.md nohup -- "$c" x', A, 'name', null],
+      ['AS3-time-o-rel-time-dashdash-out', 'out', 'command time -o ../notes-api/docs/report.md -- "$c" x', A, 'name', null],
+      ['AS3-time-o-rel-nice-dashdash-out', 'out', 'command time -o ../notes-api/docs/report.md nice -- "$c" x', A, 'name', null],
+      ['AS3-time-o-rel-later-envC-out', 'out', 'command time -o ../notes-api/docs/report.md env -C {OUT}/scratch nice "$c" x', A, 'name', null],
+      ['AS3-time-o-rel-envC-dashdash-out', 'out', 'env -C {NA}/docs time -o report.md -- "$c" x', A, 'name', null],   // and behind a chdir before it, in the wrapper's directory
+      ['AS3-ctl-time-o-dashdash-untracked', 'na', 'command time -o log.txt -- "$c" x', N, 'allow'],
+      // and before \`env -S\`, a sudo option read as opaque, or flock's \`-c\` string (the verify round's tg-h-1; from a tracked cwd too for flock;
+      // flock rejects its \`-c\` before the lockfile, and time writes the file all the same); sudo's row is asked of the guard alone
+      ['AS3-time-o-envS-out', 'out', "command time -o {NA}/docs/report.md env -S 'true x'", A, 'name', null],
+      ['AS3-time-o-flock-na', 'na', "command time -o {NA}/docs/report.md flock -c 'true' {OUT}/scratch/lk", A, 'name', 'name'],
+      ['AS3-time-o-flock-lock-first-out', 'out', "time -o {NA}/docs/report.md flock {OUT}/scratch/lk -c 'true'", ['dash'], 'name', null],
+      ['AS3-time-o-sudo-e-out', 'out', 'command time -o {NA}/docs/report.md sudo -e {OUT}/scratch/keep.md', null, 'name', null],
+      // on those roads too, the file is judged behind a chdir before time and in the shell's directory where the chdir comes after it (the third
+      // verify round's M3-1: \`env -C <tracked dir> time -o report.md env -S ..\` wrote the tracked report from a cwd in no project); sudo's rows
+      // are asked of the guard alone
+      ['AS3-time-o-envC-envS-out', 'out', "env -C {NA}/docs time -o report.md env -S 'true x'", A, 'name', null],
+      ['AS3-time-o-envC-flock-out', 'out', 'env -C {NA}/docs time -o report.md flock {OUT}/scratch/lk -c true', A, 'name', null],
+      ['AS3-time-o-envC-sudo-e-out', 'out', 'env -C {NA}/docs time -o report.md sudo -e {OUT}/scratch/keep.md', null, 'name', null],
+      ['AS3-time-o-rel-envC-envS-out', 'out', "command time -o ../notes-api/docs/report.md env -C {OUT}/scratch env -S 'true x'", A, 'name', null],
+      ['AS3-time-o-rel-envC-flock-out', 'out', 'command time -o ../notes-api/docs/report.md env -C {OUT}/scratch flock {OUT}/scratch/lk -c true', A, 'name', null],
+      ['AS3-time-o-rel-envC-sudo-e-out', 'out', 'command time -o ../notes-api/docs/report.md env -C {OUT}/scratch sudo -e {OUT}/scratch/keep.md', null, 'name', null],
+      // the head's file is not judged again behind the wrappers' chdirs after the road (G3's second skip; M3-5): an untracked log before a relative
+      // chdir passes
+      ['AS3-ctl-time-o-envC-dashdash-untracked', 'na', 'read c <<< true; command time -o log.txt env -C scratch -- "$c" x', N, 'allow'],
+      // a cost, refused by name though time writes out/report.md: the guard does not order time's option against the later chdir, so the file is
+      // judged in both directories (the fixer's concern 3; the main road over-counts so by design)
+      ['AS3-cost-time-o-over-count', 'out', "command time -o report.md env -C {NA}/docs flock -c 'true' {OUT}/scratch/lk", N, 'name', null],
+      // DISCLOSED: behind nohup or setsid a filled-in word has the reach of a command named by a variable (the ruled reading), so every form
+      // allowed without the wrapper is allowed with it, a filled-in shell reading its script from -c, a file, a pipe as its last member, a
+      // here-document, a here-string or \`<\`, and a substitution, a process substitution or a file another command reads (each unwrapped twin
+      // passes at fork main); only a \`|\` the output reaches, directly or through an enclosing group, subshell or compound, keeps the refusal
+    // (AS3-nohup-pipe, AS3-nohup-group-pipe and their twins; the third verify round's T3-14). bash and zsh copy in each
+      ['AS3-residual-nohup-c', 'na', "read x <<< sh; nohup \"$x\" -c 'cp base/report.md docs/report.md'", BZ, 'allow'],
+      ['AS3-residual-setsid-c', 'na', "read x <<< sh; setsid -w \"$x\" -c 'cp base/report.md docs/report.md'", BZ, 'allow'],
+      ['AS3-residual-nohup-env-sh-c', 'na', "read x <<< env; nohup \"$x\" sh -c 'cp base/report.md docs/report.md'", BZ, 'allow'],
+      ['AS3-residual-nohup-pipe-in', 'na', "read x <<< sh; echo 'cp base/report.md docs/report.md' | nohup \"$x\"", BZ, 'allow'],
+      ['AS3-residual-nohup-pipe-last-c', 'na', "read x <<< sh; echo z | nohup \"$x\" -c 'cp base/report.md docs/report.md'", BZ, 'allow'],
+      ['AS3-residual-nohup-herestring', 'na', "read x <<< sh; nohup \"$x\" <<< 'cp base/report.md docs/report.md'", BZ, 'allow'],
+      ['AS3-residual-nohup-heredoc', 'na', "read x <<< sh; nohup \"$x\" <<'EOF'\ncp base/report.md docs/report.md\nEOF", BZ, 'allow'],
+      ['AS3-residual-nohup-file-script', 'na', "read x <<< sh; echo 'cp base/report.md docs/report.md' > {OUT}/s.sh; nohup \"$x\" {OUT}/s.sh", BZ, 'allow'],
+      ['AS3-residual-nohup-stdin-file', 'na', "read x <<< sh; echo 'cp base/report.md docs/report.md' > {OUT}/s.sh; nohup \"$x\" < {OUT}/s.sh", BZ, 'allow'],
+      ['AS3-residual-nohup-procsub', 'nad', "read e <<< echo; bash <(nohup \"$e\" 'cp ../base/report.md report.md')", BZ, 'allow'],
+      ['AS3-residual-nohup-cmdsub-eval', 'nad', "read e <<< echo; eval \"$(nohup \"$e\" 'cp ../base/report.md report.md')\"", BZ, 'allow'],
+      ['AS3-residual-setsid-cmdsub-eval', 'nad', "read e <<< echo; eval \"$(setsid \"$e\" 'cp ../base/report.md report.md')\"", BZ, 'allow'],
+      ['AS3-residual-nohup-herestring-feed', 'nad', "read e <<< echo; bash <<< \"$(nohup \"$e\" 'cp ../base/report.md report.md')\"", BZ, 'allow'],
+      ['AS3-residual-nohup-redirect-then-run', 'nad', "read e <<< echo; nohup \"$e\" 'cp ../base/report.md report.md' > {OUT}/s.sh; bash {OUT}/s.sh", BZ, 'allow'],
+      // the same class, found in the second verify round's fixes (each unwrapped twin passes at fork main): the output written into a process
+      // substitution that runs it; piped from a place the walk reading the command does not see, a function body whose call's output is piped
+      // (the body is read where it is defined) and a \`bash -c\` script whose command's output is piped (the script is read on its own); taken by a
+      // command substitution through a group around it; and read from a coprocess
+      ['AS3-residual-nohup-procsub-out', 'nad', "read e <<< echo; nohup $e 'cp ../base/report.md report.md' > >(bash)", BZ, 'allow'],
+      ['AS3-residual-nohup-func-pipe', 'nad', "read e <<< echo; f() { nohup $e 'cp ../base/report.md report.md'; }; f | bash", BZ, 'allow'],
+      ['AS3-residual-nohup-bashc-pipe', 'nad', "bash -c 'read e <<< echo; nohup $e \"cp ../base/report.md report.md\"' | bash", A, 'allow'],
+      ['AS3-residual-nohup-cmdsub-group', 'nad', "read e <<< echo; bash <<< \"$( { nohup $e 'cp ../base/report.md report.md'; } )\"", BZ, 'allow'],
+      ['AS3-residual-nohup-coproc', 'nad', "read e <<< echo; coproc { nohup $e 'cp ../base/report.md report.md'; }; bash <&${COPROC[0]}", ['bash'], 'allow'],
+      // M3's stopping rule (the mechanism ruling, 2026-10-03): a false allow fork main also allows is disclosed with a witness row and
+      // left as a follow-up, not fixed here. A `--` before a lead-bearing wrapper's lead makes the lead read as the command (`timeout -- 5 cp a b`
+      // reads `5` as the command, S4-4), and a filled-in command named by a variable behind an external wrapper whose output is piped passes as the
+      // unwrapped `$e '<cp>' | bash` does (the filled refusal covers only `nohup $e`, not `nohup -- $e`); each is allowed at fork main and the change
+      ['AS3-residual-timeout-dd-lead', 'na', 'timeout -- 5 cp base/report.md docs/report.md', A, 'allow'],
+      // and the same \`--\` before the lead of each other lead-bearing wrapper the table marks (the fifth verify round's S5-2; the census below derives the
+      // population from the table's \`lead\`): the lockfile, the mask, the priority read as the command; chrt under \`-o\`, whose priority 0 needs no privilege
+      ['AS3-residual-flock-dd-lead', 'na', 'flock -- {OUT}/scratch/lk cp base/report.md docs/report.md', A, 'allow'],
+      ['AS3-residual-taskset-dd-lead', 'na', 'taskset -- 0x1 cp base/report.md docs/report.md', A, 'allow'],
+      ['AS3-residual-chrt-dd-lead', 'na', 'chrt -o -- 0 cp base/report.md docs/report.md', A, 'allow'],
+      ['AS3-residual-nohup-dd-pipe', 'nad', "read e <<< echo; nohup -- $e 'cp ../base/report.md report.md' | bash", BZ, 'allow'],
+      ['AS3-residual-env-dd-pipe', 'nad', "read e <<< echo; env -- $e 'cp ../base/report.md report.md' | bash", BZ, 'allow'],
+    );
+    // the chdir option as the command spells it, in every refusal that names it (the fifth verify round's tg-m5-7, and the sixth's tg-m6-5): for each
+    // wrapper whose table carries a chdir option (read from WRAPPER_OPT, as the census below reads it), each spelling commandOf reads (the short and
+    // the long option, each with its value glued or a word of its own) and each text that names it (a second chdir option of the same invocation, a
+    // directory the command cannot enter, one I cannot resolve: a link loop the command makes); GNU env applies the last of one invocation's options,
+    // so the first text's command writes the tracked report in every shell; sudo's rows asked of the guard alone
+    {
+      const ht = fs.readFileSync(HOOK, 'utf8');
+      const ob = ht.slice(ht.indexOf('const WRAPPER_OPT = {'), ht.indexOf('\n};\n', ht.indexOf('const WRAPPER_OPT = {')));
+      const keys = [...ob.matchAll(/^ {2}(?:([a-z]+)|'(-)'): \{/gm)].map((m) => ({ name: m[1] || m[2], at: m.index }));
+      const chdirSpecs = keys.map((k, i) => { const m = ob.slice(k.at, i + 1 < keys.length ? keys[i + 1].at : ob.length).match(/chdir: \{ short: '([A-Za-z])', long: '([a-z-]+)' \}/); return m ? { wr: k.name, short: m[1], long: m[2] } : null; }).filter(Boolean);
+      if (!chdirSpecs.length) throw new Error('no wrapper of WRAPPER_OPT carries a chdir option: the spelling rows read none');
+      const spellings = (c, v) => [['short-glued', `${c.wr} -${c.short}${v}`], ['short-separate', `${c.wr} -${c.short} ${v}`], ['long-glued', `${c.wr} --${c.long}=${v}`], ['long-separate', `${c.wr} --${c.long} ${v}`]];
+      for (const c of chdirSpecs) {
+        const env = c.wr === 'env';
+        for (const [form, sp] of spellings(c, '.')) rows.push([`AS3-spelled-${c.wr}-again-${form}`, 'na', `${c.wr} -${c.short} {OUT} ${sp.slice(c.wr.length + 1)} cp base/report.md docs/report.md`, env ? A : null, ['dir', ['names docs/report.md, a relative path', `an earlier \`${sp}\` follows another directory option of the same \`${c.wr}\``]], env ? 'allow' : null]);
+        for (const [form, sp] of spellings(c, 'nodir')) rows.push([`AS3-spelled-${c.wr}-enter-${form}`, 'na', `${sp} cp base/report.md docs/report.md`, env ? N : null, ['dir', ['names docs/report.md, a relative path', `an earlier \`${sp}\` names a directory the command cannot enter`]], env ? 'allow' : null]);
+        for (const [form, sp] of spellings(c, '{OUT}/l1/x')) rows.push([`AS3-spelled-${c.wr}-resolve-${form}`, 'na', `ln -s {OUT}/l2 {OUT}/l1; ln -s {OUT}/l1 {OUT}/l2; ${sp} cp base/report.md docs/report.md`, env ? N : null, ['dir', ['names docs/report.md, a relative path', `an earlier \`${sp}\` follows a directory I cannot resolve`]], env ? 'allow' : null]);
+      }
+    }
+    // item 8, the session's first case (F-a): a mention of PATH (a sed or grep pattern, an echo string) makes PATH unreadable, and a copy of any
+    // file is a bound path, so every later bare command name was refused as one the lookup might find among the copies; a made file can be what
+    // a bare name runs only when its last component is that name, so only that name refuses (the session's commands, synthetic: a unit file
+    // stands in as keep.md, the service manager's calls as reads); the twins: a copied command carrying the name, spliced and judged by name
+    // or refused for the PATH not read, and a copy of a source not read
+    const K = '{OUT}/scratch/keep.md';
+    const BOUND = 'is looked up through a PATH I do not read here, and this command made';
+    const BACKUP = ['is looked up through a PATH I do not read here', 'made a backup of a file it copied, moved or linked over'];
+    rows.push(
+      ['AS8-cp-grep-path-echo', 'na', `cp ${K} {OUT}/scratch/keep.bak; grep -c PATH ${K}; echo done`, N, 'allow'],
+      ['AS8-cp-echo-path-word', 'na', `cp ${K} {OUT}/scratch/keep.bak; echo "the PATH line"; echo done`, N, 'allow'],
+      ['AS8-mv-grep-path-printf', 'na', `mv ${K} {OUT}/scratch/keep.bak; grep -c PATH {OUT}/scratch/keep.bak; printf 'done\\n'`, N, 'allow'],
+      ['AS8-unit-heredoc-sed', 'na', "D={OUT}/scratch; cp -p $D/keep.md $D/keep.md.bak && cat > $D/unit.new <<'EOF'\n[Service]\nEnvironment=PATH=/usr/local/bin:/usr/bin\nEOF\nmv $D/unit.new $D/unit && echo reloaded; tr ' ' '\\n' < $D/unit | sed -E 's/^PATH=.*/PATH=<as above>/'; echo \"lines: $(grep -cE 'APP_(A|B)_PORT' $D/unit)\"", N, 'allow'],
+      ['AS8-unit-python-sed', 'na', `cp -p ${K} {OUT}/scratch/keep.bak && python3 - <<'PY'\nopen('{OUT}/scratch/unit.new', 'w').write('Environment=PATH=/usr/bin\\n')\nPY\nsed -E 's/^PATH=.*/PATH=(set)/' {OUT}/scratch/unit.new; printf 'lines: %s\\n' "$(grep -c PATH {OUT}/scratch/unit.new)"`, N, 'allow'],
+      ['AS8-unread-path-other-name', 'na', 'cp "$(command -v cp)" {OUT}/scratch/c2; PATH=$X:$PATH; ls docs', N, 'allow'],
+      ['AS8-armed-echo', 'na', 'cp /usr/bin/cp {OUT}/scratch/echo; PATH=$X:$PATH; echo base/report.md docs/report.md', N, 'name'],   // echo is a builtin in every shell: the copy never runs, the refusal is the splice's reading
+      ['AS8-armed-c2', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/c2; PATH=$X:$PATH; c2 base/report.md docs/report.md', BZ, 'name'],
+      ['AS8-armed-c2-untracked', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/c2; PATH=$X:$PATH; c2 base/report.md docs/other.md', N, ['text', [BOUND, '`{OUT}/scratch/c2` by copying, moving or linking, or by writing it, a file that lookup may find under that name', 'Spell the command by the full path of the program it should run, not a path this command made: '], 'the alias or the binding']],
+      ['AS8-armed-mv-untracked', 'na', 'read X <<< {OUT}/scratch; mv {OUT}/scratch/keep.md {OUT}/scratch/c2; PATH=$X:$PATH; c2 base/report.md docs/other.md', N, ['text', [BOUND, 'Spell the command by the full path of the program it should run, not a path this command made: ']]],   // a moved file carries the name too (T3-9)
+      ['AS8-ctl-mv-fullpath', 'na', 'read X <<< {OUT}/scratch; mv {OUT}/scratch/keep.md {OUT}/scratch/c2; PATH=$X:$PATH; /usr/bin/cp base/report.md docs/other.md', N, 'allow'],   // the ONE remedy (M2): the program's full path, not the made path
+      ['AS8-armed-c2-unread-source', 'na', 'read X <<< {OUT}/scratch; cp "$(command -v cp)" {OUT}/scratch/c2; PATH=$X:$PATH; c2 base/report.md docs/report.md', BZ, ['text', '`c2`']],
+      ['AS8-ctl-c2-unread-fullpath', 'na', 'read X <<< {OUT}/scratch; cp "$(command -v cp)" {OUT}/scratch/c2; PATH=$X:$PATH; /usr/bin/cp base/report.md docs/other.md', N, 'allow'],   // an allowed control: the program's full path in place of the bound name (the bound-name refusal's one remedy, whose own twin for AS8-armed-c2-unread-source the census below builds)
+      // S4-3 (the fourth verify round, a round-1/2 false allow): a backup option on cp, mv, install or ln (-b, --backup, -S, --suffix) makes a side-file
+      // under a name the guard does not follow, so F-a's bound-name narrowing is off for the rest of the command and a later bare name refuses as before
+      // F-a. bash and zsh ran the stashed cp onto the tracked report (dash does not stash); the control without -b allows the later bare name
+      ['AS8-backup-cp', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b -S zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', [...BACKUP, '(a `-b`, `--backup`, `-S` or `--suffix` option)']]],   // the option list in full (tg-m5-7; the census below also derives it from parseCopyOptions)
+      ['AS8-backup-cp-long', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp --backup=simple /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; 'x~' base/report.md docs/report.md", BZ, ['text', ['is looked up through a PATH I do not read here', 'made a backup of a file it copied, moved or linked over']]],
+      ['AS8-backup-mv', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; mv -b -S zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', 'made a backup of a file it copied, moved or linked over']],
+      ['AS8-backup-install', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; install -b -S zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', 'made a backup of a file it copied, moved or linked over']],
+      ['AS8-ctl-backup-none', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', N, 'allow'],   // no backup option: the later bare name is not a made path's name, allowed (F-a)
+      // THE SHELL'S OWN NAME (the sixth verify round's tg-t6-3): a bare name that is a builtin or a keyword in bash, zsh and dash alike runs before any
+      // lookup through PATH, so it passes after a backup or beside a made file of its name (a cd, an export, an echo whose name the backup took), and a
+      // cd there still moves the walk; a name behind a wrapper (env searches PATH), one that is no builtin in all three (ls), and any once the command
+      // runs `enable` (bash then ran the script copied into place as echo) stay refused
+      ['AS8-builtin-cd-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; cd {OUT}', N, 'allow'],
+      ['AS8-builtin-export-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; export Y=1', N, 'allow'],
+      ['AS8-builtin-echo-backup-name', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/ec; cp -b -S ho /usr/bin/true {OUT}/scratch/ec; PATH=$X:$PATH; echo base/report.md docs/report.md', N, 'allow'],
+      ['AS8-builtin-cd-same-name-untracked', 'na', 'read X <<< {OUT}/scratch; cp {OUT}/scratch/keep.md {OUT}/scratch/cd; PATH=$X:$PATH; cd docs; echo y > other.md', N, 'allow'],
+      ['AS8-builtin-cd-same-name', 'na', 'read X <<< {OUT}/scratch; cp {OUT}/scratch/keep.md {OUT}/scratch/cd; PATH=$X:$PATH; cd docs; echo y > report.md', BZ, 'name'],
+      ['AS8-builtin-nonbuiltin-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; ls docs', N, ['text', BACKUP]],
+      ['AS8-builtin-env-echo-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/ec; cp -b -S ho /usr/bin/true {OUT}/scratch/ec; PATH=$X:$PATH; env echo base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      ['AS8-builtin-enable-script', 'na', "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; enable -n echo; echo", ['bash'], ['text', [BOUND, '`{OUT}/scratch/echo`']]],
+      ['AS8-builtin-noenable-script', 'na', "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; echo", N, 'allow'],
+      // each part of S4-3 on its own (the fifth verify round's tg-m5-4; the census below derives the option list from parseCopyOptions and the verbs from
+      // COPY_OPT): -b alone (GNU's default suffix \`~\`), -S alone (it makes a backup by itself), --suffix, on cp, mv, install and ln, and the backup made
+      // by a text the command runs (eval, bash -c, a command substitution), which hands its state to the walk after it
+      ['AS8-backup-cp-b', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; 'x~' base/report.md docs/report.md", BZ, ['text', BACKUP]],
+      ['AS8-backup-cp-S', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -S zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      ['AS8-backup-mv-S', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; mv -S zz {OUT}/scratch/keep.md {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      ['AS8-backup-cp-suffix', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp --suffix=zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      ['AS8-backup-install-suffix', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; install --suffix=zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      ['AS8-backup-ln', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; ln -sf -b -S zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      ['AS8-backup-eval', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; eval 'cp -b -S zz /usr/bin/true {OUT}/scratch/x'; PATH=$X:$PATH; xzz base/report.md docs/report.md", BZ, ['text', BACKUP]],
+      ['AS8-backup-bashc', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; bash -c 'cp -b -S zz /usr/bin/true {OUT}/scratch/x'; PATH=$X:$PATH; xzz base/report.md docs/report.md", BZ, ['text', BACKUP]],
+      ['AS8-backup-cmdsub', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; echo $(cp -b -S zz /usr/bin/true {OUT}/scratch/x); PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      // each form the parser reads (the sixth verify round's tg-m6-1; the census below derives the forms from each option's arity in COPY_OPT): a bare
+      // `--backup`, `--suffix` with its value a word of its own, `-S` with its value glued, and `-b` and `-S` after another letter of a cluster
+      ['AS8-backup-cp-bare-backup', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp --backup /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; 'x~' base/report.md docs/report.md", BZ, ['text', BACKUP]],
+      ['AS8-backup-cp-suffix-sep', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp --suffix zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      ['AS8-backup-cp-S-glued', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -Szz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      ['AS8-backup-cp-b-cluster', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -fb /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; 'x~' base/report.md docs/report.md", BZ, ['text', BACKUP]],
+      ['AS8-backup-cp-S-cluster', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -fS zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', BACKUP]],
+      // M3's stopping rule (the fifth verify round): two false allows fork main also allows, disclosed with a witness row each and left as follow-ups.
+      // A backup reached by its explicit path (S5-1): the guard binds no backup path, so neither the bound name nor the bound path catches it; and a
+      // file the command made from a source the guard does not read, run by its absolute path after a construct that leaves the directory unknown
+      // (tg-m5-8: the bound head is read only where the directory is known)
+      ['AS8-residual-backup-explicit-path', 'na', 'cp /usr/bin/cp {OUT}/scratch/x; cp -b -S zz /usr/bin/true {OUT}/scratch/x; {OUT}/scratch/xzz base/report.md docs/report.md', A, 'allow'],
+      ['AS8-residual-bound-abs-after-cd', 'na', 'read d <<< docs; cp "$(command -v cp)" {OUT}/scratch/c2; cd "$d"; {OUT}/scratch/c2 {NA}/base/report.md {NA}/docs/report.md', BZ, 'allow'],
+      // a file this command made by moving or writing it from a source the guard does not read, run by its path, says so (the fifth verify round's T5-11)
+      ['AS8-unread-source-mv-head', 'na', 'mv "$S" {NA}/scratch/c2; {NA}/scratch/c2 base/report.md docs/other.md', N, ['text', 'is a path this command made by copying, moving or linking, or by writing it, from a source I do not read', 'by copying or linking a source'], ['text', 'is a path this command made by copying, moving or linking, or by writing it, from a source I do not read']],
+      ['AS8-unread-source-cat-head', 'na', 'cat "$S" > {NA}/scratch/c2; {NA}/scratch/c2 base/report.md docs/other.md', N, ['text', 'is a path this command made by copying, moving or linking, or by writing it, from a source I do not read', 'by copying or linking a source'], ['text', 'is a path this command made by copying, moving or linking, or by writing it, from a source I do not read']],
+    );
+    // THE SHELL'S GATE (the seventh verify round's tg-m7-1): a name read before an `enable`, a `disable` or a `zmodload` may run after it (a loop's next
+    // pass, a trap action, a function called in the loop), so the exemption is off for the whole command: set before the walk where the text mentions
+    // one, and by the walk where it meets one by a spelling that scan does not read or a text or a command name it does not read run in this shell, each
+    // exemption given before that withdrawn. A script written into place as echo, run from PATH once the builtin is off (bash, or zsh for `disable`), and
+    // the copied cp stashed as echo by a backup (WROTE_ECHO, STASHED_ECHO)
+    const WROTE_ECHO = "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; ";
+    const STASHED_ECHO = 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/ec; cp -b -S ho /usr/bin/true {OUT}/scratch/ec; PATH=$X:$PATH; ';
+    const BACKED_X = 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; ';
+    rows.push(
+      ['AS8-builtin-gate-for', 'na', `${WROTE_ECHO}for i in 1 2; do echo; enable -n echo; done`, ['bash'], ['text', BOUND]],
+      ['AS8-builtin-gate-while', 'na', `${WROTE_ECHO}n=0; while [ $n -lt 2 ]; do echo; enable -n echo; n=$((n+1)); done`, ['bash'], ['text', BOUND]],
+      ['AS8-builtin-gate-until', 'na', `${WROTE_ECHO}n=0; until [ $n -ge 2 ]; do echo; enable -n echo; n=$((n+1)); done`, ['bash'], ['text', BOUND]],
+      ['AS8-builtin-gate-trap-exit', 'na', `${WROTE_ECHO}trap echo EXIT; enable -n echo`, ['bash'], ['text', BOUND]],
+      ['AS8-builtin-gate-trap-debug', 'na', `${WROTE_ECHO}trap echo DEBUG; enable -n echo; true`, ['bash'], ['text', BOUND]],
+      ['AS8-builtin-gate-disable-for', 'na', `${WROTE_ECHO}for i in 1 2; do echo; disable echo; done`, ['zsh'], ['text', BOUND]],
+      ['AS8-builtin-gate-func-loop', 'na', `${WROTE_ECHO}f() { echo; }; for i in 1 2; do f; enable -n echo; done`, ['bash'], ['text', BOUND]],
+      ['AS8-builtin-gate-ansic-loop', 'na', `${WROTE_ECHO}for i in 1 2; do echo; $'\\x65nable' -n echo; done`, ['bash'], ['text', BOUND]],   // a spelling the scan does not read: the walk's own
+      ['AS8-builtin-gate-eval-ansic-loop', 'na', `${WROTE_ECHO}for i in 1 2; do echo; eval "\\$'\\\\x65nable' -n echo"; done`, ['bash'], ['text', BOUND]],   // the gate shared with a text the command runs
+      ['AS8-builtin-gate-unread-head-loop', 'na', `printf '\\145nable' > {OUT}/scratch/n; ${WROTE_ECHO}for i in 1 2; do echo; "$(cat {OUT}/scratch/n)" -n echo; done`, ['bash'], ['text', BOUND]],   // a command name not read (THE UNHELD ROAD)
+      ['AS8-builtin-gate-unread-trap', 'na', `printf '\\145nable' > {OUT}/scratch/n; ${WROTE_ECHO}trap echo EXIT; "$(cat {OUT}/scratch/n)" -n echo`, ['bash'], ['text', BOUND]],
+      ['AS8-builtin-gate-source-loop', 'na', `printf '\\145nable -n echo\\n' > {OUT}/scratch/e.sh; ${WROTE_ECHO}for i in 1 2; do echo; . {OUT}/scratch/e.sh; done`, ['bash'], ['text', BOUND]],   // a text not read, sourced
+      // zsh's `disable` and `zmodload` and an eval's text (the seventh verify round's tg-m7-5); `zmodload -F zsh/rlimits -b:ulimit` turns ulimit off, run
+      // then from PATH in zsh (measured: tg-r-probe-2.log), and ulimit has no program a remedy could name, so the row pins the gate's name on an echo
+      ['AS8-builtin-gate-disable', 'na', `${WROTE_ECHO}disable echo; echo`, ['zsh'], ['text', BOUND]],
+      ['AS8-builtin-gate-zmodload', 'na', `${WROTE_ECHO}zmodload zsh/rlimits; echo`, N, ['text', BOUND]],
+      ['AS8-builtin-gate-eval-enable', 'na', `${WROTE_ECHO}eval 'enable -n echo'; echo`, ['bash'], ['text', BOUND]],
+      // the scan's reach, a stated cost: a mention no shell runs turns the exemption off too (the restricted side)
+      ['AS8-builtin-gate-mention-cost', 'na', `${BACKED_X}echo enable`, N, ['text', BACKUP]],
+      // a name a wrapper runs is the wrapper's lookup, never the shell's own (the seventh verify round's tg-m7-4: `exec echo` ran the stash in bash,
+      // `command echo` in zsh), whatever spells the wrapper: by a path, which names no lookup (`/usr/bin/env echo` and `/usr/bin/nohup echo` ran it in
+      // bash and zsh while allowed before this round), or a copy of it the command made
+      ['AS8-builtin-exec-echo', 'na', `${STASHED_ECHO}exec echo base/report.md docs/report.md`, ['bash'], ['text', BACKUP]],
+      ['AS8-builtin-command-echo', 'na', `${STASHED_ECHO}command echo base/report.md docs/report.md`, ['zsh'], ['text', BACKUP]],
+      ['AS8-builtin-exec-command', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/comm; cp -b -S and /usr/bin/true {OUT}/scratch/comm; PATH=$X:$PATH; exec command base/report.md docs/report.md', ['bash'], ['text', BACKUP]],   // the first wrapper the shell's own (the builtin exec), the second exec's lookup through PATH (the stash)
+      ['AS8-builtin-slash-env-echo', 'na', `${STASHED_ECHO}/usr/bin/env echo base/report.md docs/report.md`, BZ, ['text', BACKUP]],
+      ['AS8-builtin-slash-nohup-echo', 'na', `${STASHED_ECHO}/usr/bin/nohup echo base/report.md docs/report.md`, BZ, ['text', BACKUP]],
+      ['AS8-builtin-bound-env-echo', 'na', `cp /usr/bin/env {OUT}/scratch/e2; ${STASHED_ECHO}{OUT}/scratch/e2 echo base/report.md docs/report.md`, BZ, ['text', BACKUP]],
+      // a quoted keyword is no keyword: the shells look `'if'`, `"while"` up through PATH and ran the stash (bash and zsh, allowed before this round);
+      // a quoted builtin takes the restricted side with it, a stated cost
+      ['AS8-builtin-quoted-if', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/i; cp -b -S f /usr/bin/true {OUT}/scratch/i; PATH=$X:$PATH; 'if' base/report.md docs/report.md", BZ, ['text', BACKUP]],
+      ['AS8-builtin-quoted-while', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/wh; cp -b -S ile /usr/bin/true {OUT}/scratch/wh; PATH=$X:$PATH; \"while\" base/report.md docs/report.md", BZ, ['text', BACKUP]],
+      ['AS8-builtin-partquoted-for', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/f; cp -b -S or /usr/bin/true {OUT}/scratch/f; PATH=$X:$PATH; f'or' base/report.md docs/report.md", BZ, ['text', BACKUP]],   // a quote anywhere in the name, not only at its start (the reading the reserved-word peel keeps: AS8-residual-partquoted-keyword)
+      ['AS8-builtin-quoted-echo-cost', 'na', `${STASHED_ECHO}'echo' base/report.md docs/report.md`, N, ['text', BACKUP]],
+      // DISCLOSED (M3's stopping rule): a reserved word spelled partly quoted (`i'f'`) is read as the keyword, at fork main as here, while the shells
+      // look it up through PATH and ran the copy; a follow-up, named in decision 47
+      ['AS8-residual-partquoted-keyword', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/i; cp -b -S f /usr/bin/true {OUT}/scratch/i; PATH=$X:$PATH; i'f' base/report.md docs/report.md", BZ, 'allow'],
+      // `builtin` is no command of dash, which looks it up through PATH (the seventh verify round's tg-t7-1: a backup stashed sh as `builtin`, and dash ran
+      // the piped and the redirected script through it while allowed before this round)
+      ['AS8-builtin-dash-builtin-stdin', 'nad', "cp /bin/sh {OUT}/scratch/built; cp -b -S in /usr/bin/true {OUT}/scratch/built; PATH={OUT}/scratch:$PATH; echo 'cp ../base/report.md report.md' | builtin", ['dash'], ['text', BACKUP]],
+      ['AS8-builtin-dash-builtin-file', 'nad', "printf 'cp ../base/report.md report.md\\n' > {OUT}/scratch/cmds; cp /bin/sh {OUT}/scratch/built; cp -b -S in /usr/bin/true {OUT}/scratch/built; PATH={OUT}/scratch:$PATH; builtin < {OUT}/scratch/cmds", ['dash'], ['text', BACKUP]],
+      // the lead-letter form of the backup flag (the seventh verify round's tg-m7-6: `cp -bf`, which the form census now requires)
+      ['AS8-backup-cp-b-lead', 'na', "read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -bf /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; 'x~' base/report.md docs/report.md", BZ, ['text', BACKUP]],
+    );
+    // item 8, the session's second case: a target holding a variable the guard cannot read (a substitution's value) is refused, naming the ONE
+    // remedy that always lifts it, the path spelled out as an absolute path (M2: the literal-value clause the rounds before offered, which did not
+    // lift where a later construct blocked the read, is gone, and no row carries it, NO_CURE); a cd elsewhere does not lift it, since the
+    // session's directory decides the project in play; a variable with a literal value outside every project passes, one into a tracked file or
+    // folder is refused by name. The rows that pinned where the clause was offered or withheld (an operator form, a name given its value after
+    // \`&&\`, a loop variable or PWD, a name another command fills, a value with a space, a name after an eval, a source or a function call, a target
+    // holding no variable, a literal value added after the substitution) now pin the one remedy alone
+    rows.push(
+      ['AS8-target-unprovable', 'na', 'T=$(mktemp -d {OUT}/build-XXXXXX); echo x > "$T/t.sh"', N, ['text', REMEDY_ABS, ['cd to', ...NO_CURE]]],
+      ['AS8-target-unprovable-cd-out', 'na', 'cd {OUT}; T=$(mktemp -d {OUT}/build-XXXXXX); echo x > "$T/t.sh"', N, ['text', REMEDY_ABS, ['cd to', ...NO_CURE]]],
+      ['AS8-target-slug', 'na', 'slug=a/b; echo x > "{OUT}/${slug//\\//__}.txt"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-operator-cure', 'na', 'T=$(mktemp -d {OUT}/build-XXXXXX); echo x > "${T:-x}/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-operator-head', 'na', 'read c <<< true; "$c" x; T={OUT}/t; echo x > "${T%/}/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-add-after', 'na', 'T=$(mktemp -d {OUT}/build-XXXXXX); T={OUT}/build-out; mkdir -p "$T"; echo x > "$T/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-space', 'na', "T='{OUT}/my dir'; echo x > \"$T/t.sh\"", N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-printf-v', 'na', "printf -v T '%s' {OUT}/b; echo x > \"$T/t.sh\"", N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-inner-read', 'na', 'read T <<< {OUT}/b; echo "$(echo x > "$T/t.sh")"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-inner-head', 'na', 'read c <<< true; "$c" x; T={OUT}/b; echo "$(echo x > "$T/t.sh")"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-read', 'na', 'read T <<< {OUT}/build-out; echo x > "$T/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-unset', 'na', 'echo x > "$T/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-no-variable', 'na', 'echo x > "$(mktemp -d {OUT}/build-XXXXXX)/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-and', 'na', 'true && T={OUT}/build-out; echo x > "$T/t.sh"', N, ['text', ['through a command after `&&`', REMEDY_ABS], NO_CURE]],
+      ['AS8-target-loop', 'na', 'for f in a b; do echo x > "$f.txt"; done', N, ['text', ['through a `for` loop variable', REMEDY_ABS], NO_CURE]],
+      ['AS8-target-pwd', 'na', 'PWD={OUT}; cp x $PWD/docs/report.md', N, ['text', ['the command names PWD outside an expansion', REMEDY_ABS], NO_CURE]],
+      ['AS8-target-eval', 'na', 'eval "$E"; T={OUT}/build-out; echo x > "$T/t.sh"', N, ['text', ['an earlier `eval` may assign any name', REMEDY_ABS], NO_CURE]],
+      ['AS8-target-func', 'na', 'f() { :; }; f; T={OUT}/build-out; echo x > "$T/t.sh"', N, ['text', ['a function the command defines, may assign any name', REMEDY_ABS], NO_CURE]],
+      ['AS8-target-read-then-source', 'na', `read T <<< {OUT}/build-out; source ${ENV}; echo x > "$T/t.sh"`, N, ['text', REMEDY_ABS, NO_CURE]], // a literal value in place of the read is not read after the source either
+      ['AS8-target-outside', 'na', 'T={OUT}/build-out; mkdir -p "$T"; echo x > "$T/t.sh"', N, 'allow'],
+      ['AS8-remedy-abs', 'na', 'mkdir -p {OUT}/build-out; echo x > {OUT}/build-out/t.sh', N, 'allow'],   // the not-literal refusal's one remedy followed, the path spelled absolute (the census below builds such a twin for every refused row)
+      ['AS8-target-tracked-folder', 'na', 'T={NA}/notes; echo x > "$T/n2.md"', A, 'name', 'name'],
+      ['AS8-target-tracked-file', 'na', 'T={NA}/docs; echo x > "$T/report.md"', A, 'name', 'name'],
+      // the third verify round's rows for the clause's conditions (T3-1, T3-2, T3-3 and T2-2's four text conditions, M3-6): under M2 no refusal
+      // carries a clause, so each pins the one remedy alone; the allowed controls beside them (a command named by its literal path, a backgrounded
+      // command, two literal values) are commands the guard reads, not remedies the refusal offers
+      ['AS8-target-read-and', 'na', 'true && read T <<< {OUT}/b; echo x > "$T/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-read-body', 'na', 'if true; then read T <<< {OUT}/b; fi; echo x > "$T/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-head-unset', 'na', 'read c <<< true; "$c" x; echo y > "$T/a.txt"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-ctl-target-head-unset-literal-head', 'na', 'read c <<< true; /usr/bin/true x; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS8-ctl-target-head-unset-bg', 'na', 'read c <<< true; "$c" x & T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
+      ['AS8-target-two-names', 'na', 'read A <<< {OUT}; for L in a; do :; done; echo x > "$A/$L/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-two-names-glued', 'na', 'read A <<< {OUT}/b; for L in a; do :; done; echo x > "$A$L/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-two-cures', 'na', 'read A <<< {OUT}; read B <<< b; echo x > "$A/$B.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-ctl-target-two-cures-literal', 'na', 'A={OUT}; B=b; echo x > "$A/$B.sh"', N, 'allow'],
+      ['AS8-target-pwd-unknown', 'na', 'cd "$D"; echo x > "$PWD/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-oldpwd', 'na', 'echo x > "$OLDPWD/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-braced', 'na', 'echo x > "${T}/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-braced-head', 'na', 'read c <<< true; "$c" x; T={OUT}/t; echo x > "${T}/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-backtick', 'na', 'read T <<< {OUT}/b; echo x > "$T/`echo t`.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-glob-no-name', 'na', `source ${ENV}; echo x > n*.md`, N, ['text', REMEDY_ABS, NO_CURE]],
+      ['AS8-target-unset-then-loop', 'na', 'read T <<< {OUT}/b; unset T; for T in a; do :; done; echo x > "$T/t.sh"', N, ['text', REMEDY_ABS, NO_CURE]],
+    );
+    // item 6: an option of a command named by a variable after a construct that leaves the directory unknown stays refused (the program may read any
+    // word as a path); M2's ONE remedy that always lifts it: name the command by its literal path (an option is then not judged as a path) AND spell
+    // each path it is handed as an absolute path (a relative one stays under the directory not known); the twins: the literal interpreter with
+    // absolute paths, a cd after `;` (passes). The cd the rounds before offered is gone (it did not lift where the directory not known was the
+    // command's own `env -C`: the fourth verify round's T4-5)
+    const headRemedy = (sp) => `Name the command by its literal path rather than ${sp}, and spell each path it is handed as an absolute path`;
+    // a shell reading a script the guard does not read (the piped and script roads) has no command to name, and an option it is handed takes no
+    // absolute spelling, so the kind is split and its ONE remedy is the cd that makes the directory known, with no directory option of the command's
+    // own (fork main's cd lifted these; the fifth verify round's T5-2); where the unread text itself leaves the directory unknown, the text spelled out
+    const SCRIPT_CD = 'Run the command after a cd to a literal absolute directory that exists, as a command of its own (not after `&&`), after the last command that leaves the directory unknown (such as that construct, or a later `source`, `.`, eval, cd to a variable or command named by a variable), with no directory option (`-C`, `--chdir` or `-D`) on the command itself';
+    const SCRIPT_TEXT = 'Spell the script out as literal words, with its paths as absolute paths';   // one remedy for the text's own move and an earlier construct's (the sixth verify round's tg-m6-3)
+    rows.push(
+      ['AS6-source-option', 'na', `source ${ENV}; "$PY" {OUT}/scratch/x.py --outdir {OUT}/res`, N, ['dir', [headRemedy('`"$PY"`')], ['one of its options', 'cd to']]],
+      ['AS6-cd-option-value', 'na', 'cd "$D"; "$PY" {OUT}/scratch/x.py --seed 3', N, ['dir', [headRemedy('`"$PY"`')], ['one of its options', 'cd to']]],
+      ['AS6-and-cd', 'na', `source ${ENV} && cd {NA} && "$PY" {OUT}/scratch/x.py --outdir {OUT}/res`, N, ['dir', [headRemedy('`"$PY"`')], 'cd to']],
+      ['AS6-cd-then-later-head', 'na', `source ${ENV}; cd {NA}; "$PY" x; "$PY" {OUT}/scratch/x.py --outdir {OUT}/res`, N, ['dir', [headRemedy('`"$PY"`')], 'cd to']],
+      ['AS6-ctl-literal-interpreter', 'na', `source ${ENV}; /usr/bin/python3 {OUT}/scratch/x.py --outdir {OUT}/res`, N, 'allow'],
+      ['AS6-ctl-semi-cd', 'na', `source ${ENV}; cd {NA}; "$PY" {OUT}/scratch/x.py --outdir {OUT}/res`, N, 'allow'],
+      ['AS6-ctl-newline-cd', 'na', `source ${ENV}\ncd {NA}\n"$PY" {OUT}/scratch/x.py --outdir {OUT}/res`, N, 'allow'],
+      // an operand the command writes (M2): the literal path AND the absolute spelling lift it; either alone does not (the literal path leaves
+      // report.md relative to the directory not known; an absolute path leaves an option judged as a path). The remedy twin that lifts it
+      ['AS6-writer-operand', 'na', `source ${ENV}; read c <<< tee; "$c" report.md < /dev/null`, N, ['dir', ['names report.md, a relative path', headRemedy('`"$c"`')], ['one of its options', 'cd to']]],
+      ['AS6-writer-operand-remedy', 'na', `source ${ENV}; read c <<< tee; /usr/bin/tee {NA}/scratch/report.md < /dev/null`, N, 'allow'],   // M2's one remedy followed: the literal command, the path absolute
+      ['AS6-ctl-writer-operand-cd', 'na', `source ${ENV}; cd {NA}/scratch; read c <<< tee; "$c" report.md < /dev/null`, N, 'allow'],
+      ['AS6-writer-operand-literal', 'na', `source ${ENV}; /usr/bin/tee report.md < /dev/null`, N, ['dir', ['names report.md, a relative path', 'Spell the target as an absolute path'], ['Name the command', 'cd to']]],   // a literal head: unknownDir, not the q1 head remedy (M2)
+      // T5-2's shapes (an option word on the piped, here-string and eval roads after a source), a chdir of the command's own that a cd before it does
+      // not reach, and a text whose own earlier command leaves the directory unknown, which no cd reaches (its remedy the script spelled out)
+      ['AS6-script-piped-option', 'na', `source ${ENV}; cat "$f" | bash -s -- --seed 3`, N, ['dir', ['its shell reading its script from `cat "$f"` names --seed, a relative path', SCRIPT_CD], ['Spell the target as an absolute path', 'Name the command']]],
+      ['AS6-script-herestring-option', 'na', `source ${ENV}; bash -s -- --seed 3 <<< "$X"`, N, ['dir', ['names --seed, a relative path', SCRIPT_CD], 'Spell the target as an absolute path']],
+      ['AS6-script-eval-option', 'na', `source ${ENV}; eval "$X" --seed 3`, N, ['dir', ['its script held in `"$X" --seed 3` names --seed, a relative path', SCRIPT_CD], 'Spell the target as an absolute path']],
+      ['AS6-script-piped-own-chdir', 'na', 'cat "$f" | env -C "$d" bash -s -- --seed 3', N, ['dir', ['an earlier `env -C` names "$d", a directory the shell fills in', SCRIPT_CD]]],
+      ['AS6-script-eval-in-text', 'na', 'eval "$X; $Y" --seed 3', N, ['dir', ['an earlier command of the text `"$X; $Y" --seed 3` stands for may move the shell', SCRIPT_TEXT], ['Run the command after a cd', 'Spell the target as an absolute path']]],
+      // and where an earlier construct left the directory unknown too (the sixth verify round's tg-m6-3): a cd does not reach the text's own move, so the
+      // text spelled out, with its paths absolute for the earlier construct's directory, is the one remedy for both causes
+      ['AS6-script-eval-in-text-after-source', 'na', `source ${ENV}; eval "$X; $Y" --seed 3`, N, ['dir', ['an earlier command of the text `"$X; $Y" --seed 3` stands for may move the shell', SCRIPT_TEXT], 'Run the command after a cd']],
+      ['AS6-script-eval-in-text-path-after-source', 'na', `source ${ENV}; eval "$X; $Y" scratch/a.txt`, N, ['dir', ['names scratch/a.txt, a relative path', 'an earlier command of the text `"$X; $Y" scratch/a.txt` stands for may move the shell', SCRIPT_TEXT], 'Run the command after a cd']],
+      ['AS6-script-eval-in-text-after-cd-var', 'na', 'read d <<< docs; cd "$d"; eval "$X; $Y" --seed 3', N, ['dir', ['an earlier command of the text `"$X; $Y" --seed 3` stands for may move the shell', SCRIPT_TEXT], 'Run the command after a cd']],
+    );
+    // item 7: the remedies say what works (M2, one remedy each): a command name that is a pattern the guard cannot expand in a directory not known
+    // asks for the name without a pattern after a cd that makes the directory known again; a relative target after such a construct asks for the
+    // target as an absolute path (the cd is gone from the target remedy, kept for the pattern head: a pattern read in a known directory is still
+    // a residual zsh globs, so the name must lose the pattern too)
+    const PATTERN_REMEDY_DIR = 'Spell the command name without a pattern after a cd to a literal absolute directory that exists, as a command of its own (not after `&&`), after the last command that leaves the directory unknown (such as that construct, or a later `source`, `.`, eval, cd to a variable or command named by a variable)';
+    const TARGET_REMEDY = 'Spell the target as an absolute path';
+    const COMPARE_REMEDY = 'Write the comparison with `expr`, its operator quoted (`expr "$a" \\> "$b"`), which bash, zsh and dash run alike: ';
+    rows.push(
+      ['AS7-pattern-head-cd', 'na', 'cd "$D"; ./c? a b', N, ['text', `\`./c?\` is a pattern, matched in a directory that is not known when I check the command (an earlier \`cd\` names "$D", a directory the shell fills in when the command runs), so which command it names is not known, so I cannot tell what would run or which file it would write, and {NA} tracks files whose changes are recorded for me to accept or reject. ${PATTERN_REMEDY_DIR}`, 'the alias or the binding']],
+      ['AS7-pattern-head-source', 'na', `source ${ENV}; [ab] x`, N, ['text', PATTERN_REMEDY_DIR, 'the alias or the binding']],
+      ['AS7-ctl-pattern-head-cd-after-last', 'na', 'cd "$D"; "$PY" {OUT}/scratch/x.py; cd {NA}/scratch; ./c? a b', N, 'allow'],
+      ['AS7-target-after-source', 'na', `source ${ENV}; echo x > scratch/a.txt`, N, ['dir', TARGET_REMEDY, 'cd to']],
+      ['AS7-target-and-cd', 'na', `source ${ENV} && cd {NA} && echo x > scratch/a.txt`, N, ['dir', TARGET_REMEDY, 'cd to']],
+      ['AS7-target-later-head', 'na', `source ${ENV}; cd {NA}; "$PY" x; echo x > scratch/a.txt`, N, ['dir', TARGET_REMEDY, 'cd to']],
+      ['AS7-ctl-semi-cd', 'na', `source ${ENV}; cd {NA}; echo x > scratch/a.txt`, N, 'allow'],
+      ['AS7-target-cd-relative', 'na', `source ${ENV}; cd scratch; echo x > a.txt`, N, ['dir', TARGET_REMEDY, 'cd to']],
+      ['AS7-pattern-head-later-head', 'na', 'cd "$D"; "$PY" {OUT}/scratch/x.py; ./c? a b', N, ['text', ['an earlier `cd` names "$D"', PATTERN_REMEDY_DIR]]],
+      ['AS7-target-later-source', 'na', `cd "$D"; source ${ENV}; echo x > scratch/a.txt`, N, ['dir', ['an earlier `cd` names "$D"', TARGET_REMEDY], 'cd to']],
+      ['AS7-ctl-target-cd-after-last', 'na', `cd "$D"; source ${ENV}; cd {NA}; echo x > scratch/a.txt`, N, 'allow'],
+      // the piped road's remedy is the cd (a shell reading its script from a pipe has no command to name, and a word it is handed may be an option:
+      // the fifth verify round's T5-2), not the target's absolute path, which the rounds before gave
+      ['AS7-target-piped-road', 'na', `source ${ENV}; cat "$f" | bash -s docs/report.md`, N, ['dir', SCRIPT_CD, ['Name the command', TARGET_REMEDY]]],
+      ['AS7-target-remedy-abs', 'na', `source ${ENV}; echo x > {OUT}/scratch/a.txt`, N, 'allow'],   // the directory-not-known target's one remedy followed, the absolute path (the census below builds such a twin for every refused row)
+      // a `>` inside `[[ ... ]]` with a target the guard cannot read (a comparison in bash and zsh, a redirection in dash): ONE remedy, the comparison
+      // written with `expr`, which writes nothing in any of them (the sixth verify round's tg-t6-4: the text had named a cwd outside the project and
+      // `expr` beside the absolute path)
+      ['AS7-compare-notlit', 'nad', '[[ $a > $b ]] && echo y', N, ['text', ['which is not a literal path', COMPARE_REMEDY], ['run it from a directory outside', 'Spell the path out']]],
+      ['AS7-compare-remedy', 'nad', 'expr $a \\> $b && echo y', N, 'allow'],   // the one remedy followed (the census below builds such a twin for every row of the kind)
+    );
+    const verdict = (id, cmd, h, want, where) => {
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error ${where}: ${h.reason.split('\n')[0]}`);
+      if (want === 'allow') { assert.equal(h.status, 0, `${id}: allowed ${where}: ${cmd}: ${h.reason.split('\n')[0]}`); return; }
+      assert.equal(h.status, 2, `${id}: refused ${where}: ${cmd}`);
+      assert.ok(!/[\u2013\u2014]/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash or en dash, no romp noun`);
+      if (want === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name ${where}: ${h.reason.split('\n')[0]}`);
+      else {
+        if (want[0] === 'dir') assert.ok(h.reason.includes('the directory it is relative to is not known'), `${id}: refused ${where} for the directory not known: ${h.reason.split('\n')[0]}`);
+        for (const t of texts(want[1])) assert.ok(h.reason.includes(t), `${id}: refused ${where}, the reason including (${t}): ${h.reason.split('\n')[0]}`);
+        for (const t of texts(want[2])) assert.ok(!h.reason.includes(t), `${id}: refused ${where}, the reason without (${t}): ${h.reason.split('\n')[0]}`);
+      }
+    };
+    const texts = (x) => (x == null ? [] : Array.isArray(x) ? x : [x]);   // an expected text, or a list of them
+    const fillT = (x) => (Array.isArray(x) ? x.map(fillT) : typeof x === 'string' ? w.fill(x) : x);
+    const fillWant = (want) => (Array.isArray(want) ? want.map((s, i) => (i ? fillT(s) : s)) : want);   // an expected text may spell {NA}
+    const guardOnly = [];   // the rows asked of the guard alone (writers null: no leg runs their command)
+    const reasonAt = {};   // each row's verdict and reason from its own cwd, for the M2 remedy census below
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      if (outside != null) { w.build(); verdict(id, cmd, w.hook(cmd, w.cwds.out), fillWant(outside), 'from a cwd in no project'); }   // first, so a row that reds from its cwd has shown its twin from a cwd in no project
+      w.build();
+      const hAt = w.hook(cmd, at);
+      reasonAt[id] = { status: hAt.status, reason: hAt.reason };
+      verdict(id, cmd, hAt, fillWant(expect), `from ${cwd}`);
+      if (writers === null) { guardOnly.push(id); return; }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    // every row is asked and every failure listed (each message opens with the row's id), so a run against an earlier guard names each row it reds
+    const failures = [];
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { try { judge(id, cwd, raw, writers, expect, outside); } catch (e) { failures.push(String(e.message).split('\n')[0]); } }
+    // item 4's second cause: a tracked folder holding more entries than the caps (GLOB_MATCH_CAP, 2000) makes the pattern one the guard
+    // cannot expand from any directory; tee truncates every file the pattern names
+    const crowd = () => { for (let i = 0; i < 2101; i++) fs.writeFileSync(path.join(w.NA, 'notes', `f${i}.md`), 'x\n'); };
+    const capRows = [
+      ['AS4-cap-root', 'na', 'read c <<< tee; "$c" notes/* < /dev/null', BZ, ['text', 'names notes/*, which is not a literal path']],
+      ['AS4-cap-out', 'out', 'read c <<< tee; "$c" {NA}/notes/* < /dev/null', BZ, ['text', 'names {NA}/notes/*, which is not a literal path']],
+      ['AS4-cap-ctl-known-command', 'na', 'tee notes/* < /dev/null', A, ['text', 'names notes/*, which is not a literal path']],
+      // an absolute pattern whose directory part is itself a pattern, past the caps after a construct that leaves the directory unknown: a target
+      // the hook cannot read (judging it by its spelling would place it in no project and pass it; tee truncated both projects' notes)
+      ['AS4-cap-wild-dir-cd', 'na', 'read c <<< tee; cd "$D"; "$c" {W}/*/notes/* < /dev/null', BZ, ['text', 'names {W}/*/notes/*, which is not a literal path']],
+      ['AS4-cap-wild-dir-source', 'na', `read c <<< tee; source ${ENV}; "$c" {W}/*/notes/* < /dev/null`, BZ, ['text', 'names {W}/*/notes/*, which is not a literal path']],
+      // the operand that names a tracked file is refused by name before the pattern past the caps (THE UNREAD OPERAND's tag on the cap's record)
+      ['AS4-cap-q1-order', 'na', 'read c <<< tee; "$c" docs/report.md notes/* < /dev/null', BZ, 'name'],
+      // DISCLOSED, older than this change: such a pattern past the caps from a cwd in no project passes, its spelled directory in no project
+      ['AS4-residual-wild-dir-out', 'out', 'read c <<< tee; "$c" {W}/*/notes/* < /dev/null', BZ, 'allow'],
+      ['AS4-residual-wild-dir-known-out', 'out', 'tee {W}/*/notes/* < /dev/null', A, 'allow'],
+      // item 7: a command name that is a pattern past the caps, the directory known, asks for the name without a pattern alone, and so does an
+      // absolute one after a cd the guard does not follow (the pattern's directory is spelled, so a cd does not change it)
+      ['AS7-cap-pattern-head', 'na', '{NA}/notes/f* a b', N, ['text', ['is a pattern matching more names than I read (more than 2000 matches, or more than 50000 entries to read), so which command it names is not known', 'Spell the command name without a pattern: '], 'cd to']],
+      ['AS7-cap-pattern-head-abs-cd', 'na', 'cd "$D"; {NA}/notes/f* a b', N, ['text', ['is a pattern matching more names than I read', 'Spell the command name without a pattern: '], ['cd to', 'not known when I check']]],
+    ];
+    for (const [id, cwd, raw, writers, expect] of capRows) {
+      try {
+        const cmd = w.fill(raw);
+        const at = w.cwds[cwd];
+        w.build(); crowd();
+        const hAt = w.hook(cmd, at);
+        reasonAt[id] = { status: hAt.status, reason: hAt.reason };
+        verdict(id, cmd, hAt, fillWant(expect), `from ${cwd}`);
+        if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, NAMED_PROBE, undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
+          w.build(); crowd();
+          const before = w.fingerprint();
+          const argv = shell === 'bash' ? ['--norc', '--noprofile', '-c', cmd] : shell === 'zsh' ? ['-f', '-c', cmd] : ['-c', cmd];
+          const r = spawnLeg(shell, argv, { cwd: at, input: '', encoding: 'utf8', env: w.env, timeout: 60000 });   // as sixthPassWorld's run does
+          assert.equal(w.fingerprint() !== before, writers.includes(shell), `${id}: run unguarded over the crowded folder, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${String(r.stderr || '').slice(0, 300)}`);
+        }
+      } catch (e) { failures.push(String(e.message).split('\n')[0]); }
+    }
+    assert.deepEqual(failures, [], `every row holds (${failures.length} do not)`);
+    const all = [...rows, ...capRows];
+    const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 266, AS4: 17, AS5: 20, AS6: 19, AS7: 17, AS8: 114 }, 'the population by item');
+    assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
+    assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-nohup-name', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-sudoD-var-nohup-dir', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
+    // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
+    // from the rows and the census failing on none
+    const plan = fs.readFileSync(fileURLToPath(new URL('../plans/file-review.md', import.meta.url)), 'utf8');
+    const d47 = plan.slice(plan.indexOf('\n47. **'), plan.indexOf('\n48. **'));
+    assert.ok(plan.includes('\n47. **') && d47.length > 0, 'decision 47 is found in plans/file-review.md');
+    const residualIds = all.map((r) => r[0]).filter((id) => id.includes('-residual-'));
+    assert.ok(residualIds.length > 0, 'the census reads the residual rows (none read is no census)');
+    assert.deepEqual(residualIds.filter((id) => !new RegExp(`(?<![\\w-])${id}(?![\\w-])`).test(d47)), [], 'each disclosed residual row is named by id in decision 47');
+    // the wrappers behind which a command named by a variable is POISONED (its names unreadable after it) are those WRAPPER_OPT leaves without its
+    // `external` mark: M1's names predicate (the names stay readable when at least one external wrapper precedes the head), so each non-external
+    // wrapper has its AS3-kept-* row showing the poison, the population derived from the table and the census failing on none; and no wrapper the
+    // table marks external is a builtin, a keyword or a precommand modifier in a shell on this runner (`type`, asked as the round derived the marks,
+    // so a mark on such a wrapper reds here)
+    const hookText = fs.readFileSync(HOOK, 'utf8');
+    const optAt = hookText.indexOf('const WRAPPER_OPT = {');
+    const optBody = hookText.slice(optAt, hookText.indexOf('\n};\n', optAt));
+    const optKeys = [...optBody.matchAll(/^ {2}(?:([a-z]+)|'(-)'): \{/gm)].map((m) => ({ name: m[1] || m[2], at: m.index }));
+    const wrapperMarks = optKeys.map((k, i) => ({ name: k.name, external: optBody.slice(k.at, i + 1 < optKeys.length ? optKeys[i + 1].at : optBody.length).includes('external: true') }));
+    const keptWrappers = wrapperMarks.filter((m) => !m.external).map((m) => m.name).sort();
+    const keptRows = all.map((r) => r[0]).filter((id) => /^AS3-kept-[a-z]+-dd$/.test(id)).map((id) => id.slice('AS3-kept-'.length, -'-dd'.length)).map((n) => (n === 'minus' ? '-' : n)).sort();
+    assert.ok(optKeys.length > 0 && keptWrappers.length > 0 && wrapperMarks.some((m) => m.external), 'the census reads the wrapper table, marked and unmarked');
+    assert.deepEqual(keptRows, keptWrappers, 'each non-external wrapper has its AS3-kept-* poison row, and no row names a marked one (M1 names predicate)');
+    const roadRows = all.map((r) => r[0]).filter((id) => /^AS3-road-[a-z]+-dd$/.test(id)).map((id) => id.slice('AS3-road-'.length, -'-dd'.length)).map((n) => (n === 'minus' ? '-' : n)).sort();
+    assert.deepEqual(roadRows, wrapperMarks.map((m) => m.name).sort(), 'each wrapper of the table has its AS3-road-* row, the road behind it, the external ones included (M1; the fifth verify round\'s tg-m5-2 for the wrappers the shell runs itself, the sixth\'s tg-m6-4 for every wrapper)');
+    // each lead-bearing wrapper the table marks has its disclosed witness for a `--` before the lead (M3's stopping rule; the fifth verify round's S5-2)
+    const leadWrappers = optKeys.filter((k, i) => /\blead: \d/.test(optBody.slice(k.at, i + 1 < optKeys.length ? optKeys[i + 1].at : optBody.length))).map((k) => k.name).sort();
+    const leadRows = all.map((r) => r[0]).filter((id) => /^AS3-residual-[a-z]+-dd-lead$/.test(id)).map((id) => id.slice('AS3-residual-'.length, -'-dd-lead'.length)).sort();
+    assert.ok(leadWrappers.length > 0, 'the census reads the lead-bearing wrappers from the table');
+    assert.deepEqual(leadRows, leadWrappers, 'each lead-bearing wrapper has its AS3-residual-<wrapper>-dd-lead witness row');
+    for (const sh of shellsFor(['bash', 'zsh', 'dash'], 'the wrapper census')) {
+      for (const { name } of wrapperMarks.filter((m) => m.external)) {
+        const argv = sh === 'bash' ? ['--norc', '--noprofile', '-c', 'type -t -- "$W"'] : sh === 'zsh' ? ['-f', '-c', 'whence -w -- "$W"'] : ['-c', 'type "$W"'];   // the name in the environment: a word, never a text the cleared-environment reader takes for a command
+        const r = spawnSync(sh, argv, { encoding: 'utf8', env: { PATH: process.env.PATH, W: name } });
+        const said = `${r.stdout || ''}${r.stderr || ''}`.trim();
+        assert.ok(!/\b(builtin|keyword|reserved)\b/.test(said), `${name} is marked external, but ${sh} says: ${said}`);
+      }
+    }
+    // THE SHELL'S OWN NAME's set (the sixth verify round's tg-t6-3; the seventh's tg-t7-1), asked of the shells as the external marks are: every name in
+    // ALL_SHELL_BUILTINS is a builtin, a keyword or a reserved word in each of bash, zsh and dash (a name one of them looks up through PATH would be a write
+    // the skip lets pass), asked of each shell present on this runner by its own positive answer (bash `type -t` prints the kind, zsh `whence -w` NAME: KIND,
+    // dash `type` NAME is a [special ]shell builtin or keyword; the detector before read dash's "builtin: not found" as a builtin), and of a shell absent
+    // here through SHELL_OWN_DERIVED, the lists derived on the box the set was derived on; and the set is exactly the intersection of those lists
+    const abAt = hookText.indexOf('const ALL_SHELL_BUILTINS = new Set([');
+    const allBuiltins = abAt < 0 ? [] : [...hookText.slice(abAt, hookText.indexOf(']);', abAt)).matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    assert.ok(allBuiltins.length > 0, 'the census reads ALL_SHELL_BUILTINS from the hook');
+    const OWN_ANSWER = { bash: (s) => /^(?:builtin|keyword)$/.test(s), zsh: (s) => /: (?:builtin|reserved)$/.test(s), dash: (s) => / is a (?:special )?shell (?:builtin|keyword)$/.test(s) };
+    const ownWord = new Map();
+    const runsOwn = (sh, name) => {
+      const key = `${sh} ${name}`;
+      if (!ownWord.has(key)) {
+        const argv = sh === 'bash' ? ['--norc', '--noprofile', '-c', 'type -t -- "$W"'] : sh === 'zsh' ? ['-f', '-c', 'whence -w -- "$W"'] : ['-c', 'type "$W"'];   // the name in the environment, never a text the shell parses
+        const r = spawnSync(sh, argv, { encoding: 'utf8', env: { PATH: process.env.PATH, W: name } });
+        ownWord.set(key, OWN_ANSWER[sh](String(r.stdout || '').trim()));
+      }
+      return ownWord.get(key);
+    };
+    const ownShells = shellsFor(['bash', 'zsh', 'dash'], 'the shell-own census');
+    const ownCensus = (names, live) => ['bash', 'zsh', 'dash'].flatMap((sh) => names.filter((n) => !(live.includes(sh) ? runsOwn(sh, n) : SHELL_OWN_DERIVED[sh].includes(n))).map((n) => `${sh} ${n}`));
+    assert.deepEqual(ownCensus(allBuiltins, ownShells), [], 'every name in ALL_SHELL_BUILTINS is one bash, zsh and dash run as their own, asked live where the shell is here and from SHELL_OWN_DERIVED where it is not');
+    const derivedAll = SHELL_OWN_DERIVED.bash.filter((n) => SHELL_OWN_DERIVED.zsh.includes(n) && SHELL_OWN_DERIVED.dash.includes(n));
+    assert.ok(derivedAll.length > 0 && SHELL_OWN_DERIVED.bash.length > derivedAll.length, 'the committed lists hold the intersection and more');
+    assert.deepEqual([...allBuiltins].sort(), [...derivedAll].sort(), 'ALL_SHELL_BUILTINS is exactly the names bash, zsh and dash all run as their own (SHELL_OWN_DERIVED)');
+    for (const live of [ownShells, []]) assert.deepEqual(ownCensus(['builtin'], live), ['dash builtin'], `the census reds on \`builtin\`, which dash looks up through PATH, asked ${live.length ? `live of ${live.join(', ')} and from the lists for the rest` : 'from the lists alone'}`);
+    console.log(`# THE SHELL'S OWN NAME's census: asked live of ${ownShells.join(', ') || 'no shell'}; from SHELL_OWN_DERIVED for ${['bash', 'zsh', 'dash'].filter((s) => !ownShells.includes(s)).join(', ') || 'no shell'}`);
+    console.log(`# the after-source fixes: ${all.length} rows, by item ${Object.entries(byItem).map(([k, v]) => `${k} ${v}`).join(', ')}; ${all.filter((r) => /-residual-/.test(r[0])).length} disclosed residual rows; asked of the guard alone: ${guardOnly.join(', ')}`);
+    // M2's proof over every row (the mechanism ruling, 2026-10-03, option (b), and the fifth verify round's rulings): each refusal names the ONE
+    // remedy that always lifts it, and "always" is proved over this population row by row, not once per kind. Every refused row is classified by
+    // the cause its reason states (kindOf, never by the remedy it names). For a remedy-offering kind, (1) the reason's remedy sentence (between its
+    // last "accept or reject." and ": outside that project") EQUALS the kind's one remedy, so a second remedy beside it reds; and (2) the row's
+    // remedied command is built and run through the hook: MECHANICALLY where the remedy is a rewrite (BUILD: an absolute target for notlit, dir,
+    // dir-q1 and home, a not-literal word spelled as an absolute path outside every project since its value is what the guard cannot know; the cd
+    // for patternHead in a directory not known, with the name spelled without a pattern, and for the script roads, with no directory option of
+    // the command's own; the binding's source for aliasUnread; the copied program's full path for boundName; the filled-in word spelled as the
+    // row reads it and its command put directly before the `|` for the piped kinds; the comparison written with `expr` for notlit-compare), each
+    // refusal the hook then names remedied in turn, and by a
+    // HAND twin per row otherwise (HAND); a refused row with neither reds. A twin is lifted when it is allowed, or refused by name for a tracked
+    // file it names (the text's own promise: a tracked file takes its change through track-edit). A kind whose remedy does not lift each of its
+    // rows is split (dir-q1-script and dir-q1-text out of dir: the fifth verify round's T5-2; patternHead and piped split by the remedy each text
+    // names; the sixth verify round's notlit-compare out of notlit, tg-t6-4, and option-unheld and option-unheld-piped out of option, tg-t6-2),
+    // and a kind with no remedy that always lifts offers none (by-name; q1-name since the fifth verify round's T5-6: the command spelled out lifts
+    // it only where that command merely reads the file; option-unheld-piped, whose wrapper dropped would pass a piped command named by a
+    // variable), its reason's first line ending with the cause and the track-edit sentence, nothing between (the sixth verify round's tg-m6-2).
+    const line1 = (r) => r.split('\n')[0];
+    const kindOf = (reason) => {
+      const l = line1(reason);
+      if (l.startsWith('Track-changes is ON for ')) return l.includes('a text I do not read, so it may run any command') ? 'q1-name' : 'by-name';
+      if (l.includes('the directory it is relative to is not known')) {
+        if (/ its command named by `/.test(l)) return 'dir-q1';
+        if (/ its (?:shell reading its script from|script held in) /.test(l)) return l.includes('an earlier command of the text ') ? 'dir-q1-text' : 'dir-q1-script';
+        return 'dir';
+      }
+      if (l.includes('which is not a literal path')) return l.includes(' inside a `[[ ... ]]` (a comparison in bash and zsh') ? 'notlit-compare' : 'notlit';   // the comparison's sub-kind by the construct the reason names (the sixth verify round's tg-t6-4)
+      if (/ wrapper runs .*, a word the shell fills in when the command runs, so the command it runs is one I do not read/.test(l)) return 'piped';
+      if (l.includes('a word the shell fills in when the command runs: it may be an option of the wrapper or the command the wrapper runs')) return l.includes('it is followed by `|`') ? 'filled-piped' : 'filled';
+      if (l.includes('which I do not read in that spelling')) return 'option';
+      if (/ wrapper carries the option .*, which I do not know, so I cannot tell what the command behind it would write or where/.test(l)) return l.includes('it is followed by `|`') ? 'option-unheld-piped' : 'option-unheld';   // an option the table does not hold, split by whether the output reaches `|` (the sixth verify round's tg-t6-2)
+      if (l.includes('is looked up through a PATH I do not read here')) return 'boundName';
+      if (l.includes('is a pattern, matched in a directory that is not known')) return 'patternHead-dir';
+      if (l.includes('is a pattern matching more names than I read')) return 'patternHead-cap';
+      if (l.includes('so I cannot tell what would run or which file it would write')) return 'aliasUnread';
+      if (l.includes('`$HOME` and `~` name a directory I')) return 'home';
+      if (l.includes('a text the shell produces when the command runs, and I could not establish that text')) return 'producer';
+      if (l.includes('hands the rest of the command to a splitter or a shell of its own')) return 'opaque';   // a refused wrapper option, its abbreviation among them (the seventh verify round's tg-m7-7)
+      return 'unclassified';
+    };
+    const remedyOf = (reason) => {
+      const l = line1(reason);
+      let end = l.indexOf(': outside that project');
+      if (end < 0) end = l.indexOf(', or make the change with track-edit');
+      const start = end < 0 ? -1 : l.lastIndexOf('reject.', end);
+      return start < 0 ? null : l.slice(start + 'reject.'.length, end).trim();
+    };
+    const PIPE_SHAPE = 'directly before that `|`, with no redirection and no group, subshell or compound around it';
+    const REMEDY = {
+      notlit: 'Spell the path out as an absolute path',
+      'notlit-compare': COMPARE_REMEDY.slice(0, -': '.length),
+      home: 'Spell the path out as an absolute path',
+      dir: TARGET_REMEDY,
+      'dir-q1': (l) => headRemedy((l.match(/ its command named by (`[^`]+`) names /) || [])[1]),
+      'dir-q1-script': SCRIPT_CD,
+      'dir-q1-text': SCRIPT_TEXT,
+      'patternHead-dir': PATTERN_REMEDY_DIR,
+      'patternHead-cap': 'Spell the command name without a pattern',
+      filled: FILLED_SPELL,
+      'filled-piped': `${FILLED_SPELL}, and put the command ${PIPE_SHAPE}`,
+      piped: `Spell the command out and put it ${PIPE_SHAPE}`,
+      option: 'Spell the option in the long form I know',
+      'option-unheld': (l) => `Run the command without the \`${(l.match(/ its `([^`]+)` wrapper carries the option /) || [])[1]}\` wrapper`,
+      boundName: 'Spell the command by the full path of the program it should run, not a path this command made',
+      aliasUnread: 'Spell the command the alias or the binding stands for, with its paths as absolute paths',
+      producer: 'Spell the text out (the path, or the script, as literal words)',
+      opaque: (l) => `Spell the command without \`${(l.match(/ its `([^`]+)` hands the rest of the command /) || [])[1]}\``,
+    };
+    const NO_REMEDY = new Set(['by-name', 'q1-name', 'option-unheld-piped']);
+    // the no-remedy contract stated positively (the sixth verify round's tg-m6-2): the reason's first line ends with the cause's own last words and the
+    // track-edit sentence, nothing between them, so a remedy added before the sentence, or spliced into it, reds (remedyOf, which reads up to a
+    // terminator, saw neither)
+    const TRACK_EDIT_SENTENCE = ' Make the change with track-edit instead, which records it for me to accept or reject:';
+    const NO_REMEDY_CAUSE = {
+      'by-name': [/ would write the file silently, with no change for me to accept or reject\)\.$/, / would write the file silently, with no change for me to accept or reject\.$/],
+      'q1-name': [/ as an operand, so it may write the file silently, with no change for me to accept or reject\.$/],
+      'option-unheld-piped': [/, so its output may reach another command, and \S+ tracks files whose changes are recorded for me to accept or reject\.$/],
+    };
+    const keepsNoRemedy = (k, l) => l.endsWith(TRACK_EDIT_SENTENCE) && NO_REMEDY_CAUSE[k].some((re) => re.test(l.slice(0, -TRACK_EDIT_SENTENCE.length)));
+    // the rewrites (BUILD), each from the reason's first line, the command as it stands and the row's cwd
+    const refusedWord = (l) => { const m = l.match(/ names (.+?), (?:a relative path|which is not a literal path|and `|but )/); if (!m) throw new Error(`no word named: ${l}`); return m[1]; };
+    const lastAt = (cmd, raw, before = cmd.length) => {
+      let at = -1;
+      for (const m of cmd.matchAll(new RegExp(`(?<=^|[\\s;|&(<>='"])${escapeRe(raw)}(?=$|[\\s;|&)<>'"])`, 'g'))) if (m.index < before) at = m.index;
+      if (at < 0) throw new Error(`${raw} is not a word of the command`);
+      return at;
+    };
+    const splice = (cmd, at, raw, by) => cmd.slice(0, at) + by + cmd.slice(at + raw.length);
+    const absOf = (raw, cwd) => (raw.startsWith('/') ? raw : path.resolve(cwd, raw));
+    // where the statement holding offset `at` starts: after the last `;`, newline or `&` outside quotes and brackets (a `;;` or `&&` is none); an `&&`
+    // or `||` before the word in its statement leaves a cd put there after `&&`, which the text rules out, so such a row needs a hand twin
+    const stmtStart = (cmd, at) => {
+      let q = null; let depth = 0; let start = 0; let andOr = false;
+      for (let i = 0; i < at; i++) {
+        const c = cmd[i];
+        if (q) { if (c === '\\' && q !== "'") i++; else if (c === q) q = null; continue; }
+        if (c === '\\') { i++; continue; }
+        if (c === "'" || c === '"' || c === '`') { q = c; continue; }
+        if (c === '(' || c === '{') { depth++; continue; }
+        if (c === ')' || c === '}') { depth--; continue; }
+        if (depth) continue;
+        if (c === '\n' || (c === ';' && cmd[i + 1] !== ';' && cmd[i - 1] !== ';') || (c === '&' && cmd[i + 1] !== '&' && cmd[i - 1] !== '&' && cmd[i - 1] !== '>' && cmd[i + 1] !== '>')) { start = i + 1; andOr = false; continue; }
+        if ((c === '&' && cmd[i + 1] === '&') || (c === '|' && cmd[i + 1] === '|')) { andOr = true; i++; }
+      }
+      if (andOr) throw new Error('an `&&` or `||` stands before the word in its statement, so the cd needs a hand twin');
+      while (cmd[start] === ' ') start++;
+      return start;
+    };
+    // a pattern spelled as one name it matches: `*` none, `?` one letter, a class its first member (zsh's `[!]` and `[^]` one letter)
+    const depattern = (t) => {
+      let o = '';
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (c === '*') continue;
+        if (c === '?') { o += 'x'; continue; }
+        if (c === '[') {
+          let j = i + 1;
+          const neg = t[j] === '!' || t[j] === '^';
+          if (neg) j++;
+          if (neg && t[j] === ']') { o += 'x'; i = j; continue; }
+          const first = j;
+          if (t[j] === ']') j++;
+          while (j < t.length && t[j] !== ']') j++;
+          if (j < t.length) { o += neg ? 'x' : t[first]; i = j; continue; }
+        }
+        o += c;
+      }
+      return o;
+    };
+    const valueRead = (cmd, name) => { const m = cmd.match(new RegExp(`\\bread\\s+${name}\\s*<<<\\s*([^\\s;]+)`)) || cmd.match(new RegExp(`\\bread\\s+${name}\\s*<<EOF\\n([^\\n]*)\\nEOF`)) || cmd.match(new RegExp(`(?:^|[;\\s])${name}=([^\\s;'"$]+)`)); return m ? m[1] : null; };
+    const onPath = (prog) => { if (prog.includes('/')) return prog; for (const d of String(process.env.PATH || '').split(':')) { const p = path.join(d || '.', prog); try { fs.accessSync(p, fs.constants.X_OK); if (fs.statSync(p).isFile()) return p; } catch { /* the next directory */ } } return null; };
+    const literalOf = (cmd, head) => {
+      const m = head.match(/^"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?$/);
+      if (!m) throw new Error(`the command name ${head} is no variable`);
+      const p = onPath(valueRead(cmd, m[1]) || 'true');   // the value the row reads into it, or `true` where it reads none
+      if (!p) throw new Error(`the value of ${head} is no program on PATH`);
+      return p;
+    };
+    const stripChdirs = (t) => { let prev; do { prev = t; t = t.replace(/(\b(?:env|sudo)\b)\s+(?:-[CD]\s*(?:"[^"]*"|'[^']*'|[^\s;|&]+)|--chdir(?:=|\s+)(?:"[^"]*"|'[^']*'|[^\s;|&]+))/, '$1'); } while (t !== prev); return t; };
+    let twinSerial = 0;
+    const BUILD = {
+      dir: (cmd, l, cwd) => { const raw = refusedWord(l); return splice(cmd, lastAt(cmd, raw), raw, absOf(raw, cwd)); },
+      'dir-q1': (cmd, l, cwd) => {
+        const raw = refusedWord(l);
+        const head = (l.match(/ its command named by `([^`]+)` names /) || [])[1];
+        const at = lastAt(cmd, raw);
+        const hAt = lastAt(cmd, head, at);
+        const out = raw.startsWith('-') ? cmd : splice(cmd, at, raw, absOf(raw, cwd));   // an option is not a path: the literal command reads it as its own
+        return splice(out, hAt, head, literalOf(cmd, head));
+      },
+      notlit: (cmd, l) => { const raw = refusedWord(l); return splice(cmd, lastAt(cmd, raw), raw, `${w.OUT}/scratch/twin-${++twinSerial}.txt`); },
+      'notlit-compare': (cmd) => { const m = cmd.match(/\[\[\s+(\S+)\s+>\s+(\S+)\s+\]\]/); if (!m) throw new Error('no `[[ a > b ]]` comparison to write with expr'); return cmd.replace(m[0], `expr ${m[1]} \\> ${m[2]}`); },
+      home: (cmd, l) => { const raw = refusedWord(l); const m = raw.replace(/^"|"$/g, '').match(/^(?:~|\$HOME|\$\{HOME\})(\/.*)$/); if (!m) throw new Error(`${raw} is no path through HOME`); return splice(cmd, lastAt(cmd, raw), raw, w.HOME + m[1]); },
+      'patternHead-dir': (cmd, l, cwd) => { const raw = refusedWord(l); const at = lastAt(cmd, raw); const s = stmtStart(cmd, at); const out = splice(cmd, at, raw, depattern(raw)); return `${out.slice(0, s)}cd '${cwd}'; ${out.slice(s)}`; },
+      'patternHead-cap': (cmd, l) => { const raw = refusedWord(l); return splice(cmd, lastAt(cmd, raw), raw, depattern(raw)); },
+      'dir-q1-script': (cmd, l, cwd) => { const raw = refusedWord(l); const s = stmtStart(cmd, lastAt(cmd, raw)); return `${cmd.slice(0, s)}cd '${cwd}'; ${stripChdirs(cmd.slice(s))}`; },
+      aliasUnread: (cmd, l, cwd) => {
+        const head = refusedWord(l);
+        const m = cmd.match(new RegExp(`(?:^|[;\\s])(?:cp|mv)\\s+(/[^\\s;]+)\\s+${escapeRe(head)}(?=[\\s;])`));
+        if (!m) throw new Error(`no literal source the binding ${head} stands for`);
+        const at = lastAt(cmd, head);
+        const out = splice(cmd, at, head, m[1]);
+        const from = at + m[1].length;
+        const tail = out.slice(from).search(/[;|&\n]/);
+        const end = tail < 0 ? out.length : from + tail;
+        return out.slice(0, from) + out.slice(from, end).replace(/(^|\s)([^\s'"$~/-][^\s]*\/[^\s]*)/g, (all, sp, p) => `${sp}${path.resolve(cwd, p)}`) + out.slice(end);
+      },
+      boundName: (cmd, l) => { const raw = refusedWord(l); const m = cmd.match(/(?:^|[;\s])cp\s+(\/[^\s;]+)\s/); if (!m || !onPath(m[1])) throw new Error('no literal program copied into place'); return splice(cmd, lastAt(cmd, raw), raw, m[1]); },
+      piped: (cmd) => { const m = cmd.match(/\b(nohup|setsid|nice) \$e ('[^']*')/); const v = valueRead(cmd, 'e'); const c = [...cmd.matchAll(/\|\s*(bash|cat)\b/g)].pop(); if (!m || !v || !c) throw new Error('no `$e` the row reads, or no consumer'); return `${m[1]} ${v} ${m[2]} | ${c[1]}`; },
+    };
+    BUILD['filled-piped'] = BUILD.piped;
+    // the hand twins: the remedy applied by hand where the text asks for a value the row does not give (the word or the program it stands for)
+    const HAND = {
+      'AS3-nice-filled': 'nice tee {OUT}/scratch/x.py > {OUT}/log 2>&1 &',
+      'AS3-env-filled': 'env -i cp base/report.md docs/other.md',
+      'AS3-nice-filled-pipe': 'nice cat {OUT}/scratch/x.py | cat',
+      'AS3-option-abbrev': 'nice --adjustment=5 cp base/report.md docs/other.md',
+      'AS3-nohup-if-pipe-ls-spelled-in-body': "bash -c 'ls'",
+      'AS8-armed-mv-untracked': 'read X <<< {OUT}/scratch; mv {OUT}/scratch/keep.md {OUT}/scratch/c2; PATH=$X:$PATH; /usr/bin/cp base/report.md docs/other.md',
+      'AS8-armed-c2-unread-source': 'read X <<< {OUT}/scratch; cp "$(command -v cp)" {OUT}/scratch/c2; PATH=$X:$PATH; /usr/bin/cp base/report.md docs/report.md',
+      'AS8-unread-source-mv-head': 'mv "$S" {NA}/scratch/c2; /usr/bin/cp {NA}/base/report.md {NA}/docs/other.md',
+      'AS8-unread-source-cat-head': 'cat "$S" > {NA}/scratch/c2; /usr/bin/cp {NA}/base/report.md {NA}/docs/other.md',
+      'AS6-script-eval-in-text': 'eval "true; true" --seed 3',
+      'AS6-script-eval-in-text-after-source': 'source {OUT}/scratch/keep.md; eval "true; true" --seed 3',
+      'AS6-script-eval-in-text-path-after-source': 'source {OUT}/scratch/keep.md; eval "true; tee" {NA}/scratch/a.txt',
+      'AS6-script-eval-in-text-after-cd-var': 'read d <<< docs; cd "$d"; eval "true; true" --seed 3',
+      'AS3-option-unheld-short': 'cp base/report.md docs/other.md',
+      'AS3-option-unheld-long': 'cp base/report.md docs/other.md',
+      'AS3-option-unheld-numactl': 'cp base/report.md docs/other.md',
+      'AS3-fs-nohup-pipe': 'read c <<< ln; nohup ln -s ../docs scratch/lnk | cat; echo y > scratch/lnk/report.md',
+      'AS8-builtin-nonbuiltin-after-backup': 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; /usr/bin/ls docs',
+      'AS8-builtin-enable-script': "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; enable -n echo; /usr/bin/echo",
+      // THE SHELL'S GATE's rows (the seventh verify round's tg-m7-1, tg-m7-4, tg-m7-5): the refused echo spelled by its program's full path
+      'AS8-builtin-gate-for': `${WROTE_ECHO}for i in 1 2; do /usr/bin/echo; enable -n echo; done`,
+      'AS8-builtin-gate-while': `${WROTE_ECHO}n=0; while [ $n -lt 2 ]; do /usr/bin/echo; enable -n echo; n=$((n+1)); done`,
+      'AS8-builtin-gate-until': `${WROTE_ECHO}n=0; until [ $n -ge 2 ]; do /usr/bin/echo; enable -n echo; n=$((n+1)); done`,
+      'AS8-builtin-gate-trap-exit': `${WROTE_ECHO}trap /usr/bin/echo EXIT; enable -n echo`,
+      'AS8-builtin-gate-trap-debug': `${WROTE_ECHO}trap /usr/bin/echo DEBUG; enable -n echo; true`,
+      'AS8-builtin-gate-disable-for': `${WROTE_ECHO}for i in 1 2; do /usr/bin/echo; disable echo; done`,
+      'AS8-builtin-gate-func-loop': `${WROTE_ECHO}f() { /usr/bin/echo; }; for i in 1 2; do f; enable -n echo; done`,
+      'AS8-builtin-gate-ansic-loop': `${WROTE_ECHO}for i in 1 2; do /usr/bin/echo; $'\\x65nable' -n echo; done`,
+      'AS8-builtin-gate-eval-ansic-loop': `${WROTE_ECHO}for i in 1 2; do /usr/bin/echo; eval "\\$'\\\\x65nable' -n echo"; done`,
+      'AS8-builtin-gate-unread-head-loop': `printf '\\145nable' > {OUT}/scratch/n; ${WROTE_ECHO}for i in 1 2; do /usr/bin/echo; "$(cat {OUT}/scratch/n)" -n echo; done`,
+      'AS8-builtin-gate-unread-trap': `printf '\\145nable' > {OUT}/scratch/n; ${WROTE_ECHO}trap /usr/bin/echo EXIT; "$(cat {OUT}/scratch/n)" -n echo`,
+      'AS8-builtin-gate-source-loop': `printf '\\145nable -n echo\\n' > {OUT}/scratch/e.sh; ${WROTE_ECHO}for i in 1 2; do /usr/bin/echo; . {OUT}/scratch/e.sh; done`,
+      'AS8-builtin-gate-disable': `${WROTE_ECHO}disable echo; /usr/bin/echo`,
+      'AS8-builtin-gate-zmodload': `${WROTE_ECHO}zmodload zsh/rlimits; /usr/bin/echo`,
+      'AS8-builtin-gate-eval-enable': `${WROTE_ECHO}eval 'enable -n echo'; /usr/bin/echo`,
+      'AS8-builtin-gate-mention-cost': `${BACKED_X}/usr/bin/echo enable`,
+      'AS8-builtin-exec-echo': `${STASHED_ECHO}exec /usr/bin/echo base/report.md docs/report.md`,
+      'AS8-builtin-command-echo': `${STASHED_ECHO}command /usr/bin/echo base/report.md docs/report.md`,
+      'AS8-builtin-slash-env-echo': `${STASHED_ECHO}/usr/bin/env /usr/bin/echo base/report.md docs/report.md`,
+      'AS8-builtin-slash-nohup-echo': `${STASHED_ECHO}/usr/bin/nohup /usr/bin/echo base/report.md docs/report.md`,
+      'AS8-builtin-bound-env-echo': `cp /usr/bin/env {OUT}/scratch/e2; ${STASHED_ECHO}{OUT}/scratch/e2 /usr/bin/echo base/report.md docs/report.md`,
+      'AS8-builtin-quoted-echo-cost': `${STASHED_ECHO}/usr/bin/echo base/report.md docs/report.md`,
+      // the held options' long forms, the empty name's wrapper dropped, and the refused options' commands spelled without them (tg-m7-7, tg-m7-8)
+      'AS3-option-held-flag': 'env --debug cp base/report.md docs/other.md',
+      'AS3-option-held-opt': 'env --block-signal=INT cp base/report.md docs/other.md',
+      'AS3-option-held-script': "flock {OUT}/scratch/lk --command='cp base/report.md docs/other.md'",
+      'AS3-option-held-piped': "nice --adjustment=5 echo 'cp ../base/report.md report.md' | bash",
+      'AS3-option-unheld-empty-name': 'cp base/report.md docs/other.md',
+      'AS3-option-refuse-abbrev-env': 'cp base/report.md docs/report.md',
+      'AS3-option-refuse-abbrev-sudo': 'tee docs/other.md < /dev/null',
+    };
+    const trackedNamed = (reason) => {
+      const m = line1(reason).match(/^Track-changes is ON for (.+?), so this command is blocked here/);
+      if (!m) return false;
+      return [path.join(w.NA, 'docs', 'report.md'), path.join(w.WEB, 'docs', 'report.md'), path.join(w.NA, 'figs', 'plot.png')].includes(m[1]) || [w.NA, w.WEB].some((r) => m[1].startsWith(path.join(r, 'notes') + path.sep));
+    };
+    const lifted = (h) => (h.status === 0 ? 'allow' : h.status === 2 && trackedNamed(h.reason) ? 'name' : null);
+    const settle = (id, cwd, cmd0, reason0) => {
+      if (Object.hasOwn(HAND, id)) {
+        const cmd = w.fill(HAND[id]);
+        const h = w.hook(cmd, cwd);
+        const v = lifted(h);
+        if (!v) throw new Error(`its hand twin is not lifted: ${cmd}: ${line1(h.reason)}`);
+        return { how: 'hand', verdict: v, steps: 1 };
+      }
+      let cmd = cmd0;
+      let reason = reason0;
+      for (let step = 1; step <= 4; step++) {
+        const k = kindOf(reason);
+        if (!Object.hasOwn(BUILD, k)) throw new Error(`no hand twin, and the ${k} refusal ${step > 1 ? 'its twin met' : 'it carries'} is no rewrite: ${line1(reason)}`);
+        cmd = BUILD[k](cmd, line1(reason), cwd);
+        const h = w.hook(cmd, cwd);
+        const v = lifted(h);
+        if (v) return { how: 'mech', verdict: v, steps: step };
+        if (h.status !== 2 || line1(h.reason) === line1(reason)) throw new Error(`its remedy did not lift the refusal: ${cmd}: ${line1(h.reason)}`);
+        reason = h.reason;
+      }
+      throw new Error(`its twin is still refused after four remedies: ${cmd}`);
+    };
+    const refusedKinds = {};
+    for (const [id, r] of Object.entries(reasonAt)) {
+      if (r.status !== 2) continue;
+      const k = kindOf(r.reason);
+      assert.ok(k !== 'unclassified', `${id}: the M2 census classifies every refused row, not: ${line1(r.reason)}`);
+      (refusedKinds[k] = refusedKinds[k] || []).push(id);
+    }
+    const rowOf = Object.fromEntries(all.map((r) => [r[0], r]));
+    const capIds = new Set(capRows.map((r) => r[0]));
+    const twinFailures = [];
+    const tally = {};
+    for (const crowded of [false, true]) {
+      w.build();
+      if (crowded) crowd();
+      for (const [k, ids] of Object.entries(refusedKinds)) for (const id of ids) {
+        if (capIds.has(id) !== crowded) continue;
+        const reason = reasonAt[id].reason;
+        if (NO_REMEDY.has(k)) { if (!keepsNoRemedy(k, line1(reason))) twinFailures.push(`${id}: the ${k} refusal offers no remedy, so its first line ends with its cause and the track-edit sentence alone: ${line1(reason)}`); continue; }
+        if (!Object.hasOwn(REMEDY, k)) { twinFailures.push(`${id}: ${k} is neither a remedy-offering kind nor a stated no-remedy kind`); continue; }
+        const want = typeof REMEDY[k] === 'function' ? REMEDY[k](line1(reason)) : REMEDY[k];
+        if (remedyOf(reason) !== want) { twinFailures.push(`${id}: the ${k} refusal names one remedy, (${want}), not (${remedyOf(reason)})`); continue; }
+        const t = (tally[k] = tally[k] || { rows: 0, mech: 0, hand: 0, allow: 0, name: 0, chained: 0, chainedIds: [] });
+        t.rows++;
+        try {
+          const r = settle(id, w.cwds[rowOf[id][1]], w.fill(rowOf[id][2]), reason);
+          t[r.how]++; t[r.verdict]++;
+          if (r.steps > 1) { t.chained++; t.chainedIds.push(id); }
+        } catch (e) { twinFailures.push(`${id} (${k}): ${String(e.message).split('\n')[0]}`); }
+      }
+    }
+    assert.deepEqual(twinFailures, [], `every refused row of a remedy-offering kind names its kind's one remedy and has a twin that lifts it (${twinFailures.length} do not)`);
+    const remedyKinds = Object.keys(tally).sort();
+    const noRemedyKinds = Object.keys(refusedKinds).filter((k) => NO_REMEDY.has(k)).sort();
+    assert.ok(remedyKinds.length >= 10 && Object.values(tally).every((t) => t.rows > 0 && t.rows === t.mech + t.hand), `the M2 census twins each refused row of the remedy-offering kinds (saw ${remedyKinds.join(', ')})`);
+    console.log(`# M2 over every row: ${remedyKinds.map((k) => `${k} ${tally[k].rows} (twins ${tally[k].mech} mechanical, ${tally[k].hand} by hand; ${tally[k].allow} allowed, ${tally[k].name} by name; ${tally[k].chained} after a second refusal${tally[k].chained ? `: ${tally[k].chainedIds.join(', ')}` : ''})`).join('; ')}; no-remedy kinds ${noRemedyKinds.map((k) => `${k} ${refusedKinds[k].length}`).join(', ')}`);
+    // an abbreviation of each long option a wrapper's table refuses outright (its last letter dropped) takes that option's own refusal, its remedy the
+    // command without it, asked of the guard from the tracked root (the seventh verify round's tg-m7-7: the long form named as its remedy was refused in
+    // its turn); the population read from the table, the census failing on none
+    const refuseAbbrevs = optKeys.flatMap((k0, i0) => { const body = optBody.slice(k0.at, i0 + 1 < optKeys.length ? optKeys[i0 + 1].at : optBody.length); const m = body.match(/refuse: \{[^}]*long: \[([^\]]*)\]/); return m ? [...m[1].matchAll(/'([a-z-]+)'/g)].map((x) => [k0.name, x[1].slice(0, -1)]) : []; });
+    assert.ok(refuseAbbrevs.length > 1, 'the census reads the refused long options from the table');
+    w.build();
+    for (const [wr, ab] of refuseAbbrevs) {
+      const h = w.hook(`${wr} --${ab} cp base/report.md docs/other.md`, w.cwds.na);
+      assert.ok(h.status === 2 && kindOf(h.reason) === 'opaque' && remedyOf(h.reason) === `Spell the command without \`${wr} --${ab}\``, `\`${wr} --${ab}\`, an abbreviation of an option the table refuses, takes that option's own refusal: ${line1(h.reason)}`);
+    }
+    // the backup narrowing's parts (S4-3; the fifth verify round's tg-m5-4): the option list read from parseCopyOptions and the verbs from COPY_OPT,
+    // each with a row of its own (an option alone among the backup options on the copy, move or link that makes the backup), and the refusal's
+    // option list naming each option the parser reads (tg-m5-7)
+    const pco = hookText.slice(hookText.indexOf('function parseCopyOptions('), hookText.indexOf('\n}\n', hookText.indexOf('function parseCopyOptions(')));
+    const backupLetters = [...((pco.match(/if \(((?:ch === '[A-Za-z]'(?: \|\| )?)+)\) backup = true;/) || [])[1] || '').matchAll(/'([A-Za-z])'/g)].map((m) => m[1]);
+    const backupLongs = [...((pco.match(/if \(((?:nameL === '[a-z-]+'(?: \|\| )?)+)\) backup = true;/) || [])[1] || '').matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+    const copyVerbs = [...hookText.slice(hookText.indexOf('const COPY_OPT = {'), hookText.indexOf('\n};\n', hookText.indexOf('const COPY_OPT = {'))).matchAll(/^ {2}([a-z]+): \{/gm)].map((m) => m[1]);
+    assert.ok(backupLetters.length > 0 && backupLongs.length > 0 && copyVerbs.length > 0, 'the census reads the backup options and the verbs from the hook');
+    const backupMakers = all.filter((r) => /^AS8-backup-/.test(r[0])).map((r) => {
+      const m = r[2].match(/(?:^|[;'(]|\$\()\s*(cp|mv|install|ln)((?:\s+-[^\s;']+(?:\s+zz)?)+)\s/);
+      if (!m) return { id: r[0], verb: null, opts: [] };
+      const opts = [];
+      for (const t of m[2].trim().split(/\s+/)) {
+        if (t.startsWith('--')) { const n = t.slice(2).split('=')[0]; if (backupLongs.includes(n)) opts.push(`--${n}`); }
+        else if (t.startsWith('-')) for (const ch of t.slice(1)) if (backupLetters.includes(ch)) opts.push(`-${ch}`);
+      }
+      return { id: r[0], verb: m[1], opts };
+    });
+    for (const o of [...backupLetters.map((c) => `-${c}`), ...backupLongs.map((n) => `--${n}`)]) assert.ok(backupMakers.some((b) => b.opts.length === 1 && b.opts[0] === o), `the backup option ${o} has a row of its own (parseCopyOptions reads it)`);
+    // and each FORM the parser reads, by the option's arity in COPY_OPT's cp entry (the sixth verify round's tg-m6-1): a letter that takes a value alone
+    // with its value a word of its own, with its value glued, and after another letter of a cluster; a flag letter alone, after another letter and as
+    // the first letter of a cluster (`-bf`: the seventh verify round's tg-m7-6); a long
+    // option that takes a value with `=value` and with its value a word of its own; a long option whose value is optional bare and with `=value`
+    const cpAt = hookText.indexOf('  cp: {', hookText.indexOf('const COPY_OPT = {'));
+    const cpBody = hookText.slice(cpAt, hookText.indexOf('\n  },', cpAt));
+    const cpArgShort = (cpBody.match(/argShort: '([^']*)'/) || [])[1] || '';
+    const cpArgLong = [...((cpBody.match(/argLong: new Set\(\[([^\]]*)\]\)/) || [])[1] || '').matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+    assert.ok(cpArgShort.length > 0 && cpArgLong.length > 0, "the census reads cp's value-taking options from COPY_OPT");
+    const formsOf = (r) => {
+      const m = r[2].match(/(?:^|[;'(]|\$\()\s*(cp|mv|install|ln)((?:\s+-[^\s;']+(?:\s+zz)?)+)\s/);
+      const toks = m ? m[2].trim().split(/\s+/) : [];
+      const out = [];
+      toks.forEach((t, i) => {
+        if (t.startsWith('--')) { const [n, v] = t.slice(2).split('='); if (backupLongs.includes(n)) out.push(`--${n} ${v !== undefined ? '=value' : cpArgLong.includes(n) && toks[i + 1] === 'zz' ? 'separate' : 'bare'}`); return; }
+        if (!t.startsWith('-')) return;
+        for (let j = 1; j < t.length; j++) {
+          const takes = cpArgShort.includes(t[j]);
+          if (backupLetters.includes(t[j])) out.push(`-${t[j]} ${j > 1 ? 'cluster' : t.length === 2 ? 'alone' : takes ? 'glued' : 'lead'}`);
+          if (takes) break;
+        }
+      });
+      return out;
+    };
+    const backupForms = all.filter((r) => /^AS8-backup-/.test(r[0])).map(formsOf);
+    for (const c of backupLetters) for (const f of cpArgShort.includes(c) ? ['alone', 'glued', 'cluster'] : ['alone', 'cluster', 'lead']) assert.ok(backupForms.some((fs) => fs.length === 1 && fs[0] === `-${c} ${f}`), `the backup option -${c} has a row in the form ${f}, the only backup option of its command`);
+    for (const n of backupLongs) for (const f of cpArgLong.includes(n) ? ['=value', 'separate'] : ['bare', '=value']) assert.ok(backupForms.some((fs) => fs.length === 1 && fs[0] === `--${n} ${f}`), `the backup option --${n} has a row in the form ${f}, the only backup option of its command`);
+    for (const v of copyVerbs) assert.ok(backupMakers.some((b) => b.verb === v && b.opts.length), `${v} has a backup row (COPY_OPT holds it)`);
+    for (const o of [...backupLetters.map((c) => `\`-${c}\``), ...backupLongs.map((n) => `\`--${n}\``)]) assert.ok(reasonAt['AS8-backup-cp'].reason.includes(o), `the backup refusal's option list names ${o}`);
+    // where the code lives (the rows above prove what it does; each pin names the rows that red without it)
+    const hook = fs.readFileSync(HOOK, 'utf8');
+    assert.ok(hook.includes('function formsPattern(w) {') && hook.includes('if (!formsPattern(w)) return [word(text, true, w.raw)];') && hook.includes('if (w.glob) return !cwdKnown && formsPattern(w);'), 'a word is a pattern only where it forms one, a class closing past a slash and a `[!]` or `[^]` among them, asked by expandGlob and mayVanish (behaviour: AS1-*-after-*, AS1-side-lone-bracket, AS1-armed-class-across-slash, AS1-armed-neg-class-*, AS1-armed-caret-class-source)');
+    assert.ok(hook.includes("else { const j = parenCloses(lexScopes); if (j >= 0) lexScopes.length = j; else if (lexScopes.includes('case')) marker.pattern = true; }") && hook.includes('if (marker.pattern) markPatternList();'), "THE CASE PATTERN is marked beside the paren rule's line, which stands as it was (behaviour: AS2-pending-*, AS2-later-*)");
+    assert.ok(/if \(seg\.casePattern\) \{\n\s+recurseSubs\(seg\);\n\s+for \(const v of seg\.viaSubs\) recurse\(v\.text, shell, false, v\.via\);\n\s+runPromptExpansions\(seg\);\n\s+taintArith\(seg\);\n\s+for \(const w of seg\.words\) taintAssigningExpansions\(w\);\n\s+continue;\n\s+\}/.test(hook), 'a pattern word is no command, and its expansions still run and assign (behaviour: AS2-armed-brace-cmdsub*, AS2-armed-arith-*, AS2-armed-zsh-assign, AS2-armed-prompt)');
+    assert.equal((hook.match(/, filledHead: true \},/g) || []).length, 2, 'nohup and setsid alone read a filled-in word as the command (behaviour: AS3-nohup-*, AS3-setsid-*; AS3-nice-filled keeps the refusal)');
+    assert.ok(hook.includes("const filledPiped = !!(walked && walked.unknown && walked.unknown.head) && outputReachesPipe(idx);") && hook.includes("const cmd = walked && walked.unknown && walked.unknown.head && !filledPiped ? walked.unknown.head : walked;"), 'the walk takes the filled-in command where its output goes through no `|`, its own or an enclosing construct\'s (behaviour: AS3-nohup-pipe, AS3-setsid-pipe, AS3-nohup-group-pipe and the other enclosing forms)');
+    // M1 (the mechanism ruling): the road is RESTORED behind any wrapper (the T2-7 `if (filledHead) unreadHead = null;` and T3-4's
+    // every-wrapper line are gone), and the names stay readable only when at least one external wrapper precedes the head (behindExternal)
+    assert.ok(!hook.includes('if (filledHead) unreadHead = null;') && !hook.includes('WRAPPER_OPT[n].external === true)) unreadHead = null;'), 'the road is restored behind any wrapper: the filled-head and every-wrapper-external lines that dropped it are gone (behaviour: AS3-cost-nohup-moves, AS3-nohup-dd-moves, AS3-nohup-then-write, AS3-link-* refused as a directory not known)');
+    assert.ok(hook.includes('const behindExternal = !!cmd.wrapped && cmd.wrappers.some((n) => Object.hasOwn(WRAPPER_OPT, n) && WRAPPER_OPT[n].external === true);') && hook.includes("if (unreadHead && !behindExternal && seg.op !== '|' && seg.op !== '&') unreadPoison = "), 'the names stay readable when at least one external wrapper precedes the head (behaviour: AS3-nohup-no-poison, AS3-nohup-dd-no-poison, AS3-chain-command-nohup-no-poison, AS3-chain-nohup-command-no-poison; and poisoned behind a wrapper the shell runs itself: AS3-kept-time-dd and the other kept rows)');
+    assert.ok(hook.includes('if (unreadHead && cmd.writes && cmd.writes.length) { const at = dirNow(); unreadHeadWrites = () => fromDir(at, () => wrapperWrites(cmd)); }') && hook.includes('if (unreadHeadWrites) unreadHeadWrites();'), 'a `time -o FILE` before a command named by a variable is judged before its road moves the directory (behaviour: AS3-time-o-rel-*-dashdash-out, AS3-ctl-time-o-dashdash-untracked)');
+    assert.ok(hook.includes('if (unknownDir && !path.isAbsolute(w.text)) w = word(w.text, true, w.raw);') && hook.includes('else { const u0 = unresolved.length; cannotRead(w, how); for (const u of unresolved.splice(u0)) { u.q1 = q1; q1Unresolved.push(u); } return; }'), 'a pattern operand the guard cannot expand is judged by its spelling, or refused past the caps (behaviour: AS4-*-glob, AS4-cap-*)');
+    assert.ok(hook.includes("    if (unreadPoison) poison(unreadPoison);   // THE UNREAD HEAD's names (above), applied after the segment's own words and redirections were resolved\n    recordSegment(seg, idx, cmd, preWords);"), 'the poison of a command named by a variable is applied just before recordSegment (behaviour: AS5-semi, AS5-newline, AS5-before, AS5-ctl-bg, AS5-ctl-pipe)');
+    assert.ok(hook.includes("{ let at = dirNow(); if (cmd.chdirs && cmd.chdirs.length) fromDir(at, () => { enterChdirs(cmd); at = dirNow(); }); unreadOperandsAtHead = () => fromDir(at, "), "the operands of a command named by a variable are judged in the wrappers' directory (behaviour: AS3-envC-*, AS3-sudoD-nohup-name)");
+    assert.ok(hook.includes('wrapperWrites(cmd.unknown);') && hook.includes('wrapperWrites(cmd.opaque);') && hook.includes("if ('script' in cmd) {   // `flock … -c 'string'` runs the string through `$SHELL -c`, read like `sh -c` (round 4)\n      wrapperWrites(cmd);"), 'a `time -o FILE` before a wrapper option the guard does not read, an opaque option or a flock string is still a write (behaviour: AS3-time-o-nice-out, AS3-time-o-nice-command-out, AS3-time-o-envS-out, AS3-time-o-flock-na, AS3-time-o-rel-later-envC-out)');
+    assert.ok(hook.includes("      fromDir(dirNow(), () => {\n        enterChdirs(cmd);\n        for (const t of scriptTexts(cmd.script, "), "flock's string is read behind the wrappers' chdirs (behaviour: AS3-envC-flock-script, AS3-envchdir-flock-script, AS3-sudoD-flock-script, AS3-envC-var-flock-script-dir)");
+    assert.ok(hook.includes('if (c.again) { setUnknown(') && hook.includes('again: chdirs.some((c) => c.inv === wrappers.length) })'), 'a second chdir option in one env or sudo invocation leaves the directory not known (S4-1; behaviour: AS3-envC-rpt-*, and the nested control AS3-envC-flock-script)');
+    assert.ok(hook.includes('if (parsed.backup) boundBackup.made = true;') && hook.includes("          : boundBackup.made ? { kind: 'boundName', text: "), 'a backup option on cp, mv, install or ln turns the bound-name narrowing off for the rest of the command (S4-3; behaviour: AS8-backup-*)');
+    assert.ok(hook.includes('const boundWhy = pathValue != null || unknownDir ? null') && hook.includes("          : sameName.length ? { kind: 'boundName', text: ") && hook.includes("if (boundWhy && !shellRuns) cannotRead(hw, 'command name', boundWhy);"), 'a bare name under a PATH not read refuses only where a bound path carries the name (behaviour: AS8-cp-*, AS8-mv-*, AS8-unit-*, AS8-armed-c2*)');
+    assert.ok(hook.includes('const shellRuns = (own || hIdx === rawHeadIndexOf(seg.words)) && (!hw.marks || /^u+$/.test(hw.marks)) && ALL_SHELL_BUILTINS.has(bareName) && !builtinsOff.seen;') && hook.includes('boundRoad(headWord, headIdx, !cmd.wrapped);'), "THE SHELL'S OWN NAME: a bare name the three shells run as their own skips both refusals only as the shell's own lookup (the head where no wrapper runs it, or the first wrapper: AS8-builtin-exec-command and the hand twins of the exec and command rows) and spelled with no quoting (behaviour: AS8-builtin-cd-after-backup and the other allowed AS8-builtin-* rows; refused behind a wrapper: AS8-builtin-exec-echo, AS8-builtin-command-echo, AS8-builtin-slash-env-echo, AS8-builtin-slash-nohup-echo, AS8-builtin-bound-env-echo, AS8-builtin-env-echo-after-backup; quoted: AS8-builtin-quoted-if, AS8-builtin-quoted-while, AS8-builtin-partquoted-for, AS8-builtin-quoted-echo-cost; the census above asks the shells for the set)");
+    assert.ok(hook.includes('const builtinsOff = { seen: mentionsBuiltinGate(command), given: [], withdrawn: [] };') && hook.includes('if (BUILTIN_GATES.has(name)) gateBuiltins();') && hook.includes("    gateBuiltins();   // THE SHELL'S GATE: a text not read, run here, may turn a builtin off") && hook.includes('else if (boundWhy) builtinsOff.given.push(unreadEntry(hw, ') && hook.includes('r.unresolved.push(...builtinsOff.withdrawn);'), "THE SHELL'S GATE: set for the whole command by the scan before the walk, by the walk's gate name and by a text not read run here, each exemption given before it withdrawn (behaviour: AS8-builtin-gate-* by the scan, AS8-builtin-gate-ansic-loop and AS8-builtin-gate-eval-ansic-loop by the walk's name, AS8-builtin-gate-unread-head-loop, AS8-builtin-gate-unread-trap and AS8-builtin-gate-source-loop by the text not read; the scan's cost: AS8-builtin-gate-mention-cost)");
+    assert.ok(hook.includes('const fsRoad = ctx.fsRoad || { why: null, seq: 0, rel: [] };') && hook.includes('const fsAfter = (seq) => { if (fsRoad.seq > seq) fsMark(fsRoad.why); };') && hook.includes("for (let j = frames.length - 1; j >= 0; j--) { frames[j].fsInside = true; if (frames[j].kind === 'function' && !frames[j].coproc) break; }") && hook.includes('fsRoad.seq++; fsRoad.why = why;'), 'THE FILESYSTEM ROAD is one state every walk of the command shares, counted so a restored directory state leaves the directory unknown again, each frame open when it is taken marked up to a function body being defined (behaviour: AS3-fs-*, AS3-ctl-fs-nohup-func-uncalled)');
+    assert.ok(hook.includes('for (const f of frames.slice(j)) if (f.fsInside && LOOP_HEADS.has(f.kind)) for (const r of fsRoad.rel.slice(f.relAt)) if (!r.again) {') && hook.includes('if (!path.isAbsolute(w.text)) fsRoad.rel.push({ w, how: how + viaOf() });') && hook.includes(", relAt: fsRoad.rel.length }; frames.push(f); return f; };"), 'THE ROAD IN A LOOP: a loop body marked by the road has the relative writes judged in it read again as writes whose directory is not known (behaviour: AS3-fs-loop-*, AS3-ctl-fs-loop-absolute, AS3-ctl-fs-loop-write-before, AS3-ctl-fs-loop-func-uncalled)');
+    assert.deepEqual([(hook.match(/fsAfter\(/g) || []).length, (hook.match(/fsMark\(/g) || []).length], [3, 4], 'THE FILESYSTEM ROAD is re-applied at each restore of a saved directory state: by count at a text\'s return, fromDir and a wrapper\'s chdir left (fsAfter), by mark at a subshell\'s or a coproc\'s close (restore) and a piped or backgrounded group\'s, beside where it is taken and fsAfter itself (fsMark) (behaviour: AS3-fs-nohup-cmdsub, AS3-fs-nohup-flock-script, AS3-fs-envC-bashc, AS3-fs-nohup-subshell, AS3-fs-nohup-coproc, AS3-fs-nohup-group-bg)');
+    assert.ok(hook.includes('r.unknown.held = held;') && hook.includes('if (nm.length > 0 && spec.refuse && spec.refuse.long.some((x) => x.startsWith(nm))) return opaque(`${name} --${nm}`, value);') && hook.includes('if (u.why.held) return ') && hook.includes('if (u.why.piped) return `This command is blocked here: its \\`${u.why.wrapper}\\` wrapper carries the option ${u.why.option}, which I do not know, `'), 'a literal wrapper option is split by what the table holds and by whether the output reaches `|` (behaviour: AS3-option-abbrev, AS3-option-held-*, AS3-option-unheld-*; an abbreviation of a refused option takes the refusal of the option it abbreviates: AS3-option-refuse-abbrev-*, and the census over the table above)');
+    assert.ok(hook.includes("const compare = u.how.includes(CONSTRUCT_HEADS['[['].via) ? 'Write the comparison with `expr`") && hook.includes('const inText = moved;'), 'the comparison names its one remedy, and the text\'s own move names the text remedy whatever an earlier construct did (behaviour: AS7-compare-notlit, AS6-script-eval-in-text-*)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
 });

@@ -175,7 +175,21 @@ the clone updates it:
   modifiers `noglob`, `nocorrect` and `-`, which hid the writer behind them) is parsed in full
   against its own option table or
   the command is refused naming the option (an unknown, abbreviated or non-literal one: spell the
-  long form the guard knows, or drop the wrapper), a glued `env -Cdocs` is a chdir, a nested `env -C a
+  long form the guard knows of an abbreviated option, except that an abbreviation of an option
+  refused outright (`env --split`) is refused as that option; run the command without the wrapper for an
+  option the guard does not know, unless its output goes through `|`, where no remedy is offered; for
+  a word the shell fills in, spell it out as the option or the command it stands for, and where its
+  output goes through `|` put the command directly before it, with no redirection and no group,
+  subshell or compound around it; behind `nohup` or `setsid`, whose
+  options take no value, a non-literal word is read as the command name, and its operands are judged
+  as for a command named by a variable, unless its output goes through `|` to another command,
+  directly or through an enclosing group, subshell or compound; a command named by a variable keeps its
+  names readable when an external program wrapper (`nohup`, `setsid`, `env`, `nice` and the like, not a
+  shell builtin) precedes it, since it then runs in a child process that cannot set this shell's variables,
+  while the directory is judged unknown after it all the same, so a later relative write is refused after
+  such a command run in the foreground in this shell (not backgrounded, not before a `|`, and not in a
+  subshell or a substitution), and after the word behind `nohup` or `setsid` wherever it runs), a glued
+  `env -Cdocs` is a chdir, a nested `env -C a
   env -C b` enters a then b under a, `env -S` and sudo's `-e`, `-i`, `-s`, `-R` and `-h` are refused
   outright, and `time -o FILE` is a write of FILE; an `ln -s` whose source is not literal makes the
   link name unknown, so a later write through it refuses; a `set`, `shopt`, `setopt` or `unsetopt`
@@ -211,8 +225,8 @@ the clone updates it:
   the command it runs in every position, and a literal echo or printf piped into a shell reading stdin is
   that shell's script (a producer the guard cannot see, `cat f | bash`, stays unread, as does a script
   handed to a shell outside the set it reads, busybox sh or ash among them), and since its third fix-up the same day an unquoted here-document body's expansions are read as the commands they run and the expanded body is the consumer's script (a quoted delimiter keeps the body as written), a `$(echo '...')` or a backtick with literal operands is the text it prints where the shell puts it (so `bash -c "$(echo 'cp a b')"` and `$(echo cp) a b` copy), a `${x:-word}` alone is read as a script under its default word, zsh's `=(cmd)` runs its command, a shell fed through a subshell, a group, an if or loop body, a `/dev/stdin` operand, a `<(echo '...')` script, a redirection on the compound's closer or a `-c` script's inner shell reads what was piped or redirected to it, and a copying writer whose one unquoted operand the shell may split into two refuses while a project is in play (a `${...}` word the guard cannot read as a script, a producer outside its output model (since round 6's second commit, 2026-09-21, the model reads a subshell or a group of echo, printf and silent commands as what it prints), a redirection on the closing brace of zsh's brace-body compound and a command whose name is an expansion the resolver never reads stay unread and are named), and `[[ $a > $b ]]`
-  with `$b` the guard cannot read refuses from a tracked cwd (the remedy: `expr`, or a cwd outside
-  the project); a link the command makes is followed into a numeric
+  with `$b` the guard cannot read refuses from a tracked cwd (the remedy: the comparison written with
+  `expr`); a link the command makes is followed into a numeric
   name's folder too, and one whose source is not literal refuses a numeric write through it; a
   python or node path that is a plain string is judged by its text whatever it holds (a `$` is
   text), while one built from an f-string, `.format(`, `%` or a template literal with `${}` is
@@ -232,7 +246,8 @@ the clone updates it:
   PWD and OLDPWD once the command names the name outside an expansion or may fill it in (so
   `PWD=<dir>; cp x $PWD/docs/report.md` from a tracked cwd is refused as not literal, the reason
   naming the mention); what stays opaque (a name the command never sets, one set in a body, after
-  `&&`, in a subshell, by a `read`, a loop, an eval, a sourced file or a function call, a `$(...)`)
+  `&&`, in a subshell, by a `read`, a loop, an eval, a sourced file or a function call, after a command named by
+  a variable with no external program wrapper before it, a `$(...)`)
   keeps the verdict the working directory gives it, refused as not literal from a cwd in a tracked
   project and allowed from a cwd in no project. The principle: a guard is strictest where its
   subject is and loosest where its subject is not; this guard's subject is tracked files inside
