@@ -167,16 +167,23 @@ no binding here, and the census does not see the value such a setting gives it (
   or to 45001.0, or to "x" and to "45001", int(P) is 45001), except at a step, where a name with a value other than
   an int is unbounded, int() around it too; in offset_base(), below, a name by each value the census records for it in
   turn; and, over bounded operands, str() and int(), a unary minus or plus (-7, +7), + - and *, and // and % by a
-  divisor whose every value is positive, of one value or of several: // as the span from the least to the greatest
-  quotient of an end of its left operand by an end of its divisor (90002 // K, with K bound to 2, to 3 and by K = f(),
-  is 30000-45001), % by one value as the remainder where the left operand is one value and as 0 to the divisor less one
-  otherwise, and % by a divisor of several values as 0 to its highest value less one (50000 % K, with K bound to 60000,
-  to 70000 and by K = f(), is 0-69999). It reads an unknown operand of % by such a divisor as 0 to the divisor's highest
-  value less one, and a call to randint(a, b), randrange(stop), randrange(start, stop[, step]) or randbelow(n) over
-  bounded arguments (random's and secrets', by the callee's name; a randrange's step may be unbounded, below) as the
-  values it can return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does random.randint(40000,
-  50000). A call Python always refuses can give a span whose ends are reversed (random.randint(50000, 40000) is
-  50000-40000), and such a span counts when both its ends lie in the range. Each argument of one of these random calls
+  divisor read by its positive part, from the greater of its lowest value and 1 up to its highest, and its negative
+  part, from its lowest value up to the lesser of its highest and -1, each a part only where it holds a value, as the
+  span holding both parts' readings. 0, for which Python raises, is in neither part, so no reading divides by it, and a
+  divisor that is 0 alone, or a reversed one (below) whose ends lie on either side of 0, is not read. By a part, // is
+  the span from the least to the greatest quotient of an end of its left operand by an end of the part (90002 // K,
+  with K bound to 2, to 3 and by K = f(), is 30000-45001, and with K bound to -1 and to 2 it is -90002-90002), and % is
+  the remainder where the left operand and the part are one value each, and otherwise 0 to the part's highest value
+  less one for a positive part and the part's lowest value plus one to 0 for a negative one, as Python's remainder
+  takes the divisor's sign (50000 % K, with K bound to 60000, to 70000 and by K = f(), is 0-69999, and
+  80000 + os.getpid() % -40000 is 40001-80000). It reads an unknown operand of % by a divisor so too, by each part as
+  for a left operand of several values, and a call to randint(a, b), randrange(stop), randrange(start, stop[, step])
+  or randbelow(n) over bounded arguments (random's and secrets', by the callee's name; a randrange's step may be
+  unbounded, below) as the values it can return, so 20000 + os.getpid() % 20000 is 20000-39999 and counts, and so does
+  random.randint(40000, 50000). A call Python always refuses can give a span whose ends are reversed
+  (random.randint(50000, 40000) is 50000-40000), and such a span counts when both its ends lie in the range; as a
+  divisor it reads by its parts, so 90002 // random.randint(3, 2) is 30000-45001, an over-read, and
+  90002 // random.randint(1, 0) is not read. Each argument of one of these random calls
   is given by position or by its parameter's name (randint's a and b, randrange's start, stop and step, randbelow's
   exclusive_upper_bound; a keyword that names none is passed over), and the call is read by the arguments that fill its
   parameters from the first up to the first left empty: random.randint(a=40000, b=50000) counts as random.randint(40000,
@@ -623,11 +630,11 @@ def _signed_number(v):
 
 def interval(node, bound=None, steps=None):
     """(lo, hi, computed) for an int expression the census can bound, else None: constants, a unary minus or plus, + -
-    and * over them, // and % by a divisor whose every value is positive (// by the least and greatest quotient of their
-    ends, so 90002 // K, with K bound to 2, to 3 and by K = f(), is 30000-45001; % by a divisor of several values as 0
-    to its highest value less one), a name (below), str() or int() around one (int() of a name as CPython's int() of
-    each of its values in `bound`, a float or a string included and a value int() refuses passed over), an unknown
-    operand of % by such a divisor read as 0 to its highest less one, and randint(a, b), randrange(stop),
+    and * over them, // and % by a divisor read by its positive and its negative part, 0 in neither (_divided(): so
+    90002 // K, with K bound to 2, to 3 and by K = f(), is 30000-45001, and with K bound to -1 and to 2 it is
+    -90002-90002), a name (below), str() or int() around one (int() of a name as CPython's int() of each of its values
+    in `bound`, a float or a string included and a value int() refuses passed over), an unknown operand of % by such a
+    divisor read by its parts too, and randint(a, b), randrange(stop),
     randrange(start, stop[, step]) and randbelow(n) over bounded arguments read as the values each can return, each
     argument given by position or by its parameter's name (_random_args()). randrange(start, stop[, step]) is read by
     its step's sign, the step bounded or not (a step left out is 1, and one a ** mapping can give is unbounded): start's
@@ -678,8 +685,8 @@ def interval(node, bound=None, steps=None):
     if isinstance(node, ast.BinOp):
         right = interval(node.right, bound, steps)
         left = interval(node.left, bound, steps)
-        if isinstance(node.op, ast.Mod) and right and right[0] > 0 and left is None:
-            return 0, right[1] - 1, True            # an unknown % a positive divisor: 0 to its highest less one
+        if isinstance(node.op, (ast.FloorDiv, ast.Mod)) and right:
+            return _divided(node.op, left, right)   # an unknown left operand too, for %
         if left is None or right is None:
             return None
         (a, b, ca), (c, d, cb) = left, right
@@ -690,14 +697,37 @@ def interval(node, bound=None, steps=None):
         if isinstance(node.op, ast.Mult):
             ends = (a * c, a * d, b * c, b * d)
             return min(ends), max(ends), ca or cb
-        if isinstance(node.op, (ast.FloorDiv, ast.Mod)) and c > 0:   # a divisor never below 1, one value or several
-            if isinstance(node.op, ast.FloorDiv):
-                ends = (a // c, a // d, b // c, b // d)   # monotonic in a and in x, so its ends are at the corners
-                return min(ends), max(ends), ca or cb
-            if c != d:
-                return 0, d - 1, ca or cb
-            return (a % c, b % c, ca or cb) if a == b else (0, c - 1, ca or cb)
     return None
+
+
+def _divided(op, left, right):
+    """(lo, hi, computed) for `left` // or % `right`, `left` an interval or None when interval() does not bound it, else
+    None. The divisor is read by its positive part, from the greater of its lowest value and 1 up to its highest, and
+    its negative part, from its lowest value up to the lesser of its highest and -1, each a part only where it holds a
+    value, and the reading is the span holding both parts' readings. 0, for which Python raises, is in neither part, so
+    no end of a part is 0, and a reversed divisor (a call Python always refuses) has a part only where its two ends
+    share a sign. // by a part is the span from the least to the greatest quotient of an end of `left` by an end of the
+    part (a // x is monotonic in a, and in x on either side of 0); % by a part is the remainder where `left` and the
+    part are one value each, and otherwise, `left` unknown included, 0 to the part's highest value less one for a
+    positive part and the part's lowest value plus one to 0 for a negative one (Python's remainder takes the divisor's
+    sign). None when the divisor has no part (it is 0, or a reversed one across 0), or for // when `left` is unknown."""
+    c, d, cb = right
+    parts = ([(max(c, 1), d)] if d >= 1 else []) + ([(c, min(d, -1))] if c <= -1 else [])
+    reads = []
+    for p, q in parts:
+        if isinstance(op, ast.FloorDiv):
+            if left is None:
+                return None
+            ends = [x // y for x in left[:2] for y in (p, q)]
+            reads.append((min(ends), max(ends)))
+        elif left is not None and left[0] == left[1] and p == q:
+            reads.append((left[0] % p,) * 2)
+        else:
+            reads.append((0, max(p, q) - 1) if p > 0 else (min(p, q) + 1, 0))
+    if not reads:
+        return None
+    lo, hi = min(r[0] for r in reads), max(r[1] for r in reads)
+    return lo, hi, (True if left is None else left[2]) or cb or lo != hi
 
 
 def _random_span(name, ivs):
@@ -1537,17 +1567,20 @@ MANGLED_FORMS = (
                                                                           "    def m(self):"), 8, "{k}"))
 
 
-def _unbounded_readings():
-    """[(label, source, readings)]: shapes that read a name with a binding the census does not record, each with the
-    readings, as [(number, why)], that the census gave it when it read such a name as unbounded wherever offset_base()
-    did not read it by its one recorded int, taken from that census's own run on the same source (numbers in the range
-    built at run time, as _n() builds them)."""
+def _earlier_readings():
+    """[(label, source, readings)]: shapes whose readings two earlier censuses gave, each with those readings, as
+    [(number, why)], the union of both censuses' raw readings of the same source (numbers in the range built at run
+    time, as _n() builds them; a comment that writes one opens a file no other number does). One read a name with a
+    binding the census does not record as unbounded wherever offset_base() did not read it by its one recorded int; the
+    other read a name by its value only where it recorded exactly one, and recorded no number written with a sign, so
+    with K bound to -1 and to 2 it read K as 2."""
     lo, hi, n = LOW + 7232, LOW + 17232, _n()                                      # 40000, 50000 and 45001
     mod, ass = "%d + K %% %d" % (20000, 20000), "an assignment to port, "
+    key, opens = "the value of the key 'port', ", "                # %d opens the file" % n
     return [
         ("% by a constant", "K = 7\nK = f()\nport = %s\n" % mod, [(LOW, ass + "computed into 20000-39999")]),
         ("% by a constant, under a port-named key", 'K = 7\nK = f()\nrow = {"port": %s}\n' % mod,
-         [(LOW, "the value of the key 'port', computed into 20000-39999")]),
+         [(LOW, key + "computed into 20000-39999")]),
         ("% by a constant, beside a star import", "from m import *\nK = 7\nport = %s\n" % mod,
          [(LOW, ass + "computed into 20000-39999")]),
         ("% by a constant, of a name Python mangles in a class",
@@ -1559,21 +1592,38 @@ def _unbounded_readings():
          [(lo, "the port of the address ('127.0.0.1', ...), an offset from %d" % lo)]),
         ("a sum on a quotient by the name", "K = 3\nK = f()\nport = %d + %d // K\n" % (lo, 2 * n),
          [(lo, ass + "an offset from %d" % lo)]),
-        ("a sum, the name's int small", "K = 7\nK = f()\nport = %d + K\n" % lo, [(lo, ass + "an offset from %d" % lo)]),
+        ("a sum, the name's int small", "K = 7\nK = f()\nport = %d + K\n" % lo,
+         [(lo, ass + "an offset from %d" % lo), (lo + 7, ass + "a constant expression")]),
         ("% by a constant, then a sum", "K = 7\nK = f()\nport = K %% %d + %d\n" % (20000, lo),
-         [(lo, ass + "computed into %d-%d" % (lo, lo + 19999))]),
+         [(lo, ass + "computed into %d-%d" % (lo, lo + 19999)), (lo + 7, ass + "a constant expression")]),
         ("a randrange whose start is under % by a constant", "K = 7\nK = f()\nport = random.randrange(%s, %d)\n" % (mod, hi),
-         [(LOW, ass + "computed into 20000-%d" % (hi - 1))]),
+         [(LOW, ass + "computed into 20000-%d" % (hi - 1)), (LOW, ass + "computed into 20007-%d" % (hi - 1))]),
         ("a difference by the name, from a name every binding of which the census records",
          "S = %d\nK = %d\nK = f()\nport = S - K\n" % (70000, lo), [(lo, ass + "an offset from %d" % lo)]),
         ("a sum of the name and a name every binding of which the census records",
-         "S = 9000\nK = %d\nK = f()\nport = S + K\n" % n, [(n, ass + "an offset from %d" % n)]),
+         "S = 9000\nK = %d\nK = f()\nport = S + K\n" % n,
+         [(n, ass + "an offset from %d" % n), (9000 + n, ass + "a constant expression")]),
         ("% by a constant, of a private name bound only under the spelling its class mangles it to",
          "_C__K = 7\n_C__K = f()\n\n\nclass C:\n    def m(self):\n        port = %s\n" % mod.replace("K", "__K"),
          [(LOW, ass + "computed into 20000-39999")]),
         ("a sum on a private name bound only under the spelling its class mangles it to",
          "_C__K = %d\n_C__K = f()\n\n\nclass C:\n    def m(self):\n        port = %d + __K\n" % (30000, lo),
-         [(lo, ass + "an offset from %d" % lo)])]
+         [(lo, ass + "an offset from %d" % lo)]),
+        ("// by a divisor name bound to a negative and a positive int",
+         'K = -1\nK = 2\nrow = {"port": %d // K}%s\n' % (2 * n, opens), [(n, key + "a constant expression")]),
+        ("// by a divisor name bound to a negative and a positive int and by a call",
+         'K = -1\nK = 2\nK = f()\nrow = {"port": %d // K}%s\n' % (2 * n, opens), [(n, key + "a constant expression")]),
+        ("// by a divisor name a loop binds to a negative and a positive int",
+         'for K in (-1, 2):\n    row = {"port": %d // K}%s\n' % (2 * n, opens), [(n, key + "a constant expression")]),
+        ("// by a divisor name bound to a negative and a positive int, in a randrange's stop",
+         "K = -1\nK = 2\nport = random.randrange(%d, %d // K)\n" % (lo, 2 * hi), [(lo, ass + "computed into %d-%d" % (lo, hi - 1))]),
+        ("% of one value by a divisor name bound to a negative and a positive int and by a call",
+         'K = -1\nK = %d\nK = f()\nrow = {"port": %d %% K}\n' % (hi + 10000, hi), [(hi, key + "a constant expression")]),
+        ("an unknown operand of % by a divisor name bound to a negative and a positive int",
+         "K = -5\nK = 30000\nport = 20000 + os.getpid() %% K%s\n" % opens, [(LOW, ass + "computed into 20000-49999")]),
+        ("an unknown operand of % by a divisor name bound to a negative and a positive int and by a call",
+         "K = -5\nK = 30000\nK = f()\nport = 20000 + os.getpid() %% K%s\n" % opens,
+         [(LOW, ass + "computed into 20000-49999")])]
 
 
 def _holds(got, old):
@@ -2680,34 +2730,40 @@ class Plants(unittest.TestCase):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
 
-    def test_a_name_with_a_binding_the_census_does_not_record_keeps_every_reading_it_gave_the_name_unbounded(self):
-        """A name with a binding the census does not record reads, at every position, the union of two readings
-        (BOUND): with the name unbounded, wherever the expression gives a reading without it (an unknown operand of % by
-        a divisor whose every value is positive, a sum or difference built on a constant in the range, which
-        offset_base() finds, and a step's span holding both signs), and with the name as the span of the ints the census
-        records for it; where the first gives nothing (a bare name at a start or stop), the second stands alone. Each
-        case of _unbounded_readings() is a shape and the readings the census gave it when it read such a name as
-        unbounded, and fails when the census drops one: when no reading the census gives the place holds it (_holds()).
-        Each also has a hit where the census keeps one per place. Every case but the last two failed where such a name
-        read by its recorded ints alone: 20000 + K % 20000, with K bound to 7 and by K = f(), read 20007 and was not
-        counted (in an assignment, under a port-named key, beside a star import, and with K a name Python mangles in a
-        class), where the census reads 20000-39999 again; 40000 + K and K + 40000 with K bound to 30000, 40000 - K with
-        K bound to 9000 (in an assignment and as an address's port) and 40000 + 90002 // K with K bound to 3 read 70000,
-        70000, 31000 and 70000 and were not counted, each a sum built on 40000 again; and 40000 + K and K % 20000 +
-        40000 with K bound to 7, and a randrange whose start is 20000 + K % 20000, kept a hit but read 40007, 40007 and
-        20007-49999 alone, where the census reads the sum built on 40000, 40000-59999 and 20000-49999 again beside them.
-        S - K and S + K pin that the reading with such a name unbounded in interval() reads it in offset_base() by its
-        recorded ints, as that census did: S - K, with S bound to 70000 and K to 40000 and by K = f(), read 30000 and
-        was not counted, and S + K, with S bound to 9000 and K to 45001 and by K = f(), read 54001 alone, where the
-        census reads each as a sum built on K's int again. The last two read a private name whose values come only
-        through the spelling its class mangles it to: 20000 + __K % 20000 and 40000 + __K in a method of C, with _C__K
-        bound to 7 or to 30000 and by _C__K = f(). The census that read such a name as unbounded, the one that read it
-        by its recorded ints (neither read __K by _C__K's values) and this one all read them as 20000-39999 and as a sum
-        built on 40000. They pin where the census looks for a name with a binding it does not record: among the names it
-        reads by the values of both spellings (self.reads). Looked for among the names with a value recorded under the
-        spelling written (self.bound), where __K has none, it read the two values by _C__K's ints alone, as 20007 and
-        70000, and counted neither."""
-        for label, src, old in _unbounded_readings():
+    def test_no_reading_either_earlier_census_gave_is_dropped(self):
+        """No reading two earlier censuses gave a shape is dropped (_earlier_readings(): the census that read a name with
+        a binding it does not record as unbounded, and the one that read a name only where it recorded one value). A
+        name with a binding the census does not record reads, at every position, the union of two readings (BOUND):
+        with the name unbounded, wherever the expression gives a reading without it (an unknown operand of % by a
+        divisor, a sum or difference built on a constant in the range, which offset_base() finds, and a step's span
+        holding both signs), and with the name as the span of the ints the census records for it; where the first gives
+        nothing (a bare name at a start or stop), the second stands alone. Each case fails when no reading the census
+        gives the place holds an earlier one (_holds()), and each also has a hit where the census keeps one per place.
+        The first fourteen failed where such a name read by its recorded ints alone: 20000 + K % 20000, with K bound to
+        7 and by K = f(), read 20007 and was not counted (in an assignment, under a port-named key, beside a star import,
+        and with K a name Python mangles in a class), where the census reads 20000-39999 again; 40000 + K and K + 40000
+        with K bound to 30000, 40000 - K with K bound to 9000 (in an assignment and as an address's port) and 40000 +
+        90002 // K with K bound to 3 read 70000, 70000, 31000 and 70000 and were not counted, each a sum built on 40000
+        again; and 40000 + K and K % 20000 + 40000 with K bound to 7, and a randrange whose start is 20000 + K % 20000,
+        kept a hit but read 40007, 40007 and 20007-49999 alone, where the census reads the sum built on 40000,
+        40000-59999 and 20000-49999 again beside them. S - K and S + K pin that the reading with such a name unbounded
+        in interval() reads it in offset_base() by its recorded ints, as that census did: S - K, with S bound to 70000
+        and K to 40000 and by K = f(), read 30000 and was not counted, and S + K, with S bound to 9000 and K to 45001
+        and by K = f(), read 54001 alone, where the census reads each as a sum built on K's int again. The next two read
+        a private name whose values come only through the spelling its class mangles it to: 20000 + __K % 20000 and
+        40000 + __K in a method of C, with _C__K bound to 7 or to 30000 and by _C__K = f(). The two earlier censuses, the
+        one that read such a name by its recorded ints (none of the three read __K by _C__K's values) and this one all
+        read them as 20000-39999 and as a sum built on 40000. They pin where the census looks for a name with a binding it does
+        not record: among the names it reads by the values of both spellings (self.reads). Looked for among the names
+        with a value recorded under the spelling written (self.bound), where __K has none, it read the two values by
+        _C__K's ints alone, as 20007 and 70000, and counted neither. The last seven pin a divisor read by its positive
+        and its negative part: with K bound to -1 and to 2 (with and without K = f(), and bound by a loop), 90002 // K
+        and a randrange's stop of 100000 // K, with K bound to -1, to 60000 and by K = f(), 50000 % K, and with K bound
+        to -5 and to 30000 (with and without K = f()), 20000 + os.getpid() % K read 45001, 40000-49999, 50000 and
+        20000-49999 in the census that read K by its one recorded value, 2, 60000 or 30000, and each read nothing where
+        the census read a divisor only when its every value was positive; the census reads them as -90002-90002,
+        40000-99999, 0-59999 and 19996-49999."""
+        for label, src, old in _earlier_readings():
             with self.subTest(label):
                 tree = ast.parse(src)
                 sc = _Scan(defs_of(tree), {}, lambda x, end=False: getattr(x, "lineno", 1), 0)
@@ -2834,6 +2890,64 @@ class Plants(unittest.TestCase):
                  '_C__K__ = %d\n\n\nclass C:\n    def m(self):\n        return {"ports": [__K__]}\n' % n)):
             with self.subTest(label):
                 self.assertGreen("test_x.py", src)
+
+    def test_a_divisor_reads_by_its_positive_and_its_negative_part(self):
+        """// and % read a divisor by its positive part and its negative part, each by its ends, as the span holding
+        both, 0 in neither (THE RULE), where the census read a divisor only when its every value was positive and read
+        each red plant as nothing. A divisor name bound to -1 and to 2, with and without K = f(), reads 90002 // K as
+        -90002-90002; bound to -5 and to 30000 it reads 20000 + os.getpid() % K as 19996-49999. The edges: a divisor
+        all negative (-90002 // K with K bound to -2 and to -3 is 30000-45001), one negative value (-90002 // -2 is
+        45001, and 80000 + os.getpid() % -40000 is 40001-80000, the remainder taking the divisor's sign), one that
+        touches 0 from above or from below (90002 // K with K bound to 0 and to 2, and -90002 // K with K bound to -2
+        and to 0, are 45001-90002), one that straddles 0 (90002 // (os.getpid() % 3 - 1) is -90002-90002), and a reversed
+        one of one sign from a call Python always refuses, read by its ends, an over-read (90002 // random.randint(3,
+        2) is 30000-45001). A divisor that is 0, or a reversed one whose ends lie on either side of 0 (random.randint(1,
+        0), which Python always refuses), has no part and is not read, green, and no divisor makes interval() divide by
+        0: each divisor below, with a left operand of one value, of several or unknown, by // and by %, reads without
+        raising, where 90002 // random.randint(1, 0) raised ZeroDivisionError in the census that read a divisor whose
+        lowest value was positive by its two ends."""
+        n, opens = _n(), "                # %d opens the file" % _n(1)
+        key = "the key 'port', "
+        for label, src, why, first in (
+                ("// by a divisor name bound to a negative and a positive int",
+                 'K = -1\nK = 2\nrow = {"port": %d // K}%s\n' % (2 * n, opens), key + "computed into -%d-%d" % (2 * n, 2 * n),
+                 LOW),
+                ("// by a divisor name bound to a negative and a positive int and by a call",
+                 'K = -1\nK = 2\nK = f()\nrow = {"port": %d // K}%s\n' % (2 * n, opens),
+                 key + "computed into -%d-%d" % (2 * n, 2 * n), LOW),
+                ("an unknown operand of % by a divisor name bound to a negative and a positive int",
+                 'K = -5\nK = 30000\nport = 20000 + os.getpid() %% K%s\n' % opens, "computed into 19996-49999", LOW),
+                ("// by a divisor all negative", 'K = -2\nK = -3\nrow = {"port": -%d // K}%s\n' % (2 * n, opens),
+                 key + "computed into 30000-%d" % n, LOW),
+                ("// by one negative value", 'row = {"port": -%d // -2}%s\n' % (2 * n, opens), key + "a constant expression", n),
+                ("an unknown operand of % by one negative value", 'port = 80000 + os.getpid() %% -%d\n' % (LOW + 7232),
+                 "computed into 40001-80000", LOW + 7233),
+                ("// by a divisor that touches 0 from above", 'K = 0\nK = 2\nrow = {"port": %d // K}%s\n' % (2 * n, opens),
+                 key + "computed into %d-%d" % (n, 2 * n), n),
+                ("// by a divisor that touches 0 from below", 'K = -2\nK = 0\nrow = {"port": -%d // K}%s\n' % (2 * n, opens),
+                 key + "computed into %d-%d" % (n, 2 * n), n),
+                ("// by a divisor that straddles 0", 'row = {"port": %d // (os.getpid() %% 3 - 1)}%s\n' % (2 * n, opens),
+                 key + "computed into -%d-%d" % (2 * n, 2 * n), LOW),
+                ("// by a reversed divisor of one sign, an over-read",
+                 'row = {"port": %d // random.randint(3, 2)}\n' % (2 * n), key + "computed into 30000-%d" % n, LOW)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+        for label, src in (
+                ("// by 0", 'row = {"port": %d // 0}%s\n' % (2 * n, opens)),
+                ("// by a reversed divisor across 0", 'row = {"port": %d // random.randint(1, 0)}\n' % (2 * n)),
+                ("% by a reversed divisor across 0", 'row = {"port": %d %% random.randint(1, 0)}\n' % (2 * n)),
+                ("an unknown operand of % by a reversed divisor across 0",
+                 'row = {"port": os.getpid() % random.randint(1, 0)}\n')):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", src)
+        for divisor in ("0", "-0", "os.getpid() % 1", "random.randint(1, 0)", "random.randint(0, 0)",
+                        "random.randint(0, -3)", "random.randint(3, 0)", "random.randint(2, -2)", "random.randint(-1, -3)",
+                        "random.randint(3, 2)", "os.getpid() % 3 - 1", "os.getpid() % 4 - 3"):
+            for left in ("%d" % (2 * n), "os.getpid() % 7 - 3", "os.getpid()"):
+                for op in ("//", "%"):
+                    text = "(%s) %s (%s)" % (left, op, divisor)
+                    with self.subTest("no division by 0", expression=text):
+                        interval(ast.parse(text, mode="eval").body)
 
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
@@ -3031,7 +3145,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
     to several ints, a name with a binding it does not record under % by a constant, a stop name bound to None, int() of
     a name bound to strings and floats, and a private name read in a method, bound under its mangled spelling; and the
     light check at the pushed head after them with a start or stop name bound to ints beside a string, a float or
-    None)."""
+    None, and with a divisor bound to ints of both signs)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
@@ -3295,7 +3409,12 @@ class RandrangeAgainstCPython(unittest.TestCase):
         to several ints as _mixed() binds them and to a string or a float with a fraction, which no call takes and
         interval() passes over, taking each int, the step drawn from STEP_SHAPES and the form from FORMS; and a stop name
         so bound and to None, taking each int and None, in a form and with a step drawn from NONE_FORMS, with the
-        exceptions a stop left empty beside a step other than 1 raises."""
+        exceptions a stop left empty beside a step other than 1 raises. Then, per relation, a start and a stop written
+        as a number // a divisor name, and as the interval's lowest value plus an unknown % a divisor name, the name
+        bound to two positive ints, two negative ones and half the time 0 (for %, the interval's width and its negative
+        too), and half the time by a call, taking CPython's quotient by each int but 0, or its remainder of seeded
+        values by each; each such case also writes a dict whose port is a number // random.randint(1, 0), a reversed
+        divisor across 0, which the census must read without raising."""
         rng, out = random.Random(self.SEED + 4), []
 
         def near():
@@ -3320,6 +3439,25 @@ class RandrangeAgainstCPython(unittest.TestCase):
                 out.append(("the %s, bound to several ints and to %s, every binding recorded" % (role, kind),
                             takes if role == "start" else s, e if role == "start" else takes, step, form,
                             dict(how, pre=pre, **{role: name})))
+        for relation in self.RELATIONS:
+            for role, kind in (("start", "//"), ("stop", "//"), ("start", "%"), ("stop", "%")):
+                s, e = self._shape(relation, near(), rng)
+                (lo, hi), name = (s if role == "start" else e), "XD%d" % len(out)
+                k = rng.randint(1, 4)
+                ks = sorted({k, k + 1, -rng.randint(1, 3), -rng.randint(4, 9)} | ({0} if rng.random() < 0.5 else set()))
+                if kind == "//":
+                    m = rng.randint(lo, hi) * k
+                    written, takes = "%d // %s" % (m, name), sorted({m // x for x in ks if x})
+                else:
+                    w = hi - lo + 1
+                    ks = sorted({w, -w} | set(ks))
+                    ps = (0, 1, w - 1, rng.randint(0, 10 ** 6), rng.randint(-10 ** 6, 0))
+                    written, takes = "%d + os.getpid() %% %s" % (lo, name), sorted({lo + p % x for x in ks if x for p in ps})
+                pre = ["%s = %d" % (name, x) for x in ks] + (["%s = f()" % name] if rng.random() < 0.5 else [])
+                pre.append("XZ%d = {\"port\": %d // random.randint(1, 0)}" % (len(out), rng.randint(LOW, HIGH)))
+                out.append(("the %s, %s by a divisor name bound to ints of both signs" % (role, kind),
+                            takes if role == "start" else s, e if role == "start" else takes, rng.choice(self.STEP_SHAPES),
+                            rng.choice(self.FORMS), {"pre": pre, role: written}))
         return out
 
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
@@ -3340,7 +3478,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
         a stop name bound to None, a start or stop that is int() of a name bound to strings and floats, and a private
         name read in a method, bound under the spelling its class mangles it to; and last those _checked() writes: a
         start or stop name every binding of which the census records, bound to several ints and to a string, a float
-        or None. The census reads them as one module,
+        or None, and a start or stop that is a number // a divisor name, or a sum on an unknown % one, the name bound to
+        ints of both signs. The census reads them as one module,
         each call on a line of its own after the lines that bind its names (in the class's body or a method where the
         call reads the name there). For each call the test
         samples start and stop at each end of their intervals and at a seeded value between (or each value they take),
