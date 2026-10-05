@@ -153,8 +153,8 @@ try {
 } catch (e) {
   out.died = String(e).slice(0, 600);
 }
-// the result goes to the file the Python side names (cfg.result): one write to a pipe can stop at the pipe's buffer, and these
-// readings run past 64 KB
+// the result goes to the file the Python side names (cfg.result): one write to a pipe can stop at the pipe's buffer, 64 KiB on
+// Linux, and these readings (about 50 KB) come close to that and grow with every reading the test adds
 fs.writeFileSync(cfg.result, JSON.stringify(out));
 fs.writeSync(1, "RESULT-FILE:" + cfg.result + "\n");
 try { await browser.close(); } catch (e) { /* closing */ }
