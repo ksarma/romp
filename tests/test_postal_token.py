@@ -327,8 +327,9 @@ class BusBodyGate(_BusServer):
 class BusAnswersDeclareTheirTypeFinal(_BusServer):
     """The bus's _send writes X-Content-Type-Options: nosniff beside its application/json Content-Type, as the kernel's _send does
     (tests/test_kernel_auth_hardening.py, ResponseHardeningHeaders). Without it a browser runs a bus answer as a classic script when
-    a page loads it by <script src>, and the network census (scripts/network-inventory.py) refuses a type it types as running no
-    script, application/json among them, where no nosniff header is written beside its Content-Type (item A of the reviewer's ruling
+    a page loads it by <script src>, and the network census (scripts/network-inventory.py) refuses a type it would otherwise type as
+    running no script, every one but image/png (SNIFF_SCRIPT_TYPES, application/json among them), where no nosniff header is written
+    beside its Content-Type (item A of the reviewer's ruling
     on the second closing check, 2026-10-04). Source-pinned the way the kernel's header set is, and executed: the liveness probe's
     answer, which every caller can ask for, carries the header."""
 

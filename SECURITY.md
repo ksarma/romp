@@ -452,9 +452,22 @@ application/manifest+json, application/octet-stream, image/png and text/plain,
 all but image/png only with a nosniff header); and so is one of those but
 image/png (SNIFF_SCRIPT_TYPES) where no X-Content-Type-Options: nosniff header
 is written beside its Content-Type (an expression statement calling send_header
-on the write's own receiver with exactly those two string constants, in the
-write's block, before any statement there that calls end_headers or
-flush_headers), at a `_send` call and at a write outside it alike, since without
+on the write's own receiver with exactly two positional string constants and no
+keyword, X-Content-Type-Options in any case and nosniff in any case once
+stripped of spaces and tabs, in the write's block, before any statement there
+that names end_headers or flush_headers (as an attribute, a name or a string
+constant) or, after the write, calls a method of that receiver other than
+send_header, send_response or send_response_only, or hands the receiver to a
+call, and with no other X-Content-Type-Options header, nor a send_header whose
+name is no string constant, before it there or in a statement that runs before
+its block; not read: a compound statement before that block in an enclosing
+block, a header written through a call the census does not follow, a helper
+method of the handler among them, an earlier iteration of a loop around the
+write that writes the header from a branch exclusive with the write's, a
+callable bound outside the write's block under another name, a function that
+reaches the handler through a global, a closure or a frame, and a name computed
+before the write), at a `_send` call and at a write outside it alike, since
+without
 that header a browser runs such a response as a classic script when a page loads
 it by <script src>, and the census reads no body of a type it types as running
 none; the part before any `;`, stripped and lower-cased, is compared

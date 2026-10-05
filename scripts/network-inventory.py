@@ -274,8 +274,16 @@ spaces and tabs alone and lower-cased, is in neither SCRIPT_TYPES nor NO_SCRIPT_
 the types that run no script among those the census types at such places in the live tree, application/json,
 application/manifest+json, application/octet-stream, image/png and text/plain, all but image/png only with a nosniff header); and
 so is one of those but image/png (SNIFF_SCRIPT_TYPES) where no X-Content-Type-Options: nosniff header is written beside its
-Content-Type (an expression statement calling send_header on the write's own receiver with exactly those two string constants, in
-the write's block, before any statement there that calls end_headers or flush_headers), at a `_send` call and at a write outside
+Content-Type (an expression statement calling send_header on the write's own receiver with exactly two positional string constants
+and no keyword, X-Content-Type-Options in any case and nosniff in any case once stripped of spaces and tabs, in the write's block,
+before any statement there that names end_headers or flush_headers (as an attribute, a name or a string constant) or, after the
+write, calls a method of that receiver other than send_header, send_response or send_response_only, or hands the receiver to a
+call, and with no other X-Content-Type-Options header, nor a send_header whose name is no string constant, before it there or in a
+statement that runs before its block; not read: a compound statement before that block in an enclosing block, a header written
+through a call the census does not follow, a helper method of the handler among them, an earlier iteration of a loop around the
+write that writes the header from a branch exclusive with the write's, a callable bound outside the write's block under another
+name, a function that reaches the handler through a global, a closure or a frame, and a name computed before the write), at a
+`_send` call and at a write outside
 it alike, since without that header a browser runs such a response as a classic script when a page loads it by <script src>, and
 the census reads no body of a type it types as running none; the part before any `;`, stripped and lower-cased,
 is compared with the types a browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
@@ -4407,13 +4415,28 @@ def _nosniff_beside(write, home):
     """Whether an `X-Content-Type-Options: nosniff` header is written beside a Content-Type write (item A of the reviewer's ruling on
     the second closing check; judge's refusal of SNIFF_SCRIPT_TYPES): the innermost statement list one of whose statements holds the
     write (a body, an else, a finally, an except handler's body or a match case's, searched from `home`, the definition or the module
-    around the write, which only bounds the search) also holds, before any statement holding a call of end_headers or flush_headers
-    (either writes the header buffer to the stream, so a header written after it reaches the body), an expression statement calling
-    send_header on the write's own receiver with exactly two positional string constants, X-Content-Type-Options in any case and
-    nosniff stripped of spaces and tabs in any case. A nosniff header after such a statement, under an if or in any other block than
-    the write's (a def nested in the definition among them), written on another receiver, through any other method or as anything but
-    an expression statement, or with any other arguments, is not beside it, so the type is refused (the (nd) and (ns) plants hold each
-    condition). The search finds the write's block from any root that holds the write, as `home` always does."""
+    around the write, which only bounds the search) also holds an expression statement calling send_header on the write's own
+    receiver with exactly two positional string constants and no keyword, X-Content-Type-Options in any case and nosniff in any case
+    once stripped of spaces and tabs, before any statement there that names end_headers or flush_headers, as an attribute, a name or
+    a string constant (end_headers writes the blank line that ends the header section, so a header sent after it is no header: a
+    later flush puts it in the body, and without one it is never sent; flush_headers sends the buffered lines without ending the
+    section, so a header sent after it is still one, but the census does not follow a header across it and refuses the type, failing
+    closed: the ndfl plant), before any statement after the write's own that calls a method of the write's receiver other than
+    send_header, send_response or send_response_only, or hands the receiver to a call as an argument or a keyword (such a call may end
+    the headers), and with no other X-Content-Type-Options header, nor a send_header whose name is no string constant, before it
+    there or in a statement that runs before its block (a browser reads the first value of that header alone): a simple statement
+    before the statement holding that block in each enclosing statement list, and one of a sibling block that runs before it in a
+    statement the search descends through (a try's body before its except handlers and its else; its body, handlers and else before
+    its finally; a loop's body before its else). A nosniff header after such a statement, under an if or in any other block than the
+    write's (a def nested in the definition among them), written on another receiver, through any other method or as anything but an
+    expression statement, or with any other arguments, is not beside it, so the type is refused (the (nd) and (ns) plants hold each
+    condition). Not read, the stated limits: a compound statement before the write's block in an enclosing statement list (the
+    live _file_preview range path's `if head:`, which holds a headers loop and a return), a header written through a call the census
+    does not follow before the write (a helper method of the handler among them; refusing every call on or handed the receiver there
+    refuses the live tree), an earlier iteration of a loop around the write that writes the header from a branch exclusive with the
+    write's, a callable bound outside the write's block under another name, a function that reaches the handler through a global, a
+    closure or a frame, and a name computed before the write (their witnesses the (nd) plants ndwc, ndwh, ndwl and ndoa). The search
+    finds the write's block from any root that holds the write, as `home` always does."""
     def nosniff(s):
         c = s.value if isinstance(s, ast.Expr) else None
         return (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "send_header" and len(c.args) == 2
@@ -4421,23 +4444,60 @@ def _nosniff_beside(write, home):
                 and c.args[0].value.lower() == "x-content-type-options" and c.args[1].value.strip(" \t").lower() == "nosniff"
                 and ast.dump(c.func.value) == ast.dump(write.func.value))
 
-    def ends(s):   # a statement holding a call that writes the header buffer to the stream, wherever it stands in the statement
-        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("end_headers", "flush_headers")
-                   for n in ast.walk(s))
+    def ends(s):   # a statement naming end_headers or flush_headers in any form, an attribute, a name or a string constant
+        e = ("end_headers", "flush_headers")
+        return any((isinstance(n, ast.Attribute) and n.attr in e) or (isinstance(n, ast.Name) and n.id in e)
+                   or (isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in e) for n in ast.walk(s))
 
-    def block(stmts):   # the innermost statement list under `stmts` one of whose statements holds the write
-        for s in stmts:
+    recv = ast.dump(write.func.value)
+
+    def reaches(s):   # a call of a method of the write's receiver other than a header line's, or a call handed the receiver
+        for n in ast.walk(s):
+            if not isinstance(n, ast.Call): continue
+            f = n.func
+            if isinstance(f, ast.Attribute) and ast.dump(f.value) == recv and f.attr not in ("send_header", "send_response", "send_response_only"):
+                return True
+            if (any(ast.dump(a.value if isinstance(a, ast.Starred) else a) == recv for a in n.args)
+                    or any(ast.dump(k.value) == recv for k in n.keywords)):
+                return True
+        return False
+
+    def other(s):   # a statement holding a send_header whose name is missing, no string constant, or X-Content-Type-Options
+        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "send_header"
+                   and not (n.args and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)
+                            and n.args[0].value.strip(" \t").lower() != "x-content-type-options") for n in ast.walk(s))
+
+    def simple(s):   # a statement that holds no statement list of its own
+        return not any(isinstance(getattr(s, f, None), list) for f in ("body", "orelse", "finalbody", "handlers", "cases"))
+
+    def runs_before(s, b):   # the sibling blocks of statement `s` that run before its block `b`, in a try or a loop
+        if isinstance(s, (ast.Try, getattr(ast, "TryStar", ast.Try))):
+            hs = [h.body for h in s.handlers]
+            if b is s.finalbody: return [s.body] + hs + [s.orelse]
+            if b is s.orelse or any(b is h for h in hs): return [s.body]
+        if isinstance(s, (ast.For, ast.AsyncFor, ast.While)) and b is s.orelse: return [s.body]
+        return []
+
+    def block(stmts, pre):   # (the innermost statement list under `stmts` one of whose statements holds the write, the simple
+        # statements that run before that list: `pre`, those before it in each enclosing list, and the sibling blocks' that run first)
+        for i, s in enumerate(stmts):
             if not any(n is write for n in ast.walk(s)): continue
+            here = pre + [x for x in stmts[:i] if simple(x)]
             inner = [getattr(s, f) for f in ("body", "orelse", "finalbody") if isinstance(getattr(s, f, None), list)]
             for b in inner + [h.body for h in getattr(s, "handlers", ())] + [c.body for c in getattr(s, "cases", ())]:
-                got = block(b)
+                got = block(b, here + [x for sb in runs_before(s, b) for x in sb if simple(x)])
                 if got is not None: return got
-            return stmts
+            return stmts, pre
         return None
 
-    for s in block(home.body):
-        if ends(s): return False
+    stmts, pre = block(home.body, [])
+    if any(other(x) for x in pre): return False
+    after = False
+    for s in stmts:
+        if ends(s) or (after and reaches(s)): return False
         if nosniff(s): return True
+        if other(s): return False
+        after = after or any(n is write for n in ast.walk(s))
     return False
 
 

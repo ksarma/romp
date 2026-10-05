@@ -1458,8 +1458,17 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "among those the census types at such places in the live tree, application/json, application/manifest+json, "
                 "application/octet-stream, image/png and text/plain, all but image/png only with a nosniff header); and so is one "
                 "of those but image/png (SNIFF_SCRIPT_TYPES) where no X-Content-Type-Options: nosniff header is written beside its "
-                "Content-Type (an expression statement calling send_header on the write's own receiver with exactly those two "
-                "string constants, in the write's block, before any statement there that calls end_headers or flush_headers), at a "
+                "Content-Type (an expression statement calling send_header on the write's own receiver with exactly two positional "
+                "string constants and no keyword, X-Content-Type-Options in any case and nosniff in any case once stripped of "
+                "spaces and tabs, in the write's block, before any statement there that names end_headers or flush_headers (as an "
+                "attribute, a name or a string constant) or, after the write, calls a method of that receiver other than "
+                "send_header, send_response or send_response_only, or hands the receiver to a call, and with no other "
+                "X-Content-Type-Options header, nor a send_header whose name is no string constant, before it there or in a "
+                "statement that runs before its block; not read: a compound statement before that block in an enclosing block, a "
+                "header written through a call the census does not follow, a helper method of the handler among them, an earlier "
+                "iteration of a loop around the write that writes the header from a branch exclusive with the write's, a callable "
+                "bound outside the write's block under another name, a function that reaches the handler through a global, a "
+                "closure or a frame, and a name computed before the write), at a "
                 "`_send` call and at a write outside it alike, since without that header a browser runs such a response as a "
                 "classic script when a page loads it by <script src>, and the census reads no body of a type it types as running "
                 "none; the part before any `;`, stripped and lower-cased, is compared with the types a browser "
@@ -9422,14 +9431,34 @@ _RD_X3NAME = "the module name %s, no module constant the census follows by bindi
 # `_send` that writes none (A_SEND: nsp, nsj, nso, nsm, at the call); and a nosniff header after the end_headers (nda), after a
 # statement holding an end_headers (ndie) or a flush_headers (ndfl), under an if (ndi), on another receiver (ndr), as an assignment
 # (ndx), through a bare name (ndu) or another method (ndl), with a third argument (nd3) or a keyword (ndk), its value a name (ndv),
-# another header's name (ndh) or another value (ndy). Each was typed as running no script at the head that check read, its page
-# never read and nothing printed. Typed as before, no line: each of the four written outside `_send` with a nosniff header beside it
+# another header's name (ndh) or another value (ndy). Each was typed as running no script at the head that check read, its page never
+# read and nothing printed. After the owner's check of that pass (A2, A3 and A4), refused as well, each typed at that pass's head:
+# the type spelled with a parameter after a `;` (ndpp, nspp), in another case (ndjc, nsjc) or with a space and a tab on each side
+# (ndos, nsos), each step of the type's normalisation before the sniffed test held by a plant of its own (_RD_NORM_TYPES); another
+# X-Content-Type-Options header before the nosniff header, a browser reading the first value alone: in the write's block before the
+# Content-Type (ndea) or after it (ndaf), its name in capitals (ndeu) or among a space and a tab (ndes), a send_header whose name is
+# no positional string constant (ndek, keywords alone), an empty value in an enclosing block (ndeb), through an assignment there
+# (ndas), in a try's body before its finally (ndtf), its except handler (ndth) or its else (ndte), in a loop's body before its else
+# (ndfe), and a `_send` whose headers loop comes before its nosniff header, called with that header's name (rdnh's nsh); and the
+# headers ended before the nosniff header other than by a call spelled on the receiver: an alias bound in the write's block (ndal) or
+# named end_headers in an enclosing one (ndnm), getattr on self (ndga) or on super() (ndgs), and after the write a method of the
+# receiver's (ndhm) or a function handed the receiver as an argument (ndmf), a keyword (ndkw) or a starred argument (ndmz). Typed as
+# before, no line: each of the four written outside `_send` with a nosniff header beside it
 # (ndpk, ndjk, ndok, ndmk) and served through the kernel's shape, which writes one (nkp, nkj, nko, nkm); the header's name and value in
 # another case among spaces and a tab (ndc); a constant statement before it (ndn); the write and its nosniff header in a try's body
-# (ndt), an else (ndb), a finally (ndf), an except handler (nde) and a match case (ndq); and image/png, which no engine runs as a
-# script, written outside `_send` with no nosniff header (ndg) and served through A_SEND (nsg)
+# (ndt), an else (ndb), a finally (ndf), an except handler (nde) and a match case (ndq); image/png, which no engine runs as a script,
+# written outside `_send` with no nosniff header (ndg) and served through A_SEND (nsg); a later value of the header's name after the
+# nosniff header (ndls), another header before the Content-Type (ndcc), and a Content-Length (ndcl), a response line (ndsr) and a
+# response line alone (ndso) between the write and the nosniff header. The stated limits' witnesses, typed and silent: the header
+# written in a compound statement before the write's block (ndwc), through a method of the handler's before the write (ndwh) and in
+# an earlier iteration of a loop around the write (ndwl), and the headers ended through an alias bound outside the write's block
+# under another name (ndoa)
 _RD_ND_TYPES = (("p", "text/plain"), ("j", "application/json"), ("o", "application/octet-stream"), ("m", "application/manifest+json"))
 _RD_NS_LINE = 'self.send_header("X-Content-Type-Options", "nosniff")'
+# the type's normalisation before the sniffed test (_ctype_essence: cut at the first `;`, stripped of spaces and tabs, lower-cased), each
+# step held by a plant of its own, refused like the four: a parameter after a `;` (pp), another case (jc), a space and a tab on each side (os)
+_RD_NORM_TYPES = (("pp", "text/plain; charset=utf-8"), ("jc", "Application/JSON"), ("os", " \tapplication/octet-stream \t"))
+_RD_XS = 'self.send_header("X-Content-Type-Options", "sniff")'   # another value of the nosniff header's name, written before it
 
 
 def _rd_direct(tag, ct, between="", indent=12):
@@ -9444,6 +9473,21 @@ def _rd_ns(line, indent=12):
     return " " * indent + line + "\n"
 
 
+def _rd_pre(tag, pre, between="", ct="text/plain"):
+    """A direct write's branch whose lines `pre` (each indented 12 and ending in a newline) stand between the response line and the
+    Content-Type write, then `between`, the end_headers and the write of the page tagged `tag`."""
+    return ('self.send_response(200)\n%s            self.send_header("Content-Type", "%s")\n%s            self.end_headers()\n'
+            '            return self.wfile.write(b"%s")' % (pre, ct, between, FGH_PAGE % tag))
+
+
+def _rd_under(tag, pre, head, inner="", tail=""):
+    """A branch whose lines `pre` (indented 12) stand before a statement `head` opens (its lines indented 12, the block it opens at 16)
+    holding the Content-Type write, `inner` (indented 16) and the nosniff header, `tail` after it, then the end_headers and the write."""
+    return ('self.send_response(200)\n%s            %s\n                self.send_header("Content-Type", "text/plain")\n%s'
+            '                %s\n%s            self.end_headers()\n            return self.wfile.write(b"%s")'
+            % (pre, head, inner, _RD_NS_LINE, tail, FGH_PAGE % tag))
+
+
 def _rd_block(tag, head, tail=""):
     """A branch whose Content-Type write and nosniff header stand in a block `head` opens (its lines indented 16), the end_headers and
     the write after it, `tail` closing the block."""
@@ -9451,8 +9495,12 @@ def _rd_block(tag, head, tail=""):
             '%s            self.end_headers()\n            return self.wfile.write(b"%s")' % (head, _RD_NS_LINE, tail, FGH_PAGE % tag))
 
 
-RD_ND_HEAD = '_PROBE_NDV = "nosniff"'
-RD_ND = (tuple(("nd" + k, _rd_direct("nd" + k, ct)) for k, ct in _RD_ND_TYPES)
+RD_ND_HEAD = '_PROBE_NDV = "nosniff"\n\n\ndef _probe_ndmf(h):\n    h.end_headers()'
+# rdnd's class: the kernel's `_send` shape and two methods of its own, one ending the headers (ndhm) and one writing another value of
+# the nosniff header's name (ndwh, the limit on a call the census does not follow before the write)
+RD_ND_SEND = (B_KERNEL_SEND + "\n    def _probe_ndhm(self):\n        self.end_headers()\n\n    def _probe_ndwh(self):\n        "
+              + _RD_XS + "\n")
+RD_ND = (tuple(("nd" + k, _rd_direct("nd" + k, ct)) for k, ct in _RD_ND_TYPES + _RD_NORM_TYPES)
          + (("nda", _rd_direct("nda", "text/plain").replace("self.end_headers()\n", "self.end_headers()\n            " + _RD_NS_LINE + "\n")),
             ("ndie", _rd_direct("ndie", "text/plain", "            if self.path is None:\n                self.end_headers()\n" + _rd_ns(_RD_NS_LINE))),
             ("ndfl", _rd_direct("ndfl", "text/plain", "            self.flush_headers()\n" + _rd_ns(_RD_NS_LINE))),
@@ -9475,8 +9523,45 @@ RD_ND = (tuple(("nd" + k, _rd_direct("nd" + k, ct)) for k, ct in _RD_ND_TYPES)
             ("ndf", _rd_block("ndf", "try:\n                pass\n            finally:")),
             ("nde", _rd_block("nde", "try:\n                raise ValueError(self.path)\n            except ValueError:")),
             ("ndq", _rd_block("ndq", "match self.path:\n                case _:").replace("\n                self.send_header", "\n                    self.send_header")),
-            ("ndg", _rd_direct("ndg", "image/png"))))
-RD_NS = tuple(("ns" + k, 'return self._send(200, "%s", "%s")' % (FGH_PAGE % ("ns" + k), ct)) for k, ct in _RD_ND_TYPES + (("g", "image/png"),))
+            ("ndg", _rd_direct("ndg", "image/png")))
+         + (("ndea", _rd_pre("ndea", _rd_ns(_RD_XS), _rd_ns(_RD_NS_LINE))),
+            ("ndaf", _rd_direct("ndaf", "text/plain", _rd_ns(_RD_XS) + _rd_ns(_RD_NS_LINE))),
+            ("ndeu", _rd_direct("ndeu", "text/plain", _rd_ns('self.send_header("X-CONTENT-TYPE-OPTIONS", "sniff")') + _rd_ns(_RD_NS_LINE))),
+            ("ndes", _rd_direct("ndes", "text/plain", _rd_ns('self.send_header(" X-Content-Type-Options\\t", "sniff")') + _rd_ns(_RD_NS_LINE))),
+            ("ndek", _rd_direct("ndek", "text/plain", _rd_ns('self.send_header(keyword="X-Content-Type-Options", value="sniff")') + _rd_ns(_RD_NS_LINE))),
+            ("ndeb", _rd_under("ndeb", _rd_ns('self.send_header("X-Content-Type-Options", "")'), "if self.path:")),
+            ("ndas", _rd_under("ndas", _rd_ns("_probe_r = " + _RD_XS), "if self.path:")),
+            ("ndtf", _rd_under("ndtf", _rd_ns("try:") + _rd_ns(_RD_XS, 16), "finally:")),
+            ("ndth", _rd_under("ndth", _rd_ns("try:") + _rd_ns(_RD_XS, 16), "except ValueError:")),
+            ("ndte", _rd_under("ndte", _rd_ns("try:") + _rd_ns(_RD_XS, 16) + _rd_ns("except ValueError:") + _rd_ns("pass", 16), "else:")),
+            ("ndfe", _rd_under("ndfe", _rd_ns("for _probe_k in self.path:") + _rd_ns(_RD_XS, 16), "else:")),
+            ("ndal", _rd_direct("ndal", "text/plain", _rd_ns("_probe_eh = self.end_headers") + _rd_ns("_probe_eh()") + _rd_ns(_RD_NS_LINE))),
+            ("ndga", _rd_direct("ndga", "text/plain", _rd_ns('getattr(self, "end_headers")()') + _rd_ns(_RD_NS_LINE))),
+            ("ndgs", _rd_direct("ndgs", "text/plain", _rd_ns('getattr(super(), "end_headers")()') + _rd_ns(_RD_NS_LINE))),
+            ("ndnm", _rd_under("ndnm", _rd_ns("end_headers = self.end_headers"), "if self.path:", _rd_ns("end_headers()", 16))),
+            ("ndhm", _rd_direct("ndhm", "text/plain", _rd_ns("self._probe_ndhm()") + _rd_ns(_RD_NS_LINE))),
+            ("ndmf", _rd_direct("ndmf", "text/plain", _rd_ns("_probe_ndmf(self)") + _rd_ns(_RD_NS_LINE))),
+            ("ndkw", _rd_direct("ndkw", "text/plain", _rd_ns("_probe_ndmf(h=self)") + _rd_ns(_RD_NS_LINE))),
+            ("ndmz", _rd_direct("ndmz", "text/plain", _rd_ns("_probe_ndmf(*self)") + _rd_ns(_RD_NS_LINE))),
+            ("ndls", _rd_direct("ndls", "text/plain", _rd_ns(_RD_NS_LINE) + _rd_ns(_RD_XS))),
+            ("ndcc", _rd_pre("ndcc", _rd_ns('self.send_header("Cache-Control", "no-cache")'), _rd_ns(_RD_NS_LINE))),
+            ("ndcl", _rd_direct("ndcl", "text/plain", _rd_ns('self.send_header("Content-Length", str(len(self.path)))') + _rd_ns(_RD_NS_LINE))),
+            ("ndsr", _rd_direct("ndsr", "text/plain", _rd_ns("self.send_response(200)") + _rd_ns(_RD_NS_LINE)).replace("self.send_response(200)\n            ", "", 1)),
+            ("ndso", _rd_direct("ndso", "text/plain", _rd_ns("self.send_response_only(200)") + _rd_ns(_RD_NS_LINE))),
+            ("ndwc", _rd_under("ndwc", _rd_ns("if self.path is None:") + _rd_ns(_RD_XS, 16), "if self.path:")),
+            ("ndwh", _rd_pre("ndwh", _rd_ns("self._probe_ndwh()"), _rd_ns(_RD_NS_LINE))),
+            ("ndwl", 'self.send_response(200)\n            for _probe_i in (0, 1):\n                if _probe_i == 0:\n                    %s\n'
+                     '                else:\n                    self.send_header("Content-Type", "text/plain")\n                    %s\n'
+                     '            self.end_headers()\n            return self.wfile.write(b"%s")' % (_RD_XS, _RD_NS_LINE, FGH_PAGE % "ndwl")),
+            ("ndoa", _rd_under("ndoa", _rd_ns("_probe_eh = self.end_headers"), "if self.path:", _rd_ns("_probe_eh()", 16)))))
+RD_NS = tuple(("ns" + k, 'return self._send(200, "%s", "%s")' % (FGH_PAGE % ("ns" + k), ct))
+              for k, ct in _RD_ND_TYPES + _RD_NORM_TYPES + (("g", "image/png"),))
+# rdnh's `_send`: its headers loop before its nosniff header, so the census reads no header name there, refused at its call (nsh, called
+# with headers={"X-Content-Type-Options": "sniff"}, whose first value a browser reads)
+RD_NH_SEND = ("    def _send(self, code, body, ctype, headers=None):\n        self.send_response(code)\n        self.send_header(\"Content-Type\", ctype)\n"
+              "        for k, v in (headers or {}).items():\n            self.send_header(k, v)\n" + A_NOSNIFF + "        self.end_headers()\n"
+              "        self.wfile.write(body)\n")
+RD_NH = (("nsh", 'return self._send(200, "%s", "text/plain", headers={"X-Content-Type-Options": "sniff"})' % (FGH_PAGE % "nsh")),)
 _RD_NOSNIFF = "serves %s with no X-Content-Type-Options: nosniff header beside its Content-Type ("
 RD_FILES = (("rdzb", _a_module("rdzb", B_KERNEL_SEND, branches=RD_ZB)),
             ("rdzd", _a_module("rdzd", B_KERNEL_SEND, head=RD_ZD_HEAD, branches=RD_ZD)),
@@ -9490,8 +9575,9 @@ RD_FILES = (("rdzb", _a_module("rdzb", B_KERNEL_SEND, branches=RD_ZB)),
             ("rdsn", _a_module("rdsn", A_SEND % "", branches=RD_SN)),
             ("rdx2", _a_module("rdx2", B_KERNEL_SEND, head=RD_X2_HEAD, branches=RD_X2)),
             ("rdx3", _a_module("rdx3", RD_X3_SEND, head=RD_X3_HEAD, branches=RD_X3)),
-            ("rdnd", _a_module("rdnd", B_KERNEL_SEND, head=RD_ND_HEAD, branches=RD_ND)),
-            ("rdns", _a_module("rdns", A_SEND % "", branches=RD_NS)))
+            ("rdnd", _a_module("rdnd", RD_ND_SEND, head=RD_ND_HEAD, branches=RD_ND)),
+            ("rdns", _a_module("rdns", A_SEND % "", branches=RD_NS)),
+            ("rdnh", _a_module("rdnh", RD_NH_SEND, branches=RD_NH)))
 _RD_LEAF = "a digest of hmac's new whose digestmod is no constructor or algorithm name of hashlib's, whose return may be any text"
 _RD_CTYPE = "serves a response whose content type holds a CR or LF ("
 _RD_ARG = "a constant holding a CR or LF"
@@ -9541,9 +9627,15 @@ RD_REFUSED = (("rdzb", "zbu", 1, "a bytes constant holding a byte past ASCII", 1
     ("rdx3", "x3e", 1, "the module constant _PROBE_X3E, whose bound value reads __doc__, no module constant the census follows by binding", 1),
     ("rdx3", "x3o", 1, _RD_X3NAME % "__annotations__", 1)) + tuple(
     ("rdx3", t, 3, _RD_X3NAME % ("_PROBE_" + t.upper()), 1) for t in ("x3r", "x3s", "x3k")) + tuple(
-    ("rdnd", "nd" + k, 2, _RD_NOSNIFF % ct, 1) for k, ct in _RD_ND_TYPES) + tuple(
-    ("rdnd", t, 2, _RD_NOSNIFF % "text/plain", 1) for t in ("nda", "ndie", "ndfl", "ndi", "ndr", "ndx", "ndu", "ndl", "nd3", "ndk", "ndv", "ndh", "ndy")) + tuple(
-    ("rdns", "ns" + k, 1, _RD_NOSNIFF % ct, 1) for k, ct in _RD_ND_TYPES)
+    ("rdnd", "nd" + k, 2, _RD_NOSNIFF % ct, 1) for k, ct in _RD_ND_TYPES + _RD_NORM_TYPES) + tuple(
+    ("rdnd", t, 2, _RD_NOSNIFF % "text/plain", 1) for t in ("nda", "ndie", "ndfl", "ndi", "ndr", "ndx", "ndu", "ndl", "nd3", "ndk", "ndv", "ndh", "ndy",
+                                                         "ndaf", "ndeu", "ndes", "ndek", "ndal", "ndga", "ndgs", "ndhm", "ndmf", "ndkw", "ndmz")) + (
+    ("rdnd", "ndea", 3, _RD_NOSNIFF % "text/plain", 1), ("rdnd", "ndeb", 4, _RD_NOSNIFF % "text/plain", 1),
+    ("rdnd", "ndas", 4, _RD_NOSNIFF % "text/plain", 1), ("rdnd", "ndnm", 4, _RD_NOSNIFF % "text/plain", 1),
+    ("rdnd", "ndtf", 5, _RD_NOSNIFF % "text/plain", 1), ("rdnd", "ndth", 5, _RD_NOSNIFF % "text/plain", 1),
+    ("rdnd", "ndte", 7, _RD_NOSNIFF % "text/plain", 1), ("rdnd", "ndfe", 5, _RD_NOSNIFF % "text/plain", 1)) + tuple(
+    ("rdns", "ns" + k, 1, _RD_NOSNIFF % ct, 1) for k, ct in _RD_ND_TYPES + _RD_NORM_TYPES) + (
+    ("rdnh", "nsh", 1, _RD_NOSNIFF % "text/plain", 1),)
 RD_WHOLE = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe", "zxe") + tuple(
     a + f for a in ("qs", "qb") for f, _kw in RD_CF_FORMS) + ("qxe", "qxq", "qsp")   # the plants whose every page text is refused
 # the plants read at the fix (and at the reviewed head), each page's fetch a site and no SERVED line at it
@@ -9582,7 +9674,7 @@ RD_UNREAD = ("zbu", "zbs", "zbe", "zbf", "zbm", "znb", "zns", "znx", "zij", "zhe
     a + f for a in ("qs", "qb", "qf", "qj") for f, _kw in RD_CF_FORMS) + ("qxe", "qxq", "qsp") + (
     "ycp", "ych", "ycj", "ycn", "ycs", "ymx", "yvt", "yna", "ywc", "yws", "yse", "ysa", "ysu", "ysp", "ysm", "yrp") + tuple(
     t + "x" for t in ("x2u", "x2n", "x2t", "x2g", "x2w", "x2m", "x2k", "x2i", "x2v", "x3d", "x3o", "x3r", "x3s", "x3k")) + tuple(
-    t for t, _b in RD_ND + RD_NS)
+    t for t, _b in RD_ND + RD_NS + RD_NH)
 AD_FILES = AW_FILES + AP_FILES + AG_FILES + AB_FILES + AC_FILES + PC_FILES + AE_FILES + AR_FILES + AS_FILES + AT_FILES + RD_FILES
 
 
@@ -15887,7 +15979,10 @@ class TheLandingRoundsClassesFailClosed(_Scope):
     `global` and binds there among them (the (x3) plants), a builtin's name and a route's own local still read; and item A: a type of
     SNIFF_SCRIPT_TYPES typed as running no script only where a nosniff header is written beside its Content-Type, refused by name
     anywhere else, written outside `_send` and through a `_send` that writes none (the (nd) and (ns) plants, each of the conditions on
-    that header held by a plant of its own), image/png and the written header still typed. Each
+    that header held by a plant of its own, and since the owner's check of that pass each step of the type's normalisation, another
+    value of the header's name before it and the headers ended before it by an alias, getattr, a method of the receiver's or a call
+    handed it, rdnh's headers loop among them), image/png and the written header still typed, the stated limits' witnesses silent.
+    Each
     refusal is held at its line with its text and the count of its lines, each module's lines being its refused plants' and no other;
     each read plant's fetch is a site and each refused text none. The reds of a mutant per conjunct of each mechanism are in the build
     record."""
