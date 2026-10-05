@@ -27,8 +27,11 @@
 // The arrival's repaint waits out a press on the card through a hold of its own (the review's round 2, ui-1): a press on an Outline
 // row held across a retry's success lands its pick, its row still in the page at the click, and the note is laid out after the
 // release; a reload landing parked under a press survives an arrival in the same press and paints the new text at the release; a
-// viewer closed while its repaint is parked paints nothing at the release (the run re-checks that the viewer is up). Nothing in the
-// body moves under the press either: the arrival leaves a failed load's sources in both viewers' bodies to the held repaint (math.ts
+// viewer closed while its repaint is parked paints nothing at the release (the run re-checks that the viewer is up); and a paint since
+// the settle stands (the run re-checks that too: a reload answered 404 under the same press, its pane parked and painted first at the
+// release, over a held open with the chunk served and over a failed load's sources with the retry served, keeps the pane and error()'s
+// sentence; in the URL viewer a press on Raw across the retry's success keeps the Raw pick's rows, the one paint after the release).
+// Nothing in the body moves under the press either: the arrival leaves a failed load's sources in both viewers' bodies to the held repaint (math.ts
 // MATH_REPAINT_ATTR), so a press on a link below two display formulas, held across the retry's success, clicks the link, still in
 // the page, and its fragment lands, in both viewers (before, the in-place re-fill grew the formulas and the release met another
 // element; at f760868a6 the repaint removed the link).
@@ -550,6 +553,96 @@ test("chromium: the Files pane's viewer: a viewer closed while the arrival's rep
     await page.mouse.up();
     await frames(page, 8);
     assert.equal(await page.evaluate(() => (window as any).__paints), closed, "the parked repaint found the viewer gone and painted nothing: no hook of the closed viewer heard a paint");
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+// ── the parked repaint re-checks at the release that nothing painted since the settle (the check of round 2's pass): a landing
+// parked under the same press, which the release runs first, or the reader's own pick at the release, stands ──
+
+/** The local viewer's body as the takeover scenes read it: the failure pane's sentence, the seam's error(), and what else shows. */
+const paneNow = (page: any): Promise<{ pane: string | null; error: string | null; md: boolean; loader: boolean; katex: number; src: number }> => page.evaluate(() => {
+  const b = document.querySelector(".fileview-body")!;
+  const e = b.querySelector(":scope > .fileview-err");
+  return { pane: e ? e.textContent : null, error: (window as any).__seam.error(), md: !!b.querySelector(".fileview-md"), loader: !!b.querySelector(".fileview-load"),
+    katex: b.querySelectorAll(".katex").length, src: b.querySelectorAll("code.md-math-src").length };
+});
+/** A reload of the note answered 404 (the file gone) while a press holds the card: its landing, the failure pane, parks. */
+async function reload404UnderPress(page: any): Promise<void> {
+  const fetched = await page.evaluate(() => (window as any).__fetches);
+  await page.evaluate((p: string) => { delete (window as any).__docs[p]; (window as any).__seam.reload(); }, REPORT);
+  await page.waitForFunction((n: number) => (window as any).__fetches > n, fetched, { timeout: 10000 });
+  await frames(page, 4);
+  assert.equal(await page.evaluate(() => !!document.querySelector(".fileview-body > .fileview-err")), false, "the failure pane is parked under the press");
+}
+
+test("chromium: the Files pane's viewer: a held open, under one press a reload answered 404 and the chunk served: the release paints the reload's pane, and the arrival's parked repaint stands down, error() keeping its sentence", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const g = gate(); const requests: string[] = [];
+    const { page, errors } = await open(browser, { [REPORT]: NOTE }, "serve", g, requests);
+    await page.waitForFunction(() => !!document.querySelector('script[src*="math-chunk.js"]'), null, { timeout: 10000 });
+    await frames(page, 4);
+    const box = await page.locator(".fileview-body > .fileview-load").boundingBox();
+    assert.ok(box, "the held open's loader to press on");
+    await page.mouse.move(box.x + 10, box.y + box.height / 2);
+    await page.mouse.down();
+    await reload404UnderPress(page);
+    g.open();
+    await page.waitForFunction(() => (window as any).__rompKatex !== undefined, null, { timeout: 10000 });
+    await frames(page, 6);
+    await page.mouse.up();
+    await frames(page, 10);
+    const after = await paneNow(page);
+    assert.ok(after.error && after.pane !== null && after.pane.includes(after.error) && !after.md && !after.loader && after.katex === 0,
+      "the reload's pane stands with its sentence, no note painted over it: " + JSON.stringify(after));
+    assert.equal(requests.length, 1);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the Files pane's viewer: a failed load's sources shown, under one press a reload answered 404 and the retry served: the release paints the reload's pane, and the arrival's parked repaint stands down, error() keeping its sentence", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "file");
+    const para = page.locator(".fileview-body .fileview-md p", { hasText: "Paragraph 2:" }).first();
+    const box = await para.boundingBox();
+    assert.ok(box, "a paragraph to press on");
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    await reload404UnderPress(page);
+    await retryLandsNow(page, retry);
+    await page.mouse.up();
+    await frames(page, 10);
+    const after = await paneNow(page);
+    assert.ok(after.error && after.pane !== null && after.pane.includes(after.error) && !after.md && after.katex === 0 && after.src === 0,
+      "the reload's pane stands with its sentence, no note painted over it: " + JSON.stringify(after));
+    assert.equal(requests.length, 2);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test("chromium: the URL viewer: a failed load's sources shown, a press on Raw held across the retry's success: the release's Raw pick paints the rows, and the arrival's parked repaint stands down", { timeout: 60000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const retry = gate(); const requests: string[] = [];
+    const { page, errors } = await failedThenRetryOut(browser, retry, requests, "url");
+    const raw = page.locator("#romp-fileview button.fileview-btn", { hasText: /^Raw$/ });
+    const box = await raw.boundingBox();
+    assert.ok(box, "the Raw button to press");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await retryLandsNow(page, retry);
+    const under = await overNow(page);
+    assert.deepEqual([under.md, under.src, under.katex], [true, 2, 0], "under the press the note stands, its formulas still their sources: " + JSON.stringify(under));
+    // every paint of the body from here on: a swap of its children (the URL viewer fires no seam paint)
+    await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; (window as any).__swaps = 0; new MutationObserver((recs) => { if (recs.some((r) => r.addedNodes.length)) (window as any).__swaps++; }).observe(b, { childList: true }); });
+    await page.mouse.up();
+    await frames(page, 10);
+    const after = await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; return { rows: b.querySelectorAll(".fv-cl").length, md: !!b.querySelector(".fileview-md"), katex: b.querySelectorAll(".katex").length, swaps: (window as any).__swaps }; });
+    assert.ok(after.rows > 0 && !after.md && after.katex === 0, "the Raw pick's rows stand, no Rendered paint over them: " + JSON.stringify(after));
+    assert.equal(after.swaps, 1, "one paint after the release, the Raw pick's: the parked repaint found a paint since the settle and painted nothing: " + JSON.stringify(after));
+    const pressed = (await overNow(page)).pressed;
+    assert.ok(pressed.includes("Raw") && !pressed.includes("Rendered"), "under the pressed Raw button: " + JSON.stringify(pressed));
     assert.equal(requests.length, 2);
     assert.deepEqual(errors, []);
   });
