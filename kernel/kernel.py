@@ -74473,7 +74473,8 @@ function paneLabel(k){k=String(k||'');return PN[k]||(k?k.charAt(0).toUpperCase()
 // 3.5 s per handshake logged the Files pane at +22 s). A refused dial fails whatever stands; with nothing open, a hung outage, the
 // first cut writes, at 15 s.
 var lost={};
-// [fork] review round 1 of item 4b (2026-10-04): `leaving`, a latch set on beforeunload and read first by both failure doors below.
+// [fork] review round 1 of item 4b (2026-10-04): `leaving`, a latch set on beforeunload and read by both failure doors below before
+// any handling of their own (window.__rompLinkFailed first; the wsFail listener right after the pane protocol's source check).
 // Firefox closes the page's dials that never opened after beforeunload and before pagehide, and delivers their close events while
 // the page still runs, so a reload while a dial was connecting (a return's redial, the boot dials) read each such close as a failed
 // reconnect and wrote one unread entry per shown pane, which the reloaded page showed. beforeunload also fires for a navigation that

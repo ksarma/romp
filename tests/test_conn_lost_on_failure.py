@@ -1105,8 +1105,9 @@ console.log(JSON.stringify(out));
 class AnUnloadsClosesFailNothing(unittest.TestCase):
     """Review round 1 of item 4b (2026-10-04): Firefox closes the page's dials that never opened after beforeunload and before
     pagehide and delivers their close events while the page still runs, so a reload during a return's redial or the boot dials
-    wrote one unread entry per shown pane. The Log now holds a latch, `leaving`, set on beforeunload and read first by both
-    failure doors (window.__rompLinkFailed and the wsFail listener), and cleared by the page's next real event, since
+    wrote one unread entry per shown pane. The Log now holds a latch, `leaving`, set on beforeunload, read by both failure
+    doors before any handling of their own (window.__rompLinkFailed first; the wsFail listener right after the pane
+    protocol's source check, which ThePaneSourceCheckComesFirst executes), and cleared by the page's next real event, since
     beforeunload also fires for a navigation that does not unload (a 204, a download): the shell's next dial, its open or the
     next frame on its link (window.__rompNotLeaving), a pane's or a column's open, or pageshow. Each door and each clear is executed here; the real
     engines are tests/test_conn_lost_log_served.py's unload legs. The unload posts its words in a real Firefox reload's order
