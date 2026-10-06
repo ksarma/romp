@@ -5282,6 +5282,9 @@ function ruleWordSafe(w) {
   return true;
 }
 const ruleHasRedir = (seg) => (seg.redirects && seg.redirects.length) || (seg.stdin && seg.stdin.length) || (seg.heredocs && seg.heredocs.length) || (seg.dups && seg.dups.length) || (seg.outDups && seg.outDups.length);
+// a word's quote-removed literal head text, or null: literal and built only from the command's own text (no expansion mark x, no home mark h), so a quoted or
+// escaped spelling of a builtin head reads as the name the shell still runs it under (clause (c) of RULE S)
+const ruleLiteralHead = (w) => (w && w.literal && w.text && !w.text.includes('\0') && (!w.marks || !/[xh]/.test(w.marks))) ? w.text : null;
 // clause (b) and the SECOND CENSUS AXIS applied to a segment's words and head
 function ruleSegUnsafe(seg) {
   if (seg.paren) return false;   // a `(` or `)` subshell marker: safe; its body segments are judged on their own
@@ -5290,9 +5293,10 @@ function ruleSegUnsafe(seg) {
   if (seg.op === '(' && seg.words.length) return true;   // (a) an unquoted `(` glued to a word: function definition, array assignment, extglob or glob qualifier
   if (compoundHeadOf(seg.words) === 'function') return true;   // (a) a `function` keyword definition
   if (ruleHasRedir(seg) && seg.words.some((w) => RULE_S_BRACEVAR.test(w.text))) return true;   // (a) a {NAME} descriptor redirection
-  const head = compoundHeadOf(seg.words);
-  const raw = seg.words[rawHeadIndexOf(seg.words)];
-  if ((head && NAME_RUN_CHANGERS.has(head)) || (raw && plainWord(raw) && NAME_RUN_CHANGERS.has(raw.text))) return true;   // (c) a head that may change what a name runs
+  // (c) a head that may change what a name runs, read by its QUOTE-REMOVED literal text at the peel position and as spelled: quoting or escaping a builtin's
+  // name (`'typeset' -fu g`, `"declare" -fu g`, `\typeset -fu g`) removes the quotes and still runs the builtin (quoting suppresses alias and reserved-word
+  // recognition, not builtin lookup), so plainWord alone (unquoted) let these through; a word built from an expansion (mark x) or the home (mark h) is no literal head
+  if ([seg.words[peelIndex(seg.words)], seg.words[rawHeadIndexOf(seg.words)]].some((w) => ruleLiteralHead(w) && NAME_RUN_CHANGERS.has(ruleLiteralHead(w)))) return true;
   const words = [...(seg.words || []), ...((seg.redirects || []).map((r) => r.target).filter(Boolean)), ...((seg.stdin || []).filter(Boolean)), ...((seg.fedWords || []))];
   for (const w of words) {
     if (!ruleWordSafe(w)) return true;   // (a) an unsafe expansion in a word

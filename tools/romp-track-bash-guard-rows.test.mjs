@@ -250,6 +250,7 @@ test("fork PR 975's round 2, R1 (RULE S), clause (a) SAFE SYNTAX at every nestin
     'f() { :; }', 'function g { :; }', 'arr=(a b c)', 'cat *(.)', 'echo @(a|b)',
     'echo ${x/a/b}', 'echo ${x//a/b}', 'echo ${x[0]}', 'echo ${!x}', 'echo ${x:2:3}', 'echo ${x^^}', 'echo ${x@P}', 'echo ${(U)x}', 'echo ${x:=y}', 'echo ${x=y}',
     'BASH_ALIASES[ls]=rm', 'functions[g]=x', 'galiases[g]=x', 'autoload -Uz g', 'typeset -fu g', 'declare -fu g', 'readonly -fu g', 'enable -n cd', 'alias g=rm', 'unalias g', 'hash -p /x y',
+    "'typeset' -fu g", '"declare" -fu g', '\\typeset -fu g',   // clause (c) reads the head's quote-removed text: a quoted or escaped may-change head is unsafe (the shell still runs the builtin)
   ];
   const nest = {
     top: (f) => f, subshell: (f) => `( ${f} )`, braceGroup: (f) => `{ ${f}; }`, cmdSubst: (f) => `echo $(${f})`,
@@ -918,6 +919,12 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // belongs on THE NAME-RUN AXIS. It was absent, so the command was positively safe for ROOT and the mention relaxation held (base refused, the PR's HEAD still allowed,
       // zsh wrote); readonly on the axis gives it fork main's reading. The from-out twin (outside 'name') refuses the same way, c2 writing an absolute tracked path.
       ['AS8-ruleS-nameRun-readonly-fu', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; readonly -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
+      // fork PR 975's gap pass (R1, 2026-10-06): clause (c) read only an UNQUOTED head word (plainWord), so a may-change head spelled with quotes or an escape
+      // (`'typeset'`, `"declare"`, `\typeset`) slipped past the axis while the shell still ran the builtin. Clause (c) now reads the head's quote-removed literal
+      // text. Base refused each; the PR's HEAD allowed it; a real zsh wrote the tracked file through the autoloaded shadow.
+      ['AS8-ruleS-nameRun-typeset-fu-quoted', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; 'typeset' -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
+      ['AS8-ruleS-nameRun-declare-fu-dquoted', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; "declare" -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
+      ['AS8-ruleS-nameRun-typeset-fu-bslash', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; \\typeset -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-root-alias-head', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; alias g=read\ng PATH < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
       ['AS8-root-global-alias', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; alias -g G='read PATH'\nG < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
       ['AS8-root-alias-unread-operand', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; printf 'g=read\\n' > {OUT}/an; read n < {OUT}/an; alias $n\ng PATH < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
@@ -1457,6 +1464,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       'AS8-root-func-later-loop': { c2: CP }, 'AS8-root-func-later-keyword': { c2: CP }, 'AS8-root-func-later-body': { c2: CP }, 'AS8-root-func-later-echo': { c2: CP },
       'AS8-root-func-zsh-autoload': { c2: CP }, 'AS8-root-func-zsh-functions-c': { c2: CP, g: 'bound' }, 'AS8-root-func-unread-head-loop': { w3: W2 },
       'AS8-ruleS-bracevar-path': { c2: CP }, 'AS8-ruleS-nameRun-typeset-fu': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-declare-fu': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-readonly-fu': { c2: CP, g: 'bound' },
+      'AS8-ruleS-nameRun-typeset-fu-quoted': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-declare-fu-dquoted': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-typeset-fu-bslash': { c2: CP, g: 'bound' },
       'AS8-root-alias-head': { c2: CP }, 'AS8-root-alias-unread-operand': { c2: CP, g: 'bound' },
       'AS8-cost-into-file': { w2: 'absent' }, 'AS8-cost-into-dir-T': { w2: 'absent' },
       'AS8-root-test-v-path': { c2: CP }, 'AS8-root-jobs-x-read-path': { w3: W2 }, 'AS8-root-jobs-x-eval-func': { c2: CP }, 'AS8-root-zsh-continue-path': { c2: CP },
@@ -1589,7 +1597,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# RESTS_ON_PROBES: ${RESTS_ON_PROBES.size} rows whose rebinding the gate cannot know; ${ranHere.size} of ${rows.length} rows ran their legs here; the rest ran none here: ${rows.map((r) => r[0]).filter((id) => !ranHere.has(id) && !RESTS_ON_PROBES.has(id) && !guardOnly.includes(id)).join(', ') || 'none'}`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 280 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 283 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
