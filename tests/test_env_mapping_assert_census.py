@@ -78,8 +78,8 @@ THE MAPPINGS, read by is_env():
   X[k] = M stores an environment mapping M under a key k that is not a string constant: a capture helper's seen[slot]
   = dict(kwargs["env"]) makes seen["probe"], seen[slot] and seen.get("probe") one, and seen.get("probe").get(name)
   an absent-value check's read. A name X is matched to the scope that binds it, as Python resolves the name at the
-  assignment (the helper's seen is the test's seen); an attribute X is matched by its name, module-wide. X itself,
-  printed whole or through a view, is not read (WHAT IT CANNOT SEE);
+  assignment (the helper's seen is the test's seen); an attribute X is matched by its name, module-wide. A view of X
+  is read (THE CONTAINERS); X itself printed whole is not, unless it is a holder (WHAT IT CANNOT SEE);
   a copy or view of a mapping: dict(M, ...), dict(**M), copy.copy, copy.deepcopy, OrderedDict, ChainMap and
   MappingProxyType of M, M.copy(), M.items(), M.values(), {**M, ...}, M | other and other | M, a dict comprehension
   over M or its items, any comprehension over M.items() or M.values(), and sorted, list, tuple or set of M.items() or
@@ -121,8 +121,14 @@ a session's launch shape; a host spawn spec; a registry entry, which stores a se
   an element of a tuple target bound from a call (host, sock, spec = self._start(...)), read through the callee's
   `return a, b, c`.
 A view of a holder, H.items() or H.values(), and sorted, list, tuple, set or frozenset of one, is not itself a holder,
-but it carries the environment the holder holds and renders it the same way (_holder_view); H.keys() prints names
+but it carries the environment the holder holds and renders it the same way (_carrying_view); H.keys() prints names
 only.
+THE CONTAINERS, one rule for both keyings and both kinds: where an assignment X[k] = V stores an environment mapping
+or a holder V under any key, a string constant or not (seen[slot] = dict(kwargs["env"]), seen["child"] =
+dict(os.environ), opts[name] = dict(model=m, env=E)), a view of X carries every entry and renders each, as a holder's
+view does: X.items() and X.values(), and sorted, list, tuple, set or frozenset of one (_carrying_view). A name X is
+matched to the scope that binds it and an attribute X by its name, module-wide, as for the subscripts above. X.keys()
+prints names only, and X itself printed whole is not read unless it is a holder (WHAT IT CANNOT SEE).
 THE BINDING FORMS. The census counts four copies of os.environ where a name is bound to one (READ_FORMS):
 dict(os.environ, ...), os.environ.copy(), {**os.environ, ...} and os.environ.items() (a binding of the view or a
 comprehension over it). It claims to find three of them in the tree (BINDING_FORMS) and fails when the tree holds none
@@ -172,9 +178,11 @@ The census also cannot see:
   a mapping or a holder reached through a parameter (a helper handed env by its caller), a list index
   (captured.append(env); captured[0]), getattr, or an attribute or key whose name is neither an env word nor assigned
   an environment mapping in the module (s.env_vars, a per-session overlay, is not read);
-  the container X itself, printed whole or through a view, where X[k] = M stores mappings under keys that are not
-  string constants (assertEqual(seen, {...}) or assertEqual(list(seen.values()), [...]) after seen[slot] =
-  dict(kwargs["env"])): its subscripts and keyed reads are read, not X;
+  the container X itself printed whole, where X[k] = V stores environment mappings or holders under any key
+  (assertEqual(seen, {...}) after seen[slot] = dict(kwargs["env"]) or seen["child"] = dict(os.environ)), unless the
+  text shows X is a holder (THE HOLDERS), as an env key does (seen["env"] = ...): its views are read, and its
+  subscripts and keyed reads under any key after seen[slot] = ... but only under the same constant key after
+  seen["child"] = ..., not X;
   a read wrapped in `or` before an absent-value check (assertEqual(os.getenv(k) or "", ""), assertIsNone(env.get(k)
   or None)): the check prints the value when the variable is set, and the census reads only a bare read;
   an object that holds the environment as an attribute its repr prints (the SDK's options object, opts.env, built by a
@@ -188,9 +196,11 @@ The census also cannot see:
   a callee that resolves by a name the module does not define or import from tests/, a product function whose name is
   not an env word, a product module's own attribute and key bindings, or a callee that returns the mapping through
   another call's parameter (sb._bin_on_path_env(environ) returns a mapping of its argument's values and is not read);
-  a view bound to a name and then iterated (pairs = env.items(); sorted(pairs), or ", ".join(vals) after vals =
-  env.values()), a join whose comprehension reads the values through the keys (", ".join(k + "=" + env[k] for k in
-  env)), and a formatted mapping passed through another call (repr(env).replace(...), map(str, env.values()));
+  a view of a mapping, a holder or a container bound to a name and then iterated (pairs = env.items(); sorted(pairs),
+  or ", ".join(vals) after vals = env.values()), a comprehension over a holder's or a container's view ([v for v in
+  kw.values()]; one over a mapping's view is read), a join whose comprehension reads the values through the keys
+  (", ".join(k + "=" + env[k] for k in env)), and a formatted mapping passed through another call
+  (repr(env).replace(...), map(str, env.values()));
   Python inside a string (a planted module a test writes and runs, whose bare assert over os.environ renders under
   that run's own conftest);
   a mapping printed by print(), logging, a raise or a subprocess's output a test asserts on;
@@ -203,11 +213,11 @@ The census also cannot see:
   name in scope is the one binding followed.
 PLANTS pins each shape it reads, red or green, and the stated limits a reader would most expect it to see (a parameter,
 a list index, a mapping read back from a child's dump, a for target over captured pairs, mock's assert_called* family,
-a view bound to a name, values read through the keys, a formatted mapping passed through another call, an options
-object holding the environment as an attribute, a holder known only by a membership test, a holder bound as a tuple
-element that only another test shows, the container of mappings stored under keys that are not string constants,
-printed whole or through a view, a read wrapped in `or` before an absent-value check, and Python a test writes as a
-string, in both idioms the tree uses: a written constant and a textwrap.dedent module).
+a view bound to a name, a comprehension over a holder's or a container's view, values read through the keys, a
+formatted mapping passed through another call, an options object holding the environment as an attribute, a holder
+known only by a membership test, a holder bound as a tuple element that only another test shows, the container of
+mappings or holders stored under any key, printed whole, a read wrapped in `or` before an absent-value check, and
+Python a test writes as a string, in both idioms the tree uses: a written constant and a textwrap.dedent module).
 
 THE PARSE (2026-10-06; the shape tests/test_obsidian_state_routes.py's census calls E, and this module's exception to
 tests/parse_cache.py's rule that the AST censuses under tests/ parse through its one process-wide cache). The census
@@ -622,6 +632,9 @@ class _Module:
         # attribute names X whose every subscript is an environment mapping, or a holder, because the module assigns
         # X[k] = one under a key that is not a string constant (a name X is marked per scope, on the Reader)
         self.slot_attrs, self.holder_slot_attrs = set(), set()
+        # attribute names X whose views carry an environment because the module assigns X[k] = an environment mapping or
+        # a holder under any key (THE CONTAINERS; a name X is marked per scope, on the Reader)
+        self.container_attrs = set()
 
     def scope(self, node):
         s = self._scopes.get(id(node))
@@ -675,6 +688,9 @@ class Reader:
         # (id(scope), name): a name X whose every subscript is an environment mapping, or a holder, because X[k] = one is
         # assigned under a key that is not a string constant (seen[slot] = dict(kwargs["env"]) makes seen["probe"] one)
         self.env_slots, self.holder_slots = set(), set()
+        # (id(scope), name): a name X whose views carry an environment, because X[k] = an environment mapping or a
+        # holder is assigned under any key, a string constant or not (THE CONTAINERS)
+        self.containers = set()
         self._hreturns, self._hnames, self._hmemo = {}, {}, {}
 
     def forget(self):
@@ -954,7 +970,7 @@ class Reader:
                     self._slotted(f.value, scope, self.holder_slots, module.holder_slot_attrs)
             if f.attr in MAPPING_METHODS + ("keys",) + VIEWS:
                 # a mapping's own method: one value, its names, a view, or None, never the holder itself; a holder's
-                # items() or values() view still carries the environment it holds and renders it (_holder_view)
+                # items() or values() view still carries the environment it holds and renders it (_carrying_view)
                 return False
         if name in HOLDER_BUILDERS:
             # dict(..., env=E) and SimpleNamespace(env=E) hold E under the key; dict(H, ...) and copy.copy(H) copy a holder
@@ -1030,19 +1046,23 @@ class Reader:
             return self.witness(node.target, module, scope) | self.witness(node.value, module, scope)
         return False
 
-    def _holder_view(self, node, module, scope):
-        """H.items() or H.values() of a holder H, or sorted, list, tuple, set or frozenset of one: it carries the
-        environment the holder holds."""
+    def _carrying_view(self, node, module, scope):
+        """X.items() or X.values(), or sorted, list, tuple, set or frozenset of one, where X is a holder or a container
+        whose entries are environment mappings or holders (THE CONTAINERS: X[k] = one under any key, a string constant
+        or not): the view carries the environment the holder, or each entry, holds."""
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in SEQUENCES and node.args:
             node = node.args[0]
-        return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in VIEWS
-                and not node.args and self.is_holder(node.func.value, module, scope))
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in VIEWS
+                and not node.args):
+            return False
+        x = node.func.value
+        return self.is_holder(x, module, scope) or self._slotted(x, scope, self.containers, module.container_attrs)
 
     def renders_whole(self, node, module, scope):
-        """An environment mapping, a holder of one, or a view of a holder: a failure that prints it prints the
-        environment."""
+        """An environment mapping, a holder of one, or a view that carries one (_carrying_view): a failure that prints
+        it prints the environment."""
         return (self.is_env(node, module, scope) or self.is_holder(node, module, scope)
-                or self._holder_view(node, module, scope))
+                or self._carrying_view(node, module, scope))
 
     def rendered(self, node, module, scope):
         """The environment mappings a failure message prints when it prints `node` (the module docstring's list)."""
@@ -1127,7 +1147,7 @@ class Reader:
 
     def settle(self, modules):
         """The attribute names and string keys each module assigns an environment mapping to, to a fixed point over every
-        module (a callee in one module can read another's), then memoisation on."""
+        module (a callee in one module can read another's), then memoisation on, then the containers."""
         self.settled = False
         pending = [(m, m.attrs if isinstance(t, ast.Attribute) else m.keys,
                     t.attr if isinstance(t, ast.Attribute) else _str_const(t.slice), v, sn)
@@ -1207,6 +1227,18 @@ class Reader:
                     self.forget()
         self.forget()
         self.settled = True
+        # THE CONTAINERS, one rule for both keyings: X[k] = V stores an environment mapping or a holder V under a key
+        # that is not a string constant (seen[slot] = dict(kwargs["env"])) or under one that is (seen["child"] =
+        # dict(os.environ)), so a view of X carries every entry (_carrying_view). Read once the mappings and the holders
+        # have settled: a view is neither, so marking X changes no other reading.
+        for m in modules:
+            stored = m.slots + [(sn, t.value, v) for sn, t, v in m.targets
+                                if isinstance(t, ast.Subscript) and isinstance(t.value, (ast.Name, ast.Attribute))]
+            for sn, x, v in stored:
+                scope = m.scope(sn)
+                k = self.slot_key(x, scope)
+                if k is not None and (self.is_env(v, m, scope) or self.is_holder(v, m, scope)):
+                    (self.containers if isinstance(x, ast.Name) else m.container_attrs).add(k)
 
 
 def _is_os_environ(node, scope, reader):
@@ -1642,13 +1674,15 @@ PLANTS = {
                                                 'self.shapes[1] = dict(model="m", env={})',
                                                 'self.assertIn("model", self.shapes[1])'),
                                           ['opts["a"]', "self.box[0]", "self.shapes[1]"]),
-    # a same-named X in another method is its own binding: its seen["probe"] stays clean
+    # a same-named X in another method is its own binding: its seen["probe"] and its view stay clean
     "variable-key-binding-scope": ("import os, unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n"
                                    "        seen = {}\n        def capture(slot):\n"
                                    "            seen[slot] = dict(os.environ)\n        capture('probe')\n"
-                                   "        self.assertNotIn('X', seen['probe'], 'm')\n    def test_b(self):\n"
-                                   "        seen = {'probe': 'a b'}\n        self.assertIn('a', seen['probe'])\n",
-                                   ["seen['probe']"]),
+                                   "        self.assertNotIn('X', seen['probe'], 'm')\n"
+                                   "        self.assertEqual(list(seen.values()), [], 'm')\n    def test_b(self):\n"
+                                   "        seen = {'probe': 'a b'}\n        self.assertIn('a', seen['probe'])\n"
+                                   "        self.assertEqual(list(seen.values()), ['a b'])\n",
+                                   ["seen['probe']", "list(seen.values())"]),
     # the same X read by key without a subscript: X.get(k), X.pop(k), X.setdefault(k), and an absent-value check
     # through one, for an environment mapping stored under a variable key and for a holder
     "variable-key-keyed-reads": (_body('seen = {}', 'def capture(slot):', '    def side_effect(*args, **kwargs):',
@@ -1669,6 +1703,47 @@ PLANTS = {
                                               'self.shapes[1] = dict(model="m", env={})',
                                               'self.assertIn("model", self.shapes.get(1))'),
                                         ['opts.get("a")', "self.box.get(0)", "self.shapes.get(1)"]),
+    # THE CONTAINERS: X[k] = an environment mapping or a holder under any key, a string constant or not, makes a view
+    # of X (X.items(), X.values(), sorted, list, tuple, set or frozenset of one) carry every entry; one plant per keying
+    # and kind, each with a name and an attribute; X.keys(), len() and sorted(X) print names or a count
+    "variable-key-container-views": (_body('seen = {}', 'def capture(slot):', '    seen[slot] = dict(os.environ)',
+                                           'self.assertEqual(list(seen.values()), [])',
+                                           'self.assertIn("X", seen.items())',
+                                           'self.assertEqual(sorted(seen.items()), [], "m")',
+                                           'self.assertTrue(False, "%r" % (tuple(seen.values()),))',
+                                           'self.box = {}', 'self.box[0] = dict(os.environ)',
+                                           'self.assertEqual(frozenset(self.box.items()), frozenset())',
+                                           'self.assertEqual(len(seen.values()), 1)',
+                                           'self.assertEqual(sorted(seen.keys()), [])'),
+                                     ['list(seen.values())', 'seen.items()', 'sorted(seen.items())',
+                                      'tuple(seen.values())', 'frozenset(self.box.items())']),
+    "variable-key-holder-container-views": (_body('opts = {}', 'for name in ("a", "b"):',
+                                                  '    opts[name] = dict(model="m", env=dict(os.environ))',
+                                                  'self.assertIn("m", opts.values())',
+                                                  'self.assertEqual(set(opts.items()), set())',
+                                                  'self.shapes = {}', 'self.shapes[1] = dict(model="m", env={})',
+                                                  'self.assertEqual(list(self.shapes.values()), [])',
+                                                  'self.assertEqual(sorted(opts.keys()), ["a", "b"])'),
+                                            ['opts.values()', 'set(opts.items())', 'list(self.shapes.values())']),
+    "string-key-container-views": (_body('byname = {}', 'byname["child"] = dict(os.environ)',
+                                         'self.assertEqual(list(byname.values()), [])',
+                                         'self.assertNotIn("X", byname.items(), "m")',
+                                         'assert tuple(byname.items()) == ()',
+                                         'self.reg = {}', 'self.reg["probe"] = dict(os.environ)',
+                                         'self.assertEqual(sorted(self.reg.values()), [])',
+                                         'self.assertEqual(sorted(byname), ["child"])',
+                                         'self.assertEqual(len(byname.items()), 1)'),
+                                   ['list(byname.values())', 'byname.items()', 'tuple(byname.items())',
+                                    'sorted(self.reg.values())']),
+    "string-key-holder-container-views": (_body('byname = {}', 'byname["a"] = dict(model="m", env=dict(os.environ))',
+                                                'self.assertIn("m", byname.values())',
+                                                'self.assertEqual(frozenset(byname.items()), frozenset())',
+                                                'self.specs = {}', 'self.specs["host"] = {"sid": "s", "env": {}}',
+                                                'self.assertEqual(list(self.specs.values()), [])',
+                                                'self.assertTrue(False, "%r" % (self.specs.items(),))',
+                                                'self.assertEqual(sorted(self.specs.keys()), [])'),
+                                          ['byname.values()', 'frozenset(byname.items())', 'list(self.specs.values())',
+                                           'self.specs.items()']),
     # the clean shapes: what a failure prints is one value, a bool, or names
     "clean-get-read": (_body('seen = {}', 'self.assertEqual(seen["env"].get("X"), "1")',
                              'self.assertTrue(seen["env"].get("X") is None, "X")'), []),
@@ -1751,9 +1826,13 @@ PLANTS = {
     "limit-mock-assertion": (_body('with mock.patch("subprocess.run") as run:', '    run(["claude"], env=dict(os.environ))',
                                    'run.assert_not_called()', 'run.assert_called_once()',
                                    'run.assert_called_once_with(["claude"])'), []),
-    "limit-variable-key-container": (_body('seen = {}', 'def capture(slot):', '    seen[slot] = dict(os.environ)',
-                                           'self.assertEqual(seen, {})', 'self.assertEqual(list(seen.values()), [])',
-                                           'self.assertIn("X", seen.items())'), []),
+    "limit-container-printed-whole": (_body('seen = {}', 'def capture(slot):', '    seen[slot] = dict(os.environ)',
+                                            'self.assertEqual(seen, {})', 'self.shapes = {}',
+                                            'self.shapes[1] = dict(model="m", env={})',
+                                            'self.assertEqual(self.shapes, {})', 'byname = {}',
+                                            'byname["child"] = dict(os.environ)', 'self.assertNotIn("X", byname)',
+                                            'self.specs = {}', 'self.specs["host"] = {"sid": "s", "env": {}}',
+                                            'self.assertEqual(self.specs, {})'), []),
     "limit-or-wrapped-absent-read": (_body('self.assertEqual(os.getenv("X") or "", "")',
                                            'self.assertIsNone(os.getenv("X") or None)', 'env = dict(os.environ)',
                                            'self.assertEqual(env.get("X") or "", "", "X")',
@@ -1769,7 +1848,12 @@ PLANTS = {
                                     'vals = env.values()', 'self.assertTrue(False, ", ".join(vals))',
                                     'self.assertTrue(False, ", ".join(k + "=" + env[k] for k in env))',
                                     'self.assertTrue(False, repr(env).replace("a", "b"))',
-                                    'self.assertTrue(False, ", ".join(map(str, env.values())))'), []),
+                                    'self.assertTrue(False, ", ".join(map(str, env.values())))',
+                                    'byname = {}', 'byname["child"] = env', 'entries = byname.items()',
+                                    'self.assertEqual(sorted(entries), [])',
+                                    'self.assertEqual([v for v in byname.values()], [])',
+                                    'kw = dict(model="m", env={})',
+                                    'self.assertEqual([v for v in kw.values()], [])'), []),
 }
 
 
