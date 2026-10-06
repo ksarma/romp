@@ -6647,6 +6647,15 @@ class BatchStateLimit(unittest.TestCase):
                                        "aside and plan again" % (path, 1 << 20), (1 << 20) + 1])
 
 
+def _ci_workflow_readers():
+    """tests/test_ci_workflow_concurrency.py, the ci.yml readers (the shape switch's among them), imported with the checkout
+    root on sys.path as the CI test modules import it."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from tests import test_ci_workflow_concurrency
+    return test_ci_workflow_concurrency
+
+
 class CiJobs(unittest.TestCase):
     """The coordinator's decision 18, the half that reads ci.yml: batch.ci_jobs reads, at a head, each job of ci.yml and
     the name GitHub renders for its job runs (its name: with each expression matching any text, or its id), and refuses a
@@ -6712,13 +6721,20 @@ class CiJobs(unittest.TestCase):
             self.assertFalse(name == job and re.search(r"^    strategy:", block, re.M),
                              "the %s job has a matrix and no name: render GitHub's (<values>) here" % job)
             names = [name]
-            if "matrix.python-version" in exprs:
+            if "matrix.python-version" in exprs and job == "python":
+                # the python job's python-version axis is the shape switch's expression (2026-10-06): the versions a batch
+                # push runs are the axis evaluated for a push to a batch branch, under the shape the file's three lines say
+                # (tests/test_ci_workflow_concurrency.py; its excludes drop macOS cells alone, and a push has none)
+                wf = _ci_workflow_readers()
+                versions = wf.python_versions(wf.python_version_axis(text), wf.run("push", wf.BATCH_X, wf.SHA_A))
+            elif "matrix.python-version" in exprs:
                 # an exclude: entry names a cell the matrix drops (the python job's macOS exclusions, 2026-10-04), so its
                 # versions are not read; the list and the include: entries are
                 kept = re.sub(r"^(\s*)exclude:[ \t]*\n(?:\1\s+.*\n|\s*\n)*", "", block, flags=re.M)
                 versions = [v.strip().strip("'\"") for group in re.findall(r"python-version:[ \t]*\[([^\]]*)\]", kept)
                             for v in group.split(",")]
                 versions += re.findall(r"python-version:[ \t]*['\"]([^'\"]+)['\"]", kept)
+            if "matrix.python-version" in exprs:
                 self.assertTrue(versions, "the %s job's matrix lists no python-version" % job)
                 names = [re.sub(r"\$\{\{\s*matrix\.python-version\s*\}\}", v, name) for v in versions]
             if self.SHARD_CLAUSE in exprs:
@@ -6751,28 +6767,58 @@ class CiJobs(unittest.TestCase):
     def test_the_maintainer_steps_name_every_check_a_batch_push_reports(self):
         """docs/batching.md's maintainer section lists the checks to require; it names every one a batch push reports, as
         batch_push_checks derives them from ci.yml: each job's rendered name in backticks, and for the python job its
-        name with <version> for the version and <shard> for the shard, the Linux cells' versions and the shards listed
-        after it (the shards since 2026-10-04). At the round-2 fix head it named four of the six jobs, not the
-        vendored-tooling and served-pages jobs PR 928 added."""
+        name with <version> for the version and <shard> for the shard, the shards and, for each shape of ci.yml's shape
+        switch (2026-10-06), the Linux cells' versions listed after it (the shards since 2026-10-04). Both shapes are read
+        whichever the file's three lines say (wf.with_shape), so the doc holds for either and a switch of the shape needs no
+        edit here. At the round-2 fix head it named four of the six jobs, not the vendored-tooling and served-pages jobs
+        PR 928 added."""
+        wf = _ci_workflow_readers()
         text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         doc = (ROOT / "docs" / "batching.md").read_text(encoding="utf-8")
         start = doc.index("## If you are the maintainer")
         section = doc[start:doc.index("\n## ", start + 1)]
         para = re.sub(r"\s+", " ", section)
-        m = re.search(r"`Python <version> \(ubuntu-latest, shard <shard>\)` for each Linux cell \(([^)]*)\) and each shard "
+        m = re.search(r"`Python <version> \(ubuntu-latest, shard <shard>\)` for each shard \(([^)]*)\) and each Linux cell a "
+                      r"batch push runs: under ci\.yml's full shape, the default \(([^)]*)\), and under its smaller shape "
                       r"\(([^)]*)\)", para)
         self.assertIsNotNone(m, "the python job's checks are named as `Python <version> (ubuntu-latest, shard <shard>)` with "
-                                "the cells' versions and the shards")
-        versions = [v.strip() for v in re.split(r",|\band\b", m.group(1)) if v.strip()]
-        shards = [k.strip() for k in re.split(r",|\band\b", m.group(2)) if k.strip()]
-        listed = sorted("%s (ubuntu-latest, shard %s)" % (v, k) for v in versions for k in shards)
-        for job, names in self.batch_push_checks(text).items():
-            with self.subTest(job=job):
-                if job == "python":
-                    self.assertEqual(listed, sorted(n[len("Python "):] for n in names))
-                else:
-                    for name in names:
-                        self.assertTrue("`%s`" % name in para, "docs/batching.md's maintainer section does not name %s" % name)
+                                "the shards and each shape's versions")
+
+        def words(group):
+            return [w.strip() for w in re.split(r",|\band\b", group) if w.strip()]
+        shards = words(m.group(1))
+        for shape, group in zip(wf.SHAPES, (m.group(2), m.group(3))):
+            listed = sorted("%s (ubuntu-latest, shard %s)" % (v, k) for v in words(group) for k in shards)
+            for job, names in self.batch_push_checks(wf.with_shape(text, shape)).items():
+                with self.subTest(shape=shape, job=job):
+                    if job == "python":
+                        self.assertEqual(listed, sorted(n[len("Python "):] for n in names))
+                    else:
+                        for name in names:
+                            self.assertTrue("`%s`" % name in para, "docs/batching.md's maintainer section does not name %s"
+                                            % name)
+
+    def test_lands_gate_reads_a_batch_run_of_either_shape_as_complete(self):
+        """land's CI gate (batch.ci_jobs and batch.unmet_ci_jobs, read by batch_ci_run) holds a batch run to one passing
+        job run for each job of ci.yml, matched by its rendered name, so a batch push under the smaller shape, eight
+        Python jobs (3.12 and 3.14t, four shards each) where full runs twenty, meets it as full's does (2026-10-06; no
+        change to batch.py). It is no stronger than that: a run whose Python jobs are 3.12's alone meets it too, and the
+        per-shape cells are held by tests/test_ci_shards.py's ShapeSwitch, which the sweep runs at every batch head. A run
+        with no Python job, or a failed one only, does not meet it."""
+        wf = _ci_workflow_readers()
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        for shape in wf.SHAPES:
+            src = wf.with_shape(text, shape)
+            expected = self.jobs(src)
+            checks = self.batch_push_checks(src)
+            runs = [{"name": n, "status": "completed", "conclusion": "success"} for names in checks.values() for n in names]
+            with self.subTest(shape=shape):
+                self.assertEqual(len(checks["python"]), {"full": 20, "smaller": 8}[shape])
+                self.assertEqual(batch.unmet_ci_jobs(expected, runs), [])
+                no_python = [r for r in runs if not r["name"].startswith("Python ")]
+                self.assertEqual([job for job, _name in batch.unmet_ci_jobs(expected, no_python)], ["python"])
+                failed = [dict(r, conclusion="failure") if r["name"].startswith("Python ") else r for r in runs]
+                self.assertEqual([job for job, _name in batch.unmet_ci_jobs(expected, failed)], ["python"])
 
     def test_a_ci_yml_it_cannot_read_that_way_is_refused(self):
         for label, ci, text in (("no ci.yml", None, "could not read .github/workflows/ci.yml at"),

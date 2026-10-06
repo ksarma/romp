@@ -445,9 +445,10 @@ the run valid.
 The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
 the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
 switch, so a Chromium that fails to launch there skips instead of failing), the Python versions other than --python's,
-and macOS run only in GitHub's CI: the Linux jobs in every run of ci.yml (a batch push or a manual run; the weekly
-schedule is paused), and the macOS cells only in a manual run (workflow_dispatch) whose macos input is on, which
-is off by default. CI's free-threaded
+and macOS run only in GitHub's CI: the Linux jobs in every run of ci.yml (a batch push, a manual run, and the weekly
+schedule under its smaller shape alone; under that shape a batch push runs Python 3.12 and 3.14t, and 3.10, 3.11 and
+3.13 run weekly and in a manual run), and the macOS cells only in a manual run (workflow_dispatch) whose macos input
+is on, which is off by default. CI's free-threaded
 cell also runs pytest with PYTHON_GIL=0, which the runner does not set, so a free-threaded --python runs with its own
 default.
 
@@ -2393,7 +2394,7 @@ def make_checkout(repo, sha, shallow, main):
     batcher's repository does:
     actions/checkout@v4, at its default depth 1 in every job a leg stands in for (.github/workflows/ci.yml), fetches the
     one commit as the remote-tracking ref of the branch the run is on (a batch branch's, in the run land reads), so a run
-    on main (a dispatch on main, or the weekly schedule while it ran) holds it at the commit it checks out, and a batch branch's run
+    on main (a dispatch on main, or the weekly schedule, which runs under ci.yml's smaller shape alone) holds it at the commit it checks out, and a batch branch's run
     holds none. A test that reads origin/main can therefore behave differently in the sweep than in CI; one
     that first checks whether its clone is shallow (fork PR 954's history case does) takes its shallow-clone handling
     in CI whether or not origin/main is there (round 1 of PR 959, ruling D; tests/test_origin_main_readers.py lists the

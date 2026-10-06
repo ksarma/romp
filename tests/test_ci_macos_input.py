@@ -5,9 +5,9 @@ Until 2026-10-05 every manual run (workflow_dispatch) ran the macOS cells beside
 repository every run is billed, and the macOS cells bill at about ten times the Linux rate: about 8 dollars of macOS
 minutes a dispatch by ci.yml's header figures, against about 3 dollars for a run's Linux jobs. So workflow_dispatch
 declares a boolean input, macos, off by default, and each matrix job's os: expression selects macOS on a dispatch only
-when the input is true. A batch push never selects it, and the schedule event still does (its weekly run is paused;
-tests/test_ci_macos_schedule.py holds the pause and the restore). The reason is cost control, as for the paused weekly
-run; ci.yml's on: block says so and says how to ask for the macOS cells.
+when the input is true. A batch push never selects it, and since 2026-10-06 neither does the schedule event, live under
+the smaller shape alone (tests/test_ci_macos_schedule.py holds the weekly macOS run paused in both shapes). The reason is
+cost control, as for the paused weekly macOS run; ci.yml's on: block says so and says how to ask for the macOS cells.
 
 Pins, over ci.yml's text, read with tests/test_ci_workflow_concurrency.py's readers (no YAML library in the test deps):
 1. THE INPUT: workflow_dispatch declares `macos`, with `type: boolean`, `default: false` (YAML's plain false; a quoted
@@ -132,8 +132,9 @@ class TheReadersThemselves(unittest.TestCase):
     shape after it, a default of true, a quoted 'false', an undeclared input, and a release script that passes none."""
     BEFORE_EXPR = ("${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && "
                    "'[\"ubuntu-latest\",\"macos-latest\"]' || '[\"ubuntu-latest\"]') }}")
-    AFTER_EXPR = ("${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.macos) || github.event_name == "
-                  "'schedule') && '[\"ubuntu-latest\",\"macos-latest\"]' || '[\"ubuntu-latest\"]') }}")
+    # the expression as ci.yml writes it since 2026-10-06, when the schedule clause left it
+    AFTER_EXPR = ("${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.macos) && "
+                  "'[\"ubuntu-latest\",\"macos-latest\"]' || '[\"ubuntu-latest\"]') }}")
     BEFORE_DISPATCH = "  workflow_dispatch:   # the manual on-switch for the macOS cells\n"
     AFTER_DISPATCH = ("  workflow_dispatch:\n    # a comment\n    inputs:\n      macos:\n        description: 'Also run the "
                       "macOS cells'\n        type: boolean\n        default: false\n")

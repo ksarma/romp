@@ -3,7 +3,7 @@
 ci.yml's secrets job (.github/workflows/secret-scan.yml, 2026-09-30; push only since 2026-10-04).
 
 Since 2026-09-27 ci.yml runs only on a push to a batch branch and by hand (its weekly schedule as well until 2026-10-04,
-when it was paused). A push the pre-push hook did not scan (CLAUDE.md, "Credentials", lists the kinds) then waited for
+when it was paused, and since 2026-10-06 again under its smaller shape alone). A push the pre-push hook did not scan (CLAUDE.md, "Credentials", lists the kinds) then waited for
 the next of those runs, and a commit that left every branch before one (force-pushed over, or on a deleted branch) was
 never scanned by CI, though GitHub still serves it by its sha. secret-scan.yml runs ci.yml's secrets job on every push of
 a branch or a tag whose commit carries that file (the PR's narrow landing delta, ruling 1); GitHub reads a push's

@@ -56,6 +56,17 @@ At the commit before these pins, all four are red: the header named secret-scan.
    repositories use the included minutes up, so every minute here is billed, where it said this repository would use a
    large part of them. Red at the commit before it: these inputs and figures changed first, and TheSums and TheAllowance
    failed against the unchanged header.
+7. BOTH SHAPES (2026-10-06, within TheSums, and TheShapeSwitch): ci.yml's shape switch (its header, THE SHAPE SWITCH;
+   tests/test_ci_shards.py's ShapeSwitch) chooses between full, every batch push running all five interpreters, and
+   smaller, a batch push running 3.12 and 3.14t and a weekly scheduled run 3.10, 3.11 and 3.13 with every other Linux
+   job. Each run's shard minutes are derived from the interpreters the python job runs in it under each shape, the matrix
+   evaluated from ci.yml with the switch's three lines set to that shape (run_minutes), so a change to the matrix moves
+   the estimate or turns these pins red; under full no weekly run is billed, since no scheduled run can start. The header
+   states full's figures as before and smaller's per batch run, per weekly run and a month, and a month at 30 and 58
+   batch runs, in their own sentences, and says that switching the shape is a three-line change, which three lines, and
+   that those three lines decide which figures are billed. Red at the commit before the switch: the header stated none
+   of smaller's figures and had no sentence on the switch, and the python job's python-version axis had no shape
+   literal.
 Text pins: they hold what the header says and that its sums agree with the inputs here, not what GitHub bills; the first
 private batch run's billed minutes are the measurement."""
 import math
@@ -68,7 +79,9 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 # the checkout root on sys.path before the import from a sibling module, as tests/test_ci_macos_schedule.py does
 sys.path.insert(0, ROOT)
-from tests.test_ci_workflow_concurrency import JOBS, job_lines, job_value  # noqa: E402
+from tests.test_ci_workflow_concurrency import (  # noqa: E402
+    BATCH_X, JOBS, MAIN, SHA_A, SHAPES, dispatch_run, job_lines, job_value, python_version_axis, python_versions, run,
+    triggers, with_shape)
 from tests import test_ci_bats_bound as bound  # noqa: E402
 
 WF = os.path.join(ROOT, ".github", "workflows", "ci.yml")
@@ -109,6 +122,8 @@ OTHER_REPO_MIN_OCT_1_4 = 27993  # one of the owner's other repositories, in its 
 OTHER_REPO_DAYS = 4             # the days that figure spans
 
 # ---- the stated figures, each held to its derivation within its rounding (TheSums) -------------------------------------
+# full's figures carry the names they had before the shape switch; smaller's are named for it, and the weekly run is
+# smaller's alone (under full no scheduled run can start)
 STATED = {
     "batch run minutes": (456, 1), "manual run minutes": (453, 1),
     "batch dollars at 30": (82, 1), "batch dollars at 58": (159, 1),
@@ -120,21 +135,76 @@ STATED = {
     "all minutes at 30": (18800, 100), "all minutes at 58": (31600, 100), "all dollars at 30": (113, 1),
     "all dollars at 58": (189, 1),
     "other repository minutes on 1 to 4 October": (28000, 1000),
+    "smaller batch run minutes": (248, 1), "smaller batch run dollars": (1.49, 0.01),
+    "weekly run minutes": (324, 1), "weekly run dollars": (1.94, 0.01),
+    "weekly minutes a month": (1390, 10), "weekly dollars a month": (8, 1),
+    "smaller ci minutes at 30": (9700, 100), "smaller ci minutes at 58": (16700, 100),
+    "smaller ci dollars at 30": (58, 1), "smaller ci dollars at 58": (100, 1),
+    "smaller all minutes at 30": (13900, 100), "smaller all minutes at 58": (20900, 100),
+    "smaller all dollars at 30": (84, 1), "smaller all dollars at 58": (125, 1),
+    "smaller saving dollars at 58": (64, 1),
 }
 
 
-def derived():
-    """{figure name: value} for each of STATED, from the inputs above."""
+def interpreter_shard_minutes(py):
+    """The estimate's minutes for one interpreter's shard jobs in one run: 3.12 and 3.14t at their own phases in the
+    weighted run, each unmeasured interpreter at the weighted run's slower phase of the two (shard_job_minutes)."""
+    w312, w314t = bound.SHARD_PHASE_312_WEIGHTED_S, bound.SHARD_PHASE_314T_WEIGHTED_S
+    if py == "3.12":
+        phases = w312
+    elif py == "3.14t":
+        phases = w314t
+    elif py in bound.UNMEASURED:
+        phases = {k: max(w312[k], w314t[k]) for k in w312}
+    else:
+        raise LookupError("no phases for %s: the matrix runs an interpreter the estimate does not price" % py)
+    return sum(shard_job_minutes(phases, py))
+
+
+def run_pythons(src, shape, kind):
+    """The interpreters the python job runs on Linux in one run of kind ("batch", "weekly" or "manual") under shape: the
+    python-version axis evaluated for a push to a batch branch, the schedule, or a dispatch with its inputs at their
+    defaults, in ci.yml with the three lines of the switch set to shape. The weekly run's are [] when that shape has no
+    schedule trigger (no scheduled run can start)."""
+    s = with_shape(src, shape)
+    if kind == "weekly" and "schedule" not in triggers(s):
+        return []
+    ctx = {"batch": run("push", BATCH_X, SHA_A), "weekly": run("schedule", MAIN, SHA_A),
+           "manual": dispatch_run(s, MAIN, SHA_A)}[kind]
+    return python_versions(python_version_axis(s), ctx)
+
+
+def run_minutes(src, shape):
+    """{"batch", "weekly", "manual": the minutes one run of each kind bills under shape}: its interpreters' shard jobs
+    (run_pythons, interpreter_shard_minutes), every other Linux job (each runs on every trigger: no job carries an if:),
+    and, on a batch push alone, secret-scan.yml's copy; a weekly run is 0 when the shape has none."""
     other_jobs = sum(math.ceil(s / 60) for s in OTHER_JOB_S.values())
-    batch = SHARD_JOBS_MIN + other_jobs + SECRET_SCAN_RUN_MIN
-    manual = SHARD_JOBS_MIN + other_jobs
+    out = {}
+    for kind in ("batch", "weekly", "manual"):
+        pythons = run_pythons(src, shape, kind)
+        shards = sum(interpreter_shard_minutes(py) for py in pythons)
+        out[kind] = (shards + other_jobs + (SECRET_SCAN_RUN_MIN if kind == "batch" else 0)) if pythons else 0
+    return out
+
+
+def derived(src=None):
+    """{figure name: value} for each of STATED, from the inputs above and ci.yml's matrix under each shape."""
+    if src is None:
+        with open(WF, encoding="utf-8") as fh:
+            src = fh.read()
+    full, small = run_minutes(src, "full"), run_minutes(src, "smaller")
+    batch, manual = full["batch"], full["manual"]
     pushes = WEEK_PUSHES * WEEK_TO_MONTH
     scan = pushes * SECRET_SCAN_RUN_MIN
     tier = PR_TIER_WEEK_RUNS * PR_TIER_RUN_MIN * WEEK_TO_MONTH
     main = MAIN_PUSH_WEEK_MIN * WEEK_TO_MONTH
     docs = DOCS_PR_WEEK_RUNS * DOCS_PR_RUN_MIN * WEEK_TO_MONTH
     other = scan + tier + main + docs
-    ci = {n: n * batch + MANUAL_RUNS * manual for n in BATCH_RUNS}
+
+    def ci_month(r, n):
+        return n * r["batch"] + r["weekly"] * WEEK_TO_MONTH + MANUAL_RUNS * r["manual"]
+    ci = {n: ci_month(full, n) for n in BATCH_RUNS}
+    sci = {n: ci_month(small, n) for n in BATCH_RUNS}
     lo, hi = BATCH_RUNS
     return {
         "batch run minutes": batch, "manual run minutes": manual,
@@ -147,6 +217,15 @@ def derived():
         "all minutes at 30": ci[lo] + other, "all minutes at 58": ci[hi] + other,
         "all dollars at 30": (ci[lo] + other) * RATE, "all dollars at 58": (ci[hi] + other) * RATE,
         "other repository minutes on 1 to 4 October": OTHER_REPO_MIN_OCT_1_4,
+        "smaller batch run minutes": small["batch"], "smaller batch run dollars": small["batch"] * RATE,
+        "weekly run minutes": small["weekly"], "weekly run dollars": small["weekly"] * RATE,
+        "weekly minutes a month": small["weekly"] * WEEK_TO_MONTH,
+        "weekly dollars a month": small["weekly"] * WEEK_TO_MONTH * RATE,
+        "smaller ci minutes at 30": sci[lo], "smaller ci minutes at 58": sci[hi], "smaller ci dollars at 30": sci[lo] * RATE,
+        "smaller ci dollars at 58": sci[hi] * RATE,
+        "smaller all minutes at 30": sci[lo] + other, "smaller all minutes at 58": sci[hi] + other,
+        "smaller all dollars at 30": (sci[lo] + other) * RATE, "smaller all dollars at 58": (sci[hi] + other) * RATE,
+        "smaller saving dollars at 58": (ci[hi] - sci[hi]) * RATE,
     }
 
 
@@ -159,6 +238,9 @@ CELL_EDGE_S = bound.CELL_EDGE_S
 # ones the caps take (the projections of each shard's slowest 3.12 run of the rounds), and that figure less the
 # estimate's batch run; exact, since each job is rounded up to a whole minute before the sum
 PROJECTED_STATED = {"projected batch run minutes": 500, "projected difference": 44}
+# the same for the smaller shape's weekly run, whose interpreters are all unmeasured: its minutes with each at the caps'
+# projected phases, and the difference from the estimate's weekly run
+PROJECTED_WEEKLY_STATED = {"projected weekly run minutes": 368, "projected weekly difference": 44}
 # the header's word for the count of measured runs of four shards (tests/test_ci_bats_bound.py's MEASURED_RUNS)
 RUN_COUNT_WORDS = {2: "two", 3: "three"}
 
@@ -200,6 +282,22 @@ def projected_derived():
     batch = derived()["batch run minutes"]
     projected = batch - SHARD_JOBS_MIN + shard_jobs_total(True)
     return {"projected batch run minutes": projected, "projected difference": projected - batch}
+
+
+def projected_weekly_derived(src=None):
+    """{figure name: value} for each of PROJECTED_WEEKLY_STATED: the smaller shape's weekly run with each of its
+    interpreters (run_pythons) at its projected phase as the caps take it, and the difference from the estimate's."""
+    if src is None:
+        with open(WF, encoding="utf-8") as fh:
+            src = fh.read()
+    weekly = run_minutes(src, "smaller")["weekly"]
+    base = caps_projection_base()
+    pythons = run_pythons(src, "smaller", "weekly")
+    if not pythons or set(pythons) - set(bound.UNMEASURED):
+        raise LookupError("the weekly run's interpreters are %r, not unmeasured ones alone: re-anchor this figure" % pythons)
+    swap = sum(sum(shard_job_minutes({k: bound.projected_phase(k, py, base) for k in base}, py)) - interpreter_shard_minutes(py)
+               for py in pythons)
+    return {"projected weekly run minutes": weekly + swap, "projected weekly difference": swap}
 
 
 def header(path=WF):
@@ -407,6 +505,77 @@ class TheTwoPremises(unittest.TestCase):
         for piece in want:
             with self.subTest(piece=piece):
                 self.assertTrue(piece in sentence, "the header's sentence on the two premises states %r" % piece)
+
+
+class TheShapeSwitch(unittest.TestCase):
+    """Item 7: both shapes' figures derived from the matrix, and stated in the header with the switch."""
+
+    def setUp(self):
+        with open(WF, encoding="utf-8") as fh:
+            self.src = fh.read()
+        self.text = header()
+
+    def test_each_runs_interpreters_are_the_shapes(self):
+        five = sorted(bound.MEASURED + bound.UNMEASURED)
+        want = {("full", "batch"): five, ("full", "weekly"): [], ("full", "manual"): five,
+                ("smaller", "batch"): ["3.12", "3.14t"], ("smaller", "weekly"): ["3.10", "3.11", "3.13"],
+                ("smaller", "manual"): five}
+        for (shape, kind), pythons in sorted(want.items()):
+            with self.subTest(shape=shape, run=kind):
+                self.assertEqual(sorted(run_pythons(self.src, shape, kind)), pythons)
+
+    def test_full_bills_no_weekly_run_and_its_shard_jobs_are_the_estimates(self):
+        full = run_minutes(self.src, "full")
+        self.assertEqual(full["weekly"], 0, "under full no scheduled run can start, so none is billed")
+        other_jobs = sum(math.ceil(s / 60) for s in OTHER_JOB_S.values())
+        self.assertEqual(full["batch"], SHARD_JOBS_MIN + other_jobs + SECRET_SCAN_RUN_MIN)
+        self.assertEqual(full["manual"], SHARD_JOBS_MIN + other_jobs)
+        small = run_minutes(self.src, "smaller")
+        self.assertEqual(small["manual"], full["manual"], "a manual run runs all five in both shapes")
+        self.assertEqual(small["batch"] - SECRET_SCAN_RUN_MIN - other_jobs + small["weekly"] - other_jobs, SHARD_JOBS_MIN,
+                         "smaller's batch run and weekly run together run each interpreter's shard jobs once")
+
+    def test_the_projected_weekly_figures_are_their_derivation(self):
+        d = projected_weekly_derived(self.src)
+        self.assertEqual(sorted(PROJECTED_WEEKLY_STATED), sorted(d))
+        for name, figure in sorted(PROJECTED_WEEKLY_STATED.items()):
+            with self.subTest(figure=name):
+                self.assertEqual(figure, d[name], "%s: stated %d, derived %d" % (name, figure, d[name]))
+
+    def test_the_header_states_the_smaller_shapes_figures_in_their_sentences(self):
+        def f(name):
+            return format(STATED[name][0], ",")
+        lo, hi = BATCH_RUNS
+        pw = PROJECTED_WEEKLY_STATED
+        want = (
+            "a batch run bills about %s minutes, about %s dollars" % (f("smaller batch run minutes"),
+                                                                      f("smaller batch run dollars")),
+            "the weekly run bills about %s minutes, about %s dollars, so about %s minutes and about %s dollars a month"
+            % (f("weekly run minutes"), f("weekly run dollars"), f("weekly minutes a month"), f("weekly dollars a month")),
+            "about %s minutes and about %s dollars a month for this workflow under the smaller shape at %d batch runs, and "
+            "about %s minutes and about %s dollars at %d" % (f("smaller ci minutes at 30"), f("smaller ci dollars at 30"), lo,
+                                                            f("smaller ci minutes at 58"), f("smaller ci dollars at 58"), hi),
+            "about %s minutes and about %s dollars a month with the other workflows at %d batch runs, and about %s minutes "
+            "and about %s dollars at %d" % (f("smaller all minutes at 30"), f("smaller all dollars at 30"), lo,
+                                           f("smaller all minutes at 58"), f("smaller all dollars at 58"), hi),
+            "about %s dollars a month less than full at %d" % (f("smaller saving dollars at 58"), hi),
+            "a weekly run would bill about %d minutes, %d more than the estimate's %s" % (
+                pw["projected weekly run minutes"], pw["projected weekly difference"], f("weekly run minutes")),
+        )
+        for piece in want:
+            with self.subTest(piece=piece):
+                self.assertTrue(states(self.text, piece), "ci.yml's header does not state %r" % piece)
+
+    def test_the_header_says_switching_is_a_three_line_change_and_names_the_lines(self):
+        for piece in ("Switching the shape is a three-line change: edit all three lines",
+                      "the on: block's two schedule lines, the schedule: key and its one cron entry, both commented under "
+                      "full and both live under smaller",
+                      "the 'full' or 'smaller' literal that opens the python job's python-version expression",
+                      "tests/test_ci_shards.py fails unless the three agree",
+                      "The shape switch's three lines (above) decide which of the two is billed: flipping them from full "
+                      "to smaller is the whole change"):
+            with self.subTest(piece=piece):
+                self.assertTrue(piece in self.text, "ci.yml's header does not say %r" % piece)
 
 
 class TheReadersThemselves(unittest.TestCase):

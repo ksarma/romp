@@ -42,18 +42,21 @@ literal, and any change to it is red until the literal changes with it, on purpo
    make node skip every test, and a defaults: run: working-directory moves where the command runs. The ruling allowed either
    a check that those two keys are absent or an equality; the list is compared, so a quoted or spaced spelling of either, a
    merge key, a second YAML document (`---`) and any key added later are red with no spelling listed here. The on: block
-   (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES too. CI runs on a push to
-   a batch branch and by hand, and on nothing else (the workflow's header; its weekly schedule is commented out, paused
-   since 2026-10-04 until the first month's bill on the private runner is read): a paths or paths-ignore
+   (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES, or ON_LINES_SMALLER, the
+   same block with the weekly schedule's two lines live (2026-10-06). CI runs on a push to a batch branch and by hand, and,
+   under the smaller shape alone, on a weekly schedule (the workflow's header, THE SHAPE SWITCH: the schedule: key and its
+   cron entry are commented under full, the default, and live under smaller; tests/test_ci_shards.py holds the two lines
+   in agreement with the python job's python-version literal, so this check accepts either block and leaves the shape to
+   that pin): a paths or paths-ignore
    filter added to push, or its branch pattern narrowed, starts no run for the batch pushes it filters, and
    scripts/batch.py land then finds no CI run of the batch head and refuses the batch; an added trigger (a pull_request,
    a tags pattern on push, or main back on push) runs the whole matrix where no landing reads it. The value of name and
    the concurrency block stay free (tests/test_ci_workflow_concurrency.py reads concurrency, and its CiTriggers reads the
    triggers and the push filter).
-   tests/test_ci_macos_schedule.py still reads the schedule and the dispatch: this equality refuses any change to the block,
-   and that module says what the lines must mean (no live schedule, the manual dispatch kept, and the commented schedule
-   lines, un-commented, one weekly cron at a quiet hour Pacific) and ties them to every matrix expression's events, so a
-   change made on purpose, the schedule's restore among them, updates ON_LINES here and must still pass that module. The
+   tests/test_ci_macos_schedule.py still reads the schedule and the dispatch: this equality refuses any other change to the
+   block, and that module says what the lines must mean (the schedule lines one weekly cron at a quiet hour Pacific, live
+   under smaller alone, the manual dispatch kept, and no matrix expression selecting macOS on the schedule), so a change
+   made on purpose updates ON_LINES and ON_LINES_SMALLER here and must still pass that module. The
    block holds the dispatch's macos input too (2026-10-05), and tests/test_ci_macos_input.py says what it must mean: a
    boolean, off by default, the one switch that puts the macOS cells in a manual run.
 4. The Shell job's cap line EQUALS SHELL_CAP_LINE (60 minutes on macOS, 55 on Linux, in the python job's per-OS form;
@@ -146,7 +149,7 @@ cells ran the Python suite about twice as long as the Linux cells, then 18 to 29
 again. 90 is 14 minutes past 76 because two of the estimate's inputs are weak (the job's comment names them). It is also past
 the hour the python job's macOS cap keeps (tests/test_ci_bats_bound.py holds that cap at 60 or less, since past an hour a hung
 cell holds the dispatch): the estimate alone is past that hour, so a hung macOS cell of this job holds a dispatch for up to
-90 minutes. The first macOS run (a dispatch, while the weekly schedule is paused) measures the step; the cap is then re-read from it, and
+90 minutes. The first macOS run (a dispatch with its macos input on, the one run that selects macOS) measures the step; the cap is then re-read from it, and
 the literal changes with it."""
 import difflib
 import os
@@ -172,7 +175,7 @@ EXPECTED_JOB = (
     "    strategy:",
     "      fail-fast: false",
     "      matrix:",
-    "        os: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.macos) || github.event_name == 'schedule') "
+    "        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.macos) "
     "&& '[\"ubuntu-latest\",\"macos-latest\"]' || '[\"ubuntu-latest\"]') }}",
     "    steps:",
     "      - uses: actions/checkout@v4",
@@ -201,6 +204,15 @@ ON_LINES = (
     "        default: false",
     "",
 )
+# The same block under the smaller shape (ci.yml's header, THE SHAPE SWITCH): the weekly schedule's two lines, the
+# schedule: key and its cron entry, live after the dispatch's input, as they stand commented there under full.
+# tests/test_ci_shards.py's ShapeSwitch holds the two lines in agreement with the python job's python-version literal; this
+# check holds the rest of the block in either shape.
+SCHEDULE_LINES = (
+    "  schedule:   # shape switch, line 1 of 3: commented under 'full', live under 'smaller'",
+    "    - cron: \"17 10 * * 1\"   # shape switch, line 2 of 3: commented under 'full', live under 'smaller'",
+)
+ON_LINES_SMALLER = ON_LINES[:-1] + SCHEDULE_LINES + ("",)
 # The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
 # the slowest measured or projected job plus 10 minutes, rounded up to a multiple of 5 (ci.yml's comment above the line
 # carries the measurement: Linux 40 min 43 s in run 37128151383, job 111217616222, the slowest among the finished runs on
@@ -381,7 +393,8 @@ def _diff(want, got, name):
 
 
 def check_on_block(src):
-    """Check 3, the triggers: the on: block, comment-only lines removed, against ON_LINES."""
+    """Check 3, the triggers: the on: block, comment-only lines removed, against ON_LINES, or ON_LINES_SMALLER, the shape
+    whose weekly schedule lines are live."""
     ls, fault = _lines_or_fault(src)
     if fault:
         return fault
@@ -389,7 +402,9 @@ def check_on_block(src):
         block = content(on_block(ls))
     except WorkflowShape as e:
         return [str(e)]
-    return [] if block == list(ON_LINES) else _diff(ON_LINES, block, "ON_LINES")
+    if block in (list(ON_LINES), list(ON_LINES_SMALLER)):
+        return []
+    return _diff(ON_LINES_SMALLER if any(l.startswith("  schedule:") for l in block) else ON_LINES, block, "ON_LINES")
 
 
 def check_shell_cap(src):
@@ -585,8 +600,9 @@ class VendoredToolingJob(unittest.TestCase):
             "it, or the reason it could not be read). A paths or paths-ignore filter added to push, or its branch pattern "
             "narrowed, starts no CI run for the batch pushes it filters (scripts/batch.py land then finds no CI run of the "
             "batch head and refuses the batch), and an added trigger runs the whole matrix where no landing reads it, so the "
-            "whole block is held. If the change is meant, replace ON_LINES in tests/test_ci_vendored_job.py with the lines "
-            "printed above, check that tests/test_ci_macos_schedule.py and tests/test_ci_workflow_concurrency.py still pass, "
+            "whole block is held, in either shape ci.yml's shape switch gives it. If the change is meant, replace "
+            "ON_LINES and ON_LINES_SMALLER in tests/test_ci_vendored_job.py with the lines printed above, check that "
+            "tests/test_ci_macos_schedule.py, tests/test_ci_workflow_concurrency.py and tests/test_ci_shards.py still pass, "
             "and say in the commit why the triggers changed."))
 
     def test_4_the_shell_cap_is_60_on_macos_and_55_on_linux(self):
@@ -636,7 +652,7 @@ class VendoredToolingJob(unittest.TestCase):
     def test_the_job_runs_on_the_shell_jobs_matrix(self):
         self.assertNoFaults(check_matrix_tie(raw()), (
             "The vendored-tooling job's matrix and the Shell job's differ (above). The job runs on the Shell job's cells "
-            "(ubuntu-latest always, macOS on a manual run, and on the weekly schedule were its paused run restored), so "
+            "(ubuntu-latest always, and macOS on a manual run with its macos input on), so "
             "moving the step lost none. If the "
             "Shell job's matrix changed on purpose, give the vendored-tooling job the same lines and update EXPECTED_JOB."))
 
@@ -709,6 +725,17 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
         self.assertIn([l for l in EXPECTED_JOB if "node-version" in l][0], SHELL_TAIL, "the synthetic Shell job's node version "
                       "comes from SHELL_TAIL, and it is the literal's")
 
+    def test_the_smaller_shapes_block_passes_check_3(self):
+        # the weekly schedule's two lines live (the switch's lines 1 and 2 under smaller) are the one change to the block
+        # check 3 takes
+        src = self.synthetic()
+        self.assertEqual(src.count("        default: false\n"), 1, "the plant's anchor is in the synthetic workflow once")
+        live = src.replace("        default: false\n", "        default: false\n" + "".join(l + "\n" for l in SCHEDULE_LINES))
+        self.assertEqual(check_on_block(live), [])
+        commented = src.replace("        default: false\n",
+                                "        default: false\n" + "".join("  # " + l[2:] + "\n" for l in SCHEDULE_LINES))
+        self.assertEqual(check_on_block(commented), [], "the two lines commented are the full shape's block")
+
     def test_each_plant_reds_its_check(self):
         src = self.synthetic()
         run, name, cap = "        run: " + CMD, "      - name: " + STEP, EXPECTED_JOB[3]
@@ -754,8 +781,16 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
             (check_on_block, "the push branch pattern narrowed", "top", "    branches: ['batch/**']", ["    branches: ['batch/x']"]),
             (check_on_block, "a pull_request trigger added", "top", "  push:", ["  pull_request:", "  push:"]),
             (check_on_block, "push replaced by pull_request", "top", "  push:", ["  pull_request:"]),
-            (check_on_block, "the paused weekly schedule restored", "top", "        default: false",
-             ["        default: false", "  schedule:", '    - cron: "0 10 * * 1"']),
+            (check_on_block, "a weekly schedule at another time, without the switch's comments", "top",
+             "        default: false", ["        default: false", "  schedule:", '    - cron: "0 10 * * 1"']),
+            (check_on_block, "the live schedule made daily", "top", "        default: false",
+             ["        default: false", SCHEDULE_LINES[0], SCHEDULE_LINES[1].replace("17 10 * * 1", "17 10 * * *")]),
+            (check_on_block, "a second cron entry under the live schedule", "top", "        default: false",
+             ["        default: false"] + list(SCHEDULE_LINES) + ['    - cron: "0 9 * * 2"']),
+            (check_on_block, "the schedule key live with its cron entry commented", "top", "        default: false",
+             ["        default: false", SCHEDULE_LINES[0]]),
+            (check_on_block, "the cron entry live with its schedule key commented", "top", "        default: false",
+             ["        default: false", SCHEDULE_LINES[1]]),
             (check_on_block, "the dispatch's macos input on by default", "top", "        default: false",
              ["        default: true"]),
             (check_on_block, "the push branch filter widened to main", "top", "    branches: ['batch/**']",

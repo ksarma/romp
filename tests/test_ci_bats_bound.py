@@ -394,11 +394,18 @@ class PythonJobCeiling(unittest.TestCase):
     def test_every_interpreter_of_the_matrix_is_measured_or_projected(self):
         # the governing phase takes the max over every unmeasured interpreter, so UNMEASURED is the matrix's interpreters
         # less the measured ones, read from the matrix: an interpreter the matrix adds is projected (or measured) before
-        # its cells are capped
-        m = re.search(r"^        python-version: \[([^\]]*)\]$", self.job, re.M)
-        self.assertTrue(m, "the python job's python-version list moved: re-anchor this pin")
-        versions = re.findall(r"'([^']+)'", m.group(1))
-        self.assertTrue(versions, "the python-version list names no interpreter: re-anchor this pin")
+        # its cells are capped. Since the shape switch (2026-10-06) the python-version axis is an expression whose list
+        # depends on the event and the shape, so the matrix's interpreters are every one it gives in any run under either
+        # shape (tests/test_ci_workflow_concurrency.py's every_python; the caps are keyed on the shard alone, so they hold
+        # for 3.10 wherever it runs: on every batch push under full, on the weekly run and a dispatch under smaller). The
+        # import is here, not at the top: tests/test_bats_bare_negation.py imports this module under a python with no pytest.
+        import sys
+        root = os.path.dirname(HERE)
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from tests.test_ci_workflow_concurrency import every_python
+        versions = every_python(self.src)
+        self.assertTrue(versions, "the python-version axis names no interpreter: re-anchor this pin")
         self.assertFalse(set(MEASURED) & set(UNMEASURED), "an interpreter is measured or projected, not both")
         self.assertEqual(sorted(MEASURED + UNMEASURED), sorted(versions), "MEASURED and UNMEASURED together are the "
                          "matrix's interpreters: one the matrix adds needs a measured phase or a ratio to 3.12")

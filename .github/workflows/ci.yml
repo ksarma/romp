@@ -4,8 +4,8 @@ name: CI
 # postal/), the shell surfaces (hooks / postal / manager), and the VS Code
 # extension build; and scan the whole history for credentials (the secrets job).
 #
-# LINUX runs on every push to a batch branch (batch/**) and by hand; the weekly schedule that also
-# ran it is paused (see `on:`). Member PRs and merges to main run none of it (2026-09-27; a copy of
+# LINUX runs on every push to a batch branch (batch/**) and by hand, and on a weekly schedule under the
+# smaller shape alone (THE SHAPE SWITCH, below). Member PRs and merges to main run none of it (2026-09-27; a copy of
 # the secrets job runs on each push whose commit carries secret-scan.yml, and that file's header says
 # why and which pushes start no run of it):
 # the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate, and
@@ -13,6 +13,27 @@ name: CI
 # before the merge, so the merge commit's tree is the batch head's tree, the one this workflow tested
 # on the batch push; a move of main after that last read is not stopped, and batch.py finish reports
 # it loudly from the merge commit's first parent (docs/batching.md).
+# THE SHAPE SWITCH (2026-10-06): the python job runs in one of two shapes, chosen by three lines that must agree.
+# full, the default: every batch push runs Python 3.10, 3.11, 3.12, 3.13 and 3.14t, and nothing runs on a schedule.
+# smaller: a batch push runs 3.12 and 3.14t alone; a weekly scheduled run on main runs 3.10, 3.11 and 3.13, on Linux
+# alone, with every other Linux job; a manual run still runs all five. In both shapes each interpreter runs as
+# SHARD_COUNT shard jobs on Linux under the same caps, and the macOS cells run only on a manual run with its macos input
+# on. The three lines: the on: block's two schedule lines, the schedule: key and its one cron entry, both commented
+# under full and both live under smaller, and the 'full' or 'smaller' literal that opens the python job's
+# python-version expression. Switching the shape is a three-line change: edit all three lines, and
+# tests/test_ci_shards.py fails unless the three agree (the schedule lines live under full would bill a weekly run
+# nobody chose; commented under smaller, 3.10, 3.11 and 3.13 would never run; one schedule line live without the other
+# makes the file invalid). One line cannot carry the choice: the on: block takes no expression, and a job's strategy
+# reads only the github, needs, vars and inputs contexts; a repository variable would put the choice outside this
+# file, and a job-level if: would report a skipped job as a success. The schedule takes two lines, not one, because the
+# one-line form (a flow mapping inside a flow sequence) is a YAML form tests/test_ci_sdk_pin.py refuses. Under full no
+# scheduled run can start, since the on: block has no schedule trigger. Under smaller, a
+# break that shows only on 3.10, 3.11 or 3.13 lands on main and shows at the next weekly run, up to a week later, and a
+# scheduled run tests main's latest commit with main's copy of this file, so the weekly run starts only once the switch
+# is on main. Under smaller, make the first run on the private repository a manual run of main, which runs every
+# interpreter, so that the shard caps, which 3.10's projections govern, can be re-derived from it, since its batch
+# pushes carry 3.12 and 3.14t alone; and a ruleset that requires checks by name must not require the 3.10, 3.11 or 3.13
+# jobs, which no batch push reports (docs/batching.md, the maintainer section).
 # Cost: a public repository is not billed for these runs. A private one is billed for each run by
 # the job-minute, each job rounded up to a whole minute, and this repository moves to a private one
 # (approved 2026-10-04) whose runner, the private runner here, has 2 CPUs and 8 GB, where the public
@@ -72,7 +93,17 @@ name: CI
 # fewer may bill), at 1 billed minute a run (each of its 4 runs on a pull request that week), about
 # 330 minutes a month. tier-policy.yml's one job is skipped outside the project's repository (its
 # job-level if:), so its runs bill nothing. So about 18,800 minutes and about 113 dollars a month in
-# all at 30 batch runs, and about 31,600 minutes and about 189 dollars at 58. These dollars are the
+# all at 30 batch runs, and about 31,600 minutes and about 189 dollars at 58. Those are the full shape's
+# figures. Under the smaller shape (above), by the same method, a batch run's shard jobs are 3.12's and 3.14t's alone,
+# 129 minutes, so a batch run bills about 248 minutes, about 1.49 dollars; the weekly run bills 3.10's, 3.11's and
+# 3.13's shard jobs, 208 minutes, and the other Linux jobs, 116, without secret-scan.yml's copy: the weekly run bills
+# about 324 minutes, about 1.94 dollars, so about 1,390 minutes and about 8 dollars a month at 30/7 (about 4.3) runs a
+# month; a manual run is unchanged. With 3.10, 3.11 and 3.13 at the caps' projections, a weekly run would bill about 368
+# minutes, 44 more than the estimate's 324. So about 9,700 minutes and about 58 dollars a month for this workflow
+# under the smaller shape at 30 batch runs, and about 16,700 minutes and about 100 dollars at 58, and about 13,900
+# minutes and about 84 dollars a month with the other workflows at 30 batch runs, and about 20,900 minutes and about
+# 125 dollars at 58: about 64 dollars a month less than full at 58. The shape switch's three lines (above) decide
+# which of the two is billed: flipping them from full to smaller is the whole change. These dollars are the
 # list price, and every minute here would be billed at list price: GitHub documents 50,000 included
 # minutes a month for Enterprise Cloud on standard GitHub-hosted runners such as these, charged to
 # the repository's owner (read 2026-10-05), and the owner's other repositories use them up in about
@@ -95,8 +126,8 @@ name: CI
 # measured and billed figures. The same push also runs secret-scan.yml's copy
 # of the secrets job once, for the push (that file has had no pull_request trigger since 2026-10-04),
 # about 3 minutes a run (2 to 5 measured, and more as the history grows; that file's header gives the
-# runs). A manual run (workflow_dispatch) runs the Linux jobs alone by default, the jobs a batch push
-# runs but secret-scan.yml's copy, about 2.72 dollars by the estimate above. With its macos input on (2026-10-05; the on: block
+# runs). A manual run (workflow_dispatch) runs the Linux jobs alone by default, in both shapes the jobs and cells a
+# batch push runs under full, but not secret-scan.yml's copy, about 2.72 dollars by the estimate above. With its macos input on (2026-10-05; the on: block
 # says why it is off by default) it adds the macOS cells: 132 runner minutes in run 36716348831,
 # billed at about ten times the Linux rate, so about 1,320 Linux minutes' worth, about 8 dollars,
 # and a floor: the 3.13 cell was cancelled at its 60-minute cap, the 3.10 cell
@@ -113,7 +144,8 @@ name: CI
 # an earlier note here said it was billed), but the macOS cells are slow (a macOS bats
 # job alone has taken 48 min 1 s, above) and the runners are scarcer, so they do NOT run
 # on every push. From 2026-09-16 they also ran once a week on a schedule; that run is paused until
-# the first month's bill on the private runner is read (see `on:`). They run on a
+# the first month's bill on the private runner is read (see `on:`), and the smaller shape's weekly run
+# takes none of them. They run on a
 # manual run that asks for them: tick the macos box in the Actions tab's "Run workflow"
 # form, or run `gh workflow run CI --ref <branch> -f macos=true`. Ask for them when you
 # want a cross-platform check before a release (scripts/release.sh's gate dispatches
@@ -147,28 +179,34 @@ on:
     # -f macos=true`. The reason is cost control, as for the paused weekly run: the macOS cells bill at about ten
     # times the Linux rate, about 8 dollars of macOS minutes a dispatch by the header's figures (132 runner minutes in
     # run 36716348831, a floor), where a run's Linux jobs come to about 3 dollars. Each matrix job's os: expression
-    # selects macOS on a dispatch only when the input is true, and never on a batch push; the schedule event still
-    # selects it (tests/test_ci_macos_input.py holds the input and the gate). scripts/release.sh, whose release gate
+    # selects macOS on a dispatch only when the input is true, and never on a batch push or on the schedule event
+    # (tests/test_ci_macos_input.py holds the input and the gate). scripts/release.sh, whose release gate
     # is the macOS run, dispatches with the input on.
     inputs:
       macos:
         description: 'Also run the macOS cells (about 8 dollars of macOS runner minutes a run)'
         type: boolean
         default: false
-  # The weekly schedule is PAUSED (2026-10-04) until the first month's bill on the private runner is
-  # read. On a private repository every run is billed, and the scheduled run would add its Linux jobs
-  # and the macOS cells, which bill at about ten times the Linux rate (about 1,320 Linux minutes' worth
-  # in run 36716348831, the header's figure), every week. While it is paused, nothing runs on a
-  # schedule, a batch push runs the Linux jobs alone, and a manual dispatch runs the Linux jobs and,
-  # when its macos input is true, the macOS cells. Each matrix expression below still names the
-  # schedule event, so un-commenting the two lines at the end of this comment restores the weekly run
-  # as it was, the macOS cells included (tests/test_ci_macos_schedule.py holds both).
-  # From 2026-09-16 the macOS cells ran ONCE A WEEK on their own: with the manual switch alone the
-  # release gate was the first macOS run in two weeks, and it found twenty-nine failures that had
-  # accumulated unseen. One run at a quiet hour Pacific (Monday 10:00 UTC is 03:00 Pacific in summer,
-  # 02:00 in winter); the manual dispatch stays for the release day and for a platform-sensitive change.
-  # schedule:
-  #   - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the matrix a dispatch with macos on does
+  # The weekly schedule, lines 1 and 2 of the shape switch (the header's THE SHAPE SWITCH): both
+  # commented under full, the default, so no scheduled run can start; both live under smaller, where the
+  # weekly run on main runs 3.10, 3.11 and 3.13 on Linux alone, with every other Linux job. Line 3 is the
+  # python job's python-version expression; switch all three (tests/test_ci_shards.py fails unless they
+  # agree).
+  # The weekly macOS run stays PAUSED (2026-10-04) until the first month's bill on the private runner is
+  # read, in both shapes: on a private repository every run is billed, and the macOS cells bill at
+  # about ten times the Linux rate (about 1,320 Linux minutes' worth in run 36716348831, the header's
+  # figure). No matrix expression below names the schedule event, so the smaller shape's weekly run
+  # takes no macOS cell; bringing them back is a change to the three os: expressions
+  # (tests/test_ci_macos_schedule.py holds the schedule lines and the pause). From 2026-09-16 to
+  # 2026-10-04 the macOS cells ran ONCE A WEEK on their own: with the manual switch alone the release
+  # gate was the first macOS run in two weeks, and it found twenty-nine failures that had accumulated
+  # unseen. Until they are back, a manual dispatch with its macos input on is the release day's and a
+  # platform-sensitive change's run.
+  # The smaller shape's weekly run is at a quiet hour Pacific (Monday 10:17 UTC is 03:17 Pacific in
+  # summer, 02:17 in winter), and at minute 17 rather than on the hour, since GitHub delays scheduled
+  # runs more at the start of each hour and may drop some.
+  # schedule:   # shape switch, line 1 of 3: commented under 'full', live under 'smaller'
+  #   - cron: "17 10 * * 1"   # shape switch, line 2 of 3: commented under 'full', live under 'smaller'
 
 # A newer push to a BATCH BRANCH cancels the older in-flight run on that branch:
 # a rebuild's new head supersedes the old one, whose verdict nobody reads and
@@ -298,6 +336,9 @@ jobs:
     # repository's 2-CPU runners, whose jobs give the private runner's own phases and setup times; the fork's public
     # runners have more CPUs, so the fork's CI times are not that measurement. Each step's time is the jobs API's.
     # tests/test_ci_bats_bound.py holds each cap to its governing phase and the rule, and this comment to the figures.
+    # The caps are keyed on the shard alone and hold in both shapes (the header's THE SHAPE SWITCH): under smaller a
+    # batch push runs 3.12 and 3.14t alone, and the caps keep 3.10's projections, since 3.10 still runs on the weekly
+    # run and on a manual run.
     # 90 is the figure each shard's cap held before the shards were measured. The whole suite's estimated one-worker
     # phase gave it: the slowest finished two-worker Linux cell, the 3.10 cell of run
     # 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880), 2312 s in its pytest step,
@@ -313,11 +354,16 @@ jobs:
       fail-fast: false
       matrix:
         # macOS is in the matrix ONLY on a manual run (workflow_dispatch) whose macos input is
-        # true, or on the weekly schedule, which is paused (see `on:`); a batch push, and a manual
+        # true; a batch push, the weekly schedule (live under the smaller shape alone), and a manual
         # run with the input left off, get Linux alone. See the billing note in the header.
-        os: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.macos) || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
-        # 3.14t is setup-python's spelling for the free-threaded build (see the header).
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14t']
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.macos) && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        # Line 3 of the shape switch (the header's THE SHAPE SWITCH): its first literal is the shape, 'full' or
+        # 'smaller'. Under full every run gets all five interpreters. Under smaller a manual run gets all five, the
+        # weekly schedule 3.10, 3.11 and 3.13, and any other run (a batch push; a pull_request, were it a trigger)
+        # 3.12 and 3.14t, so a trigger added later cannot quietly run all five. The values are JSON strings, so 3.10
+        # stays "3.10". An exclude entry below whose value a run's list lacks matches nothing. 3.14t is
+        # setup-python's spelling for the free-threaded build (see the header).
+        python-version: ${{ fromJSON('full' == 'smaller' && github.event_name != 'workflow_dispatch' && (github.event_name == 'schedule' && '["3.10","3.11","3.13"]' || '["3.12","3.14t"]') || '["3.10","3.11","3.12","3.13","3.14t"]') }}   # shape switch, line 3 of 3: 'full' or 'smaller'
         # The shards: tests/conftest.py assigns each test file to one of SHARD_COUNT shards (its CI's shards
         # section), and the Run pytest step hands it the cell's shard, so it skips the other shards' files. The axis
         # lists 1 to SHARD_COUNT (tests/test_ci_shards.py holds it to the constant, and the shards to a partition of
@@ -661,9 +707,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS only on a manual run (workflow_dispatch) whose macos input is true, or the weekly schedule, which is
-        # paused; see the header note.
-        os: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.macos) || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        # macOS only on a manual run (workflow_dispatch) whose macos input is true; the weekly schedule (the smaller
+        # shape's) gets Linux alone; see the header note.
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.macos) && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       # bats comes from the pinned release tarball, NOT apt: an Azure apt-mirror outage hung
@@ -791,7 +837,7 @@ jobs:
     # The same job runs as secret-scan.yml's secrets job on each push, of a branch or a tag, whose
     # commit carries that file (its header names the pushes that start no run), since this workflow
     # runs only on a batch push and by hand (2026-09-30; that file's pull_request trigger was dropped
-    # on 2026-10-04, and this workflow's weekly schedule is paused).
+    # on 2026-10-04, and this workflow's weekly schedule runs under its smaller shape alone, the header's).
     # tests/test_ci_secret_scan.py holds the two copies equal, every key but the name, so a change
     # here is made there too; the reasons for the steps are written here only.
     name: Secret scan (gitleaks)
@@ -893,8 +939,8 @@ jobs:
     # hour the python job's macOS cap keeps (tests/test_ci_bats_bound.py holds it at 60 or less,
     # since past an hour a hung cell holds the dispatch): the rule's figure for this step, 70 to 76
     # minutes, is already past that hour, so a hung macOS cell here holds a dispatch for up to 90
-    # minutes. The first macOS run (a dispatch with its macos input on, while the weekly schedule is
-    # paused) measures the step, and the cap is re-read from it. A batch push's run starts the Linux
+    # minutes. The first macOS run (a dispatch with its macos input on, the one run that selects macOS)
+    # measures the step, and the cap is re-read from it. A batch push's run starts the Linux
     # cell alone, so batches are not affected.
     # Follow-ups, in this order: (1) make the hook's per-paren case check linear (skipNested in
     # hooks/romp-track-bash-guard.mjs tests /\bcase\b/ over the whole slice read so far at every
@@ -916,9 +962,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS only on a manual run (workflow_dispatch) whose macos input is true, or the weekly schedule, which is
-        # paused, as in the Shell job; see the header note.
-        os: ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.macos) || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        # macOS only on a manual run (workflow_dispatch) whose macos input is true, as in the Shell job; the weekly
+        # schedule (the smaller shape's) gets Linux alone; see the header note.
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.macos) && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       # Node 22, pinned as the Shell job pins it for the handshake step, so the step never rides
@@ -1064,7 +1110,7 @@ jobs:
         # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in
         # the batch push's CI run, or in a workflow_dispatch of the PR's branch (the macOS cells too if its macos input is on), since
         # the PR's own sweep does not run this step (scripts/sweep.py's docstring: it runs only in GitHub's CI, in every
-        # run of this workflow: a batch push or a manual run, the weekly schedule being paused), and raises the step's timeout-minutes
+        # run of this workflow: a batch push, a manual run, and the weekly run under the smaller shape), and raises the step's timeout-minutes
         # when the total needs it, and the job's cap with it when the new bound does not fit the margin (the job
         # comment above), and node's --test-timeout when one leg's own bound or its whole-file seconds need it. Step
         # seconds, job minutes and the job's cap:

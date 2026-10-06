@@ -86,7 +86,12 @@ Once, already done on this fork: delete branches on merge, squash and rebase mer
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
 on, admin bypass) is optional and comes after the first batch has shown the check names. The checks
 to require are the job checks a batch push reports: `Python <version> (ubuntu-latest, shard <shard>)`
-for each Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t) and each shard (1, 2, 3 and 4),
+for each shard (1, 2, 3 and 4) and each Linux cell a batch push runs: under ci.yml's full shape, the
+default (3.10, 3.11, 3.12, 3.13 and 3.14t), and under its smaller shape (3.12 and 3.14t). Under the
+smaller shape 3.10, 3.11 and 3.13 run on the weekly schedule and on a manual run alone, so a ruleset
+must not require their names: a required check that no batch push reports holds every batch.
+Switching the shape is a three-line change in ci.yml (its header, THE SHAPE SWITCH, names the three
+lines), and a ruleset follows it. The other checks are
 `Shell (bats, ubuntu-latest)`, `Secret scan (gitleaks)`,
 `Vendored tooling (node --test, ubuntu-latest)`, `vscode-extension (typecheck + test + build)` and
 `Served pages (pytest, ubuntu-latest)`. Each Linux interpreter runs as one job per shard of the test
@@ -324,7 +329,9 @@ subject; `verify` refuses the branch otherwise.
    tests with `ROMP_BROWSER_LEGS_REQUIRE=1`; the sweep's `npm test` runs those tests without the
    switch, so a Chromium that fails to launch there skips instead of failing), the other Python
    versions and macOS run only in GitHub's CI: the Linux jobs in every run of `ci.yml` (a batch
-   push or a manual run; the weekly schedule is paused), and the macOS cells only in a manual run
+   push, a manual run, and the weekly schedule under its smaller shape alone; under that shape a
+   batch push runs Python 3.12 and 3.14t, and 3.10, 3.11 and 3.13 run weekly and in a manual run),
+   and the macOS cells only in a manual run
    (`workflow_dispatch`) whose `macos` input is on: it is off by default, for cost, and you turn it
    on with the box in the Actions tab's "Run workflow" form or with `gh workflow run CI --ref
    <branch> -f macos=true`. CI's free-threaded cell runs pytest with
@@ -370,7 +377,8 @@ subject; `verify` refuses the branch otherwise.
    `origin/main` except in a run on main itself: `actions/checkout@v4`, at its default depth 1
    in every job a leg stands in for, fetches the one commit as the remote-tracking ref of the
    branch the run is on (the batch branch's, in the run `land` reads), so a run on main (a
-   dispatch on main, or the weekly schedule while it ran) holds it at the commit it checks out, and a batch
+   dispatch on main, or the weekly schedule, which runs under `ci.yml`'s smaller shape alone) holds it at
+   the commit it checks out, and a batch
    branch's run holds none. A test that reads `origin/main` can therefore behave differently in the
    sweep than in CI; one that first checks whether its clone is shallow (fork PR 954's history
    case does) takes its shallow-clone handling in CI whether or not `origin/main` is there.

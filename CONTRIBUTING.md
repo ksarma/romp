@@ -121,8 +121,11 @@ every bash.
 
 On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
 each batch head, and GitHub's CI runs once per batch, on the push of the batch
-branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux; member PRs
-and merges to main run none of it (`docs/batching.md`). Each Linux interpreter
+branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux under its
+full shape, the default, or across 3.12 and 3.14t alone under its smaller shape,
+where 3.10, 3.11 and 3.13 run on a weekly schedule (`ci.yml`'s header, THE SHAPE
+SWITCH: switching is a three-line change); member PRs and merges to main run none
+of it (`docs/batching.md`). Each Linux interpreter
 runs as four jobs, one for each shard of the test files, each with one pytest
 worker: one worker running the whole suite does not fit the private runner's
 8 GB. `tests/conftest.py` (its CI's shards section) states the rule that puts
@@ -132,8 +135,9 @@ never run on a batch push. A manual run of CI runs the Linux jobs alone unless y
 ask for macOS: tick the `macos` box in the Actions tab's "Run workflow" form, or
 run `gh workflow run CI --ref <branch> -f macos=true`. The box is off by default
 to control cost: the macOS cells bill at about ten times the Linux rate, about 8
-dollars per manual run. The weekly schedule that also ran them is paused until the first
-month's bill on the private runner is read.
+dollars per manual run. A weekly scheduled run also ran them until 2026-10-04;
+their weekly run stays paused until the first month's bill on the private runner
+is read, and the smaller shape's weekly run is Linux alone.
 CI's secret scan alone runs on every push of a branch or a tag whose commit
 carries `.github/workflows/secret-scan.yml`, once per push: it has no pull
 request trigger, since the private runner bills every run. Among the pushes

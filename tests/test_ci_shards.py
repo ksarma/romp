@@ -20,6 +20,20 @@ Two kinds of pin:
    macOS job per macOS interpreter, unsharded; the Run
    pytest step hands each Linux cell its shard and each macOS cell an empty value; and each cell's job name differs.
    Each shard's cap is tests/test_ci_bats_bound.py's (PythonJobCeiling).
+3. The shape switch (ShapeSwitch, 2026-10-06): three lines of ci.yml choose the python job's shape, the on: block's
+   two schedule lines, its schedule: key and its one cron entry (both commented under full, both live under smaller),
+   and the 'full' or 'smaller' literal that opens the python job's python-version expression
+   (tests/test_ci_workflow_concurrency.py's shape_lines, shape_of and with_shape). The pins read the three lines, each
+   exactly once, the two schedule lines as one unit, and refuse every half-flip, any one or two of the three lines
+   switched without the rest (the schedule lines live under full, the literal smaller with the schedule commented, one
+   schedule line live without the other); hold that switching is a change of exactly those three lines; and, for EACH
+   shape, build the python job's cells for a batch push, a pull request (not a trigger; the expression's default), the
+   schedule and a manual dispatch with its macos input off and on, and hold them: under full, all five interpreters on
+   Linux for every run and no scheduled run (no schedule trigger); under smaller, 3.12 and 3.14t on a batch push and a
+   pull request, 3.10, 3.11 and 3.13 on the weekly schedule, Linux alone, and all five on a dispatch; the macOS cells,
+   3.10 and 3.13 unsharded, on a dispatch with macos on alone, in both. Every interpreter runs on a batch push or on the
+   schedule, and none on both. Red at the commit before the switch, whose python-version axis was a flow list with no
+   shape literal.
 """
 import itertools
 import os
@@ -36,7 +50,8 @@ from tests.conftest import (  # noqa: E402
     HEAVY_MODULES, SHARD_COUNT, SHARD_ENV, hash_shard, is_test_file, parse_shard, shard_of, shard_repo_path)
 from tests.ci_shard_probe import PROBE_ITEM  # noqa: E402
 from tests.test_ci_workflow_concurrency import (  # noqa: E402
-    MAIN, SHA_A, _children, _keys_at, _strip_comment, _unquote, evaluate, job_lines, os_list, run)
+    MAIN, SHA_A, SHAPES, SWITCH_LINES, _children, _keys_at, _strip_comment, _unquote, dispatch_run, evaluate,
+    every_python, job_lines, os_list, python_versions, run, set_line, shape_lines, shape_of, triggers, with_shape)
 
 WF = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 BATCH = "refs/heads/batch/2026-10-04a"
@@ -239,8 +254,9 @@ def _flow_list(text):
 
 
 def python_matrix(src):
-    """The python job's strategy.matrix as written: (os: expression, [python-version], [shard], [exclude entry as a
-    dict]). An include: is refused (python_cells models exclude alone), and so is any other key."""
+    """The python job's strategy.matrix as written: (os: expression, python-version value as written (a flow list or the
+    shape switch's expression; python_versions reads either for a run), [shard], [exclude entry as a dict]). An include:
+    is refused (python_cells models exclude alone), and so is any other key."""
     jl = job_lines(src, "python")
     strat = next((_children(jl, i, 4) for k, _r, i in _keys_at(jl, 4) if k == "strategy"), None)
     mat = next((_children(strat, i, 6) for k, _r, i in _keys_at(strat, 6) if k == "matrix"), None) if strat else None
@@ -260,21 +276,26 @@ def python_matrix(src):
         elif not excludes:
             raise LookupError("an exclude: line before any entry: %r; re-anchor this pin" % line)
         excludes[-1][m.group(3)] = _unquote(_strip_comment(m.group(4)))
-    return (_strip_comment(keys["os"][0]), _flow_list(keys["python-version"][0]), _flow_list(keys["shard"][0]), excludes)
+    return (_strip_comment(keys["os"][0]), _strip_comment(keys["python-version"][0]), _flow_list(keys["shard"][0]),
+            excludes)
 
 
-def python_cells(src, event, ref=MAIN, inputs=None):
+def python_cells(src, event, ref=MAIN, inputs=None, ctx=None):
     """The python job's cells for a run of `event` on `ref`, as GitHub builds them: the product of the os list (the
     os: expression evaluated by tests/test_ci_workflow_concurrency.py's os_list, a dispatch carrying `inputs`), the
-    python-version list and the shard list, less each cell an exclude entry matches (every key of the entry equal to the
-    cell's; a key the matrix lacks is an error, as GitHub makes it one). [{"os", "python-version", "shard"}]."""
-    os_expr, versions, shards, excludes = python_matrix(src)
+    python-version list (python_versions: the flow list, or the shape switch's expression evaluated for the run) and the
+    shard list, less each cell an exclude entry matches (every key of the entry equal to the cell's; a key the matrix
+    lacks is an error, as GitHub makes it one, and an entry whose value no list holds matches nothing). ctx, when given,
+    is the run's context instead (dispatch_run's, with each input at its declared default).
+    [{"os", "python-version", "shard"}]."""
+    os_expr, versions_text, shards, excludes = python_matrix(src)
     for e in excludes:
         unknown = set(e) - {"os", "python-version", "shard"}
         if unknown:
             raise LookupError("an exclude entry names %r, which the matrix does not define" % sorted(unknown))
+    ctx = run(event, ref, SHA_A, inputs) if ctx is None else ctx
     cells = [{"os": o, "python-version": v, "shard": s}
-             for o, v, s in itertools.product(os_list(os_expr, run(event, ref, SHA_A, inputs)), versions, shards)]
+             for o, v, s in itertools.product(os_list(os_expr, ctx), python_versions(versions_text, ctx), shards)]
     return [c for c in cells if not any(all(c[k] == v for k, v in e.items()) for e in excludes)]
 
 
@@ -331,11 +352,12 @@ class ShardMatrix(unittest.TestCase):
 
     def test_a_batch_push_runs_each_interpreter_once_per_shard_on_linux(self):
         cells = python_cells(self.src, "push", BATCH)
-        versions = python_matrix(self.src)[1]
-        self.assertTrue({"3.10", "3.12", "3.14t"} <= set(versions), versions)
+        shape = shape_of(self.src)
+        versions = BATCH_PYTHONS[shape]
         self.assertEqual(sorted((c["os"], c["python-version"], c["shard"]) for c in cells),
                          sorted(("ubuntu-latest", v, s) for v in versions for s in self.want_shards),
-                         "a batch push runs every interpreter as one Linux job per shard, and no macOS job")
+                         "a batch push under the %s shape runs %s as one Linux job per shard each, and no macOS job"
+                         % (shape, versions))
 
     def test_a_dispatch_adds_one_unsharded_macos_job_per_macos_interpreter(self):
         mac = [c for c in python_cells(self.src, "workflow_dispatch", inputs=MACOS_ON) if c["os"] == "macos-latest"]
@@ -368,6 +390,124 @@ class ShardMatrix(unittest.TestCase):
                     self.assertEqual(n, "Python %s (macos-latest)" % c["python-version"], "a macOS cell keeps its name")
 
 
+# ---- the shape switch (2026-10-06) -------------------------------------------------------------------------------------
+FIVE = ["3.10", "3.11", "3.12", "3.13", "3.14t"]
+# the interpreters a batch push runs under each shape (a pull request too, were it a trigger: the expression's default)
+BATCH_PYTHONS = {"full": FIVE, "smaller": ["3.12", "3.14t"]}
+# the interpreters the weekly schedule runs under each shape; None: the schedule is no trigger, so no scheduled run starts
+WEEKLY_PYTHONS = {"full": None, "smaller": ["3.10", "3.11", "3.13"]}
+# a manual dispatch runs all five under both shapes, and its macos input on adds these, one unsharded job each
+DISPATCH_PYTHONS = FIVE
+MACOS_PYTHONS = ["3.10", "3.13"]
+PR = "refs/pull/1/merge"
+
+
+def cell_rows(cells):
+    return sorted((c["os"], c["python-version"], c["shard"]) for c in cells)
+
+
+def expected_rows(pythons, macos=False):
+    """The cells, as cell_rows gives them, of a run of pythons on Linux, one job per shard, plus with macos the macOS
+    cells: one shard-1 job (run unsharded) for each of MACOS_PYTHONS."""
+    rows = [("ubuntu-latest", v, str(k)) for v in pythons for k in range(1, SHARD_COUNT + 1)]
+    return sorted(rows + ([("macos-latest", v, "1") for v in MACOS_PYTHONS] if macos else []))
+
+
+def changed_lines(a, b):
+    """The indexes of the lines that differ between a and b (same line count asserted by the caller)."""
+    return [i for i, (x, y) in enumerate(zip(a.split("\n"), b.split("\n"))) if x != y]
+
+
+class ShapeSwitch(unittest.TestCase):
+    """Item 3 of the module docstring: the three lines, their agreement, the three-line change, and each shape's cells."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(WF, encoding="utf-8") as fh:
+            cls.src = fh.read()
+        cls.shapes = {shape: with_shape(cls.src, shape) for shape in SHAPES}
+
+    def test_the_three_lines_are_each_read_once_and_agree(self):
+        lines = shape_lines(self.src)
+        self.assertEqual(sorted(lines), sorted(SWITCH_LINES))
+        self.assertIn(lines["python-version"][1], SHAPES)
+        self.assertIn(lines["schedule"][1], ("live", "commented"))
+        self.assertEqual(lines["cron"][0], lines["schedule"][0] + 1, "the cron entry is the line after the schedule: key")
+        self.assertEqual(lines["cron"][1], lines["schedule"][1], "the two schedule lines are commented or live together")
+        self.assertIn(shape_of(self.src), SHAPES, "the schedule lines and the python-version literal say one shape")
+
+    def test_each_half_flip_is_refused(self):
+        # any one or two of the three lines switched without the rest: the schedule lines live under full bill a weekly
+        # run nobody chose; commented under smaller, 3.10, 3.11 and 3.13 never run; one schedule line live without the
+        # other is a schedule with no entries, or an entry outside the schedule, and the file is invalid
+        flips = [c for n in (1, 2) for c in itertools.combinations(SWITCH_LINES, n)]
+        self.assertEqual(len(flips), 6, "every proper subset of the three lines but the empty one")
+        for shape in SHAPES:
+            other = [s for s in SHAPES if s != shape][0]
+            for flipped in flips:
+                half = self.shapes[shape]
+                for which in flipped:
+                    half = set_line(half, which, other)
+                with self.subTest(shape=shape, flipped=flipped):
+                    self.assertEqual(len(changed_lines(self.shapes[shape], half)), len(flipped),
+                                     "a half-flip changes the lines it flips and no other")
+                    with self.assertRaises(LookupError):
+                        shape_of(half)
+
+    def test_switching_the_shape_changes_exactly_the_three_lines(self):
+        lines = shape_lines(self.src)
+        three = sorted(lines[which][0] for which in SWITCH_LINES)
+        self.assertEqual(len(set(three)), 3, "three distinct lines")
+        current = shape_of(self.src)
+        for shape, src in self.shapes.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(len(src.split("\n")), len(self.src.split("\n")), "the switch adds or drops no line")
+                changed = changed_lines(self.src, src)
+                self.assertEqual(len(changed), 0 if shape == current else 3, "switching the shape is a three-line change")
+                self.assertEqual(changed, [] if shape == current else three,
+                                 "switching to %s changes the two schedule lines and the python-version line, and "
+                                 "nothing else" % shape)
+                self.assertEqual(shape_of(src), shape)
+                self.assertEqual(with_shape(src, current), self.src, "switching back restores the file")
+
+    def test_each_shape_runs_its_cells_for_each_event(self):
+        for shape, src in self.shapes.items():
+            events = triggers(src)
+            with self.subTest(shape=shape, run="batch push"):
+                self.assertEqual(cell_rows(python_cells(src, "push", BATCH)), expected_rows(BATCH_PYTHONS[shape]))
+            with self.subTest(shape=shape, run="pull request"):
+                self.assertNotIn("pull_request", events, "a pull request is no trigger of ci.yml")
+                self.assertEqual(cell_rows(python_cells(src, "pull_request", PR)), expected_rows(BATCH_PYTHONS[shape]),
+                                 "were a pull request a trigger, it would run what a batch push runs")
+            with self.subTest(shape=shape, run="schedule"):
+                if WEEKLY_PYTHONS[shape] is None:
+                    self.assertNotIn("schedule", events, "under %s no scheduled run can start: the schedule lines are "
+                                     "commented" % shape)
+                    self.assertEqual(cell_rows(python_cells(src, "schedule")), expected_rows(FIVE), "under full the "
+                                     "expression gives all five for every event, so the shape alone decides")
+                else:
+                    self.assertIn("schedule", events, "under %s the weekly schedule is a trigger" % shape)
+                    self.assertEqual(cell_rows(python_cells(src, "schedule")), expected_rows(WEEKLY_PYTHONS[shape]))
+            with self.subTest(shape=shape, run="dispatch, macos at its default"):
+                ctx = dispatch_run(src, MAIN, SHA_A)
+                self.assertFalse(ctx["inputs.macos"], "the macos input is off by default")
+                self.assertEqual(cell_rows(python_cells(src, "workflow_dispatch", ctx=ctx)), expected_rows(DISPATCH_PYTHONS))
+            with self.subTest(shape=shape, run="dispatch, macos on"):
+                ctx = dispatch_run(src, MAIN, SHA_A, macos=True)
+                self.assertEqual(cell_rows(python_cells(src, "workflow_dispatch", ctx=ctx)),
+                                 expected_rows(DISPATCH_PYTHONS, macos=True))
+
+    def test_every_interpreter_runs_on_a_batch_push_or_the_schedule_and_none_on_both(self):
+        for shape, src in self.shapes.items():
+            with self.subTest(shape=shape):
+                batch = {c["python-version"] for c in python_cells(src, "push", BATCH)}
+                weekly = ({c["python-version"] for c in python_cells(src, "schedule")} if "schedule" in triggers(src)
+                          else set())
+                self.assertEqual(sorted(batch | weekly), sorted(DISPATCH_PYTHONS), "every interpreter runs at least weekly")
+                self.assertEqual(batch & weekly, set(), "no interpreter is billed on both a batch push and the schedule")
+        self.assertEqual(every_python(self.src), sorted(FIVE))
+
+
 class TheReadersThemselves(unittest.TestCase):
     """python_cells and cell_value over synthetic matrices: an exclude that removes the macOS shards, an include that the
     reader refuses, and a dropped shard that the axis pin sees."""
@@ -397,6 +537,64 @@ class TheReadersThemselves(unittest.TestCase):
     def test_a_shard_dropped_from_the_axis_is_seen(self):
         src = self.HEAD + "        shard: ['1']\n        exclude:\n          - os: macos-latest\n            shard: '2'\n"
         self.assertNotEqual(python_matrix(src)[2], [str(k) for k in range(1, SHARD_COUNT + 1)])
+
+    SWITCH = ('on:\n  push:\n    branches: [\'batch/**\']\n  workflow_dispatch:\n  # schedule:   # line 1\n'
+              '  #   - cron: "17 10 * * 1"   # line 2\njobs:\n  python:\n    strategy:\n      matrix:\n'
+              '        python-version: ${{ fromJSON(\'full\' == \'smaller\' && github.event_name != \'workflow_dispatch\' && '
+              '(github.event_name == \'schedule\' && \'["3.10"]\' || \'["3.12"]\') || \'["3.10","3.12"]\') }}   # line 3\n'
+              '    steps:\n      - run: x\n')
+    COMMENTED = '  # schedule:   # line 1\n  #   - cron: "17 10 * * 1"   # line 2\n'
+
+    def test_the_switch_readers(self):
+        self.assertEqual(self.SWITCH.count(self.COMMENTED), 1)
+        self.assertEqual(shape_of(self.SWITCH), "full")
+        small = with_shape(self.SWITCH, "smaller")
+        self.assertEqual(shape_of(small), "smaller")
+        self.assertIn('\n  schedule:   # line 1\n    - cron: "17 10 * * 1"   # line 2\n', small)
+        self.assertEqual(with_shape(small, "full"), self.SWITCH)
+        self.assertEqual(triggers(small)["schedule"], ['    - cron: "17 10 * * 1"   # line 2'],
+                         "the live schedule is a trigger whose one child line is the cron entry")
+        self.assertNotIn("schedule", triggers(self.SWITCH))
+        for n in (1, 2):
+            for flipped in itertools.combinations(SWITCH_LINES, n):
+                half = self.SWITCH
+                for which in flipped:
+                    half = set_line(half, which, "smaller")
+                with self.subTest(flipped=flipped):
+                    with self.assertRaises(LookupError):
+                        shape_of(half)
+        live_key = self.SWITCH.replace("  # schedule:", "  schedule:")
+        self.assertEqual(set_line(self.SWITCH, "schedule", "smaller"), live_key, "set_line flips the one line it names")
+        with self.assertRaises(LookupError):   # a second cron entry under the key
+            shape_lines(self.SWITCH.replace(self.COMMENTED, self.COMMENTED + '  #   - cron: "0 9 * * 2"\n'))
+        with self.assertRaises(LookupError):   # a second schedule: key
+            shape_lines(self.SWITCH.replace("jobs:\n", '  # schedule:\njobs:\n'))
+        with self.assertRaises(LookupError):   # no cron entry after the key
+            shape_lines(self.SWITCH.replace('  #   - cron: "17 10 * * 1"   # line 2\n', ""))
+        with self.assertRaises(LookupError):   # the cron entry not right after the key
+            shape_lines(self.SWITCH.replace(self.COMMENTED, '  # schedule:   # line 1\n  # a note\n'
+                                            '  #   - cron: "17 10 * * 1"   # line 2\n'))
+        with self.assertRaises(LookupError):   # the one-line flow form, which tests/test_ci_sdk_pin.py refuses live
+            shape_lines(self.SWITCH.replace(self.COMMENTED, '  # schedule: [{cron: "17 10 * * 1"}]   # line 1\n'))
+        with self.assertRaises(LookupError):   # no shape literal
+            shape_lines(self.SWITCH.replace("fromJSON('full' == 'smaller' && ", "fromJSON("))
+        with self.assertRaises(LookupError):   # no schedule lines
+            shape_lines(self.SWITCH.replace(self.COMMENTED, ""))
+        with self.assertRaises(ValueError):
+            with_shape(self.SWITCH, "medium")
+        with self.assertRaises(ValueError):
+            set_line(self.SWITCH, "schedule-and-cron", "smaller")
+
+    def test_python_versions_reads_a_flow_list_and_the_expression(self):
+        self.assertEqual(python_versions("['3.10', \"3.14t\"]  # two", run("push", BATCH, SHA_A)), ["3.10", "3.14t"])
+        expr = "${{ fromJSON(github.event_name == 'schedule' && '[\"3.10\"]' || '[\"3.12\",\"3.14t\"]') }}"
+        self.assertEqual(python_versions(expr, run("schedule", MAIN, SHA_A)), ["3.10"])
+        self.assertEqual(python_versions(expr, run("push", BATCH, SHA_A)), ["3.12", "3.14t"])
+        for bad in ("[3.10, 3.12]", "['3.1x']", "${{ fromJSON('[]') }}", "${{ fromJSON(github.run_id) }}", "3.12",
+                    "${{ fromJSON('[3.10]') }}"):
+            with self.subTest(value=bad):
+                with self.assertRaises(LookupError):
+                    python_versions(bad, run("push", BATCH, SHA_A))
 
     def test_the_names_render_per_cell(self):
         name = re.search(r"^    name: (.+)$", self.HEAD, re.M).group(1)
