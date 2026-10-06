@@ -10,6 +10,7 @@ named after the blocks with its state, never a column. The rail's own aggregate 
 TESTHOST names, the logins user@example.test and other@example.test. Skips LOUDLY without a playwright (set
 ROMP_PLAYWRIGHT_NODE_PATH to a node_modules holding it) unless ROMP_SERVED_TESTS_REQUIRE=1 makes that a failure."""
 import json
+import lab_result
 import os
 import subprocess
 import tempfile
@@ -128,11 +129,12 @@ class UsageByAccountServed(unittest.TestCase):
 
     def _drive(self):
         shots = os.environ.get("ROMP_SHOTS", "")
-        env = dict(os.environ, NODE_PATH=self.node_path)
+        tgt = lab_result.target(self.td.name)   # this drive's result file and nonce (tests/lab_result.py)
+        env = dict(os.environ, NODE_PATH=self.node_path, **lab_result.env(tgt))
         r = subprocess.run(["node", os.path.join(HERE, "usage_by_account_headless.js"), "http://127.0.0.1:%d/" % self.port, shots],
                            capture_output=True, text=True, timeout=180, env=env)
         self.assertEqual(r.returncode, 0, "the driver failed:\n" + r.stderr[-3000:])
-        o = json.loads(r.stdout.strip().splitlines()[-1])
+        o = lab_result.read(r, tgt)
         self.assertEqual(o["errs"], [], "no page errors")
         return o
 

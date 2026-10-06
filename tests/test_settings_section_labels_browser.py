@@ -8,6 +8,7 @@ there is a failure). No real prompt or transcript text: every string here is inv
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -41,6 +42,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -100,8 +102,7 @@ if (setF) {
   if (cfg.shots) await page.screenshot({ path: cfg.shots + "-light.png" });
   await setF.evaluate(() => { document.body.classList.remove("chat-theme-yatharth", "theme-light"); });
 }
-fs.writeFileSync(cfg.out, JSON.stringify(out));
-console.log("RESULT: ok");
+lab.writeResult(cfg, out);
 await browser.close();
 """
 
@@ -184,10 +185,12 @@ class ServedSectionLabels(unittest.TestCase):
             return cls.result
         try:
             cfg = os.path.join(cls.lab, "cfg.json")
-            out = os.path.join(cls.lab, "result.json")
+            conf = {"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token), "count": len(NAMES),
+                    "shots": os.environ.get("SETTINGS_HEADS_SHOTS", "")}   # <prefix>-dark.png and -light.png of the General pane
+            tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token), "count": len(NAMES), "out": out,
-                           "shots": os.environ.get("SETTINGS_HEADS_SHOTS", "")}, f)   # <prefix>-dark.png and -light.png of the General pane
+                json.dump(conf, f)
             driver = os.path.join(cls.lab, "driver.mjs")
             with open(driver, "w") as f:
                 f.write(DRIVER)
@@ -195,9 +198,9 @@ class ServedSectionLabels(unittest.TestCase):
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if p.returncode == 3:
                 raise unittest.SkipTest("the playwright browser did not launch here: " + p.stderr[-300:])
-            if p.returncode != 0 or not os.path.exists(out):
+            if p.returncode != 0:
                 raise AssertionError("driver failed: rc=%d\n%s\n%s" % (p.returncode, p.stdout[-1500:], p.stderr[-1500:]))
-            cls.result = json.loads(Path(out).read_text())
+            cls.result = lab_result.read(p, tgt)
         except BaseException as e:
             cls.result = e
             raise

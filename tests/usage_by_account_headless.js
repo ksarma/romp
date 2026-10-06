@@ -1,8 +1,10 @@
 // Drives the served landing page (tests/test_usage_by_account_served.py serves it) with playwright: hover the usage
 // readout and read the panel's shape by ACCOUNT (plans/usage-panel-by-account.md): the blocks, each block's head, its
 // window names, its machines line (names, dress, a lagging note), its updated-ago line, the not-reporting line, and the
-// rail's own aggregate bars. Prints one JSON line of observations; screenshots when asked.
+// rail's own aggregate bars. Hands its observations to the Python side through tests/lab_result.cjs (the record to the
+// file LAB_RESULT names, one short RESULT: line naming it); screenshots when asked.
 const { chromium } = require('playwright');
+const lab = require('./lab_result.cjs');
 (async () => {
   const url = process.argv[2], shots = process.argv[3] || '';
   const b = await chromium.launch();
@@ -41,6 +43,6 @@ const { chromium } = require('playwright');
              spend: !!t.querySelector('.ru-tip-fleetspend'), display: getComputedStyle(t).display, colsDisplay: (() => { const c = t.querySelector('.ru-tip-cols'); return c ? getComputedStyle(c).display : null; })() };
   });
   if (shots) { const tipEl = await pg.$('#ru-tip'); if (tipEl) await tipEl.screenshot({ path: shots + '-hover.png' }); }
-  console.log(JSON.stringify({ rail, tip, errs }));
+  lab.writeResult(lab.targetFromEnv(), { rail, tip, errs });
   await b.close();
 })().catch((e) => { console.error(e); process.exit(1); });

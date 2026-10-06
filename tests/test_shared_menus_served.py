@@ -23,6 +23,7 @@ extension deps or a browser.
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -68,10 +69,11 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); } catch (e) { fs.writeSync(2, "no browser: " + e + "\n"); process.exit(3); }
 const out = { roads: {}, errors: [] };
-const finish = async () => { fs.writeFileSync(cfg.out, JSON.stringify(out)); await browser.close(); process.exit(0); };
+const finish = async () => { lab.writeResult(cfg, out); await browser.close(); process.exit(0); };
 const die = async (why) => { out.died = why; await finish(); };
 process.on("unhandledRejection", async (e) => { await die("unhandled: " + String(e).split("\n")[0]); });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
@@ -242,10 +244,12 @@ class SharedMenusServed(unittest.TestCase):
     @classmethod
     def _drive(cls):
         cfg = os.path.join(cls.lab, "cfg.json")
-        res = os.path.join(cls.lab, "result.json")
+        conf = {"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token),
+                "web": SID_WEB, "api": SID_API, "tests": SID_TESTS, "card": CARD}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token), "out": res,
-                       "web": SID_WEB, "api": SID_API, "tests": SID_TESTS, "card": CARD}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -258,14 +262,18 @@ class SharedMenusServed(unittest.TestCase):
             return
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box: the served leg needs one (CI installs none)")
-        if p.returncode != 0 or not os.path.exists(res):
+        if p.returncode != 0:
             cls.driver_error = "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
             return
-        with open(res) as f:
-            r = json.load(f)
+        try:
+            r = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            cls.driver_error = str(e)
+            return
         keep = os.environ.get("ROMP_SHAREDMENUS_RESULT")
         if keep:
-            shutil.copy(res, keep)
+            with open(keep, "w") as f:
+                json.dump(r, f)
         if "died" in r:
             cls.driver_error = "driver aborted early: %s\n%s" % (r["died"], json.dumps(r, indent=1)[-3000:])
             return
