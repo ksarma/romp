@@ -64,7 +64,9 @@ below) is read once for each mix of the two ways, each name by its ints or unbou
 BASE bound to 20000 and by BASE = g(), and OFFSET bound to 7 and by OFFSET = f(), BASE + OFFSET % 20000 reads
 20000-39999, BASE by its int and OFFSET unbounded. A value that reads more than eight such names, more than 256 mixes
 (MIXES), is refused: the census fails on it as a value it refuses to read, with no port, naming the names and what an
-author changes (bind fewer such names in the expression, or bind them only to values the census records; failure()), an
+author changes (bind fewer such names in the expression, or, where the module has no star import and none of them is a
+name a class writes with two leading underscores and not two trailing ones or a spelling the census joins to one, each
+of which gives a name a binding the census does not record, bind them only to values it records; failure()), an
 over-refusal wherever no mix reaches the range, since reading it by spans or by fewer mixes could miss (a name read
 unbounded gives no interval at all, so a mix left out can be the one reading that counts). The names are counted over
 the whole of a value interval() or offset_base() reads, before the and, or and conditional expressions inside it are
@@ -830,8 +832,10 @@ MIXES = 256                                         # the most ways literal() re
 REFUSED_NAMES = ("it reads more than eight names that hold a value the census records and have a binding it does not "
                  "record, in one expression (%s), and the census reads each such name both by the values it records "
                  "and as unknown, every mix of the two, which past eight names it refuses rather than leave a mix out; "
-                 "bind fewer such names in the expression, or bind each of them only to values the census records (a "
-                 "constant, a number with a sign, or a list, tuple or set display, given by =)")
+                 "bind fewer such names in the expression, or, where the module has no star import and none of them is "
+                 "a name a class in it writes with two leading underscores and not two trailing ones (__K) or a "
+                 "spelling the census joins to such a name (_C__K), bind each of them only to values the census "
+                 "records (a constant, a number with a sign, or a list, tuple or set display, given by =)")
 REFUSED_CHOICES = ("its and, or and conditional expressions give it more ways to read than the census reads one by one "
                    "(each and or or read as each of its operands in turn, and each conditional expression as each of "
                    "its two branches, every way), which it refuses rather than leave a way out; write fewer of them in "
@@ -2994,18 +2998,26 @@ class Plants(unittest.TestCase):
         each by a call too, reads nine names with a value the census records and a binding it does not, more than eight,
         more than MIXES mixes; its value, with B and each Z at its int and K any value, is 20000 to 39999, and reading
         it by every name's ints, or by every name one way, gives nothing, a miss, so it is refused. The failure names
-        it, the nine names, and the remedy (bind fewer such names, or bind them only to values the census records), and
-        holds no figure but the plant's line. The plant also fails assertGreen, which reads the values the census
-        refuses as well as its hits, as a census that counted the plant made it do. The same plant written as code text
-        in a string is refused there, and the failure names it as in code text (in code text, an assignment to port),
-        where a census that dropped a refusal made inside code text reported nothing for it. A value whose and, or and
-        conditional expressions give more than MIXES expressions is refused as well, with its remedy (write fewer of
-        them), its failure naming and, or and conditional expressions: (a0 or 1) + ... + (a8 or 1) + os.getpid() % 20000
-        gives 512 expressions; eight such terms, 256, are read, and (a0 or 40000) + (a1 or 0) + ... + (a7 or 0) + worker
-        counts 40000. The failure does not offer binding each and or or to a name first: where an operand is one the
-        census does not record, as a0 is, the name takes a binding the census does not record, so A0 + ... + A8 +
-        os.getpid() % 20000, each Ai bound by Ai = ai or 1, is refused by its nine names instead. Each refusal is also
-        an over-refusal THE RULE states: test_each_refusal_is_an_over_refusal_the_rule_states."""
+        it, the nine names, and the remedy (bind fewer such names, or, where the module has no star import and none of
+        them is a name a class writes with two leading underscores and not two trailing ones or a spelling the census
+        joins to one, bind them only to values the census records), and holds no figure but the plant's line. Each
+        remedy is followed in a plant, and Python gives 20007 in each. Bound only by =, the nine names count nothing and
+        are not refused. Bound only by = beside a star import, as private names __B to __K in a class C, or as the
+        spellings _C__B to _C__K read outside a class C that writes __B to __K, they are refused as before, since the
+        census counts a star import as a binding of every name, and both spellings of a private name among the names
+        with a binding it does not record, which is why the failure offers the second remedy only where neither is
+        written; in each of those three, an expression that reads eight of the names is read, 20000-39999. The plant
+        also fails assertGreen, which reads the values the census refuses as well as its hits, as a census that counted
+        the plant made it do. The same plant written as code text in a string is refused there, and the failure names it
+        as in code text (in code text, an assignment to port), where a census that dropped a refusal made inside code
+        text reported nothing for it. A value whose and, or and conditional expressions give more than MIXES expressions
+        is refused as well, with its remedy (write fewer of them), its failure naming and, or and conditional
+        expressions: (a0 or 1) + ... + (a8 or 1) + os.getpid() % 20000 gives 512 expressions; eight such terms, 256, are
+        read, and (a0 or 40000) + (a1 or 0) + ... + (a7 or 0) + worker counts 40000. The failure does not offer binding
+        each and or or to a name first: where an operand is one the census does not record, as a0 is, the name takes a
+        binding the census does not record, so A0 + ... + A8 + os.getpid() % 20000, each Ai bound by Ai = ai or 1, is
+        refused by its nine names instead. Each refusal is also an over-refusal THE RULE states:
+        test_each_refusal_is_an_over_refusal_the_rule_states."""
         c, rel = 20000, os.path.join("tests", "test_plant.py")   # the base and the modulus, written apart from the text
         names = ["B", "K"] + ["Z%d" % i for i in range(1, 8)]
         src = ("B = %d\nB = g()\n" % c + "".join("Z%d = 0\nZ%d = f()\n" % (i, i) for i in range(1, 8)) + "K = 7\nK = f()\n"
@@ -3016,7 +3028,10 @@ class Plants(unittest.TestCase):
         said = failure(result) or ""
         for part in ("refuses to read", "more than eight names that hold a value the census records and have a binding "
                      "it does not record, in one expression (%s)" % ", ".join(names),
-                     "bind fewer such names in the expression", "bind each of them only to values the census records"):
+                     "bind fewer such names in the expression", "or, where the module has no star import and none of "
+                     "them is a name a class in it writes with two leading underscores and not two trailing ones (__K) "
+                     "or a spelling the census joins to such a name (_C__K), bind each of them only to values the "
+                     "census records"):
             self.assertIn(part, said, "the failure names the refusal and what to change")
         self.assertEqual(re.findall(r"(?<![\w.])\d+(?![\w.])", said), [str(line)],
                          "no figure but the plant's line, so no port: %s" % said)
@@ -3025,6 +3040,32 @@ class Plants(unittest.TestCase):
         self.assertEqual(MIXES, 2 ** 8, "REFUSED_NAMES says eight names, 2 ** 8 mixes")
         with self.assertRaises(AssertionError, msg="a plant the census refuses is not green"):
             self.assertGreen("test_plant.py", src)
+
+        def remedied(spell, k, indent=""):
+            """The plant with each name bound only by =, spelled by `spell` and indented by `indent`, its expression
+            reading B, Z1 to Zk and K: the first remedy with k = 6, eight names, and the second with k = 7."""
+            binds = [("B", c)] + [("Z%d" % i, 0) for i in range(1, 8)] + [("K", 7)]
+            return ("".join("%s%s = %d\n" % (indent, spell % x, v) for x, v in binds) + "%sport = %s + %s %% %d\n"
+                    % (indent, " + ".join(spell % x for x in ["B"] + ["Z%d" % i for i in range(1, k + 1)]), spell % "K",
+                       c))
+        with self.subTest("the second remedy: each name bound only by ="):
+            self.assertGreen("test_plant.py", remedied("%s", 7))
+        reads = "class C:\n    def m(self):\n        return %s\n\n\n" % ", ".join("__" + x for x in names)
+        for label, spell, pre, indent in (
+                ("beside a star import", "%s", "from m import *\n", ""),
+                ("private names in a class", "__%s", "class C:\n", "    "),
+                ("the spellings private names are joined to, read outside their class", "_C__%s", reads, "")):
+            with self.subTest("the second remedy, %s: refused" % label):
+                text = pre + remedied(spell, 7, indent)
+                self._write(rel, text)
+                result = census(self.d)
+                self.assertEqual((result["hits"], result["refused"]),
+                                 ([], [(rel, text.count("\n"), "an assignment to port",
+                                        REFUSED_NAMES % ", ".join(spell % x for x in names))]),
+                                 "the second remedy clears nothing here, as the failure's limit on it says")
+            with self.subTest("the first remedy, %s: read" % label):
+                self.assertRed("test_plant.py", pre + remedied(spell, 6, indent),
+                               "an assignment to port, computed into 20000-39999", n=LOW)
         self._write(rel, "code = %r\n" % src)      # the same plant as code text in a string, on line 1
         result = census(self.d)
         said = failure(result) or ""
@@ -3821,7 +3862,7 @@ class Plants(unittest.TestCase):
         readings; its test is no value (the owner's call of 2026-10-05 on fork PR 973 at 23:5xZ, which names 45001 if
         fast else pick() and PORT = int(os.environ["P"]) if "P" in os.environ else 45001 as the env-default idiom).
         That replaces the reading of a conditional expression as the span holding its two branches, which read nothing
-        where interval() bounded one branch alone. The first 44 red plants each read nothing in a census that read the
+        where interval() bounded one branch alone. The first 45 red plants each read nothing in a census that read the
         span: the two defaults the call names, the second then used as an address's port; and, the other branch a value
         the census does not read, a default in a function's body (port = port if port is not None else 45001), one
         beside an attribute (cfg.port if cfg else 45001) under a port-named key, a call as the first branch, None as the
@@ -3838,17 +3879,19 @@ class Plants(unittest.TestCase):
         bound to a digit string or to a display that is a branch, a digit string that is a branch inside a display and
         inside a loop's display, a display that is a branch inside a display, an or inside a branch, a conditional
         expression that is an operand of an or, one nested in a branch of another, and inside int(), one that is an
-        operand of an or. The next four pin that each branch is read, not the first alone or the second alone, and were
-        counted in that census by the unknown operand of % and by a step of either sign: 20000 + (pick() if fast else 7)
-        % 20000 and 20000 + (7 if fast else pick()) % 20000 are 20000-39999 by the unknown, where 7 gives 20007, and
-        random.randrange(40000, 1000, 7 if fast else -7) and the same with the branches swapped are 1001-40000 by the
-        step -7, where the step 7 counts nothing. A conditional expression whose two branches both read counts each
-        branch, not their span: PORT = 45001 if x else 45002 counts 45001 and 45002, and random.randrange(40000 if x
-        else 41000, 50000) counts 40000-49999 and 41000-49999, where that census counted 45001-45002 and 40000-49999
-        once. Three plants are green: random.randrange(40000, 1000, 7 if fast else 9), whose steps Python refuses for
-        both, is read by each step's sign; PORT = 30000 if fast else 70000, both branches outside the range, counts
-        nothing, where that census counted the span 30000-70000, an over-read; and 1 if N else 2 under a port-named key,
-        with N bound to 45001, counts nothing, since the test is no value."""
+        operand of an or; and h, port = ("TESTHOST", 1) if fast else ("TESTHOST", 45001), a tuple assignment from a
+        conditional expression whose two branches are both displays of its length, which takes the port from the second,
+        as Python does when fast is false. The next four pin that each branch is read, not the first alone or the second
+        alone, and were counted in that census by the unknown operand of % and by a step of either sign: 20000 + (pick()
+        if fast else 7) % 20000 and 20000 + (7 if fast else pick()) % 20000 are 20000-39999 by the unknown, where 7
+        gives 20007, and random.randrange(40000, 1000, 7 if fast else -7) and the same with the branches swapped are
+        1001-40000 by the step -7, where the step 7 counts nothing. A conditional expression whose two branches both
+        read counts each branch, not their span: PORT = 45001 if x else 45002 counts 45001 and 45002, and
+        random.randrange(40000 if x else 41000, 50000) counts 40000-49999 and 41000-49999, where that census counted
+        45001-45002 and 40000-49999 once. Three plants are green: random.randrange(40000, 1000, 7 if fast else 9), whose
+        steps Python refuses for both, is read by each step's sign; PORT = 30000 if fast else 70000, both branches
+        outside the range, counts nothing, where that census counted the span 30000-70000, an over-read; and 1 if N else
+        2 under a port-named key, with N bound to 45001, counts nothing, since the test is no value."""
         n, lo, hi = _n(), LOW + 7232, LOW + 17232                                  # 45001, 40000 and 50000
         key, ass, c = "the key 'port'", "an assignment to port, ", 20000   # c: the modulus, written apart from the text
         env, ports = 'int(os.environ["P"]) if "P" in os.environ else %d' % n, "the key 'ports'"
@@ -3937,6 +3980,8 @@ class Plants(unittest.TestCase):
                  'row = {"port": pick() if a else (%d if b else pick())}\n' % n, key, n),
                 ("inside int(), a conditional expression as an operand of an or",
                  'row = {"port": int(x or (pick() if fast else "%d"))}\n' % n, key + ", a constant expression", n),
+                ("a tuple assignment from a conditional expression of two displays, the port in the second",
+                 'h, port = ("TESTHOST", 1) if fast else ("TESTHOST", %d)\n' % n, "an assignment to port", n),
                 ("% over a conditional expression, the unknown first",
                  "port = %d + (pick() if fast else 7) %% %d\n" % (c, c), ass + "computed into 20000-39999", LOW),
                 ("% over a conditional expression, the unknown second",
