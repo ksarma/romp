@@ -106,7 +106,11 @@ opens no Usage modal and posts no phoneAct (read after a settle: an absence has 
 shows; then, the card still open, a reading arrives (the lab's own GET /usage payload posted to the shell as the timeline
 posts it, the shell's later pulls let through), and the open card shows Usage enabled with no line; the readings emptied (a
 payload with no window and no spend, posted the same way) show it disabled with its line in the open card, filled again
-enabled with no line; and one click closes the card, posts phoneAct usage and opens the Usage modal. Then a reading the kernel holds and the shell has not pulled, on a page
+enabled with no line; then the Token usage panel over the card (#ra-open, which hides the card with no word to the shell),
+each turn from an opening: with the readings filled (Usage enabled), the readings emptied while the panel is up and the panel
+closed (#ra-close) show Usage disabled with its line in the card the close shows; from an opening with no reading (Usage
+disabled), the readings filled while the panel is up show it enabled with no line after the close; and one click closes the
+card, posts phoneAct usage and opens the Usage modal. Then a reading the kernel holds and the shell has not pulled, on a page
 of its own at 390px: the shell's boot pull answers no rows and every later pull reaches the lab, with the Sessions pane
 unloaded so no timeline forwards a reading (both read as the premise); the card's opening asks the shell for a pull (a GET
 under /usage/ after the opening), and while that request is held Usage shows the romp loader in its sub-line's place (the
@@ -121,7 +125,11 @@ line. Then the row following the layout while the card is open, on a page of its
 the layout turns at 820px), the shell's poll answering both hosts up: the card opened at 390px shows its row; the window
 widened to WIDE with the card open hides it (not displayed, its buttons boxless), a host drops there (the class left on the
 hidden glyph, the premise), and the window narrowed to 390px again shows the row, its glyph carrying no flash two frames on,
-and Usage enabled with no line once the ask the row's return makes has ended. Then the
+and Usage enabled with no line once the ask the row's return makes has ended; then the same turns under the Token usage
+panel: opened over the card with its row at 390px, the window widened to WIDE while it is up (the shell's layout turned, the
+premise) and the panel closed, the card it shows has no row; the card opened again at WIDE (no row, read at the opening), the
+panel opened, the window narrowed to 390px while it is up and the panel closed, the card shows the row, and Usage enabled
+with no line once its ask has ended. Then the
 Remote kernels glyph's colours in the dark and the light theme (THEMES), each on a page of its own at 390px: in the card
 opened from the bar's Settings, every colour the glyph can wear (GLYPH: the glyph lit and attaching, read on its svg, a node connected,
 dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
@@ -154,7 +162,10 @@ opening's copy of that class made the same way as well (both unlit lines). The d
 publishes no marker, where the card reads the layout alone (its row shown with no marker), and where a shell that cannot be
 asked reads as one with no reading (Usage disabled with its line). The layout leg is red where the card reads the layout
 only when it opens (the row still shown in the widened window), and its glyph line red without the clear of the drop's class
-when the row shows again (the flash then plays at the narrowing). The contrast pin is red at the shell's literals in the light theme, in
+when the row shows again (the flash then plays at the narrowing). The Token usage panel's turns, in both legs, are red where
+the card follows the readings and the layout only while it shows, and where it follows them only when it opens: the card
+the panel's close shows keeps Usage and the row as they were when the panel opened. The narrowing's Usage line is red under
+a mutant whose ask stands down when it ends while the card is hidden (the loader stays). The contrast pin is red at the shell's literals in the light theme, in
 all three engines: the dialing grey #8a8a8a reads 2.59:1 and the needs-you red #e5484d 2.94:1 on the button's fill; its
 hovered half is red where the button takes the row's accent wash on hover, on which the dark needs-you red reads 2.95:1;
 and the separation's pin is red at the darker red the light theme had at the shell's hue, #dc3f46, 7.10 from the clay. Runs in the "Browser-backed served-page tests (pytest)" step of the
@@ -503,7 +514,8 @@ def _states_problems(engine, acts):
 def _no_reading_problems(engine, nr):
     """Usage with no reading: disabled with its line once the opening's ask has ended, a tap leaving the card open and posting
     nothing; then a reading landing while the card is still open enables Usage there with no line (the shell tells the open
-    card), the readings emptying disable it with its line again and filling enable it again, and one click opens the Usage
+    card), the readings emptying disable it with its line again and filling enable it again; the readings emptying, and
+    filling, while the Token usage panel stands over the card show in the card its close shows; and one click opens the Usage
     modal."""
     out = []
     where = "%s Usage with no reading at %dx%d" % (engine, nr["vp"][0], nr["vp"][1])
@@ -541,6 +553,31 @@ def _no_reading_problems(engine, nr):
     refilled = nr.get("refilled")
     if not refilled or refilled.get("disabled") is not False or not refilled.get("line") or refilled["line"].get("shown") is not False:
         out.append("%s: the readings filled again while the card was open, and the open card does not show Usage enabled without its line: %r" % (where, refilled))
+    # the readings changing while the Token usage panel stands over the card (the check of PR 976's round 1 fixes): the panel
+    # hides the card with no word to the shell, and the card its close shows must show Usage as the readings now are. Each
+    # turn starts at an opening, which reads Usage afresh in any tree
+    pn = nr.get("panel") or {}
+    pick = lambda *ks: {k: pn.get(k) for k in ks}
+    fs = pn.get("fullStart") or {}
+    if not fs.get("asked") or (fs.get("usage") or {}).get("disabled") is not False or not pn.get("opened") \
+            or not pn.get("emptiedReadout") or not pn.get("closed"):
+        out.append("%s: the first panel turn's premise (an opening with the readings filled showing Usage enabled, the panel "
+                   "opened over the card, the readout emptied while it was up, the panel closed): %r" % (
+                       where, pick("fullStart", "opened", "emptiedReadout", "closed")))
+    pe = pn.get("emptied")
+    if not pe or pe.get("disabled") is not True or not pe.get("line") or pe["line"].get("shown") is not True:
+        out.append("%s: the readings emptied while the Token usage panel stood over the card, and the card its close shows "
+                   "does not show Usage disabled with its line: %r" % (where, pe))
+    es = pn.get("emptyStart") or {}
+    if not es.get("asked") or (es.get("usage") or {}).get("disabled") is not True or not pn.get("opened2") \
+            or not pn.get("filledReadout") or not pn.get("closed2"):
+        out.append("%s: the second panel turn's premise (an opening with no reading showing Usage disabled, the panel opened "
+                   "over the card, the readout filled while it was up, the panel closed): %r" % (
+                       where, pick("emptyStart", "opened2", "filledReadout", "closed2")))
+    pf = pn.get("filled")
+    if not pf or pf.get("disabled") is not False or not pf.get("line") or pf["line"].get("shown") is not False:
+        out.append("%s: the readings filled while the Token usage panel stood over the card, and the card its close shows "
+                   "does not show Usage enabled without its line: %r" % (where, pf))
     clicked = nr.get("clicked") or {}
     if not nr.get("opened") or clicked.get("settingsOpen") or clicked.get("cardHidden") is not True or clicked.get("acts") != ["usage"]:
         out.append("%s: with the reading, one click on Usage did not close the card and open the Usage modal: opened %r, %r" % (
@@ -606,7 +643,8 @@ def _follow_problems(engine, fl):
     """The row follows the layout while the card is open (PR 976's round 1, correctness-2 and ui-1): opened on the phone layout
     with its row, the window widened past 820px hides the row in the open card, and narrowed back shows it again; the row shown
     again carries no flash for a drop that came while it was hidden, and Usage's state is asked afresh (the lab's reading:
-    enabled, no line)."""
+    enabled, no line); and the window crossing 820px either way while the Token usage panel stands over the card leaves the
+    card its close shows with the row the layout calls for."""
     out = []
     where = "%s the row following the layout, %dx%d and %dx%d" % (engine, fl["vp"][0], fl["vp"][1], (fl.get("wide") or WIDE)[0], (fl.get("wide") or WIDE)[1])
     ph = fl.get("phone") or {}
@@ -631,6 +669,36 @@ def _follow_problems(engine, fl):
     u = fl.get("usage")
     if not fl.get("asked") or not u or u.get("disabled") is not False or not u.get("line") or u["line"].get("shown") is not False:
         out.append("%s: the row shown again does not show Usage enabled with no line once its ask has ended (the lab's reading): %r" % (where, u))
+    # the same turns with the Token usage panel over the card (the check of PR 976's round 1 fixes): the panel hides the card
+    # with no word to the shell, and the card its close shows must have the row the layout now calls for. The second turn
+    # starts at an opening on the desktop layout, which reads the layout in any tree
+    pn = fl.get("panel") or {}
+    pick = lambda *ks: {k: pn.get(k) for k in ks}
+    st, wu = pn.get("start") or {}, pn.get("wideUnder") or {}
+    if st.get("mobile") is not True or not st.get("rowShown") or not pn.get("opened") or not pn.get("wideTurned") \
+            or wu.get("panel") is not True or wu.get("cardHidden") is not True or not pn.get("closed"):
+        out.append("%s: the first panel turn's premise (the row shown on the phone layout, the panel opened over the card, the "
+                   "window widened to the desktop layout while it was up, the panel closed): %r" % (
+                       where, pick("start", "opened", "wideTurned", "wideUnder", "closed")))
+    pw = pn.get("wideRow") or {}
+    if not pn.get("hid") or pw.get("open") is not True or pw.get("rowShown") is not False or any(w > 0 or h > 0 for w, h in pw.get("boxes", [])):
+        out.append("%s: the window widened past the phone layout while the Token usage panel stood over the card, and the card "
+                   "its close shows still shows the row: %r" % (where, pw))
+    wo, nu = pn.get("wideOpened") or {}, pn.get("narrowUnder") or {}
+    if wo.get("mobile") is not False or wo.get("open") is not True or wo.get("rowShown") is not False or not pn.get("opened2") \
+            or not pn.get("narrowTurned") or nu.get("panel") is not True or nu.get("cardHidden") is not True or not pn.get("closed2"):
+        out.append("%s: the second panel turn's premise (the card opened on the desktop layout with no row, the panel opened "
+                   "over it, the window narrowed to the phone layout while it was up, the panel closed): %r" % (
+                       where, pick("wideOpened", "opened2", "narrowTurned", "narrowUnder", "closed2")))
+    pr = pn.get("narrowRow") or {}
+    if not pn.get("showed") or pr.get("mobile") is not True or pr.get("open") is not True or not pr.get("rowShown"):
+        out.append("%s: the window narrowed to the phone layout while the Token usage panel stood over the card, and the card "
+                   "its close shows has no row: %r" % (where, pr))
+    pu = pn.get("usage")
+    if not pn.get("asked") or not pu or pu.get("disabled") is not False or pu.get("busy") is not None or not pu.get("line") \
+            or pu["line"].get("shown") is not False:
+        out.append("%s: the row the narrowing showed under the Token usage panel does not show Usage enabled with no line once "
+                   "its ask has ended (the lab's reading): %r" % (where, pu))
     return out
 
 

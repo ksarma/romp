@@ -35,7 +35,8 @@
 // and the phoneAct messages the shell heard read; then, the card still open, a reading arrives (the lab's own GET /usage
 // payload posted to the shell as the timeline posts it, the shell's later pulls let through), Usage read again in the open
 // card; then the readings emptied (a payload with no window and no spend, posted the same way) and filled again, Usage read
-// after each, and one click on it, its effect read.
+// after each; then, each from an opening, the readings emptied and filled while the Token usage panel stands over the card
+// (#ra-open, #ra-close), Usage read after each close; and one click on it, its effect read.
 // Then a reading the kernel holds and the shell has not pulled, on a page of its own at cfg.actsViewport: the shell's boot
 // pull answers no rows and every later one goes to the lab, the Sessions pane unloaded (read as the premise); the card
 // opened, its ask for a fresh pull held while Usage is read (the romp loader in the sub-line's place, its animations, the
@@ -48,7 +49,8 @@
 // Then the row following the layout while the card is open, on a page of its own in a plain context (a fine pointer): the card
 // opened at cfg.actsViewport, the window widened to cfg.wideViewport and narrowed back with the card open, a host dropping
 // while it is wide (the shell's GET /tunnels answering cfg.tunnels2, then cfg.tunnelsDrop), and the row, the glyph and Usage
-// read after each turn.
+// read after each turn; then the window widened, and from an opening at that width narrowed, while the Token usage panel
+// stands over the card, the row read after each close (and Usage after the second).
 // Then the Remote kernels glyph's colours, on a page of its own per theme (cfg.themes: the theme written to the store before
 // the page parses, as the gear writes it) at cfg.actsViewport: the card opened from the bar's Settings, and in it the card's
 // background, the button's own fill (the glyph sits on it) and each colour the glyph can wear, as computed values: the
@@ -518,8 +520,51 @@ try {
     nr.refilledReadout = await readout(true);
     await frames(page);
     nr.refilled = await kit.usageNow(sf);
-    if (nr.refilled) {
-      await page.mouse.click(nr.refilled.left + nr.refilled.w / 2, nr.refilled.top + nr.refilled.h / 2);
+    // ...then the readings changing while the Token usage panel stands over the card (the check of PR 976's round 1 fixes): the
+    // panel hides the card with no word to the shell and its close shows it again. Each turn starts at an opening, which reads
+    // Usage afresh in any tree: the card closed and opened again from the bar's Settings with the readings filled (Usage
+    // enabled, read once the opening's ask has ended), the panel opened (#ra-open's own click), the readings emptied while it
+    // is up, the panel closed (#ra-close's) and Usage read in the card it shows; then the card opened again with the shell's
+    // pull answering no rows (Usage disabled with its line), the panel opened, the readings filled while it is up, the panel
+    // closed and Usage read. The click below lands on the last Usage read
+    {
+      const pn = {};
+      const raOpen = () => sf.evaluate(() => { const b = document.getElementById("ra-open"), back = document.getElementById("ranalytics-back");
+        if (!b) return false; b.click(); return !!back && !back.hidden && document.getElementById("rsettings").hidden; });
+      const raClose = () => sf.evaluate(() => { const b = document.getElementById("ra-close"), back = document.getElementById("ranalytics-back");
+        if (!b) return false; b.click(); return !!back && back.hidden && !document.getElementById("rsettings").hidden; });
+      const reopen = async () => {
+        await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+        await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+        await frames(page);
+        await kit.openCard();
+        const asked = await kit.askEnded(sf);
+        await frames(page);
+        return { asked, usage: await kit.usageNow(sf) };
+      };
+      pn.fullStart = await reopen();
+      pn.opened = await raOpen();
+      await post(true);
+      pn.emptiedReadout = await readout(false);
+      await frames(page);
+      pn.closed = await raClose();
+      await frames(page);
+      pn.emptied = await kit.usageNow(sf);
+      empty = true;   // the opening's pull answers no rows from here (the route above), so the next opening holds no reading
+      pn.emptyStart = await reopen();
+      pn.opened2 = await raOpen();
+      await post(false);
+      pn.filledReadout = await readout(true);
+      await frames(page);
+      pn.closed2 = await raClose();
+      await frames(page);
+      pn.filled = await kit.usageNow(sf);
+      empty = false;
+      nr.panel = pn;
+    }
+    const last = (nr.panel && nr.panel.filled) || nr.refilled;
+    if (last) {
+      await page.mouse.click(last.left + last.w / 2, last.top + last.h / 2);
       nr.opened = await kit.modalUp();
       await frames(page);
       nr.clicked = await kit.shellNow(sf);
@@ -682,6 +727,55 @@ try {
     fl.asked = await sf.waitForFunction(() => { const w = document.getElementById("rs-pact-usage-wait"); return !w || w.hidden; }, null, { timeout: 10000 }).then(() => true, () => false);
     fl.usage = await sf.evaluate(() => { const b = document.getElementById("rs-pact-usage"), un = document.getElementById("rs-pact-usage-none");
       return b ? { disabled: b.disabled, line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none" } : null } : null; });
+    // ...then the same turns with the Token usage panel over the card (the check of PR 976's round 1 fixes): the panel hides
+    // the card with no word to the shell and its close shows it again. The panel opened (#ra-open's own click) at the phone
+    // width with the row shown, the window widened to cfg.wideViewport while it is up (the shell's layout read as turned), the
+    // panel closed (#ra-close's) and the row read once it has had the time to follow; then the card closed and opened again at
+    // that width (an opening reads the layout in any tree: no row), the panel opened, the window narrowed to the phone width
+    // while it is up, the panel closed, and the row read, and Usage once its ask has ended
+    {
+      const pn = {};
+      const raOpen = () => sf.evaluate(() => { const b = document.getElementById("ra-open"), back = document.getElementById("ranalytics-back");
+        if (!b) return false; b.click(); return !!back && !back.hidden && document.getElementById("rsettings").hidden; });
+      const raClose = () => sf.evaluate(() => { const b = document.getElementById("ra-close"), back = document.getElementById("ranalytics-back");
+        if (!b) return false; b.click(); return !!back && back.hidden && !document.getElementById("rsettings").hidden; });
+      const mobileIs = (want) => page.waitForFunction((w) => !!window.__rompMobileOn && window.__rompMobileOn() === w, want, { timeout: 5000 }).then(() => true, () => false);
+      const under = () => sf.evaluate(() => { const back = document.getElementById("ranalytics-back");
+        return { panel: !!back && !back.hidden, cardHidden: document.getElementById("rsettings").hidden }; });
+      pn.start = await rowNow();
+      pn.opened = await raOpen();
+      await page.setViewportSize({ width: cfg.wideViewport[0], height: cfg.wideViewport[1] });
+      pn.wideTurned = await mobileIs(false);
+      await frames(page);
+      await frames(page);
+      pn.wideUnder = await under();
+      pn.closed = await raClose();
+      pn.hid = await rowIs(false);
+      await frames(page);
+      pn.wideRow = await rowNow();
+      await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+      await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+      await frames(page);
+      await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+      await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+      await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+      await frames(page);
+      pn.wideOpened = await rowNow();
+      pn.opened2 = await raOpen();
+      await page.setViewportSize({ width: cfg.actsViewport[0], height: cfg.actsViewport[1] });
+      pn.narrowTurned = await mobileIs(true);
+      await frames(page);
+      await frames(page);
+      pn.narrowUnder = await under();
+      pn.closed2 = await raClose();
+      pn.showed = await rowIs(true);
+      await frames(page);
+      pn.narrowRow = await rowNow();
+      pn.asked = await sf.waitForFunction(() => { const w = document.getElementById("rs-pact-usage-wait"); return !w || w.hidden; }, null, { timeout: 10000 }).then(() => true, () => false);
+      pn.usage = await sf.evaluate(() => { const b = document.getElementById("rs-pact-usage"), un = document.getElementById("rs-pact-usage-none");
+        return b ? { disabled: b.disabled, busy: b.getAttribute("aria-busy"), line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none" } : null } : null; });
+      fl.panel = pn;
+    }
     out.follow = fl;
     await context.close();
   }

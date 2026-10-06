@@ -2196,19 +2196,26 @@ function initGear(post, opts) {
     var done = function () { if (usageWait !== n) return; usageWait = 0; usageAct(); };
     try { Promise.resolve(ask.call(w)).then(done, done); } catch (e) { done(); }
   }
-  // the shell's tell (its renderRows, on every write of its readings): re-read Usage while the card is open with the row shown;
-  // a closed card asks afresh at its next opening
-  window.__rompUsageAct = function () { var r = document.getElementById('rs-pacts'); if (!p.hidden && r && !r.hidden) usageAct(); };
+  // whether the settings are open: the card shows, or the Token usage panel stands in its place. The panel's opener hides the
+  // card under it (raOpen) and its close shows the card again (raHide), with no word to the shell either way, so the two
+  // followers below keep following while the panel is up. Followers that stood down while the card was hidden showed it again
+  // as it was: Usage's line over readings that had changed, the row on a layout the window had left (the check of PR 976's
+  // round 1 fixes)
+  function settingsUp() { return !p.hidden || (!!raBack && !raBack.hidden); }
+  // the shell's tell (its renderRows, on every write of its readings): re-read Usage while the settings are open (settingsUp,
+  // the card under the Token usage panel too) with the row shown; a closed card asks afresh at its next opening
+  window.__rompUsageAct = function () { var r = document.getElementById('rs-pacts'); if (settingsUp() && r && !r.hidden) usageAct(); };
   // THE ROW FOLLOWS THE LAYOUT WHILE THE CARD IS OPEN (PR 976's round 1, correctness-2 and ui-1). The shell re-tells every iframe
   // when its layout query changes (kernel _LANDING_MOBILE_JS retell: __rompPanesTell, whose tellLink posts {romp:'link', link,
   // mob} into this frame), an event, so on that word the card re-reads the row's predicate, the shell's own (phoneShell, never
   // the word's mob field), and Usage's state with it. A row shown by the change asks for Usage afresh, as an opening does, and
   // first drops the drop flash's class off its Remote kernels glyph: a host that dropped while the row was hidden left it on a
   // button with no box, and the flash would play now, late. A row hidden by the change ends its ask. The word is heard only
-  // from the shell's own window (the parent), and only while the card is open: each opening reads the layout itself.
+  // from the shell's own window (the parent), and only while the settings are open (settingsUp: the card, or the Token usage
+  // panel in its place, whose close then shows the card with the row the layout calls for): each opening reads the layout itself.
   window.addEventListener('message', function (e) {
     var m = e.data;
-    if (window.parent === window || e.source !== window.parent || !m || m.romp !== 'link' || p.hidden) return;
+    if (window.parent === window || e.source !== window.parent || !m || m.romp !== 'link' || !settingsUp()) return;
     var r = document.getElementById('rs-pacts');
     if (!r) return;
     var on = phoneShell() && shellActs();
