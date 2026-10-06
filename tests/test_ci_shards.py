@@ -24,8 +24,12 @@ Two kinds of pin:
    it starts sees the variable. Both classes are red when the controller removes the variable before its worker starts
    (the worker then runs every file) and when a process that runs tests keeps it; the two forms outside CI's are red
    when the conftest tells a controller by xdist's dist option alone (--dist load) or by its tx list alone (--tx
-   popen), where xdist's own test needs both. AValueThatNamesNoShard runs the census's child with values that name no
-   shard: each ends in pytest's usage error, naming the variable and the value, with no file collected.
+   popen), where xdist's own test needs both. The legs that pass xdist's options skip where pytest-xdist is not
+   installed; the form with no -n runs on any interpreter. BothSidesReadOneEnvironment holds that the collect-only run
+   and the run of the probe's items read one environment, and that ShardsRunInCIsForms's file-set message names the
+   xdist controller only for the -n 1 form (round 2 of fork PR 986's review). AValueThatNamesNoShard runs the census's
+   child with values that name no shard: each ends in pytest's usage error, naming the variable and the value, with no
+   file collected.
 2. Source pins over ci.yml, read by line shape with no YAML library, as tests/test_ci_workflow_concurrency.py reads it
    (ShardMatrix): the python job's shard axis lists 1 to SHARD_COUNT; a batch push runs each interpreter as
    SHARD_COUNT Linux jobs, one per shard, and a dispatch with its macos input on (tests/test_ci_macos_input.py) adds one
@@ -55,6 +59,7 @@ Two kinds of pin:
    secret-scan.yml, CONTRIBUTING.md, docs/batching.md, three test modules' docstrings and one test's pattern named full
    as the default.
 """
+import importlib.util
 import itertools
 import json
 import os
@@ -83,6 +88,9 @@ WF = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 BATCH = "refs/heads/batch/2026-10-04a"
 # a dispatch's inputs that put the macOS cells in the matrix (ci.yml's macos input, off by default)
 MACOS_ON = {"macos": True}
+# -n, --dist and --tx are pytest-xdist's options, so the legs that pass them skip where it is not installed, as
+# tests/test_run_end_leaked_processes.py's do; CI's Python cells install it
+HAS_XDIST = importlib.util.find_spec("xdist") is not None
 
 
 # ---- the census -------------------------------------------------------------------------------------------------------
@@ -91,11 +99,10 @@ def probe_files(shard):
     """The test files a run collects, as repository-relative paths, asked of pytest in a child run from the repository
     root: `pytest --collect-only` with tests/ci_shard_probe.py loaded and no path, as the Run pytest step runs it (no
     path, so pytest walks the tree and asks pytest_ignore_collect about each file), with SHARD_ENV set to `shard`, or
-    absent for None. A child that fails, or lists no file, raises AssertionError with its output."""
-    env = dict(os.environ)
-    env.pop(SHARD_ENV, None)
-    if shard is not None:
-        env[SHARD_ENV] = str(shard)
+    absent for None, in probe_child_env's environment, the one probe_run's run reads, so an option a caller exported in
+    PYTEST_ADDOPTS reaches neither (BothSidesReadOneEnvironment). A child that fails, or lists no file, raises
+    AssertionError with its output."""
+    env = probe_child_env(None if shard is None else str(shard))
     p = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "-p", "no:anyio",
                         "-p", "tests.ci_shard_probe"],
                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
@@ -138,7 +145,9 @@ def probe_child_env(shard):
     """A child pytest's environment, built as tests/test_hermetic_kernel_postal.py's _proof_child_env builds one: this
     process's, less PYTEST_CURRENT_TEST, the variables pytest-xdist sets in a worker (PYTEST_XDIST_*: this process's,
     when it is a worker, would otherwise reach the child's controller and its worker) and PYTEST_ADDOPTS (options a
-    caller exported would join the child's command line), with SHARD_ENV set to `shard`, a string, or absent for None."""
+    caller exported would join the child's command line), with SHARD_ENV set to `shard`, a string, or absent for None.
+    The census's collect-only child (probe_files) reads it as well as the child that runs the probe's items (probe_run),
+    for the same reasons, so the two sides ShardsRunInCIsForms compares read one environment."""
     env = {k: v for k, v in os.environ.items()
            if k != "PYTEST_CURRENT_TEST" and not k.startswith("PYTEST_XDIST_") and k != "PYTEST_ADDOPTS"}
     env.pop(SHARD_ENV, None)
@@ -215,12 +224,15 @@ class ShardsRunInCIsForms(unittest.TestCase):
     collects with no -n, so neither half of that conditional ran in it. Here each shard's probe items run under -n 1, the
     Linux cells' form, and with no -n: the files whose item passed are that shard's collected files, and no item failed.
     Red under a mutant of either half: a controller that removes the variable (its one worker runs every file, under
-    -n 1), and a process that runs tests and keeps it (every item fails its assert, in both forms)."""
+    -n 1), and a process that runs tests and keeps it (every item fails its assert, in both forms). The -n 1 runs need
+    pytest-xdist: without it they are not run and their test skips, and the form with no -n runs on any interpreter.
+    Both sides read probe_child_env's environment (BothSidesReadOneEnvironment)."""
 
     @classmethod
     def setUpClass(cls):
         cls.collected = {k: collected_files(k) for k in range(1, SHARD_COUNT + 1)}
-        cls.runs = {(k, w): probe_run(k, w) for k in range(1, SHARD_COUNT + 1) for w in (1, None)}
+        cls.runs = {(k, w): probe_run(k, w) for k in range(1, SHARD_COUNT + 1) for w in ((1, None) if HAS_XDIST else
+                                                                                         (None,))}
 
     def hold_each_shard(self, workers, form):
         for k in range(1, SHARD_COUNT + 1):
@@ -231,17 +243,57 @@ class ShardsRunInCIsForms(unittest.TestCase):
                                  "the process that runs it (tests/conftest.py's _stash_run_shard removes it in every "
                                  "process that runs tests): %s" % (k, form, len(failed), SHARD_ENV, tail))
                 beyond, short = sorted(passed - want), sorted(want - passed)
+                # only the -n 1 form has a controller; with no -n the two runs, from one environment, chose other files
+                cause = ("under -n 1 the xdist controller must keep %s for its worker" % SHARD_ENV if workers == 1 else
+                         "the run and the collect-only run, both from probe_child_env's environment, chose other files")
                 self.assertEqual((beyond, short), ([], []),
                                  "shard %d %s ran the items of %d files where its collect-only run lists %d: %d beyond those "
-                                 "and %d short of them (the lists above); under -n 1 the xdist controller must keep %s for "
-                                 "its worker" % (k, form, len(passed), len(want), len(beyond), len(short), SHARD_ENV))
+                                 "and %d short of them (the lists above); %s" % (k, form, len(passed), len(want),
+                                                                                len(beyond), len(short), cause))
                 self.assertEqual(rc, 0, "shard %d %s exited %d: %s" % (k, form, rc, tail))
 
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
     def test_under_one_worker_each_shard_runs_its_collected_files_and_no_item_sees_the_variable(self):
         self.hold_each_shard(1, "under -n 1")
 
     def test_with_no_workers_each_shard_runs_its_collected_files_and_no_item_sees_the_variable(self):
         self.hold_each_shard(None, "with no -n")
+
+
+class BothSidesReadOneEnvironment(unittest.TestCase):
+    """ShardsRunInCIsForms holds two child runs of each shard to each other, the collect-only run (probe_files) and the
+    run of the probe's items (probe_run), so both read probe_child_env's environment (round 2 of fork PR 986's review,
+    2026-10-06): an option exported in PYTEST_ADDOPTS would otherwise reach the collect-only run alone, and the class
+    would be red with no defect in tests/conftest.py. The file-set message names the xdist controller only for the -n 1
+    form, the one form that has a controller. Red at the commit before: the collect-only run read the exported option,
+    and the message of the form with no -n named the controller."""
+
+    def test_the_collect_only_run_does_not_read_an_exported_pytest_addopts(self):
+        # probe_files directly, never collected_files, so the run under the option does not enter the cache the census's
+        # classes share; tests/test_ci_shards.py is a file the run with no shard collects (the census holds it)
+        old = os.environ.get("PYTEST_ADDOPTS")
+        self.addCleanup(lambda: os.environ.pop("PYTEST_ADDOPTS", None) if old is None
+                        else os.environ.__setitem__("PYTEST_ADDOPTS", old))
+        os.environ["PYTEST_ADDOPTS"] = "--ignore=tests/test_ci_shards.py"
+        self.assertIn("tests/test_ci_shards.py", probe_files(None), "the collect-only run read PYTEST_ADDOPTS from this "
+                      "process's environment, which probe_run's run does not read, so the two can list other files")
+
+    def test_the_file_set_message_names_the_controller_for_the_one_worker_form_alone(self):
+        for workers, form, names in ((None, "with no -n", False), (1, "under -n 1", True)):
+            with self.subTest(form=form):
+                case = ShardsRunInCIsForms("test_with_no_workers_each_shard_runs_its_collected_files_and_no_item_sees_"
+                                           "the_variable")
+                case.collected = {k: frozenset({"tests/test_a.py"}) for k in range(1, SHARD_COUNT + 1)}
+                case.runs = {(k, workers): (0, {"tests/test_a.py"}, [], "") for k in range(1, SHARD_COUNT + 1)}
+                case.runs[(1, workers)] = (0, {"tests/test_b.py"}, [], "")
+                # a case that is not running: its subTest lets the first failure raise
+                with self.assertRaises(AssertionError) as cm:
+                    case.hold_each_shard(workers, form)
+                msg = str(cm.exception)
+                self.assertIn("shard 1 %s ran the items of 1 files where its collect-only run lists 1" % form, msg,
+                              "the failure is not the file-set one: %s" % msg)
+                self.assertEqual("xdist controller" in msg, names, "shard 1 %s: the file-set message %s name the xdist "
+                                 "controller: %s" % (form, "must" if names else "must not", msg))
 
 
 # A synthetic test file for TheShardEnvironmentInCIsForm, written outside the checkout: it records the shard variable as
@@ -280,7 +332,8 @@ class TheShardEnvironmentInCIsForm(unittest.TestCase):
     reads None in both views. Each form is red under its own defect: -n 1 under a controller that removes the variable
     (its worker then runs every file); -n 0 under a process that runs tests and keeps it (both views read k); --dist
     load under a test of the dist option alone, and --tx popen under a test of the tx list alone, each of which keeps
-    the variable in that run's one process (both views read k)."""
+    the variable in that run's one process (both views read k). All four forms pass pytest-xdist's options, -n 0 among
+    them, so each skips where it is not installed."""
 
     def run_ci_form(self, *opts):
         base = os.path.realpath(tempfile.mkdtemp())
@@ -328,15 +381,19 @@ class TheShardEnvironmentInCIsForm(unittest.TestCase):
                          % (" ".join(opts), SHARD_ENV, k, len(shards), len(want), k, p.returncode, tail))
         self.assertEqual(p.returncode, 0, tail)
 
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
     def test_under_one_worker_only_the_shards_files_run_and_no_view_sees_the_variable(self):
         self.run_ci_form("-n", "1")
 
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
     def test_in_process_only_the_shards_files_run_and_no_view_sees_the_variable(self):
         self.run_ci_form("-n", "0")
 
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
     def test_a_dist_mode_with_no_workers_runs_in_process_and_no_view_sees_the_variable(self):
         self.run_ci_form("--dist", "load")
 
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
     def test_a_tx_list_with_no_dist_mode_runs_in_process_and_no_view_sees_the_variable(self):
         self.run_ci_form("--tx", "popen")
 
