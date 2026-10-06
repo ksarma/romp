@@ -71674,8 +71674,9 @@ window.__rompUsageFailed=function(){return READ_FAILED;};
 // spend panel. The abort is AbortSignal.timeout's where the engine has it. Where it does not (Safari before 16), an
 // AbortController with a timer of the same bound aborts the fetch instead, the shape the spend panel's bound below has, and
 // the timer is cleared when the pull ends first (romp-manager's decision on PR 976's round 1 builds: the pull is
-// bounded there too; ui/webview/usage-pull-bound.test.ts runs this code with AbortSignal.timeout deleted). An engine without
-// AbortController as well (Safari before 12.1) cannot abort a fetch, and the pull runs unbounded there
+// bounded there too; ui/webview/usage-pull-bound.test.ts runs this code with AbortSignal.timeout deleted). An engine whose
+// fetch cannot be aborted runs the pull unbounded: Safari before 12.1, which has no AbortController before 11.1 and, in 11.1
+// and 12.0, one whose signal fetch ignores (there the timer fires and the fetch goes on)
 window.__rompUsagePull=function(){var ms=(window.__rompUsagePullMs|0)||10000,sig=null,t=0;
 if(typeof AbortSignal!=='undefined'&&typeof AbortSignal.timeout==='function')sig=AbortSignal.timeout(ms);
 else if(typeof AbortController==='function'){var ac=new AbortController();sig=ac.signal;t=setTimeout(function(){ac.abort();},ms);}
