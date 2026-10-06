@@ -707,8 +707,7 @@ def _assistant_row(text):
 # The population (2026-10-06): the rows the CLI writes for input it is NOT running as a turn, derived from what the CLI
 # itself marks. Every user row it echoes carries the isReplay key (its SDK schema's SDKUserMessageReplay), and its own test
 # for evidence that a turn is running skips a user row that has the key, whatever its value. It writes every local
-# command's output with the tag first and recognises that output by the start of the text, so a key-less row whose text
-# opens with either tag is an echo too. On romp's road the one member that arrives outside a turn with no result after it
+# command's output with the tag first, so a key-less row whose text opens with either tag is an echo too. On romp's road the one member that arrives outside a turn with no result after it
 # is the first: the confirmation a /model switch makes the CLI write when the kernel asks for it over the control channel.
 ECHO_ROWS = {
     "a model switch's echo (string content, isReplay true)":
@@ -758,9 +757,13 @@ class ReplayedEchoes(unittest.TestCase):
     carrying the local command's <local-command-stdout> confirmation, written outside any turn and followed by no result)
     left the count at one until the next real turn's result: every attaching kernel was told a turn was open, the
     unattached grace never ended the CLI, and a re-exec waited for that result. In-process: the constructor and _track, no
-    CLI and no socket. HostProcess's two echo cases drive the same row through the fake CLI."""
+    CLI and no socket. HostProcess's three echo cases drive the same row through the fake CLI."""
 
     def setUp(self):
+        self._new_host()
+
+    def _new_host(self):
+        """A freshly built host in a state root of its own, with no row tracked yet, as after a relaunch."""
         self.state = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.state, True)
         d = Path(self.state) / "hosts" / SID
@@ -821,6 +824,32 @@ class ReplayedEchoes(unittest.TestCase):
                 self._feed(_assistant_row("the turn goes on"))
                 self.assertEqual(len(self._reopened()), before + 1, "and none for the turn's later rows: %s" % name)
 
+    def test_an_echo_that_is_a_fresh_hosts_first_row_opens_no_turn(self):
+        """The reported shape: a session relaunched to apply a model change, where the CLI's echo of the switch comes right
+        after the SessionStart hooks, before any result, so the new host's count starts at 0 and no result has closed
+        anything. Each echo, as the first row a freshly built host tracks: the count stays 0 and host.log gains no
+        turn-reopened row (the base read 1 and wrote one). Each turn row as a fresh host's first row still opens one."""
+        for name, rec in ECHO_ROWS.items():
+            with self.subTest(echo=name):
+                self._new_host()
+                self._feed(rec)
+                self.assertEqual(self.host.inflight, 0, "an echo as a fresh host's first row opens no turn: %s" % name)
+                self.assertEqual(self._reopened(), [], "and logs no turn-reopened row: %s" % name)
+        for name, rec in TURN_ROWS.items():
+            with self.subTest(turn=name):
+                self._new_host()
+                self._feed(rec)
+                self.assertEqual(self.host.inflight, 1, "a turn row as a fresh host's first row opens one: %s" % name)
+                self.assertEqual(len(self._reopened()), 1, "with one turn-reopened row: %s" % name)
+
+    def test_both_modules_hold_the_same_two_tags(self):
+        """The host's test and the kernel's each read their own copy of the pair of local-command tags. Both copies are
+        the two tags the CLI writes first, so neither can gain or lose a tag alone. Its own case, so the hand-written parity
+        case below reaches its verdicts when only the kernel's half is missing."""
+        tags = ("<local-command-stdout>", "<local-command-stderr>")
+        self.assertEqual(getattr(sh, "LOCAL_COMMAND_TAGS", None), tags, "the host holds the two tags")
+        self.assertEqual(getattr(sb, "LOCAL_COMMAND_TAGS", None), tags, "the kernel holds the same two tags")
+
     def test_the_kernel_reads_the_same_local_command_echoes_off_the_parsed_message(self):
         """The kernel counts a turn the CLI opened from the PARSED message (SdkSession._turn_frame), and the SDK drops the
         isReplay key when it parses a row (claude_agent_sdk 0.2.156, message_parser's user branch keeps the content, uuid,
@@ -832,7 +861,6 @@ class ReplayedEchoes(unittest.TestCase):
         the SDK is importable."""
         fn = getattr(sh, "_cli_echo", None)
         self.assertIsNotNone(fn, "the host's predicate")
-        self.assertEqual(getattr(sb, "LOCAL_COMMAND_TAGS", None), sh.LOCAL_COMMAND_TAGS, "the kernel reads the host's two tags")
 
         class TextBlock:
             def __init__(self, text): self.text = text
@@ -870,7 +898,7 @@ class ReplayedEchoes(unittest.TestCase):
         ECHO_ROWS and TURN_ROWS with the real parser (claude_agent_sdk._internal.message_parser.parse_message), asserts the
         parsed message has no isReplay attribute, and asserts the kernel's verdict on it equals the host's verdict on the
         row with the key removed. So a later SDK that parsed user content into another shape fails here instead of passing
-        through the double. Skipped where the SDK does not import (the box's test venvs), and a failure under
+        through the double. Skipped where the SDK does not import (a local venv without it), and a failure under
         ROMP_SDK_REQUIRE=1, which CI's pytest step sets after it installs the pinned SDK."""
         if importlib.util.find_spec("claude_agent_sdk") is None:
             if os.environ.get("ROMP_SDK_REQUIRE") == "1":
@@ -5186,6 +5214,22 @@ class HostProcess(unittest.TestCase):
                                                "turn's result would end)")
         self.assertNotIn("turn-reopened", [r["kind"] for r in self._hostlog()], "the echo re-opened nothing")
         k2.send({"t": "in", "data": self._user("two sleep=0")})                   # and the idle CLI takes the next send at once
+        k2.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result" and f["offset"] > ans["offset"], timeout=15)
+        k2.close()
+
+    def test_a_relaunched_clis_model_switch_echo_before_any_turn_leaves_no_open_turn(self):
+        """The reported sequence: a session relaunched to apply a model change, and the CLI's echo of the switch is its
+        first output, before any turn has run or resulted. The host counted it as a queued line running as its own turn,
+        so the first kernel to attach after it was told a turn was open, and nothing would close it until a real turn's
+        result. The echo opens no turn here either."""
+        host, sock, spec = self._start()
+        k, _ = self._attach(sock)
+        echo, ans = self._switch_model(k)
+        k.send({"t": "detach"}); k.close()
+        k2, hello = self._attach(sock, ack=ans["offset"], pid=4343)
+        self.assertEqual(hello["inflight"], 0, "no open turn after the echo that came before any turn (the base reported one)")
+        self.assertNotIn("turn-reopened", [r["kind"] for r in self._hostlog()], "the echo re-opened nothing")
+        k2.send({"t": "in", "data": self._user("first sleep=0")})                 # and the CLI takes the first send at once
         k2.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result" and f["offset"] > ans["offset"], timeout=15)
         k2.close()
 
