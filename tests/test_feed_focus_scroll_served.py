@@ -59,6 +59,7 @@ import unittest
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -88,6 +89,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -337,7 +339,7 @@ await park();
 await kernel(cfg.api);
 await shotBoth("2-stacked");
 out.errors = errors;
-fs.writeFileSync(cfg.out, JSON.stringify(out));
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -383,13 +385,15 @@ class ServedFocusedSectionJumpScroll(unittest.TestCase):
 
     def test_a_summary_click_switches_the_section_and_scrolls_the_feed_to_the_top_at_once(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token),
+                "web": SID_WEB, "api": SID_API, "tests": SID_TESTS, "webDone": WEB_DONE, "apiDone": API_DONE, "apiSplit": API_SPLIT,
+                "testsDone": TESTS_DONE, "apiGrp1": API_GRP1, "apiGrp2": API_GRP2, "apiAnchor": API_ANCHOR, "webAnchor": WEB_ANCHOR, "testsAnchor": TESTS_ANCHOR, "paraAnchors": PARA_ANCHORS,
+                "colors": {"web": {"bg": "#1EA1EB", "fg": "#ffffff"}, "api": {"bg": "#E0A526", "fg": "#000000"}, "tests": {"bg": "#7A5CFF", "fg": "#ffffff"}},
+                "shots": os.environ.get("FEED_FOCUS_SCROLL_SHOTS", "")}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token),
-                       "web": SID_WEB, "api": SID_API, "tests": SID_TESTS, "webDone": WEB_DONE, "apiDone": API_DONE, "apiSplit": API_SPLIT,
-                       "testsDone": TESTS_DONE, "apiGrp1": API_GRP1, "apiGrp2": API_GRP2, "apiAnchor": API_ANCHOR, "webAnchor": WEB_ANCHOR, "testsAnchor": TESTS_ANCHOR, "paraAnchors": PARA_ANCHORS,
-                       "colors": {"web": {"bg": "#1EA1EB", "fg": "#ffffff"}, "api": {"bg": "#E0A526", "fg": "#000000"}, "tests": {"bg": "#7A5CFF", "fg": "#ffffff"}},
-                       "out": os.path.join(self.lab, "result.json"),
-                       "shots": os.environ.get("FEED_FOCUS_SCROLL_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -398,10 +402,7 @@ class ServedFocusedSectionJumpScroll(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        out_path = os.path.join(self.lab, "result.json")
-        self.assertTrue(os.path.exists(out_path), "driver wrote no result file:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        with open(out_path) as fh:
-            r = json.load(fh)
+        r = lab_result.read(p, tgt)
         # the roads' outcomes in one line each, for the record a base run leaves (pytest -s): a red assertion below stops
         # at the first road, the print shows every road's state
         summary = []

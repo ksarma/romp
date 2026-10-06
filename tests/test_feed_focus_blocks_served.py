@@ -71,6 +71,7 @@ import unittest
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -106,6 +107,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -614,7 +616,7 @@ await page.keyboard.press("Escape");   // any context menu
 await frame(); await park();
 out.rightPress = await survey();
 out.errors = errors;
-fs.writeFileSync(cfg.out, JSON.stringify(out));   // a file, not stdout: the survey record is past the size one pipe write carries whole
+lab.writeResult(cfg, out);   // a file, not stdout: the survey record is past the size one pipe write carries whole
 await browser.close();
 process.exit(0);
 """
@@ -661,12 +663,15 @@ class ServedFocusedSectionBlocks(unittest.TestCase):
 
     def test_the_sections_blocks_move_resize_and_fold_on_their_own_and_the_label_folds_the_section(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token),
+                "web": SID_WEB, "api": SID_API, "tests": SID_TESTS, "ids": IDS,
+                "long": SID_LONG, "longName": LONG_NAME,
+                "colors": {"web": {"bg": "#1EA1EB", "fg": "#ffffff"}, "api": {"bg": "#E0A526", "fg": "#000000"}},
+                "shots": os.environ.get("FEED_FOCUS_BLOCKS_SHOTS", "")}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token),
-                       "web": SID_WEB, "api": SID_API, "tests": SID_TESTS, "ids": IDS,
-                       "long": SID_LONG, "longName": LONG_NAME, "out": os.path.join(self.lab, "result.json"),
-                       "colors": {"web": {"bg": "#1EA1EB", "fg": "#ffffff"}, "api": {"bg": "#E0A526", "fg": "#000000"}},
-                       "shots": os.environ.get("FEED_FOCUS_BLOCKS_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -675,10 +680,7 @@ class ServedFocusedSectionBlocks(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        out_path = os.path.join(self.lab, "result.json")
-        self.assertTrue(os.path.exists(out_path), "driver wrote no result file:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        with open(out_path) as fh:
-            r = json.load(fh)
+        r = lab_result.read(p, tgt)
         self.assertEqual(r.get("errors"), [], "the page threw nothing (an exception mid-render would skip the view-state write): %r" % r.get("errors"))
         web_keys = {"f:a:" + IDS[k] for k in ("webWork1", "webWork2", "webBlocked", "webDone1", "webDone2")}
 

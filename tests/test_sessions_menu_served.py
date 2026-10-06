@@ -29,6 +29,7 @@ Red first per road at the merge base (no menu opens there). Skips loudly without
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -75,10 +76,14 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); } catch (e) { fs.writeSync(2, "no browser: " + e + "\n"); process.exit(3); }
 const out = { roads: {}, errors: [] };
-const finish = async () => { fs.writeFileSync(cfg.out, JSON.stringify(out)); await browser.close(); process.exit(0); };
+// die() reaches finish() from the unhandledRejection handler as well as from the drive, so finish() can run twice: the first
+// call alone writes the record (the reader refuses two RESULT: lines)
+let finished = false;
+const finish = async () => { if (finished) return; finished = true; lab.writeResult(cfg, out); await browser.close(); process.exit(0); };
 const die = async (why) => { out.died = why; await finish(); };
 process.on("unhandledRejection", async (e) => { await die("unhandled: " + String(e).split("\n")[0]); });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
@@ -370,10 +375,12 @@ class SessionsMenuServed(unittest.TestCase):
     @classmethod
     def _drive(cls):
         cfg = os.path.join(cls.lab, "cfg.json")
-        res = os.path.join(cls.lab, "result.json")
+        conf = {"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token),
+                "web": SID_WEB, "api": SID_API, "tests": SID_TESTS}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token), "out": res,
-                       "web": SID_WEB, "api": SID_API, "tests": SID_TESTS}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -386,14 +393,18 @@ class SessionsMenuServed(unittest.TestCase):
             return
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this machine: the served leg needs one (CI installs Chromium and treats this skip as a failure)")
-        if p.returncode != 0 or not os.path.exists(res):
+        if p.returncode != 0:
             cls.driver_error = "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
             return
-        with open(res) as f:
-            r = json.load(f)
+        try:
+            r = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            cls.driver_error = str(e)
+            return
         keep = os.environ.get("ROMP_SESSMENU_RESULT")
         if keep:
-            shutil.copy(res, keep)
+            with open(keep, "w") as f:
+                json.dump(r, f)
         if "died" in r:
             cls.driver_error = "driver aborted early: %s\n%s" % (r["died"], json.dumps(r, indent=1)[-3000:])
             return

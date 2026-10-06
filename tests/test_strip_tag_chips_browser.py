@@ -32,6 +32,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -58,6 +59,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -174,8 +176,7 @@ await openMenu(); await clickRow("Group tabs by tag"); await page.waitForTimeout
 out.groupedMany = await readStrip();
 await themed("grouped", null);
 out.errors = errors;
-fs.writeFileSync(cfg.out, JSON.stringify(out));
-console.log("RESULT: ok");
+lab.writeResult(cfg, out);
 await browser.close();
 """
 
@@ -287,10 +288,12 @@ class ServedStripTagChips(unittest.TestCase):
     @classmethod
     def _drive(cls):
         cfg = os.path.join(cls.lab, "cfg.json")
-        out = os.path.join(cls.lab, "result.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (cls.port, cls.token), "landing": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token),
+                "count": len(NAMES), "names": NAMES, "tags": TAGS, "shots": os.environ.get("STRIP_TAGS_SHOTS", "")}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (cls.port, cls.token), "landing": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token),
-                       "count": len(NAMES), "names": NAMES, "tags": TAGS, "out": out, "shots": os.environ.get("STRIP_TAGS_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -300,9 +303,7 @@ class ServedStripTagChips(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box: the served guard needs one (CI installs none)")
         if p.returncode != 0:
             raise AssertionError("driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(cls.klog).read()[-1500:])
-        if not os.path.exists(out):
-            raise AssertionError("driver printed no result:\n" + p.stdout[-3000:])
-        result = json.loads(Path(out).read_text())
+        result = lab_result.read(p, tgt)
         if os.environ.get("STRIP_TAGS_DUMP"):
             Path(os.environ["STRIP_TAGS_DUMP"]).write_text(json.dumps(result, indent=1) + "\n")
         return result
