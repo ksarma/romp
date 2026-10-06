@@ -80,7 +80,10 @@ Restart kernel closes the card and makes the shell's one POST /restart (the driv
 manager's shape, RESTART_REFUSAL, so the lab kernel stays up, and the shell's handler takes it: its splash down, the
 refusal's words on the rail's restart button); no click but that one makes a POST /restart. Then the drop cue (TUNNELS_DROP,
 a host that was up answering with no kernel): with the card closed the poll drops the host, and at the card's next opening
-its glyph carries no flash; then the host comes back and drops again with the card open, and the glyph's flash runs. Then
+its glyph carries no flash; then the host comes back and drops again with the card open, and the glyph's flash runs; then
+the host comes back again, the Token usage panel opens over the card (#ra-open, which hides the card with no message to the
+shell), the host drops while the panel is up, the panel closes (#ra-close), and two frames after the card shows again its
+glyph carries no flash. Then
 Usage with no reading, on a page whose shell's usage pull (its GET under /usage/) answers no rows (the rail's readout, which
 renders over the readings, read empty as the leg's premise): the card opened from the bar's Settings shows Usage disabled
 with the line USAGE_NONE; a click at its centre leaves the card open, opens no Usage modal and posts no phoneAct (read after
@@ -106,7 +109,8 @@ tap closing the card to open nothing) and under a mutant that reads the state on
 reading that arrived later never enables Usage. The fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
-closed flashed the glyph at the card's next opening. The contrast pin is red at the shell's literals in the light theme, in
+closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
+class (gear.js raHide), where the glyph flashed as the panel closed. The contrast pin is red at the shell's literals in the light theme, in
 all three engines: the dialing grey #8a8a8a reads 2.59:1 and the needs-you red #e5484d 2.94:1 on the button's fill. Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
@@ -377,6 +381,17 @@ def _acts_problems(engine, acts):
     live = drop.get("openDrop")
     if not live or "rs-pact-drop:running" not in (live["anims"] or []):
         out.append("%s: a host dropping while the card is open does not flash the card's glyph: %r" % (where, live))
+    # the Token usage panel over the card (PR 976's round 1, fresh-1): it hides the card with no settings message, so a drop
+    # while it is up must not flash the card's glyph when the panel closes and the card shows again
+    ra = drop.get("analytics") or {}
+    if not ra.get("backUp") or not ra.get("opened") or not ra.get("dropped") or not (ra.get("during") or {}).get("cardHidden"):
+        out.append("%s: the Token usage panel leg's premise (the host back up, the panel opened over the card and hiding it, "
+                   "the host dropping while it was up): %r" % (where, ra))
+    ra_after = ra.get("after")
+    if not ra.get("closed") or not ra_after or ra_after.get("cardHidden") or "rn-drop" in (ra_after["cls"] or "").split() \
+            or any(a.startswith("rs-pact-drop:") for a in (ra_after["anims"] or [])):
+        out.append("%s: a host dropped while the Token usage panel hid the card, and the card's glyph flashes when the panel "
+                   "closes: %r" % (where, ra))
     return out
 
 

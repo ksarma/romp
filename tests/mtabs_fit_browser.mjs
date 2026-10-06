@@ -21,7 +21,9 @@
 // kernel: it is answered here with a refusal (cfg.restartRefusal, the manager's 502 shape), which the shell's restart
 // handles by bringing its splash down and wearing the refusal's words on the rail's restart button, so the lab lives on.
 // Then the drop cue on the card's glyph (cfg.tunnelsDrop, a host that was up answering down): a drop with the card closed,
-// the glyph read at the card's next opening, and a drop with the card open, the glyph read while its flash runs.
+// the glyph read at the card's next opening, and a drop with the card open, the glyph read while its flash runs; then, the
+// host back up, the Token usage panel opened over the card (#ra-open), a drop while it is up, the panel closed (#ra-close),
+// and the glyph read two frames after the card shows again.
 // Then Usage with no reading, on a page of its own at cfg.actsViewport: the shell's usage pull (the main frame's GET under
 // /usage/) answers no rows, so the shell holds no reading (the rail's readout, which renders over the readings, read empty as
 // the premise); the card opened from the bar's Settings, its Usage button read (disabled, its sub-line), a click at its
@@ -319,6 +321,27 @@ try {
         if (!n || !n.classList.contains("rn-drop")) return false;
         return { cls: n.getAttribute("class"), anims: n.getAnimations ? n.getAnimations().map((a) => (a.animationName || "?") + ":" + a.playState) : null }; },
         null, { timeout: 15000, polling: "raf" }).then((h) => h.jsonValue(), () => null);
+      // then the Token usage panel over the open card (PR 976's round 1, fresh-1): the panel hides the card with no message to
+      // the shell, so a drop while it is up left the class on the hidden copy, and the panel's close showed the card again
+      // with the class on, where the flash played late. The host comes back, the panel opens (#ra-open's own click), the host
+      // drops while the panel is up, the panel closes (#ra-close's), and the copy is read two frames after the card shows
+      {
+        const ra = {};
+        answer = cfg.tunnels2;
+        ra.backUp = await railA("rn-a rn-ok");
+        ra.opened = await sf.evaluate(() => { const b = document.getElementById("ra-open"), back = document.getElementById("ranalytics-back");
+          if (!b) return false; b.click(); return !!back && !back.hidden && document.getElementById("rsettings").hidden; });
+        answer = cfg.tunnelsDrop;
+        ra.dropped = await railA("rn-a rn-warn");
+        await frames(page);
+        ra.during = await glyphNow();
+        ra.closed = await sf.evaluate(() => { const b = document.getElementById("ra-close"), back = document.getElementById("ranalytics-back");
+          if (!b) return false; b.click(); return !!back && back.hidden && !document.getElementById("rsettings").hidden; });
+        await frames(page);
+        await frames(page);
+        ra.after = await glyphNow();
+        drop.analytics = ra;
+      }
       await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
       await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
       acts.drop = drop;

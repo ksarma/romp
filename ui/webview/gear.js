@@ -2144,6 +2144,8 @@ function initGear(post, opts) {
   function closeSettings() { endDrags(); if (raBack && !raBack.hidden) raHide(); clearSectionScroll(); p.hidden = true; setModalCls(false); feedFull(false); }   // the reset FIRST, while the card still has a layout: a hidden card ignores a scroll write and keeps its old offset for the next open (measured); a pending section ask dies with the panel (round two, LOW 2 and 7)
   // the web shell's phone layout, read from the shell's own predicate (kernel _LANDING_MOBILE_JS __rompMobileOn, the media
   // query the shell lays its bottom bar out by); false in VS Code (a cross-origin parent) and on a page of its own
+  // the drop flash's class off the card's Remote kernels glyph (the kernel's flashDrop puts it there; gear.css #rs-pact-net.rn-drop)
+  function netDropClear() { var n = document.getElementById('rs-pact-net'); if (n) n.classList.remove('rn-drop'); }
   function phoneShell() { try { var w = window.parent; return w !== window && typeof w.__rompMobileOn === 'function' && !!w.__rompMobileOn(); } catch (e) { return false; } }
   // Usage with no reading (iOS item 4g; romp-manager's call, explain rather than hide). The shell's usage panel opens only over a
   // reading (kernel _LANDING_USAGE_JS: __rompUsagePanel's openIt returns on an empty tipHTML), so a tap on Usage before the
@@ -2305,7 +2307,11 @@ function initGear(post, opts) {
   // own click stops here: bubbling on to the document, it would meet the card's click-outside listener with the card just
   // shown and close the settings outright (the lab saw the card hidden again a moment after the close). The settings' own
   // close, open and Escape answer route through this too, so the layer never survives a close or sits over a fresh open.
-  function raHide(e) { if (e && e.stopPropagation) e.stopPropagation(); raBack.hidden = true; p.hidden = false; }
+  // The card shown again here clears the drop flash's class off its Remote kernels glyph first (PR 976's round 1, fresh-1). The
+  // panel hides the card with no message to the shell, so a host that dropped while the panel was up left rn-drop on the hidden
+  // button (kernel _LANDING_REMOTES_JS flashDrop) in a box that runs no animation, as did a drop whose flash the panel's opening
+  // cut short; this close would then play the flash, late. The cue shows at the drop or not at all, as at the card's opening.
+  function raHide(e) { if (e && e.stopPropagation) e.stopPropagation(); raBack.hidden = true; netDropClear(); p.hidden = false; }
   if (raClose) raClose.onclick = raHide;
   if (raBack) raBack.addEventListener('click', function (e) { if (e.target === raBack) raHide(e); });
   Array.prototype.forEach.call(document.querySelectorAll('.ra-periods button'), function (btn) { btn.onclick = function () { raState.window = +btn.getAttribute('data-w'); raState.periodLabel = btn.textContent;
