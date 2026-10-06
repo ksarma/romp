@@ -563,6 +563,84 @@ class HelperTimeoutEndsTheGroup(_Settings):
         self.assertTrue(st is not None and st[0] != "Z", "the process that left the group runs on: %r" % (st,))
         self.assertEqual((st[2], st[3]), (recs["escaped"], recs["escaped"]), "in a session and a group of its own")
 
+    def test_an_exception_that_cuts_the_wait_ends_the_group_too_and_goes_on_unchanged(self):
+        # KeyboardInterrupt, or any exception raised while communicate waits, takes the same road as the bound: the
+        # group is ended and the exception goes on as it was raised. A BaseException of the test's own stands in for
+        # it, raised once the tree is up; the drain's own communicate runs as written.
+        pids = self._pids()
+        cmd = self._tree_cmd(pids)
+
+        class Interrupted(BaseException):
+            pass
+
+        class InterruptedPopen(subprocess.Popen):
+            raised = False
+
+            def communicate(self, *a, **kw):
+                if InterruptedPopen.raised:
+                    return super().communicate(*a, **kw)
+                InterruptedPopen.raised = True
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    try:
+                        if len(Path(pids).read_text().splitlines()) >= 3:
+                            break
+                    except OSError:
+                        pass
+                    time.sleep(0.01)
+                raise Interrupted()
+        with patch.object(subprocess, "Popen", InterruptedPopen):
+            with self.assertRaises(Interrupted):
+                cred.run_helper(cmd, timeout_s=5)
+        recs = _recorded(self, pids)
+        self.assertEqual(sorted(role for role, _pid in recs), ["child", "grandchild", "shell"],
+                         "the tree was up before the exception")
+        self.assertEqual(_left(recs), [], "no process of the tree is left running")
+
+    def test_a_daemonizing_helper_is_not_reached_and_costs_nothing(self):
+        # The stated limit's other face, planted: a helper that daemonizes (forks twice, takes a session of its own and
+        # points its stdio at /dev/null) leaves the group and holds no stdout, so the kill does not reach it and the
+        # drain does not wait for it: the call raises at the bound and the daemon runs on. The sleep the shell forks
+        # after it stays in the group and is ended.
+        pids = self._pids()
+        code = ("import os, sys, time\nif os.fork(): os._exit(0)\nos.setsid()\nif os.fork(): os._exit(0)\n"
+                "n = os.open(os.devnull, os.O_RDWR)\nfor k in (0, 1, 2): os.dup2(n, k)\n"
+                "open(sys.argv[1], 'a').write('daemon %d\\n' % os.getpid())\ntime.sleep(30)\n")
+        q = shlex.quote(pids)
+        cmd = "%s; echo shell $$ >> %s; sleep 30 & echo sleep $! >> %s; wait" % (
+            " ".join(shlex.quote(a) for a in (sys.executable, "-c", code, pids)), q, q)
+        t0 = time.monotonic()
+        with self.assertRaises(cred.CredentialError) as cm:
+            cred.run_helper(cmd, timeout_s=2)
+        elapsed = time.monotonic() - t0
+        recs = dict((role, pid) for role, pid in _recorded(self, pids))
+        self.assertEqual(str(cm.exception), "apiKeyHelper timed out after 2 s")
+        self.assertEqual(sorted(recs), ["daemon", "shell", "sleep"], "all three were up before the bound")
+        self.assertLess(elapsed, 2 + 1.0, "the drain had nothing to wait for")
+        self.assertFalse(_still_running(recs["shell"], 0), "the shell was in the group")
+        self.assertFalse(_still_running(recs["sleep"]), "and so was its sleep")
+        st = _proc(recs["daemon"])
+        self.assertTrue(st is not None and st[0] != "Z", "the daemon runs on: %r" % (st,))
+        self.assertEqual(st[3], st[2], "in a session of its own")
+        self.assertNotEqual(st[3], recs["shell"], "not the helper's")
+
+    def test_a_finished_run_kills_nothing(self):
+        # The finished roads, planted: a helper that exits, with a key or without one, while a process it started runs
+        # on without stdout, leaves that process running, as run_helper always has; only a run that does not finish is
+        # killed.
+        for tail, outcome in (("echo synthetic-helper-output-2", "synthetic-helper-output-2"),
+                              ("exit 1", "apiKeyHelper failed (non-zero exit)")):
+            with self.subTest(tail=tail):
+                pids = self._pids()
+                cmd = "sleep 30 >/dev/null 2>&1 & echo background $! >> %s; %s" % (shlex.quote(pids), tail)
+                try:
+                    got = cred.run_helper(cmd, timeout_s=5)
+                except cred.CredentialError as e:
+                    got = str(e)
+                recs = _recorded(self, pids)
+                self.assertEqual(got, outcome)
+                self.assertEqual([role for role, pid in recs if _still_running(pid, 0)], ["background"], "it runs on")
+
 
 class BootCheck(unittest.TestCase):
     """A retired provider line, the marker, or a key in the kernel's environment stops the kernel; the message
