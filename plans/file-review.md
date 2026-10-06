@@ -5381,7 +5381,11 @@ document stands on its own, each with the reasoning it was given.
     introduced, fixed here: bindWrite resolves a preserving op's link text against the destination's directory
     (linkTexts holds each command-made link's raw text), so the made copy there refuses by name. Rows
     AS8-ruleB-relsym-mv, -hardln, -cpa, -cpP, -cpr and the two out twins, red at the pre-round-2 head, with real writes
-    in all three shells.
+    in all three shells. The same moved link RUN BY ITS FULL PATH (no PATH search) base and the pre-round-2 head both
+    allowed (a full-path invocation is no bare-name lookup for them); the destination's absolute path is bound too, so it
+    refuses, a fork-main allow the by-name rows do not reach (AS8-ruleB-relsym-mv-fullpath, -cpa-fullpath). An
+    absolute-source move into a directory on a readable PATH (`mv <abs> <dir>`), which fork main allows and ruling C and
+    rule B refuse, is witnessed as the closure it is (AS8-ruleB-intodir-mv-abs).
     THE BUILTIN EXEMPTION TAKEN OUT (fork PR 975's round 2, R2): the sixth verify round's tg-t6-3 had exempted a bare
     name that is a builtin or a keyword in bash, zsh and dash alike (ALL_SHELL_BUILTINS, checked against the shells and
     against per-shell lists committed beside the rows test, SHELL_OWN_DERIVED) from the bound-name refusal, as the name
