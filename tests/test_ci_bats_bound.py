@@ -94,6 +94,7 @@ class BatsStepBound(unittest.TestCase):
 # that measurement.
 HASH_ALONE = "hash-alone"
 WEIGHTED = "weighted"
+MERGED_MAIN = "merged-main"
 # the run of four shards by the hash alone (2026-10-05; logs measure4-shard<k>-312-c.log and measure4-shard<k>-314t-c.log)
 SHARD_PHASE_312_HASH_ALONE_S = {1: 553, 2: 1482, 3: 661, 4: 1145}
 SHARD_PHASE_314T_HASH_ALONE_S = {1: 559, 2: 1438, 3: 466, 4: 1222}
@@ -101,22 +102,34 @@ SHARD_PHASE_314T_HASH_ALONE_S = {1: 559, 2: 1438, 3: 466, 4: 1222}
 # measure4-shard<k>-314t-w.log); tests/test_ci_cost_estimate.py bills these phases
 SHARD_PHASE_312_WEIGHTED_S = {1: 529, 2: 1220, 3: 614, 4: 1237}
 SHARD_PHASE_314T_WEIGHTED_S = {1: 679, 2: 1451, 3: 409, 4: 1204}
+# the run of four shards at the weighted rule after main was merged into this branch, over the files CI runs (shard 2 on
+# 2026-10-05, shards 1, 3 and 4 on 2026-10-06; logs measure5-shard<k>-312-m.log and measure5-shard<k>-314t-m.log)
+SHARD_PHASE_312_MERGED_MAIN_S = {1: 519, 2: 1293, 3: 554, 4: 1066}
+SHARD_PHASE_314T_MERGED_MAIN_S = {1: 543, 2: 1361, 3: 466, 4: 1143}
 # {round: {interpreter: {shard: seconds}}}, the rounds in the order they ran
 MEASURED_RUNS = {
     HASH_ALONE: {"3.12": SHARD_PHASE_312_HASH_ALONE_S, "3.14t": SHARD_PHASE_314T_HASH_ALONE_S},
     WEIGHTED: {"3.12": SHARD_PHASE_312_WEIGHTED_S, "3.14t": SHARD_PHASE_314T_WEIGHTED_S},
+    MERGED_MAIN: {"3.12": SHARD_PHASE_312_MERGED_MAIN_S, "3.14t": SHARD_PHASE_314T_MERGED_MAIN_S},
 }
 # each round's logs (<k> the shard, <py> 312 or 314t), and its name in ci.yml's cap comment
-ROUND_LOG = {HASH_ALONE: "measure4-shard<k>-<py>-c.log", WEIGHTED: "measure4-shard<k>-<py>-w.log"}
-ROUND_NAME = {HASH_ALONE: "the hash-alone run", WEIGHTED: "the weighted run"}
-# the shards whose files differ between the rounds, each with the round whose files are not the ones CI runs:
+ROUND_LOG = {HASH_ALONE: "measure4-shard<k>-<py>-c.log", WEIGHTED: "measure4-shard<k>-<py>-w.log",
+             MERGED_MAIN: "measure5-shard<k>-<py>-m.log"}
+ROUND_NAME = {HASH_ALONE: "the hash-alone run", WEIGHTED: "the weighted run", MERGED_MAIN: "the merged-main run"}
+# the round whose files are the ones CI runs, the last: ci.yml's comment says what that round alone would give the caps
+CURRENT_ROUND = MERGED_MAIN
+# the shards whose files the hash-alone round assigned by another rule than CI's, each with that round:
 # tests/test_thread_stop_census.py ran in shard 4 by the hash alone and runs in shard 1 at the weighted rule (on 3.12, shard
-# 1 ran 4761 tests and then 4837, and shard 4 ran 5189 and then 5113). Shard 2 ran the same 5318 tests in both rounds;
+# 1 ran 4761 tests and then 4837, and shard 4 ran 5189 and then 5113). Shard 2 ran the same 5318 tests in those two rounds;
 # shard 3 ran the same files, and 3 more tests in the weighted round, which tests/test_ci_shards.py, a shard 3 file, added
-# between the two.
+# between the two. The merged-main round shards the files by the weighted round's rule, and every shard of it also ran the
+# test files main's merge added and changed (ci.yml's comment gives the counts).
 OTHER_COMPOSITION = {1: HASH_ALONE, 4: HASH_ALONE}
 # the module whose move made that difference, and its shard in each round
-MOVED_MODULE = ("tests/test_thread_stop_census.py", {HASH_ALONE: 4, WEIGHTED: 1})
+MOVED_MODULE = ("tests/test_thread_stop_census.py", {HASH_ALONE: 4, WEIGHTED: 1, MERGED_MAIN: 1})
+# the cap comment's word for how many rounds there are, by their count
+ROUND_COUNT_WORD = {2: "both", 3: "the three"}
+ALL_ROUNDS_WORD = {2: "both", 3: "all three"}
 MEASURED = ("3.12", "3.14t")
 # the Run pytest step's seconds in each Linux cell of run 37212676524 (batch/2026-10-04b, two workers on the public runner),
 # the jobs API's figures: each unmeasured interpreter's ratio to 3.12
@@ -409,9 +422,10 @@ class PythonJobCeiling(unittest.TestCase):
                       "a timeout shows as a cancelled, red job"):
             with self.subTest(piece=piece):
                 self.assertTrue(piece in self.joined, "the cap's comment gives the rule's reason (%r)" % piece)
+        count = ROUND_COUNT_WORD.get(len(MEASURED_RUNS))
+        self.assertIsNotNone(count, "re-anchor: no word for %d rounds in ROUND_COUNT_WORD" % len(MEASURED_RUNS))
         slowest = "the largest of every measured run of the shard above, in %s runs of four shards, %s, on %s" % (
-            {2: "both"}.get(len(MEASURED_RUNS), "the %d" % len(MEASURED_RUNS)),
-            english([ROUND_NAME[r] for r in MEASURED_RUNS]), english(MEASURED))
+            count, english([ROUND_NAME[r] for r in MEASURED_RUNS]), english(MEASURED))
         self.assertTrue(slowest in self.joined, "the cap's comment says the governing phase takes every measured run "
                         "(%r)" % slowest)
         self.assertTrue("each interpreter not measured locally, %s" % english(UNMEASURED) in self.joined, "the cap's "
@@ -499,9 +513,9 @@ class PythonJobCeiling(unittest.TestCase):
                         "measurement")
 
     def test_the_cap_comment_says_whether_the_other_composition_changes_a_cap(self):
-        # Shards 1 and 4 ran other files in the hash-alone round than CI runs (OTHER_COMPOSITION). The caps count every
-        # round, as ruled; the comment says whether counting only the rounds with CI's files would change either cap, and
-        # each such shard's figures that way. Red, to be reworded, if it would change one.
+        # Shards 1 and 4 ran other files in the hash-alone round than CI's rule gives them (OTHER_COMPOSITION). The caps
+        # count every round, as ruled; the comment says whether counting only the rounds that follow CI's rule would
+        # change either cap, and each such shard's figures that way. Red, to be reworded, if it would change one.
         P, S = PER_TEST_TIMEOUT_S, SETUP_S
         self.assertTrue(OTHER_COMPOSITION, "re-anchor: no shard ran other files in any round, so the composition "
                         "sentence goes")
@@ -513,16 +527,20 @@ class PythonJobCeiling(unittest.TestCase):
         self.assertEqual(len(others), 1, "re-anchor: the shards ran other files in different rounds")
         other = next(iter(others))
         kept = {r: v for r, v in MEASURED_RUNS.items() if r != other}
-        self.assertTrue(kept, "re-anchor: no round runs CI's files")
+        self.assertTrue(kept, "re-anchor: no round follows CI's rule")
+        kept_shards = {where[r] for r in kept}
+        self.assertEqual(len(kept_shards), 1, "re-anchor: the moved module's shard differs between the rounds that follow "
+                         "CI's rule")
         shards = sorted(OTHER_COMPOSITION)
         self.assertEqual(len(shards), 2, "re-anchor: the sentence speaks of two shards ('neither cap')")
-        moved = ("Shards %s ran different files in the two runs: %s ran in shard %d in %s and in shard %d in %s, whose "
-                 "files are the ones CI runs" % (english(shards), module, where[other], ROUND_NAME[other],
-                                                 where[next(iter(kept))], english([ROUND_NAME[r] for r in kept])))
-        self.assertTrue(moved in self.joined, "the cap's comment says which shards ran other files, and why (%r)" % moved)
         kept_name = english([ROUND_NAME[r] for r in kept])
-        counted = "The caps count both runs; counting %s alone would change neither cap" % kept_name
-        self.assertEqual(len(MEASURED_RUNS), 2, "re-anchor: 'both runs'")
+        moved = ("Shards %s ran other files in %s than the rule CI runs gives them: %s ran in shard %d there and in shard "
+                 "%d in %s, which follow that rule" % (english(shards), ROUND_NAME[other], module, where[other],
+                                                        next(iter(kept_shards)), kept_name))
+        self.assertTrue(moved in self.joined, "the cap's comment says which shards ran other files, and why (%r)" % moved)
+        every = ALL_ROUNDS_WORD.get(len(MEASURED_RUNS))
+        self.assertIsNotNone(every, "re-anchor: no word for %d rounds in ALL_ROUNDS_WORD" % len(MEASURED_RUNS))
+        counted = "The caps count %s runs; counting %s alone would change neither cap" % (every, kept_name)
         for k in shards:
             with self.subTest(shard=k):
                 gx, rx, px = governing_phase(k, kept)
@@ -542,8 +560,23 @@ class PythonJobCeiling(unittest.TestCase):
                     phrase = "shard %d's cap already comes from %s" % (k, ROUND_NAME[rnd])
                 self.assertTrue(phrase in self.joined, "the cap's comment states shard %d's figures counting %s alone "
                                 "(%r)" % (k, kept_name, phrase))
-        self.assertTrue(counted in self.joined, "the cap's comment says the caps count both runs and that counting the "
-                        "runs with CI's files alone changes neither cap (%r)" % counted)
+        self.assertTrue(counted in self.joined, "the cap's comment says the caps count every run and that counting the "
+                        "runs that follow CI's rule alone changes neither cap (%r)" % counted)
+
+    def test_the_cap_comment_says_what_the_current_round_alone_would_give(self):
+        # The round over the files CI runs (CURRENT_ROUND, the last to run) governs no cap while an older round's run or
+        # projection is slower, and the comment says so with the caps that round alone would give, so a reader sees how
+        # much of each cap the older rounds hold. Red, to be reworded, once that round governs a cap.
+        self.assertEqual(CURRENT_ROUND, list(MEASURED_RUNS)[-1], "the round over the files CI runs is the last to run")
+        governs = [k for k in range(1, self.count + 1) if governing_phase(k)[1] == CURRENT_ROUND]
+        self.assertEqual(governs, [], "re-anchor: %s governs shard(s) %r, so the comment's sentence that it governs no "
+                         "cap is false" % (ROUND_NAME[CURRENT_ROUND], governs))
+        alone = {CURRENT_ROUND: MEASURED_RUNS[CURRENT_ROUND]}
+        caps = [ruled_cap(governing_phase(k, alone)[0], PER_TEST_TIMEOUT_S, SETUP_S)[0] for k in range(1, self.count + 1)]
+        name = ROUND_NAME[CURRENT_ROUND]
+        phrase = "%s%s governs no cap: counted alone it would give %s" % (name[0].upper(), name[1:], english(caps))
+        self.assertTrue(phrase in self.joined, "the cap's comment says what the round over the files CI runs would give "
+                        "alone (%r)" % phrase)
 
     def test_the_time_before_the_step_is_the_longest_cells_and_the_comment_names_it(self):
         self.assertEqual(sorted(CELL_EDGE_S), sorted(MEASURED + UNMEASURED), "the times before and after the Run pytest "
@@ -594,6 +627,13 @@ class PythonJobCeiling(unittest.TestCase):
                          [(25, 25, 146), (45, 45, 126), (30, 25, 4), (40, 40, 148)], "3.10's projected phases of each "
                          "shard's slowest run: 1354 s, 2574 s, 1496 s and 2252 s, so 25, 45, 25 and 40 by the rule, with "
                          "margins of 146, 126, 4 and 148 s, and shard 3's under 60 s, so 25, 45, 30 and 40")
+        self.assertEqual([ruled_cap(p, 600, 27) for p in (682, 1699, 728, 1400)],
+                         [(25, 25, 191), (40, 40, 74), (25, 25, 145), (35, 35, 73)], "3.10's projected phases of the "
+                         "merged-main run alone: 1309 s, 2326 s, 1355 s and 2027 s, so 25, 40, 25 and 35, each margin at "
+                         "least 60 s, what that run alone would give while the older runs govern")
+        self.assertEqual([projected_phase(k, "3.10", SHARD_PHASE_312_MERGED_MAIN_S) for k in (1, 2, 3, 4)],
+                         [682, 1699, 728, 1400], "the merged-main run's 3.12 phases, 519, 1293, 554 and 1066 s, times "
+                         "1639/1248, rounded up")
         self.assertEqual(rule_minutes(3000 - 632, 600, 32), 50, "exactly 50 minutes stays 50")
         self.assertEqual(rule_minutes(3001 - 632, 600, 32), 55, "a second past 50 minutes is 55")
 

@@ -30,18 +30,20 @@ Pins over ci.yml's header comment (its comment lines before `on:`, joined into o
    half its cap does not reach it by the CPU count alone, and one over half can.
 At the commit before these pins, all four are red: the header named secret-scan.yml alone of the other workflows, stated
 161 and 238 dollars as the total in all, said nothing of an allowance, and had no sentence on the first private batch run.
-5. THE TWO PREMISES (TheTwoPremises, 2026-10-05): the python job's shard caps take each unmeasured interpreter's projected
-   phase where it is the largest (tests/test_ci_bats_bound.py, governing_phase), and since the slowest-run rule of the
-   same day those are the projections of each shard's slower 3.12 run of the two runs of four shards (the hash-alone run
-   and the weighted run), where this estimate bills those interpreters' shard jobs at the weighted run's slower measured
-   phase. The caps also read both runs' measured phases on 3.12 and 3.14t, where the estimate bills the weighted run's
-   alone. Caps do not bill, so the estimate's figures stand, but the header says in one sentence what each of the two
-   takes, and what a batch run would bill at the caps' projected ones, by the estimate's own method, with 3.12 and 3.14t
-   held at the weighted run's phases, as the estimate bills them. The shard jobs' 337 is derived here too, from the same
-   phases and the cells' times. Red at the commit before it: the header had no such sentence. The figures moved with the
-   caps' basis: 482 minutes, 26 more than the estimate, at the weighted run's projections, the caps' basis until the
-   slowest-run rule. Red at the commit before the sentence named 3.12 and 3.14t: it said the two take different phases
-   for 3.10, 3.11 and 3.13 alone, and did not say where the figure holds 3.12 and 3.14t.
+5. THE TWO PREMISES (TheTwoPremises, 2026-10-05): the python job's shard caps take each unmeasured interpreter's
+   projected phase where it is the largest (tests/test_ci_bats_bound.py, governing_phase), and since the slowest-run
+   rule of the same day those are the projections of each shard's slowest 3.12 run of the runs of four shards (the
+   hash-alone run and the weighted run, and since 2026-10-06 the merged-main run), where this estimate bills those
+   interpreters' shard jobs at the weighted run's slower measured phase. The caps also read every run's measured phases
+   on 3.12 and 3.14t, where the estimate bills the weighted run's alone. Caps do not bill, so the estimate's figures
+   stand, but the header says in one sentence what each of the two takes, and what a batch run would bill at the caps'
+   projected ones, by the estimate's own method, with 3.12 and 3.14t held at the weighted run's phases, as the estimate
+   bills them. The shard jobs' 337 is derived here too, from the same phases and the cells' times. Red at the commit
+   before it: the header had no such sentence. The figures moved with the caps' basis: 482 minutes, 26 more than the
+   estimate, at the weighted run's projections, the caps' basis until the slowest-run rule. Red at the commit before the
+   sentence named 3.12 and 3.14t: it said the two take different phases for 3.10, 3.11 and 3.13 alone, and did not say
+   where the figure holds 3.12 and 3.14t. The sentence counts the runs of four shards in words, three since the
+   merged-main run joined them (2026-10-06); red at the commit before it, whose header said the two runs.
 6. THE MEASURED RATES (2026-10-05, within TheSums and TheAllowance): a measurement of the fork's activity on 2026-10-05,
    re-derived from the APIs on 2026-10-06, replaced three inputs, and the header states each rate with its week and what
    was counted. pr-tier.yml is priced at its four trigger events, 152 in the week to 2026-10-04, where the earlier 534
@@ -154,9 +156,11 @@ def derived():
 # step is derived from the same figures
 CELL_EDGE_S = bound.CELL_EDGE_S
 # the stated figures: a batch run's minutes with each unmeasured interpreter's shard jobs at its own projected phases, the
-# ones the caps take (the projections of each shard's slower 3.12 run of the two rounds), and that figure less the
+# ones the caps take (the projections of each shard's slowest 3.12 run of the rounds), and that figure less the
 # estimate's batch run; exact, since each job is rounded up to a whole minute before the sum
 PROJECTED_STATED = {"projected batch run minutes": 500, "projected difference": 44}
+# the header's word for the count of measured runs of four shards (tests/test_ci_bats_bound.py's MEASURED_RUNS)
+RUN_COUNT_WORDS = {2: "two", 3: "three"}
 
 
 def shard_job_minutes(phases, py):
@@ -167,7 +171,7 @@ def shard_job_minutes(phases, py):
 
 
 def caps_projection_base():
-    """{shard: seconds}: each shard's slower 3.12 phase of the measured rounds (tests/test_ci_bats_bound.py's
+    """{shard: seconds}: each shard's slowest 3.12 phase of the measured rounds (tests/test_ci_bats_bound.py's
     MEASURED_RUNS), the 3.12 phase whose projection is the largest of the shard's projections the caps take."""
     rounds = list(bound.MEASURED_RUNS.values())
     return {k: max(r["3.12"][k] for r in rounds) for k in rounds[0]["3.12"]}
@@ -176,7 +180,7 @@ def caps_projection_base():
 def shard_jobs_total(projected):
     """The shard jobs' minutes for one batch run: 3.12 and 3.14t at their own phases in the weighted run, and each
     unmeasured interpreter at the weighted run's slower phase of the two (the estimate; projected False) or at its own
-    projected phase as the caps take it, the projection of each shard's slower 3.12 run (projected True), the phases
+    projected phase as the caps take it, the projection of each shard's slowest 3.12 run (projected True), the phases
     tests/test_ci_bats_bound.py holds."""
     w312, w314t = bound.SHARD_PHASE_312_WEIGHTED_S, bound.SHARD_PHASE_314T_WEIGHTED_S
     total = sum(shard_job_minutes(w312, "3.12")) + sum(shard_job_minutes(w314t, "3.14t"))
@@ -344,15 +348,19 @@ class TheTwoPremises(unittest.TestCase):
         self.assertTrue(span in text, "the header states the range of the cells' times before and after the Run pytest "
                         "step (%r)" % span)
 
-    def test_the_caps_projection_base_is_each_shards_slower_312_run(self):
+    def test_the_caps_projection_base_is_each_shards_slowest_312_run(self):
         # the base the projected figure scales: the slowest 3.12 run of each shard over every round, which is what the
         # caps' governing phase projects (the largest projection of a shard is that of its largest 3.12 phase)
         base = caps_projection_base()
         self.assertEqual(sorted(base), sorted(bound.SHARD_PHASE_312_WEIGHTED_S), "a base for each shard")
-        self.assertEqual(len(bound.MEASURED_RUNS), 2, "re-anchor: the header's sentence speaks of two runs")
+        self.assertIn(len(bound.MEASURED_RUNS), RUN_COUNT_WORDS, "re-anchor: the header's sentence names the count of "
+                      "runs in words, and RUN_COUNT_WORDS has none for %d" % len(bound.MEASURED_RUNS))
+        self.assertEqual(sorted(bound.MEASURED_RUNS), sorted([bound.HASH_ALONE, bound.WEIGHTED, bound.MERGED_MAIN]),
+                         "re-anchor: the base below names each round's 3.12 phases")
         for k, s in sorted(base.items()):
             with self.subTest(shard=k):
-                self.assertEqual(s, max(bound.SHARD_PHASE_312_HASH_ALONE_S[k], bound.SHARD_PHASE_312_WEIGHTED_S[k]))
+                self.assertEqual(s, max(bound.SHARD_PHASE_312_HASH_ALONE_S[k], bound.SHARD_PHASE_312_WEIGHTED_S[k],
+                                        bound.SHARD_PHASE_312_MERGED_MAIN_S[k]))
                 for py in bound.UNMEASURED:
                     self.assertEqual(bound.projected_phase(k, py, base),
                                      max(bound.projected_phase(k, py, r["3.12"]) for r in bound.MEASURED_RUNS.values()),
@@ -371,8 +379,8 @@ class TheTwoPremises(unittest.TestCase):
                 self.assertEqual(figure, d[name], "%s: stated %d, derived %d" % (name, figure, d[name]))
 
     def test_the_header_says_so_in_one_sentence(self):
-        # the sentence that names the projected phases states that the caps take each shard's slower measured run of
-        # the two runs on 3.12 and 3.14t and, for the unmeasured interpreters, the projections of each shard's slower
+        # the sentence that names the projected phases states that the caps take each shard's slowest measured run of
+        # the runs on 3.12 and 3.14t and, for the unmeasured interpreters, the projections of each shard's slowest
         # 3.12 run, and the estimate the weighted run's measured phases; the minutes a batch run would bill with the
         # unmeasured interpreters at the caps' projected phases and 3.12 and 3.14t at the weighted run's, the basis the
         # figure holds; and the difference from the estimate's batch run
@@ -383,10 +391,13 @@ class TheTwoPremises(unittest.TestCase):
         n = PROJECTED_STATED["projected batch run minutes"]
         diff = PROJECTED_STATED["projected difference"]
         batch = STATED["batch run minutes"][0]
+        runs = len(bound.MEASURED_RUNS)
+        self.assertIn(runs, RUN_COUNT_WORDS, "re-anchor: RUN_COUNT_WORDS has no word for %d runs" % runs)
+        most = "slower" if runs == 2 else "slowest"
         want = (
-            "take different phases: the caps take each shard's slower measured run of the two runs of four shards "
-            "on %s," % bound.english(bound.MEASURED),
-            "and for %s their projected phases of each shard's slower 3.12 run" % bound.english(bound.UNMEASURED),
+            "take different phases: the caps take each shard's %s measured run of the %s runs of four shards "
+            "on %s," % (most, RUN_COUNT_WORDS[runs], bound.english(bound.MEASURED)),
+            "and for %s their projected phases of each shard's %s 3.12 run" % (bound.english(bound.UNMEASURED), most),
             "the estimate the weighted run's measured ones",
             "with %s at those projected phases and %s at the weighted run's, a batch run would bill about %d minutes, "
             "%d %s than the estimate's %d" % (bound.english(bound.UNMEASURED), bound.english(bound.MEASURED), n,
