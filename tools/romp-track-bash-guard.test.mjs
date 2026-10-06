@@ -12505,6 +12505,9 @@ const recordReading = (text, cwd, run, { PATH = process.env.PATH, searchDirs = n
   return { faults: [...new Set(faults)], legitimate, unjudged: [...new Set(invs.filter((inv) => !inv.ok && !judged(inv)).map(absentLine).filter((l) => !faults.includes(l)))], searchers: look.searchers, roads: look.roads };
 };
 const recordFaults = (text, cwd, run, opts) => recordReading(text, cwd, run, opts).faults;
+// strace under -f -o starts each line with the pid as "%-5u ", so a pid under 10000 is followed by more than one space (on this box
+// for a few seconds after the pid counter wraps); the strip takes every space after the pid, as straceLeg and traceCalls read it
+const stripStracePid = (l) => l.replace(/^\d+ +/, '');
 // one leg under strace, every process of it traced: the lines that open a file of `watched` (each as named, and the file a symlink among
 // them resolves to, as strace's -P reads them) and the whole trace, for THE LOOKUP RECORD. strace's -P, which the thirty-third commit used,
 // passes only the calls that name a watched path, so no execve reached the trace; the opens are picked here instead, by the same reading.
@@ -12685,6 +12688,13 @@ const clearedLegs = (shells, cwds, build, measure, gate = {}, legs = CLEARED_LEG
   }
   return { got, lacking, faults, legitimate, searchers, roads };
 };
+test("strace's pid column is stripped however it is padded: a pid under 10000 is followed by more than one space under -f -o, and the head self-check's open reading still sees the call", () => {
+  const padded = '579   openat(AT_FDCWD, "/x", O_RDONLY) = 3';
+  assert.equal(stripStracePid(padded), 'openat(AT_FDCWD, "/x", O_RDONLY) = 3', "every space after the pid goes");
+  assert.equal(stripStracePid('12345 openat(AT_FDCWD, "/x", O_RDONLY) = 3'), 'openat(AT_FDCWD, "/x", O_RDONLY) = 3', "a five-digit pid keeps its one space");
+  assert.equal((stripStracePid(padded).match(/^open(?:at2?)?\((?:AT_FDCWD, )?"([^"]+)"/) || [])[1], '/x', "the head self-check reads the opened path");
+});
+
 test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONMENT by execution: every command CLEARED_LEGS lists, run in every present shell over a fresh world from its row's cwd under strace (every process traced, the startup files under the account's home watched), opens none of them, while the instrument sees the roads it watches in a world's home: a bash leg with no SHLVL whose standard input is a socket opens the world's ~/.bashrc, and so does a bash a dash leg starts, a zsh leg opens the world's .zshenv, and SHLVL 1 or zsh's -f shuts each; where strace is absent, or refuses to run in its recorded shape, a NOT RUN line, and any other failure of it reds; since the fifty-first commit a command that runs a program this box lacks, the row's own or one THE INVOKED PROGRAM derives from its text, is NOT RUN with the reason and counted as lacking; since the fifty-second (THE EXECVE RECORD) a leg reds where its execve record shows a program absent or holds no invocation of a program word the walk reads; since the fifty-third (THE LOOKUP RECORD) a leg reds where a name its processes looked up, or a path one ran, was found nowhere in the leg; since the fifty-fourth (the reviewer's ruling at 17:18Z) a leg reds where a program word the walk cannot resolve has no execve its literal operands attribute to it, where a name was found only outside the directories the record shows or at least one execve of it there failed and none succeeded (M2 reads the execve road only), and where a probe failed in a directory the record does not show, unless a LEGITIMATE LOOKUPS entry excuses it, and the road of every lookup a leg made is the road of a plant's lookup", () => {
   const WHAT = CLEARED_WHAT;
   if (!straceUsable(WHAT)) return;
@@ -12717,7 +12727,7 @@ test("round 7 of fork PR #780 review, thirty-third commit, THE CLEARED ENVIRONME
     // every listed command, in every present shell, the account's startup files watched; the watch sees an open of each of them (head
     // opens each file and reads none of it), so a zero below is a measurement of these files
     const accountFiles = [...ACCOUNT_HOMES].flatMap((h) => ACCOUNT_STARTUP_NAMES.map((n) => path.join(h, n)));
-    const measure = (argv, cwd, env) => opened(accountFiles, argv, cwd, env).map((l) => l.replace(/^\d+ /, ''));
+    const measure = (argv, cwd, env) => opened(accountFiles, argv, cwd, env).map(stripStracePid);
     const headOpened = new Set(measure(['head', '-c', '0', '--', ...accountFiles], w.W, { PATH: process.env.PATH }).map((l) => (l.match(/^open(?:at2?)?\((?:AT_FDCWD, )?"([^"]+)"/) || [])[1]));
     assert.deepEqual(accountFiles.filter((f) => !headOpened.has(f)), [], "the watch sees an open of every startup file under the account's home");
     // the legs, through the gate; each returns what it opened and its trace, for THE LOOKUP RECORD (the fifty-second and fifty-third commits)
