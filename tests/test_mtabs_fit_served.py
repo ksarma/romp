@@ -161,8 +161,9 @@ the two end in, and RACE_MS set on the shell keeps the held pull from ending on 
 Usage disabled beside USAGE_ERR), the card left open, and the lab's own GET /usage payload posted to the shell as the
 timeline posts it: once the readout fills, Usage is enabled with neither line, the forward being a read too. And an
 opening whose pull reaches the lab then shows Usage enabled with neither line; then, the shell holding that reading, an opening whose
-pull fails in transit shows Usage enabled with the line USAGE_ERR beside its name, seen, and not USAGE_NONE, the card open
-and nothing posted,
+pull fails in transit shows Usage enabled with the line USAGE_ERR beside its name, seen, its left edge at or past the
+name's right edge and the loader out of the layout (its computed display none), and not USAGE_NONE, the card open and
+nothing posted,
 and one click on Usage closes the card, posts phoneAct usage and opens the Usage modal over that reading. Then the tap
 opening the panel at once: the modal closed, the shell given a window reading of its own (a pull the driver answers with a
 synthetic five-hour window reported ten minutes before, read at an opening), the card opened over a pull held past HANG_MS,
@@ -202,7 +203,8 @@ and with the reading, to SAME px, and Usage is as tall as Restart kernel (on ano
 both, too, Usage holds the loader's width: its words are as wide as the loader's laid-out box, and Usage as wide as its
 glyph and those words with the gap between them, its side padding and its borders, both to SAME px, and it is narrower
 than it is over no rows and over ERROR_STATUS (those two states read at the same widths, and compared only for that); and
-Usage's name is unseen while loading and seen with the reading and beside either line. Then the card opened over the lab's
+Usage's name is unseen while loading and seen with the reading and beside either line, each line's left edge at or past the name's right edge and the loader
+out of the layout (its computed display none) while a line shows. Then the card opened over the lab's
 reading and again over a pull the driver aborts in transit (Usage enabled beside USAGE_ERR), and the pointer moved onto
 Usage with its transitions off: the line reads TEXT_FLOOR or more on the fill Usage wears hovered, :hover read as the
 premise. Then a desktop
@@ -257,7 +259,10 @@ width of 80px (the words' check alone), and the loader one of 126px (Usage 168px
 No reading yet: the check that it is narrower, alone). The name is red where it stays seen while the loader shows (in all
 three engines, at every width in both themes and over the unpulled reading), and in Chromium under a mutant that drops the
 rule hiding it while Usage is busy (the same lines) and one that hides it in every state (unseen with a reading, beside
-either line, after the unpulled reading's pull and over the cached reading). The layout word's source is red under a mutant of the card's link listener
+either line, after the unpulled reading's pull and over the cached reading). The line's place is red in Chromium under a
+mutant of gear.css that drops the line's own grid cell (the line over the name, its left edge 34 px inside the name's right
+edge, at every width in both themes and over the cached reading), and the loader's display under one that drops the rule
+taking the loader out of the layout while a line shows (display flex, in the same reads). The layout word's source is red under a mutant of the card's link listener
 that does not check the word's source (the row hidden by the settings frame's own word and by the chat pane's). The
 fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
@@ -390,6 +395,11 @@ RAIL_AF7 = (
 )
 DUMP = os.environ.get("MTABS_FIT_DUMP", "")   # a directory: each engine's raw readings are copied there (evidence for a run)
 EPS = 0.5
+
+
+def _num(v):
+    """A measured number: an int or a float, never a bool (JSON's true is not a width)."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
 def _px(v):
@@ -781,9 +791,10 @@ def _failed_problems(engine, fr):
     through its surface (PR 976's round 2); after an opening over ERROR_STATUS, a reading the timeline forwards to the shell
     shows Usage enabled with neither line (PR 976's round 2); a later opening whose pull reads the lab's reading shows Usage
     enabled with neither line; and then, with that reading cached, an opening whose pull fails in transit shows Usage enabled
-    with USAGE_ERR, one click opening the Usage modal; and, the shell holding a window reading of its own and the card's pull
-    ended by its bound, a tap whose own pull is held opens the Usage modal within 1 s over that reading with its age, and the
-    open modal follows the held pull's fresher answer (PR 976's round 2)."""
+    with USAGE_ERR beside its name, past the name's right edge, with the loader out of the layout (PR 976's round 2), one
+    click opening the Usage modal; and, the shell holding a window reading of its own and the card's pull ended by its bound,
+    a tap whose own pull is held opens the Usage modal within 1 s over that reading with its age, and the open modal follows
+    the held pull's fresher answer (PR 976's round 2)."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -915,6 +926,17 @@ def _failed_problems(engine, fr):
     if ((cu or {}).get("name") or {}).get("shown") is not True:
         out.append("%s: the opening's pull failed in transit over a cached reading, and Usage's name is not seen beside the line "
                    "%r: %r" % (where, USAGE_ERR, (cu or {}).get("name")))
+    # ...beside it, past its right edge, with the loader out of the layout while the line shows (PR 976's round 2, fresh-2)
+    if cu and (cu.get("err") or {}).get("shown"):
+        el, nr = (cu.get("err") or {}).get("left"), (cu.get("name") or {}).get("right")
+        if not _num(el) or not _num(nr):
+            out.append("%s: over a cached reading, the line's or the name's box unread (the line's left %r, the name's right %r)" % (where, el, nr))
+        elif el < nr - SAME:
+            out.append("%s: over a cached reading, the line %r overlaps Usage's name: its left edge %.2f, the name's right edge %.2f" % (
+                where, USAGE_ERR, el, nr))
+        if (cu.get("wait") or {}).get("display") != "none":
+            out.append("%s: over a cached reading, the loader is laid out while the line %r shows (display %r)" % (
+                where, USAGE_ERR, (cu.get("wait") or {}).get("display")))
     if card_closed(cd.get("shell") or {}):
         out.append("%s: the failed read over a cached reading closed the card or reached the shell before the click: %r" % (where, cd.get("shell")))
     ck = cd.get("clicked") or {}
@@ -960,7 +982,9 @@ def _height_problems(engine, contrast):
     is narrower than with No reading yet or Couldn't load, the widest states, whose width the decision turned down; those two
     are read at the same widths and otherwise not compared: the line beside the name widens Usage, which can wrap the row onto
     one more line on a narrow window (the module's docstring gives the widths). And the loader shows in the name's place: the
-    name unseen while loading, and seen with a reading and beside either line."""
+    name unseen while loading, and seen with a reading and beside either line. And each line sits beside the name, its left
+    edge at or past the name's right edge, with the loader out of the layout (its computed display none) while it shows
+    (PR 976's round 2, fresh-2)."""
     out = []
     num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
     for name, theme in THEMES:
@@ -1028,6 +1052,19 @@ def _height_problems(engine, contrast):
                     elif r["usageW"] >= o["usageW"] - SAME:
                         out.append("%s at %dpx: with %s Usage is %.2f px wide, no narrower than with the line %r (%.2f): it holds the "
                                    "widest state's width, not the loader's" % (where, w, s, r["usageW"], line, o["usageW"]))
+            # ...and each line beside the name, its left edge at or past the name's right edge, with the loader out of the
+            # layout while it shows (PR 976's round 2, fresh-2: without the line's own grid cell it lay over the name, and
+            # with the loader laid out unseen Usage was wider by the loader's extra width)
+            for line, o in ((USAGE_NONE, no), (USAGE_ERR, fl)):
+                ll, nr = o.get("lineLeft"), (o.get("name") or {}).get("right")
+                if not num(ll) or not num(nr):
+                    out.append("%s at %dpx: with the line %r its left edge or the name's right edge unread (%r, %r)" % (where, w, line, ll, nr))
+                elif ll < nr - SAME:
+                    out.append("%s at %dpx: the line %r overlaps Usage's name: its left edge %.2f, the name's right edge %.2f" % (
+                        where, w, line, ll, nr))
+                if o.get("waitDisplay") != "none":
+                    out.append("%s at %dpx: with the line %r the loader is laid out (display %r), where it leaves the layout while "
+                               "a line shows" % (where, w, line, o.get("waitDisplay")))
             # ...and the loader shows in the name's place: the name unseen while it shows, and seen with a reading and beside
             # either line (its computed visibility and display, and a box)
             for s, r, seen in (("loading", ld, False), ("a reading", rd, True), ("the line %r" % USAGE_NONE, no, True),

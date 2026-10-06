@@ -79,9 +79,10 @@
 // each answer to the opening's pull (held, the lab's reading, no rows, an error status), the window taken through
 // cfg.heightWidths in each, and at each width the row's height, Usage's box beside Restart kernel's top and height, Usage's
 // words' box, the loader's laid-out box and the button's parts, the tabs' offset in the card and their top in the window, the
-// line Usage shows, and whether its name is seen; then the card opened over the lab's reading and again over a pull failed in
-// transit (Usage enabled beside Couldn't load), the pointer moved onto Usage's centre (its transitions off first), and its
-// hovered fill, the line's colour and whether :hover holds read.
+// line Usage shows with its left edge beside the name's right edge, the loader's computed display, and whether the name is
+// seen; then the card opened over the lab's reading and again over a pull failed in transit (Usage enabled beside Couldn't
+// load), the pointer moved onto Usage's centre (its transitions off first), and its hovered fill, the line's colour and
+// whether :hover holds read.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -483,13 +484,15 @@ try {
         const c = b.getBoundingClientRect();
         // the name, seen or not: its computed visibility and display, and a box to be seen in (the loader shows in its place)
         const nm = b.querySelector(".rs-pact-name"), ns = nm && getComputedStyle(nm), nb = nm && nm.getBoundingClientRect();
+        // each line's box (its left edge, which sits past the name's right edge, beside it), and the loader's computed display
+        const lineOf = (el) => (el ? { shown: !el.hidden && getComputedStyle(el).display !== "none", text: el.textContent.trim(),
+                                       left: r(el.getBoundingClientRect().left), w: r(el.getBoundingClientRect().width) } : null);
         return { disabled: b.disabled, busy: b.getAttribute("aria-busy"), left: r(c.left + ctx.left), top: r(c.top + ctx.top), w: r(c.width), h: r(c.height),
                  rowH: row ? r(row.getBoundingClientRect().height) : null,
                  name: nm ? { shown: ns.visibility === "visible" && ns.display !== "none" && nb.width > 0 && nb.height > 0,
-                              visibility: ns.visibility, display: ns.display, w: r(nb.width) } : null,
-                 line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none", text: un.textContent.trim() } : null,
-                 err: er ? { shown: !er.hidden && getComputedStyle(er).display !== "none", text: er.textContent.trim() } : null,
-                 wait: wt ? { shown: !wt.hidden && getComputedStyle(wt).display !== "none", text: wt.textContent.trim(),
+                              visibility: ns.visibility, display: ns.display, w: r(nb.width), left: r(nb.left), right: r(nb.right) } : null,
+                 line: lineOf(un), err: lineOf(er),
+                 wait: wt ? { shown: !wt.hidden && getComputedStyle(wt).display !== "none", text: wt.textContent.trim(), display: getComputedStyle(wt).display,
                               anims: wt.getAnimations ? wt.getAnimations({ subtree: true }).map((a) => a.animationName || "?") : null } : null };
       }, lift);
     };
@@ -1233,9 +1236,14 @@ try {
                  parts: { kids: laid.map((c) => c.getBoundingClientRect().width), gap: px(bs.columnGap),
                           pad: px(bs.paddingLeft) + px(bs.paddingRight), border: px(bs.borderLeftWidth) + px(bs.borderRightWidth) },
                  name: nm ? { shown: ns.visibility === "visible" && ns.display !== "none" && nb.width > 0 && nb.height > 0,
-                              visibility: ns.visibility, display: ns.display } : null,
+                              visibility: ns.visibility, display: ns.display, left: nb.left, right: nb.right } : null,
                  disabled: b.disabled, wait: shown(document.getElementById("rs-pact-usage-wait")), none: shown(document.getElementById("rs-pact-usage-none")),
-                 err: shown(document.getElementById("rs-pact-usage-err")) };
+                 err: shown(document.getElementById("rs-pact-usage-err")),
+                 // the shown line's left edge (beside the name, past its right edge) and the loader's computed display (out of the
+                 // layout while a line shows; PR 976's round 2, fresh-2)
+                 lineLeft: (() => { const l = [document.getElementById("rs-pact-usage-none"), document.getElementById("rs-pact-usage-err")].find((x) => shown(x));
+                   return l ? l.getBoundingClientRect().left : null; })(),
+                 waitDisplay: wt ? getComputedStyle(wt).display : null };
       });
       const sweep = async () => {
         const rows = [];
