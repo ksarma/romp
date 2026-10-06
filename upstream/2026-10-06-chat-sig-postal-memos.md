@@ -1,7 +1,7 @@
 ---
 title: Chat signature: the postal check's card values are memoized on the cached build's record, keyed on the names digest, the postal index and the caption map, and `_name_color_by_name` answers from a name-to-colour index built once per names digest
 status: candidate
-where: kernel/kernel.py (_names_scope_digest, new; _name_color_by_name and _name_color_index; _postal_card_deps_memo, new; _chat_sig_deps' postal component); tests/test_chat_fixed_cost_memos.py (PostalSigMemo and NameColorIndex, new); upstream/2026-10-06-chat-sig-postal-memos.md (this entry)
+where: kernel/kernel.py (_names_scope_digest, new; _name_color_by_name and _name_color_index; _postal_card_deps_memo, new; _chat_sig_deps' postal component); tests/test_chat_fixed_cost_memos.py (PostalSigMemo and NameColorIndex, new); tests/test_session_env.py (COUNTS functions, the fork's census: 3478 to 3481); upstream/2026-10-06-chat-sig-postal-memos.md (this entry)
 added: 2026-10-06
 pr:
 tier: fix
