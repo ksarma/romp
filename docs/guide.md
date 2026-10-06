@@ -446,9 +446,11 @@ key the page keeps in the site's storage, so the bare `http://127.0.0.1:29855/`
 works from then on. For a new browser, or one that has lost its sign-in,
 `romp url` prints the link again.
 
-The cookie on its own opens only the page's code; the page sends the key with
-each request for data or an action. Together they are a credential in their own
-right, so treat a machine holding them as signed in.
+The cookie on its own opens the page's code and the dashboard shell, which
+lists each pane's id, title and full address, including panes added with
+`romp pane define`. The page sends the key with each request for data or an
+action. Together they are a credential in their own right, so treat a machine
+holding them as signed in.
 
 A few requests need neither the token nor a sign-in: liveness probes, the
 sign-in page, the files a browser fetches to install Romp on a Home Screen, and

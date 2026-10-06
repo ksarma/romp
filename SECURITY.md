@@ -49,8 +49,13 @@ a fixed label of its own:
   is `HttpOnly` and `SameSite=Lax`, lasts a year, and is named for this kernel,
   so two kernels on one host keep separate sessions. On its own it opens only
   the page documents (the dashboard shell and its pane pages) and the static
-  files (`/dist/`, `/media/` and `/sw.js`), which hold code, one setting
-  (whether task tracking is on), and no session data.
+  files (`/dist/`, `/media/` and `/sw.js`). These hold code, one setting
+  (whether task tracking is on), and no session data. The dashboard shell also
+  lists each pane defined beyond the shipped ones (`romp pane define` adds
+  one): its id, its title, its `on` and `experimental` flags, its `protocol`
+  (`romp` or `none`), and the address it loads, a URL's query string included.
+  `GET /panes` refuses those records to the cookie alone; the shell escapes
+  them and refuses to be framed by another origin.
 - A **page key**. The sign-in response writes it into this origin's local
   storage; that response is served with `Cache-Control: no-store`, and no other
   response carries the key. The pages send it as an `X-Romp-Key` header (a

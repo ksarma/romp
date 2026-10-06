@@ -4608,8 +4608,10 @@ def _ct_eq(a, b):
 
 # ── browser sessions: the login cookie holds a session id, never the serve token ──────────────────
 # The browser's login cookie carries a per-kernel SESSION ID. The kernel accepts that id, on its own,
-# for the PAGE class (the page documents) and the STATIC class (/dist, /media, /sw.js): code, no
-# session data. Every other request needs a second value the cookie never carries. For the full and
+# for the PAGE class (the page documents) and the STATIC class (/dist, /media, /sw.js): code and no
+# session data, and the shell (/) also lists each data pane's id, title, flags and source address, a
+# URL's query string included, the records GET /panes refuses to the cookie (Handler._authorize names
+# the builders). Every other request needs a second value the cookie never carries. For the full and
 # socket classes that is the PAGE KEY K, held in this origin's localStorage and presented as the
 # X-Romp-Key header (or as k= on a socket dial). For a header-less /file load that is a per-file CAP
 # in the URL. The four values are domain-separated HMACs, each under a DISTINCT FIXED LABEL so a value
@@ -80905,13 +80907,16 @@ class Handler(BaseHTTPRequestHandler):
         or a one-time ?c= code authorizes from any Origin, as before: it is the credential the CLI,
         hooks, the extension host, the VS Code webview and kernel-to-kernel calls present, and a
         cross-site page cannot forge it. The BROWSER's own credential is two parts. The session cookie
-        alone opens only the page and static classes (a page document, /dist, /media, /sw.js: code, no
-        session data). The full and socket classes additionally need the page key (the X-Romp-Key
-        header, or k= on a socket dial); the file class additionally needs a per-file cap. The cookie
+        alone opens only the page and static classes (a page document, /dist, /media, /sw.js): code and no
+        session data, and the shell (/) also lists each data pane's id, title, flags and source address, a
+        URL's query string included (_panes_attr, _data_pane_markup, _rail_buttons_html,
+        _mtab_buttons_html), the records GET /panes refuses to the cookie. The full and socket classes
+        additionally need the page key (the X-Romp-Key header, or k= on a socket dial); the file class
+        additionally needs a per-file cap. The cookie
         still passes through the Origin gate (_origin_ok), which refuses a request that names a foreign
         Origin. A request that names none passes it with the cookie, and a browser names none on a GET
         navigation (a frame's included) or on a subresource load made without CORS (a script, an image),
-        whichever page made it: that is why the page and static classes carry code and no session data.
+        whichever page made it: that is why the page and static classes carry no session data.
         session_to_set is the session a login mints or keeps: a
         GET navigation to a page authorized by ?token=, ?c=, or the old romp_token cookie (which held
         the serve token itself, migrated once here); every other authorized response sets no cookie."""

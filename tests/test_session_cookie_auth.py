@@ -6,7 +6,9 @@ server (the auth-hardening doctrine: a source-position assertion cannot catch a 
 side of the gate). The model:
 
   * The session cookie ALONE opens the PAGE class (a page document) and the STATIC class (/dist,
-    /media, /sw.js): code, no session data. Both classes are read off the shared route table
+    /media, /sw.js): code and no session data, and the shell (/) also lists each data pane's id,
+    title, flags and source address, which GET /panes refuses to the cookie (tests/test_pane_registry.py
+    pins the shell's markup). Both classes are read off the shared route table
     (kernel.py _PAGE_RENDERERS / _static_route) that the router itself dispatches from, so the
     router and the classifier (_need) never disagree.
   * Every other route needs a second value the cookie never carries: the PAGE KEY K (the X-Romp-Key
@@ -999,7 +1001,7 @@ class LegacyCookieClearedBesideASession(_Server):
 
 
 class NoPageDataInlined(_Server):
-    """What a request on the session cookie alone can read holds code and no session data, and the page key
+    """What a request on the session cookie alone can read holds no session data, and the page key
     reaches the browser only in the sign-in response. A census over every page route in the route table, on
     both response paths (the cookie alone, and a ?token= sign-in navigation), over /sw.js, and over every file
     under /media/. A synthetic session is planted in the kernel's session registry and names store, and a
