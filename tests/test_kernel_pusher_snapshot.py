@@ -172,6 +172,117 @@ class OneSnapshotPerCycle(_CycleFixture):
         self.assertEqual(reads, [], "a provided snapshot is enough — no fresh liveness reads")
 
 
+SID3 = "11111111-2222-3333-4444-575757575757"   # a third live lane: a per-lane read shows as more than one
+
+
+class _HeldClock(object):
+    """km's `time` with time() held at one instant, so a push's lane build and a reference build made after it read
+    the same clock; everything else (monotonic, thread_time, sleep) passes through."""
+
+    def __init__(self, real, at):
+        self._real, self._at = real, at
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def time(self):
+        return self._at
+
+
+class TimelineConnectReadsLivenessOnce(_CycleFixture):
+    """A timeline connect push over a STALE cache builds its lanes on the WebSocket handler's thread
+    (_push(connect=True) from _push_one), where no cycle scope serves a snapshot. The push takes one liveness
+    map of its own, but every nested reader under build_timeline used to sweep the registry again: each live
+    lane's _session_awaiting row lookup (build_timeline calls it without live=), _bg_live_norm's lookup under
+    it, the awaiting task descriptions. That was 87 Sessions.live() reads for one timeline page load on a
+    30-session state copy, 862 ms against 78 ms with one map (the 2026-10-06 re-profile). The push now lends
+    its map to that build (_serve_live), as the chat builds and _awaiting_items_payload already do; the lend
+    leaves an active scope alone, so the pusher's own timeline stage reads exactly as before (the second test).
+
+    SYNTHETIC: three invented live sessions over the fixture's world."""
+
+    FULL = {"type": "timeline", "now": 1,
+            "sessions": [{"id": SID, "name": "web", "state": "working", "context": 10, "compactions": []}],
+            "turns": {SID: [{"id": "b1"}]}, "judging": {}, "messages": [], "views": {"active": "all"}, "usage": {}}
+
+    def setUp(self):
+        super().setUp()
+        pdir = Path(self.paths[SID]).parent
+        cwd = jd.NAMES.joinpath(SID).read_text().split("\t")[1]
+        self.paths[SID3] = str(pdir / (SID3 + ".jsonl"))
+        jd.NAMES.joinpath(SID3).write_text("tests\t%s\t#123456\n" % cwd)
+        self.row[SID3] = dict(self.row[SID])
+        # every lane's turn has ended (a reply after the prompt), so the full build's parse reads each lane as idle and
+        # its _session_awaiting looks at the live rows, as the skeleton build (no parse) always does
+        recs = [{"type": "user", "timestamp": "2026-06-11T00:00:00.000Z", "uuid": "u1", "parentUuid": None,
+                 "promptSource": "typed", "message": {"role": "user", "content": "add a health check route"}},
+                {"type": "assistant", "timestamp": "2026-06-11T00:00:05.000Z", "uuid": "a1", "parentUuid": "u1",
+                 "message": {"role": "assistant", "content": [{"type": "text", "text": "Added GET /health."}],
+                             "stop_reason": "end_turn"}}]
+        for sid in (SID, SID2, SID3):
+            Path(self.paths[sid]).write_text("".join(json.dumps(r) + "\n" for r in recs))
+        saved = (list(km._built_timeline), km._views_dirty[0], km._bars_wire, km._skel_wire, km.build_timeline, km.time)
+
+        def restore():                                  # the fixture's tearDown puts back the rest (Sessions.live, the tick jobs)
+            km._built_timeline[:] = saved[0]
+            km._views_dirty[0] = saved[1]
+            km._bars_wire, km._skel_wire, km.build_timeline, km.time = saved[2:]
+        self.addCleanup(restore)
+        km._bars_wire = km._skel_wire = None
+        km._built_timeline[:] = [("older",), self.FULL, 1.0, 1.0]   # built long ago under a view signature the world has
+        km._views_dirty[0] = 0.0                                     #  since left: _timeline_cache_fresh says stale
+        km.time = _HeldClock(time, float(int(time.time())))
+        self.reads = []
+        km.Sessions.live = lambda: (self.reads.append(1), dict(self.row))[1]
+        self.builds = []                                # (now, the handed map, with_bars, live_only, the scope's map at the call)
+        real = self.real_build = km.build_timeline
+
+        def recorded(now, live_map=None, with_bars=True, live_only=False):
+            self.builds.append((now, live_map, with_bars, live_only, getattr(km._live_scope, "snapshot", None)))
+            return real(now, live_map, with_bars, live_only)
+        km.build_timeline = recorded
+
+    def test_a_connect_push_over_a_stale_cache_reads_liveness_once(self):
+        frames = []
+        km._push([{"app": "timeline", "send": frames.append, "sent": {}, "alive": True}], connect=True)
+        self.assertEqual(len(self.reads), 1, "one liveness read for the whole connect push, the push's own: the lane "
+                                             "build's nested readers are served that map")
+        self.assertEqual([b[2:4] for b in self.builds], [(False, False)],
+                         "the stale branch built the lanes fresh (no bars, every lane), and nothing else was built")
+        now, handed, _, _, scope = self.builds[0]
+        self.assertIs(scope, handed, "the lane build ran with the push's own map lent to every nested reader")
+        self.assertIsNone(km._live_scope.snapshot, "the lend ends with the build: the handler thread holds no scope")
+        data = [json.loads(f) for f in frames if json.loads(f)["type"] == "data"]
+        self.assertEqual(len(data), 1, "the connect push sent one lanes frame")
+        # the unlent build: the same clock and the same rows, no scope, so every nested reader reads fresh
+        n = len(self.reads)
+        ref = self.real_build(now, dict(self.row), with_bars=False)
+        self.assertGreaterEqual(len(self.reads) - n, 3, "the unlent build reads at least once per live lane: the "
+                                                        "fixture runs the nested readers the lend serves")
+        self.assertEqual(len(data[0]["data"]["sessions"]), 3, "three live lanes")
+        self.assertEqual(data[0]["data"], json.loads(json.dumps(ref)),
+                         "the lanes the lent build sent equal the ones the unlent build makes")
+
+    def test_a_pusher_cycle_with_a_timeline_client_still_reads_liveness_once(self):
+        # The pusher's timeline stage (connect=False) rebuilds the stale cache through _cached_timeline under the
+        # cycle's own scope. _serve_live leaves an active scope alone (the nested lend in _awaiting_items_payload
+        # runs inside this build), so the cycle's one snapshot serves the whole build and the scope ends with the
+        # cycle, exactly as before the connect path's lend.
+        km._turn_notify_tick = lambda now, live_map: None
+        km._api_health_frame = lambda now, live_map: None
+        km._api_health_push = lambda frame: None
+        with km._clients_lock:
+            km._clients[:] = [{"app": "timeline", "alive": True, "wid": "", "qbytes": 0, "send": lambda s: None,
+                               "sent": {}}]
+        km._pusher_cycle()
+        self.assertEqual(len(self.reads), 1, "one liveness read per cycle, the timeline's full rebuild included")
+        self.assertEqual([b[2:4] for b in self.builds], [(True, False)], "the pusher rebuilt the full timeline once")
+        _, handed, _, _, scope = self.builds[0]
+        self.assertIs(scope, handed, "the rebuild ran under the cycle's snapshot, the same map the cycle handed down")
+        self.assertIn(SID3, handed)
+        self.assertIsNone(km._live_scope.snapshot, "the scope ends with the cycle")
+
+
 class OneDiscoverPerCycle(_CycleFixture):
     """The cycle's discover rows are memoized on the scope, so the tick jobs' _alive_sessions calls, the
     _path_of misses under _compacting_now and the builders share ONE _sessions sweep per (window, forks)

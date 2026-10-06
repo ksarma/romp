@@ -67169,7 +67169,12 @@ def _push(targets, connect=False, live_map=None):
                         # lanes are built fresh here, as every connect did before the projection (no transcript
                         # parse: the skeleton), and the next cycle's rebuild dedups against them when unchanged;
                         # the heavy bars still come from the cache, as they always did on a connect.
-                        frame = {"type": "data", "data": build_timeline(now, live_map, with_bars=False)}
+                        # The push's map is lent to the build (_serve_live): this runs on the WS handler's thread,
+                        # outside any cycle scope, so every live lane's nested readers (_session_awaiting's row
+                        # lookup, _bg_live_norm's) otherwise read liveness afresh, 87 reads on one page load of a
+                        # 30-session state copy (2026-10-06; tests/test_kernel_pusher_snapshot.py).
+                        with _serve_live(live_map):
+                            frame = {"type": "data", "data": build_timeline(now, live_map, with_bars=False)}
                     skel_pre, skel_sig = json.dumps(frame), None
                 else:
                     w = _skel_wire                                  # tuple snapshot — rebound whole, never mutated
