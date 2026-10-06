@@ -24,18 +24,19 @@ from test_asm_checkpoint import kernel_module   # noqa: E402
 JOB_NAME_RE = r"_job_stage\(['\"](\w+)['\"]"
 WALK_SID = "33333333-4444-5555-6666-777777777777"   # the walk test's own synthetic session: no other module keys a memo under it
 
-PUSHER_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
+PUSHER_JOBS = ("beginCheckpointCycle", "sessionsListing", "applyPendingOps", "artifactsSignal", "turnNotify", "persistCheckpoints", "convergeCheckpoints",
                "bootRowBackstop", "kernelSample", "apiHealth")
 HOUSEKEEPING = ("liftSpentAwaiting", "deathSweep", "endOnIdle", "deferralSweep",
                 "unreadableStores",   # this fork's unreadable-store warn, a stage of the jobs pass since the 2026-09-15 pull-in (the rulings' item 9)
                 "autoNudge", "interruptBlock",
-                "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll", "autoPauseOnSpend",
-                "spendGuard", "autoResumeRetry", "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes")
+                "persistTickSeen", "persistIntrMarks", "persistSpendTrees", "autoPauseOnLimit", "usagePoll", "retryUpgrade", "autoPauseOnSpend",
+                "spendGuard", "autoResumeRetry", "autoResumeSession", "autoRetry", "idleQueueDrive", "clearDoneNotes",
+                "heldWorking")
 QUIET = ("_lift_spent_awaiting", "_death_sweep_tick", "_end_on_idle_sweep", "_deferral_sweep_tick", "_unreadable_store_warns", "_interrupt_block_tick",
          "_persist_tick_seen", "_persist_intr_marks", "_persist_spend_trees", "_auto_pause_on_limit", "_usage_poll_tick",
          "_auto_pause_on_spend_limit", "_spend_guard_tick", "_auto_resume_retry", "_auto_resume_session_retry",
-         "_auto_retry_tick", "_idle_queue_drive_tick", "_clear_done_working_notes", "_turn_notify_tick", "_apply_pending_ops",
-         "_persist_checkpoints", "_converge_checkpoints", "_kernel_sample_tick", "_api_health_push")
+         "_auto_retry_tick", "_idle_queue_drive_tick", "_clear_done_working_notes", "_held_working_pass", "_turn_notify_tick", "_apply_pending_ops",
+         "_persist_checkpoints", "_converge_checkpoints", "_kernel_sample_tick", "_api_health_push", "_artifacts_signal")
 
 
 class Partition(unittest.TestCase):
@@ -52,8 +53,10 @@ class Partition(unittest.TestCase):
         self.assertEqual(tuple(jobs), HOUSEKEEPING, "the housekeeping, in the order it always ran")
         self.assertFalse(set(pusher) & set(jobs), "no job on both threads")
         self.assertEqual(set(pusher) | set(jobs), set(km._PerfStats.JOBS), "together they are the JOBS census")
-        # the collector keeps the two lists by thread since 2026-09-18 (stage attribution: the pusher's nine are seeded under
-        # pusher.cycleJobsMs, the jobs thread's nineteen as flat `jobs.<job>` rows), so each must be the source's, in order
+        # the collector keeps the two lists by thread since 2026-09-18 (stage attribution: the pusher's cycle jobs are seeded
+        # under pusher.cycleJobsMs (nine at the change, ten since artifactsSignal joined), the jobs thread's as flat
+        # `jobs.<job>` rows: nineteen at the change, twenty-one since retryUpgrade and heldWorking joined), so each must be
+        # the source's, in order
         self.assertEqual(km._PerfStats.CYCLE_JOBS, PUSHER_JOBS, "CYCLE_JOBS is _pusher_cycle_jobs's list")
         self.assertEqual(km._PerfStats.PASS_JOBS, HOUSEKEEPING, "PASS_JOBS is _jobs_pass's list")
         self.assertEqual(km._PerfStats.JOBS, PUSHER_JOBS + HOUSEKEEPING, "JOBS is the census as CYCLE_JOBS + PASS_JOBS")
@@ -138,7 +141,11 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         km._auto_nudge_tick = lambda now, live_map: (calls.append(1), time.sleep(0.4))
         t0 = time.monotonic(); km._pusher_cycle(); cycle = time.monotonic() - t0
         self.assertEqual(calls, [], "the pusher's cycle ran no walk")
-        self.assertLess(cycle, 0.3, "and did not carry its sleep: %.3f s" % cycle)
+        # a wall-clock bound: when it reds, the message names the stages that carried the time (the cycle's own split), so a
+        # loaded runner's red says WHAT waited rather than only that something did (round three of PR 1951, 2026-09-21)
+        stages = km._PERF_STATS.snapshot()["stages_ms"]
+        carried = sorted(((ms, name) for name, ms in stages.items() if ms), reverse=True)[:6]
+        self.assertLess(cycle, 0.3, "and did not carry its sleep: %.3f s; the stages that carried the time (ms): %r" % (cycle, carried))
         t0 = time.monotonic(); km._jobs_cycle(); pas = time.monotonic() - t0
         self.assertEqual(calls, [1], "the jobs pass ran it once")
         self.assertGreaterEqual(pas, 0.4)
@@ -266,7 +273,7 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
     def test_a_loop_body_on_a_thread_owning_the_other_loops_cycle_takes_the_owner_over(self):
         """The guard at the top of each loop body (2026-09-18 review): a thread that owns the OTHER loop's cycle flips to this
         loop's, so the body's jobs are credited to this loop. Before, the guard opened a cycle only for a thread owning none,
-        so a test driving both bodies on one thread kept the first owner through the second body and the nine cycle jobs
+        so a test driving both bodies on one thread kept the first owner through the second body and the cycle jobs
         landed in the flat jobs.<job> rows, the merge stage()'s routing exists to end. The running kernel's two loop threads
         never meet this: each loop function opens its own cycle before its body."""
         km = self.km
@@ -280,7 +287,7 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         self.assertFalse({"jobs." + j for j in PUSHER_JOBS} & set(st),
                          "no cycle job's row in stages_ms: %r" % sorted(k for k in st if k.startswith("jobs.")))
         self.assertEqual(sorted(cyc), sorted(PUSHER_JOBS))
-        self.assertGreater(sum(cyc.values()), 0.0, "the nine were credited to the pusher's block")
+        self.assertGreater(sum(cyc.values()), 0.0, "the ten were credited to the pusher's block")
         for j in HOUSEKEEPING:
             self.assertIn("jobs." + j, st, j)
         self.assertEqual(snap["stagesForeign"], {})
@@ -291,8 +298,8 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         self.assertGreater(snap["stages_ms"]["jobsPass"], st["jobsPass"], "and its pass went to the flat rows")
 
     def test_a_run_of_both_loops_keeps_each_threads_job_rows_apart(self):
-        """The real _pusher_cycle and _jobs_cycle, every job quiet: the nine cycle jobs' walls land under pusher.cycleJobsMs
-        and sum to at most the pusher's `jobs` container, the nineteen housekeeping jobs' land in the flat `jobs.<job>` rows
+        """The real _pusher_cycle and _jobs_cycle, every job quiet: the ten cycle jobs' walls land under pusher.cycleJobsMs
+        and sum to at most the pusher's `jobs` container, the twenty-one housekeeping jobs' land in the flat `jobs.<job>` rows
         and sum to at most `jobsPass`, no cycle job's key is in stages_ms, and nothing is foreign. Each sum is a set of
         disjoint intervals inside its container's, so the bound is exact, not a ratio (the ratio tests here were coin
         tosses under load)."""
@@ -300,7 +307,7 @@ class TheBrowserNeverWaitsOnTheHousekeeping(_LabCycles):
         km._pusher_cycle(); km._jobs_cycle()
         snap = km._PERF_STATS.snapshot()
         st, cyc = snap["stages_ms"], snap["pusher"]["cycleJobsMs"]
-        self.assertEqual(sorted(cyc), sorted(PUSHER_JOBS), "exactly the nine, whether or not a job took measurable time")
+        self.assertEqual(sorted(cyc), sorted(PUSHER_JOBS), "exactly the ten, whether or not a job took measurable time")
         self.assertFalse({"jobs." + j for j in PUSHER_JOBS} & set(st), "no cycle job's row in stages_ms")
         for j in HOUSEKEEPING:
             self.assertIn("jobs." + j, st, j)

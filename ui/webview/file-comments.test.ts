@@ -25,7 +25,27 @@ const VIEW = web("file-view.ts");
 const GEAR = web("gear.js");
 const CHAT_CSS = web("styles.css");
 const FEED_CSS = web("feed.css");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's Files and chat paragraphs live in docs/reference.md since the front pages became the project's (CLAUDE.md "The
+// documentation front pages"; fold 4 moved every fork paragraph there). The chat's section is "## The chat pane in detail" up
+// to the feed's layout controls. The Files section is the same paragraphs the Python helpers' _files_section() reads (for
+// one, tests/test_guide_files_about_vocabulary.py): "## The Files pane" up to the Artifacts pane, then the three viewer
+// subsections the reference keeps with the chat pane ("Links inside a file", "Text size and width", "A file's own HTML"),
+// each up to the next `## ` or `### ` heading. Those three sat in the guide's Files section on this fork, so the
+// vocabulary and privacy scan below still reads them. The pins read both sections there.
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const refSection = (from: string, to: string): string => {
+  const at = REF.indexOf(from), end = REF.indexOf(to, at + 1);
+  assert.ok(at > -1 && end > at, "docs/reference.md has " + from.trim() + " before " + to.trim());
+  return REF.slice(at, end);
+};
+const refSubsection = (heading: string): string => {
+  const at = REF.indexOf("\n### " + heading + "\n");
+  assert.ok(at > -1, "docs/reference.md has ### " + heading);
+  const ends = ["\n## ", "\n### "].map((h) => REF.indexOf(h, at + 1)).filter((i) => i > -1);
+  return REF.slice(at, ends.length ? Math.min(...ends) : REF.length);
+};
+const filesSection = (): string => [refSection("\n## The Files pane\n", "\n## The Artifacts pane"),
+  ...["Links inside a file", "Text size and width", "A file's own HTML"].map((h) => refSubsection(h))].join("\n\n");
 const ADR = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "adr", "0002-file-comments-in-the-track-changents-sidecar.md"), "utf8");
 
 // ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
@@ -970,26 +990,26 @@ test("vocabulary and privacy: the person's words, never the format's; no persona
   const modelWords = (MODEL.match(/\b(thread|suggestion|annotation)s?\b/gi) || []).filter((w) => !new RegExp("--" + w).test(MODEL));
   assert.deepEqual([...new Set(MODEL.match(/[^-]\b(thread|annotation)s?\b/gi) || [])], [], "the model's only 'thread' is the --thread flag");
   void modelWords;
-  const newGuide = GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges"));
+  const newGuide = filesSection();
   assert.doesNotMatch(newGuide, /\b(suggestion|annotation)s?\b/i);
   assert.doesNotMatch(newGuide.replace(/`[^`]*`/g, ""), /\bthreads?\b/i);
   // This file is new prose too, and its assertion messages print to the person on failure — so it scans itself,
   // with the guard's own regex lines set aside (an assertion message here once named the sessions pane by its old word).
   const SELF = web("file-comments.test.ts").split("\n").filter((l) => !l.includes("/fleet/i")).join("\n");
-  for (const [name, text] of [["file-comments.ts", SRC], ["file-comments-model.ts", MODEL], ["guide.md Files", newGuide], ["file-comments.test.ts", SELF]] as const) {
+  for (const [name, text] of [["file-comments.ts", SRC], ["file-comments-model.ts", MODEL], ["reference.md Files section", newGuide], ["file-comments.test.ts", SELF]] as const) {
     assert.doesNotMatch(text, /fleet/i, name + ": no new fleet identifiers or prose");
     assert.doesNotMatch(text, /\/home\/[a-z]/, name + ": no absolute home paths");
   }
 });
 
-test("docs: the guide covers the panel, the poll, the consent, either view and media, the log and its opt-out, and where to look when the action is missing; the ADR is accepted", () => {
-  const flat = (t: string) => t.replace(/\s+/g, " ");   // the guide wraps at 80 columns
-  const files = flat(GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")));
+test("docs: the reference covers the panel, the poll, the consent, either view and media, the log and its opt-out, and where to look when the action is missing; the ADR is accepted", () => {
+  const flat = (t: string) => t.replace(/\s+/g, " ");   // the reference wraps its lines
+  const files = flat(filesSection());
   for (const phrase of ["**Comments**", "**Track changes**", "**Send to session**", "Rendered or Raw", "**Comment on this file**", "image or a PDF",
     ".trackchanges/", "comments log", ".gitignore", "**File comments**", "**File editing**", "every few seconds", "**Re-place**"]) {
     assert.ok(files.includes(phrase), "Files section: " + phrase);
   }
-  const chat = flat(GUIDE.slice(GUIDE.indexOf("### The chat"), GUIDE.indexOf("### The feed")));
+  const chat = flat(refSection("\n## The chat pane in detail\n", "\n## The feed's layout controls\n"));
   assert.ok(chat.includes("quote chip"), "chips remain for one-off notes");
   assert.ok(chat.includes("**Comments**"), "…and point at the panel for anything worth keeping");
   assert.ok(files.includes("folder a session will write into"), "track the folder before the session writes");

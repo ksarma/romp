@@ -24,7 +24,10 @@ const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui
 const SRC = web("file-comments.ts");
 const CHAT_CSS = web("styles.css");
 const FEED_CSS = web("feed.css");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's Files section lives in docs/reference.md ("## The Files pane", up to the Artifacts pane) since the front pages
+// became the project's (CLAUDE.md "The documentation front pages"; fold 4 moved every fork paragraph there).
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const REF_FILES = ((at: number) => REF.slice(at, REF.indexOf("\n## The Artifacts pane", at)))(REF.indexOf("\n## The Files pane\n"));
 const PLAN = fs.readFileSync(path.resolve(process.cwd(), "..", "plans", "file-review.md"), "utf8");
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
@@ -644,7 +647,7 @@ test("the sheets: .fc-composer-in is the reply-of-yours dress — the wash and t
 
 test("docs: the guide says Reply opens the box inside the card; the plan's follow-on note says where the box stands, where it returns, and who gets the keyboard", () => {
   const flat = (t: string) => t.replace(/\s+/g, " ");
-  const files = flat(GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")));
+  const files = flat(REF_FILES);
   assert.ok(files.includes("**Reply** opens the reply box inside the card, under the comment and its replies"), "the guide");
   assert.ok(!files.includes("reply into it"), "the old phrase is gone");
   const note = flat(PLAN.slice(PLAN.indexOf("The composer follow-on (2026-09-07)"), PLAN.indexOf("### Slice 3: region comments on images")));

@@ -28,6 +28,17 @@ named so the fake does not pass as evidence):
     (`branches/main/protection`: the `protection` object, or the 404 GitHub returns when there is
     none), and `-X DELETE .../git/refs/heads/<ref>` (deletes the branch and retargets its
     dependents to main, as GitHub does).
+  - `run list` serves the state's `runs`, filtered by --workflow, --branch, --event and --commit the way gh
+    filters them, newest first; there are none unless a test records one (tests/test_batch_tool.py, Fixture.ci).
+    With `runs_as_recorded` in the state it serves them in the order they were recorded instead, so a test can
+    hand the tool rows in an order gh does not promise.
+  - `api repos/{owner}/{repo}/actions/runs/<id>/attempts/<n>` serves attempt n of the recorded run <id> from the
+    run's `attempts` list (entry n - 1, its keys laid over {id, run_attempt, status, conclusion, html_url}), or
+    GitHub's 404 when the run has no such earlier attempt.
+  - `api repos/{owner}/{repo}/actions/runs/<id>/attempts/<n>/jobs[?per_page=N]` serves the jobs of the recorded run
+    <id>'s attempt n as GitHub's listing, {total_count, jobs}: the run's `jobs` (each {name, status, conclusion}; a
+    test records them, Fixture.ci), or `jobs_doc` as it stands when a test gives the whole answer; the run's own attempt
+    only (an earlier attempt's jobs are not modelled), else GitHub's 404.
   - FAKE_GH_FAIL (`|`-separated argv prefixes) makes the matching calls fail with an HTTP 502, so
     a test can see what the tool does when a call does not land. `fail` in the state maps an
     endpoint (`rules`, `protection`) to a gh error line the fake prints and exits 1 with, the way a
@@ -39,6 +50,7 @@ Synthetic data only: PR numbers, titles and branches are the tests' inventions.
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -367,6 +379,34 @@ def api(state, argv):
         else:
             print(json.dumps(rows))
         return
+    m = re.fullmatch(r"repos/\{owner\}/\{repo\}/actions/runs/(\d+)/attempts/(\d+)/jobs(?:\?per_page=\d+)?", path)
+    if m:
+        rid, n = int(m.group(1)), int(m.group(2))
+        run = next((r for r in state.get("runs", []) if r.get("databaseId") == rid), None)
+        if run is None or n != run.get("attempt", 1):
+            print(json.dumps({"message": "Not Found", "status": "404"}))
+            sys.stderr.write("gh: Not Found (HTTP 404)\n")
+            sys.exit(1)
+        if "jobs_doc" in run:
+            print(json.dumps(run["jobs_doc"]))
+            return
+        jobs = run.get("jobs") or []
+        print(json.dumps({"total_count": len(jobs), "jobs": jobs}))
+        return
+    m = re.fullmatch(r"repos/\{owner\}/\{repo\}/actions/runs/(\d+)/attempts/(\d+)", path)
+    if m:
+        rid, n = int(m.group(1)), int(m.group(2))
+        run = next((r for r in state.get("runs", []) if r.get("databaseId") == rid), None)
+        attempts = (run or {}).get("attempts") or []
+        if run is None or not 1 <= n <= len(attempts):
+            print(json.dumps({"message": "Not Found", "status": "404"}))
+            sys.stderr.write("gh: Not Found (HTTP 404)\n")
+            sys.exit(1)
+        rec = {"id": rid, "run_attempt": n, "status": "completed", "conclusion": "success",
+               "html_url": "%s/attempts/%d" % (run.get("url"), n)}
+        rec.update(attempts[n - 1])
+        print(json.dumps(rec))
+        return
     if "/branches/" in path and path.endswith("/protection"):
         if fail.get("protection"):
             die(fail["protection"], code=1)
@@ -395,7 +435,24 @@ def maybe_fail(argv):
 
 
 def run_list(state, argv):
-    print(json.dumps([{"url": "https://example.invalid/actions/runs/1", "status": "completed", "conclusion": "success"}]))
+    """`run list` over the state's `runs` (none by default: a test that needs a CI run records it): the runs matching
+    --workflow (a run's `workflow`, default ci.yml), --branch, --event and --commit, newest first as gh lists them,
+    cut to --limit, each projected onto the --json fields."""
+    o = opts(argv, {"--workflow", "-w", "--branch", "-b", "--event", "-e", "--commit", "-c", "--limit", "-L", "--json", "--jq"})
+    rows = []
+    for r in state.get("runs", []):
+        for flags, key, default in ((("--workflow", "-w"), "workflow", "ci.yml"), (("--branch", "-b"), "headBranch", None),
+                                    (("--event", "-e"), "event", None), (("--commit", "-c"), "headSha", None)):
+            want = next((o[f][0] for f in flags if o.get(f)), None)
+            if want is not None and r.get(key, default) != want:
+                break
+        else:
+            rows.append(r)
+    if not state.get("runs_as_recorded"):
+        rows.sort(key=lambda r: (r.get("createdAt") or "", r.get("databaseId") or 0), reverse=True)
+    rows = rows[:int((o.get("--limit") or o.get("-L") or ["20"])[0])]
+    fields = (o.get("--json") or ["databaseId,status,conclusion,url"])[0].split(",")
+    print(json.dumps([{f: r.get(f) for f in fields} for r in rows]))
 
 
 def main(argv):
