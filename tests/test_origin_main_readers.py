@@ -61,10 +61,7 @@ an empty scan (census_problems, which compares the lines, never their count; its
 classification was confirmed by execution where the text did not settle it: the modules and bats files that run
 scripts/batch.py, scripts/pr-orphans.sh, scripts/release.sh, the kernel's release and GitHub-link probes and
 scripts/sweep.py were run in a checkout make_checkout made, with a git first on PATH logging each call made through it,
-and none read that checkout's origin/main, nor any ref of it but HEAD (2026-10-03). tests/fork-remotes.bats, which runs
-scripts/fork-remotes.sh, was run the same way in a checkout built as make_checkout builds one, with each call's ref
-reads traced (GIT_TRACE_REFS): its one read of that checkout was of HEAD, by an onbranch include in the test's own
-global config file (fork PR 974, 2026-10-06).
+and none read that checkout's origin/main, nor any ref of it but HEAD (2026-10-03).
 
 At this head three test files read the checkout's own origin/main (READERS), all brought by the merge of fork main
 through fork PR 926's merge of it: the history case of tests/gitleaks-config.bats, the three tests of
@@ -206,7 +203,8 @@ CLASSIFIED = {
     "scripts/fork-remotes.sh": ((NOT_A_READ,),
                                 "read_urls's `git remote get-url --all` and `--push --all`, and the same read of "
                                 "upstream's push urls, which resolve a remote's urls from configuration and the "
-                                "legacy remote files and read no ref but HEAD, in the clone the script lives in (it "
+                                "legacy remote files and read HEAD and the branch it names, no remote-tracking ref, in "
+                                "the clone the script lives in (it "
                                 "cds there), which its tests build (tests/fork-remotes.bats copies it into $REPO); "
                                 "comments naming those options; and a message naming origin's url"),
     "scripts/pr-orphans.sh": ((SYNTHETIC, NOT_A_READ),
@@ -229,7 +227,8 @@ CLASSIFIED = {
     "tests/fork-remotes.bats": ((NOT_A_READ,),
                                 "reads and writes of configuration in the clone its setup builds ($REPO) or in the "
                                 "test's own global config file (git_hermetic's GIT_CONFIG_GLOBAL): `config --get`, "
-                                "which reads no ref, `remote get-url --all`, which reads none but HEAD, and `config "
+                                "which reads no ref, `remote get-url --all`, which reads HEAD and the branch it names "
+                                "and no remote-tracking ref, and `config "
                                 "remote.<name>.fetch`, which writes a refspec; the legacy remote files it writes, "
                                 "chmods and removes under $REPO/.git/remotes/, which define a remote and are no "
                                 "remote-tracking ref; and expected texts naming those files"),
