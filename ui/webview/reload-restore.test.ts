@@ -83,11 +83,12 @@ test("every write of the keep offset writes the reader's line beside it, in the 
   // pendingAnchorKeepY wherever they sit, and a comment or a string spelling the line's assignment counts as nothing. Each write must
   // be a plain statement of a statement list (a block, a case, the module), not one arm of an if or a branch of an expression, and the
   // statement beside it in that list (or the same statement, through a comma) must assign pendingAnchorKeepAt with a plain `=` whose
-  // target is the name itself, so the two always run together: a `??=` or `||=` there can keep a line from an earlier keep, and a
-  // destructuring that names it only as a key or a default writes another variable. What it guards is the declaration's rule: a line
-  // left from an earlier keep is never READ while the offset is null (scrollToAnchor reads it only under a non-null offset, and every
-  // write of a non-null offset writes the line too, which this census also holds), so a miss is a broken invariant, not a misplaced
-  // reader; the line's landing itself executes in scroll-to-anchor-roads.test.ts and land-active-keep.test.ts
+  // target is the name itself and whose right-hand side does not name it, so the two always run together: a `??=` or `||=` there, or
+  // its longhand, can keep a line from an earlier keep, and a destructuring that names it only as a key or a default writes another
+  // variable. What it guards is the declaration's rule: a line left from an earlier keep is never READ while the offset is null
+  // (scrollToAnchor reads it only under a non-null offset, and every write of a non-null offset writes the line too, which this census
+  // also holds), so a miss is a broken invariant, not a misplaced reader; the line's landing itself executes in
+  // scroll-to-anchor-roads.test.ts and land-active-keep.test.ts
   const sf = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const bare = (e: ts.Node): ts.Node => { let x = e; while (ts.isParenthesizedExpression(x) || ts.isAsExpression(x) || ts.isNonNullExpression(x) || ts.isTypeAssertionExpression(x) || ts.isSatisfiesExpression(x)) x = x.expression; return x; };
   /** Whether an assignment target writes `name`: the name itself, or a destructuring pattern naming it anywhere (a key or a default
@@ -113,11 +114,14 @@ test("every write of the keep offset writes the reader's line beside it, in the 
     while (x.parent && (ts.isParenthesizedExpression(x.parent) || (ts.isBinaryExpression(x.parent) && x.parent.operatorToken.kind === ts.SyntaxKind.CommaToken))) x = x.parent;
     return x.parent && ts.isExpressionStatement(x.parent) && LIST(x.parent.parent) ? x.parent : null;
   };
-  /** The line's side counts only an assignment that always sets the line: a plain `=` whose target, bare, is pendingAnchorKeepAt.
-   *  A `??=` or `||=` can leave the line from an earlier keep in place, a `&&=` assigns only over a line already set, a compound
-   *  operator computes the new value from the old line, and a destructuring that names it as a key, a default or a property target
-   *  writes something else; one whose target is the name itself is refused too, the safe side. */
-  const setsLine = (n: ts.Node): boolean => { if (!ts.isBinaryExpression(n) || n.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false; const t = bare(n.left); return ts.isIdentifier(t) && t.text === "pendingAnchorKeepAt"; };
+  /** The line's side counts only an assignment that always sets the line: a plain `=` whose target, bare, is pendingAnchorKeepAt
+   *  and whose right-hand side does not name it. A `??=` or `||=` can leave the line from an earlier keep in place, and so can its
+   *  longhand (`pendingAnchorKeepAt = pendingAnchorKeepAt ?? x`, `= pendingAnchorKeepAt || x`); a `&&=` assigns only over a line
+   *  already set, a compound operator computes the new value from the old line, and a destructuring that names it as a key, a default
+   *  or a property target writes something else; one whose target is the name itself is refused too, the safe side, as is a right-hand
+   *  side that names it anywhere, even as a property or a key, whether or not it reads the old line. */
+  const namesLine = (n: ts.Node): boolean => { let hit = false; const walk = (m: ts.Node): void => { if (ts.isIdentifier(m) && m.text === "pendingAnchorKeepAt") hit = true; ts.forEachChild(m, walk); }; walk(n); return hit; };
+  const setsLine = (n: ts.Node): boolean => { if (!ts.isBinaryExpression(n) || n.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false; const t = bare(n.left); return ts.isIdentifier(t) && t.text === "pendingAnchorKeepAt" && !namesLine(n.right); };
   const keepY: ts.Node[] = [];
   const keepAt: ts.Node[] = [];
   const visit = (n: ts.Node): void => { if (writes(n, "pendingAnchorKeepY")) keepY.push(n); if (setsLine(n)) keepAt.push(n); ts.forEachChild(n, visit); };
@@ -133,7 +137,7 @@ test("every write of the keep offset writes the reader's line beside it, in the 
     const i = list.indexOf(s);
     return !lineStmts.some((t) => t === s || (t.parent === s.parent && Math.abs(list.indexOf(t) - i) === 1));
   }).map(shown);
-  assert.deepEqual(unpaired, [], "a write of pendingAnchorKeepY that is not a plain statement with a plain `=` of pendingAnchorKeepAt beside it");
+  assert.deepEqual(unpaired, [], "a write of pendingAnchorKeepY that is not a plain statement with a plain `=` of pendingAnchorKeepAt beside it, one whose right-hand side does not name pendingAnchorKeepAt");
   // …and the reload flag the same way (pendingAnchorKeepReload's declaration: set with pendingAnchorKeepY, cleared wherever it is cleared,
   // true only at the reload restore's arm). scrollToAnchor reads it only under a non-null offset, to decide whether its keep-offset landing
   // re-bases the boxes-above observer, so every write of the offset needs a plain `=` of the flag to true or false in the same run of plain
