@@ -21,7 +21,8 @@
 # sudo -D in DIR, refuses an unknown cp/mv/install/ln option, treats $HOME and ~ as unreadable once the command
 # reassigns HOME, and refuses a variable whose literal head parents or sits under a tracked project; and it
 # states the contract plainly (best-effort against known write forms, allow by default) with the current list of
-# unmodelled writers that pass, the same paragraph the hook header, hooks/README.md and docs/install.md carry.
+# unmodelled writers that pass, the same paragraph the hook header, hooks/README.md and docs/reference.md's section
+# "What the installer links into `~/.claude/`" carry (fork main moved that section out of docs/install.md).
 # The walk-around lens second pass (2026-09-19) extended the round-4 paragraph with the six families it closed
 # (a glued option short form; any HOME assignment form; an in-command rm/mv/link mutation; a stat error refusing
 # from any cwd; a marker nested under the project; and a cd the guard cannot know ran). The third pass
@@ -94,7 +95,8 @@
 # verifier) makes the statement's list of known writers read as examples (dd, truncate and sort -o are among the writers the
 # guard knows, and the list had read as the whole set) and names a piped script beside a name and a script among the texts
 # the guard cannot read.
-# The after-source fixes (2026-10-03) add two clauses to the same paragraph, as hooks/README.md and docs/install.md carry
+# The after-source fixes (2026-10-03) add two clauses to the same paragraph, as hooks/README.md and docs/reference.md's
+# installer section carry
 # them: behind nohup or setsid, whose options take no value, a non-literal word is read as the command name, as a command
 # named by a variable is, unless its output goes through `|` to another command; and a command named by a variable joins
 # the constructs after which a name stays opaque. Their second verify round (2026-10-03) extends the first clause to output

@@ -923,12 +923,15 @@
 // judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal
 // head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes that reaches a tracked file is
 // a rule to state, not a residual. The same
-// paragraph is on the vendored SKILL.md, hooks/README.md and docs/install.md, pinned identical by a test. THE RESIDUAL PROPERTY stands
+// paragraph is on the vendored SKILL.md, hooks/README.md and docs/reference.md's section "What the installer links into `~/.claude/`",
+// pinned identical by a test; fork main moved that section out of docs/install.md, and the plan test keeps docs/install.md as its label,
+// so the next sentence names it that way. THE RESIDUAL PROPERTY stands
 // identical on five surfaces, the developer ones: this header, decision 47, hooks/README.md, docs/install.md and the ledger entry, pinned
 // so by a test; its classes are the ones tools/romp-track-bash-guard.test.mjs's RESIDUAL_TABLE measures, and THE RESIDUAL TABLE holds 225
 // rows over 8 classes, a figure that test asserts from the table's own length and class count on this header, decision 47 and the ledger
-// entry. The vendored SKILL.md states the classes in its reader's words, held to RESIDUAL_CLASSES by name, and docs/guide.md points
-// at docs/install.md for the statement (round 7 of fork PR #780 review, thirty-fifth commit, the reviewer's regression-2, extra7-3 and
+// entry. The vendored SKILL.md states the classes in its reader's words, held to RESIDUAL_CLASSES by name, and the guide's sentences on the
+// refusal, in docs/reference.md's Files pane section since fork main moved them out of docs/guide.md, point at that file's installer
+// section for the statement (round 7 of fork PR #780 review, thirty-fifth commit, the reviewer's regression-2, extra7-3 and
 // extra6-4; each had carried the developer paragraph, review provenance and the hook's internal names included).
 // ROUND 6, SEVENTH COMMIT (2026-09-21; the round's three verifiers on the sixth commit's head): a regression, an unsound reading and the round's
 // pre-existing allows, the mechanism fixed and the rest disclosed as residual rows. THE SPLICED PRINTER (printerOf, splicedPrinter, splicedOutput):
@@ -9706,7 +9709,8 @@ function inPlayFor(u, cwd, memo) {
       // the drop needs an absolute spelling: a relative numeric target is measured against its own project above
       // (the refuse direction, round 3) and stays refused here even when the write-time directory is known and
       // outside every project in play, a documented false refusal (round 2 declined to trade it for an allowance
-      // that would rest on the write-time directory; docs/install.md states it)
+      // that would rest on the write-time directory; docs/reference.md's section "What the installer links into
+      // `~/.claude/`" states it)
       if (path.isAbsolute(u.text) && hits.every((h) => numericOutside(view, h.root))) return null;
       if (view.folder) return { ...hits[0], unknownFolder: view.folder, carried: path.isAbsolute(u.text) && view.text.startsWith(hits[0].root + '/') };
     }

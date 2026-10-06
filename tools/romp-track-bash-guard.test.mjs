@@ -1605,8 +1605,9 @@ test('a command the lexer cannot see through and that names no target is allowed
 // them behavioural and pinned in the addendum tests below by the shape that reaches each mechanism alone:
 // numericOutside's three spellings (the root's own segment past the cap, the literal directory part resolved, a
 // candidate entry that leads into the project), couldSpell's literal dollar, the unresolvable prefix, and the
-// own-project cut at the first expansion mark; the three prose clauses (docs/install.md, the hook's README row,
-// the ledger entry) are pinned in tools/file-review-plan-bash-guard.test.mjs.
+// own-project cut at the first expansion mark; the three prose clauses (docs/reference.md's section "What the
+// installer links into `~/.claude/`", the hook's README row, the ledger entry) are pinned in
+// tools/file-review-plan-bash-guard.test.mjs, which labels that section docs/install.md, where it stood before fork main moved it.
 
 const NOT_LITERAL = /is not a literal path/;
 
@@ -2024,7 +2025,8 @@ test('review round 3: every target the hook cannot read is measured against the 
   // now asks the literal directory part of every unreadable target the hook can place, resolving a relative one against
   // the write-time directory, in the refuse direction only: the prefix names the folder the write lands in or one above
   // it, never one below, so the widening can add refusals and never an allowance; a relative numeric target stays
-  // refused from a cwd in a project even when it lands outside (docs/install.md states it). Both directions: the
+  // refused from a cwd in a project even when it lands outside (docs/reference.md's section "What the installer links
+  // into `~/.claude/`" states it). Both directions: the
   // untracked subfolder of the same project stays allowed in every spelling. Beside them, the class round 2's addendum
   // ruled for the first segment, restated: the landing gate on the literal directory part is folder-granular, so a
   // numeric folder name ANYWHERE that gate holds (`<root>/docs/x-$$/y.md`, docs/ holding a tracked file) is refused
@@ -8717,7 +8719,8 @@ test("round 6, second commit, THE OUTPUT MODEL: a subshell or a `{ }` group of e
 
 // THE RESIDUAL TABLE (round 6's second commit; round 5's ruling C): every shape the round could name that still reaches a tracked
 // file from the tracked cwd (or the cwd the row names, since round 6's thirteenth commit), run through the hook (allowed) and the shells (the writers measured), each under the class of THE
-// RESIDUAL PROPERTY stated on the hook header, decision 47, hooks/README.md, docs/install.md and the ledger entry (the vendored SKILL.md
+// RESIDUAL PROPERTY stated on the hook header, decision 47, hooks/README.md, docs/reference.md's section "What the installer links into
+// `~/.claude/`" and the ledger entry (the vendored SKILL.md
 // states the classes in its reader's words, held to RESIDUAL_CLASSES by name in the thirty-fifth commit's test below). A row whose program this box lacks is NOT RUN by name. The table is the population the property is a
 // statement over: a shape added here must be under one of its classes (the class is a key of RESIDUAL_CLASSES, whose text the
 // property carries), and a row that stops writing, or that the hook starts refusing, reds here (a rule to state, not drift).
@@ -18002,6 +18005,12 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS3-residual-loop-plain', 'na', 'read c <<< ln; for i in 1 2; do echo y > scratch/lnk/report.md; "$c" -s ../docs scratch/lnk; done', BZ, 'allow'],
       ['AS3-residual-loop-cd', 'na', 'for i in 1 2; do echo y > report.md; cd docs; done', A, 'allow'],
       ['AS3-residual-loop-ln', 'na', 'for i in 1 2; do echo y > scratch/lnk/report.md; ln -s ../docs scratch/lnk; done', A, 'allow'],
+      // and the command named by a variable behind `nohup --`, `env --` or `command --` in that place, read once the same way (found by probe when
+      // fork PR 975's body was checked): the road such a head takes leaves the directory not known for what follows it in the text alone, and the
+      // write the next pass makes is not read again
+      ['AS3-residual-loop-nohup-dd', 'na', 'read c <<< ln; for i in 1 2; do echo y > scratch/lnk/report.md; nohup -- "$c" -s ../docs scratch/lnk; done', BZ, 'allow'],
+      ['AS3-residual-loop-env-dd', 'na', 'read c <<< ln; for i in 1 2; do echo y > scratch/lnk/report.md; env -- "$c" -s ../docs scratch/lnk; done', BZ, 'allow'],
+      ['AS3-residual-loop-command-dd', 'na', 'read c <<< ln; for i in 1 2; do echo y > scratch/lnk/report.md; command -- "$c" -s ../docs scratch/lnk; done', BZ, 'allow'],
       // DISCLOSED (M3's stopping rule; the seventh verify round's fixer, by probe): the guard reads no text that find's -exec or xargs runs, so a text
       // run once per file or per input line, whose relative write comes before the program that makes a link, passes, at fork main as here, and the
       // second run writes the tracked report through the link the first run made (all three shells, since the text runs in bash; run once, it writes
@@ -18084,6 +18093,10 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS3-sudoD-flock-script', 'na', "sudo -D docs flock {OUT}/scratch/lk -c 'cp ../base/report.md report.md'", null, 'name', null],
       ['AS3-envC-var-flock-script-dir', 'na', "read d <<< docs; env -C \"$d\" flock {OUT}/scratch/lk -c 'cp ../base/report.md report.md'", BZ, ['dir', ['names report.md, a relative path', 'an earlier `env -C` names "$d", a directory the shell fills in']]],
       ['AS3-ctl-envC-flock-script-untracked', 'na', "env -C docs flock {OUT}/scratch/lk -c 'cp ../base/report.md other.md'", N, 'allow'],
+      // DISCLOSED (M3's stopping rule; found by probe when fork PR 975's body was checked): the same string held in a variable a `read` gave is not
+      // read, the residual property's class of a script held in a variable (RT-read-var-head's), so it passes at fork main as here while bash and zsh
+      // write the tracked report (dash has no here-string); a follow-up, named in decision 47
+      ['AS3-residual-envC-flock-read-script', 'na', "read s <<< 'cp ../base/report.md report.md'; env -C docs flock {OUT}/scratch/lk -c \"$s\"", BZ, 'allow'],
       // S4-1 (the fourth verify round, a false allow this round's flock fix opened and the operand and plain roads carried): GNU env and sudo apply the
       // LAST of one invocation's -C/--chdir/-D, relative to where that invocation starts, while the guard chains them, so a second one in a single
       // invocation leaves the directory not known (the restricted side; a nested `env -C a env -C b` still chains, the control). bash, zsh and dash
@@ -18167,6 +18180,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS3-residual-chrt-dd-lead', 'na', 'chrt -o -- 0 cp base/report.md docs/report.md', A, 'allow'],
       ['AS3-residual-nohup-dd-pipe', 'nad', "read e <<< echo; nohup -- $e 'cp ../base/report.md report.md' | bash", BZ, 'allow'],
       ['AS3-residual-env-dd-pipe', 'nad', "read e <<< echo; env -- $e 'cp ../base/report.md report.md' | bash", BZ, 'allow'],
+      ['AS3-residual-plain-pipe', 'nad', "read e <<< echo; $e 'cp ../base/report.md report.md' | bash", BZ, 'allow'],   // the unwrapped form the two rows above pass as, its own witness (found by probe when fork PR 975's body was checked)
     );
     // the chdir option as the command spells it, in every refusal that names it (the fifth verify round's tg-m5-7, and the sixth's tg-m6-5): for each
     // wrapper whose table carries a chdir option (read from WRAPPER_OPT, as the census below reads it), each spelling commandOf reads (the short and
@@ -18352,6 +18366,11 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-residual-assign-zsh-repeat', 'nan', `p={OUT}/scratch/x.md; repeat 'p=1' true; echo y > "$p"`, ['zsh'], 'allow'],
       ['AS8-residual-jobs-x-cp', 'na', 'jobs -x cp base/report.md docs/report.md', ['bash'], 'allow'],
       ['AS8-residual-assign-zsh-exit-trap', 'nan', `p={OUT}/scratch/x.md; trap 'echo y > "$p"' EXIT; exit 'p=0'`, ['zsh'], 'allow'],
+      // M3, pre-existing (fork main allows it, as this change does, while bash writes; a witness row, named in decision 47; found by probe when fork PR
+      // 975's body was checked): an assignment of RANDOM is read as the value it gives, while bash keeps no such value (it evaluates the value as
+      // arithmetic, reports the error and goes on, `$RANDOM` a number), so a target that climbs out of the tracked notes/ folder through the value
+      // makes a new file in that folder in bash; zsh stops at the error and dash keeps the text, so neither writes
+      ['AS8-residual-special-param-random', 'na', 'RANDOM=../scratch/x; echo y > notes/$RANDOM', ['bash'], 'allow'],
       // M3, pre-existing (fork main allows each, as this change does, while zsh writes; a witness row each, named in decision 47; found by the text lens on
       // fork PR 975's round 1, tg-t12-9): zsh closes a try block at a `}` with no `;` before it when `always` follows (`{ cmd } always { .. }`), where the
       // lexer reads the `}`, `always` and `{` as words of the command inside, so an assignment, a read and a cd in the block do not count and a write
@@ -18732,7 +18751,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# THE MADE NAME: ${madeRan.size} of ${Object.keys(MADE).length} rows ran their legs here`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 181, AS4: 17, AS5: 67, AS6: 19, AS7: 17, AS8: 223 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 186, AS4: 17, AS5: 67, AS6: 19, AS7: 17, AS8: 224 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived

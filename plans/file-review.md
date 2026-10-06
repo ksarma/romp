@@ -3262,7 +3262,8 @@ follow-on (2026-09-10), that a session writing a tracked file any other
 way, with its editing tools or a shell command, is refused and pointed at track-edit (`tests/test_guide_files_bash_guard.py`
 holds the sentence to the hook), and that sessions are asked to include `.trackchanges/` when they commit their own work while
 the person's commits stay theirs (`tests/test_guide_files_commit_folder.py` holds it to the prompt, the skill and decision
-25); `docs/install.md` names the Bash-side guard beside the vendored one. With the tie-break (2026-09-11), that a
+25); the installer's section in the reference, "What the installer links into `~/.claude/`", names the Bash-side
+guard beside the vendored one. With the tie-break (2026-09-11), that a
 comment on text which occurs more than once is placed again by its own record of where it was, which copy it is and
 the heading above it when the file has changed around that occurrence, that when none of those can tell the copy
 shown is a guess and the card says so, and that saving the comment again from the right copy adds a new card on that
@@ -3288,7 +3289,7 @@ lexer legs under the viewer's configuration in CI, and `tests/test_guide_files_o
 paragraph's sentences in their order and the rule's two exclusions at the source).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
-kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
+kernel, and under what the installer links into `~/.claude/` names that tooling. With Slice 4,
 `SECURITY.md`'s output-sanitization bullet names the PDF renderer (pdf.js parsing on the
 dashboard's origin, in a Worker, with pixels as its only sink, as Security posture states it),
 and the `pdf-chunk.ts` header says the same in a sentence, so a session upgrading pdfjs-dist
@@ -3720,7 +3721,8 @@ document stands on its own, each with the reasoning it was given.
     with the construct named: a cd after `&&`/`||`, a cd in a pipeline or backgrounded, a cd under a wrapper, `pushd
     -n` or a rotate, a physical cd (`cd -P`, after `set -P`, or an option not modelled), and a call of a function whose
     body ran a cd; `env -C DIR` resolves its operand physically, as chdir(2) does. The guard states its contract on the
-    hook header, the vendored skill, hooks/README.md and docs/install.md: it is best-effort against known write forms,
+    hook header, the vendored skill, hooks/README.md and docs/reference.md's section on what the installer links into
+    `~/.claude/`: it is best-effort against known write forms,
     its default on an unrecognised form is allow (deliberately not flipped, since flipping it would refuse almost all
     normal work), the one class flipped to refuse is a path it cannot check (family 4), and the unmodelled writers that
     still reach a tracked file are listed.
@@ -3933,7 +3935,8 @@ document stands on its own, each with the reasoning it was given.
     `noglob`, `nocorrect` and `-` (`ZSH_MODIFIERS`; 14 live rows in zsh alone, bash and dash failing on the word and
     writing nothing) were read as commands named so and hid the writer behind them; they are wrappers of the shape of
     `command` and `builtin`, with an empty option table and a `WRAPPED_CD_WHY` text for a cd behind one, and the wrapper
-    list on hooks/README.md, docs/install.md and the vendored SKILL.md names them. RO: a name made readonly then written by
+    list on hooks/README.md, docs/reference.md's section on what the installer links into `~/.claude/` and the vendored
+    SKILL.md names them. RO: a name made readonly then written by
     a `declare`, `typeset`, `export` or `unset`, which bash refuses and continues past with the readonly value (dash too
     where the word is no command of its) while the guard adopted the later one (`readonly x=docs/report.md; declare
     x=scratch/keep.md; cp base/report.md $x` wrote the tracked file in both); a readonly name keeps its value and every
@@ -4982,10 +4985,13 @@ document stands on its own, each with the reasoning it was given.
     residual.
     ROUND 7 OF FORK PR #780 REVIEW, THIRTY-FIFTH COMMIT (2026-09-24; the reviewer's regression-2, extra7-3 and extra6-4):
     THE RESIDUAL PROPERTY stands identical on five surfaces, the developer ones: this decision, the hook header,
-    hooks/README.md, docs/install.md and the ledger entry, pinned so by the plan test. The user-facing surfaces had
+    hooks/README.md, docs/install.md and the ledger entry, pinned so by the plan test (docs/install.md is that test's
+    label for docs/reference.md's section on what the installer links into `~/.claude/`, which fork main moved out of
+    docs/install.md). The user-facing surfaces had
     carried the developer paragraph, review provenance and the hook's internal names included: the vendored SKILL.md
     now states the classes in its reader's words, each under its own name and held to RESIDUAL_CLASSES by name,
-    and docs/guide.md keeps its sentences on the refusal and points at docs/install.md for the statement. THE
+    and the guide's sentences on the refusal, in docs/reference.md's Files pane section since fork main moved them out of
+    docs/guide.md, point at that file's installer section for the statement. THE
     RESIDUAL TABLE holds 225 rows over 8 classes, a figure tools/romp-track-bash-guard.test.mjs asserts from the table's
     own length and class count on this decision, the hook header and the ledger entry.
     ROUND 7 OF FORK PR #780 REVIEW, THIRTY-SIXTH COMMIT (2026-09-24; the reviewer's verifier on the thirty-fifth commit,
@@ -5051,7 +5057,7 @@ document stands on its own, each with the reasoning it was given.
     allows it (AS3-residual-link-nohup-dd-abs). The relative write's own refusal leads there: its one remedy, the target
     spelled as an absolute path, turns AS3-link-nohup-dd-rel into that allowed row, which bash and zsh run onto the
     tracked report, so on this shape the remedy does not keep the write off a tracked file (the fifth verify round's
-    T5-9). M3's stopping rule leaves eleven false allows fork main also allows as
+    T5-9). M3's stopping rule leaves twelve false allows fork main also allows as
     disclosed follow-ups, not fixed here: an unread head (a command named by a
     variable with no wrapper, or behind `--`) takes no road where it is backgrounded, piped, in a `( )` subshell or in a
     `$(..)`, so a link it makes there is followed by a later relative write while allowed, and bash and zsh write the
@@ -5063,14 +5069,19 @@ document stands on its own, each with the reasoning it was given.
     row each, which the rows test derives from the table: flock's lockfile, AS3-residual-flock-dd-lead; taskset's mask,
     AS3-residual-taskset-dd-lead; chrt's priority, AS3-residual-chrt-dd-lead); a command named by a variable behind
     `nohup --` or `env --` whose output is piped passes as the unwrapped form does (AS3-residual-nohup-dd-pipe,
-    AS3-residual-env-dd-pipe); where the program behind `nohup --` runs in a function call or a loop body, the body is
-    marked as moving the shell, so the call or the loop's close leaves the directory unknown with none held, and a
-    later relative write from a cwd in no project passes while bash and zsh write (the reviewer's t8-9:
+    AS3-residual-env-dd-pipe), and the unwrapped form, `read e <<< echo; $e '<cp>' | bash` from docs/, passes while
+    bash and zsh write (AS3-residual-plain-pipe); where the program behind `nohup --` runs in a function call or a
+    loop body, the body is marked as moving the shell, so the call or the loop's close leaves the directory unknown
+    with none held, and a later relative write from a cwd in no project passes while bash and zsh write (the reviewer's t8-9:
     AS3-residual-nohup-dd-func-held-out, AS3-residual-nohup-dd-loop-held-out; the follow-up holds the directory
     through the body as THE HELD DIRECTORY holds it after the program); behind `env -C <absolute tracked dir>` before
     `nohup "$c"`, the filled-in word's operands are judged in the shell's directory, so from a cwd in no project no
     project is in play and the write passes (the reviewer's e10-3, AS3-residual-envC-abs-nohup-filled-out; the
-    follow-up judges the rest words behind the wrappers' chdirs, as the `time -o` judgment already does); after `nohup
+    follow-up judges the rest words behind the wrappers' chdirs, as the `time -o` judgment already does); flock's `-c`
+    string held in a variable a `read` gave, behind a chdir wrapper (`read s <<< '<cp>'; env -C docs flock <lock> -c
+    "$s"` from the project's root), is not read, the residual property's class of a script held in a variable, so it
+    passes while bash and zsh write the tracked report, where the same string spelled in the command is read behind
+    the chdir and refused (AS3-residual-envC-flock-read-script, beside AS3-envC-flock-script); after `nohup
     "$c"` fork main's B2 poison makes a later variable read unreadable, so from a cwd in no project a target built
     from a variable that lands on a tracked file is dropped (e10-3, AS3-residual-nohup-filled-poison-out; the
     follow-up walks such a command again with that poison set aside, as THE TWO WALKS do for THE UNREAD HEAD's); a backup side-file
@@ -5082,8 +5093,9 @@ document stands on its own, each with the reasoning it was given.
     (AS8-residual-bound-abs-after-cd; the follow-up reads an absolute head whatever the directory); a loop body is
     read once, so a relative write in it before a command that moves the shell or makes a link the next pass writes
     through is judged where the first pass stands, when that command is a literal cd, a literal ln or a command named
-    by a variable (AS3-residual-loop-cd, AS3-residual-loop-ln,
-    AS3-residual-loop-plain; the follow-up reads the body again from the state its first walk leaves: the seventh
+    by a variable, unwrapped or behind `nohup --`, `env --` or `command --` (AS3-residual-loop-cd,
+    AS3-residual-loop-ln, AS3-residual-loop-plain, AS3-residual-loop-nohup-dd, AS3-residual-loop-env-dd,
+    AS3-residual-loop-command-dd; the follow-up reads the body again from the state its first walk leaves: the seventh
     verify round's tg-m7-2); the guard reads no text that another program runs once per file or per input line (find's
     `-exec`, xargs), so a relative write in such a text before the program that makes a link passes, and bash, zsh and
     dash write the tracked report on the second run, through the link the first run made
@@ -5221,7 +5233,11 @@ document stands on its own, each with the reasoning it was given.
     AS8-residual-assign-zsh-glob-qualifier, AS8-residual-assign-zsh-e-flag); zsh's repeat count, which the walk reads as
     no word of a command (AS8-residual-assign-zsh-repeat); the command bash's `jobs -x` runs, which the walk does not
     peel as a wrapper (AS8-residual-jobs-x-cp); and a trap's action, read where the trap is set while it runs where it
-    fires, after an exit whose status assigns the name it writes through (AS8-residual-assign-zsh-exit-trap); and zsh's
+    fires, after an exit whose status assigns the name it writes through (AS8-residual-assign-zsh-exit-trap); an
+    assignment of RANDOM, read as the value it gives while bash keeps none (bash evaluates the value as arithmetic,
+    reports the error and goes on with `$RANDOM` a number), so a target that climbs out of the tracked notes/ folder
+    through that value (`RANDOM=../scratch/x; echo y > notes/$RANDOM` from the project's root) makes a new file in
+    that folder in bash (AS8-residual-special-param-random); and zsh's
     try block closed at a `}` with no `;` before `always` (`{ cmd } always { .. }`), whose `}`, `always` and `{` the
     lexer reads as words of the command inside, so an assignment, a `read` and a cd in the block do not count
     (AS8-residual-zsh-always-read, AS8-residual-zsh-always-assign, AS8-residual-zsh-always-cd-out; the text lens's
