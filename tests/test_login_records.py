@@ -308,8 +308,30 @@ class TheTokenCommand(unittest.TestCase):
                         | {k for k in seen if k.startswith(("LC_", "XDG_"))} | injected, sorted(seen))
 
     def test_a_hung_command_is_cut_by_the_bound(self):
+        import shlex
+        import signal
         import time as _t
-        rec = _rec(self.state, "Hung", tokenCmd="sleep 30")
+        # The command hangs in a child of the shell and that child holds the stdout pipe, the shape a token command has
+        # under dash (Debian's and Ubuntu's /bin/sh forks even a lone command): the bound must return while the child is
+        # still there. run_helper's bound kills the shell alone (subprocess.run kills the process it started, and the
+        # command shares the test's process group), so the child outlives the call; it records its pid and the test ends
+        # it. Left running, the `sleep 30` outlives the test, and a run that ends while it still sleeps ends red:
+        # tests/conftest.py's run-end process check names it. Backgrounded and waited for so that every shell forks it:
+        # bash execs a lone `sleep 30` in its own place, and the kill would then end the hang itself.
+        pidfile = Path(tempfile.mkdtemp()) / "hung.pid"
+
+        def end_the_child():
+            try:
+                pid = int(pidfile.read_text())
+            except (OSError, ValueError):
+                return          # no record, no child: the shell writes the pid right after the fork, a second before the cut
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass            # already gone, as under a runner that ends the command's whole process group
+
+        self.addCleanup(end_the_child)
+        rec = _rec(self.state, "Hung", tokenCmd="sleep 30 & echo $! > %s; wait" % shlex.quote(str(pidfile)))
         t0 = _t.time()
         with self.assertRaises(sb._cred.CredentialError) as cm:
             self._read(rec["id"], timeout_s=1)
