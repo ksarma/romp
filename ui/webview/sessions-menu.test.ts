@@ -2,26 +2,25 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { inBrowser, frames, requireCjs, UI, EXT, ORIGIN } from "./real-viewer-leg";
+import { createRequire } from "node:module";
 
 // The Sessions pane's row menu (the user 2026-09-16): Rename and Delete on the tab strip's own roads, through the shared
 // builder. These pins hold the wiring's shape; the served lab (tests/test_sessions_menu_served.py) drives it.
 //
-// THE MENU'S CLOSE AND THE KEYBOARD (the catch-up fold's review, round 1, ui-1): the row menu's onClose refocused the
-// row's head on EVERY close, the window's blur included, and the blur is how the menu closes when the person clicks into
-// another pane without picking. Reproduced in Firefox with the served shell's frame arrangement (the chat and Sessions
-// panes as sibling iframes): right-click a row, click the chat composer, and the composer LOSES the keyboard; the letters
-// typed next land on the head, where Space or Enter opens that session in place of typing. Chromium keeps the composer
-// through the frame switch (a frame-focus re-entrancy guard), so there the residue is a stale activeElement, the head, in
-// the unfocused Sessions frame. The fix guards the return as the builder does: a close that followed the focus out of
-// the document (document.hasFocus() false) moves nothing; Escape, Tab and a pick still hand the focus back to the head,
-// by sid, so the return survives a push that rebuilt the list under the open menu (the builder's own return only
-// refocuses a still-connected opener, which is why onClose stays). Two browser legs below run the REAL fleet.ts bundle
-// in that frame arrangement: the Chromium one is the fails-before case (the residue: after the menu closed on a click
-// into the chat frame, the Sessions frame's activeElement is the head as written and the body under the guard), with
-// the Escape return and the rebuild-then-Escape return beside it; the Firefox one pins the user-visible loss itself and
-// skips LOUDLY where that engine is not installed (CI installs no browsers). Synthetic values only: the notes-api world,
-// the placeholder sid.
+// THE MENU'S CLOSE AND THE KEYBOARD: the dashboard hosts the chat and the Sessions panes as sibling iframes, and the shared
+// builder closes an open menu on its window's blur, which is what a click into another pane is. The row menu's onClose
+// once refocused the row's head on EVERY close, the blur included: right-click a row, click the chat composer without
+// picking, and in Firefox the composer LOST the keyboard, the next letters landing on the head, where Space or Enter opens
+// that session in place of typing; Chromium kept the composer through the frame switch, and the residue there was a stale
+// activeElement, the head, in the unfocused Sessions document. The return is now bounded by the predicate the builder's own
+// return (ctx-menu.ts) and the pane's rebuild restore already use: a close that followed the focus out of the document
+// (document.hasFocus() false) moves nothing; Escape, Tab and a pick still hand the focus back to the head, by sid, so the
+// return survives a push that rebuilt the list under the open menu (the builder's own return refocuses only a
+// still-connected opener, which is why onClose stays). The executing legs: the Chromium read is road 9 of the served lab
+// (the real shell's chat and Sessions frames over a hermetic kernel, run in CI), which reads the residue after a click into
+// the chat frame's composer and the rebuild-then-Escape return; the Firefox leg at the end of this file runs the real
+// fleet.ts bundle in a stand-in of that frame arrangement and reads the user-visible loss, skipping LOUDLY where that
+// engine is not installed. Synthetic values only: the notes-api world, the placeholder sid.
 const PANE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "fleet.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
@@ -71,7 +70,7 @@ test("the menu's rows: Rename first, Delete second and marked danger; the danger
   assert.match(fn, /\{ label: "Rename", sub: RENAME_SUBLINE, pick: \(\) => startRowRename\(sid\) \},\s*\n\s*\{ label: "Delete", sub: "ends the session; its history stays on disk", danger: true, pick: \(\) => confirmEndSession\(sid\) \},/,
     "both picks carry the sid alone");
   assert.match(fn, /onClose: \(\) => \{ if \(!document\.hasFocus\(\)\) return; const h = headOf\(sid\); if \(h\) h\.focus\(\{ preventScroll: true \}\); \}/,
-    "focus returns to the row's head when the menu closes (round two, low a), unless the close followed the focus out of the document: the window's blur, a click into another pane (the fold review's ui-1: the composer lost the keyboard to the head in Firefox)");
+    "focus returns to the row's head when the menu closes, unless the close followed the focus out of the document (the window's blur: a click into another pane, where the composer lost the keyboard to the head in Firefox)");
   assert.doesNotMatch(fn, /onClose: \(\) => \{ const h = headOf\(sid\);/, "the unguarded return is gone");
   assert.match(PANE, /document\.addEventListener\("focusin", \(e\) => \{[^\n]*\n\s*focusedHead = \(e\.target as Element\)\.closest\?\.\("\.fl-head"\) as HTMLElement \| null;/,
     "the focused head is remembered as the node, never its sid alone");
@@ -96,20 +95,42 @@ test("a rebuild restores the focus only when it removed the head that held it an
   assert.equal((PANE.match(/focusedHeadSid/g) || []).length, 0, "the sid-keyed record is gone");
 });
 
-// ── the browser legs: the real fleet.ts bundle in the served shell's frame arrangement ─────────────────────────────────
+// ---- the Firefox leg: the real fleet.ts bundle in the shell's frame arrangement ----
 // The kernel's landing page hosts the chat and the Sessions panes as sibling same-origin iframes (f-chat and f-fleet). The
 // stand-in below is that arrangement: a chat frame holding a textarea composer, and a Sessions frame that is the kernel's
-// outline page stood in (the chat's sheet and fleet-pane.css, the page's own divs, the shim's acquireVsCodeApi recording
-// every post) running fleet.ts bundled from this tree as the webview build bundles it, fed one feed frame the way the shim
-// dispatches a kernel frame. No fake DOM: a real engine reads the focus.
-const web = (f: string) => fs.readFileSync(path.join(UI, f), "utf8").replace('@import "katex/dist/katex.min.css";', "");
+// outline page stood in (the chat's sheet and fleet-pane.css, the page's own divs, an acquireVsCodeApi recording every
+// post) running fleet.ts bundled from this tree as the webview build bundles it, fed one feed frame the way the shim
+// dispatches a kernel frame. No fake DOM: a real engine reads the focus. The Chromium read of the same scene lives in the
+// served lab (road 9), which CI executes; this leg is the engine where the loss was the keyboard itself.
+const EXT = process.cwd();                                        // npm test runs in vscode-extension
+const requireCjs = createRequire(path.join(EXT, "package.json"));   // playwright and esbuild from the extension, wherever this bundle was written
+const UI = path.resolve(EXT, "..", "ui", "webview");
+const ORIGIN = "http://notes-api.test";
 const SID = "11111111-2222-3333-4444-555555555555";
 const HEAD = '.fl-head[data-sid="' + SID + '"]';
 const MENU = ".ctx-menu.fl-sess-menu";
 const COMPOSER = "TEXTAREA#composer-input";
 
+let pw: any = null;
+try { pw = requireCjs("playwright"); } catch { pw = null; }
+/** Headless Firefox, or a LOUD skip: playwright's Firefox build is installed by hand (npx playwright install firefox under
+ *  vscode-extension); CI installs Chromium alone, after npm test, so this leg skips there and the served lab carries the CI read. */
+async function inFirefox(t: any, body: (browser: any) => Promise<void>): Promise<void> {
+  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it"); return; }
+  let browser: any;
+  try { browser = await pw.firefox.launch(); }
+  catch (e) { t.skip("no playwright Firefox on this machine; this leg needs that engine (npx playwright install firefox): " + String((e as Error).message).split("\n")[0]); return; }
+  try { await body(browser); } finally { await browser.close(); }
+}
+/** `n` animation frames of `frame`, so the page's own rAF work (the pane's render) has run. */
+async function frames(frame: any, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) await frame.evaluate(() => new Promise<void>((res) => { requestAnimationFrame(() => res()); }));
+}
+
 let paneBundle: string | null = null;
-/** fleet.ts as the webview build bundles it (esbuild.js's fleet.ts entry), in memory. */
+/** fleet.ts as the webview build bundles it (esbuild.js's fleet.ts entry, the same options), in memory. It asserts ONE output:
+ *  fleet.ts imports no sheet (fleet-pane.css is the build's own entry), so the page below inlines the sheets itself; a sheet
+ *  import added to fleet.ts would turn this into a stop, and the page would then take the sheet from the second output. */
 function bundlePane(): string {
   if (paneBundle) return paneBundle;
   const esbuild = requireCjs("esbuild");
@@ -121,16 +142,19 @@ function bundlePane(): string {
   paneBundle = r.outputFiles[0].text as string;
   return paneBundle;
 }
-/** The Sessions page: the kernel's outline page stood in, the shim's acquireVsCodeApi recording every post, then the real bundle. */
+/** The Sessions page: the kernel's outline page stood in (its search bar, list and foot), an acquireVsCodeApi recording every
+ *  post as the shim's does, then the real bundle. The chat's sheet loses its KaTeX import: no math renders here and the page has
+ *  no package to serve it from. */
 function panePage(): string {
-  return `<!DOCTYPE html><html><head><meta charset=utf-8><style>${web("styles.css")}\n${web("fleet-pane.css")}</style></head>
+  const sheet = CSS.replace('@import "katex/dist/katex.min.css";', "") + "\n" + fs.readFileSync(path.join(UI, "fleet-pane.css"), "utf8");
+  return `<!DOCTYPE html><html><head><meta charset=utf-8><style>${sheet}</style></head>
 <body><div id="fleet-search-bar"><div id="fleet-search-wrap"><input id="fleet-search" type="search" autocomplete="off" placeholder="Search"><button id="fleet-search-clear" type="button" hidden>x</button></div></div>
 <div id="fleet-list"></div><div id="fleet-foot"></div><script>
 window.__posted = [];
 window.acquireVsCodeApi = function () { return { postMessage: function (m) { window.__posted.push(m); } }; };
 </script><script>${bundlePane()}</script></body></html>`;
 }
-const CHAT = '<!DOCTYPE html><html><body style="margin:8px"><textarea id="composer-input" style="width:260px;height:80px"></textarea><p id="plain">chat pane stand-in</p></body></html>';
+const CHAT = '<!DOCTYPE html><html><body style="margin:8px"><textarea id="composer-input" style="width:260px;height:80px"></textarea><p>chat pane stand-in</p></body></html>';
 const SHELL = `<!DOCTYPE html><html><body style="margin:0"><div style="height:20px">shell stand-in</div><iframe id="f-chat" src="${ORIGIN}/chat" style="width:340px;height:560px"></iframe><iframe id="f-fleet" src="${ORIGIN}/fleet" style="width:620px;height:560px"></iframe></body></html>`;
 
 /** One feed frame as the kernel's push carries it: the session `name` with one open top inside the pane's age window. */
@@ -139,11 +163,11 @@ function feedFrame(name: string): Record<string, unknown> {
   return { type: "feed", now, nowAt: now * 1000, sessions: [], asks: [], ledgers: [{ sid: SID, name, color: { bg: "#3a86ff", fg: "#ffffff" }, status: { state: "ready" },
     ledger: { current: null, archivedTops: [], tree: [{ id: "g1", depth: 0, done: false, text: "Wire the notes-api health route", t: now - 60, mt: now - 60 }] } }] };
 }
-/** The shim's delivery of a kernel frame to the pane: a message event dispatched on the pane's window. */
+/** The shim's delivery of a kernel frame to the pane: a message event dispatched on the pane's window (frame-listener.ts). */
 const deliver = (fb: any, m: Record<string, unknown>): Promise<void> => fb.evaluate((f: Record<string, unknown>) => { window.dispatchEvent(new MessageEvent("message", { data: f })); }, m);
 
 type Mounted = { page: any; fa: any; fb: any; errors: string[] };
-/** The shell stand-in with the chat frame and the Sessions frame loaded, the pane fed one frame and the row painted. */
+/** The shell stand-in with the chat frame (fa) and the Sessions frame (fb) loaded, the pane fed one frame and the row painted. */
 async function mount(browser: any): Promise<Mounted> {
   const page = await browser.newPage({ viewport: { width: 1000, height: 600 } });
   const errors: string[] = [];
@@ -157,7 +181,7 @@ async function mount(browser: any): Promise<Mounted> {
     return route.fulfill({ status: 404, contentType: "text/plain", body: "" });
   });
   await page.goto(ORIGIN + "/");
-  const fa = page.frames().find((f: any) => f.url() === ORIGIN + "/chat"), fb = page.frames().find((f: any) => f.url() === ORIGIN + "/fleet");
+  const fa = await (await page.$("#f-chat")).contentFrame(), fb = await (await page.$("#f-fleet")).contentFrame();
   assert.ok(fa && fb, "both iframes loaded");
   await fb.waitForFunction(() => !!document.getElementById("fleet-list") && Array.isArray((window as any).__posted), null, { timeout: 10000 });
   await deliver(fb, feedFrame("web"));
@@ -167,86 +191,37 @@ async function mount(browser: any): Promise<Mounted> {
 }
 type Holder = { active: string; hasFocus: boolean };
 /** A frame's active element (tag, id, classes) and whether its document holds the page's focus. */
-const holder = (frame: any): Promise<Holder> => frame.evaluate(() => { const a = document.activeElement as HTMLElement | null; return { active: a ? a.tagName + (a.id ? "#" + a.id : "") + (a.className ? "." + String(a.className).split(/\s+/).filter(Boolean).join(".") : "") : "none", hasFocus: document.hasFocus() }; });
+const holder = (frame: any): Promise<Holder> => frame.evaluate(() => {
+  const a = document.activeElement as HTMLElement | null;
+  return { active: a ? a.tagName + (a.id ? "#" + a.id : "") + (a.className ? "." + String(a.className).split(/\s+/).filter(Boolean).join(".") : "") : "none", hasFocus: document.hasFocus() };
+});
 /** The sid of the session head holding the Sessions document's focus, or null. */
 const focusedHead = (fb: any): Promise<string | null> => fb.evaluate(() => { const a = document.activeElement as HTMLElement | null; return a && a.classList.contains("fl-head") ? (a.dataset.sid || null) : null; });
-const menuOpen = (fb: any): Promise<boolean> => fb.evaluate((sel: string) => !!document.querySelector(sel), MENU);
-const composer = (fa: any): Promise<string> => fa.evaluate(() => (document.getElementById("composer-input") as HTMLTextAreaElement).value);
-/** The pane's posts of one type (the shim's record). */
+const composerValue = (fa: any): Promise<string> => fa.evaluate(() => (document.getElementById("composer-input") as HTMLTextAreaElement).value);
+/** The pane's posts of one type (the stand-in acquireVsCodeApi's record). */
 const postedOf = (fb: any, type: string): Promise<unknown[]> => fb.evaluate((t: string) => (window as any).__posted.filter((m: any) => m && m.type === t), type);
 const waitMenu = (fb: any, open: boolean): Promise<unknown> => fb.waitForFunction(([sel, want]: [string, boolean]) => !!document.querySelector(sel) === want, [MENU, open], { timeout: 5000 });
-/** The composer typed in, the head right-clicked (the menu up, the Sessions frame holding the page's focus), then the click back into
- *  the composer, which closes the menu through the Sessions window's blur: the scene both engines' legs read after. */
+/** The scene: the composer typed in, the head right-clicked (the menu up, the Sessions frame holding the page's focus), then the
+ *  click back into the composer without picking, which closes the menu through the Sessions window's blur. */
 async function menuThenClickComposer(page: any, fa: any, fb: any): Promise<void> {
   await fa.click("#composer-input"); await page.keyboard.type("abc");
   assert.equal((await holder(fa)).active, COMPOSER, "the composer holds the keyboard before the menu");
   await fb.click(HEAD, { button: "right" });
   await waitMenu(fb, true);
   assert.equal((await holder(fb)).hasFocus, true, "the right-click gave the Sessions frame the page's focus, the menu up");
-  await fa.click("#composer-input");   // back to typing without picking: the Sessions window's blur closes the menu
+  await fa.click("#composer-input");
   await waitMenu(fb, false);
 }
 
-test("in a browser, the real Sessions bundle beside a chat frame: a click into the composer closes the open row menu and moves NOTHING in the Sessions frame (its activeElement is the body, not the head: the Chromium residue of the pull, the fails-before read), the composer keeps the keyboard and takes the next letters and no session opens; Escape still returns the focus to the head, and after a push rebuilt the list under the open menu Escape lands on the same session's new head (why onClose stays)", { timeout: 240000 }, async (t) => {
-  await inBrowser(t, async (browser) => {
-    const { page, fa, fb, errors } = await mount(browser);
-    // the pull: the menu closed by the blur, the head refocused (as written) or left alone (guarded)
-    await menuThenClickComposer(page, fa, fb);
-    const b = await holder(fb), a = await holder(fa);
-    assert.equal(await focusedHead(fb), null, "RESIDUE: after the menu closed on the click into the chat frame, the Sessions frame's activeElement is not the head (read " + b.active + "): the close followed the focus out of the pane and moved nothing");
-    assert.equal(b.active, "BODY", "the Sessions document's focus fell to its body with the menu's removal and stayed there");
-    assert.equal(b.hasFocus, false, "the Sessions document does not hold the page's focus");
-    assert.equal(a.active, COMPOSER, "the composer holds the keyboard after the close");
-    assert.equal(a.hasFocus, true, "the chat document holds the page's focus");
-    await page.keyboard.type(" hello");
-    assert.equal(await composer(fa), "abc hello", "the letters typed after the close reach the composer");
-    assert.deepEqual(await postedOf(fb, "openSession"), [], "no key pressed the head: no session was opened");
-    // the return the guard keeps: Escape hands the focus back to the head (the menu opened from the keyboard, as road 4 does)
-    await fb.evaluate((sel: string) => { (document.querySelector(sel) as HTMLElement).focus(); }, HEAD);
-    await fb.locator(HEAD).press("Shift+F10");
-    await waitMenu(fb, true);
-    assert.equal(await fb.evaluate((sel: string) => { const m = document.querySelector(sel); return !!m && m.contains(document.activeElement) && (document.activeElement as HTMLElement).classList.contains("ctx-item"); }, MENU), true, "a keyboard opening focuses the first row");
-    await page.keyboard.press("Escape");
-    await waitMenu(fb, false);
-    assert.equal(await focusedHead(fb), SID, "Escape: the focus returns to the row's head");
-    assert.equal((await holder(fb)).hasFocus, true, "the Sessions document holds the page's focus after Escape");
-    // a push rebuilds the list while the menu is open: the opener is detached, the builder's own return does nothing, and the sid-keyed onClose lands on the new head
-    await fb.evaluate((sel: string) => { (document.querySelector(sel) as HTMLElement).dataset.probe = "old"; }, HEAD);
-    await fb.click(HEAD, { button: "right" });
-    await waitMenu(fb, true);
-    await deliver(fb, feedFrame("web-two"));
-    await fb.waitForFunction((sel: string) => { const n = document.querySelector(sel + " .fl-name"); return !!n && n.textContent === "web-two"; }, HEAD, { timeout: 5000 });
-    assert.equal(await fb.evaluate((sel: string) => (document.querySelector(sel) as HTMLElement).dataset.probe, HEAD), undefined, "the push rebuilt the row: the head under the open menu is a new node");
-    assert.equal(await menuOpen(fb), true, "the menu is still up over the rebuilt list");
-    await page.keyboard.press("Escape");
-    await waitMenu(fb, false);
-    assert.equal(await focusedHead(fb), SID, "Escape after the rebuild: the same session's NEW head holds the focus (dropping onClose would have left it on the body)");
-    assert.equal(await fb.evaluate((sel: string) => (document.querySelector(sel + " .fl-name") as HTMLElement).textContent, HEAD), "web-two", "the head that holds the focus is the rebuilt one");
-    assert.deepEqual(errors, [], "no page errors");
-    await page.close();
-  });
-});
-
-let pw: any = null;
-try { pw = requireCjs("playwright"); } catch { pw = null; }
-/** Headless Firefox, the engine where the pull reproduced as the composer losing the keyboard, or a LOUD skip (CI installs no browsers). */
-async function inFirefox(t: any, body: (browser: any) => Promise<void>): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
-  let browser: any;
-  try { browser = await pw.firefox.launch(); }
-  catch (e) { t.skip("no playwright Firefox on this box; this leg needs that engine (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
-  try { await body(browser); } finally { await browser.close(); }
-}
-
-test("in Firefox, the same scene: after the click into the composer closed the row menu, the composer keeps the keyboard and takes the next letters, the head holds no focus and no session opens (as written, the head took the focus back and the letters landed on it, where Space or Enter opens the session)", { timeout: 240000 }, async (t) => {
+test("in Firefox, the real Sessions bundle beside a chat frame: after the click into the composer closed the row menu, the composer keeps the keyboard and takes the next letters, the head holds no focus and no session opens (with the unguarded return, the head took the focus back and the letters landed on it, where Space or Enter opens the session)", { timeout: 240000 }, async (t) => {
   await inFirefox(t, async (browser) => {
     const { page, fa, fb, errors } = await mount(browser);
     await menuThenClickComposer(page, fa, fb);
     const a = await holder(fa);
-    assert.equal(a.active, COMPOSER, "FIREFOX: the composer holds the keyboard after the close (read " + a.active + "; as written the head took it back)");
+    assert.equal(a.active, COMPOSER, "FIREFOX: the composer holds the keyboard after the close (read " + a.active + "; with the unguarded return the head took it back)");
     assert.equal(await focusedHead(fb), null, "FIREFOX: no head holds the Sessions document's focus after the close (read " + (await holder(fb)).active + ")");
     await page.keyboard.type(" hello");
-    assert.equal(await composer(fa), "abc hello", "FIREFOX: the letters typed after the close reach the composer, not the head");
+    assert.equal(await composerValue(fa), "abc hello", "FIREFOX: the letters typed after the close reach the composer, not the head");
     assert.deepEqual(await postedOf(fb, "openSession"), [], "FIREFOX: no key pressed the head: no session was opened");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();

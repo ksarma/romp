@@ -16,7 +16,7 @@ const GEAR = fs.readFileSync(path.join(ROOT, "ui", "webview", "gear.js"), "utf8"
 
 test("the shared Escape block wires the shell document AND every pane document", () => {
   assert.ok(ESC.includes("document.addEventListener('keydown',onEsc,true);"));
-  assert.ok(ESC.includes("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].forEach"), "every pane document, the fork's Waiting pane among them, and the gear's document (the hidden settings iframe) wired with the panes'");
+  assert.ok(ESC.includes("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].concat((function(){try{return JSON.parse(document.body.getAttribute('data-panes')||'[]').map(function(p){return 'f-'+p.id;});}catch(e){return [];}})()).forEach"), "every pane document, the fork's Waiting pane among them, and the gear's document (the hidden settings iframe) wired with the panes': the hand panes and the generic panes' frames from body[data-panes] (plans/panes-as-data.md phase three)");
   assert.ok(ESC.includes("f.contentDocument.addEventListener('keydown',onEsc,true);"));
   assert.ok(ESC.includes("f.addEventListener('load',wire);wire();"), "re-attached on every iframe (re)load");
   // and the block is actually spliced into the landing page

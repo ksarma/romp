@@ -34,7 +34,9 @@ test("render() gates both forced layouts on the flip decision, and remembers the
   // the decision is per column, read off the DOM itself: a column whose current key sequence equals the
   // planned one moved nothing, so neither its rects nor its fly are read or written; the stacked layout
   // (where a change in one section shifts the sections below it) widens a hit to every column
-  assert.match(SRC, /const differing = skipFlipOnce \? \[\] : FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*skipFlipOnce = false;\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? FLY_COLS : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);/);
+  // (boards phase four, PR 1886: the columns are the ACTIVE board's, activeCols(), and ensureCols returns its lists under
+  // cols.lists; the gate is the same per-column decision over them)
+  assert.match(SRC, /const differing = skipFlipOnce \? \[\] : activeCols\(\)\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\.lists\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\.lists\[k\]\)\)\)\);\n\s*skipFlipOnce = false;\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? activeCols\(\) : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);/);
   assert.match(SRC, /flyColumnChanges\(flipFirst, cols, flipCols\);/);
   // 2026-09-07 (upstream #1016): the release paint after a hidden stretch skips the pass once. On the
   // per-column gate that is an empty differing list, so no column's rects are read and nothing flies; the
@@ -68,11 +70,11 @@ test("a card repaints only when its object or a board-level input it reads chang
   assert.match(SRC, /function updateAskCard\(card: HTMLElement, it: AskItem\) \{\n\s*const a = card as any;\n\s*a\._it = it;/,
     "updateAskCard stashes the object the gate compares, first thing");
   // the env, built once per render from everything a card's paint reads outside its object: the status sets and
-  // self host, the hover/pin, the bell, the prefs, the host-down mark, the session's repository, and the fork's
-  // user-todo count (the ⚑ marker). The clock is NOT among them: the 15 s live pass moves the stamped ages in
-  // place instead of repainting cards.
-  assert.match(SRC, /const gate: GateEnv = \{\n\s*dot: dotFor, working: \(n\) => workingSet\.has\(n\), userTodos: userTodosMap,\n\s*focusId: hoverAskId \?\? pinnedAskId, pinnedId: pinnedAskId, notifyOn: cardNotifyOn,\n\s*prefs: \{ grouped: gprefs\.grouped, collapsed: gprefs\.collapsed, colormap: gprefs\.colormap \},\n\s*hostDown: hostIsDown, selfHost: feedSelfHost, repo: prRepoOf, seq: \+\+renderSeq,\n\s*\};/);
-  assert.match(SRC, /reconcileCol\(cols\.asks, buckets\.asks, desired, gate\);\n\s*reconcileCol\(cols\.needsInput, buckets\.needsInput, desired, gate\);\n\s*reconcileCol\(cols\.completed, buckets\.completed, desired, gate\);/);
+  // self host, the hover/pin, the bell, the prefs, the host-down mark, the session's repository, the card's board
+  // title (card boards, phase three), and the fork's user-todo count (the ⚑ marker). The clock is NOT among them: the
+  // 15 s live pass moves the stamped ages in place instead of repainting cards.
+  assert.match(SRC, /const gate: GateEnv = \{\n\s*dot: dotFor, working: \(n\) => workingSet\.has\(n\), userTodos: userTodosMap,\n\s*focusId: hoverAskId \?\? pinnedAskId, pinnedId: pinnedAskId, notifyOn: cardNotifyOn,\n\s*prefs: \{ grouped: gprefs\.grouped, collapsed: gprefs\.collapsed, colormap: gprefs\.colormap \},\n\s*hostDown: hostIsDown, selfHost: feedSelfHost, repo: prRepoOf, seq: \+\+renderSeq,\n\s*boardTitle: \(it\) => boardLabelOf\(it\),[^\n]*\n\s*\};/);   // boardTitle: a card on a data-defined board (card boards, phase three)
+  assert.match(SRC, /for \(const k of activeCols\(\)\) reconcileCol\(cols\.lists\[k\], buckets\[k\], desired, gate\);/);
   // the latches: the card's Retry is a manual retry, and each latch re-arms on the kernel's reply for ITS request
   // (review find, 2026-09-08): a refused apiRetry names the session, reviveFailed names the revived id
   assert.match(SRC, /vscodeApi\?\.postMessage\(\{ type: "apiRetry", id: it\.sid, manual: true \}\);/);

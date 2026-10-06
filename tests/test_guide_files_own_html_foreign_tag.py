@@ -27,6 +27,13 @@ def _read(*parts):
         return f.read()
 
 
+def _ref_section(md, heading):
+    """The body of the `## ` or `### ` heading `heading` in docs/reference.md, up to the next `## ` or `### ` heading."""
+    m = re.search(r"^#{2,3} " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} |\Z)", md, re.S | re.M)
+    assert m, "docs/reference.md has no section %r" % heading
+    return m.group(1)
+
+
 def _flat(text):
     """Collapse hard wraps so an assertion survives a rewrap."""
     return re.sub(r"\s+", " ", text).strip()
@@ -83,7 +90,9 @@ SHAPE = "Intro <svg><title>icon</svg> beside end\\n"
 
 class TheGuideSaysSo(unittest.TestCase):
     def setUp(self):
-        self.paragraph = _paragraph(_read("docs", "guide.md"), "**A file's own HTML.**")
+        # the paragraph is docs/reference.md's "### A file's own HTML" since fold 4 moved the fork's paragraph out of the
+        # guide and merged it with the project's copy there (CLAUDE.md "The documentation front pages")
+        self.paragraph = _flat(_ref_section(_read("docs", "reference.md"), "A file's own HTML"))
 
     def test_the_qualification_stands_right_after_the_rule_it_qualifies(self):
         self.assertIn(RULE + " " + LOSS + " " + QUALIFICATION + " " + CLOSED, self.paragraph)

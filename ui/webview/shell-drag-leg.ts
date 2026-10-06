@@ -13,11 +13,30 @@ import { EXT } from "./real-viewer-leg";   // the cwd's tree, the one place that
 export const KERNEL_PY = path.resolve(EXT, "..", "kernel", "kernel.py");
 export const readKernel = (file: string = KERNEL_PY): string => fs.readFileSync(file, "utf8");
 
-/** The shell's landing script (kernel.py `_LANDING_JS`): the pane grows, the gutters, the timeline band's autosize. */
+/** The one Python splice in `_LANDING_JS` (the registry panes' gutter loop, from the project's panes-as-data change): the
+ *  columns after the chat, `[c + "-pane" for c in _COLUMN_IDS if c != "chat"]`, built at import. */
+const COLUMN_SPLICE = '""" + json.dumps([c + "-pane" for c in _COLUMN_IDS if c != "chat"]) + """';
+
+/** That splice's value, read from the same kernel text, so a caller's other commit gets its own list: _COLUMN_IDS is
+ *  _HAND_PANES without the timeline (kernel.py), and the splice drops the chat. */
+function columnPanes(py: string): string[] {
+  const hand = /^_HAND_PANES = \(([^)]*)\)/m.exec(py);
+  if (!hand) throw new Error("_HAND_PANES not found in kernel.py: re-anchor");
+  if (!py.includes('_COLUMN_IDS = tuple(k for k in _HAND_PANES if k != "timeline")'))
+    throw new Error("_COLUMN_IDS is no longer _HAND_PANES without the timeline: re-anchor");
+  return Array.from(hand[1].matchAll(/"(\w+)"/g)).map((m) => m[1]).filter((k) => k !== "timeline" && k !== "chat").map((k) => k + "-pane");
+}
+
+/** The shell's landing script (kernel.py `_LANDING_JS`) as the kernel serves it: the pane grows, the gutters, the timeline
+ *  band's autosize. The column splice is evaluated; any other Python splice in the slice fails loudly, since the raw
+ *  `""" + ... + """` text left in place is a syntax error that stops the whole script. */
 export function landingJs(py: string): string {
   const m = /_LANDING_JS = """\n([\s\S]*?)^"""/m.exec(py);
   if (!m) throw new Error("_LANDING_JS not found in kernel.py: re-anchor");
-  return m[1];
+  let js = m[1];
+  if (js.includes(COLUMN_SPLICE)) js = js.split(COLUMN_SPLICE).join(JSON.stringify(columnPanes(py)));
+  if (js.includes('"""')) throw new Error("_LANDING_JS carries a Python splice the extraction does not evaluate: re-anchor");
+  return js;
 }
 
 /** The pane row's CSS: every string literal from the `#chat-pane{flex:...}` rule through `.pane>iframe{...}` (the grows,

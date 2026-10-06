@@ -20,11 +20,16 @@ Shape of the machine:
 - Auth is machine-global (`codex login`): a missing login is surfaced PER SESSION via launch_error,
   loudly, the moment a session tries to run (the 2026-07-28 rule: never a silent non-start).
 
+- Mail: every thread carries the six postal tools as Codex DYNAMIC TOOLS (POSTAL_TOOL_SPECS); the app-server's
+  `item/tool/call` lands in _handle_approval and the kernel's `postal` callable posts to the bus AS the session,
+  so no credential enters the sandbox and Sandboxed and Auto mail alike (2026-09-19).
+
 Everything Claude-only returns its documented empty value and the kernel stays loud about it:
 set_fast/set_auth/stop_task/rewind_files → False, on_ask → False, current_ask → None.
 """
 from __future__ import annotations
 
+import copy
 import errno
 import fcntl
 import json
@@ -51,10 +56,15 @@ _runtime = load_source("romp_codex_runtime", HERE / "codex_runtime.py")
 # copy of that module when it is loaded (kernel.py loads it as romp_session_backend, and its
 # _UnownedBackend subclasses that copy's ABC); otherwise the file is loaded under its OWN module name, as sdk_backend
 # does, so re-executing the source never rebinds the ABC out from under a subclass.
-echo_text_key = (sys.modules.get("romp_session_backend")
-                 or load_source("romp_session_backend_keys", HERE / "session_backend.py")).echo_text_key
+_contract = (sys.modules.get("romp_session_backend")
+             or load_source("romp_session_backend_keys", HERE / "session_backend.py"))
+echo_text_key = _contract.echo_text_key
 
 SDK_PIN = "openai-codex==0.144.4"     # bin/romp-codex-setup installs exactly this into codexvenv
+# The postal tools ride fields this SDK's generated params do not describe (`dynamicTools`; `developerInstructions`
+# it does) and its _params_dict passes a plain dict through unchanged. Live-probed 2026-09-19 on runtime 0.153.3
+# through this client (tests/smoke_codex_live.py re-runs the wire-shape half): a bump that validates dicts against
+# ThreadStartParams would drop the key silently, and the unit tests' fake accepts any dict, so re-run the smoke.
 SETUP_HINT = ("Session not created: the Codex backend isn't installed. "
               "Run romp-codex-setup, then try again.")
 LOGIN_HINT = "Codex isn't logged in on this machine — run: codex login"
@@ -95,6 +105,105 @@ def _approval_params(mode="sandboxed"):
     # Reset the reviewer as well: thread/resume otherwise inherits a previous Auto selection.
     return {"approvalPolicy": APPROVAL_POLICY, "approvalsReviewer": "user"}
 
+# ── the postal tools a Codex thread carries (2026-09-19) ─────────────────────────────────────────────────────
+# A Codex session mails through TOOL CALLS the kernel performs on its behalf, never through a shell command. The bus
+# and the kernel accept one credential, the kernel's serve token, and the sandbox profile above leaves the state
+# directory that holds it unmounted on purpose (docs/codex.md, Sandboxing): `romp mail` inside the sandbox fails on
+# credential, identity and reachability alike, and the one way it ever worked was an out-of-sandbox escalation that
+# Codex's own reviewer allowed on some threads and refused on others. So the six postal tools are registered as Codex
+# DYNAMIC TOOLS on thread/start (and again on thread/resume, harmless: the registration persists in the rollout's
+# session_meta; probed live 2026-09-19 on runtime 0.153.3 through the pinned 0.144.4 client, whose _params_dict passes
+# a plain dict through unchanged, its ThreadStartParams knowing no such field). Each call comes back as the
+# `item/tool/call` server request, which _handle_approval routes to _postal_tool_call, and the kernel's callable
+# (`postal`, kernel.py _codex_postal_call) posts to the bus over loopback AS the session: no credential enters the
+# sandbox, the sender is the thread's own sid by construction, and Sandboxed and Auto behave the same (no approval or
+# reviewer step touches a dynamic tool call in either mode: probed).
+#
+# POSTAL_TOOL_SPECS is a KEEP-IN-SYNC copy of the bus's MCP_TOOLS (bin/romp-postal-service) as function specs
+# (`type`, `name`, `description`, `inputSchema`; a spec without a description refuses the whole thread/start), and
+# POSTAL_INSTRUCTIONS of its MCP_INSTRUCTIONS minus the paragraph about Claude Code's own messaging (a Codex model has
+# no such thing to be steered away from). A copy, not an import, on purpose: the bus is its own process behind the
+# kernel's _restart_class boundary and imports nothing from kernel/, the kernel imports nothing from postal/, and the
+# two already carry one text each way under that rule (_serve_token_read_or_mint, the same function in both).
+# tests/test_codex_postal_tools.py loads the bus by path and pins the two equal, name for name and schema for schema.
+POSTAL_TOOL_SPECS = [
+    {"type": "function", "name": "send_message",
+     "description": "Message a live romp session by name; it arrives at the end of the recipient's current turn. They share none of your context, so put the whole point in your first sentence. Live-only (see list_agents).",
+     "inputSchema": {"type": "object",
+                     "properties": {"to": {"type": "string", "description": "recipient romp session name"},
+                                    "body": {"type": "string", "description": "message text"},
+                                    "kind": {"type": "string", "enum": ["delegate", "coordinate", "question"],
+                                             "description": "what this message does: delegate = the recipient owns the work now; coordinate = aligning or a heads-up, reply optional; question = you need an answer"},
+                                    "tracked": {"type": "boolean",
+                                                "description": "delegate only: a report-back handoff — the work stays tracked under YOU as the one view, with the recipient's live progress; their copy files as its satellite. Omit for a plain handoff the recipient owns outright."}},
+                     "required": ["to", "body", "kind"]}},
+    {"type": "function", "name": "check_inbox",
+     "description": "Read and clear any messages other romp sessions have sent you. Messages are also delivered automatically at the end of each turn, so you rarely need to call this.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"type": "function", "name": "list_agents",
+     "description": "List live romp sessions you can message (yours marked), each with its git branch and working-note. Check before editing shared files to avoid collisions; discount a note flagged '(idle now, claim may be stale)' and never wake an idle peer to ask if it still owns a file.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"type": "function", "name": "set_working",
+     "description": "Publish what you're working on (files/surface) so peers steer clear; your branch shows automatically. Empty text clears it (romp also auto-clears once your work is done and the session idles).",
+     "inputSchema": {"type": "object",
+                     "properties": {"text": {"type": "string", "description": "short note, e.g. 'editing postal/postal_service.py + the drain hook'"}}}},
+    {"type": "function", "name": "check_sent",
+     "description": "See your recently sent messages and whether each was read/acted on by the recipient yet, or is still pending — instead of asking 'did you get it?'.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"type": "function", "name": "recall_message",
+     "description": "Withdraw a message that is still here when the ask went moot: unread mail to a session on this machine, or mail to another machine that has not left for it yet (check_sent shows which). Give 'to' to withdraw your message(s) to them, or add 'id' (from check_sent) for one. Only your own; anything already read, or already on its way to another machine, is gone.",
+     "inputSchema": {"type": "object",
+                     "properties": {"to": {"type": "string", "description": "recipient session name (or UUID) whose queued message(s) from you to cancel"},
+                                    "id": {"type": "string", "description": "optional specific message id (from check_sent) to recall just that one"}}}},
+]
+# the arguments each tool declares: the only ones _postal_tool_call forwards (a forged from_id or id is dropped)
+_POSTAL_TOOL_ARGS = {t["name"]: frozenset((t["inputSchema"].get("properties") or {}).keys()) for t in POSTAL_TOOL_SPECS}
+
+POSTAL_INSTRUCTIONS = """\
+Messaging peer romp sessions. A peer shares none of your context, only the bytes you send.
+
+Message a peer only for something substantive: a question, information they need, or a result worth sharing. A message wakes the recipient and costs it a turn, so never send just to acknowledge, and stop once the exchange is done.
+
+Write so the recipient can act from your first line:
+- Declare the message kind via the required `kind` parameter: delegate (the recipient owns this now), coordinate (aligning/heads-up, reply optional), or question (reply required).
+- First sentence is the whole point (the ask or conclusion), not how you got there.
+- Name things exactly: files by path, sessions by name. Mark verified vs. suspected, and whose ask it is.
+- End with the reply you need, or that none is. One point per message.
+
+Before editing a shared repo, run list_agents and read peers' branches + working-notes (overlap only collides on the SAME branch), and publish yours with set_working. Resolve ownership by reading that state, never by messaging "do you still own this?": an idle peer's note may be stale, and a peer with no note holds nothing. Declare what you own in your first line. Never wake an idle session just to coordinate.
+
+An isolation refusal is FINAL. A mailbox toggled off is a boundary the user drew: if send_message refuses for isolation, do NOT reroute the content through any other door (the kernel's /send route, shared files, another peer as relay). Report the refusal to the user and stop; only they lift the isolation.
+
+Addressing is live-only: you can message only currently-live sessions (list_agents). Dead names error, with no parked mail or reviving. A session's stable id (the uuid in list_agents) also works as the recipient — rename-proof, unique by construction.
+
+A name is not guaranteed unique. When more than one live session answers to it the send is refused and the candidates are listed as `host:name`, each with the start of its session id where two share one `host:name`: pick one and resend to that address rather than assuming the first. Your OWN name is refused outright, because a message there lands in your own inbox looking exactly like a reply from someone else. Your row in list_agents is the one marked `(you)`.
+"""
+
+
+def _postal_tools(postal):
+    """The thread/start and thread/resume params that register the postal tools: the six dynamic tools, and the
+    bus's instructions as the thread's developer instructions (a dynamic tool carries no instructions block of its
+    own, so the kind semantics and the isolation rule would otherwise never reach the model; the pinned
+    ThreadStartParams and ThreadResumeParams both know `developerInstructions`). {} when the backend was handed no
+    `postal` callable: then no tool is registered, rather than a tool that answers nothing. dynamicTools on
+    turn/start is accepted and IGNORED by the runtime (probed 2026-09-19), so turn params carry none.
+
+    What each call site's copy does (probed 2026-09-19 on 0.153.3): at thread/START both fields count, and both
+    persist with the thread (the tools in the rollout's session_meta, the instructions as the thread's first
+    developer message, replayed on every resume and across kernel restarts). At thread/RESUME the tools are
+    accepted and harmless (the persisted registration stands) and the instructions are accepted and IGNORED, so
+    a resume cannot revise an existing thread's instructions: a changed text reaches only threads started after
+    it. Nor can a resume ADD a registration (read against openai/codex at rust-v0.153.3 for the review of
+    2026-09-19: ThreadResumeParams has no dynamic_tools field, resume_thread_with_history builds its
+    StartThreadOptions with dynamic_tools empty, and the session falls back to the rollout's persisted
+    session_meta), so a thread started without the tools stays without them for its life; the smoke's resume leg
+    shows persistence, not addition. The same dict rides both calls anyway: the resume's copy is harmless, and one
+    shape is one test."""
+    if postal is None:
+        return {}
+    return {"dynamicTools": copy.deepcopy(POSTAL_TOOL_SPECS), "developerInstructions": POSTAL_INSTRUCTIONS}
+
+
 SEED_TAIL = 200   # records whose uuids seed the normalizer's dedup on re-attach (replay guard)
 CLIENT_RETRY_MIN = 0.25
 CLIENT_RETRY_MAX = 5.0
@@ -130,6 +239,96 @@ def _is_permanent_request_rejection(error):
 
 # Compatibility for focused probes written against the first durable-queue implementation.
 _is_permanent_turn_rejection = _is_permanent_request_rejection
+
+
+def _is_response_model_mismatch(error):
+    """Whether a request reached Codex, was answered with success, and only the pinned SDK's model of
+    the REPLY could not read it.
+
+    The pinned client validates every success reply against its generated models after the app-server
+    has already acted on the request, so pydantic's ValidationError out of a client method means the
+    server did the work and the client cannot parse the answer. Matched by class name plus a callable
+    errors(), the shape pydantic gives it, and nothing looser: a JsonRpcError keeps its park, a
+    RuntimeError its retry. Duck-typed for the same reason _is_permanent_request_rejection is: pydantic
+    lives only in codexvenv and the backend must import without the SDK (2026-09-19).
+    """
+    return (error.__class__.__name__ == "ValidationError"
+            and callable(getattr(error, "errors", None)))
+
+
+def _installed_sdk_version():
+    """The version of the openai-codex distribution this process imports, from its metadata, or None.
+
+    The mismatch log names the SDK that raised, and that is the installed copy, not necessarily SDK_PIN:
+    ensure_codex_sdk lets an already-importable openai_codex win over codexvenv and never reads its
+    version, so a box carrying another copy would otherwise be told a pin it does not run cannot read
+    the reply, and pointed at a pin bump that cannot reach it (2026-09-19). The caller words the
+    fallback as the pin.
+    """
+    try:
+        import importlib.metadata
+        return importlib.metadata.version("openai-codex")
+    except Exception:
+        return None
+
+
+def _sdk_for_mismatch_log():
+    """How the mismatch log names the SDK: the installed version when its metadata reads, else the pin,
+    each worded as what it is (2026-09-19)."""
+    installed = _installed_sdk_version()
+    if installed:
+        return "the installed SDK (openai-codex %s)" % installed
+    return "the pinned SDK (%s)" % SDK_PIN
+
+
+_MISMATCH_POSITIONS_LISTED = 12   # item positions named in the mismatch line before "and N more"
+
+
+def _response_model_mismatch_summary(error):
+    """One phrase for a response-model mismatch: the error count and the DISTINCT thread items that
+    failed, by position (thread.turns.N.items.M), never a value and never the first error's location.
+
+    pydantic's str() lists every failing input, and a 'missing' error's input is the WHOLE item dict:
+    for a text-bearing item kind that is transcript content, which must never reach the kernel log, the
+    registry or a card. The first error's own location is no pointer either: the item union is plain,
+    so pydantic reports its members in declaration order, and every unknown item fails first on the
+    FIRST member's fields (UserMessageThreadItem.content, 'missing'), a member and a field that have
+    nothing to do with the drift. The positions of the failing items are what a reader can act on,
+    and they are indices, so they carry nothing from the reply. Errors outside the items (a reply
+    missing a top-level field) are counted apart, so a malformed reply reads as one (2026-09-19).
+    """
+    try:
+        errs = list(error.errors())
+    except Exception:
+        errs = []
+    count = len(errs)
+    counter = getattr(error, "error_count", None)
+    if callable(counter):
+        try:
+            count = counter()
+        except Exception:
+            pass
+    positions = []
+    outside = 0
+    for err in errs:
+        loc = tuple(err.get("loc") or ()) if isinstance(err, dict) else ()
+        at = loc.index("items") + 1 if "items" in loc else 0
+        if not at or at >= len(loc) or not isinstance(loc[at], int):
+            outside += 1
+            continue
+        pos = ".".join(str(part) for part in loc[:at + 1])
+        if pos not in positions:
+            positions.append(pos)
+    text = "%s validation %s" % (count, "error" if count == 1 else "errors")
+    if not positions:
+        return text + ", none under a thread item"
+    listed = ", ".join(positions[:_MISMATCH_POSITIONS_LISTED])
+    if len(positions) > _MISMATCH_POSITIONS_LISTED:
+        listed += ", and %d more" % (len(positions) - _MISMATCH_POSITIONS_LISTED)
+    text += " over %d %s (%s)" % (len(positions), "item" if len(positions) == 1 else "items", listed)
+    if outside:
+        text += " and %d outside the items" % outside
+    return text
 
 
 class _PermanentRequestRejection(RuntimeError):
@@ -248,6 +447,29 @@ def _dump(payload):
     return getattr(payload, "params", None) or {}
 
 
+def _append_cmd_gesture(state_dir, sid, text, t):
+    """Record a command GESTURE at the moment it was asked for — the twin of sdk_backend.append_cmd_gesture,
+    same record ({"t", "cmdGesture"}) in the same file (<state>/states/<sid>.jsonl), because this module cannot
+    import the SDK-gated one and the kernel reads both (_cmd_gestures). How the twin renders (2026-09-19): it is
+    stamped at the clear, before the fresh conversation's first record, so it shows in the fresh conversation only
+    until the boundary tick, which records the boundary at that first record's time and floors the live build's
+    notes there; from then on it renders as the last gesture row of the cleared conversation's episode. Written by
+    clear() for its acknowledging chip, with the command as typed."""
+    p = Path(state_dir) / "states" / (str(sid) + ".jsonl")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"t": int(t), "cmdGesture": str(text)}) + "\n")
+
+
+def _unlink_quiet(path):
+    """Remove a file this module touched and no longer wants (a rollback's), swallowing a filesystem refusal: the
+    caller is already on its failure path, and a second raise there would mask the first (2026-09-19)."""
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _tail_state(path):
     """(last_uuid, recent uuids) off a materialized file, to re-anchor the normalizer's chain and
     seed its replay dedup after a restart. Reads the whole file once; keeps only the tail's uuids —
@@ -306,6 +528,9 @@ class _Session:
         self.queue_ids = []           # stable durable identity parallel to queue (public API stays text-only)
         self.echoes = []              # optimistic user-atom echoes ahead of the materialized file
         self.turn_id = None           # the active turn (interrupt/steer target), else None
+        self.clearing = False         # the clear bracket (CodexBackend.clear, 2026-09-19): latched before
+                                      # thread/start, dropped when the new tid is durable or the attempt raises
+        self.turn_ended = False       # a turn ended under mode_lock; _run_turn pokes for it after the release
         self.loaded = False           # thread/resume done in THIS process
         self.loaded_client_generation = None  # ...on WHICH app-server (client generation): a
                                               # replacement server has never seen the thread, so
@@ -326,7 +551,7 @@ class _Session:
 
 class CodexBackend:
     def __init__(self, state_dir, notify=None, poke=None, push=None, push_session=None,
-                 codex_bin=None, log=None, client_factory=None):
+                 codex_bin=None, log=None, client_factory=None, postal=None):
         self.state = Path(state_dir)
         self.root = self.state / "codex"
         self.projects = self.root / "projects"
@@ -336,6 +561,10 @@ class CodexBackend:
         self.push = push or (lambda: None)
         self.push_session = push_session or (lambda sid: None)
         self.codex_bin = codex_bin
+        # postal(tool, sid, name, args) -> (ok, text): the kernel's loopback call to the bus AS the session, behind the
+        # six dynamic tools every thread registers (_postal_tools); None registers no tool, said once (_postal_params)
+        self.postal = postal
+        self._postal_unset_said = False
         raw_log = log or (lambda m: sys.stderr.write("codex-backend: %s\n" % m))
 
         def _log(m):
@@ -821,6 +1050,11 @@ class CodexBackend:
         here would stall responses and notifications for every session, including interrupts.
         Decline supported requests immediately and make the limitation visible.
         """
+        if method == "item/tool/call":
+            # a dynamic tool call is not a request for a human (2026-09-19): the postal tools are the kernel's to
+            # answer, and this branch comes BEFORE the declined-request log line and the chat warn below, which
+            # would otherwise toast on every send
+            return self._postal_tool_call(params)
         text = ("Codex requested input or manual approval that romp cannot handle yet. "
                 "The request was declined; no permission was granted.")
         self.log("manual Codex request declined: %s" % method)
@@ -843,6 +1077,69 @@ class CodexBackend:
         # request, so nothing is granted and the transport stays up. Loud on the log and the session.
         self.log("unknown Codex server request %s declined with an empty answer; no permission granted" % method)
         return {}
+
+    def _postal_params(self):
+        """_postal_tools for this backend's callable, merged into every thread/start and thread/resume. A backend
+        built without one says so ONCE, at the first thread it starts, so a Codex session with no mail is a logged
+        decision and never a quiet absence (2026-09-19)."""
+        extra = _postal_tools(self.postal)
+        if not extra and not self._postal_unset_said:
+            self._postal_unset_said = True
+            self.log("postal tools not registered on Codex threads: this backend was built without a postal "
+                     "callable, so its sessions cannot mail peers")
+        return extra
+
+    def _postal_tool_call(self, params):
+        """Answer one `item/tool/call` server request (a postal tool the thread carries, _postal_tools) in the shape the
+        app-server accepts: {"success", "contentItems": [{"type": "inputText", "text"}]} (2026-09-19).
+
+        Runs inline on the pinned SDK's single reader thread, the constraint the #930 find recorded in
+        _handle_approval, so it NEVER raises, whatever the request carries: a fault is a failed result carrying the
+        exception's text, and a log line. And it holds NO backend lock while the kernel's callable runs: the bus's
+        /send resolves its recipient through the kernel's GET /sessions, which calls live_sessions() here and takes
+        _sessions_lock and every s.lock, so a lock held across the call would make every Codex send wait out the
+        bus's kernel timeout and then this side's bus timeout, silently. The sid and name are copied out under the
+        locks, which are released before the call; the callable itself is bounded (the kernel's: 3 s on loopback).
+
+        The session is bound by the request's threadId ONLY. The backend minted the sid and started the thread, so
+        the sender is exact by construction; a threadId no live session holds is refused with a retry sentence and
+        never resolved by name or by the only live session. No turnId fallback: the worker stores s.turn_id after
+        turn_start returns, the call arrives on the reader thread, and an early call would miss. Only the arguments
+        the tool's schema declares are forwarded, so a `from_id` or `id` a model puts into send_message's arguments
+        is dropped here and the bus never sees a claimed sender. A call can arrive with no callable installed (the
+        registration persists in the rollout across kernels): refused, never a tool that pretends."""
+        def answer(ok, text):
+            return {"success": bool(ok), "contentItems": [{"type": "inputText", "text": str(text)}]}
+        tool = None
+        try:
+            p = params if isinstance(params, dict) else {}
+            tool = p.get("tool")
+            allowed = _POSTAL_TOOL_ARGS.get(tool) if isinstance(tool, str) else None
+            if allowed is None:
+                self.log("codex tool call refused: unknown tool %r" % (tool,))
+                return answer(False, "Unknown tool: %s" % tool)
+            if self.postal is None:
+                self.log("codex tool call refused: %s called but no postal callable is installed" % tool)
+                return answer(False, "Mail is not available in this session: the %s tool is not connected." % tool)
+            tid = p.get("threadId")
+            sid = name = None
+            if isinstance(tid, str) and tid:
+                for _sid, s in self._session_items():
+                    with s.lock:
+                        if s.tid == tid and not s.dead:
+                            sid, name = s.sid, s.name
+                            break
+            if sid is None:
+                self.log("codex tool call refused: %s from thread %r, which no live session holds" % (tool, tid))
+                return answer(False, "This session is not matched to its thread yet; try %s again in a moment."
+                              % tool)
+            raw = p.get("arguments")
+            args = {k: v for k, v in raw.items() if k in allowed} if isinstance(raw, dict) else {}
+            ok, text = self.postal(tool, sid, name, args)      # no backend lock held here (see above)
+            return answer(ok, text)
+        except BaseException as e:
+            self.log("codex tool call %s failed: %s" % (tool, traceback.format_exc()))
+            return answer(False, "The %s call failed: %s" % (tool or "tool", str(e) or e.__class__.__name__))
 
     def _check_auth(self, client):
         """A missing `codex login` must surface as text on the session, not as a hung turn."""
@@ -894,15 +1191,21 @@ class CodexBackend:
                 self.log("global pump: %s" % traceback.format_exc())
 
     # ── the materialized transcript ──────────────────────────────────────────────────────────────
+    def _path_for(self, cwd, tid):
+        """The one path rule: projects/<encoded cwd>/<tid>.jsonl, its directory made. transcript_path reads
+        it for the session's CURRENT tid; clear() for a tid the row does not name yet — the fresh file must
+        exist BEFORE the registry names it (2026-09-19)."""
+        d = self.projects / _enc_cwd(cwd)
+        d.mkdir(parents=True, exist_ok=True)
+        return d / ("%s.jsonl" % tid)
+
     def transcript_path(self, sid):
         s = self._session(sid)
         if not s:
             return None
         with s.lock:
             cwd, tid = s.cwd, s.tid
-        d = self.projects / _enc_cwd(cwd)
-        d.mkdir(parents=True, exist_ok=True)
-        return d / ("%s.jsonl" % tid)
+        return self._path_for(cwd, tid)
 
     def _ensure_norm(self, s):
         with s.norm_lock:
@@ -1062,6 +1365,19 @@ class CodexBackend:
                 if s.turn_id:
                     busy += 1
         return live, busy
+
+    def clearing(self, sid):
+        """AUTHORITATIVE 'is a clear in progress right now' (SessionBackend.clearing): the bracket clear() holds
+        from before thread/start until the new thread id is durable, or the attempt raises. None when no session
+        or ended. The kernel's _clearing_now reads it for the chip, the chat's live "Clearing conversation…"
+        element and the fold of a queued "/clear" chip — no kernel literal changes for Codex (2026-09-19)."""
+        s = self._session(sid)
+        if not s:
+            return None
+        with s.lock:
+            if s.dead:
+                return None
+            return bool(s.clearing)
 
     # ── control ──────────────────────────────────────────────────────────────────────────────────
     def send(self, sid, text):
@@ -1277,6 +1593,151 @@ class CodexBackend:
     def set_fast(self, sid, value):
         return False   # no Codex equivalent
 
+    def clear(self, sid, text="/clear"):
+        """A fresh conversation for the SAME session (SessionBackend.clear, 2026-09-19): a new app-server thread
+        under the same sid — thread/start with sessionStartSource "clear" (Codex's own tag for its /clear and
+        /new; the runtime validates the enum and reflects nothing back, live probe 2026-09-19) and the row's
+        cwd, mode and picked model — swapped into the registry row under the turn lock, the normalizer reset on
+        the new EMPTY file so its first record is a ROOT (what the kernel's episode boundary keys on: the old
+        cards settle and the "Conversation cleared" card appears on the fresh thread's first prompt), and an
+        acknowledging chip carrying `text` as typed ("/clear", "/new", "/clear now") left in the live tail: the
+        composer retires its optimistic bubble by that exact text, so a literal "/clear" chip for a typed /new
+        left the bubble standing (review find, 2026-09-19). Everything else on the row survives because it lives
+        on the row, keyed by sid: name, cwd, model, effort, mode, color, note, the durable queue; tags and the
+        mailbox are kernel stores keyed by sid. The old thread is LEFT on the app-server: romp reads only its own
+        materialized file, which stays where build_episode's sibling lookup finds it; an archive would be one
+        more RPC that can raise after the swap committed, and a thread with no turn has no rollout to archive.
+
+        Idle only. The worker holds mode_lock across thread preparation and the whole turn (_run_turn), so a
+        non-blocking take of it is the exact "a turn is in flight" test set_mode uses, and the swap under it can
+        never race a worker between _prepare_thread and turn_start (a worker that read the OLD normalizer and the
+        NEW tid would chain the new file's first record to the old leaf: no root head, no boundary). The belt
+        behind it is busy()'s own rule: a queued send whose worker has not yet taken the lock reads busy() True
+        to the kernel and would otherwise land on the fresh thread — a message typed BEFORE the /clear, answered
+        without its context — so it answers "busy" too; a queue PARKED on a permanent rejection rides into the
+        fresh thread instead (busy() says not busy for it, and this explicit change is what re-arms it, as
+        set_mode does). "busy" is the kernel's word to park on (it retries at the turn's end) and is never shown.
+
+        The bracket: s.clearing is latched before thread/start and dropped when the new tid is durable (the
+        deciding event) or the attempt raises; clearing() publishes it. The swap's order: the fresh file is
+        touched BEFORE the registry names its tid, because discovery signs registry.json's mtime and skips a row
+        whose file does not stat — saved first, a discover landing in the gap would cache a list WITHOUT this
+        session until the next registry write. A raising registry write publishes NOTHING (_prepare_thread's
+        discipline): the in-memory swap rolls back and the touched file leaves with it. The chip lives here and
+        not in the kernel because the composer's optimistic "/clear" bubble ends only on a landed user event with
+        its text (the "cmd:<t>:<command>" id is not the kernel-echo form, so send-pending takes it by text) and the
+        kernel has no live-atom store of its own — the SDK puts the same chip in its setters (_ack_cmd_chip)."""
+        cmd = str(text or "").strip() or "/clear"   # the words as typed ride the chip, its uuid and the twin (see above)
+        s = self._session(sid)
+        if not s:
+            return _contract.SessionBackend.clear(self, sid, cmd)
+        c = self._get_client()
+        if c is None:
+            return self._client_failure_text()
+        if not s.mode_lock.acquire(blocking=False):
+            return "busy"
+        try:
+            with s.lock:
+                if s.dead:
+                    return "this session has ended — revive it first"
+                parked = s.turn_rejection is not None and s.turn_rejection[0] == s.change_generation
+                if s.turn_id or (s.queue and not parked):
+                    return "busy"
+                cwd, mode, model, name = s.cwd, s.mode, s.model, s.name
+                s.clearing = True
+            self.push_session(sid)             # the chip reads "clearing" from here
+            params = {"cwd": cwd, **_approval_params(mode), **_execution_permissions(cwd, thread_start=True),
+                      **self._postal_params(), "sessionStartSource": "clear"}
+            # the postal tools ride thread/start alone (a resume cannot add a registration, see _postal_tools), so
+            # a thread minted here without them would carry no mail for its whole life (2026-09-20)
+            if model:
+                params["model"] = model
+            touched = None
+            try:
+                resp = c.thread_start(params)
+                new_tid = resp.thread.id
+                loaded_client_generation = self._client_generation_for(c)
+                touched = self._path_for(cwd, new_tid)
+                touched.touch()                # the fresh file exists before the row names it (see above)
+                with s.lock:
+                    if s.dead:
+                        touched.unlink(missing_ok=True)
+                        s.clearing = False
+                        return "this session has ended — revive it first"
+                    prior = (s.tid, s.model, s.loaded, s.loaded_client_generation, s.launch_error)
+                    s.tid = new_tid
+                    # the row's CURRENT model, as _create_thread reads it (review find, 2026-09-19): nothing reads busy
+                    # through the bracket and set_model never takes mode_lock, so a /model pick can land while
+                    # thread/start is in flight, accepted and saved — and the model read before the request, written
+                    # back here, reverted it in memory, the registry, the live listing and the next turn's params. The
+                    # pre-request model rides the start params only; the server's reply fills an empty pick
+                    s.model = s.model or getattr(resp, "model", "") or ""
+                    s.loaded = True
+                    s.loaded_client_generation = loaded_client_generation
+                    s.launch_error = None      # the fresh thread starts clean; a parked rejection named the old one
+                    try:
+                        self._save_registry(s, fields=("tid", "model", "launchError"))
+                    except BaseException:
+                        (s.tid, s.model, s.loaded, s.loaded_client_generation, s.launch_error) = prior
+                        raise
+                    s.clearing = False         # THE deciding event: the new tid is durable
+                    s.change_generation += 1   # re-arms a queue parked on a rejection of the old thread
+                    queued = bool(s.queue)
+            except Exception as e:
+                if touched is not None:
+                    try:
+                        touched.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                with s.lock:
+                    s.clearing = False
+                self.push_session(sid)
+                self.log("clear %s: %s" % (s.name, e))
+                return "Couldn't start a fresh conversation: %s" % str(e)[:200]
+            # A fresh normalizer anchored on the new empty file: last_uuid None, so the first record is a ROOT. Reset
+            # UNDER the turn lock, as _create_thread does under the worker's (review find, 2026-09-19): a prompt typed
+            # while thread/start was in flight has queued a worker on mode_lock (busy() reads False through the
+            # bracket, so the kernel hands it over), and that worker takes _ensure_norm as a local for its whole turn
+            # the instant the lock is released — reset AFTER the release, a scheduler switch let it read the OLD
+            # normalizer with the NEW tid and chain the fresh file's first record to the old leaf, stamped with the old
+            # thread (no root head, so no boundary, ever, for that file: transcript_head memoizes the first record).
+            # Reset under norm_lock and rebuilt after ITS release — _ensure_norm takes the same non-reentrant lock
+            # itself, exactly as _prepare_thread does; the global pump routes by s.tid, so a straggler for the old
+            # thread is dropped, and none is expected between turns. Guarded: the swap is durable, the answer is
+            # already "", and a worker rebuilds a missing normalizer itself.
+            try:
+                with s.norm_lock:
+                    s.norm = None
+                self._ensure_norm(s)
+            except Exception as e:
+                self.log("clear %s: normalizer reset after the swap: %s" % (s.name, e))
+        finally:
+            s.mode_lock.release()
+        # After the swap (review find, 2026-09-19): everything from here is bookkeeping on a clear that HAPPENED, and
+        # the answer is "" whatever it does. Unguarded, a raise here (the durable twin's write at ENOSPC — the class
+        # this module's own _log wrapper exists for) escaped a verb whose contract promises a string: the route logged
+        # it and said nothing (the bracket had dropped, the composer's optimistic bubble stood), the drain's per-sid
+        # except dropped the sid's whole queue, and the kick a queue parked on the old thread's rejection waits for
+        # never came. The kick and the pushes run whatever the tail did.
+        t = int(time.time())
+        try:
+            with s.lock:
+                s.echoes.append({"text": cmd, "t": t, "uuid": "cmd:%d:%s" % (t, cmd.lstrip("/")), "command": cmd})
+            _append_cmd_gesture(self.state, sid, cmd, t)     # the durable twin, on disk before the push that rebuilds the chat
+            try:
+                c.thread_set_name(new_tid, name)
+            except Exception:
+                pass                           # cosmetic on the Codex side, as rename treats it; the registry is the truth
+        except Exception as e:
+            self.log("clear %s: after the swap: %s" % (s.name, e))
+        finally:
+            if queued:
+                self._ensure_worker(s)
+                s.kick.set()
+            self.push()
+            self.push_session(sid)
+        return ""
+
     # ── lifecycle ────────────────────────────────────────────────────────────────────────────────
     def _publish_spawn_name(self, s, bg="", fg=""):
         """spawn's names/ write, transactional: the durable row already landed, so a raising
@@ -1364,7 +1825,7 @@ class CodexBackend:
             return sid
         try:
             resp = c.thread_start({"cwd": cwd, **_approval_params(),
-                                   **_execution_permissions(cwd, thread_start=True)})
+                                   **_execution_permissions(cwd, thread_start=True), **self._postal_params()})
             tid = resp.thread.id
             model = getattr(resp, "model", "") or ""
         except Exception as e:
@@ -1530,46 +1991,89 @@ class CodexBackend:
                                         name="codex:%s" % s.name)   # kind:payload: the kernel's stack sample keeps the kind
             s.worker.start()
 
+    def _create_thread(self, s, c, cwd, model):
+        """thread/start for `s` and the swap of its row onto the new thread: the body _prepare_thread's
+        placeholder branch always had, shared since 2026-09-19 with the restart fallback below. False when
+        the session was killed while the create was in flight."""
+        params = {"cwd": cwd, **_approval_params(s.mode),
+                  **_execution_permissions(cwd, thread_start=True), **self._postal_params()}
+        if model:
+            params["model"] = model    # picked while the row was a placeholder: born on it
+        resp = c.thread_start(params)
+        loaded_client_generation = self._client_generation_for(c)
+        touched = self._path_for(cwd, resp.thread.id)
+        touched.touch()                # BEFORE the row names the tid (review find, 2026-09-19): discovery skips a row whose
+        #                                file does not stat, so saved first, a discover landing in the gap (the restart
+        #                                fallback's included) listed the board without this session until the next save;
+        #                                the order clear() keeps. Both rollbacks below remove it again
+        with s.lock:
+            if s.dead:
+                _unlink_quiet(touched)
+                return False
+            prior = (s.tid, s.model, s.loaded, s.loaded_client_generation)
+            s.tid = resp.thread.id
+            # The pick outlives the create. The server's reply names ITS model, never empty
+            # (ThreadStartResponse.model is a required string), so `resp.model or s.model` let
+            # the default overwrite a model the user chose on the pending-/failed- row, saved
+            # it below, and ran every turn on it with no word to anyone (2026-09-11).
+            s.model = s.model or getattr(resp, "model", "") or ""
+            s.loaded = True
+            s.loaded_client_generation = loaded_client_generation
+            try:
+                self._save_registry(s, fields=("tid", "model"))
+            except BaseException:
+                # publish NOTHING on a raise: with the real tid only in memory, every retry
+                # took the resume path and never re-saved it — the next kernel restart
+                # loaded 'pending-…' and silently started a FRESH Codex thread (the r29
+                # verification). Rolled back, the loud retry re-runs thread_start; an
+                # orphaned server-side thread beats a silently forked conversation.
+                (s.tid, s.model, s.loaded, s.loaded_client_generation) = prior
+                _unlink_quiet(touched)
+                raise
+        with s.norm_lock:
+            s.norm = None
+        self._ensure_norm(s)
+        return True
+
+    @staticmethod
+    def _never_turned(path):
+        """romp's own record that no turn ever ran on a thread: the materialized file it touched at the
+        thread's birth (spawn, clear) is still EMPTY — every turn appends at least its user record. An
+        unreadable or missing file is not that record (2026-09-19)."""
+        try:
+            return os.path.getsize(str(path)) == 0
+        except OSError:
+            return False
+
     def _prepare_thread(self, s, c):
-        """Resume a durable thread, or turn a visible pending/failed placeholder into a real one."""
+        """Resume a durable thread, or turn a visible pending/failed placeholder into a real one.
+
+        A thread that never ran a turn has no rollout on the app-server, so a fresh app-server (a kernel
+        restart, a replaced client) refuses to resume it — `no rollout found for thread id …`, an
+        InvalidRequestError the permanent-rejection rule would park the queue on for good (live probe,
+        2026-09-19). clear() mints exactly such a thread and saves its tid (spawn's thread is the same until
+        its first turn), so on THAT refusal, for a thread romp's own record says never turned (its file is
+        empty, _never_turned), the thread is re-created ONCE with the row's params and the row swapped onto
+        the new one — the create branch's own transaction, with its rollback — loudly logged; the empty file
+        of the thread that never ran leaves with it. Keyed on both facts: the same refusal for a thread whose
+        file holds records is a real inconsistency (a rollout gone missing server-side) and parks as before,
+        never a re-create over a conversation romp has records of. The re-created thread is still turn-less
+        with an empty file, so its first record is a ROOT and the episode boundary lands where it would have.
+
+        The resume reply is never read here, and the pinned SDK validates it only after the app-server
+        has answered success, so a reply its models cannot parse is not a failed resume: it is logged
+        once, without any value from the reply, and the turn goes on to turn/start, the next gate, which
+        stays loud about a thread the server does not hold (2026-09-19, after a session parked forever
+        on such a reply across a kernel restart).
+        """
         with s.lock:
             if s.dead:
                 return False
             tid, cwd, model = s.tid, s.cwd, s.model
             create = tid.startswith("pending-") or tid.startswith("failed-")
         if create:
-            params = {"cwd": cwd, **_approval_params(s.mode),
-                      **_execution_permissions(cwd, thread_start=True)}
-            if model:
-                params["model"] = model    # picked while the row was a placeholder: born on it
-            resp = c.thread_start(params)
-            loaded_client_generation = self._client_generation_for(c)
-            with s.lock:
-                if s.dead:
-                    return False
-                prior = (s.tid, s.model, s.loaded, s.loaded_client_generation)
-                s.tid = resp.thread.id
-                # The pick outlives the create. The server's reply names ITS model, never empty
-                # (ThreadStartResponse.model is a required string), so `resp.model or s.model` let
-                # the default overwrite a model the user chose on the pending-/failed- row, saved
-                # it below, and ran every turn on it with no word to anyone (2026-09-11).
-                s.model = s.model or getattr(resp, "model", "") or ""
-                s.loaded = True
-                s.loaded_client_generation = loaded_client_generation
-                try:
-                    self._save_registry(s, fields=("tid", "model"))
-                except BaseException:
-                    # publish NOTHING on a raise: with the real tid only in memory, every retry
-                    # took the resume path and never re-saved it — the next kernel restart
-                    # loaded 'pending-…' and silently started a FRESH Codex thread (the r29
-                    # verification). Rolled back, the loud retry re-runs thread_start; an
-                    # orphaned server-side thread beats a silently forked conversation.
-                    (s.tid, s.model, s.loaded, s.loaded_client_generation) = prior
-                    raise
-            with s.norm_lock:
-                s.norm = None
-            self._ensure_norm(s)
-            self.transcript_path(s.sid).touch()
+            if not self._create_thread(s, c, cwd, model):
+                return False
             try:
                 self._write_name(s)
             except (OSError, UnicodeDecodeError) as e:
@@ -1593,8 +2097,42 @@ class CodexBackend:
                              "a same-name create may collide meanwhile" % (s.sid, e))
             self.push()
             return True
-        c.thread_resume(tid, {"cwd": cwd, **_approval_params(s.mode),
-                              **_execution_permissions(cwd, thread_start=True)})
+        try:
+            c.thread_resume(tid, {"cwd": cwd, **_approval_params(s.mode),
+                                  **_execution_permissions(cwd, thread_start=True), **self._postal_params()})
+        except Exception as e:
+            if _is_response_model_mismatch(e):
+                # The only RPC replies this backend consumes are thread/start's thread id and turn/start's
+                # turn id; the resume reply is discarded, and the SDK raises on it AFTER the server's
+                # success answer, with the thread resumed. A thread whose history held an item kind the
+                # SDK's generated models predate (a subAgentActivity kind the runtime added later) raised
+                # here on every attempt, each filed as a failed turn with the whole error text as its
+                # launchError, and the session could not run another turn until it was ended and its
+                # thread lost (2026-09-19). Say what happened once, in identifiers only (never str(e) or an
+                # input: a 'missing' error's input is the whole item; the failing items by position, not
+                # the first error's location, which names whichever union member pydantic tries first),
+                # naming the SDK that actually raised (the installed one, which need not be the pin), and
+                # proceed: turn/start is the authoritative gate and stays loud if the thread is really not
+                # there.
+                self.log("codex thread/resume for %s succeeded, but %s cannot read the reply: %s; the "
+                         "app-server has resumed the thread, so the turn proceeds and turn/start decides. "
+                         "A newer openai-codex reads those items."
+                         % (s.sid, _sdk_for_mismatch_log(), _response_model_mismatch_summary(e)))
+            else:
+                # not the reply parse: the two 2026-09-19 arms meet here (native clear + resume tolerance)
+                stale = self._path_for(cwd, tid)
+                if "no rollout found" not in str(e) or not self._never_turned(stale):
+                    raise
+                self.log("codex: thread %s of %s has no rollout on this app-server and never ran a turn; "
+                         "re-creating it instead of parking the resume (%s)" % (tid, s.name, e))
+                if not self._create_thread(s, c, cwd, model):
+                    return False
+                try:
+                    stale.unlink(missing_ok=True)  # the empty file of the thread that never ran
+                except OSError:
+                    pass
+                self.push()
+                return True
         loaded_client_generation = self._client_generation_for(c)
         with s.lock:
             if s.dead:
@@ -1685,8 +2223,20 @@ class CodexBackend:
     def _run_turn(self, s):
         # Mode changes take effect between turns. Nonblocking set_mode refuses while this
         # lock is held, including thread preparation and the turn/start acknowledgement gap.
-        with s.mode_lock:
-            return self._run_turn_in_mode(s)
+        # The turn-end poke and push fire AFTER the lock is released (2026-09-19): the kernel's parked-op
+        # drain runs on that poke, and a clear() it fires takes this same lock non-blocking — poked from
+        # inside the lock, every clear parked mid-turn met "busy" on the very poke that announced the
+        # turn's end and waited for the pusher's clock instead. Released first, the poke IS the retry
+        # event. _run_turn_in_mode records that a turn ended and leaves the announcing to here.
+        try:
+            with s.mode_lock:
+                return self._run_turn_in_mode(s)
+        finally:
+            with s.lock:
+                ended, s.turn_ended = s.turn_ended, False
+            if ended:
+                self.poke()                    # the turn END is the kernel's cue (parked ops deliver on it): every
+                self.push_session(s.sid)       # in-loop poke above fired while turn_id was set, i.e. busy() True
 
     def _run_turn_in_mode(self, s):
         c = self._get_client()
@@ -1848,8 +2398,7 @@ class CodexBackend:
                 s.turn_id = None
                 s.state = "waiting"
                 s.since = time.time()
-            self.poke()                    # the turn END is the kernel's cue (parked ops deliver on it): every
-            self.push_session(s.sid)       # in-loop poke above fired while turn_id was set, i.e. busy() True
+                s.turn_ended = True        # _run_turn pokes and pushes once the turn lock is released (see there)
         return True
 
     # ── chat tail ────────────────────────────────────────────────────────────────────────────────
@@ -1871,8 +2420,13 @@ class CodexBackend:
             # queued-bubble pass enlists it while the session is busy. Without the marker an echo paints
             # as a solid user atom beside its own queued bubble and forces the last turn open: a false
             # "working" chip for a session whose only live item is a pending send.
+            # `command` rides only on clear()'s acknowledging chip (2026-09-19): the kernel dedups the durable
+            # gesture against it, renders it on the user's side, and _merge_live_atoms never counts a command
+            # atom as live work; prune_live retires it by the human floor, the one exit a chip whose text never
+            # lands has
             return [{"type": "user", "uuid": e["uuid"], "session_id": sid, "fsid": s.tid,
                      "t": e["t"], "parentUuid": None, "author": "human", "_echo_text": e["text"],
+                     **({"command": e["command"]} if e.get("command") else {}),
                      "message": {"role": "user",
                                  "content": [{"type": "text", "text": e["text"]}]}}
                     for e in s.echoes]
@@ -1895,10 +2449,12 @@ class CodexBackend:
         block per send; _atom_user_texts yields each block, so this prune lands every echo of such a turn
         too).
 
-        `human_floor` (the newest genuine-human record's time) is accepted and retires nothing here. No
-        floor retires a plain input echo on any backend: a send the app-server never records must stay
-        visible. The SDK uses the floor to retire its streamed slash-command feedback, atoms carrying
-        `command`, and no Codex echo carries that flag: send() mints plain echoes only."""
+        `human_floor` (the newest genuine-human record's time) retires only a COMMAND chip by it (2026-09-19:
+        clear()'s acknowledging "/clear" echo, the one echo here carrying `command`) — the SDK's stale-command
+        rule, the one exit a chip whose text never lands has, and STRICTLY later (the kernel's _echo_overtaken
+        rule, not the SDK's at-or-later), so a first prompt into the fresh conversation in the chip's own second
+        leaves the chip until the next human record. No floor retires a PLAIN input echo on any backend: a send
+        the app-server never records must stay visible; send() mints plain echoes only."""
         s = self._session(sid)
         if not s:
             return
@@ -1909,6 +2465,8 @@ class CodexBackend:
         def _landed(e):
             if e.get("uuid") in uuids:
                 return True
+            if e.get("command") and human_floor and float(human_floor) > float(e.get("t") or 0):
+                return True                    # the next human record retires the acknowledging chip
             key = echo_text_key(e.get("text"))
             if not key:
                 return False

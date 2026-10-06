@@ -50,8 +50,10 @@ class FiguresSaysWhatReplaceKeeps(unittest.TestCase):
     """The Re-place sentence names the replies, and the host it describes keeps them."""
 
     def setUp(self):
-        guide = _read("docs", "guide.md")
-        files = guide[guide.index("### Files"):guide.index("## Automatic nudges")]
+        # the Figures paragraph is in docs/reference.md's Files pane since fold 4 moved the fork's Files section out of
+        # docs/guide.md (the front pages are the project's, CLAUDE.md "The documentation front pages")
+        ref = _read("docs", "reference.md")
+        files = ref[ref.index("\n## The Files pane\n"):ref.index("\n## The Artifacts pane")]
         self.figures = _flat(_paragraph(files, "Figures"))
         # The sentence that names the control: from its bold label to the sentence's end.
         m = re.search(r"[^.]*\*\*Re-place\*\*[^.]*\.", self.figures)

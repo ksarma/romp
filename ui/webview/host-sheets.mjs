@@ -6,10 +6,10 @@
 // reveal planted there left every home green and the control painting in print; and a flat listing of ui/webview is a wider
 // typed bound, not the population, since the kernel inlines three blocks of its own that no listing of the directory reads: two
 // constants the pages name (THEME_CSS, into every page that takes no arguments, and the chat's _CHAT_MOBILE_CSS, string constants
-// of kernel/kernel.py) and the style block the pane spinner helper writes into the served HTML of the chat, feed, sessions and
-// waiting pages (_pane_spin, carrying _LOADER_CSS; the file review's round 11, kernel-1 with extra6-1, extra7-1 and tests-1:
-// the block had stood outside the read with every pin green, excused by this header as one a helper adds after the page is
-// served, which is false, since the kernel writes it into the response body).
+// of kernel/kernel.py) and the style block the pane spinner helper writes into the served HTML of the chat, feed, sessions,
+// waiting and artifacts pages (_pane_spin, carrying _LOADER_CSS; the file review's round 11, kernel-1 with extra6-1, extra7-1 and
+// tests-1: the block had stood outside the read with every pin green, excused by this header as one a helper adds after the page
+// is served, which is false, since the kernel writes it into the response body).
 //
 // The derivation, each part read off the tree's own source so a change to the assembly moves the population:
 //   * the kernel's served pages are the `def _<name>_page(...)` functions of kernel/kernel.py whose `)` closes on `:` at the end
@@ -48,7 +48,7 @@
 //     `str.<method>(` on some other value there, `str.maketrans(...)`, is over-refused loudly; the file review's round 14,
 //     extra6-1: the arm had named three methods, so `str.replace(run, ...)` decoded to its placeholder text silently), the operator applied to the run's parenthesised
 //     expression being the kernel's house shape (the pane spinner's block, `_pane_spin` with _LOADER_CSS folded in, on the chat,
-//     feed, sessions and waiting pages; the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block was
+//     feed, sessions, waiting and artifacts pages; the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block was
 //     served with the page and outside the read, so a reveal planted in _LOADER_CSS or in the helper's own literal left every
 //     home green; round 13, correctness-1 with kernel-3 and extra8-1: the refusal had named two spellings, `%` and `.format(`,
 //     so a run formatted by format_map, by a spaced .format, by .replace or by str.format(run, ...) decoded to its placeholders
@@ -199,7 +199,7 @@ const all = (re, text) => { const out = []; let m; re.lastIndex = 0; while ((m =
  *  expression, the kernel's house shape, is refused wherever it stands, and a `%` in arithmetic after the run is refused too,
  *  loudly; the bound is the helper's body, not the return statement, whose end in text would take a second reader to find) fail
  *  by name, since each decodes to text the page does not serve (the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the pane spinner's block,
- *  `_pane_spin`'s with _LOADER_CSS folded in, served with the chat, feed, sessions and waiting pages, had been outside the read
+ *  `_pane_spin`'s with _LOADER_CSS folded in, served with the chat, feed, sessions, waiting and artifacts pages, had been outside the read
  *  with every pin green; the three formatted shapes had decoded silently; and round 12, kernel-1 with extra8-1: the operator had
  *  been refused only right after the literal, so the house shape decoded to its placeholders silently; the triple-quoted and
  *  the continued form joined the blanking in the author's closing pass after those fixes, since read as two-quote pieces a
