@@ -3268,8 +3268,11 @@ class FileAdapter:
         self._adopted = {}       # boundary uuid -> its episode's splice record (the /compact stdout),
         #                          filled by _adopt_detached_compactions. Downstream consumers key on
         #                          membership: an ADOPTED boundary is a LIVE manual compact, so the
-        #                          replay dedup must not arm on it (nothing after it is a replayed
-        #                          tail) and its atom must sort AFTER the episode's stdout.
+        #                          replay dedup, which arms at the pair's SUMMARY record keyed to that
+        #                          record's own boundary, must not arm for an adopted pair (nothing
+        #                          after the pair is a replayed tail: the 2026-08-19 reason, the arming
+        #                          record named 2026-09-19) and its atom must sort AFTER the episode's
+        #                          stdout.
         self._repair_compaction_stitches()
         self._stitch_resume_forks()
         self._adopt_detached_compactions()
@@ -3367,11 +3370,13 @@ class FileAdapter:
         stitching (the active path must already cross files). parent_of/leaf_uuid only —
         records are never mutated, so the shared _read_jsonl_incremental cache lists stay
         pristine. Adopted boundaries are recorded in self._adopted for the two downstream
-        consumers that must NOT treat them as attached: the replay dedup (a live manual
-        compact replays no tail — arming it ate the user's next genuine prompt whenever its
-        text repeated an earlier one) and the emit-order override (the boundary record is
-        appended BEFORE the stdout, so raw (t, seq) order would put the card inside the
-        command exchange it belongs after).
+        consumers that must NOT treat them as attached: the replay dedup, which arms at the
+        pair's SUMMARY record keyed to that record's own boundary and must not arm for an
+        adopted pair (2026-09-19; a live manual compact replays no tail, and armed there the
+        dedup ate the user's next genuine prompt whenever its text repeated an earlier one,
+        2026-08-19), and the emit-order override (the boundary record is appended BEFORE the
+        stdout, so raw (t, seq) order would put the card inside the command exchange it
+        belongs after).
 
         Placement note (re-derived 2026-08-19 against the golden scenario AND every
         boundary-bearing live-corpus transcript, plan_units pre vs post — the first cut
@@ -3413,8 +3418,8 @@ class FileAdapter:
         # seq-nearest the boundary+summary pair; the replayed copy's atoms fall to the dedup) —
         # else the last record seen: a MID-WRITE episode, one parse wide, never hidden, each
         # phase self-correcting at the next record. Boundary- or summary-as-leaf the pair is ON
-        # the active path (attached by shape, emits natively; the dedup arms there on an empty
-        # window — the file ends at the pair); caveat- or wrapper-as-leaf it adopts AT the
+        # the active path (attached by shape, emits natively; the dedup arms at the summary on an
+        # empty window — the file ends at the pair); caveat- or wrapper-as-leaf it adopts AT the
         # episode's last landed record — adopted, so unarmed — and re-seats once the stdout lands.
         episodes = {}
         for eu, er in self.by_uuid.items():          # insertion order = file read order
@@ -3963,22 +3968,61 @@ class FileAdapter:
                 continue
             if r.get("type") == "system" and r.get("subtype") == "compact_boundary":
                 _compacted = True
-                if u not in self._adopted:
-                    # the restore burst starts here and ends at the next assistant. An ADOPTED
-                    # boundary (a LIVE manual compact) never arms it: its transcript replays NO
-                    # tail — the records after it are the user's genuine next actions, and the
-                    # armed window silently ate the next typed prompt whenever its text repeated
-                    # any earlier message ("continue", a nudge) — a dropped real ask (2026-08-19).
-                    # Attached boundaries (auto, and the resume re-splice, which DOES replay) keep it.
-                    _restoring = True
                 last_boundary = u
+                # The boundary alone arms NOTHING (2026-09-19): the restore window opens at the
+                # isCompactSummary record below, the record that begins the Claude CLI's replay.
+                # Armed here, the window also covered a boundary that NO replay follows — a Codex
+                # session compacts at the top of the next turn and writes no summary record, so the
+                # record right after its boundary is the person's next prompt, and one whose text
+                # repeated an earlier message ("continue", a canned follow-up sent twice) was read
+                # as a replay and dropped: gone from the chat and the turns, its reply filed as a
+                # triggerless continuation of the boundary's turn. Measured on one machine's live
+                # corpus (2026-09-19, counts only): every attached boundary (338 in 32 transcripts,
+                # all trigger auto) has its summary as the very next record in FILE order, but this
+                # walk is (second, read order) and the CLI stamps the summary one second BEFORE its
+                # boundary in 104 of the 338 (9 of them the transcript's first compaction), so there
+                # the summary is walked first; no live window holds a textual replayed record (0 of
+                # 338, so the atom sets could not tell the two arming records apart), and old-vs-new
+                # direct parses of all 32 agree atom for atom and turn for turn (371,758 atoms and
+                # 10,418 turns each side; no PLACEMENTS_V bump), while the cards carrying a summary
+                # rose from 261 to 338 because an early-stamped summary now lands on its own card.
+                # The summary branch keys on its OWN boundary, so the window opens before the first
+                # replayed record on either stamp order (tests/test_event_model_compact_turn.py).
             elif r.get("type") == "assistant":
                 _restoring = False         # work resumed → anything later is new, not restored context
             elif r.get("type") == "user" and r.get("isCompactSummary") is True:
+                # The summary's OWN boundary, by the record's designed link (2026-09-19): its parent
+                # when that is a compact_boundary on record, else the last boundary walked. The walk
+                # is (second, read order) and the CLI stamps the summary one second before its
+                # boundary in 104 of the 338 attached boundaries on one machine's corpus (every one
+                # of the 338 parents its summary to its boundary), so keyed on the last boundary
+                # walked this branch met NO boundary yet (a transcript's first compaction: the window
+                # never opened and a replayed tail rendered as new asks) or the PREVIOUS one (an
+                # adopted manual pair earlier in the session disarmed an unrelated auto compaction's
+                # dedup, and this summary's text landed on the manual card). The fallback serves a
+                # summary whose boundary is not on record here: a restored assembly entry holds only
+                # the tail's records and carries last_boundary from its checkpoint.
+                bp = self.parent_of.get(u)
+                br = self.by_uuid.get(bp) if bp else None
+                own = bp if (br is not None and br.get("type") == "system"
+                             and br.get("subtype") == "compact_boundary") else last_boundary
                 stext = _text_of(_content(r.get("message")))
-                if last_boundary and stext:            # attach to the boundary just seen; cap for transport
-                    summaries[last_boundary] = stext[:SUMMARY_CAP] + (
+                if own and stext:                      # attach to its own boundary; cap for transport
+                    summaries[own] = stext[:SUMMARY_CAP] + (
                         "\n\n…(summary truncated)" if len(stext) > SUMMARY_CAP else "")
+                if own and own not in self._adopted:
+                    # the restore burst starts HERE — the summary is what the CLI writes before it
+                    # replays the recent tail verbatim — and ends at the next assistant. An ADOPTED
+                    # boundary's summary (a LIVE manual compact) never arms it: its transcript replays
+                    # NO tail — the records after the pair are the user's genuine next actions, and
+                    # the armed window silently ate the next typed prompt whenever its text repeated
+                    # any earlier message ("continue", a nudge) — a dropped real ask (2026-08-19).
+                    # Attached boundaries' summaries (auto, and the resume re-splice, which DOES
+                    # replay) arm it. _adopted is complete by now: every _prepass caller runs on an
+                    # adapter whose __init__ ended in _run_graph_passes (which fills it), or right
+                    # after _asm_fold's own _run_graph_passes call (all five call sites read
+                    # 2026-09-19), so membership here is the whole parse's, never a partial one.
+                    _restoring = True
             elif r.get("type") == "user" and not r.get("isMeta"):
                 txt = _text_of(_content(r.get("message")))
                 if txt:
@@ -4426,14 +4470,18 @@ class _Unhydrated:
         return "<unhydrated body of %s>" % self.uuid
 
 
+_UNBOUND_LAZY_SOURCE = object()    # compatibility for descriptors constructed without a verified document (2026-09-17)
+
+
 class _LazyBody(dict):
     """The message of a lazy atom: a dict-shaped sentinel that refuses every read. `_content` sees a dict and asks
     it for content; the ask raises LazyBodyRead with the atom's uuid, so the bypassing site is on the traceback."""
-    __slots__ = ("uuid",)
+    __slots__ = ("uuid", "source_path")
 
-    def __init__(self, uuid):
+    def __init__(self, uuid, source_path=_UNBOUND_LAZY_SOURCE):
         super().__init__()
         self.uuid = uuid
+        self.source_path = source_path                  # private, not a wire field: this snapshot's verified source (2026-09-17)
         super().__setitem__("lazy body", _Unhydrated(uuid))   # the C json encoder walks a dict subclass's storage
         #                                                        directly, never through get/items: the value inside makes
         #                                                        json.dumps raise (TypeError, not JSON serializable) instead
@@ -4448,7 +4496,16 @@ class _LazyBody(dict):
         return True
 
     def __eq__(self, other):
-        return isinstance(other, _LazyBody) and other.uuid == self.uuid
+        # the source slot and the uuid, not the class (2026-09-21): __hash__ keys on ("lazy", uuid) with no class in it, and
+        # a class check resolved _LazyBody from the module's globals at call time, so across the loader's re-execution
+        # (see is_lazy) two old sentinels of one uuid compared unequal, and an old one equaled a new one of its uuid that
+        # did not equal it back. Only this class declares the slot here; _Unhydrated has a uuid alone and stays unequal
+        return hasattr(other, "source_path") and getattr(other, "uuid", None) == self.uuid
+
+    def __ne__(self, other):
+        # the dict base's own __ne__ sits before object's in the lookup, so without this != compared storage, two distinct
+        # _Unhydrated values, and a same-uuid pair answered both == True and != True (2026-09-21)
+        return not self.__eq__(other)
 
     def __hash__(self):
         return hash(("lazy", self.uuid))
@@ -4458,7 +4515,11 @@ class _LazyBody(dict):
 
 
 def is_lazy(atom):
-    return isinstance(atom.get("message"), _LazyBody)
+    # the source slot, not the class, the one test the first loop of hydrate keys on (2026-09-21): the module loader
+    # re-executes this file into the same module object at every import and rebinds _LazyBody, so a sentinel built
+    # before a re-execution is no instance of the current class, and a class check answered False for a lazy body.
+    # A plain dict and None have no slot and answer False as before
+    return hasattr(atom.get("message"), "source_path")
 
 
 def _text_hash8(atom):
@@ -5243,9 +5304,10 @@ def _asm_gates(entry, leaf_path, candidate_files, links):
             parent_d[u] = None if p == u else p
             new_leaf = u
         if t == "system" and r.get("subtype") == "compact_boundary":
-            return _asm_demote("boundary")   # arms the restore dedup and can re-seat adoptions
+            return _asm_demote("boundary")   # sets the pre-pass's compaction gate and can re-seat adoptions
         if r.get("isCompactSummary") is True:
-            return _asm_demote("summary")    # attaches to boundaries in the chronological pre-pass
+            return _asm_demote("summary")    # attaches to its boundary and arms the restore dedup in the
+            #                                  chronological pre-pass (the summary, not the boundary, 2026-09-19)
         if t == "user" and r.get("promptId") and r["promptId"] in ad.prompt_ids:
             # A repeated promptId is ROUTINE — every record of a turn wears its prompt's id, so
             # tool results repeat it on nearly every append (measured: this gate, unshaped,
@@ -5616,6 +5678,9 @@ class LazyIndex:
         self.rowb = [r.encode("utf-8") for r in doc["atoms"]]   # v6: the document's rows are JSON strings already (T401 (4))
         self.records = doc["records"]
         self.fsids = list(doc.get("fsids") or [])
+        files = doc.get("files")
+        self.source_files = None if files is None else _source_files(files)   # the held view's own document, not the last
+        #                                                                         restore's (_restore_prefix_atoms, 2026-09-17)
         self._user_facts = {}                             # the interrupt-marks tally's light facts by row (user_facts), bounded by _USER_FACTS_CAP
         with _MAT_LOCK:                                   # the add under the lock the userFacts gauge sums under: an add beside the sum raised
             _LIVE_INDEXES.add(self)                       #  "set changed size during iteration" and /perf answered 500 (1597 low 1)
@@ -5644,7 +5709,7 @@ class LazyIndex:
             if "m" in row:
                 a.update(message=row["m"])                # a WRITE of the synthesized atom's message (no body read: the audit's regex)
             return a
-        a = _restore_prefix_atoms([row], self.rompuuid, self.records, self.fsids)[0]
+        a = _restore_prefix_atoms([row], self.rompuuid, self.records, self.fsids, self.source_files)[0]
         a.pop("_seq", None)                               # the read-order tiebreak: the section fixed the order (parse_session pops it too)
         return a
 
@@ -6108,7 +6173,7 @@ def _asm_doc_memo_put(key, mkey, doc):
             if _ASM_DOC_MEMO_BYTES[0] <= _ASM_DOC_MEMO_CAP or len(_ASM_DOC_MEMO) <= 1:
                 break
             _asm_doc_memo_drop(k_)
-_LAZY_FILES = {}                   # rompuuid -> {fsid: path}: where hydrate finds a lazy atom's record
+_LAZY_FILES = {}                   # rompuuid -> {fsid: path}: fallback for legacy unbound descriptors; restored bodies own their source (2026-09-17)
 _HYDRATED = {}                     # uuid -> the body fields read; dict order = LRU
 _HYDRATED_BYTES = [0]
 _HYDRATED_CAP = _env_or("ROMP_HYDRATED_CAP_MB", max(1024 ** 3, _machine_memory_bytes() // 32), 1024 * 1024)
@@ -7224,10 +7289,17 @@ def atom_model(atom):
     return msg.get("model") if isinstance(msg, dict) else None
 
 
-def _restore_prefix_atoms(pre_atoms, rompuuid, rows, fsids):
+def _source_files(files):
+    """A document's files map as hydration reads it, fsid -> the path of the ingested file: one form for the index, the
+    atoms-only restore and the per-session map (2026-09-20)."""
+    return {fsid: f["path"] for fsid, f in files.items()}
+
+
+def _restore_prefix_atoms(pre_atoms, rompuuid, rows, fsids, source_files=None):
     """The pre-cut atoms as the tree holds them: the identity fields from the record row (uuid, type, t, fsid, session,
     parentUuid), the recorded scalars over them, a _LazyBody where a message was, the lazy scalars under `lazy`, and
-    the read-order tiebreak the segmentation sorts by."""
+    the read-order tiebreak the segmentation sorts by. The body's private source path belongs to this verified document
+    (2026-09-17): another leaf restored under the same session may replace _LAZY_FILES while this view is still held."""
     tname = {"u": "user", "a": "assistant", "s": "system"}
     out = []
     for row in pre_atoms:
@@ -7245,7 +7317,8 @@ def _restore_prefix_atoms(pre_atoms, rompuuid, rows, fsids):
         lz = row.get("lz")
         if lz is not None:
             a["lazy"] = dict(lz, i=row["i"], at=tuple(row["at"]) if row.get("at") else None)
-            a["message"] = _LazyBody(a.get("uuid"))
+            source = _UNBOUND_LAZY_SOURCE if source_files is None else source_files.get(a.get("fsid"))
+            a["message"] = _LazyBody(a.get("uuid"), source)
         elif "m" in row:                                  # an inline body: an emitted atom with no record behind it (round 3)
             a["message"] = row["m"]
             if "tur" in row:
@@ -7540,7 +7613,8 @@ def _asm_restore_inner(key, leaf_path, candidate_files, links, rompuuid, postal_
             _restore_ms("index", _t0)
         else:
             _t0 = time.perf_counter()
-            prefix = _restore_prefix_atoms([json.loads(r_) for r_ in doc["atoms"]], rompuuid, doc["records"], fsids)   # v6 string rows
+            prefix = _restore_prefix_atoms([json.loads(r_) for r_ in doc["atoms"]], rompuuid, doc["records"], fsids,
+                                           _source_files(doc["files"]))   # v6 string rows
             ok_ = _pre_tree_identity(prefix, rompuuid) == doc.get("identity")
             _restore_ms("verify", _t0)                         # the atoms-only form: its rows built and its identity proven, one part
             if not ok_:
@@ -7565,7 +7639,7 @@ def _asm_restore_inner(key, leaf_path, candidate_files, links, rompuuid, postal_
         #        to a whole parse when the tail past the cut reaches the share (tailShare), so the settle rewrites the cut
     except Exception as e:                                     # noqa: BLE001 — a document the code cannot use is a fallback
         _asm_ckpt_note(leaf_path, "restore", repr(e)[:120]); return None
-    _LAZY_FILES[str(rompuuid)] = {fsid: f["path"] for fsid, f in doc["files"].items()}
+    _LAZY_FILES[str(rompuuid)] = _source_files(doc["files"])
     with _ASM_LOCK:
         gone = [_ASM_CACHE.pop(key, None)]
         while len(_ASM_CACHE) >= _ASM_CACHE_MAX:
@@ -7588,9 +7662,15 @@ def _hydrate_one(a, rec):
     if k == "a":
         a["message"] = _norm_message(rec.get("message"))
     elif k == "u":
-        a["message"] = _norm_message(rec.get("message"))
         if lz.get("tur") and isinstance(rec.get("toolUseResult"), dict):
-            a["toolUseResult"] = rec["toolUseResult"]
+            a["toolUseResult"] = rec["toolUseResult"]       # before the message, as kind k sets its skill text first (2026-09-20):
+        a["message"] = _norm_message(rec.get("message"))    #  a peer meeting the plain-dict body in hydrate's first loop counts the
+        #                                                      atom filled once its memo entry is gone, so the body a consumer is
+        #                                                      handed must be whole the instant the message lands. Written the other
+        #                                                      way round, a diff row or an answer built in that window read no tool
+        #                                                      result for one build. The marker pop below is the one write still in
+        #                                                      flight then, and a present marker costs a reader a hydrate call, never
+        #                                                      a body
     elif k == "c":
         a["message"] = {"role": "user", "content": [{"type": "text", "text": lz.get("disp", "")}]}
     elif k == "o":
@@ -7666,8 +7746,36 @@ def hydrate(atoms, rompuuid=None, by=None):
                 _hydrate_one(a, hit[0])
             filled += 1
             continue
-        sid = a.get("session_id") or rompuuid
-        path = (_LAZY_FILES.get(str(sid)) or {}).get(a.get("fsid"))
+        msg = a.get("message")
+        if not hasattr(msg, "source_path"):                 # another thread finished this atom between the memo miss above and
+            with _ASM_CKPT_LOCK:                            #  here (2026-09-20): its body is a plain dict with no source, and the
+                hit = _HYDRATED.get(u) if u else None       #  per-session map below could name a newer document and refuse an atom
+            if hit is not None:                             #  whose body is in place, the whole call with it. Its bookkeeping (the
+                _hydrate_one(a, hit[0])                     #  popped marker) may still be in flight: finish it from the memo as the
+            filled += 1                                     #  hit branch does, or count it filled when the entry is gone already.
+            continue                                        #  Entry gone with the marker present: the peer's pop is in flight, its
+        #                                                      put having left the memo already, self-evicted under a cap the record
+        #                                                      does not fit under or evicted by later puts from any thread between
+        #                                                      the peer's put and its fill (2026-09-21); the body stands whole, since
+        #                                                      _hydrate_one writes the message last, and readers key on the body
+        #                                                      type, not the marker (2026-09-20).
+        #                                                      The test is the source slot, not the class: the module loader
+        #                                                      re-executes this file into the same module object at every import,
+        #                                                      rebinding _LazyBody, and a sentinel built before that fails isinstance
+        #                                                      against the new class, so it was counted filled, read nothing and
+        #                                                      left its marker for the caller's next body read to raise on. A bound
+        #                                                      body built before the re-execution is read now; an unbound one still
+        #                                                      fails loudly below, its stale source sentinel being no path (the
+        #                                                      product re-executes only at import, before any body exists). A None
+        #                                                      message has no slot either and counts filled as before (2026-09-20).
+        #                                                      is_lazy and the sentinel's __eq__ key on the same slot (2026-09-21)
+        # Resolve from the held body's document, not the last document restored for this session (2026-09-17).
+        # A shallow atom copy keeps its sentinel and source. A missing bound source stays a loud failure; it must
+        # never borrow a path from a different snapshot. Legacy unbound descriptors retain the old lookup.
+        path = msg.source_path
+        if path is _UNBOUND_LAZY_SOURCE:
+            sid = a.get("session_id") or rompuuid
+            path = (_LAZY_FILES.get(str(sid)) or {}).get(a.get("fsid"))
         if path is None:
             raise LazyBodyRead("atom %s: no file known for fsid %s" % (u, a.get("fsid")))
         by_file.setdefault(path, []).append(a)

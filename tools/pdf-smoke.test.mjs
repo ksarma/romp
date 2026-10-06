@@ -69,7 +69,7 @@ test('pdfjs-dist opens a two-page synthetic PDF: two pages, each with a positive
 test('the installed pdfjs-dist is the 6.x line, Apache-2.0, and ships the worker the esbuild entry names', { skip: SKIP }, () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.json'), 'utf8'));
   assert.match(pkg.version, /^6\./, 'the chunk is written against pdf.js 6');
-  assert.equal(pkg.license, 'Apache-2.0', 'the license docs/install.md names');
+  assert.equal(pkg.license, 'Apache-2.0', 'the license docs/reference.md\'s License section names');
   assert.ok(fs.existsSync(path.join(PKG_DIR, 'build', 'pdf.worker.mjs')), 'vscode-extension/esbuild.js bundles this file as dist/pdf-worker.js');
 });
 

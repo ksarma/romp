@@ -110,6 +110,10 @@ CENSUS = {
         "resent": (NONE, _BOOL), "ms": (NONE, _INT), "bytesSince": (NONE, _INT), "redialed": (NONE, _BOOL), "code": (NONE, "the close code"),
         "reason": (NONE, "the close frame's reason text: this kernel sends no close frame (a drop reads 1006), so empty, or an intermediary's text, cut"),
         "wasClean": (NONE, _BOOL), "sinceOpenMs": (NONE, _INT), "everConnected": (NONE, _BOOL), "bundleReady": (NONE, _BOOL),
+        # wsclose's readyAcked and readyQueued (the project's PR 1862, the fork's breadcrumb offer; admitted on the owner's approval of
+        # 2026-10-02, as the project shipped them): the shim's own page-local flags at the close, each declared false and assigned only the
+        # literals true and false (the caps frame's arrival, the ready queued for an open, the open's flush)
+        "readyAcked": (NONE, _BOOL), "readyQueued": (NONE, _BOOL),
         "attempts": (NONE, _INT), "firstFailMs": (NONE, _INT), "wasDiscarded": (NONE, _BOOL), "nav": (NONE, "the navigation type word"),
         "awaitLink": (NONE, _BOOL), "linkUpMs": (NONE, _INT), "parked": (NONE, _BOOL),
     },
@@ -166,14 +170,17 @@ CENSUS = {
                                                  "true when that pick carried no numeric gt (an older emitter)"),
     },
     "chat": {   # render.ts's direct posts and scroll-write.ts's rows through scrollDiagRow
-        "sid": (PREFIXED, "the active tab's id or the session's id: <host>:<uuid> for a remote session (send, cancel-miss, reconcile-optimistic-failed, every scroll row)"),
+        "sid": (PREFIXED, "the active tab's id or the session's id: <host>:<uuid> for a remote session (send, cancel-miss, reconcile-optimistic-failed, every scroll row; "
+                          "delta-refused: requestFullSession's id, the session whose refused needFull the row names, the project's PR 1874)"),
         "error": (NONE, "a caught exception's message, cut at 200 by the poster and 64 here"), "held": (NONE, _INT), "got": (NONE, _INT), "distVer": (NONE, _INT),
         "path": (NONE, "location.pathname, the page's own route"), "mdLen": (NONE, _INT), "queuedLeft": (NONE, _INT),
         "ids": (PREFIXED, "live-omitted-kept: tab ids the kernel still affirms live, prefixed for remote sessions"),
         "n": (NONE, _INT),
         "active": (PREFIXED, "skeleton: the active tab's id, prefixed for a remote session"),
         "ts": (NONE, _INT), "len": (NONE, _INT), "route": (NONE, "plain, quote or followup"),
-        "id": (PREFIXED, "empty-session-frame: the frame's session id, prefixed by prefixInbound for a remote session"),
+        "id": (PREFIXED, "empty-session-frame, and the project's dropped-history rows (PRs 1860, 1877 and 1912): full-frame-desync, both full-frame-desync-loop rows, "
+                         "frame-behind and the four regions-dropped rows: the frame's session id (msg.id; on the cleared loop row clearRefusedLatch's id, the session of "
+                         "the frame or the delta that applied), prefixed by prefixInbound for a remote session"),
         "load": (NONE, "federation-missing: federationLoadEntry's four rounded numbers (frame-listener.ts) or null"),
         "first": (NONE, "federation-missing: the earlier pass's load figures, federationLoadEntry's four numbers read back from the sessionStorage retry marker ({load: entry}, its "
                         "only writer), or null; no build ever posted a boolean"),
@@ -188,7 +195,10 @@ CENSUS = {
                            "the timeline's message connector fills with a postal message id, <epoch>.<pid>_<hex>.<host> (postal_service.py _unique), so on that ONE road the tail is "
                            "the delivering kernel's short hostname, whole with its leading dot for a host of up to 11 characters, on a single-kernel page the page's own machine's; "
                            "filed on a landing miss, not gated by the share switch"),
-        "proto": (NONE, _INT), "events": (NONE, _INT), "regions": (NONE, _BOOL),
+        # proto: the frame's wire protocol number; null on landmiss when the active tab holds no session (sm ? (sm.proto ?? null) : null).
+        # full-frame-desync and the first full-frame-desync-loop row spell msg.proto ?? null (the project's PR 1860), but desyncWhy is set only
+        # on msg.proto === 2, so they post 2
+        "proto": (NONE, _INT_OR_NULL), "events": (NONE, _INT), "regions": (NONE, _BOOL),
         "headKnown": (NONE, _BOOL),
         "headFrom": (NONE, "landmiss: the resident tail's first global event index (Session.headFrom, a non-negative number from the kernel's full frame or the chatHead reply's from), "
                            "or null when the active tab has no live session"),
@@ -203,7 +213,10 @@ CENSUS = {
         "bot": (NONE, "spacer: the bottom spacer's [before, after] heights, its only writer"),
         "dTop": (NONE, _INT), "dBot": (NONE, _INT), "lo": (NONE, _INT), "hi": (NONE, _INT), "edge": (NONE, "top or bottom"),
         "why": (NONE, "regionask: gap-scroll (requestTurns, a gap fill's region ask) or landing (the window ask at landing), the two writers' literals; spacer-dropped: "
-                      "hidden or shown, the visibility edge its one writer names (render.ts dropSpacerRowsOnVisibility)"),
+                      "hidden or shown, the visibility edge its one writer names (render.ts dropSpacerRowsOnVisibility); full-frame-desync and the first "
+                      "full-frame-desync-loop row: would-drop-held, upsert's desyncWhy, its one value (the project's PR 1860); regions-dropped: regions-less, "
+                      "no-tail-lo or not-proto2 (the project's PR 1877) or rebased (the project's PR 1912), its four call sites' literals; delta-refused: gap, nobase or skeleton-delta, "
+                      "requestFullSession's NeedFullWhy word filtered to the three delta words (the project's PR 1874)"),
         "notice": (NONE, _BOOL),
         "nav": (NONE, "regionask: whether the window ask is a fresh landing rather than keepPlaceAcrossWindow's re-land, nav = !relandAsk, a boolean"),
         "kind": (NONE, "regionask: the landing anchor's kind, the kernel's _focus_kind word (user) on the showOnTimeline road, or a deep link URL's anchorKind query forwarded as "
@@ -213,6 +226,36 @@ CENSUS = {
         # view: the spacer row's literal inactive, spread by scroll-write.ts spacerRow only when handed that word, on the row of a view the
         # scroller did not measure in its frame; CLIENT_DIAG_VALUES bounds the key to that word and the kernel refuses any other value; no host
         "view": (NONE, _ENUM),
+        # render.ts's dropped-history rows (the project's PRs 1860 and 1877; the twelve keys admitted on the owner's approval of 2026-10-02, as the
+        # project shipped them; and the project's PR 1912, whose rebased regions-dropped row adds setAside, admitted on the owner's approval of
+        # 2026-10-03, as the project shipped it): full-frame-desync and the first full-frame-desync-loop row (upsert), the cleared loop row
+        # (clearRefusedLatch), frame-behind and the four regions-dropped rows (upsert, through chatDiagRow). Each value is classified from its writer.
+        # tailLo: the frame's tail start, the kernel's turn index (m_send["tailLo"]). The two desync rows post msg.tailLo when it is a number and
+        # null otherwise (the writer's ternary; desyncWhy is set only on a numeric tailLo, so today that arm is not reached, and the class keeps
+        # the writer's spelling); frame-behind posts the merge's tailLo, msg.tailLo or 0 on a headKnown frame, inside the branch that requires it.
+        "tailLo": (NONE, _INT_OR_NULL),
+        "count": (NONE, _INT),            # the first loop row's n (the refusal count, 2 at that site); the cleared row's prior.count, at least 2
+        "cleared": (NONE, _BOOL),         # the cleared loop row's literal true
+        "heldLo": (NONE, _INT),           # frame-behind: the held run's Run.lo, a turn index
+        "dropped": (NONE, _INT),          # frame-behind: split.dropped.length (splitHeldAgainstFrame)
+        "afterLast": (NONE, _INT),        # frame-behind: split.afterLast, a count of held transcript rows after the frame's last key
+        "rewindPending": (NONE, _BOOL),   # frame-behind: pendingRewind.has(msg.id)
+        "heldRuns": (NONE, _INT),         # regions-dropped: runsOf(prev.regions).length (runsOf(prev.regions || []).length on the rebased row), or the literal 0 on the regions-less row
+        "heldEvents": (NONE, _INT),       # regions-dropped (regions-less): prev.events.length
+        "frameEvents": (NONE, _INT),      # regions-dropped: events.length, or (msg.events || []).length on the not-proto2 row
+        # setAside: regions-dropped (rebased, the project's PR 1912), a counter, `let setAside = 0` raised only by `setAside++` over prev.events (a
+        # held transcript row whose key the merged list lacks), posted only when non-zero, so a positive integer; a count, no host
+        "setAside": (NONE, _INT),
+        "heldLast": (NONE, "frame-behind: (keyOf(e) ?? \"\").slice(-12) over the held run's last transcript row (not optimistic, not a held group, not an overlay "
+                           "kind): the last 12 characters of an event KEY (key, else uuid; chat-window.ts keyOf), or empty. The keys are the kernel's, set by "
+                           "_uniq_event_uuids over the built list (federation.ts prefixes session ids, never an event's key), and their range is a transcript "
+                           "record's uuid (the Claude CLI's uuid4, which the SDK stream carries too; on a Codex session the app server's opaque item or turn id, "
+                           "alone or with codex_events.py's -r, -err, -int, -<n> or ~<n> after it, or cb-<turn>, err-<turn>, cx~<n>), the echo keys echo:<hex> "
+                           "and echo-<hex>, the chip cmd:<epoch>:model, effort or auth, the notes orphan, retried, gaveup, cmdg and effort:<epoch>:<ordinal> and the event "
+                           "model's orphan:<epoch>, system:head, clear:<record uuid or epoch>, branch:<record uuid>, ev:<12 hex digits> or ev:<n>, any of them "
+                           "with #<n>: hex digits, digits, those words and record ids, no host name, postal message id or session id on any road"),
+        "frameLast": (NONE, "frame-behind: the same expression over the frame's last transcript row, the last 12 characters of an event key the kernel "
+                            "minted, or empty: heldLast's range (the same minters), no host on any road"),
     },
     "strip": {   # strip.ts: the host popover's fetch and toggle rows
         "ok": (NONE, _BOOL), "tunnels": (NONE, _INT), "err": (NONE, "the page's own /tunnels fetch failure as String(err), cut"), "open": (NONE, _BOOL),
@@ -237,12 +280,13 @@ CENSUS = {
         "rev": (NONE, "delta-unapplied: the frame's rev, the kernel's per-slot integer counter (_send_slot); on the pre-receiver federation.js road the remote's value as the wire carried it, slot's scope clause"),
     },
     "waiting": {"buildId": (NONE, "feedDelta-unapplied (waiting.ts): the frame's buildId as its kernel sent it, _next_feed_build_id's integer counter")},
-    "kernel": {   # the kernel's four direct writers: _note_ws_open, _note_history_reply, _note_chat_withheld_at_close, _implicit_handshake
+    "kernel": {   # the kernel's six direct writers: _note_ws_open, _note_history_reply, _note_chat_full, _note_chat_withheld_at_close, _implicit_handshake, _note_needfull_status
         "app": (NONE, "the dial's app word"), "kind": (NONE, "page, relay or hub"), "reconnect": (NONE, _BOOL), "iid": (NONE, "a boolean: whether the dial stated one"),
         "cid": (NONE, "a minted hex id"),
         "host": (BARE, "wsopen, kind hub: the host a spliced /remote/<host>/ws upgrade was relayed to (_note_ws_open, from the hub's splice)"),
         "sid": (NONE, "historyReply: str(msg['id']), the session id a history ask named, stored uncut (the kernel's rows never pass _client_diag_scrub): a page asks for its "
-                      "local sessions bare, and the relay strips a remote id's host before forwarding (federation.ts stripHost)"),
+                      "local sessions bare, and the relay strips a remote id's host before forwarding (federation.ts stripHost); chatFull and needFullStatus: str(m['id']), "
+                      "the id of the kernel's own session the frame was built for (_send_chat_proto2, _send_chat_or_status), bare"),
         "type": (NONE, "the ask's type word, one of four guarded words or the literal loadOlder"),
         "span": (NONE, "historyReply: the turn pair [lo, hi) the kernel computed from its turn index (_chat_history_reply), or null on a loadAround with no placed turn; on a "
                        "chatTurns reply the kernel could not build (lo or hi not an int, no session or build, an exception) the ask's own lo and hi echoed as parsed and stored "
@@ -251,8 +295,10 @@ CENSUS = {
         "events": (NONE, _INT), "bytes": (NONE, _INT), "head": (NONE, _BOOL),
         "missing": (NONE, _BOOL), "refused": (NONE, _BOOL),
         "reason": (NONE, "historyReply: the fault text the kernel minted for a refused history reply (_fault's two forms, the legacy arm's; no build to answer from, or an "
-                         "exception's class and text), stored uncut; an exception's text may quote the ask"),
+                         "exception's class and text), stored uncut; an exception's text may quote the ask; chatFull: _chat_full_reason's label, a fixed word or "
+                         "lastGone: plus _gone_key_label's family word"),
         "sent": (NONE, _BOOL), "frames": (NONE, _INT), "ageS": (NONE, _INT), "frame": (NONE, "a WS_OPS word or other"), "withheld": (NONE, _INT), "proto": (NONE, _INT),
+        "changeFrom": (NONE, _INT), "total": (NONE, _INT), "firstHeld": (NONE, _BOOL), "lastHeld": (NONE, _BOOL),   # chatFull (_note_chat_full, the project's PR 1868): int() and bool() of the sender's figures
     },
 }
 
@@ -265,6 +311,40 @@ MARKERS = {
     "cut": (NONE, "_client_diag_admit: the admitted keys of the row under which _client_diag_scrub cut a string or nulled a nesting, in the "
                   "row's key order: positions of keys in the row, taken from the surface's own table, no host"),
 }
+
+# Keys the project's code posts that this fork's allowlist admits on the owner's word (fold 4, slices 1 and 2): a field a page posts to
+# client-diag.jsonl is admitted field by field, and the owner approved admitting these as the project shipped them (2026-10-02, and setAside
+# on 2026-10-03). Each set is pinned PRESENT by the cell named beside it, which posts the writers' rows and asserts them stored whole with
+# nothing said; drop any one key from CLIENT_DIAG_KEYS and that cell reds (the kernel drops the key and says so), with the census and the
+# posters cells.
+# - The shim's wsclose row's readyAcked and readyQueued (the project's PR 1862, the fork's own offer; booleans):
+#   test_the_shims_wsclose_ready_keys_pass_whole_on_the_owners_approval.
+# - render.ts's dropped-history rows (the project's PRs 1860 and 1877: full-frame-desync, full-frame-desync-loop, frame-behind and
+#   regions-dropped; and the project's PR 1912's setAside on the regions-dropped row of why "rebased", a count of the held transcript rows
+#   the rebased frame set aside, approved 2026-10-03): test_the_dropped_history_rows_pass_whole_on_the_owners_approval.
+APPROVED_PANE_SHIM_KEYS = ("readyAcked", "readyQueued")
+APPROVED_CHAT_KEYS = ("tailLo", "count", "cleared", "heldLo", "heldLast", "dropped", "afterLast", "frameLast", "rewindPending",
+                      "heldRuns", "heldEvents", "frameEvents", "setAside")
+
+
+def dropped_history_fixture_rows(sid):
+    """render.ts's dropped-history rows, one per call site in its writer's shape (the project's PRs 1860, 1877 and 1912): full-frame-desync and
+    the first full-frame-desync-loop row (upsert's guard 3), the cleared loop row (clearRefusedLatch), frame-behind (upsert's merge) and the four
+    regions-dropped rows (regions-less, no-tail-lo, not-proto2, rebased). heldLast and frameLast are (keyOf(e) ?? "").slice(-12) over a
+    transcript row: here the last 12 characters of a placeholder record uuid, the form a Claude CLI record's key takes (the census,
+    chat.heldLast)."""
+    tail = "555555555555"
+    return [
+        ("full-frame-desync", {"id": sid, "why": "would-drop-held", "proto": 2, "tailLo": 40}),   # desyncWhy needs msg.proto === 2 and a numeric tailLo, so the writer's null arms are not reached (the census, chat.tailLo)
+        ("full-frame-desync-loop", {"id": sid, "why": "would-drop-held", "count": 2, "proto": 2, "tailLo": 40}),
+        ("full-frame-desync-loop", {"id": sid, "count": 5, "cleared": True}),
+        ("frame-behind", {"id": sid, "tailLo": 40, "heldLo": 10, "heldLast": tail, "dropped": 2, "afterLast": 1, "frameLast": tail,
+                          "rewindPending": False}),
+        ("regions-dropped", {"id": sid, "why": "regions-less", "heldRuns": 0, "heldEvents": 12, "frameEvents": 30}),
+        ("regions-dropped", {"id": sid, "why": "no-tail-lo", "heldRuns": 2, "frameEvents": 30}),
+        ("regions-dropped", {"id": sid, "why": "not-proto2", "heldRuns": 2, "frameEvents": 30}),
+        ("regions-dropped", {"id": sid, "why": "rebased", "heldRuns": 2, "setAside": 3}),   # posted only when setAside is non-zero (the census, chat.setAside)
+    ]
 
 
 def host_carrying_keys():
@@ -860,7 +940,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         todays = [
             ("perf", "minute", MINUTE),
             ("perf", "slowframe", {"app": "chat", "type": "session", "ms": 150.2, "dom": 53306, "loaf": {"ms": 160, "blocking_ms": 110, "top": []}}),
-            ("pane-shim", "wsclose", {"app": "feed", "code": 1006, "reason": "", "wasClean": False, "sinceOpenMs": 5000, "quietMs": 31000, "everConnected": True, "bundleReady": True}),
+            ("pane-shim", "wsclose", {"app": "feed", "code": 1006, "reason": "", "wasClean": False, "sinceOpenMs": 5000, "quietMs": 31000, "everConnected": True, "bundleReady": True,
+                                      "readyAcked": True, "readyQueued": False}),   # the row as the shim posts it since the project's PR 1862 (both keys admitted on the owner's approval of 2026-10-02)
             ("pane-shim", "return", {"decision": "redial-closed", "resumed": False, "hiddenMs": 29000, "frozenMs": 0, "quietMs": 29500, "quietAtResumeMs": -1, "ready": 3, "app": "chat", "resent": True}),
             ("pane-shim", "return-fresh", {"ms": 5600, "bytesSince": 40000, "redialed": True, "app": "chat"}),
             ("pane-shim", "wsconnfail", {"app": "chat", "attempts": 3, "firstFailMs": 30000}),
@@ -921,6 +1002,88 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertIn("parked", km.CLIENT_DIAG_KEYS["pane-shim"])
         for surface in ("shell", "federation", "chat", "perf", "reload-core"):
             self.assertNotIn("parked", km.CLIENT_DIAG_KEYS[surface], "the key is the pane-shim surface's alone")
+
+    def test_the_shims_wsclose_ready_keys_pass_whole_on_the_owners_approval(self):
+        # The project's PR 1862 (the fork's own offer) added readyAcked and readyQueued to the shim's wsclose row, and the owner approved
+        # admitting both to this fork's allowlist as the project shipped them (2026-10-02; APPROVED_PANE_SHIM_KEYS). The row is read off the
+        # served shim's own literal, so the row posted here is the real row's shape, and it is stored whole with nothing said. Red under the
+        # reverse plant: either key out of CLIENT_DIAG_KEYS["pane-shim"] and the kernel drops it with a stderr line, so the stored row is not
+        # the posted one (the census, the wsclose fixture row in test_todays_rows_pass_whole_and_quietly and
+        # tests/test_client_diag_reconnect_stamp.py ThePairInTheLog red with it).
+        js = km._shim("feed", caps=km.READY_GATE_CAP)
+        literals = re.findall(r'what:"wsclose",data:\{([^{}]*)\}', js)
+        self.assertEqual(len(literals), 1, "the shim posts one wsclose row: re-aim the read if it moved")
+        posted = re.findall(r'(?:^|,)(\w+):', literals[0])
+        self.assertEqual(sorted(posted), sorted(["app", "code", "reason", "wasClean", "sinceOpenMs", "quietMs", "everConnected", "bundleReady"]
+                                               + list(APPROVED_PANE_SHIM_KEYS)), "the shim's wsclose keys, the two approved ones among them")
+        row = {"app": "feed", "code": 1006, "reason": "", "wasClean": False, "sinceOpenMs": 5000, "quietMs": 31000, "everConnected": True,
+               "bundleReady": True, "readyAcked": True, "readyQueued": False}
+        self.assertEqual(sorted(row), sorted(posted), "the row here carries exactly the keys the shim posts")
+        err = self.post("pane-shim", "wsclose", row)
+        approved = "admitted on the owner's approval of 2026-10-02, as the project shipped it (APPROVED_PANE_SHIM_KEYS)"
+        self.assertEqual(self.rows()[-1]["data"], row, "the row is stored whole, readyAcked and readyQueued included: each is %s" % approved)
+        self.assertEqual(err, "", "nothing dropped, nothing said: %s" % err)
+        for k in APPROVED_PANE_SHIM_KEYS:
+            self.assertIn(k, km.CLIENT_DIAG_KEYS["pane-shim"], "%s: %s" % (k, approved))
+            self.assertEqual(CENSUS["pane-shim"].get(k), (NONE, _BOOL), "%s: %s; a page-local flag, declared false and assigned only the literals" % (k, approved))
+            for surface in km.CLIENT_DIAG_KEYS:
+                if surface != "pane-shim":
+                    self.assertNotIn(k, km.CLIENT_DIAG_KEYS[surface], "%s: the pane-shim surface's alone (%s)" % (k, surface))
+        self.assert_shorthand_shapes("pane-shim", "wsclose", row)
+
+    def test_the_dropped_history_rows_pass_whole_on_the_owners_approval(self):
+        # render.ts's dropped-history rows post thirteen keys the owner approved admitting to this fork's allowlist as the project shipped
+        # them (APPROVED_CHAT_KEYS): the twelve of the project's PRs 1860 and 1877 (2026-10-02) and setAside, which the project's PR 1912 added
+        # to the regions-dropped row of why "rebased" (2026-10-03). One row per call site in its writer's shape (dropped_history_fixture_rows),
+        # each stored whole with nothing said, every value of the shape its census row states. The fixture's key sets are read against the
+        # writers' own literals in render.ts, call site by call site (frame-behind's spread of `behind` read from that object's one literal),
+        # so a writer that grows a key reds here before its rows lose it. Red under the reverse plant: any one key out of
+        # CLIENT_DIAG_KEYS["chat"] (setAside included: the rebased row is then stored without it and the kernel names it on stderr) and a
+        # stored row is not the posted one (the census and the posters cells red with it).
+        sid = "TESTHOST:11111111-2222-3333-4444-555555555555"
+        rows = dropped_history_fixture_rows(sid)
+        src = open(os.path.join(UI, "render.ts"), encoding="utf-8").read()
+        sites = [(m.group(1) or m.group(3), m.group(2) if m.group(1) else m.group(4)) for m in re.finditer(
+            r'surface: "chat", what: "(full-frame-desync(?:-loop)?)", data: \{ ([^\n]*?) \} \}\);|chatDiagRow\("(frame-behind|regions-dropped)", \{ ([^\n]*?) \}\);', src)]
+        self.assertEqual(sorted(w for w, _ in sites), sorted(w for w, _ in rows),
+                         "render.ts's dropped-history call sites, one fixture row each: re-aim the read if a site moved, or add a row for a new one")
+        behind = re.findall(r'\bbehind = \{ ([^\n]*?) \};', src)
+        self.assertEqual(len(behind), 1, "frame-behind's `behind` object has one literal: re-aim the read if it moved")
+
+        def keys(body):
+            parts, depth, cur = [], 0, ""
+            for ch in body:
+                depth += ch in "([{"
+                depth -= ch in ")]}"
+                if ch == "," and depth == 0:
+                    parts.append(cur.strip())
+                    cur = ""
+                else:
+                    cur += ch
+            parts.append(cur.strip())
+            out = []
+            for part in parts:
+                name = re.match(r"(\.\.\.)?(\w+)", part)
+                self.assertIsNotNone(name, "an object-literal member this read cannot name: %r" % part)
+                out.extend(keys(behind[0]) if name.group(1) and name.group(2) == "behind" else [name.group(2)])
+            return out
+
+        self.assertEqual(sorted((w, tuple(sorted(keys(b)))) for w, b in sites), sorted((w, tuple(sorted(d))) for w, d in rows),
+                         "each fixture row carries exactly the keys its render.ts writer posts")
+        approved = "admitted on the owner's approval, as the project shipped it (APPROVED_CHAT_KEYS: setAside on 2026-10-03, the rest on 2026-10-02)"
+        posted, err = set(), ""
+        for what, data in rows:
+            said = self.post("chat", what, data)
+            err += said
+            self.assertEqual(self.rows()[-1]["data"], data, "%s: stored whole, every key %s; said: %s" % (what, approved, said))
+            self.assert_shorthand_shapes("chat", what, data)
+            posted |= set(data)
+        self.assertEqual(err, "", "nothing dropped, nothing said: %s" % err)
+        self.assertTrue(set(APPROVED_CHAT_KEYS) <= posted, "the rows post every approved key")
+        for k in APPROVED_CHAT_KEYS:
+            self.assertIn(k, km.CLIENT_DIAG_KEYS["chat"], "%s: %s" % (k, approved))
+            self.assertIn(k, CENSUS["chat"], "%s: %s, classified by its writer" % (k, approved))
+            self.assertEqual(CENSUS["chat"][k][0], NONE, "%s: no producer chain reaches a host name (the census row's reason)" % k)
 
     def test_the_inactive_spacer_rows_marker_passes_whole_on_the_owners_approval(self):
         # PR E's author's pass 1b (applying the maintainer's round 1 addendum) marked a spacer row whose view was switched away before its
@@ -1273,6 +1436,29 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(self.post("perf", "slowframe", big), "")
         self.assertEqual(sorted(self.rows()[-1]["data"]), ["app", "bytes", "capped"], "the cap still applies, unsaid")
         self.assertEqual(len(km._client_diag_said), km.CLIENT_DIAG_SAID_MAX + 1)
+
+    def test_the_kernel_entry_names_every_key_the_kernels_direct_writers_file(self):
+        # The kernel's own rows never pass the admit, so nothing holds the kernel entry to them at run time: each direct writer is
+        # run here and its row's keys held to the entry (_implicit_handshake's row is held to it in tests/test_chat_window_spans.py),
+        # and the row kinds kernel.py files under surface kernel are held to the six, so a new direct writer reds here until the
+        # entry and CENSUS["kernel"] name its keys (fold 4: the project's chatFull and needFullStatus writers arrived unnamed).
+        sid = "11111111-2222-3333-4444-555555555555"
+        c = {"wid": WID, "app": "chat", "kind": "relay", "cid": "c1", "host": "TESTHOST", "iid": "i1"}
+        km._note_ws_open(c, reconnect=True)
+        km._note_history_reply(c, sid, "loadOlder", {"span": [0, 1], "events": [], "head": True}, 10)
+        km._note_chat_full(c, sid, "changeAt0", 0, 3, True, True)
+        km._note_chat_withheld_at_close(dict(c, handshake=False, withheld=2))
+        km._note_needfull_status(c, sid)
+        rows = self.rows()
+        self.assertEqual([r["what"] for r in rows], ["wsopen", "historyReply", "chatFull", "chatWithheld", "needFullStatus"])
+        for r in rows:
+            self.assertEqual(r["surface"], "kernel")
+            self.assertLessEqual(set(r["data"]), km.CLIENT_DIAG_KEYS["kernel"], "%s: the kernel entry names every key the row carries" % r["what"])
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8").read()
+        self.assertEqual(sorted(re.findall(r'"surface": "kernel",\s*"what": "(\w+)"', src)),
+                         sorted(["wsopen", "historyReply", "chatFull", "chatWithheld", "needFullStatus", "implicitHandshake"]),
+                         "the kernel's direct writers, one call site each: a new row kind needs its keys in the kernel entry and CENSUS['kernel']")
+        self.assertEqual(len(re.findall(r'"surface": "kernel"', src)), 6, "every writer of surface kernel spells its kind beside it, so the census above reads them all")
 
     def test_a_page_row_under_the_kernels_surface_is_refused_and_said_once(self):
         # the table admitted surface kernel from a page, so a forged wsopen landed indistinguishable from the kernel's own
@@ -1701,7 +1887,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("regionask", {"sid": sid, "lo": 10, "hi": 20, "edge": "top", "why": "gap-scroll", "notice": False}),
                 ("regionask", {"sid": sid, "why": "landing", "nav": True, "kind": "user", "keep": True, "reland": False, "trail": ["pre-jump"], "notice": True, "atBottom": False}),
                 ("scrollwrite-capped", {"sid": sid, "perMinute": 200}),
-            ],
+                ("delta-refused", {"sid": sid, "why": "gap"}),   # render.ts requestFullSession: a refused needFull for a delta (the project's PR 1874); the admitted keys alone
+            ] + dropped_history_fixture_rows(sid),   # render.ts's dropped-history rows (the project's PRs 1860, 1877 and 1912; their keys admitted on the owner's approval of 2026-10-02, setAside's of 2026-10-03)
             "federation": federation_fixture_rows(host),
             "feed": [
                 ("colflip", {"id": parked, "from": "working", "to": "blocked", "ev": "feedDelta", "buildId": 7, "predicted": True}),

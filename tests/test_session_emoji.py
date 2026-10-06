@@ -589,7 +589,11 @@ class Frames(unittest.TestCase):
                       "the VS Code pipe holds it across a reconnect like setSessionColor")
         self.assertIn("setSessionEmoji", (root / "docs" / "reference.md").read_text())
         self.assertIn("set_emoji", (root / "docs" / "reference.md").read_text())
-        self.assertIn("romp emoji", (root / "docs" / "guide.md").read_text())
+        # the user-level account (the guide's emoji paragraph, which leads docs/reference.md's "### A session's tab emoji" since
+        # fold 4 moved it out of docs/guide.md; CLAUDE.md "The documentation front pages") names the command too
+        ref = (root / "docs" / "reference.md").read_text()
+        lead = ref[ref.index("\n### A session's tab emoji\n"):ref.index("It can be set from three places")]
+        self.assertIn("romp emoji", lead)
 
 class EmojiRoute(unittest.TestCase):
     """POST /emoji: the door `romp emoji` and the postal set_emoji tool share."""

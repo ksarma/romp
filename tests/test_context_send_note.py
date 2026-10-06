@@ -29,6 +29,24 @@ def _read(*parts):
         return f.read()
 
 
+def _ref_section(md, heading):
+    """The body of the `## ` or `### ` heading `heading` in docs/reference.md, up to the next `## ` or `### ` heading."""
+    m = re.search(r"^#{2,3} " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} |\Z)", md, re.S | re.M)
+    assert m, "docs/reference.md has no section %r" % heading
+    return m.group(1)
+
+
+def _files_section():
+    """The guide's Files section as docs/reference.md holds it since fold 4 moved the fork's paragraphs out of docs/guide.md
+    (the front pages are the project's, CLAUDE.md "The documentation front pages"): the body of "## The Files pane", then the
+    paragraphs of the three viewer sections the reference keeps with the chat pane ("Links inside a file", "Text size and
+    width", "A file's own HTML"), which sat in the guide's Files section on this fork."""
+    ref = _read("docs", "reference.md")
+    parts = [_ref_section(ref, "The Files pane").strip("\n")]
+    parts += [_ref_section(ref, h).strip("\n") for h in ("Links inside a file", "Text size and width", "A file's own HTML")]
+    return "\n\n".join(parts) + "\n"
+
+
 def _flat(text):
     """Collapse hard wraps so an assertion survives a rewrap."""
     return re.sub(r"\s+", " ", text).strip()
@@ -209,7 +227,7 @@ class TheCodeMakesTheEntryTrue(unittest.TestCase):
     def test_the_guide_says_the_same_without_the_word(self):
         # the guide's Files section may not say "note" (tests/test_guide_files_comment_vocabulary.py reads the File
         # comment entry's Avoid list), so its Send to session paragraph says the thing instead
-        send = _paragraph(_section(_read("docs", "guide.md"), "Files"), "**Send to session**")
+        send = _paragraph(_files_section(), "**Send to session**")
         self.assertIn("with a box for anything you want to add in your own words, which go first in the message; "
                       "words alone send too.", send)
 
@@ -221,7 +239,7 @@ class TheCodeMakesTheEntryTrue(unittest.TestCase):
         # the saved line and in the prose of four test modules, which this scan then took in)
         for parts in (("plans", "file-review.md"), ("ui", "webview", "file-comments-model.ts"), ("ui", "webview", "file-comments.ts"),
                       ("ui", "webview", "file-comments-send-note.test.ts"), ("ui", "webview", "file-comments-send-resolves.test.ts"),
-                      ("docs", "guide.md"), ("ui", "webview", "styles.css"), ("ui", "webview", "feed.css"),
+                      ("docs", "guide.md"), ("docs", "reference.md"), ("ui", "webview", "styles.css"), ("ui", "webview", "feed.css"),
                       ("ui", "webview", "file-comments.test.ts"), ("ui", "webview", "file-comments-arrivals.test.ts"),
                       ("ui", "webview", "file-comments-arrivals-browser.test.ts"), ("ui", "webview", "file-comments-focus-verify-2.test.ts"),
                       ("ui", "webview", "feed-css-saved-line-head-dress.test.ts")):
