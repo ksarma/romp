@@ -66,12 +66,15 @@
 // the page parses, as the gear writes it) at cfg.actsViewport: the card opened from the bar's Settings, and in it the card's
 // background, the button's own fill (the glyph sits on it) and each colour the glyph can wear, as computed values: the
 // glyph lit and attaching (its svg's colour, the strokes' currentColor) and each node's fill as connected, dialing and needs you,
-// each read with that class set on the element and the element's transitions off, then put back; then the same with the
-// pointer moved onto the button's centre (its transitions off first): its hovered fill, its colours, and whether :hover holds;
-// then, the pointer moved off, the card opened again over each answer to the opening's pull (held, the lab's reading, no rows,
-// an error status), the window taken through cfg.heightWidths in each, and at each width the row's height, Usage's box beside
-// Restart kernel's top and height, Usage's words' box, the loader's laid-out box and the button's parts, the tabs' offset in
-// the card and their top in the window, the line Usage shows, and whether its name is seen.
+// each read with that class set on the element and the element's transitions off, then put back, and the glyph unlit (its
+// svg's colour with neither class); then the same with the pointer moved onto the button's centre (its transitions off
+// first): its hovered fill, its colours, and whether :hover holds; then, the pointer moved off, the card opened again over
+// each answer to the opening's pull (held, the lab's reading, no rows, an error status), the window taken through
+// cfg.heightWidths in each, and at each width the row's height, Usage's box beside Restart kernel's top and height, Usage's
+// words' box, the loader's laid-out box and the button's parts, the tabs' offset in the card and their top in the window, the
+// line Usage shows, and whether its name is seen; then the card opened over the lab's reading and again over a pull failed in
+// transit (Usage enabled beside Couldn't load), the pointer moved onto Usage's centre (its transitions off first), and its
+// hovered fill, the line's colour and whether :hover holds read.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -1031,6 +1034,7 @@ try {
       if (route.request().frame() !== pg.mainFrame() || usageMode === "lab") return route.continue();
       if (usageMode === "hold") { usageHeld.push(route); return undefined; }
       if (usageMode === "empty") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) });
+      if (usageMode === "transit") return route.abort("failed");
       return route.fulfill({ status: cfg.errorStatus, contentType: "application/json", body: JSON.stringify({ error: "synthetic failure" }) });
     }), theme);
     const [w, h] = cfg.actsViewport;
@@ -1068,6 +1072,9 @@ try {
       res.colours.connected = readAs(me, () => me.setAttribute("class", "rn-me rn-ok"), "fill");
       res.colours.dialing = readAs(me, () => me.setAttribute("class", "rn-me rn-wait"), "fill");
       res.colours["needs you"] = readAs(me, () => me.setAttribute("class", "rn-me rn-warn"), "fill");
+      // ...and the glyph unlit, neither class on the button: its svg's colour, which hover must leave as it is at rest (PR 976's
+      // round 2, ui-1: the button's hover colour reached an unlit glyph and wore the lit one's accent)
+      res.colours.unlit = readAs(net, () => { net.classList.remove("on"); net.classList.remove("busy"); }, "color", svg);
       return res;
     }, hover);
     out.contrast[name] = await colours(false);
@@ -1168,6 +1175,37 @@ try {
       hs.failedEnded = await ended();
       hs.failed = await sweep();
       out.contrast[name].heights = hs;
+      // ...then Usage hovered beside its Couldn't load line (romp-manager's first decision before PR 976's round 2: Usage keeps
+      // its resting fill on hover, where the accent wash put the muted line under the 4.5:1 text needs): the card closed and
+      // opened over the lab's reading, then again over a pull failed in transit (the reading kept and the read failed, so
+      // Usage is enabled beside the line), the pointer moved onto Usage's centre with its transitions off, and the card's
+      // background, Usage's hovered fill, the line's colour and whether :hover holds read; the pointer moved off
+      {
+        const uh = {};
+        await closeC();
+        usageMode = "lab";
+        await openC();
+        uh.labEnded = await ended();
+        await closeC();
+        usageMode = "transit";
+        await openC();
+        uh.failedEnded = await ended();
+        await frames(page);
+        const spot = await sf.evaluate(() => { const b = document.getElementById("rs-pact-usage"); if (!b) return null;
+          b.style.transition = "none"; const c = b.getBoundingClientRect(); return { x: c.left + c.width / 2, y: c.top + c.height / 2 }; });
+        if (spot) {
+          await page.mouse.move(lift.left + spot.x, lift.top + spot.y);
+          await frames(page);
+          Object.assign(uh, await sf.evaluate(() => {
+            const b = document.getElementById("rs-pact-usage"), er = document.getElementById("rs-pact-usage-err"), card = document.querySelector("#rsettings .rs-card");
+            return { hovered: b.matches(":hover"), disabled: b.disabled, errShown: !!er && !er.hidden && getComputedStyle(er).display !== "none",
+                     card: card ? getComputedStyle(card).backgroundColor : null, fill: getComputedStyle(b).backgroundColor,
+                     line: er ? getComputedStyle(er).color : null };
+          }));
+          await page.mouse.move(1, 1);
+        }
+        out.contrast[name].usageHover = uh;
+      }
     }
     await context.close();
   }
