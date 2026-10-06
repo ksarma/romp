@@ -1121,40 +1121,55 @@ jobs:
     # again. On main's run the repeated steps took about 16 s: the checkout 6 s, node 1 s, npm ci
     # 3 s, the cache 3 s, Chromium 1 s, and the job's own set-up and post steps.
     # The cap is the job's expected time and half again, rounded up to a multiple of 5, the rule
-    # the vendored-tooling job sizes its cap by, with the slowest measured job as the expected
-    # time: the job has run within seconds of the 50-minute cap main's ci.yml gives it, and half
-    # again leaves room for the suite to grow, which the slowest job plus 10 minutes did not
-    # (2026-10-06). Main's push run after batch 970 took 49 min 51 s (run 37340134888, 2991 s; it
-    # concluded success), fork PR 977's checks 49 min 9 s (run 37389629730, 2949 s; success), and
+    # the vendored-tooling job sizes its cap by, with the slowest job as the expected time: the job
+    # has run within seconds of the 50-minute cap main's ci.yml gives it, and half again leaves room
+    # for the suite to grow, which the slowest job plus 10 minutes did not (2026-10-06). The rule
+    # reads every job, a job cancelled at the cap counted at its cancel time as a lower bound on its
+    # true duration, since leaving such a job out reads the rule on the miss side (2026-10-06). A
+    # higher cap costs nothing on a run that finishes under it: a job bills the minutes it runs.
+    # The evidence is the first attempt of run 37390122873 (fork PR 968's checks): job
+    # 112032952459 (run 37390122873, attempt 1), at least 3016 s, cancelled at the 50-minute cap,
+    # started at 23:48:18 UTC on 2026-10-05 and completed at 00:38:34 UTC on 2026-10-06, its served
+    # step cancelled at 00:38:31, 2993 s after the step began; its log's last progress line, 83
+    # percent of the tests, came 47 min 41 s into the step. The run's second attempt re-ran the job,
+    # which succeeded in 47 min 10 s, so the run concluded success and its default job listing shows
+    # only that job. 3016 s is 50 min 16 s, from the job's start to its completion as the jobs API
+    # gives them, and half again is 4524 s. 50 min 16 s and half again is 75 min 24 s, so 80.
+    # Two more jobs were cancelled at that cap: job 110492093901 (run 36898691471, attempt 1), at
+    # least 3000 s (2026-10-01), and job 111708325878 (run 37293073638, attempt 1), at least 3000 s
+    # (fork PR 978's checks, 2026-10-05; the run's second attempt re-ran the job, which succeeded in
+    # 40 min 12 s). Their records run 3300 s and 3301 s from start to completion, ending 300 s and
+    # 301 s after the cap fired, and hold no step times and no log. GitHub cancels a job that
+    # reaches its timeout-minutes, and its documentation of a cancellation gives the runner 5
+    # minutes, after which the server forcibly terminates the jobs still running. Those five
+    # minutes are that wait, and the records, with no step times and no log, do not show the job
+    # running in them, so each job is counted at the cap's 3000 s, which gives 75. Counted at
+    # 3300 s, each would give 85.
+    # The measured jobs: main's push run after batch 970 took 49 min 51 s (run 37340134888, 2991 s;
+    # it concluded success), fork PR 977's checks 49 min 9 s (run 37389629730, 2949 s; success), and
     # main's weekly scheduled run at the same commit 47 min 56 s (run 37360905751, 2876 s; the job
     # succeeded, and the run concluded failure for another job). Read at 01:28 UTC on 2026-10-06,
     # this workflow's runs since this job's first, on 2026-09-28, hold 265 completed jobs of this
-    # name, cancelled ones among them. The jobs API lists 278 records of this name when every run
+    # name, 24 of them cancelled. The jobs API lists 278 records of this name when every run
     # attempt is listed (filter=all): re-running a run's failed jobs lists the run's
     # already-finished job of this name again in the later attempt, with the same times and
     # runner, and 13 of the 278 are such copies. Listing only each run's latest attempt, the API's
-    # default, gives 260. The slowest with a measured length (a job cancelled at a cap has none) is
-    # run 37340134888's. All ran on the public runner; each job's time is the jobs API's, from its
-    # start to its completion. 49 min 51 s and half again is 74 min 46.5 s, so 75.
-    # Three of the 265 were cancelled at the 50-minute cap, so they ran longer by an amount not
-    # measured: job 110492093901 of run 36898691471 (2026-10-01) and job 111708325878, the first
-    # attempt of run 37293073638 (fork PR 978's checks, 2026-10-05), neither with a log, and job
-    # 112032952459, the first attempt of run 37390122873 (fork PR 968's checks, 2026-10-05), whose
-    # log's last progress line, 83 percent of the tests, came 47 min 41 s into the step. In the
-    # last two runs the second attempt re-ran the job, which succeeded (in 40 min 12 s and 47 min
-    # 10 s), so the run concluded success and its default job listing shows only that job. 50
-    # minutes and half again is 75, so for any of the three, had it finished, the rule gives more
-    # than 75: the rule reads measured jobs only.
+    # default, gives 260. The slowest that finished is run 37340134888's, which alone would give
+    # 75. Of the 24 cancelled jobs, the three above were cancelled at the cap and the others ended
+    # sooner, the longest at 2266 s, so none of those moves the figure. All ran on the public
+    # runner; each job's time is the jobs API's, from its start to its completion.
     # The python job's rule, the phase plus the 600 s per-test timeout plus the time before the
     # step, gives 3589 s for run 37340134888 (its step's 2973 s, the 600 s and the 16 s before the
-    # step), about 59 min 49 s, 911 s under 75. The header's sentence on the first private batch
+    # step), about 59 min 49 s, 1211 s under 80. The header's sentence on the first private batch
     # run names this job for that run to confirm.
     # Until 2026-10-05 the cap was 50, the expected time and half again from the step's own time:
     # the step's 1930 s and about 16 s of setup in main's run above were about 32 min 30 s, and
     # half again about 49 minutes; 50 then also covered the phase plus the 600 s per-test timeout
     # plus setup (about 42 min 30 s) and the three PRs above together (about 329 s more, a job of
     # about 37 min 55 s). On 2026-10-05 it was set to 60, the slowest job then measured (49 min
-    # 11 s, in run 37212676524) plus 10 minutes, the Shell job's rule, and on 2026-10-06 to 75.
+    # 11 s, in run 37212676524) plus 10 minutes, the Shell job's rule; on 2026-10-06 to 75 for a
+    # few hours, the slowest job that finished and half again; and then to 80, when the rule came
+    # to read the cancelled jobs too.
     # No strategy key: the job has no matrix, so fail-fast would have no effect (it cancels a
     # matrix's other cells when one fails, and this job has one cell).
     # Last in the file: tests/test_ci_sdk_pin.py appends synthetic steps at the end of the file and
@@ -1164,11 +1179,14 @@ jobs:
     # batch as any other red does.
     # tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal (every key,
     # step and field, the cap included), so a change here changes that literal too, on purpose.
-    # It also holds the cap at or above the rule's figure for the slowest of the runs it records
-    # (SERVED_RUNS), each of those runs named above as `run <id>, <s> s`, and the rule's sentence
-    # above (the job's time, that time and half again, and the cap) to that job's time and to this
-    # line, so a lower cap, or a newly measured slowest job, changes that module too.
-    timeout-minutes: 75
+    # It also holds the cap at or above the rule's figure for the slowest of the jobs it records
+    # (SERVED_RUNS), every job, a cancelled one at its counted time; each measured job named above
+    # as `run <id>, <s> s` and each cancelled one as `job <id> (run <id>, attempt <n>), at least
+    # <s> s`, and each job named in that second form recorded there with those figures; and the
+    # rule's sentence above (the slowest time, that time and half again, and the cap) to that time
+    # and to this line, so a lower cap, or a newly measured or cancelled slowest job, changes that
+    # module too.
+    timeout-minutes: 80
     defaults:
       run:
         working-directory: vscode-extension
@@ -1217,8 +1235,9 @@ jobs:
         # as "optional", which the switch leaves alone (WebKit's system libraries would need apt, which
         # this step does not run; see the install step above). The matrix jobs are unchanged: still no
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
-        # the job's one long phase (2973 s of the job's 49 min 51 s in run 37340134888, the slowest of the runs the cap
-        # above is sized from; it took 1930 s in run 36388144219, before it had a job of its own),
+        # the job's one long phase (2973 s of the job's 49 min 51 s in run 37340134888, the slowest that finished of the jobs
+        # the cap above is sized from, and at least 2993 s in the job the cap cancelled in run 37390122873's first attempt;
+        # it took 1930 s in run 36388144219, before it had a job of its own),
         # and every served lab added grows it, so the next growth should be visible by name. Two additions on 2026-09-20
         # (the maintainer's round 1 of the wsBytesByHost review), both pinned by tests/test_served_labs_under_ci.py: the pytest line
         # names tests/test_relay_dial_declares_held_pair.py by file, a raw-socket kernel leg that needs the dist
