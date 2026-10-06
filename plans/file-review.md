@@ -5305,6 +5305,30 @@ document stands on its own, each with the reasoning it was given.
     AS8-cost-unread-path-other-name and AS8-cost-function-call, whose PATH entry is an expansion the test's reader does
     not follow, and of AS8-root-global-alias, whose global alias it does not read, do not run, and their writers rest on
     the probes.
+    RULE B on the bound map (fork PR 975's round 2, R3): one bind helper (bindWrite) serves every writer of the map,
+    bindUnder's callers and the `cat SRC > DEST` site, and the map keys on the made path (the links this command made
+    followed, and the path as spelled) and holds a SET of values, each the source resolved to an absolute path at the
+    moment of the write (a symbolic link's target against the link's own directory); a key keeps every value it was given
+    (monotonic, never overwritten), and the bare-name lookup refuses when any binding of a candidate is a writer the
+    command made, skipping a value that is the path itself (a self-binding) and a path already being spliced (a cycle).
+    Ruling C stored the source as SPELLED, so a relative or a bare source was read as a command name, not the file copied,
+    and `ln -s SRC DIR` bound the link's target to itself, overwriting the copy's binding; rule B's resolve-at-write closes
+    that class by construction, not by a list: a bare or relative bound source under a readable PATH (tests-2:
+    AS8-ruleB-tests2-cp, -mv, -install, -cpt), the same with the mention ROOT keeps readable while fork main refuses on the
+    tainted PATH (extra4-1: AS8-ruleB-extra4-cp, -mv, -ln, -install, -catredir, -filedst, -out), an `ln -s` two-operand,
+    relative-target or -t form (tests-1: AS8-ruleB-tests1-lns-two, -lns-relsrc, -lns-t), the existing-directory `ln -s` a
+    false allow this PR introduced and an empty PATH entry read as the cwd (correctness-4: AS8-ruleB-corr4-lns-existdir,
+    -corr4-empty-path). WITH A MEMO (each bound path spliced once per head lookup, boundRoots, cleared per judge call):
+    unmemoized the splice of a crafted diamond of copies is exponential (a depth-18 diamond took about 16.3 seconds, past
+    the installer's 10-second timeout, where a killed hook would let the command run); the memo brings it under half a
+    second on the same box with the same verdicts, and a timing check holds the depth-18 diamond under one second. What
+    stays open, pre-existing, is disclosed with witness rows, each allowed at base, head and rule B while bash, zsh and
+    dash write: a `cp -r` directory copy, where only the top directory is bound (AS8-residual-ruleB-cp-r-dir); `dd of=` and
+    `tee` writers under a readable PATH, outside the binding model (AS8-residual-ruleB-dd, AS8-residual-ruleB-tee); and a
+    failed `ln -s` onto an existing name (AS8-residual-ruleB-failed-lns-exist). A relative symlink moved with `mv` or
+    copied with `cp -a`, whose text re-resolves against the new directory while rule B resolves it at the move through the
+    old location, is a residual follow-up, not a committed row: its write-through shape depends on the new directory
+    holding a writer of the link's relative name, which the synthetic world does not stage.
     THE SHELL'S OWN NAME: a bare name that is a
     builtin or a keyword in bash, zsh and dash alike (ALL_SHELL_BUILTINS) runs before any lookup through PATH, so neither
     refusal applies to it as the name the shell itself looks up (the sixth verify round's tg-t6-3: `cd` and `export`

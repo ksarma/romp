@@ -9791,7 +9791,7 @@ test("round 6, eleventh commit, the rows: a positional slice whose offset or len
     assert.ok(corpusTest && corpusTest[0].includes("assert.ok(!reason.includes('an error of my own')"), 'the corpus test pins the catch-all away per entry');
     // the mechanisms' homes, each pinned by execution in the rows above (the source pin says where the code lives; the rows prove what it does)
     const hook = fs.readFileSync(HOOK, 'utf8');
-    for (const fn of ['const headMayVanish = ', 'const vanishedHeadTexts = ', 'const dashCommandRoads = ', 'const runHeadSplices = ', 'const absSpelled = ', 'let rereadForVanish = ']) assert.ok(hook.includes(fn), `the hook has ${fn.trim()} (THE VANISHING HEAD's one home, THE KEYWORD DASH RUNS, THE BOUND NAME)`);
+    for (const fn of ['const headMayVanish = ', 'const vanishedHeadTexts = ', 'const dashCommandRoads = ', 'const runHeadSplices = ', 'const bindWrite = ', 'let rereadForVanish = ']) assert.ok(hook.includes(fn), `the hook has ${fn.trim()} (THE VANISHING HEAD's one home, THE KEYWORD DASH RUNS, THE BOUND NAME's one bind helper, rule B)`);
     assert.equal((hook.match(/dashCommandRoads\(seg\.words\[(p|at)\], (p|at)\);/g) || []).length, 3, 'the three keyword sites (function, coproc, repeat) ask the roads under dash\'s grammar (behaviour: S11-kd-* above)');
     assert.ok(hook.includes("const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && Array.isArray(positionals) && (name === '0' ? true"), 'posKnown reads the list only where it is modelled (behaviour: S11-av-* above; the element\'s text since round 7\'s twenty-fifth commit)');
     assert.ok(hook.includes("const COUNT = /^\\$(?:#|\\{#\\}|\\{#[@*]\\})$/;"), 'the counted slice knows the four spellings of the count (behaviour: S11-cs-* above)');

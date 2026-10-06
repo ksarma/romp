@@ -1045,6 +1045,41 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-made-one-op-ln-readable-path', 'na', 'cp /usr/bin/cp {OUT}/c2; cd {OUT}/scratch; ln -s {OUT}/c2; PATH={OUT}/scratch:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
       ['AS8-cost-one-op-ln-s-other-name', 'nas', 'ln -s {W}/tools/w2; PATH={NA}/scratch:$PATH; cat {NA}/docs/report.md', N, ['text', ANY_NAME]],
       ['AS8-made-one-op-ln-s-alone', 'nas', 'ln -s {W}/tools/w2; PATH={NA}/scratch:$PATH; w2', A, ['text', ANY_NAME]],   // the link's own name, which fork main allowed (it bound nothing for one operand) while every shell ran it
+      // RULE B (fork PR 975's round 2, R3, 2026-10-06; the round's tests-1, extra4-1, tests-2, correctness-4): one bind helper (bindWrite) serves every
+      // writer of the bound map; keys and values are absolute paths resolved at the write (a symbolic link's target against the link's own directory), and
+      // a key keeps EVERY value it was given (monotonic), so a later bare name refuses when any binding of it is a writer this command made. Ruling C stored
+      // the source as SPELLED, so a relative or a bare source (`c2x`, `zc`) was read as a command name, not the file copied, and a PATH the guard reads let
+      // the bare name run the copy; and `ln -s SRC DIR` bound the link's target to itself, overwriting the copy's binding. Each row refused here by name,
+      // allowed at the pre-round head, bash, zsh and dash writing the tracked report. extra4-1 (a relative bound source plus the mention ROOT keeps readable,
+      // base refuses on the tainted PATH): cp, mv, hard ln, install, a `cat >` and a file destination, from na and from a cwd in no project
+      ['AS8-ruleB-extra4-cp', 'na', 'cp /usr/bin/cp zc; cp zc scratch; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; zc base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-extra4-mv', 'na', 'cp /usr/bin/cp zc; mv zc scratch; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; zc base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-extra4-ln', 'na', 'cp /usr/bin/cp zc; ln zc scratch; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; zc base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-extra4-install', 'na', 'cp /usr/bin/cp zc; install zc scratch; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; zc base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-extra4-catredir', 'na', 'cp /usr/bin/cp zc; cat zc > scratch/zc; chmod +x scratch/zc; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; zc base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-extra4-filedst', 'na', 'cp /usr/bin/cp zc; cp zc scratch/zc; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; zc base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-extra4-out', 'out', 'cp /usr/bin/cp zc; cp zc scratch; grep -q PATH {NA}/base/report.md; PATH={OUT}/scratch:/usr/bin:/bin; zc {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      // tests-2 (a bare or relative source stored by spelling, no mention, base allows too): cp, mv, install and `cp -t` into a directory under a readable PATH
+      ['AS8-ruleB-tests2-cp', 'na', 'cp /usr/bin/cp c2x; cp c2x {OUT}/scratch; PATH={OUT}/scratch:/usr/bin:/bin; c2x {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      ['AS8-ruleB-tests2-mv', 'na', 'cp /usr/bin/cp c2x; mv c2x {OUT}/scratch; PATH={OUT}/scratch:/usr/bin:/bin; c2x {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      ['AS8-ruleB-tests2-install', 'na', 'cp /usr/bin/cp c2x; install c2x {OUT}/scratch; PATH={OUT}/scratch:/usr/bin:/bin; c2x {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      ['AS8-ruleB-tests2-cpt', 'na', 'cp /usr/bin/cp c2x; cp -t {OUT}/scratch c2x; PATH={OUT}/scratch:/usr/bin:/bin; c2x {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      // tests-1 (ln -s under a readable PATH: literalPath followed the link this command made and bound its target to itself; base refuses the two-operand
+      // and relative-target forms, allows the -t form): the two-operand, a relative target, and the -t form
+      ['AS8-ruleB-tests1-lns-two', 'na', 'cp /usr/bin/cp {OUT}/c2; ln -s {OUT}/c2 {OUT}/scratch; PATH={OUT}/scratch:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      ['AS8-ruleB-tests1-lns-relsrc', 'out', 'cd {OUT}; cp /usr/bin/cp c2; ln -s ../c2 scratch; PATH={OUT}/scratch:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      ['AS8-ruleB-tests1-lns-t', 'na', 'cp /usr/bin/cp {OUT}/c2; ln -s -t {OUT}/scratch {OUT}/c2; PATH={OUT}/scratch:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      // correctness-4 (the existing-directory ln -s of a bound source, a false allow this PR introduced, and an empty PATH entry read as the cwd)
+      ['AS8-ruleB-corr4-lns-existdir', 'na', 'mkdir -p {OUT}/d; cp /usr/bin/cp {OUT}/c2; ln -s {OUT}/c2 {OUT}/d; PATH={OUT}/d:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      ['AS8-ruleB-corr4-empty-path', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; cd {OUT}/scratch; PATH=:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      // DISCLOSED, PRE-EXISTING (base, head and rule B all allow; decision 47): writers rule B's binding model does not reach under a readable PATH, each
+      // allowed while bash, zsh and dash write: a `cp -r` directory copy (only the top directory is bound), a `dd of=` and a `tee` writer, and a failed
+      // `ln -s` onto an existing name. The relative-symlink move and `cp -a` copy class, whose text re-resolves against the new directory, is a residual
+      // named in decision 47 (its write-through shape is not reproduced as a committed row)
+      ['AS8-residual-ruleB-cp-r-dir', 'na', 'mkdir -p {OUT}/d; cp /usr/bin/cp {OUT}/d/zc; cp -r {OUT}/d {OUT}/scratch/d2; PATH={OUT}/scratch/d2:/usr/bin:/bin; zc {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
+      ['AS8-residual-ruleB-dd', 'na', 'cp /usr/bin/cp zc; dd if=zc of={OUT}/scratch/zc2 status=none; chmod +x {OUT}/scratch/zc2; PATH={OUT}/scratch:/usr/bin:/bin; zc2 {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
+      ['AS8-residual-ruleB-tee', 'na', 'cp /usr/bin/cp zc; tee {OUT}/scratch/zc2 < zc > /dev/null; chmod +x {OUT}/scratch/zc2; PATH={OUT}/scratch:/usr/bin:/bin; zc2 {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
+      ['AS8-residual-ruleB-failed-lns-exist', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; ln -s /usr/bin/true {OUT}/scratch/c2; PATH={OUT}/scratch:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
       // a file this command writes another way than by a copy, a move or a link (a printf redirection, a tee), whose name passed under a PATH the guard
       // does not read while every shell ran it (the reviewer's (b), F-a's unbound writers): refused as every bare name is once a path is bound; such a
       // file is never spliced (a printf'd script copied on with `cat` and run under a builtin's name stays the builtin's: AS8-builtin-noenable-script)
@@ -1323,6 +1358,24 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       } catch (e) { failures.push(String(e.message).split('\n')[0]); }
     }
     assert.deepEqual(failures, [], `every row holds (${failures.length} do not)`);
+    // RULE B's memo (fork PR 975's round 2, R3): each bound path is spliced once per head lookup, so a diamond of copies (each x_i and y_i written from
+    // both x_(i-1) and y_(i-1)) is judged in linear time. Unmemoized the splice is exponential: a depth-18 diamond took about 16.3 s, past the installer's
+    // 10 s timeout, where a killed hook would let the command run; the memo holds it under one second, with the same by-name refusal (the bound name chains
+    // to cp). Timed end to end through the hook as a process, the way the installer runs it
+    {
+      const D = 18;
+      const dia = ['cp /usr/bin/cp {OUT}/x0', 'cp /usr/bin/cp {OUT}/y0'];
+      for (let i = 1; i <= D; i++) for (const v of ['x', 'y']) { dia.push(`cp {OUT}/x${i - 1} {OUT}/${v}${i}`); dia.push(`cp {OUT}/y${i - 1} {OUT}/${v}${i}`); }
+      dia.push('PATH={OUT}:/usr/bin:/bin', `x${D} {NA}/base/report.md {NA}/docs/report.md`);
+      const diaCmd = w.fill(dia.join('; '));
+      w.build();
+      const t0 = process.hrtime.bigint();
+      const hDia = w.hook(diaCmd, w.cwds.na);
+      const diaMs = Number(process.hrtime.bigint() - t0) / 1e6;
+      assert.equal(hDia.status, 2, `RULE B: the depth-${D} diamond of copies is refused (the bound name chains to cp): ${String(hDia.reason).split('\n')[0]}`);
+      assert.ok(diaMs < 1000, `RULE B's memo holds the depth-${D} diamond under one second (unmemoized it is exponential, about 16.3 s, past the 10 s installer timeout): ${diaMs.toFixed(0)} ms`);
+      console.log(`# RULE B's memo: the depth-${D} diamond of copies judged in ${diaMs.toFixed(0)} ms (unmemoized about 16300 ms)`);
+    }
     // THE MADE NAME's map names rows the test has, and where cp, the shells and the world's program are present (this box, CI's bash) their legs ran (asked
     // after every row holds, since a row whose verdict reds runs no leg)
     const rowIds = new Set(rows.map((r) => r[0]));
@@ -1331,7 +1384,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# THE MADE NAME: ${madeRan.size} of ${Object.keys(MADE).length} rows ran their legs here`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 67, AS6: 19, AS7: 17, AS8: 224 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 67, AS6: 19, AS7: 17, AS8: 244 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived

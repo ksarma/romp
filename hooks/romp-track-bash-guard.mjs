@@ -1025,7 +1025,7 @@
 // `e=echo; $e .. | bash` keeps its one text and its refusal by name), and a command holding an expansion is read again once its values are noted. THE
 // ALTERNATE VALUE at the top level (posKnown): the positional parameters are not modelled there (null), so the count read threw and `eval cp ${1:+x} a
 // b` refused through the catch-all as an error of the guard's own; the list is read only where it is modelled, the dropped form joins the readings and
-// the refusal is the rule's, by name. THE BOUND NAME (boundRoad, recordMutations' absSpelled): under a PATH the resolver cannot read, or a directory
+// the refusal is the rule's, by name. THE BOUND NAME (boundRoad, recordMutations' bindWrite): under a PATH the resolver cannot read, or a directory
 // it does not know, every bound path whose last component is the name is spliced, so the bound writer's operands are judged by their own project from
 // any cwd (`cp /usr/bin/cp <out>/scratch/env; PATH=<out>/scratch:$PATH; env <proj>/base/report.md <proj>/docs/report.md` from a cwd in no project
 // allowed while every shell copied, where the same line from the project's directory and the alias and hash roads from that cwd refused); and a made
@@ -2800,6 +2800,7 @@ function foldSegments(segs) {
 // The links the command under judgment makes (class H), read by foldSegments while extract and evaluate run: an
 // absolute link path the command creates, mapped to the absolute path it points at.
 let activeLinks = null;
+let boundRootSeq = 0; const boundRoots = new Map();   // RULE B's per-lookup memo (each bound path spliced once per head lookup), cleared per judge call
 
 // A literal target's path as the kernel would open it (foldSegments), resolved against `dir` when relative:
 // { path }, { unresolvable } (with `proc` set when a `..` sat after a /proc-magic or descriptor prefix the guard
@@ -5694,6 +5695,19 @@ function extractIn(command, ctx) {
   const hashes = ctx.hashes || new Map();
   const aliasState = ctx.aliasState || { unread: null };
   const bound = ctx.bound || new Map();
+  // RULE B: one bind helper. Key: the made path, resolved (links this command made followed) and spelled, absolute, against the cwd now. Value: the
+  // source resolved now (a symbolic link's text against the link's own directory), or null where it is not literal or cannot be resolved. Monotonic:
+  // a key keeps every value it was given.
+  const bindWrite = (destText, srcW, symbolic, cwdAt) => {
+    if (!cwdAt) return;
+    let value = null;
+    if (srcW && srcW.literal && srcW.text && !srcW.text.includes('\0')) {
+      if (symbolic) { const parent = literalPath(path.dirname(destText), cwdAt); value = parent ? literalPath(srcW.text, parent) : null; }
+      else value = literalPath(srcW.text, cwdAt);
+    }
+    const saved = activeLinks; let spelled = null; activeLinks = null; try { spelled = literalPath(destText, cwdAt); } finally { activeLinks = saved; }
+    for (const k of [literalPath(destText, cwdAt), spelled]) if (k) { let set = bound.get(k); if (!set) bound.set(k, (set = new Set())); set.add(value); }
+  };
   const builtinsOff = ctx.builtinsOff || { seen: false, given: [], withdrawn: [] };   // THE SHELL'S GATE (gateBuiltins, below): `seen`, the command may run an `enable` (bash) or a `disable` or `zmodload` (zsh), which may turn a builtin off so its name is looked up through PATH (THE SHELL'S OWN NAME holds no more); `given`, the refusals an exemption withheld; `withdrawn`, those recorded since
   const headPoison = ctx.headPoison || { off: false, seen: false };   // THE TWO WALKS (judge): the switch, carried into every text the command hands over
   const headGate = ctx.headGate || { off: false, exempted: new Set(), defined: new Set(), anyDefined: false };   // THE ASSIGNING HEAD's function clause (extractWriteTargets), shared by every text
@@ -6733,10 +6747,6 @@ function extractIn(command, ctx) {
   const recordMutations = (name, args, cwd) => {
     if (!cwd) return;
     const abs = (w) => (w && w.literal ? literalPath(w.text, cwd) : null);
-    // the path as spelled, no link this command makes followed (round 6's eleventh commit, THE BOUND NAME: `ln -s /usr/bin/cp <out>/scratch/c2`
-    // bound the link's TARGET, `/usr/bin/cp`, since literalPath follows a link the command made, so a lookup by the name's last component found
-    // no `c2`; the shell looks a link up by its own name, so a made path is bound under that name beside the path it resolves to)
-    const absSpelled = (text) => { const saved = activeLinks; activeLinks = null; try { return literalPath(text, cwd); } finally { activeLinks = saved; } };
     const markAllCandidates = (verb) => { for (const c of optionCandidates(args)) markMutated(abs(c), verb); };
     // THE ALIAS ROAD's bound paths: a copy or a link this command makes (cp, install, ln, link, mv) binds the destination path to the
     // source's text, so a later command named by that path is read as the source (`cp /usr/bin/cp ../scratch/c2; ../scratch/c2 a b` and
@@ -6750,8 +6760,9 @@ function extractIn(command, ctx) {
       const bindUnder = (parsed) => {
         if (parsed.unknown || parsed.installDir) return;
         const ops = parsed.operands || [];
-        const srcText = (w) => (w && w.literal ? w.text : null);
-        const bind = (text, src) => { for (const d of [literalPath(text, cwd), absSpelled(text)]) if (d) bound.set(d, src); };   // under the resolved path and the spelled one (THE BOUND NAME)
+        const srcText = (w) => w;   // RULE B: the source WORD, resolved by bindWrite at this moment
+        const symbolicLn = name === 'ln' && args.some((a) => a.literal && (a.text === '--symbolic' || (/^-[^-]/.test(a.text) && a.text.includes('s'))));
+        const bind = (text, src) => bindWrite(text, src, symbolicLn, cwd);
         // THE BOUND NAME binds the file the writer makes (fork PR 975's round 1, C, 2026-10-05; the round's fresh-1: `cp <tool> <dir>; PATH=<dir>:$PATH; <tool's
         // name>` bound `<dir>` alone, so the name met no bound path and passed while bash, zsh and dash ran the tool, where fork main refused every bare name
         // once a path was bound; mv, install, ln and ln -s alike): with two operands and no `-T`, a destination that is a directory now takes the source
@@ -8080,10 +8091,20 @@ function extractIn(command, ctx) {
     };
     const boundRoad = (hw, hIdx, own = false) => {   // `own`: the head is the word the shell itself looks up (no wrapper before it); the segment's first wrapper is one too (shellRuns, below), and a name a wrapper runs is not
       if (!hw || !bound.size) return;
+      const rootMark = [...aliasChain].find((m) => m.startsWith('\0broot:')) || ('\0broot:' + (++boundRootSeq));
+      if (!boundRoots.has(rootMark)) boundRoots.set(rootMark, new Set());
+      const seenUnderRoot = boundRoots.get(rootMark);   // RULE B's memo: each bound path is spliced once per head lookup (its splices carry the same operands)
+      // RULE B: the bound value is an absolute path resolved at the write; the splice re-lexes it as the command the name stands for, so a path with a
+      // space or a shell metacharacter is single-quoted (a helper, not an interpolation in the push, so `every head text carries its kind` reads one `{`)
+      const quoteBound = (src) => (/^[A-Za-z0-9_.\/+@%,:=-]+$/.test(src) ? src : `'${src.replace(/'/g, "'\\''")}'`);
       const bindHead = (abs) => {
-        const src = bound.get(abs);
-        if (src == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hw.raw}\` is a path this command made by copying, moving or linking, or by writing it, from a source I do not read` });   // a move and a `cat >` make it too (the fifth verify round's T5-11, the sibling of T4-11's texts)
-        else headTexts.push({ text: src, chain: aliasChain, at: hIdx, kind: 'bound' });
+        const mark = '\0bound:' + abs;
+        if (aliasChain.has(mark) || seenUnderRoot.has(abs)) return;   // RULE B: this path's bindings are already being spliced (a self-binding, a cycle, a second road to it)
+        seenUnderRoot.add(abs);
+        for (const src of bound.get(abs) || []) {
+          if (src == null) cannotRead(hw, 'command name', { kind: 'aliasUnread', text: `\`${hw.raw}\` is a path this command made by copying, moving or linking, or by writing it, from a source I do not read` });   // a move and a `cat >` make it too (the fifth verify round's T5-11, the sibling of T4-11's texts)
+          else headTexts.push({ text: quoteBound(src), chain: new Set([...aliasChain, mark, rootMark]), at: hIdx, kind: 'bound' });
+        }
       };
       // HOME's reason as the HOME refusal gives it (homeWhyNow; the after-source fixes, 2026-10-03: the text said the command reassigns HOME, which
       // a command named by a variable before the `~/` head does not do)
@@ -8156,7 +8177,7 @@ function extractIn(command, ctx) {
         if (boundWhy && !shellRuns) cannotRead(hw, 'command name', drop ? { ...boundWhy, drop } : noRemedy ? { ...boundWhy, noRemedy } : boundWhy);
         else if (boundWhy) builtinsOff.given.push(unreadEntry(hw, 'command name', noRemedy ? { ...boundWhy, noRemedy } : boundWhy));   // the exemption, kept aside: withdrawn, its refusal recorded, if the walk meets the gate later (gateBuiltins), a gate that leaves no wrapper to drop
         if (pathValue == null || unknownDir) { for (const abs of bound.keys()) if (path.basename(abs) === bareName) bindHead(abs); }
-        else for (const d of pathValue.split(':')) { const abs = d ? literalPath(path.join(d, bareName), dir) : null; if (abs && bound.has(abs)) bindHead(abs); }
+        else for (const d of pathValue.split(':')) { const abs = literalPath(path.join(d || '.', bareName), dir); if (abs && bound.has(abs)) bindHead(abs); }
       }
     };
     // the splice: every text headTexts holds and no earlier call spliced, each read again in the head's place with the words around it as
@@ -9121,7 +9142,7 @@ function extractIn(command, ctx) {
       // ../scratch/c2; chmod +x ../scratch/c2; ../scratch/c2 a b` copied in every shell while the path was read as an unknown command)
       const ops = args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1));
       const outs = seg.redirects.filter((r) => WRITE_REDIRECTS.has(r.op));
-      if (ops.length === 1 && outs.length === 1 && outs[0].target.literal) { const d = literalPath(outs[0].target.text, dir); if (d) bound.set(d, ops[0].literal ? ops[0].text : null); }
+      if (ops.length === 1 && outs.length === 1 && outs[0].target.literal) bindWrite(outs[0].target.text, ops[0], false, dir);
     }
     }
     // THE UNREAD HEAD's names (above), applied after the segment's own words and redirections were resolved; not from the body of a function being
@@ -9811,6 +9832,7 @@ function internalErrorRefusal(e, cwd) {
 // second reading runs only then
 function judge(command, cwd) {
   const prev = oldArithReading;
+  boundRoots.clear(); boundRootSeq = 0;   // RULE B's memo is per judge call: its rootMarks are fresh seq numbers, so a cleared map never collides a prior call's
   try {
     oldArithReading = { text: false, met: false };
     const r = judgeTwoWalks(command, cwd);
