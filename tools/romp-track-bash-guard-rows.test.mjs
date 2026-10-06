@@ -206,6 +206,69 @@ test("fork PR 975's round 1, item 8 as ruled (ROOT), THE ASSIGNING HEAD's census
     console.log(`# THE ASSIGNING HEAD's behavioural leg: ${ran.length} (shell, word) pairs run in ${live.join(', ') || 'no shell'} under ${ASSIGN_SHAPES.length} operand shapes, none assigning; reserved words seen assigning ${reservedSeen.join(', ') || 'none'}, each on the may-assign side; ${unreported} (word, shape) runs reported nothing (an error the shell treats as fatal before the operand is read); not run: ${Object.keys(ASSIGN_LEG_SKIP).join(', ')}`);
   } finally { spawnSync('chmod', ['-R', 'u+rwx', root]); fs.rmSync(root, { recursive: true, force: true }); }
 });
+test("fork PR 975's round 2, R1 (RULE S), the second axes: THE NAME-RUN AXIS classifies every builtin and reserved word of bash, zsh and dash as one that may change what a name runs or one that does not, option-insensitive, with a reason, and a planted word reds it; and THE COMMAND TABLES, the special parameters a word may write to redefine a head, are each a special parameter of an installed shell, a planted name none", () => {
+  const live = shellsFor(['bash', 'zsh', 'dash'], 'RULE S censuses');
+  const pops = {};
+  for (const sh of Object.keys(SHELL_PROBE).filter((x) => x !== 'dash')) pops[sh] = live.includes(sh) ? shellWordsLive(sh) : SHELL_WORDS_DERIVED[sh];
+  pops.dash = live.includes('dash') ? shellWordsLive('dash', [...pops.bash, ...pops.zsh]) : SHELL_WORDS_DERIVED.dash;
+  // clause (c): THE NAME-RUN AXIS, over the same population as THE ASSIGNING HEAD's census, derived from the same table
+  const R = guard.NAME_RUN_AXIS;
+  const rc = assigningCensus(pops, R);
+  assert.deepEqual(rc.unclassified, [], 'every builtin and reserved word of the three shells is classified on THE NAME-RUN AXIS');
+  assert.deepEqual(rc.stale, [], 'every NAME-RUN entry is a word one of the three shells has');
+  assert.deepEqual(rc.unreasoned, [], 'each NAME-RUN entry is a boolean with a reason');
+  assert.deepEqual([...guard.NAME_RUN_CHANGERS].sort(), Object.keys(R).filter((n) => R[n][0] === true).sort(), 'NAME_RUN_CHANGERS is the axis\'s may-change side, derived');
+  assert.ok(['autoload', 'functions', 'typeset', 'declare', 'enable', 'disable', 'alias', 'unalias', 'hash', 'unhash'].every((n) => guard.NAME_RUN_CHANGERS.has(n)), 'autoload, typeset, declare and the table builtins stand on the may-change side (option-insensitive)');
+  assert.deepEqual(['echo', 'true', 'cd', 'read', 'export', 'local', 'pwd', 'printf', 'eval'].filter((n) => Object.hasOwn(R, n) && R[n][0]), [], 'a program-like builtin that assigns or runs but changes no function, alias, builtin or hash entry is not on the may-change side');
+  assert.deepEqual(assigningCensus({ ...pops, bash: [...pops.bash, 'zz_planted'] }, R).unclassified, ['bash zz_planted'], 'the NAME-RUN census reds on a planted unclassified word');
+  assert.deepEqual(assigningCensus(pops, { ...R, read: [true, ''] }).unreasoned, ['read'], 'the NAME-RUN census reds on an entry with no reason');
+  // clause (b): THE COMMAND TABLES, each verified as a special parameter of an installed shell (a word that writes one redefines a head)
+  const T = guard.NAME_TABLE_PARAMS;
+  assert.ok(T.size > 0, 'THE COMMAND TABLES set is non-empty');
+  const ask = (sh, argv) => String(spawnSync(sh, argv, { encoding: 'utf8', env: { PATH: process.env.PATH } }).stdout || '');
+  const special = new Set();
+  if (live.includes('bash')) for (const n of T) if (ask('bash', ['--norc', '--noprofile', '-c', `printf '%s' "\${${n}@a}"`]).includes('A')) special.add(n);
+  if (live.includes('zsh')) for (const n of T) if (/association|array/.test(ask('zsh', ['-f', '-c', `print -rn -- "\${(t)${n}}"`]))) special.add(n);
+  if (live.includes('bash') || live.includes('zsh')) {
+    assert.deepEqual([...T].filter((n) => !special.has(n)), [], 'every committed command table is a writable special parameter of an installed shell');
+    if (live.includes('bash')) assert.ok(!ask('bash', ['--norc', '--noprofile', '-c', 'printf "%s" "${ZZ_NOT_A_TABLE@a}"']).includes('A'), 'a planted name is no command-table special parameter in bash');
+    if (live.includes('zsh')) assert.ok(!/association|array/.test(ask('zsh', ['-f', '-c', 'print -rn -- "${(t)ZZ_NOT_A_TABLE}"'])), 'a planted name is no command-table special parameter in zsh');
+  }
+  console.log(`# RULE S: THE NAME-RUN AXIS ${Object.keys(R).length} words (${guard.NAME_RUN_CHANGERS.size} may change a name, ${Object.keys(R).length - guard.NAME_RUN_CHANGERS.size} do not); THE COMMAND TABLES ${T.size}, verified special in ${special.size ? live.filter((s) => s !== 'dash').join(', ') || 'no shell' : 'no shell'}`);
+});
+test("fork PR 975's round 2, R1 (RULE S), clause (a) SAFE SYNTAX at every nesting level: ruleSafeOf recognizes the safe word forms and the safe syntax positively and fails on anything else, at the top level and nested in a subshell, a brace group, a command substitution, a process substitution, a pipeline, a `&&` list and an unquoted here-document body; a quoted here-document body stays literal", () => {
+  // the safe word forms (a): literal, quoted, glob, the plain/braced/special/positional parameters and the default/alternative/length/suffix/prefix ${} forms, command and process substitution; and the safe syntax: a subshell, a brace group, a pipeline, a list
+  const SAFE = [
+    'cp a b', 'grep -c PATH f', 'echo "the PATH line"', 'sed -n /PATH/p f', 'cp a.md scratch/keep.bak; grep -c PATH f; echo done',
+    'echo $x ${y} "$z" plain *.md', 'echo ${x:-y} ${x-y} ${x:+y} ${x+y} ${#x} ${x%w} ${x%%w} ${x#w} ${x##w}', 'echo ${1} $? $$ $@ $# $0 $! $- $*',
+    'cat <(cmd a b)', 'echo $(cmd)`other`', 'foo=$(bar) baz', 'echo {1..3} {a,b}', '( echo hi )', '{ grep PATH f; }', 'echo ${x:-$(c)} ${x#$(d)}',
+    'cmd a && cmd2 b || cmd3', 'true | grep PATH', "cat <<EOF\n$(cp a b)\nEOF", "cat <<'EOF'\n$((x=1)) {p}>f ${x/a/b}\nEOF",
+  ];
+  // the forms rule S must fail on: arithmetic, a {NAME} descriptor redirection, a function definition, an array assignment, extglob, a glob qualifier, the other ${} forms, a command-table word, a may-change head
+  const UNSAFE = [
+    'echo $((x+1))', 'echo $[p=0]', '(( x = 1 ))', 'for ((i=0;i<3;i++)); do :; done', 'true {p}>/dev/null', ': {p}>out', 'true {p[0]}>f', 'true {p}<f', 'true {p}>>f', 'x=1 true {p}>/dev/null',
+    'f() { :; }', 'function g { :; }', 'arr=(a b c)', 'cat *(.)', 'echo @(a|b)',
+    'echo ${x/a/b}', 'echo ${x//a/b}', 'echo ${x[0]}', 'echo ${!x}', 'echo ${x:2:3}', 'echo ${x^^}', 'echo ${x@P}', 'echo ${(U)x}', 'echo ${x:=y}', 'echo ${x=y}',
+    'BASH_ALIASES[ls]=rm', 'functions[g]=x', 'galiases[g]=x', 'autoload -Uz g', 'typeset -fu g', 'declare -fu g', 'enable -n cd', 'alias g=rm', 'unalias g', 'hash -p /x y',
+  ];
+  const nest = {
+    top: (f) => f, subshell: (f) => `( ${f} )`, braceGroup: (f) => `{ ${f}; }`, cmdSubst: (f) => `echo $(${f})`,
+    procSubst: (f) => `cat <(${f})`, heredoc: (f) => `cat <<EOF\n$(${f})\nEOF`, pipe: (f) => `true | ${f}`, andOr: (f) => `true && ${f}`,
+  };
+  const over = [];
+  const miss = [];
+  for (const f of SAFE) { if (!guard.ruleSafeOf(f, null)) over.push(`top: ${JSON.stringify(f)}`); }
+  for (const [lvl, wrap] of Object.entries(nest)) for (const f of UNSAFE) { if (guard.ruleSafeOf(wrap(f), null)) miss.push(`${lvl}: ${JSON.stringify(wrap(f))}`); }
+  // a safe fragment nested in each safe construct stays safe (the relaxation is kept where the whole command is safe)
+  for (const [lvl, wrap] of Object.entries(nest)) for (const f of ['grep -c PATH f', 'cp a b', 'echo ${x:-y}']) { if (!guard.ruleSafeOf(wrap(f), null)) over.push(`${lvl}: ${JSON.stringify(wrap(f))}`); }
+  // a direct (uncollapsed) arithmetic or unsafe ${} in an unquoted here-document body is unsafe; a quoted body is literal
+  for (const d of ['cat <<EOF\n$((x=1))\nEOF', 'cat <<EOF\n$[x=1]\nEOF', 'cat <<EOF\ntext ${y/a/b}\nEOF']) { if (guard.ruleSafeOf(d, null)) miss.push(`heredocDirect: ${JSON.stringify(d)}`); }
+  assert.deepEqual(miss, [], `rule S fails on every unsafe form at every nesting level (${miss.length} slipped through)`);
+  assert.deepEqual(over, [], `rule S keeps the relaxation for every safe form (${over.length} over-refused)`);
+  // a printf -v command-table write is unsafe in the shell that runs it (clause b over the resolved name); in a subshell (a command or process substitution, a pipe) it redefines nothing in the parent, so it is not flagged there
+  assert.ok(!guard.ruleSafeOf('printf -v "aliases[ls]" read', null) && !guard.ruleSafeOf('{ printf -v "functions[g]" x; }', null), 'a printf -v write of a command table is unsafe in the parent shell');
+  console.log(`# RULE S clause (a): ${SAFE.length} safe forms kept, ${UNSAFE.length} unsafe forms each failed at ${Object.keys(nest).length} nesting levels`);
+});
 test("the after-source fixes, the rows: a pattern operand of a command named by a variable is judged by its spelling where the directory is not known and refused past the caps, a command named by a variable makes later variable reads unreadable, a `[` and a case pattern are no pattern the command name stands for, a word the shell fills in behind nohup or setsid refuses as behind every wrapper, a mention of PATH under a program leaves PATH readable while every bare name under a PATH the guard does not read refuses once a path is bound, a command after a command named by a variable is judged with its names read as fork main read them as well, that walk first, and each remedy says what works; each with the shells that write", () => {
   const w = sixthPassWorld();
   const savedHome = process.env.HOME;
@@ -825,7 +888,32 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-root-func-zsh-autoload', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath=({OUT}/fp $fpath); autoload -U g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-root-func-zsh-functions-c', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; h() { read "$@"; }; functions -c h g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-root-func-unread-head-loop', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch:/usr/bin:/bin > {OUT}/p; uniq {W}/tools/w2 {OUT}/scratch/w3; chmod +x {OUT}/scratch/w3; printf 'g() { read "$@"; }\\n' > {OUT}/f.sh; printf '.\\n' > {OUT}/dot; read c < {OUT}/dot; for i in 1 2; do g PATH < {OUT}/p; "$c" {OUT}/f.sh; done; w3`, A, ['text', ANY_NAME]],
-      ['AS8-ctl-func-call-unrelated', 'na', `cp ${K} {OUT}/scratch/b.service; h() { echo hi; }; h; grep -c PATH {OUT}/scratch/b.service; ls docs`, N, 'allow'],
+      ['AS8-ctl-func-call-unrelated', 'na', `cp ${K} {OUT}/scratch/b.service; h() { echo hi; }; h; grep -c PATH {OUT}/scratch/b.service; ls docs`, N, ['text', ANY_NAME]],
+      // RULE S (fork PR 975's round 2, R1, 2026-10-06; enumerate the safe side): ROOT's mention relaxation applies to a command only when it is positively
+      // safe, judged over the whole command (one failing segment gives fork main's reading for every mention). Clause (a) SAFE SYNTAX: a `{NAME}` descriptor
+      // redirection (`{p}>`, the `:` and echo heads, `>>`, `<`, a prefix assignment before it) assigns the name under any builtin head, which the lexer holds
+      // as a word, so the command takes fork main's reading, the name is unreadable, and a write through it refuses (correctness-1; base refused, the PR's
+      // ROOT allowed it, bash and zsh wrote); a `{PATH}>` corrupts the PATH a later made name runs through (base refuses the made name, ROOT allowed it).
+      // AS8-ctl-func-call-unrelated above is the cost: a function definition is an unquoted parenthesis that is no subshell's or substitution's, so the
+      // command takes fork main's reading and the bare `ls` after a bound path refuses, where ROOT alone allowed it (it writes nothing). Clause (b) a word
+      // whose resolved, quote-removed text names a command table (bash's BASH_ALIASES, redefined on a later line with aliases expanded, split quoting and a
+      // printf -v spelling among them) makes a head run something the guard does not model (fresh-1; base refused, ROOT allowed, bash wrote). Clause (c) a
+      // head on the second census axis, may-change-what-a-name-runs (typeset -fu, declare -fu mark a function for autoload, the roads FUNCTION_SOURCES does
+      // not carry): base refused, ROOT allowed, zsh wrote. The control keeps the relaxation: the same command without the descriptor redirection, allowed,
+      // writing nothing tracked; and the everyday rows above (grep, sed, echo under a program) stay allowed. The `10` and `11` directories give the shell a
+      // path for the descriptor number `{p}>` assigns (bash and zsh pick 10 or 11), so the unguarded leg writes the tracked file the exploit reaches.
+      ['AS8-ruleS-bracevar-pwd', 'nad', 'mkdir -p 10 11; p={OUT}/x; true {p}>/dev/null; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
+      ['AS8-ruleS-bracevar-colon', 'nad', 'mkdir -p 10 11; p={OUT}/x; : {p}>/dev/null; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
+      ['AS8-ruleS-bracevar-echo', 'nad', 'mkdir -p 10 11; p={OUT}/x; echo hi {p}>/dev/null; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
+      ['AS8-ruleS-bracevar-append', 'nad', 'mkdir -p 10 11; p={OUT}/x; true {p}>>/dev/null; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
+      ['AS8-ruleS-bracevar-input', 'nad', 'mkdir -p 10 11; p={OUT}/x; true {p}</dev/null; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
+      ['AS8-ruleS-bracevar-prefix', 'nad', 'mkdir -p 10 11; p={OUT}/x; x=1 true {p}>/dev/null; echo y > "$p/../report.md"', BZ, ['text', 'which is not a literal path']],
+      ['AS8-ruleS-bracevar-path', 'out', 'mkdir -p 10 11; cp /usr/bin/cp 10/c2; cp /usr/bin/cp 11/c2; true {PATH}>/dev/null; c2 {NA}/base/report.md {NA}/docs/report.md', BZ, 'name', null],
+      ['AS8-ruleS-ctl-noredir', 'nad', 'mkdir -p 10 11; p={OUT}/x; true; echo y > "$p/../report.md"', N, 'allow'],
+      ['AS8-ruleS-table-bash-ba', 'na', `OUT={OUT}/scratch\nshopt -s expand_aliases\nBASH_ALIASES[grep]=read\ngrep OUT <<< {NA}/docs\necho x > "$OUT/report.md"`, ['bash'], ['text', 'which is not a literal path']],
+      ['AS8-ruleS-table-bash-split', 'na', `OUT={OUT}/scratch\nshopt -s expand_aliases\nprintf -v 'BASH_''ALIASES[grep]' read\ngrep OUT <<< {NA}/docs\necho x > "$OUT/report.md"`, ['bash'], ['text', 'which is not a literal path']],
+      ['AS8-ruleS-nameRun-typeset-fu', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; typeset -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
+      ['AS8-ruleS-nameRun-declare-fu', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; declare -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-root-alias-head', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; alias g=read\ng PATH < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
       ['AS8-root-global-alias', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; alias -g G='read PATH'\nG < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
       ['AS8-root-alias-unread-operand', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; printf 'g=read\\n' > {OUT}/an; read n < {OUT}/an; alias $n\ng PATH < {OUT}/p\nc2 {NA}/base/report.md {NA}/docs/report.md`, ['dash'], 'name', 'name'],
@@ -1320,6 +1408,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       'AS8-root-print-v': { c2: CP }, 'AS8-root-getln': { c2: CP }, 'AS8-root-unread-head': { c2: CP }, 'AS8-root-glob-head': { c2: CP },
       'AS8-root-func-later-loop': { c2: CP }, 'AS8-root-func-later-keyword': { c2: CP }, 'AS8-root-func-later-body': { c2: CP }, 'AS8-root-func-later-echo': { c2: CP },
       'AS8-root-func-zsh-autoload': { c2: CP }, 'AS8-root-func-zsh-functions-c': { c2: CP, g: 'bound' }, 'AS8-root-func-unread-head-loop': { w3: W2 },
+      'AS8-ruleS-bracevar-path': { c2: CP }, 'AS8-ruleS-nameRun-typeset-fu': { c2: CP, g: 'bound' }, 'AS8-ruleS-nameRun-declare-fu': { c2: CP, g: 'bound' },
       'AS8-root-alias-head': { c2: CP }, 'AS8-root-alias-unread-operand': { c2: CP, g: 'bound' },
       'AS8-cost-into-file': { w2: 'absent' }, 'AS8-cost-into-dir-T': { w2: 'absent' },
       'AS8-root-test-v-path': { c2: CP }, 'AS8-root-jobs-x-read-path': { w3: W2 }, 'AS8-root-jobs-x-eval-func': { c2: CP }, 'AS8-root-zsh-continue-path': { c2: CP },
@@ -1422,7 +1511,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# THE MADE NAME: ${madeRan.size} of ${Object.keys(MADE).length} rows ran their legs here`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 263 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 275 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
@@ -1804,7 +1893,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     // PR 975's round 2, R5 (ii)): the walk with the poison set aside, `$[` read as text, is the first, and the walks that take the poison run only when it
     // allows (behaviour for the order: the shapes test's THE ORDER, red where the poisoned walk runs first; for the poison taken: AS5-semi, AS5-newline,
     // AS5-before and the other AS5 poison rows, red where the walk that takes it is skipped)
-    assert.ok(hook.includes('const names = { off: true, seen: false };') && hook.includes('const r0 = judgeWalk(command, cwd, names, closures);') && hook.includes('if (r0 != null) return r0;') && hook.includes('if (!names.seen) return null;') && hook.includes('return judgeWalk(command, cwd, { off: false, seen: false }, closures);') && hook.includes('if (r1 != null || !first.seen) return r1;') && hook.includes('return judgeWalk(command, cwd, { off: true, seen: false }, closures);') && hook.includes("builtinsOff, headPoison: headPoison || { off: false, seen: false }, headGate });") && hook.includes('bound, builtinsOff, headPoison, headGate, aliasChain: chain,'), "THE TWO WALKS: a command after a command named by a variable is walked with that head's poison set aside, first, and with it taken, any refusal of either walk standing, the switch carried into every text (behaviour: AS5-read-through-*, AS5-dual-* with AS5-dual-head-in-cmdsub-out for the texts, the controls AS5-ctl-read-through-untracked-out and AS5-dual-ctl-untracked-held-out; the order: the shapes test's THE ORDER)");
+    assert.ok(hook.includes('const names = { off: true, seen: false };') && hook.includes('const r0 = judgeWalk(command, cwd, names, closures);') && hook.includes('if (r0 != null) return r0;') && hook.includes('if (!names.seen) return null;') && hook.includes('return judgeWalk(command, cwd, { off: false, seen: false }, closures);') && hook.includes('if (r1 != null || !first.seen) return r1;') && hook.includes('return judgeWalk(command, cwd, { off: true, seen: false }, closures);') && hook.includes("builtinsOff, ruleSafe, headPoison: headPoison || { off: false, seen: false }, headGate });") && hook.includes('bound, builtinsOff, headPoison, headGate, aliasChain: chain,'), "THE TWO WALKS: a command after a command named by a variable is walked with that head's poison set aside, first, and with it taken, any refusal of either walk standing, the switch carried into every text (behaviour: AS5-read-through-*, AS5-dual-* with AS5-dual-head-in-cmdsub-out for the texts, the controls AS5-ctl-read-through-untracked-out and AS5-dual-ctl-untracked-held-out; the order: the shapes test's THE ORDER)");
     assert.ok(!/prePoisonOf|readThroughPoison|headPoisonOnly|preVars|heldOld|holdPre|preHome|real: false/.test(hook), 'no read-through site survives beside the two walks');
     // THE OLDER ARITHMETIC's two readings (fork PR 975's round 1, the text lens's tg-t12-1): judge reads a command whose walk met a `$[` both ways, both
     // walks each, with the `$[` read as a dollar and text and as arithmetic, any refusal of either reading standing. Since THE ORDER (fork PR 975's round

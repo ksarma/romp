@@ -5201,7 +5201,42 @@ document stands on its own, each with the reasoning it was given.
     bash below SHELL_FLOOR); six words are not run for what running them does
     (kill, suspend, clone, ztcp, zftp, zsocket), and the gap pass asked them by hand with operands that do nothing; the
     reserved words `[[` and repeat, which take a grammar of their own, are asked with one arithmetic operand each; and
-    it is a sample of operand shapes, not a proof. THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`
+    it is a sample of operand shapes, not a proof. RULE S (fork PR 975's round 2, R1, 2026-10-06; ruleSafeOf): ROOT's
+    mention relaxation is sound only where nothing in the command can set a name through a channel the guard does not
+    model, so it applies to a command only when the command is positively safe, judged over the whole command (one
+    failing segment, at any nesting, gives fork main's reading for every mention: mentionMayAssign returns true). It is
+    an enumeration of the SAFE side: a construct the recognizer does not positively recognize as safe fails. Clause (a)
+    SAFE SYNTAX: every word is built only from literal or quoted text, the guard's `~`, the plain and braced parameters
+    `$NAME` and `${NAME}`, a special or positional parameter, the default, alternative, length, suffix and prefix forms
+    `${NAME:-w}`, `${NAME-w}`, `${NAME:+w}`, `${NAME+w}`, `${#NAME}`, `${NAME%w}`, `${NAME%%w}`, `${NAME#w}`,
+    `${NAME##w}` (w by the same rule), a command or backtick substitution, or a process substitution `<(..)`, `>(..)`,
+    `=(..)`; and the syntax holds no arithmetic (`$((`, `$[`, `((`, a `for ((`, or an arithmetic body in an unquoted
+    here-document), no `{NAME}` or `{NAME[i]}` descriptor redirection (which assigns the name under any builtin head,
+    correctness-1), no unquoted parenthesis but a subshell's or a substitution's (so no function definition, array
+    assignment, extglob or zsh glob qualifier) and no `function` keyword definition. Command and process substitutions
+    and subshells are safe because they cannot assign this shell's variables; their contents are judged by the same
+    rule, a fresh shell on its own script. Clause (b) THE COMMAND TABLES: no word whose resolved, quote-removed text
+    names a command table the guard does not model (bash's BASH_ALIASES and BASH_CMDS; zsh's functions, aliases,
+    galiases, saliases, commands and their dis_ twins, NAME_TABLE_PARAMS), nor an assignment whose name the shell fills
+    in; a write to one redefines a head (fresh-1). Clause (c) THE NAME-RUN AXIS: no head a second census axis classifies
+    as may-change-what-a-name-runs, OPTION-INSENSITIVE (a builtin any of whose option forms can define, change, mark for
+    autoload, enable, disable or remove a function, alias, builtin or hash entry: autoload, functions, typeset, declare,
+    enable, disable, alias, unalias, hash, rehash, unhash, unfunction, zmodload; NAME_RUN_AXIS, NAME_RUN_CHANGERS). It
+    closes the autoload, typeset -fu, declare -fu and functions -u roads the function clause's FUNCTION_SOURCES does not
+    carry. THE CENSUS PREMISE: the heads rule S reads are the installed shells' builtins and reserved words and the
+    command's own definitions; a function or an alias from the user's environment is outside the guard's reading at the
+    base and at the head alike (a child session's environment is not the command). THE NAME-RUN AXIS's census asks the
+    same population as THE ASSIGNING HEAD's and reds on a word it does not classify; THE COMMAND TABLES' census checks
+    each committed table is a writable special parameter of an installed shell and reds on a planted name. The rows:
+    clause (a) AS8-ruleS-bracevar-pwd and its `:`, echo, append, input and prefix twins, AS8-ruleS-bracevar-path (a
+    `{PATH}>` before a made name) and the control AS8-ruleS-ctl-noredir; clause (b) AS8-ruleS-table-bash-ba and
+    AS8-ruleS-table-bash-split; clause (c) AS8-ruleS-nameRun-typeset-fu and AS8-ruleS-nameRun-declare-fu, each refused
+    now where the pre-round-2 head allowed it while bash or zsh wrote. The cost, on the restricted side:
+    AS8-ctl-func-call-unrelated, a function definition, now takes fork main's reading (the bare name after a bound path
+    refuses) where ROOT alone allowed it, writing nothing; option-insensitive, a head like `typeset x=1` beside a
+    mention gives fork main's reading too, a write only where a bound path and a bare name stand beside it. FUNCTION_SOURCES
+    and the function-clause second walk stay beside rule S: they close the later-definition and called-body roads this
+    axis does not model, so removing them would reopen those. THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`
     spelled the old way, arithmetic run in this shell, which the guard read as a dollar and text, so a name in it was a
     mention the gate let pass under a program (`ls $[PATH=0]` before a copied cp run by its bare name copied in bash and
     zsh, where fork main refused it). It is read as an arithmetic expansion now, bare, double-quoted and in a

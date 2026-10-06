@@ -5190,6 +5190,130 @@ export const MENTION_TAINT_HEADS = new Set(Object.keys(SHELL_WORD_ASSIGNS).filte
 // derived: the words that define a function or run a text or a function in this shell (their reason says what runs may assign any name), so a later head
 // may be a function the walk did not see defined (THE ASSIGNING HEAD's function clause, extractWriteTargets)
 export const FUNCTION_SOURCES = new Set(Object.keys(SHELL_WORD_ASSIGNS).filter((n) => SHELL_WORD_ASSIGNS[n][1].includes('may assign any name')));
+// RULE S (fork PR 975's round 2, R1, 2026-10-06; enumerate the safe side): ROOT lets a mention of a name pass under a head that assigns none it is given
+// (THE ASSIGNING HEAD, above). That relaxation is sound only where NOTHING in the command can set a name through a channel the guard does not model, so it
+// applies to a command only when all three clauses below hold, judged over the WHOLE command (one failing segment gives the whole command fork main's
+// reading for every mention: ruleSafe false -> mentionMayAssign returns true). It is an enumeration of the SAFE side: a construct the recognizer does not
+// positively recognize as safe fails. Clause (a) closes correctness-1 (a `{NAME}>` descriptor redirection assigns NAME under any builtin head); clause (b)
+// closes fresh-1 (a write to a command table the guard does not model, bash's BASH_ALIASES/BASH_CMDS or zsh's functions/aliases and kin, redefines a head);
+// clause (c) closes the autoload, typeset -fu, declare -fu and functions -u roads (a head that may change what a later name runs). The census of clause (c)
+// is a second axis beside THE ASSIGNING HEAD's, over the same population. Decision 47 states the premise: heads are the installed shells' words and the
+// command's own definitions; functions and aliases from the user's environment are outside the guard's reading at base and at head alike.
+//
+// Clause (b): the command tables a word may write, derived from the installed shells' special parameters (bash's associative arrays BASH_ALIASES and
+// BASH_CMDS; zsh's functions, aliases, galiases, saliases, commands and their dis_ twins). A word whose resolved, quote-removed text names one of these as an
+// identifier, or a word the guard cannot read in a position where a name is written (an assignment or a subscript lvalue the shell fills in), gives the whole
+// command fork main's reading. The census (THE COMMAND TABLES' census) checks the committed list against the special parameters each installed shell has.
+export const NAME_TABLE_PARAMS = new Set(['BASH_ALIASES', 'BASH_CMDS', 'functions', 'aliases', 'galiases', 'saliases', 'commands', 'dis_functions', 'dis_aliases', 'dis_galiases', 'dis_saliases']);
+// Clause (c): the SECOND CENSUS AXIS, may-change-what-a-name-runs, over every builtin and reserved word of bash, dash and zsh (the population of THE
+// ASSIGNING HEAD's census, SHELL_WORD_ASSIGNS). OPTION-INSENSITIVE: a builtin any of whose option forms can define, change, mark for autoload, enable,
+// disable or remove a function, an alias, a builtin or a hash entry is on it, whatever options the command actually carries. It replaces the hand reasoning
+// the function clause rested on for the autoload/typeset -fu/declare -fu/functions -u roads; FUNCTION_SOURCES and the function-clause second walk stay beside
+// it (they close the later-definition and called-body roads this axis does not model, so removing them would reopen those: kept as the safe side).
+const NAME_RUN_HEADS = new Set(['autoload', 'functions', 'typeset', 'declare', 'enable', 'disable', 'zmodload', 'alias', 'unalias', 'hash', 'rehash', 'unhash', 'unfunction']);
+const RUN_CHANGE_WHY = 'an option form of it can define, change, mark for autoload, enable, disable or remove a function, an alias, a builtin or a hash entry, so it may change what a later name runs';
+const RUN_KEEP_WHY = 'changes no function, alias, builtin or hash entry, so what a later name runs is unchanged by it';
+// derived, over the same population as SHELL_WORD_ASSIGNS, each word classified with a reason (THE NAME-RUN AXIS's census reds on a word it does not classify)
+export const NAME_RUN_AXIS = Object.fromEntries(Object.keys(SHELL_WORD_ASSIGNS).map((n) => [n, [NAME_RUN_HEADS.has(n), NAME_RUN_HEADS.has(n) ? RUN_CHANGE_WHY : RUN_KEEP_WHY]]));
+export const NAME_RUN_CHANGERS = new Set(Object.keys(NAME_RUN_AXIS).filter((n) => NAME_RUN_AXIS[n][0]));
+// Clause (a): the safe word forms and the safe syntax, recognized positively. A word is safe when every character is literal (unquoted, quoted or the
+// guard's `~` expansion: marks u, q, h) or part of a safe expansion (mark x): a plain or braced parameter `$NAME`/`${NAME}`, a special or positional
+// parameter, the default/alternative/length/suffix/prefix forms `${NAME:-w}` `${NAME-w}` `${NAME:+w}` `${NAME+w}` `${#NAME}` `${NAME%w}` `${NAME%%w}`
+// `${NAME#w}` `${NAME##w}` (w judged by the same rule), a command or backtick substitution (collapsed to a NUL) or a process substitution `<(..)`/`>(..)`/
+// `=(..)`. Nothing else: no arithmetic expansion or command, no subscript, no other parameter-expansion form, no `${ ..; }`/`${| ..; }`. A segment is safe
+// when it holds no arithmetic (`$((`, `$[`, `((`, a `for ((`: seg.arith), no unquoted parenthesis but a subshell's or a substitution's (so no function
+// definition, array assignment, extglob or zsh glob qualifier: a `(` glued to a word), no `function` keyword definition, and no `{NAME}` descriptor
+// redirection (a `{NAME}` or `{NAME[sub]}` word beside a redirection). Command and process substitutions and subshells are safe because they cannot assign
+// this shell's variables; their contents are judged by the same rule.
+const RULE_S_BRACEVAR = /^\{[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\}$/;
+const RULE_S_SPECIAL = new Set(['?', '$', '!', '#', '@', '*', '-']);
+const ruleSkipParen = (s, i) => { let d = 0; for (; i < s.length; i++) { if (s[i] === '(') d++; else if (s[i] === ')') { if (--d === 0) return i; } } return -1; };
+const ruleBraceSafe = (body) => {
+  if (body[0] === '!' || body[0] === '(') return false;   // ${!x} indirection, ${(flags)x} zsh
+  if (body[0] === '#') { const rest = body.slice(1); return rest === '' || IDENTIFIER.test(rest) || /^[0-9]+$/.test(rest) || RULE_S_SPECIAL.has(rest); }   // ${#NAME} length
+  const m = body.match(/^([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[?$!@*#-])/);
+  if (!m) return false;
+  const after = body.slice(m[0].length);
+  if (after === '') return true;   // ${NAME}
+  const opm = after.match(/^(:-|-|:\+|\+|%%|%|##|#)/);   // the allowed operators; :=, =, /, //, [, :off:len, ^, , , @ are not
+  return opm ? ruleNestedSafe(after.slice(opm[0].length)) : false;
+};
+// inside a ${..op w}: the only unsafe pieces are a nested ${..} of an unsafe form and a nested $(( or $[ arithmetic; a nested $( or backtick runs a command
+// in a subshell (safe, judged where the walk reads it), the literal text is safe
+function ruleNestedSafe(w) {
+  let i = 0;
+  while (i < w.length) {
+    if (w[i] === '$' && w[i + 1] === '{') { let d = 0, j = i + 1; for (; j < w.length; j++) { if (w[j] === '{') d++; else if (w[j] === '}') { if (--d === 0) break; } } if (j >= w.length || !ruleBraceSafe(w.slice(i + 2, j))) return false; i = j + 1; continue; }
+    if (w[i] === '$' && w[i + 1] === '[') return false;
+    if (w[i] === '$' && w[i + 1] === '(') { if (w[i + 2] === '(') return false; const j = ruleSkipParen(w, i + 1); if (j < 0) return false; i = j + 1; continue; }
+    i++;
+  }
+  return true;
+}
+// one maximal run of expansion-marked ('x') text: a NUL is a collapsed command/backtick substitution (safe); else a sequence of $-led or <(/>(/=( forms
+function ruleRunSafe(run) {
+  let i = 0;
+  while (i < run.length) {
+    const c = run[i];
+    if (c === '\0') { i++; continue; }
+    if (c === '$') {
+      if (run[i + 1] === '{') { let d = 0, j = i + 1; for (; j < run.length; j++) { if (run[j] === '{') d++; else if (run[j] === '}') { if (--d === 0) break; } } if (j >= run.length || !ruleBraceSafe(run.slice(i + 2, j))) return false; i = j + 1; continue; }
+      if (run[i + 1] === '[') return false;   // $[ arithmetic
+      if (run[i + 1] === '(') { if (run[i + 2] === '(') return false; const j = ruleSkipParen(run, i + 1); if (j < 0) return false; i = j + 1; continue; }   // $(( arithmetic; a $( command substitution keeps its spelling in a here-document body (its content is recursed through viaSubs)
+      const m = run.slice(i + 1).match(/^([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[?$!@*#-])/);
+      if (!m) return false;
+      i += 1 + m[0].length; continue;
+    }
+    if ((c === '<' || c === '>' || c === '=') && run[i + 1] === '(') { const j = ruleSkipParen(run, i + 1); if (j < 0) return false; i = j + 1; continue; }
+    return false;
+  }
+  return true;
+}
+function ruleWordSafe(w) {
+  if (!w || !w.text) return true;
+  const t = w.text, m = w.marks || 'u'.repeat(t.length);
+  let i = 0;
+  while (i < t.length) {
+    if (m[i] !== 'x') { i++; continue; }
+    let j = i; while (j < t.length && m[j] === 'x') j++;
+    if (!ruleRunSafe(t.slice(i, j))) return false;
+    i = j;
+  }
+  return true;
+}
+const ruleHasRedir = (seg) => (seg.redirects && seg.redirects.length) || (seg.stdin && seg.stdin.length) || (seg.heredocs && seg.heredocs.length) || (seg.dups && seg.dups.length) || (seg.outDups && seg.outDups.length);
+// clause (b) and the SECOND CENSUS AXIS applied to a segment's words and head
+function ruleSegUnsafe(seg) {
+  if (seg.paren) return false;   // a `(` or `)` subshell marker: safe; its body segments are judged on their own
+  if (seg.arith && seg.arith.length) return true;   // (a) arithmetic
+  if ((seg.fedWords || []).some((w) => /\$\(\(|\$\[/.test(w.raw || ''))) return true;   // (a) arithmetic in an unquoted here-document body collapses to a NUL and never reaches seg.arith; the raw spelling carries `$((`/`$[`
+  if (seg.op === '(' && seg.words.length) return true;   // (a) an unquoted `(` glued to a word: function definition, array assignment, extglob or glob qualifier
+  if (compoundHeadOf(seg.words) === 'function') return true;   // (a) a `function` keyword definition
+  if (ruleHasRedir(seg) && seg.words.some((w) => RULE_S_BRACEVAR.test(w.text))) return true;   // (a) a {NAME} descriptor redirection
+  const head = compoundHeadOf(seg.words);
+  const raw = seg.words[rawHeadIndexOf(seg.words)];
+  if ((head && NAME_RUN_CHANGERS.has(head)) || (raw && plainWord(raw) && NAME_RUN_CHANGERS.has(raw.text))) return true;   // (c) a head that may change what a name runs
+  const words = [...(seg.words || []), ...((seg.redirects || []).map((r) => r.target).filter(Boolean)), ...((seg.stdin || []).filter(Boolean)), ...((seg.fedWords || []))];
+  for (const w of words) {
+    if (!ruleWordSafe(w)) return true;   // (a) an unsafe expansion in a word
+    if (identifierTokens(w.text, w.marks).some((t) => NAME_TABLE_PARAMS.has(t))) return true;   // (b) a word naming a command table
+    const eq = w.text.indexOf('=');   // (b) an assignment whose name the shell fills in (an expansion), which may name any table
+    if (eq > 0) { const namePart = w.text.slice(0, eq); const insideBraces = (namePart.match(/\{/g) || []).length > (namePart.match(/\}/g) || []).length; if (!insideBraces && /[/\s]/.test(namePart) === false && /x/.test((w.marks || '').slice(0, eq))) return true; }
+  }
+  return false;
+}
+// RULE S's recognizer over a command text: true if the command is safe for ROOT's mention relaxation. `shell` is the shell the walk runs it under.
+export function ruleSafeOf(command, shell, depth = 0) {
+  if (depth > NESTED_DEPTH_CAP) return false;
+  let L;
+  try { L = lex(command, shell); } catch { return false; }
+  if (L.opaque) return false;   // a parse the lexer could not complete: not positively safe
+  for (const seg of L.segments) {
+    if (ruleSegUnsafe(seg)) return false;
+    for (const s of [...(seg.subs || []), ...((seg.viaSubs || []).map((v) => v.text))]) if (!ruleSafeOf(s, shell, depth + 1)) return false;   // a substitution's contents judged by the same rule
+  }
+  return true;
+}
 // THE VALUED NAMES (round 6's fourth commit, 2026-09-21; the body auditor: `PS4='$(cp a b)'; set -x; :`, `PS4='$(cp a b)' bash -xc :`,
 // `export PS4='$(cp a b)'; bash -xc :` and `PROMPT_COMMAND='cp a b' bash -i </dev/null` each ran the copy while the value stood in the
 // command as text). Names whose VALUE the shell runs: bash's prompt strings, whose `$(..)` and backticks run when the prompt is printed or a
@@ -5559,9 +5683,10 @@ function numericRunsOnly(text, marks) {
 export function extractWriteTargets(command, cwd, shell = null, headPoison = null) {
   // `headPoison` (THE TWO WALKS, judge): `off`, walk with THE UNREAD HEAD's poison set aside, every name read as fork main read it; `seen`, set where the walk
   // met a head whose poison it took or set aside, so judge walks with the poison taken only then (THE ORDER: the walk with it set aside comes first)
+  const ruleSafe = ruleSafeOf(command, shell);   // RULE S (R1): the whole command is safe for ROOT's mention relaxation, computed once; a fresh shell recomputes it on its own script (recurse)
   const walk = (headGate) => {
     const builtinsOff = { seen: mentionsBuiltinGate(command) };   // THE SHELL'S GATE, set before the walk where the text mentions a gate
-    return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0, builtinsOff, headPoison: headPoison || { off: false, seen: false }, headGate });
+    return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0, builtinsOff, ruleSafe, headPoison: headPoison || { off: false, seen: false }, headGate });
   };
   // THE ASSIGNING HEAD's function clause (mentionMayAssign): whether a head may be a function when it runs is a property of the WHOLE command, as THE
   // SHELL'S GATE is, since a definition later in the text may run first (a loop's next pass, a function body called after it). The walk that let a mention
@@ -5697,6 +5822,7 @@ function extractIn(command, ctx) {
     for (const k of [literalPath(destText, cwdAt), spelled]) if (k) { let set = bound.get(k); if (!set) bound.set(k, (set = new Set())); set.add(value); }
   };
   const builtinsOff = ctx.builtinsOff || { seen: false };   // THE SHELL'S GATE (gateBuiltins, below): `seen`, the command may run an `enable` (bash) or a `disable` or `zmodload` (zsh), which may turn a builtin on or off, so a builtin may stand under any name (THE ASSIGNING HEAD then taints every mention: mentionMayAssign)
+  const ruleSafe = ctx.ruleSafe === undefined ? true : ctx.ruleSafe;   // RULE S (R1): the whole command is safe for ROOT's mention relaxation (ruleSafeOf, extractWriteTargets); inherited by every text this shell runs, recomputed for a fresh shell (recurse)
   const headPoison = ctx.headPoison || { off: false, seen: false };   // THE TWO WALKS (judge): the switch, carried into every text the command hands over
   const headGate = ctx.headGate || { off: false, exempted: new Set(), defined: new Set(), anyDefined: false };   // THE ASSIGNING HEAD's function clause (extractWriteTargets), shared by every text
   // THE SHELL'S GATE (the seventh verify round's tg-m7-1, 2026-10-05): whether the command may turn a builtin on or off is a property of the WHOLE
@@ -6521,6 +6647,7 @@ function extractIn(command, ctx) {
   // that may be a function when it runs is the function clause (extractWriteTargets)
   const mentionMayAssign = (seg, cmd) => {
     if (headGate.off) return true;   // the second walk: every mention a write (extractWriteTargets)
+    if (!ruleSafe) return true;   // RULE S (R1): the command is not positively safe for the relaxation (unsafe syntax, a command-table word, or a head that may change what a name runs), so fork main's reading: every mention a write
     if (!cmd || !cmd.name || cmd.wrapped || cmd.unknown || cmd.opaque || 'script' in cmd) return true;
     const hw = seg.words[seg.words.length - cmd.args.length - 1];
     if (!hw || !hw.literal || !hw.text || hw.text.includes('\0')) return true;
@@ -7399,6 +7526,7 @@ function extractIn(command, ctx) {
       dir, unknownDir, unknownWhy, heldDir, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
       ifsNamed, candidates, unreadValues, unreadValueWhy, vanishedValues, namerefs, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES (THE VANISHED VALUE and THE NAMEREF with them) and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
       aliases: fresh ? new Map() : aliases, hashes: fresh ? new Map() : hashes, aliasState: fresh ? { unread: null } : aliasState, bound, builtinsOff, headPoison, headGate, aliasChain: chain, headSplice: spliced,   // THE ALIAS ROAD: a fresh shell starts with no alias or hash; the paths made are on the filesystem for every shell
+      ruleSafe: fresh ? ruleSafeOf(text, sh) : ruleSafe,   // RULE S (R1): a fresh shell is its own command, judged on its own script; a text this shell runs inherits the whole command's verdict
       spliceLine: spliced ? defLineOf(walkIdx >= 0 ? segments[walkIdx] : null) : undefined,   // a definition inside the splice binds at the spliced segment's line (defLineOf)
       functionBodies, functionLines, fnChain: opts.fnChain || fnChain, runFunction: opts.runFunction || null,   // THE CALLED BODY
       callArgs: opts.callArgs !== undefined ? opts.callArgs : opts.trapMove ? UNKNOWN_POSITIONALS : (spliced || opts.adopt ? positionals : null),   // THE POSITIONAL VALUE: a text this shell runs in place holds this shell's positional parameters; a fresh or fed shell has its own, which the guard does not read; a trap action reads the list as it stands WHEN THE TRAP FIRES, which is not known (round 7's twenty-third commit: `set -- other.md; trap 'cp ../base/report.md $1' DEBUG; set -- report.md; true` copied onto the tracked file in bash while the action read the list at the trap)
