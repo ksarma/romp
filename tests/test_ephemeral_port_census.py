@@ -39,9 +39,10 @@ positions below. This section states what the census reads. A name is BOUND, her
 records: a constant, a number written with a sign (-7, +7, -7.0, which Python parses as a unary minus or plus over a
 constant, recorded as the number Python computes), or a list, tuple or set display, given to the name anywhere in the
 module by =, an annotated = or :=, by a tuple or list assignment element by element, or by a for loop or a comprehension
-over a display. An and or an or (BOOLEAN) gives the name each of its operands, each by these same terms, and a for loop
-or a comprehension over one walks each display among its operands: P = os.environ.get("P") or 45001 records 45001 for P,
-and its call is a binding the census does not record (below). Any other binding of the name adds no value: every other
+over a display. An and or an or (BOOLEAN) gives the name each of its operands, and a conditional expression each of its
+two branches, each by these same terms, and a for loop or a comprehension over one walks each display among them: P =
+os.environ.get("P") or 45001 records 45001 for P, and so does P = int(os.environ["P"]) if "P" in os.environ else 45001,
+and each call is a binding the census does not record (below). Any other binding of the name adds no value: every other
 place Python's grammar binds a name, read from the ast (a call's result, B = A, 0 - 7, an augmented assignment, a
 starred target, a for target over anything but a display, a with or except target, a parameter, an import, a function's
 or class's name, a del, a global or nonlocal statement, a match capture), and any binding form the census does not
@@ -63,13 +64,16 @@ with BASE bound to 20000 and by BASE = g(), and OFFSET bound to 7 and by OFFSET 
 author changes (bind fewer such names in the expression, or bind them only to values the census records; failure()), an
 over-refusal wherever no mix reaches the range, since reading it by spans or by fewer mixes could miss (a name read
 unbounded gives no interval at all, so a mix left out can be the one reading that counts). The names are counted over
-the whole of a value interval() or offset_base() reads, before the and and or inside it are read as their operands
-(below), so it is refused when it reads more than eight such names in all, even where each expression its and and or
-give reads eight or fewer, an over-refusal too: with A1 to A9 each bound to 0 and by a call, the value 100 + (A1 + ... +
-A8 or A9) % 20 is refused, though one of its two expressions reads eight of the names and the other one, and every mix
-of each reads within 100-119, where Python's value lies for any ints. An and or an or that is itself the position's
-value, or an element of a display, gives each operand as a value of its own, its names counted apart: with the same
-names, A1 + ... + A8 + 40000 or A9 assigned to port counts 40000. So interval(), anywhere but
+the whole of a value interval() or offset_base() reads, before the and, or and conditional expressions inside it are
+read as their operands and branches (below), a conditional expression's test included, which no expression reads, so it
+is refused when it reads more than eight such names in all, even where each expression they give reads eight or fewer,
+an over-refusal too: with A1 to A9 each bound to 0 and by a call, the value 100 + (A1 + ... + A8 or A9) % 20 is refused,
+though one of its two expressions reads eight of the names and the other one, and every mix of each reads within
+100-119, where Python's value lies for any ints, and so is 100 + (1 if A1 + ... + A9 else 2) % 20, whose two
+expressions read none of the names and give 101 and 102, as Python does. An and, an or or a conditional expression
+that is itself the position's value, or an element of a display, gives each operand or branch as a value of its own,
+its names counted apart and a conditional expression's test not read: with the same names, A1 + ... + A8 + 40000 or A9
+assigned to port counts 40000, and so does 40000 if A1 + ... + A9 else 1. So interval(), anywhere but
 at a step, reads each int a binding the census records gives a name, and not a value a binding it does not record gives,
 unless the value bounds that name's every value as these do, nor a float or a string a binding it records gives, which
 it reads only inside int(), as CPython's int() of it, nor a None, which it reads only at a randrange's stop, as the stop
@@ -158,24 +162,27 @@ see the value such a setting gives it (WHAT IT CANNOT SEE).
     belongs to those positions, so ("127.0.0.1", "N") assigned to a port-named target is a display in the assignment's
     position, and its digit string counts;
     a list, tuple or set display, each element read by these same terms ({"ports": [N, 1]});
-    an and or an or (BOOLEAN), which gives the value of one of its operands: each operand read by these same terms in
-    the same position, the union of their readings (os.environ.get("P") or N under a port-named key counts N, and so
-    does P there after P = os.environ.get("P") or N, BOUND). Inside a value interval() or offset_base() reads, the value
-    is read once for each way of replacing each and and or in it by one of its operands, every way, and counts by any of
-    them: int(x or N) is N, random.randrange(x or 40000, 50000) is 40000-49999 by its second operand, 20000 + (x or 7) %
-    20000 is 20000-39999 by its first, where 7 gives 20007, and random.randrange(40000, 1000, 7 or 9), which Python
-    refuses for both steps, is read by each step's sign and not counted. A for loop or a comprehension over an and or an
-    or walks each display among its operands (for port in ports or (N, 1)); a tuple target of an assignment takes each
-    display of its length among the operands of an and or an or (h, port = x or ("h", N)), and a tuple target of a loop
-    each tuple or list among the operands of an element of its sequence that is one (for h, port in (x or ("h", N),)).
-    A value whose and and or give more than 256 such expressions (MIXES) is refused, as a value that reads too many
-    names with a binding the census does not record is (BOUND), its failure naming the refusal and what an author
-    changes (write fewer of them in the expression; failure()). It is an over-refusal wherever reading every expression
-    would count nothing, since reading fewer could miss (an operand read unbounded gives no reading, so an expression
-    left out can be the one that counts): 100 + ((a0 or 1) + ... + (a8 or 1)) % 20 gives 512 expressions and is refused,
-    though each reads within 100-119, where Python's value lies for any ints. Where THE RULE reads something other than
-    a value (a host, a template, a key, an option, or a name handed with a value), an and or an or is not read (WHAT IT
-    CANNOT SEE);
+    an and or an or (BOOLEAN), which gives the value of one of its operands, and a conditional expression (a if c else
+    b), which gives the value of one of its two branches, its test no value: each operand or branch read by these same
+    terms in the same position, the union of their readings (os.environ.get("P") or N under a port-named key counts N,
+    and so do N if fast else pick() there and P there after P = os.environ.get("P") or N, BOUND). Inside a value
+    interval() or offset_base() reads, the value is read once for each way of replacing each and, or and conditional
+    expression in it by one of its operands or branches, every way, and counts by any of them: int(x or N) is N,
+    random.randrange(x or 40000, 50000) is 40000-49999 by its second operand, 20000 + (x or 7) % 20000 is 20000-39999 by
+    its first, where 7 gives 20007, random.randrange(45001, None if fast else 1000) is 0-45000 by its first branch, a
+    stop left empty, and random.randrange(40000, 1000, 7 or 9), which Python refuses for both steps, is read by each
+    step's sign and not counted. A for loop or a comprehension over an and, an or or a conditional expression walks each
+    display among its operands or branches (for port in ports or (N, 1)); a tuple target of an assignment takes each
+    display of its length among them (h, port = x or ("h", N)), and a tuple target of a loop each tuple or list among
+    the operands or branches of an element of its sequence that is one (for h, port in (x or ("h", N),)). A value whose
+    and, or and conditional expressions give more than 256 such expressions (MIXES) is refused, as a value that reads
+    too many names with a binding the census does not record is (BOUND), its failure naming the refusal and what an
+    author changes (write fewer of them in the expression; failure()). It is an over-refusal wherever reading every
+    expression would count nothing, since reading fewer could miss (an operand read unbounded gives no reading, so an
+    expression left out can be the one that counts): 100 + ((a0 or 1) + ... + (a8 or 1)) % 20 gives 512 expressions and
+    is refused, though each reads within 100-119, where Python's value lies for any ints, and so is 100 + ((1 if c0 else
+    2) + ... + (1 if c8 else 2)) % 20. Where THE RULE reads something other than a value (a host, a template, a key, an
+    option, or a name handed with a value), an and, an or or a conditional expression is not read (WHAT IT CANNOT SEE);
     an expression interval() bounds that can reach the range, or a sum or difference offset_base() finds built on a
     constant expression in the range (both below);
     a bare name, by one hop, in every position but a loop's sequence: it counts each value it is bound to (BOUND,
@@ -222,8 +229,9 @@ see the value such a setting gives it (WHAT IT CANNOT SEE).
   (BIG), and &, | and ^ as Python's own value where each operand is one value (40000 | 1 is 40001) and otherwise as 0 up
   to the lesser of the operands' highest values for &, and up to 2**n - 1 for | and ^, n the bit length of the greater;
   over any bounded operand, ~ as -x - 1 (~-45002 is 45001); not as 0 to 1, whatever its operand, and as its one value
-  where the operand has one; a conditional expression as the span holding its two branches (45001 if x else 45002 is
-  45001-45002); and a := as its value. True division, which gives a float, is not read, nor are **, <<, >>, &, | and ^
+  where the operand has one; and a := as its value. A conditional expression is read by its branches, as an and or an or
+  is by its operands (above), and not as the span holding both branches: 45001 if x else 45002 assigned to a port-named
+  target counts 45001 and 45002. True division, which gives a float, is not read, nor are **, <<, >>, &, | and ^
   over an operand that can be negative (WHAT IT CANNOT SEE), and Operators checks that each operator of Python's grammar
   is read here or named as not read (OPERATOR_LIMITS). It reads an unknown operand of % by a divisor so too, by each
   part as for a left operand of several values, and a call to randint(a, b), randrange(stop), randrange(start, stop[,
@@ -272,17 +280,19 @@ see the value such a setting gives it (WHAT IT CANNOT SEE).
   30000-34999 whatever kw holds, by keyword too (random.randrange(start=30000 + os.getpid() % 5000, stop=30000, **kw)).
   Each reading holds every value random's randrange can return for the call, except where a name it takes a value for is
   also set with no binding form, or a name called Random or SystemRandom holds an instance (both in WHAT IT CANNOT SEE),
-  or a binding the census does not record gives a name in its start or stop a value it does not read (BOUND), or a
-  binding the census records gives such a name a value interval() does not read and the call takes: a None at a stop
-  beside a step that is 1 only at run time, or a float, which randrange takes on 3.10 and 3.11 (each in WHAT IT CANNOT
-  SEE); and it can hold values it never returns (a step of 7 returns values 7 apart). At a step it takes a value for a
-  name only when the census records every binding of it, each to an int. Where Python refuses a call for every value its
-  start, stop and step can take, the reading still stands, an over-read: a step of 0 is read with the steps that are
-  never negative (random.randrange(40000, 50000, 0) is 40000-49999); a positive step from a start never below its stop,
-  or a negative one from a start never above it, is read as a span with its ends reversed (random.randrange(50000,
-  40000, 7) is 50000-39999, and random.randrange(40000, 50000, -1) is 50001-40000); and a start and stop that are one
-  and the same value, with a step that can take either sign or one interval() does not bound, read as that value
-  (random.randrange(40000, 40000, k) is 40000-40000, and so is the call with a step of os.getpid() % 3 - 1).
+  or a binding the census does not record gives a name in its start or stop a value it does not read (BOUND), or the
+  call takes a value interval() does not read: a None at a stop beside a step that is 1 only at run time, whether a
+  binding the census records gives it to a name there or a branch of a conditional expression or an operand of an and
+  or an or writes it there, or a float a binding the census records gives such a name, which randrange takes on 3.10
+  and 3.11 (each in WHAT IT CANNOT SEE); and it can hold values it never returns (a step of 7 returns values 7 apart).
+  At a step it takes a value for a name only when the census records every binding of it, each to an int. Where Python
+  refuses a call for every value its start, stop and step can take, the reading still stands, an over-read: a step of 0
+  is read with the steps that are never negative (random.randrange(40000, 50000, 0) is 40000-49999); a positive step
+  from a start never below its stop, or a negative one from a start never above it, is read as a span with its ends
+  reversed (random.randrange(50000, 40000, 7) is 50000-39999, and random.randrange(40000, 50000, -1) is 50001-40000);
+  and a start and stop that are one and the same value, with a step that can take either sign or one interval() does not
+  bound, read as that value (random.randrange(40000, 40000, k) is 40000-40000, and so is the call with a step of
+  os.getpid() % 3 - 1).
   RandrangeAgainstCPython checks this reading against CPython's own randrange over generated calls. A sum or difference
   with an unbounded operand counts when one of its operands alone is a constant expression (one interval() bounds with
   no unknown in it) whose value is in the range, found through str(), int() and a unary plus and down a chain of sums
@@ -365,11 +375,12 @@ these turns its plant red, and the example leaves this list.
   (CFG["a"]), a call's result other than str() or int() around a value interval() reads (int() of a constant or of a
   name included) and the random calls (pick(), random.choice((N, M))), a random call with a parameter left empty that a
   ** mapping beside it can fill (random.randrange(50000, **kw), random.randrange(start=50000, step=1, **kw), and
-  random.randrange(50000, E, **kw) with E bound to None, a stop the name can leave empty), a name interval() does not
-  bound inside a display that is the position's value or in a loop's sequence (P = "N", then {"ports": [P]}, the census
-  recording no int for P), an f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a
-  sum or difference in the range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__
-  replaced at run time); a rule of its own may still read such a value where it is written;
+  random.randrange(50000, E, **kw) with E bound to None, a stop the name can leave empty, and random.randrange(50000,
+  None if fast else pick(), **kw), whose None branch is a stop left empty), a name interval() does not bound inside a
+  display that is the position's value or in a loop's sequence (P = "N", then {"ports": [P]}, the census recording no
+  int for P), an f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a sum or
+  difference in the range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__ replaced
+  at run time); a rule of its own may still read such a value where it is written;
   int() of str() of a name bound to a string: interval() reads str() of a name as the name, by its ints, and a string
   gives none (P = "N", then int(str(P)), where CPython gives N; int(P) is read, THE RULE);
   an unbound random method spelled on anything but a name or attribute called Random or SystemRandom, whose instance
@@ -393,20 +404,23 @@ these turns its plant red, and the example leaves this list.
   random.randrange(45001, E) reads E as 1000 and is not counted, though on 3.10 and 3.11 CPython returns values from
   45001 to 45009 for E = 45010.0 (int(E) reads it, and int(45001.0) is 45001: THE RULE);
   an operator interval() does not read over the operands it is given (THE RULE): true division, which gives a float
-  (int(90002 / 2)), **, <<, >>, &, | or ^ over an operand that can be negative (-(-45001 | 0)), and a ** or a <<
-  whose value can pass 2**4096 ((2 ** 5000 + 45001) % 2 ** 5000);
+  (int(90002 / 2)), **, <<, >>, &, | or ^ over an operand that can be negative (-(-45001 | 0), and S | 0 with S
+  bound to 45001 and by S = -2 if fast else f() or by S = -2 or f(), each of which gives S the value -2 beside its
+  45001, so that S reads -2-45001), and a ** or a << whose value can pass 2**4096 ((2 ** 5000 + 45001) % 2 ** 5000);
   a random call with an argument passed through a * sequence (random.randrange(*(N, M)), random.randint(*[N, M]));
   a randrange with its stop left empty and a step that is 1 only at run time, which Python takes (ONE = 1, then
   random.randrange(start=50000, step=ONE); random.randrange(50000, step=+1); E = None, then random.randrange(50000,
-  E, ONE));
+  E, ONE); random.randrange(50000, None if fast else pick(), ONE), whose None branch is a stop left empty);
   a host that THE RULE does not take for one (("TESTHOST", N), HTTPConnection(self.host, N)), a name bound to the
   empty string, even in a tuple (H = "", then (H, N)), and the empty string itself before a port in a call (serve("",
   N)); the port beside it is read only when another rule reads it;
-  an and or an or where THE RULE reads something other than a value: a host ((h or "127.0.0.1", N)), a template or the
-  text before a concatenated port ((t or "http://127.0.0.1:%d/") % N, (b or "http://127.0.0.1:") + str(N)), a dict key
-  ({k or "port": N}), a --*port option (["romp", x or "--port", "N"]), and a string handed first that names a port
-  (os.environ.setdefault(k or "ROMP_POSTAL_PORT", "N")); a name bound to one holds each operand (BOUND), so H = h or
-  "127.0.0.1", then (H, N), is read;
+  an and, an or or a conditional expression where THE RULE reads something other than a value: a host ((h or
+  "127.0.0.1", N), ("127.0.0.1" if local else h, N)), a template or the text before a concatenated port ((t or
+  "http://127.0.0.1:%d/") % N, (b or "http://127.0.0.1:") + str(N)), a dict key ({k or "port": N}), a --*port option
+  (["romp", x or "--port", "N"]), and a string handed first that names a port (os.environ.setdefault(k or
+  "ROMP_POSTAL_PORT", "N")), each with a conditional expression in place of the or as well; a name bound to one holds
+  each operand or branch (BOUND), so H = h or "127.0.0.1", then (H, N), is read, and so is (H, N) after H = "127.0.0.1"
+  if local else h;
   a positional port handed to a function whose name no index holds (a name no function of the module, of a tests/
   module it imports, or of kernel/, postal/ or cli/ carries: vendorlib.start_vendor_server(N), a tests/ helper the
   module does not import, a helper reached through import tests.helpers used whole), with no host right before it;
@@ -702,8 +716,8 @@ def interval(node, bound=None, steps=None):
     and * over them, // and % by a divisor read by its positive and its negative part, 0 in neither (_divided(): so
     90002 // K, with K bound to 2, to 3 and by K = f(), is 30000-45001, and with K bound to -1 and to 2 it is
     -90002-90002), every other integer operator over the operands THE RULE gives it (BINARY and UNARY: ** << >> & | ^
-    over operands never negative, ~ and not), a conditional expression as the span holding its two branches, a := as its
-    value, a name (below), str() or int() around one (int() of a name as CPython's int() of each of its values in
+    over operands never negative, ~ and not), a := as its value (no conditional expression: literal() reads each of its
+    branches), a name (below), str() or int() around one (int() of a name as CPython's int() of each of its values in
     `bound`, a float or a string included and a value int() refuses passed over, and int() of a constant as CPython's
     int() of it), an unknown operand of % by such a divisor read by its parts too, and randint(a, b), randrange(stop),
     randrange(start, stop[, step]) and randbelow(n) over bounded arguments read as the values each can return, each
@@ -760,12 +774,6 @@ def interval(node, bound=None, steps=None):
         if right is None or (left is None and not isinstance(node.op, ast.Mod)):
             return None                             # an unknown left operand is read only by %
         return BINARY[type(node.op)](node.op, left, right)
-    if isinstance(node, ast.IfExp):                 # either branch: the span holding both
-        body, orelse = interval(node.body, bound, steps), interval(node.orelse, bound, steps)
-        if body is None or orelse is None:
-            return None
-        lo, hi = min(body[0], orelse[0]), max(body[1], orelse[1])
-        return lo, hi, body[2] or orelse[2] or lo != hi
     if isinstance(node, ast.NamedExpr):             # a := is its value
         return interval(node.value, bound, steps)
     return None
@@ -810,9 +818,10 @@ REFUSED_NAMES = ("it reads more than eight names with a binding the census does 
                  "which past eight names it refuses rather than leave a mix out; bind fewer such names in the "
                  "expression, or bind each of them only to values the census records (a constant, a number with a sign, "
                  "or a list, tuple or set display, given by =)")
-REFUSED_CHOICES = ("its and and or give it more ways to read than the census reads one by one (each and or or read as "
-                   "each of its operands in turn, every way), which it refuses rather than leave a way out; write fewer "
-                   "of them in the expression")
+REFUSED_CHOICES = ("its and, or and conditional expressions give it more ways to read than the census reads one by one "
+                   "(each and or or read as each of its operands in turn, and each conditional expression as each of "
+                   "its two branches, every way), which it refuses rather than leave a way out; write fewer of them in "
+                   "the expression")
 
 
 def _cornered(f, left, right):
@@ -891,20 +900,25 @@ OPERATOR_LIMITS = {
 # gives over narrower ones, and that each of these can lose it.
 GATED = (ast.Pow, ast.LShift, ast.RShift, ast.BitAnd, ast.BitOr, ast.BitXor)
 # The boolean operators the census reads (THE RULE): each gives the value of one of its operands, so a position reads
-# such a value as each operand, the union of their readings (_either(), _choices()).
+# such a value as each operand, the union of their readings (_either(), _choices()). A conditional expression, which is
+# no operator, is read the same way by its two branches.
 BOOLEAN = {ast.And: "a and b gives a when a is false, else b", ast.Or: "a or b gives a when a is true, else b"}
 
 
 def _either(node):
-    """The operands of an and or an or (BOOLEAN), one of whose values it gives, else None."""
+    """The operands of an and or an or (BOOLEAN), one of whose values it gives, or the two branches of a conditional
+    expression, one of whose values it gives (its test is no value), else None."""
     if isinstance(node, ast.BoolOp) and type(node.op) in BOOLEAN:
         return node.values
+    if isinstance(node, ast.IfExp):
+        return [node.body, node.orelse]
     return None
 
 
 def _displays(node):
-    """(the list, tuple and set displays among the values `node` gives, each operand of an and or an or in turn, and
-    True when it can give a value that is no display): ([node], False) for a display itself."""
+    """(the list, tuple and set displays among the values `node` gives, each operand of an and or an or and each branch
+    of a conditional expression in turn, and True when it can give a value that is no display): ([node], False) for a
+    display itself."""
     ops = _either(node)
     if ops is None:
         return ([node], False) if isinstance(node, (ast.Tuple, ast.List, ast.Set)) else ([], True)
@@ -935,10 +949,12 @@ def _replaced(node, old, new):
 
 
 def _choices(node):
-    """Each expression `node` gives by its and and or (BOOLEAN): `node` with each and or or in it replaced by one of its
-    operands, every way, so that reading each and taking the union reads every value Python can give; [node] when it
-    holds none, and None past MIXES ways (literal() refuses the value). An operand holding an and or an or is read
-    the same way in turn, and the rest of `node` is shared, so each name and line reads as written."""
+    """Each expression `node` gives by its and, or and conditional expressions (_either()): `node` with each and or or
+    in it replaced by one of its operands, and each conditional expression by one of its two branches, every way, so
+    that reading each and taking the union reads every value Python can give; [node] when it holds none, and None past
+    MIXES ways (literal() refuses the value). An operand or a branch holding one is read the same way in turn, a
+    conditional expression's test goes with it, and the rest of `node` is shared, so each name and line reads as
+    written."""
     if not any(_either(x) is not None for x in ast.walk(node)):
         return [node]
     out, todo = [], [node]
@@ -1316,14 +1332,15 @@ class _Scan:
 
     def literal(self, node, why, strings=True):
         """The numbers `node` writes as a port: an int constant, a five-digit string (when `strings`), each element of a
-        tuple, list or set display of them, each operand of an and or an or (BOOLEAN), a bounded expression that can
-        reach the range, or a sum or difference built on a constant in the range. An expression is read once for each
-        expression its and and or give (_choices()), and in each once for each mix of reading each name with a binding
-        the census does not record by its ints or unbounded (BOUND). A value with more than eight such names, or more
-        than MIXES expressions by its and and or, is refused: it goes in self.refused with what to change, and no
-        number in self.hits."""
+        tuple, list or set display of them, each operand of an and or an or (BOOLEAN) and each branch of a conditional
+        expression, a bounded expression that can reach the range, or a sum or difference built on a constant in the
+        range. An expression is read once for each expression its and, or and conditional expressions give
+        (_choices()), and in each once for each mix of reading each name with a binding the census does not record by
+        its ints or unbounded (BOUND). A value with more than eight such names, a conditional expression's test
+        included, or more than MIXES expressions by its and, or and conditional expressions, is refused: it goes in
+        self.refused with what to change, and no number in self.hits."""
         ops = _either(node)
-        if ops is not None:                         # it gives one of its operands: each, read by these same terms
+        if ops is not None:                         # one of its operands or branches: each, by these same terms
             for o in ops:
                 self.literal(o, why, strings)
         elif isinstance(node, ast.Constant):
@@ -1346,7 +1363,7 @@ class _Scan:
                 self.refused.append((self.line_of(node), why, REFUSED_CHOICES))
                 return
             got = []
-            for expr in exprs:                      # each expression the value's and and or give: the union of all
+            for expr in exprs:                      # each expression _choices() gives: the union of all
                 held = {x.id for x in ast.walk(expr) if isinstance(x, ast.Name)}
                 mine, based = [k for k in loose if k in held], False
                 for mix in itertools.product((False, True), repeat=len(mine)):   # True: that name read unbounded
@@ -1369,8 +1386,9 @@ class _Scan:
         """Records the value `v` gives each name the target `t` binds (BOUND), and the id of each Name it records one
         for; a name the target gives any other value (K = f(), B = A, 0 - 7; a starred target; a tuple target over
         anything but a display of its length) goes in self.loose, a binding the census does not record. An and or an or
-        gives the target each of its operands, each bound by these same terms (P = os.environ.get("P") or 45001 records
-        45001 for P, and the call puts P in self.loose)."""
+        gives the target each of its operands, and a conditional expression each of its two branches, each bound by
+        these same terms (P = os.environ.get("P") or 45001 records 45001 for P, and the call puts P in self.loose; so
+        does P = 45001 if fast else pick())."""
         ops = _either(v)
         if ops is not None:
             for o in ops:
@@ -1388,8 +1406,8 @@ class _Scan:
             self.loose.update(x.id for x in _target_names(t))
 
     def _value(self, v, why, strings=True):
-        """A position's value: an and or an or as each of its operands in the position (BOOLEAN), a bare name by the
-        hop, anything else by literal()."""
+        """A position's value: an and or an or as each of its operands in the position (BOOLEAN), a conditional
+        expression as each of its two branches there, a bare name by the hop, anything else by literal()."""
         ops = _either(v)
         if ops is not None:
             for o in ops:
@@ -1408,7 +1426,7 @@ class _Scan:
                 for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
                     self._bind(t, n.value)
             elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)):
-                seqs, other = _displays(n.iter)     # a display, or each display an and or an or can give
+                seqs, other = _displays(n.iter)     # a display, or each display among its operands or branches
                 for seq in seqs:
                     for e in seq.elts:
                         self._bind(n.target, e)
@@ -1466,7 +1484,7 @@ class _Scan:
             elif isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)) and n.value is not None:
                 for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
                     if isinstance(t, (ast.Tuple, ast.List)):
-                        for seq in _displays(n.value)[0]:   # the display, or each one an and or an or can give
+                        for seq in _displays(n.value)[0]:   # the display, or each one among its operands or branches
                             if isinstance(seq, (ast.Tuple, ast.List)) and len(t.elts) == len(seq.elts):
                                 for te, ve in zip(t.elts, seq.elts):
                                     if names_a_port(_target_name(te)):
@@ -1484,7 +1502,7 @@ class _Scan:
                 if isinstance(t, (ast.Tuple, ast.List)):
                     for i, te in enumerate(t.elts):
                         if names_a_port(_target_name(te)):
-                            for d in (d for e in elts for d in _displays(e)[0]):   # an element an and or an or gives too
+                            for d in (d for e in elts for d in _displays(e)[0]):   # each display an element gives too
                                 if isinstance(d, (ast.Tuple, ast.List)) and i < len(d.elts):
                                     self.literal(d.elts[i], "the loop target %s" % _target_name(te))
                 elif names_a_port(_target_name(t)):
@@ -2957,13 +2975,14 @@ class Plants(unittest.TestCase):
         figure but the plant's line. The plant also fails assertGreen, which reads the values the census refuses as well
         as its hits, as a census that counted the plant made it do. The same plant written as code text in a string is
         refused there, and the failure names it as in code text (in code text, an assignment to port), where a census
-        that dropped a refusal made inside code text reported nothing for it. A value whose and and or give more than
-        MIXES expressions is refused as well, with its remedy (write fewer of them): (a0 or 1) + ... + (a8 or 1) +
-        os.getpid() % 20000 gives 512 expressions; eight such terms, 256, are read, and (a0 or 40000) + (a1 or 0) + ...
-        + (a7 or 0) + worker counts 40000. The failure does not offer binding each and or or to a name first: where an
-        operand is one the census does not record, as a0 is, the name takes a binding the census does not record, so A0
-        + ... + A8 + os.getpid() % 20000, each Ai bound by Ai = ai or 1, is refused by its nine names instead. Each
-        refusal is also an over-refusal THE RULE states: test_each_refusal_is_an_over_refusal_the_rule_states."""
+        that dropped a refusal made inside code text reported nothing for it. A value whose and, or and conditional
+        expressions give more than MIXES expressions is refused as well, with its remedy (write fewer of them), its
+        failure naming and, or and conditional expressions: (a0 or 1) + ... + (a8 or 1) + os.getpid() % 20000 gives 512
+        expressions; eight such terms, 256, are read, and (a0 or 40000) + (a1 or 0) + ... + (a7 or 0) + worker counts
+        40000. The failure does not offer binding each and or or to a name first: where an operand is one the census
+        does not record, as a0 is, the name takes a binding the census does not record, so A0 + ... + A8 + os.getpid() %
+        20000, each Ai bound by Ai = ai or 1, is refused by its nine names instead. Each refusal is also an over-refusal
+        THE RULE states: test_each_refusal_is_an_over_refusal_the_rule_states."""
         c, rel = 20000, os.path.join("tests", "test_plant.py")   # the base and the modulus, written apart from the text
         names = ["B", "K"] + ["Z%d" % i for i in range(1, 8)]
         src = ("B = %d\nB = g()\n" % c + "".join("Z%d = 0\nZ%d = f()\n" % (i, i) for i in range(1, 8)) + "K = 7\nK = f()\n"
@@ -2997,8 +3016,8 @@ class Plants(unittest.TestCase):
         result = census(self.d)
         self.assertEqual((result["hits"], [r[:3] for r in result["refused"]]), ([], [(rel, 1, "an assignment to port")]))
         said = failure(result)
-        for part in ("refuses to read", "its and and or give it more ways to read than the census reads one by one",
-                     "write fewer of them in the expression"):
+        for part in ("refuses to read", "its and, or and conditional expressions give it more ways to read than the "
+                     "census reads one by one", "write fewer of them in the expression"):
             self.assertIn(part, said)
         self.assertNotIn("bind each to a name", said, "binding each and or or to a name first is no remedy where an "
                          "operand is one the census does not record")
@@ -3025,16 +3044,29 @@ class Plants(unittest.TestCase):
         Python's value does for any ints. The names are counted over a value interval() or offset_base() reads, and an
         or that is itself the position's value gives each operand as a value of its own, its names counted apart, as
         THE RULE states too: with the same names, A1 + ... + A8 + 40000 or A9 assigned to port counts 40000 (red),
-        which a census reading such an or only through interval() refuses by its nine names."""
+        which a census reading such an or only through interval() refuses by its nine names. A conditional expression
+        joins both counts as an and or an or does (the owner's call of 2026-10-05 at 23:5xZ): with the same names, 100
+        + (1 if A1 + ... + A9 else 2) % 20 is refused by the nine names in its test, which no expression it gives
+        reads (they give 101 and 102, as Python does), and 100 + ((1 if c0 else 2) + ... + (1 if c8 else 2)) % 20 by
+        its 512 expressions, each within 109-118; and 40000 if A1 + ... + A9 else 1, the position's value itself,
+        counts 40000 (red), its test not read, which a census reading a conditional expression only through
+        interval() refuses by its nine names."""
         rel, opens = os.path.join("tests", "test_plant.py"), "                # %d opens the file\n" % _n()
         names = "".join("A%d = 0\nA%d = f()\n" % (i, i) for i in range(1, 10))
         eight, lo = " + ".join("A%d" % i for i in range(1, 9)), LOW + 7232      # lo: 40000, built at run time
+        nine = eight + " + A9"
         for label, text, what in (
                 ("nine names counted over the whole value, eight in one expression and one in the other",
                  names + "port = 100 + (%s or A9) %% 20%s" % (eight, opens),
                  REFUSED_NAMES % ", ".join("A%d" % i for i in range(1, 10))),
                 ("512 expressions",
                  "port = 100 + (%s) %% 20%s" % (" + ".join("(a%d or 1)" % i for i in range(9)), opens),
+                 REFUSED_CHOICES),
+                ("nine names in a conditional expression's test, which no expression reads",
+                 names + "port = 100 + (1 if %s else 2) %% 20%s" % (nine, opens),
+                 REFUSED_NAMES % ", ".join("A%d" % i for i in range(1, 10))),
+                ("512 expressions by conditional expressions",
+                 "port = 100 + (%s) %% 20%s" % (" + ".join("(1 if c%d else 2)" % i for i in range(9)), opens),
                  REFUSED_CHOICES)):
             with self.subTest(label):
                 self._write(rel, text)
@@ -3045,6 +3077,9 @@ class Plants(unittest.TestCase):
         with self.subTest("an or that is the position's value itself, each operand a value of its own"):
             self.assertRed("test_plant.py", names + "port = %s + %d or A9\n" % (eight, lo),
                            "an assignment to port, a constant expression", n=lo)
+        with self.subTest("a conditional expression that is the position's value itself, its test not read"):
+            self.assertRed("test_plant.py", names + "port = %d if %s else 1\n" % (lo, nine), "an assignment to port",
+                           n=lo)
 
     def test_offset_base_reads_an_operand_with_more_ways_than_each_by_its_spans(self):
         """offset_base() reads an operand value by value only while its names can take their values at most EACH ways;
@@ -3121,11 +3156,12 @@ class Plants(unittest.TestCase):
         take -7.0 as a step, so random.randrange(40000, 1000, K) returns values from 1001 to 40000 there), so `steps`
         leaves K unbounded while the census's other table reads it as 7. Each red plant nests the call in one such place:
         as a sum's right operand (0 + the call) and its left one (the call + 0), in int() and in str(), as randbelow's
-        bound, under a unary plus and a unary minus, in a conditional expression, and under a :=. Each is red under a
-        mutant that hands the other table on at its place, which reads the call as 40000-999 and reports nothing. A
-        step name with a binding the census does not record cannot pin these places, since the census also reads a
-        value that reads such a name with the name left out of both tables (BOUND), which leaves it unbounded at the
-        step whichever table reaches it."""
+        bound, under a unary plus and a unary minus, and under a :=. Each is red under a mutant that hands the other
+        table on at its place, which reads the call as 40000-999 and reports nothing. A conditional expression is no
+        such place: the census reads each of its branches as an expression of its own (_choices()), so a call that is
+        a branch is read as itself. A step name with a binding the census does not record cannot pin these places,
+        since the census also reads a value that reads such a name with the name left out of both tables (BOUND),
+        which leaves it unbounded at the step whichever table reaches it."""
         lo = LOW + 7232                                                            # 40000, built at run time
         call, k = "random.randrange(%d, 1000, K)" % lo, "K = 7\nK = -7.0\n"
         for label, written, why in (
@@ -3136,7 +3172,6 @@ class Plants(unittest.TestCase):
                 ("randbelow's bound", "secrets.randbelow(%s)" % call, "computed into 0-%d" % (lo - 1)),
                 ("a unary plus", "+" + call, "computed into 1001-%d" % lo),
                 ("a unary minus", "-random.randrange(-1000, -%d, K)" % lo, "computed into 1000-%d" % (lo - 1)),
-                ("a conditional expression", call + " if x else 0", "computed into 0-%d" % lo),
                 ("a :=", "(P := %s)" % call, "computed into 1001-%d" % lo)):
             with self.subTest(label):
                 self.assertRed("test_plant.py", k + "port = %s\n" % written, why, n=LOW)
@@ -3571,15 +3606,15 @@ class Plants(unittest.TestCase):
         """interval() reads every integer operator over bounded operands (THE RULE; Operators checks the class against
         the grammar and Python's arithmetic): ** and << and >> over operands never negative by their ends, &, | and ^
         over operands never negative by Python's own value where each is one value and by a span holding every value
-        otherwise, ~ as -x - 1, not as 0 to 1, a conditional expression as the span holding its branches, and a := as
-        its value. Each red plant reported nothing where interval() read + - * // % and the unary minus and plus
-        alone: fixed ports (2 ** 15 + 1000 is 33768, 1 << 15 is 32768, 90002 >> 1, 45000 | 1, 45001 & 65535, 45000 ^ 1
-        and ~-45002 are 45001, 45001 if x else 45002 is 45001-45002, (P := 45001) is 45001), spans ((1 + os.getpid() %
-        2) ** 16 is 1-65536, (45000 + os.getpid() % 2) & 65535 is 0-45001, (45000 + os.getpid() % 2) | 1 is 0-65535),
-        random calls (random.randint(2 ** 15, 2 ** 16 - 1) and random.randrange(1 << 15, 1 << 16) are 32768-65535,
-        random.randint(40000 | 1, 50000) is 40001-50000, random.randrange(40000 if x else 41000, 50000) and
-        random.randrange((S := 40000), 50000) are 40000-49999, and random.randrange(not x, 50000) is 0-49999), and a sum
-        built on (40000 | 1), which reads as the one value 40001 and so as a sum's constant operand."""
+        otherwise, ~ as -x - 1, not as 0 to 1, and a := as its value. Each red plant reported nothing where interval()
+        read + - * // % and the unary minus and plus alone: fixed ports (2 ** 15 + 1000 is 33768, 1 << 15 is 32768,
+        90002 >> 1, 45000 | 1, 45001 & 65535, 45000 ^ 1 and ~-45002 are 45001, (P := 45001) is 45001), spans ((1 +
+        os.getpid() % 2) ** 16 is 1-65536, (45000 + os.getpid() % 2) & 65535 is 0-45001, (45000 + os.getpid() % 2) | 1
+        is 0-65535), random calls (random.randint(2 ** 15, 2 ** 16 - 1) and random.randrange(1 << 15, 1 << 16) are
+        32768-65535, random.randint(40000 | 1, 50000) is 40001-50000, random.randrange((S := 40000), 50000) is
+        40000-49999, and random.randrange(not x, 50000) is 0-49999), and a sum built on (40000 | 1), which reads as the
+        one value 40001 and so as a sum's constant operand. A conditional expression is no operator interval() reads:
+        the census reads each of its branches (test_a_conditional_expression_reads_each_of_its_branches)."""
         n, lo, hi = _n(), LOW + 7232, LOW + 17232                                  # 45001, 40000 and 50000
         opens, key, ass = "                # %d opens the file" % _n(1), "the key 'port', ", "an assignment to PORT, "
         for label, src, why, first in (
@@ -3590,8 +3625,6 @@ class Plants(unittest.TestCase):
                 ("& over constants", "PORT = %d & 65535\n" % n, ass + "a constant expression", n),
                 ("^ over constants", "PORT = %d ^ 1\n" % (n - 1), ass + "a constant expression", n),
                 ("~ over a constant", "PORT = ~-%d\n" % (n + 1), ass + "a constant expression", n),
-                ("a conditional expression", "PORT = %d if x else %d\n" % (n, n + 1), ass + "computed into %d-%d" % (n, n + 1),
-                 n),
                 ("a :=", 'row = {"port": (P := %d)}\n' % n, key + "a constant expression", n),
                 ("** over a span", 'row = {"port": (1 + os.getpid() %% 2) ** 16}%s\n' % opens, key + "computed into 1-65536",
                  LOW),
@@ -3605,8 +3638,6 @@ class Plants(unittest.TestCase):
                  LOW),
                 ("| as a random call's argument", "port = random.randint(%d | 1, %d)\n" % (lo, hi),
                  "computed into %d-%d" % (lo + 1, hi), lo + 1),
-                ("a conditional expression as a random call's argument",
-                 "port = random.randrange(%d if x else %d, %d)\n" % (lo, lo + 1000, hi), "computed into %d-%d" % (lo, hi - 1), lo),
                 ("a := as a random call's argument", "port = random.randrange((S := %d), %d)\n" % (lo, hi),
                  "computed into %d-%d" % (lo, hi - 1), lo),
                 ("not as a random call's argument", "port = random.randrange(not x, %d)\n" % hi,
@@ -3696,6 +3727,158 @@ class Plants(unittest.TestCase):
         with self.subTest("a step whose every operand is positive, which Python refuses"):
             self.assertGreen("test_x.py", "port = random.randrange(%d, 1000, 7 or 9)\n" % lo)
 
+    def test_a_conditional_expression_reads_each_of_its_branches(self):
+        """A conditional expression gives the value of one of its two branches, so wherever THE RULE reads a value it
+        reads each branch in that place, exactly as it reads each operand of an and or an or, the union of their
+        readings; its test is no value (the owner's call of 2026-10-05 on fork PR 973 at 23:5xZ, which names 45001 if
+        fast else pick() and PORT = int(os.environ["P"]) if "P" in os.environ else 45001 as the env-default idiom).
+        That replaces the reading of a conditional expression as the span holding its two branches, which read nothing
+        where interval() bounded one branch alone. The first 44 red plants each read nothing in a census that read the
+        span: the two defaults the call names, the second then used as an address's port; and, the other branch a value
+        the census does not read, a default in a function's body (port = port if port is not None else 45001), one
+        beside an attribute (cfg.port if cfg else 45001) under a port-named key, a call as the first branch, None as the
+        second, a digit string under a port-named key, 20000 + (os.getpid() % 20000 if fast else pick()), which is
+        20000-39999 by its first branch, the hop through P = int(os.environ["P"]) if "P" in os.environ else 45001, a
+        keyword, a parameter's default, a positional argument by its parameter's name, an address's port, the argument
+        after a host, an operand formatted into an address by %, by an f-string and by format, a port concatenated onto
+        an address, the argument after a --port option, the value handed with a port-named string, int() of a
+        conditional expression and a sum over one, a display, an element of a loop's display, a loop's sequence, a tuple
+        assignment from a conditional expression and a tuple target over one in a loop's display, the address (H, 45001)
+        after H = "127.0.0.1" if local else h, a randrange's start and stop, a randrange's stop written as None in one
+        branch and 1000 in the other (random.randrange(45001, None if fast else 1000) is 0-45000 by the stop left empty,
+        as CPython returns), randint's two bounds, randbelow's bound, a sum built on a branch, the hop through a name
+        bound to a digit string or to a display that is a branch, a digit string that is a branch inside a display and
+        inside a loop's display, a display that is a branch inside a display, an or inside a branch, a conditional
+        expression that is an operand of an or, one nested in a branch of another, and inside int(), one that is an
+        operand of an or. The next four pin that each branch is read, not the first alone or the second alone, and were
+        counted in that census by the unknown operand of % and by a step of either sign: 20000 + (pick() if fast else 7)
+        % 20000 and 20000 + (7 if fast else pick()) % 20000 are 20000-39999 by the unknown, where 7 gives 20007, and
+        random.randrange(40000, 1000, 7 if fast else -7) and the same with the branches swapped are 1001-40000 by the
+        step -7, where the step 7 counts nothing. A conditional expression whose two branches both read counts each
+        branch, not their span: PORT = 45001 if x else 45002 counts 45001 and 45002, and random.randrange(40000 if x
+        else 41000, 50000) counts 40000-49999 and 41000-49999, where that census counted 45001-45002 and 40000-49999
+        once. Three plants are green: random.randrange(40000, 1000, 7 if fast else 9), whose steps Python refuses for
+        both, is read by each step's sign; PORT = 30000 if fast else 70000, both branches outside the range, counts
+        nothing, where that census counted the span 30000-70000, an over-read; and 1 if N else 2 under a port-named key,
+        with N bound to 45001, counts nothing, since the test is no value."""
+        n, lo, hi = _n(), LOW + 7232, LOW + 17232                                  # 45001, 40000 and 50000
+        key, ass, c = "the key 'port'", "an assignment to port, ", 20000   # c: the modulus, written apart from the text
+        env, ports = 'int(os.environ["P"]) if "P" in os.environ else %d' % n, "the key 'ports'"
+        loop, address = "the loop target port", "the port of the address ('127.0.0.1', ...)"
+        formatted = "an operand formatted into an address"
+        for label, src, why, first in (
+                ("the env default the call names, then an address's port",
+                 'PORT = %s\nsrv.bind(("127.0.0.1", PORT))\n' % env, "an assignment to PORT", n),
+                ("a default under a port-named key", 'row = {"port": %d if fast else pick()}\n' % n, key, n),
+                ("a default in a function's body",
+                 "def serve(port=None):\n    port = port if port is not None else %d\n" % n,
+                 "an assignment to port", n),
+                ("a default beside an attribute", 'row = {"port": cfg.port if cfg else %d}\n' % n, key, n),
+                ("the unknown branch first", "PORT = pick() if fast else %d\n" % n, "an assignment to PORT", n),
+                ("None in the other branch", "PORT = %d if fast else None\n" % n, "an assignment to PORT", n),
+                ("a digit string under a port-named key",
+                 'env = {"ROMP_POSTAL_PORT": "%d" if fast else os.environ["Q"]}\n' % n,
+                 "the key 'ROMP_POSTAL_PORT'", n),
+                ("a sum whose other operand is a conditional expression",
+                 "port = %d + (os.getpid() %% %d if fast else pick())\n" % (c, c), ass + "computed into 20000-39999",
+                 LOW),
+                ("the hop through a name bound by a conditional expression", 'P = %s\nrow = {"port": P}\n' % env,
+                 "through the name P", n),
+                ("a keyword", "serve(port=%d if fast else pick())\n" % n, "the keyword port=", n),
+                ("a parameter's default", "def go(port=%d if fast else None):\n    pass\n" % n,
+                 "the default of port", n),
+                ("a positional argument", 'km._notify_bus_peer("h", %d if fast else pick(), True)\n' % n,
+                 "the argument port of _notify_bus_peer()", n),
+                ("an address's port", 's.connect(("127.0.0.1", %d if fast else pick()))\n' % n, address, n),
+                ("the argument after a host",
+                 'conn = http.client.HTTPConnection("127.0.0.1", %d if fast else pick())\n' % n,
+                 "the argument after the host '127.0.0.1'", n),
+                ("an operand formatted by %", 'u = "http://127.0.0.1:%%d/" %% (%d if fast else pick())\n' % n,
+                 formatted, n),
+                ("an operand formatted by an f-string", 'u = f"http://127.0.0.1:{%d if fast else pick()}/"\n' % n,
+                 formatted, n),
+                ("an operand formatted by format", 'u = "http://127.0.0.1:{}/".format(%d if fast else pick())\n' % n,
+                 formatted, n),
+                ("a port concatenated onto an address", 'u = "http://127.0.0.1:" + str(%d if fast else pick())\n' % n,
+                 "a port concatenated onto an address", n),
+                ("the argument after a --port option",
+                 'subprocess.run(["romp", "--port", "%d" if fast else pick()])\n' % n,
+                 "the argument after the flag --port", n),
+                ("the value handed with a port-named string",
+                 'os.environ.setdefault("ROMP_POSTAL_PORT", "%d" if fast else pick())\n' % n,
+                 "the value handed with the name 'ROMP_POSTAL_PORT'", n),
+                ("int() of a conditional expression", 'row = {"port": int(x if fast else "%d")}\n' % n,
+                 key + ", a constant expression", n),
+                ("a sum over a conditional expression", 'row = {"port": (pick() if fast else %d) + 1}\n' % (n - 1),
+                 key + ", a constant expression", n),
+                ("a display", 'row = {"ports": [pick() if fast else %d]}\n' % n, ports, n),
+                ("an element of a loop's display", "for port in (pick() if fast else %d, 1):\n    pass\n" % n, loop, n),
+                ("a loop's sequence", "for port in (%d, 1) if fast else ports:\n    pass\n" % n, loop, n),
+                ("a tuple assignment from a conditional expression",
+                 'h, port = ("TESTHOST", %d) if fast else pick()\n' % n, "an assignment to port", n),
+                ("a tuple target over a conditional expression in a loop's display",
+                 'for host, port in (("TESTHOST", %d) if fast else pick(),):\n    pass\n' % n, loop, n),
+                ("a host bound by a conditional expression",
+                 'H = "127.0.0.1" if local else h\ns.connect((H, %d))\n' % n, address, n),
+                ("a randrange's start", "port = random.randrange(%d if fast else pick(), %d)\n" % (lo, hi),
+                 ass + "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a randrange's stop", "port = random.randrange(%d, pick() if fast else %d)\n" % (lo, hi),
+                 ass + "computed into %d-%d" % (lo, hi - 1), lo),
+                ("a randrange's stop, None in one branch", "port = random.randrange(%d, None if fast else 1000)\n" % n,
+                 ass + "computed into 0-%d" % (n - 1), LOW),
+                ("a randint's first bound", "port = random.randint(%d if fast else pick(), %d)\n" % (lo, hi),
+                 ass + "computed into %d-%d" % (lo, hi), lo),
+                ("a randint's second bound", "port = random.randint(%d, pick() if fast else %d)\n" % (lo, hi),
+                 ass + "computed into %d-%d" % (lo, hi), lo),
+                ("a randbelow's bound", "port = secrets.randbelow(%d if fast else pick())\n" % hi,
+                 ass + "computed into 0-%d" % (hi - 1), LOW),
+                ("a sum built on a branch", 'srv.bind(("127.0.0.1", (%d if fast else pick()) + worker))\n' % lo,
+                 "an offset from %d" % lo, lo),
+                ("the hop through a name bound to a digit string, a branch",
+                 'P = "%d"\nrow = {"port": os.environ.get("P") if fast else P}\n' % n, key + ", through the name P", n),
+                ("the hop through a name bound to a display, a branch",
+                 'L = [%d, 1]\nrow = {"ports": x if fast else L}\n' % n, ports + ", through the name L", n),
+                ("a digit string, a branch in a display", 'row = {"ports": [x if fast else "%d"]}\n' % n, ports, n),
+                ("a digit string, a branch in a loop's display",
+                 'for port in (x if fast else "%d", 1):\n    pass\n' % n, loop, n),
+                ("a display, a branch in a display", 'row = {"ports": [x if fast else [%d]]}\n' % n, ports, n),
+                ("an or inside a branch", 'row = {"port": (x or %d) if fast else pick()}\n' % n, key, n),
+                ("a conditional expression as an operand of an or",
+                 'row = {"port": x or (%d if fast else pick())}\n' % n, key, n),
+                ("a conditional expression nested in a branch",
+                 'row = {"port": pick() if a else (%d if b else pick())}\n' % n, key, n),
+                ("inside int(), a conditional expression as an operand of an or",
+                 'row = {"port": int(x or (pick() if fast else "%d"))}\n' % n, key + ", a constant expression", n),
+                ("% over a conditional expression, the unknown first",
+                 "port = %d + (pick() if fast else 7) %% %d\n" % (c, c), ass + "computed into 20000-39999", LOW),
+                ("% over a conditional expression, the unknown second",
+                 "port = %d + (7 if fast else pick()) %% %d\n" % (c, c), ass + "computed into 20000-39999", LOW),
+                ("a step, the negative branch second", "port = random.randrange(%d, 1000, 7 if fast else -7)\n" % lo,
+                 ass + "computed into 1001-%d" % lo, LOW),
+                ("a step, the negative branch first", "port = random.randrange(%d, 1000, -7 if fast else 7)\n" % lo,
+                 ass + "computed into 1001-%d" % lo, LOW)):
+            with self.subTest(label):
+                self.assertRed("test_plant.py", src, why, n=first)
+        for label, src, want in (
+                ("both branches constants in the range", "PORT = %d if x else %d\n" % (n, n + 1),
+                 [(n, "an assignment to PORT"), (n + 1, "an assignment to PORT")]),
+                ("both branches a randrange's start",
+                 "port = random.randrange(%d if x else %d, %d)\n" % (lo, lo + 1000, hi),
+                 [(lo, ass + "computed into %d-%d" % (lo, hi - 1)),
+                  (lo + 1000, ass + "computed into %d-%d" % (lo + 1000, hi - 1))])):
+            with self.subTest(label):
+                hits, refused = self._found("test_plant.py", src)
+                self.assertEqual(([(h[2], h[3]) for h in hits], refused), (want, []),
+                                 "each branch, not their span:\n" + src)
+        for label, src in (
+                ("a step whose every branch is positive, which Python refuses",
+                 "port = random.randrange(%d, 1000, 7 if fast else 9)\n" % lo),
+                ("both branches outside the range", "PORT = %d if fast else %d                # %d opens the file\n"
+                 % (LOW - 2768, HIGH + 4465, n)),
+                ("the test is no value", 'N = %d\nrow = {"port": 1 if N else 2}\n' % n)):
+            with self.subTest(label):
+                self.assertGreen("test_x.py", src)
+
     def test_the_stated_blind_spots_stay_unread(self):
         """Each example WHAT IT CANNOT SEE gives, planted green. The examples are known shapes, not a closed list: a change
         that reads one turns its subtest red, and the example leaves the docstring's list."""
@@ -3724,12 +3907,19 @@ class Plants(unittest.TestCase):
                 ("an operator interval() does not read over the operands it is given", "test_x.py",
                  'row = {"port": int(%d / 2)}\nrow = {"port": -(-%d | 0)}\nrow = {"port": (2 ** 5000 + %d) %% 2 ** 5000}\n'
                  % (2 * n, n, n)),
+                ("| over a name a conditional expression or an or gives a negative int beside one in the range",
+                 "test_x.py", 'S = %d\nS = -2 if fast else f()\nrow = {"port": S | 0}\nT = %d\nT = -2 or f()\n'
+                 'row = {"port": T | 0}\n' % (n, n)),
                 ("a random call with an argument passed through a * sequence", "test_x.py",
                  'port = random.randrange(*(%d, %d))\nport = random.randrange(%d, *[%d])\nport = random.randint(*[%d, %d])\n'
                  % (n, n + 9, n, n + 9, n, n + 9)),
                 ("a randrange with its stop left empty and a step that is 1 only at run time", "test_x.py",
                  'ONE = 1\nport = random.randrange(start=%d, step=ONE)\nport = random.randrange(%d, step=+1)\n'
                  'E = None\nport = random.randrange(%d, E, ONE)\n' % (n, n, n)),
+                ("a randrange whose stop is a conditional expression's None branch, beside a step that is 1 only "
+                 "at run time or a ** mapping", "test_x.py",
+                 'ONE = 1\nport = random.randrange(%d, None if fast else pick(), ONE)\n'
+                 'port = random.randrange(%d, None if fast else pick(), **kw)\n' % (n, n)),
                 ("an attribute", "test_x.py", 'cfg.p = %d\nrow = {"port": cfg.p}\n' % n),
                 ("a name bound to a digit string, inside a display that is the position's value", "test_x.py",
                  'P = "%d"\nrow = {"ports": [P]}\n' % n),
@@ -3760,6 +3950,11 @@ class Plants(unittest.TestCase):
                  'v = (b or "http://127.0.0.1:") + str(%d)\nrow = {k or "port": %d}\n'
                  'subprocess.run(["romp", x or "--port", "%d"])\nos.environ.setdefault(k or "ROMP_POSTAL_PORT", "%d")\n'
                  % (n, n, n, n, n, n)),
+                ("a conditional expression where THE RULE reads something other than a value", "test_x.py",
+                 's.connect(("127.0.0.1" if local else h, %d))\nu = ("http://127.0.0.1:%%d/" if a else t) %% %d\n'
+                 'v = ("http://127.0.0.1:" if a else b) + str(%d)\nrow = {"port" if a else k: %d}\n'
+                 'subprocess.run(["romp", "--port" if a else x, "%d"])\n'
+                 'os.environ.setdefault("ROMP_POSTAL_PORT" if a else k, "%d")\n' % (n, n, n, n, n, n)),
                 ("the empty string before a port in a call", "test_x.py", 'serve("", %d)\n' % n),
                 ("a function no index holds, no host before it", "test_x.py",
                  'import vendorlib\nvendorlib.start_vendor_server(%d)\n' % n),
@@ -3905,7 +4100,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
     None, with a divisor bound to ints of both signs, with each operator the census reads, with int() of a constant,
     with a call that is a sum's right operand, its step a name with a binding the census does not record, and with two
     such names in a start or stop; and the owner's calls after that check with a start, a stop or a step written with an
-    and or an or, and the check after those with a step and a % over a name a for loop binds over one)."""
+    and or an or, and the check after those with a step and a % over a name a for loop binds over one; and the owner's
+    call after that check with a start, a stop or a step written with a conditional expression)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
     STEPS = (-1000, -7, -2, -1, 0, 1, 2, 7, 1000)   # the values a step interval() does not bound takes
@@ -4410,6 +4606,107 @@ class RandrangeAgainstCPython(unittest.TestCase):
                                                      "pre": ["for %s in f() or (%d,):" % (name, v)], "indent": 4}))
         return out
 
+    def _conditional(self):
+        """The calls the owner's call of 2026-10-05 at 23:5xZ added: a start, a stop or a step written with a
+        conditional expression, which THE RULE reads by each branch in its place, one branch an unknown or a value
+        interval() does not bound, from a generator seeded apart from the grid's and the five above so their calls,
+        samples and draws stay as they were. Each test is a name nothing binds (CT or CU and a number). Per relation,
+        for the start and for the stop, twice each: an interval's text and an unknown (f()) as the two branches,
+        either way round, taking the interval's values (an unknown start or stop is not read: WHAT IT CANNOT SEE); the
+        interval's lowest value plus a conditional expression of an unknown and an int, % the interval's width, either
+        way round, taking that int's remainder and those of 0, the width less one and two seeded ints, which the
+        unknown can give; int() of a conditional expression of an unknown and a digit string; an or inside a branch
+        ((f() or A) if c else g()), a conditional expression as an operand of an or (f() or (A if c else g())) and one
+        nested in a branch of another (g() if c else (A if d else f())), taking A's values; a name bound twice, each
+        time to a conditional expression of a call and an int, taking both ints; and a name a for loop binds over a
+        conditional expression of a call and a display of two ints, taking both. Then, per relation, three times, a
+        stop with None as one branch and an interval's text as the other, either way round, in a form and with a step
+        drawn from NONE_FORMS, taking None and the interval's values, with the exceptions a stop left empty beside a
+        step other than 1 raises. Then, per relation, a step: a step of STEP_SHAPES that interval() bounds and an
+        unknown as the two branches, either way round, taking STEPS and that step's values; two such steps as the
+        branches, taking each one's values; and a step name bound to a conditional expression of a call and an int,
+        taking STEPS and the int."""
+        rng, out = random.Random(self.SEED + 6), []
+
+        def near():
+            return rng.choice((LOW + rng.randint(-60, 60), HIGH + rng.randint(-60, 60),
+                               rng.randint(LOW + 100, HIGH - 100), rng.randint(1024, LOW - 200)))
+
+        def ends(iv):
+            return sorted({iv[0], iv[1], rng.randint(*iv)})
+
+        def takes(kiv):
+            return {kiv[0], kiv[1], rng.randint(*kiv)} | {x for x in (-1, 0, 1) if kiv[0] <= x <= kiv[1]}
+        bounded = [(k, kiv) for k, kiv in self.STEP_SHAPES if k is not None and kiv is not None]
+        shapes = {"an interval and an unknown": "a conditional expression of an interval and an unknown",
+                  "%": "% by its width of a conditional expression of an unknown and an int",
+                  "int()": "int() of a conditional expression of an unknown and a digit string",
+                  "an or inside a branch": "an or inside a branch of a conditional expression",
+                  "an operand of an or": "a conditional expression as an operand of an or",
+                  "nested": "a conditional expression nested in a branch of another",
+                  "a name bound twice": "a name bound twice by a conditional expression",
+                  "a loop's name": "a name a loop binds over a conditional expression"}
+        for relation in self.RELATIONS:
+            for role, shape in itertools.product(("start", "stop"), shapes):
+                for _ in range(2):
+                    s, e = self._shape(relation, near(), rng)
+                    iv, n, first = (s if role == "start" else e), len(out), rng.random() < 0.5
+                    t, text, how = "CT%d" % n, self._text(iv), {}
+                    if shape == "an interval and an unknown":
+                        how[role] = "(f() if %s else %s)" % (t, text) if first else "(%s if %s else f())" % (text, t)
+                        got = set(ends(iv))
+                    elif shape == "%":
+                        lo, w, v = iv[0], iv[1] - iv[0] + 1, rng.randint(0, 5000)
+                        how[role] = "%d + (f() if %s else %d) %% %d" % (lo, t, v, w) if first else \
+                            "%d + (%d if %s else f()) %% %d" % (lo, v, t, w)
+                        got = {lo + k % w for k in (v, 0, w - 1) + tuple(rng.randint(-10 ** 6, 10 ** 6) for _ in "ab")}
+                    elif shape == "int()":
+                        v = rng.randint(*iv)
+                        how[role], got = 'int(f() if %s else "%d")' % (t, v), {v}
+                    elif shape == "an or inside a branch":
+                        how[role], got = "((f() or (%s)) if %s else g())" % (text, t), set(ends(iv))
+                    elif shape == "an operand of an or":
+                        how[role], got = "(f() or ((%s) if %s else g()))" % (text, t), set(ends(iv))
+                    elif shape == "nested":
+                        how[role], got = "(g() if %s else ((%s) if CU%d else f()))" % (t, text, n), set(ends(iv))
+                    elif shape == "a name bound twice":
+                        name, got = "CN%d" % n, {rng.randint(*iv), rng.randint(*iv)}
+                        vs = sorted(got) * 2
+                        how.update({role: name, "pre": ["%s = f() if %s else %d" % (name, t, vs[0]),
+                                                        "%s = %d if %s else g()" % (name, vs[1], t)]})
+                    else:
+                        name, got = "CL%d" % n, {rng.randint(*iv), rng.randint(*iv)}
+                        vs = sorted(got) * 2
+                        loop = "for %s in (f() if %s else (%d, %d)):" % (name, t, vs[0], vs[1])
+                        how.update({role: name, "pre": [loop], "indent": 4})
+                    got = sorted(got)
+                    out.append(("the %s, %s" % (role, shapes[shape]), got if role == "start" else s,
+                                e if role == "start" else got, rng.choice(self.STEP_SHAPES), rng.choice(self.FORMS),
+                                how))
+            for _ in range(3):
+                s, e = self._shape(relation, near(), rng)
+                (form, k), t, text = rng.choice(self.NONE_FORMS), "CT%d" % len(out), self._text(e)
+                stop = "(None if %s else %s)" % (t, text) if rng.random() < 0.5 else "(%s if %s else None)" % (text, t)
+                out.append(("the stop, a conditional expression of None and an interval", s, ends(e) + [None],
+                            (k, None if k is None else [ast.literal_eval(k)]), form,
+                            {"stop": stop, "raises": (ValueError, TypeError)}))
+            s, e = self._shape(relation, near(), rng)
+            (k1, kiv1), t = rng.choice(bounded), "CT%d" % len(out)
+            written = "(f() if %s else (%s))" % (t, k1) if rng.random() < 0.5 else "((%s) if %s else f())" % (k1, t)
+            out.append(("the step, a conditional expression of a step and an unknown", s, e,
+                        (written, sorted(set(self.STEPS) | takes(kiv1))), rng.choice(self.FORMS), {}))
+            s, e = self._shape(relation, near(), rng)
+            (k1, kiv1), (k2, kiv2) = rng.sample(bounded, 2)
+            out.append(("the step, a conditional expression of two steps", s, e,
+                        ("((%s) if CT%d else (%s))" % (k1, len(out), k2), sorted(takes(kiv1) | takes(kiv2))),
+                        rng.choice(self.FORMS), {}))
+            s, e = self._shape(relation, near(), rng)
+            name, v = "CK%d" % len(out), rng.choice((7, -7, 1))
+            out.append(("the step, a name bound to a conditional expression of a call and an int", s, e,
+                        (name, sorted(set(self.STEPS) | {v})), rng.choice(self.FORMS),
+                        {"pre": ["%s = f() if CT%d else %d" % (name, len(out), v)]}))
+        return out
+
     def test_every_value_cpython_returns_lies_in_the_span_the_census_reports(self):
         """A seeded generator writes randrange calls: start's interval below stop's, above it, touching it from either
         side, one value with it, and overlapping it four ways, crossed with STEP_SHAPES (steps known positive, known
@@ -4433,19 +4730,21 @@ class RandrangeAgainstCPython(unittest.TestCase):
         plus, a start or stop that is int() of a constant, and a step name with a binding the census does not record, or
         bound to an int and to a float, in a call that is a sum's right operand, and a start or stop that sums two names
         with such a binding; and those _boolean() writes, a start, a stop or a step written with an and or an or, or
-        with a name a for loop binds over one. The census reads them as one module, each call on a line of its own after
-        the lines that bind its names (in the class's body or a method where the call reads the name there). For each
-        call the test samples start and stop at each end of their intervals and at a seeded value between (or each value
-        they take), and the step at each end, a seeded value between, and -1, 0 and 1 where the step can take them (an
-        unbounded step takes STEPS, a step name each value it is bound to), and runs CPython's Random.randrange, the
-        function random.randrange is bound to, three times: with its draw pinned to the lowest and to the highest
-        (_RandrangeEnds), and with a seeded draw. Every value returned in the range must lie in a span the census
-        reports (every reading of the call, before the census keeps one per place: a call that reads names with a
-        binding the census does not record has one for each mix of reading each by its recorded ints or unbounded, and
-        one with an and or an or one for each expression they give), and, for a call the census reports, every value
-        returned must lie in a span it computes (_Scan.readings), since it reports only the spans that reach the range
-        and an and or an or can give one that does beside one that does not. That holds for a start or stop name with a
-        binding the census does not record too: it takes the ints its recorded bindings give, and THE RULE reads them,
+        with a name a for loop binds over one; and those _conditional() writes, the same with a conditional expression,
+        one branch an unknown or a value interval() does not bound, and a stop with None as one branch. The census
+        reads them as one module, each call on a line of its own after the lines that bind its names (in the class's
+        body or a method where the call reads the name there). For each call the test samples start and stop at each end
+        of their intervals and at a seeded value between (or each value they take), and the step at each end, a seeded
+        value between, and -1, 0 and 1 where the step can take them (an unbounded step takes STEPS, a step name each
+        value it is bound to), and runs CPython's Random.randrange, the function random.randrange is bound to, three
+        times: with its draw pinned to the lowest and to the highest (_RandrangeEnds), and with a seeded draw. Every
+        value returned in the range must lie in a span the census reports (every reading of the call, before the census
+        keeps one per place: a call that reads names with a binding the census does not record has one for each mix of
+        reading each by its recorded ints or unbounded, and one with an and, an or or a conditional expression one for
+        each expression they give), and, for a call the census reports, every value returned must lie in a span it
+        computes (_Scan.readings), since it reports only the spans that reach the range and an and, an or or a
+        conditional expression can give one that does beside one that does not. That holds for a start or stop name with
+        a binding the census does not record too: it takes the ints its recorded bindings give, and THE RULE reads them,
         and under % by a constant it takes any value, which THE RULE reads with the name unbounded. The failure names
         the calls outside by shape, with the first of each."""
         rng = random.Random(self.SEED)
@@ -4461,6 +4760,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
                                         rng.randint(LOW + 100, HIGH - 100), rng.randint(1024, LOW - 200)))
                         cases.append((relation,) + self._shape(relation, c, rng) + (step, form, {}))
         cases += self._grown() + self._mixed() + self._recorded() + self._checked() + self._boolean()
+        cases += self._conditional()
 
         def written(p, x):
             return "%s=%s" % (p, x) if p[0] != "*" else "**{%s}" % ("" if x is None else '"%s": %s' % (p[2:], x))
@@ -4588,8 +4888,9 @@ class Operators(unittest.TestCase):
         """For each operator of BINARY and UNARY, over operands drawn from a pool of intervals (one value or several;
         negative, with 0 at an end, across 0, positive, in the range), interval() reads names bound to each operand's
         ends, and every int Python's own operator computes over values at those ends, between them and at -1, 0 and 1
-        where the operand holds them, lies in its reading; and for each of BOOLEAN, in the reading of one of the
-        expressions _choices() gives, the census's union. Where it gives no reading, the operands are one THE RULE
+        where the operand holds them, lies in its reading; and for each of BOOLEAN, and for a conditional expression
+        over either value of its test, in the reading of one of the expressions _choices() gives, the census's union.
+        Where it gives no reading, the operands are one THE RULE
         leaves out: an operand that can be negative under **, <<, >>, &, | or ^, a divisor that is 0 alone, or a ** or
         << whose value can pass 2**BIG. not reads 0 to 1 over an operand interval() does not bound too."""
         rng = random.Random(973)
@@ -4648,6 +4949,17 @@ class Operators(unittest.TestCase):
                             v = eval(code, {"A": x, "B": y})
                             if not any(g and g[0] <= v <= g[1] for g in got):
                                 outside.append("%d %s %d is %d, outside %r" % (x, cls.__name__, y, v, got))
+        for left in pool:                           # a conditional expression, by its branches as BOOLEAN's are
+            for right in pool:
+                node = ast.IfExp(ast.Name("C", ast.Load()), ast.Name("A", ast.Load()), ast.Name("B", ast.Load()))
+                got = [interval(x, bound(A=left, B=right)) for x in _choices(node)]
+                code = compile(ast.fix_missing_locations(ast.Expression(node)), "<operator>", "eval")
+                for x in values(left):
+                    for y in values(right):
+                        for test in (False, True):
+                            v = eval(code, {"A": x, "B": y, "C": test})
+                            if not any(g and g[0] <= v <= g[1] for g in got):
+                                outside.append("%d if %s else %d is %d, outside %r" % (x, test, y, v, got))
         self.assertEqual(outside, [], "a value Python computes outside interval()'s reading")
         self.assertEqual(unread, [], "operands THE RULE reads, not read")
         self.assertEqual(interval(ast.parse("not f()", mode="eval").body), (0, 1, True))
