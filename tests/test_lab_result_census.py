@@ -39,14 +39,16 @@ THE RULES.
        console-bound   the console object bound to another name, or the console module loaded
        process.stdout  process.stdout by any member access, optional chaining and a string key included, on process or
                        globalThis["process"]
-       stdout-bound    stdout taken from process by destructuring, or the process module loaded at all (process is a
-                       global, so no driver needs to load it, and a loaded copy can reach stdout by any spelling)
+       stdout-bound    stdout taken from process by destructuring, on one line or split across lines, or the process
+                       module loaded at all (process is a global, so no driver needs to load it, and a loaded copy can
+                       reach stdout by any spelling)
        fd-1            an fs write call (writeSync, write, writeFile, appendFile and their kin), named or under a
                        string key (fs["writeSync"]), whose first argument is 1
-       fd-1-option     a stream opened on fd 1 ({fd: 1})
+       fd-1-option     a stream opened on fd 1 ({fd: 1}, the key quoted or not)
        stdout-path     a path that names the process's stdout (/dev/stdout, /dev/fd/1, /proc/<pid>/fd/1)
        child-inherits  a child process whose stdout is the driver's (stdio "inherit", or 1, "inherit" or process as its
-                       second stdio entry), or child_process.fork, which hands the child the parent's stdout
+                       second stdio entry after a first entry that may hold one level of parens, the key quoted or
+                       not), or child_process.fork, which hands the child the parent's stdout
        writeAll        the helper's raw writer, exported for the helper's own pins; a driver calls writeResult or
                        writeLine
   H  Every browser driver hands its record through the helper. A browser driver is a module-level text that launches a
@@ -76,7 +78,9 @@ THE EXCEPTIONS, each with its structural reason (never a size), and each held to
 
 WHAT IT CANNOT SEE (stated, not closed; each planted in StatedBounds and shown to pass): a form split across two
 constants or built from strings at run time (process["std" + "out"]); fd 1 held in a name (const o = 1;
-fs.writeSync(o, s)); a write in a module the driver imports from outside tests/ or from a module outside the served step
+fs.writeSync(o, s)); a destructuring of stdout split across lines that holds another destructuring (stdout: { write }
+on a line of its own); a second stdio entry after a first entry holding brackets or parens two deep, such as
+[fds[0], "inherit"]; a write in a module the driver imports from outside tests/ or from a module outside the served step
 (none at this tree: every driver text a served module runs is defined in a served module); a record handed through
 stderr (console.error), which carries the diagnostics every module prints in its failure text; a browser driver
 written inside a function or a container (a tuple, a dict), or composed by any operator but + or any method but
@@ -133,13 +137,15 @@ WRITE_FORMS = (
     ("console-bound", re.compile(r"=\s*" + _CONSOLE + r"\s*(?:[;,)}\]]|$)|" + _LOAD + _Q + r"(?:node:)?console" + _Q,
                                  re.M)),
     ("process.stdout", re.compile(r"\b" + _PROCESS + r"\s*(?:\??\.\s*stdout\b|(?:\?\.\s*)?\[\s*" + _Q + "stdout)")),
-    ("stdout-bound", re.compile(r"\bstdout\b.*=\s*" + _PROCESS + r"\s*(?:[;,)}\]]|$)|" + _LOAD + _Q + r"(?:node:)?process"
-                                + _Q, re.M)),
+    # a destructuring on one line (nested ones too), or one pair of braces holding stdout and no other brace, across lines
+    ("stdout-bound", re.compile(r"\bstdout\b.*=\s*" + _PROCESS + r"\s*(?:[;,)}\]]|$)|\{[^{}]*\bstdout\b[^{}]*\}\s*=\s*"
+                                + _PROCESS + r"\s*(?:[;,)}\]]|$)|" + _LOAD + _Q + r"(?:node:)?process" + _Q, re.M)),
     ("fd-1", re.compile(r"(?:\b" + _FS_WRITERS + r"|\[\s*" + _Q + _FS_WRITERS + _Q + r"\s*\])\s*(?:\?\.\s*)?\(\s*1\s*[,)]")),
-    ("fd-1-option", re.compile(r"\bfd\s*:\s*1\b")),
+    ("fd-1-option", re.compile(r"\bfd" + _Q + r"?\s*:\s*1\b")),
     ("stdout-path", re.compile(r"/dev/stdout\b|/dev/fd/1\b|/proc/[^/\s\"'`]+/fd/1\b")),
-    ("child-inherits", re.compile(r"\bstdio\s*:\s*(?:" + _Q + "inherit" + _Q + r"|\[\s*[^,\[\]]*,\s*(?:1|" + _Q + "inherit"
-                                  + _Q + r"|process\b)\s*[,\]])|\bfork\s*\(")),
+    # the first stdio entry ends at its first comma outside one level of parens (fs.openSync(f, "r") is one entry)
+    ("child-inherits", re.compile(r"\bstdio" + _Q + r"?\s*:\s*(?:" + _Q + "inherit" + _Q + r"|\[\s*(?:[^,\[\]()]|\([^()]*\))*,"
+                                  r"\s*(?:1|" + _Q + "inherit" + _Q + r"|process\b)\s*[,\]])|\bfork\s*\(")),
     ("writeAll", re.compile(r"\bwriteAll\b")),
 )
 FORM_NAMES = tuple(name for name, _ in WRITE_FORMS)
@@ -644,16 +650,22 @@ FORM_PLANTS = {
                        'globalThis["process"].stdout.write(s);', 'process?.["stdout"].write(s);'],
     "stdout-bound": ["const { stdout } = process;", 'import { stdout } from "node:process";',
                      'const { stdout: o } = require("process");', 'require("process").stdout.write(JSON.stringify(out));',
-                     '(await import("node:process")).stdout.write(s);', 'const p = require("process");'],
+                     '(await import("node:process")).stdout.write(s);', 'const p = require("process");',
+                     "const {\n  stdout,\n} = process;", "const {\n  argv,\n  stdout: o\n} = globalThis.process;",
+                     "const { stdout: { write } } = process;"],
     "fd-1": ["fs.writeSync(1, JSON.stringify(out));", "fs.writeSync(\n  1, s);", 'require("fs").writeFileSync(1, s);',
              "fs.write(1, s, () => {});", 'fs["writeSync"](1, JSON.stringify(out));', "fs.writeSync?.(1, s);",
              "/* old road */ fs.writeSync(1, JSON.stringify(out));", "/* a */ /* b */ fs.writeSync(1, s);",
              "/* by */ * fs.writeSync(1, s);"],
-    "fd-1-option": ['const w = fs.createWriteStream("", { fd: 1 });'],
+    "fd-1-option": ['const w = fs.createWriteStream("", { fd: 1 });', 'const w = fs.createWriteStream("", { "fd": 1 });',
+                    "const w = fs.createWriteStream('', { 'fd': 1 });"],
     "stdout-path": ['fs.writeFileSync("/dev/stdout", s);', 'fs.appendFileSync("/proc/self/fd/1", s);',
                     'fs.writeFileSync("/dev/fd/1", s);'],
     "child-inherits": ['spawn("node", ["dump.js"], { stdio: "inherit" });', 'spawnSync("node", [f], { stdio: [0, 1, 2] });',
-                       'spawn("node", [f], { stdio: ["ignore", "inherit", "pipe"] });', 'fork("dump.js");'],
+                       'spawn("node", [f], { stdio: ["ignore", "inherit", "pipe"] });', 'fork("dump.js");',
+                       'spawn("node", [f], { "stdio": "inherit" });', "spawn('node', [f], { 'stdio': ['ignore', 'inherit'] });",
+                       'spawn("node", [f], { stdio: [fs.openSync(f, "r"), "inherit", "pipe"] });',
+                       'spawnSync("node", [f], { "stdio": [fs.openSync(f, "r"), 1, 2] });'],
     "writeAll": ["lab.writeAll(1, JSON.stringify(out));", "const w = lab.writeAll;"],
 }
 CLEAN_LINES = [
@@ -674,6 +686,14 @@ CLEAN_LINES = [
     'spawn(cmd, args, { stdio: ["ignore", fs.openSync(log, "a"), fs.openSync(log, "a")] });',
     'spawn(cmd, args, { stdio: ["ignore", "pipe", "inherit"] });',
     'fs.writeSync(fd, s); fs.writeFileSync(path, s);',
+    # a brace that closes a function body is not a destructuring's: the brace form reads one pair of braces, never from
+    # an earlier brace to a later destructuring of something else
+    "function f(stdout) { return stdout; }\nconst { argv } = process;",
+    # a key that ends in fd is not fd
+    'const w = fs.createWriteStream("", { myfd: 1 }); const v = { "myfd": 1 };',
+    # the first stdio entry ends at its first comma outside parens: stderr inherited, stdin inherited, stdout a file
+    'spawn(cmd, args, { stdio: [fs.openSync(f, "r"), "pipe", "inherit"] });',
+    'spawn(cmd, args, { "stdio": ["inherit", "pipe", "pipe"] });',
 ]
 
 
@@ -1006,6 +1026,10 @@ class StatedBounds(unittest.TestCase):
             "a form split across two constants": 'A = "fs.write"\nB = "Sync(1, s);"\n',
             "a member built from strings": 'D = "process[\\"std\\" + \\"out\\"].write(s);"\n',
             "fd 1 held in a name": 'D = "const o = 1;\\nfs.writeSync(o, s);"\n',
+            "a destructuring split across lines that holds another": 'D = "const {\\n  stdout: { write },\\n} = process;"\n',
+            "a first stdio entry holding brackets or parens two deep":
+                'D = "spawn(c, a, { stdio: [fds[0], \\"inherit\\"] });\\n'
+                'spawn(c, a, { stdio: [fs.openSync(path.join(d, \\"in\\"), \\"r\\"), \\"inherit\\"] });"\n',
             "a record on stderr": 'D = "console.error(JSON.stringify(out));"\n',
         }
         for what, mod in bounds.items():
