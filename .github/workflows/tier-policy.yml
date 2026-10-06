@@ -54,8 +54,8 @@ name: Tier policy
 # Fork divergence (2026-09-08): the job runs only on the upstream repository (the `if:` below).
 # This clone is a fork whose PRs land through batches (scripts/batch.py, docs/batching.md): a batch
 # PR carries `batch` and no tier, so on the fork this workflow (pull_request_target fires on every PR,
-# the schedule hourly) would post a failing "Tier policy" verdict on every batch PR, and batch.py's
-# ci_of folds any red check into "ci: failure". The fork's label check is .github/workflows/pr-tier.yml.
+# the schedule hourly) would post a failing "Tier policy" verdict on every batch PR, a red check that
+# says nothing about the batch. The fork's label check is .github/workflows/pr-tier.yml.
 # The `if:` is the only functional change; apart from it and this paragraph the file is upstream's
 # byte for byte, so the next sync merges cleanly.
 
