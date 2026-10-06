@@ -540,12 +540,19 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
     terminal, and outside a terminal's foreground group (the comment at the kill has the consequences and
     what the kill does not reach).
 
-    The run is the Popen's own context manager, as subprocess.run's was: whatever ends it once the shell
-    has started (the run finishing, so that the key or a CredentialError follows; the bound or another
+    The run is the Popen's own context manager, as subprocess.run's was: whatever ends it once the block is
+    entered (the run finishing, so that the key or a CredentialError follows; the bound or another
     exception; a KeyboardInterrupt during the wait or anywhere in the kill) leaves the block through
     Popen.__exit__, which closes the pipe and then reaps the shell. On KeyboardInterrupt that reap waits at
-    most a quarter second for the shell and the interrupt goes on; otherwise it waits for a shell that by
-    then has been reaped or sent SIGKILL by the kill."""
+    most a quarter second for the shell and the interrupt goes on; otherwise it waits without a bound. By
+    then the shell has been reaped, or sent SIGKILL by the kill, unless the kill never signalled the running
+    shell: an exception other than KeyboardInterrupt that lands before os.killpg and outside communicate, or
+    a kill refused for the shell by os.killpg and p.kill() alike, leaves that wait on a running shell until
+    the shell exits, as subprocess.run's wait after its kill was. In three cases a KeyboardInterrupt ends
+    the call with no further wait for the shell, as in subprocess.run: one after an earlier one in
+    communicate has spent the quarter second (Popen allows it once per run); one between the shell's start
+    and the block's entry, which never reaches Popen.__exit__, so the pipe stays open too; and a second one
+    inside Popen.__exit__'s quarter-second wait, which ends that wait."""
     bound = HELPER_TIMEOUT_S if timeout_s is None else timeout_s
     try:
         with subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -583,11 +590,15 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
                     # rest of it, and Popen.__exit__ still closes the pipe: one in the drain, in the fallback or
                     # just after os.killpg finds the shell ended by the group's SIGKILL, and the quarter-second
                     # wait (the interrupted drain's, or else Popen.__exit__'s) reaps it; one that lands before
-                    # os.killpg signals nothing, that wait runs out, and the shell runs on. A run on another
-                    # thread goes on to its bound. A helper still running when the kernel exits runs on until it
-                    # exits by itself. Under the systemd unit, KillMode=control-group ends it only when the unit
-                    # stops or restarts (a manager exit, as the stale-manager self-bounce, is one); the
-                    # manager's kernel restart (romp refresh, a dashboard restart, a quiet-window apply, a
+                    # os.killpg signals nothing, that wait runs out, and the shell runs on. Popen spends the
+                    # quarter second once per run (its _sigint_wait_secs), so that holds for a first
+                    # KeyboardInterrupt. After a first one in communicate while the shell runs, a second one
+                    # inside the kill gets no wait: one just after os.killpg leaves the shell it signalled
+                    # unreaped, and one before os.killpg leaves the shell running, as with subprocess.run. A run
+                    # on another thread goes on to its bound. A helper still running when the kernel exits runs
+                    # on until it exits by itself. Under the systemd unit, KillMode=control-group ends it only
+                    # when the unit stops or restarts (a manager exit, as the stale-manager self-bounce, is one);
+                    # the manager's kernel restart (romp refresh, a dashboard restart, a quiet-window apply, a
                     # restarting settings pick) signals the kernel's pid alone (termThenKill in
                     # bin/romp-manager), so a hung helper runs on through it, as it did with subprocess.run
                     # before.

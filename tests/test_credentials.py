@@ -6,8 +6,10 @@ kernel/credentials.py is the whole of romp's contact with API credentials, and t
     the empty string as "helper disabled", a null as "not defined here";
   * the in-process helper run follows the CLI's contract (one line on stdout, exit 0) and its TTL memo,
     never sees the kernel's own environment, runs in a session of its own, and when the bound cuts it leaves
-    no process of its group running (a process that left the group is the stated exception); every way out of
-    it once the shell has started closes the pipe and attempts the shell's reap;
+    no process of its group running (a process that left the group is the stated exception); the run's Popen
+    block closes the pipe and attempts the shell's reap on its ways out, and the roads where it does not (a
+    KeyboardInterrupt before the block is entered, or one that finds the quarter second spent or lands in that
+    wait) or where it waits without a bound on a running shell are planted as stated;
   * the boot check stops the kernel on any retired provider line, the marker, or a key in the kernel's
     environment, naming variables and files only;
   * the judges launch keyless for a key-billed call (the first pass after boot like every later one) and
@@ -172,12 +174,15 @@ def _seen_popen():
 # the helper's processes write 'role pid' lines to, and how many lines mean the helper is up. The road says what the
 # child injects: an exception raised from the run's communicate (during the wait, once the helper is up, or during the
 # drain), a SIGINT to its own main thread (once the helper is up, once the shell has exited, or 0.3 s into the drain,
-# from a timer the os.killpg spy starts), or a KeyboardInterrupt raised from the os.killpg spy (before the signal, or
-# just after it) or from the fallback p.kill(). It keeps the run's Popen and prints what it saw as JSON, with the
-# shell's /proc state read right after the call: the child is the shell's parent, so a shell the call did not reap is
-# still there, a zombie or running, and one it reaped is gone.
+# from a timer the os.killpg spy starts), a KeyboardInterrupt raised from the os.killpg spy (before the signal, or
+# just after it), from the fallback p.kill(), from Popen.__enter__ (once the helper is up) or from Popen.__exit__'s
+# wait, or, from the os.killpg spy before the signal, a BaseException of the test's own or a PermissionError (with the
+# fallback's os.kill of the shell refused as well). A road named sigint-then-... sends the SIGINT once the helper is up
+# and then raises a second KeyboardInterrupt from the os.killpg spy. It keeps the run's Popen and prints what it saw
+# as JSON, with the shell's /proc state read right after the call: the child is the shell's parent, so a shell the
+# call did not reap is still there, a zombie or running, and one it reaped is gone.
 _EXIT_ROAD_CHILD = r'''
-import importlib.util, json, os, select, signal, subprocess, sys, threading, time
+import errno, importlib.util, json, os, select, signal, subprocess, sys, threading, time
 if not hasattr(os, "pidfd_open"):
     print(json.dumps({"skip": "no os.pidfd_open"}))
     sys.exit(0)
@@ -186,7 +191,7 @@ spec = importlib.util.spec_from_file_location("romp_credentials_exit_road_child"
 cred = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cred)
 road, cmd, bound, pids, up = sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5], int(sys.argv[6])
-seen, started, killpg_calls, sent = [], threading.Event(), [], []
+seen, started, killpg_calls, sent, refused = [], threading.Event(), [], [], []
 
 
 class Cut(BaseException):
@@ -206,7 +211,7 @@ def helper_up():
 
 
 def interrupt():
-    sent.append(True)
+    sent.append(time.monotonic())
     signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
 
 
@@ -217,6 +222,17 @@ class SeenPopen(subprocess.Popen):
         super().__init__(*a, **kw)
         seen.append(self)
         started.set()
+
+    def __enter__(self):
+        if road == "ki-in-enter":
+            helper_up()
+            raise KeyboardInterrupt()
+        return super().__enter__()
+
+    def _wait(self, timeout):
+        if road == "ki-in-exit" and killpg_calls:
+            raise KeyboardInterrupt()
+        return super()._wait(timeout)
 
     def communicate(self, *a, **kw):
         SeenPopen.calls += 1
@@ -234,15 +250,19 @@ class SeenPopen(subprocess.Popen):
 
 
 subprocess.Popen = SeenPopen
-real_killpg = os.killpg
+real_killpg, real_kill = os.killpg, os.kill
 
 
 def killpg(pgid, sig):
     killpg_calls.append([pgid, int(sig)])
-    if road == "ki-at-kill":
+    if road in ("ki-at-kill", "ki-in-exit", "sigint-then-ki-at-kill"):
         raise KeyboardInterrupt()
+    if road == "cut-at-kill":
+        raise Cut()
+    if road == "refused-kill":
+        raise PermissionError(errno.EPERM, "refused by the test")
     r = real_killpg(pgid, sig)
-    if road == "ki-after-kill":
+    if road in ("ki-after-kill", "sigint-then-ki-after-kill"):
         raise KeyboardInterrupt()
     if road == "sigint-drain":
         t = threading.Timer(0.3, interrupt)
@@ -251,7 +271,15 @@ def killpg(pgid, sig):
     return r
 
 
+def kill(pid, sig):
+    if road == "refused-kill" and seen and pid == seen[0].pid:
+        refused.append(pid)
+        raise PermissionError(errno.EPERM, "refused by the test")
+    return real_kill(pid, sig)
+
+
 os.killpg = killpg
+os.kill = kill
 
 
 def interrupt_once_up():
@@ -270,7 +298,7 @@ def interrupt_once_the_shell_has_exited():
         os.close(fd)
 
 
-if road == "sigint-wait-running":
+if road in ("sigint-wait-running", "sigint-then-ki-after-kill", "sigint-then-ki-at-kill"):
     threading.Thread(target=interrupt_once_up, daemon=True).start()
 elif road == "sigint-wait-exited":
     threading.Thread(target=interrupt_once_the_shell_has_exited, daemon=True).start()
@@ -283,7 +311,8 @@ except Cut:
     outcome = "Cut"
 except cred.CredentialError as e:
     outcome = str(e)
-elapsed = time.monotonic() - t0
+t1 = time.monotonic()
+elapsed = t1 - t0
 signal.signal(signal.SIGINT, signal.SIG_IGN)       # a SIGINT that comes after the call lands nowhere
 p = seen[0] if seen else None
 state = None
@@ -294,18 +323,23 @@ if p is not None:
         state = s[s.rindex(")") + 2:].split()[0]
     except OSError:
         state = None
-print(json.dumps({"outcome": outcome, "elapsed": round(elapsed, 3), "sent": len(sent), "killpg": killpg_calls,
-                  "shell": p.pid if p else None, "returncode": p.returncode if p else None,
+print(json.dumps({"outcome": outcome, "elapsed": round(elapsed, 3), "sent": len(sent),
+                  "from_sigint": round(t1 - sent[0], 3) if sent else None, "killpg": killpg_calls,
+                  "kill_refused": len(refused), "shell": p.pid if p else None,
+                  "returncode": p.returncode if p else None,
                   "stdout_closed": bool(p and p.stdout is not None and p.stdout.closed), "shell_state": state}))
 '''
 
-# Every way out of run_helper once its shell has started, each run in a child process (_EXIT_ROAD_CHILD). A row is: the
+# The ways out of run_helper once its shell has started, each run in a child process (_EXIT_ROAD_CHILD). A row is: the
 # road, the helper's shape (HelperTimeoutEndsTheGroup._exit_shape), the bound, the call's outcome, the number of
 # os.killpg calls, the run's returncode, the recorded processes left running, and the window the call's elapsed time
-# falls in (None: not checked). On every road the run's stdout is closed when the call ends. The shell is reaped (the
-# returncode set and /proc without it) on every road but the last, where a KeyboardInterrupt lands before os.killpg:
-# the shell still runs there, and the window's floor shows the quarter-second wait for it that Popen.__exit__ makes
-# before the interrupt goes on, its ceiling that the wait is bounded (the shell would run for 30 s).
+# falls in (None: not checked; a window whose third item is "from the SIGINT" counts from the first SIGINT the child
+# sent, not from the call's start). The rows through ki-at-kill leave the block through Popen.__exit__ and its close
+# and wait: on each the run's stdout is closed when the call ends, and the shell is reaped (the returncode set and
+# /proc without it) on every one but ki-at-kill, where a KeyboardInterrupt lands before os.killpg: the shell still
+# runs there, and the window's floor shows the quarter-second wait for it that Popen.__exit__ makes before the
+# interrupt goes on, its ceiling that the wait is bounded (the shell would run for 30 s). The rows from cut-at-kill
+# on are the roads run_helper's docstring names where the close does not happen or the wait is unbounded or absent.
 _EXIT_ROADS = (
     # The run finishes: the key, or a CredentialError after it.
     ("finished", "the key", 5, "returned: " + HELPER_OUT, 0, 0, [], None),
@@ -335,6 +369,22 @@ _EXIT_ROADS = (
     ("ki-fallback", "a holder of stdout outside the group", 1, "KeyboardInterrupt", 1, -signal.SIGKILL, ["holder"],
      (2.9, 4.0)),
     ("ki-at-kill", "a hung lone shell", 1, "KeyboardInterrupt", 1, None, ["shell"], (1.2, 2.5)),
+    # A kill that never signals the running shell: an exception other than KeyboardInterrupt raised from os.killpg
+    # before it signals, or os.killpg and the fallback's os.kill of the shell both refused. Popen.__exit__'s wait has
+    # no bound there and lasts until the shell exits on its own, 4 s in, past the bound and the drain (1 s and 2 s).
+    ("cut-at-kill", "a lone shell that ends after 4 s", 1, "Cut", 1, 0, [], (3.9, 5.0)),
+    ("refused-kill", "a lone shell that ends after 4 s", 1, "apiKeyHelper timed out after 1 s", 1, 0, [], (3.9, 5.0)),
+    # A KeyboardInterrupt that gets no wait for the shell. One raised from Popen.__enter__, after the shell has started
+    # and before the block is entered, never reaches Popen.__exit__: the pipe stays open and the shell runs on. One
+    # raised from Popen.__exit__'s quarter-second wait (after a first raised from os.killpg before the signal) ends
+    # that wait, and the shell runs on. And after a SIGINT in communicate while the shell runs has spent the quarter
+    # second, a second one just after os.killpg leaves the shell it signalled unreaped, and one before os.killpg leaves
+    # the shell running; the window shows that nothing waits after communicate's quarter second.
+    ("ki-in-enter", "a hung lone shell", 5, "KeyboardInterrupt", 0, None, ["shell"], (0.0, 0.25)),
+    ("ki-in-exit", "a hung lone shell", 1, "KeyboardInterrupt", 1, None, ["shell"], (1.0, 1.2)),
+    ("sigint-then-ki-after-kill", "a hung tree", 10, "KeyboardInterrupt", 1, None, [], (0.2, 0.45, "from the SIGINT")),
+    ("sigint-then-ki-at-kill", "a hung lone shell", 10, "KeyboardInterrupt", 1, None, ["shell"],
+     (0.2, 0.45, "from the SIGINT")),
 )
 
 
@@ -866,6 +916,7 @@ class HelperTimeoutEndsTheGroup(_Settings):
             "not UTF-8": ("printf '\\377\\n'", 0, []),
             "a hung tree": (self._tree_cmd(pids), 3, ["child", "grandchild", "shell"]),
             "a hung lone shell": ("echo shell $$ >> %s; exec sleep 30" % q, 1, ["shell"]),
+            "a lone shell that ends after 4 s": ("echo shell $$ >> %s; exec sleep 4" % q, 1, ["shell"]),
             "a shell that exited, its sleep holding stdout": (
                 "sleep 30 & echo sleep $! >> %s; echo shell $$ >> %s" % (q, q), 2, ["shell", "sleep"]),
             "a holder of stdout outside the group": (
@@ -875,8 +926,10 @@ class HelperTimeoutEndsTheGroup(_Settings):
 
     def _check_exit_roads(self, roads):
         """Run each row of _EXIT_ROADS whose road is in `roads` in a child process and compare what the call left with
-        the row: the outcome, the pipe closed, the returncode, the shell reaped, the os.killpg calls, the SIGINT sent
-        where the road sends one, the recorded processes left running, and the elapsed time's window."""
+        the row: the outcome, the pipe closed (open on ki-in-enter alone, which never enters the block), the
+        returncode, the shell reaped, the os.killpg calls, the SIGINT sent where the road sends one, the fallback's
+        os.kill refused where the road refuses it, the recorded processes left running, and the elapsed time's
+        window."""
         rows = [row for row in _EXIT_ROADS if row[0] in roads]
         self.assertEqual(sorted({row[0] for row in rows}), sorted(roads), "every road named has its rows")
         for road, shape, bound, outcome, kills, rc, left, window in rows:
@@ -892,6 +945,7 @@ class HelperTimeoutEndsTheGroup(_Settings):
                 if "skip" in got:
                     self.skipTest(got["skip"])
                 self.assertEqual(sorted(recs), roles, "the helper was up before the call ended")
+                t = got["from_sigint"] if window is not None and window[2:] == ("from the SIGINT",) else got["elapsed"]
                 seen = {"outcome": got["outcome"],
                         "stdout closed": got["stdout_closed"],
                         "returncode": got["returncode"],
@@ -899,24 +953,26 @@ class HelperTimeoutEndsTheGroup(_Settings):
                         "the run's shell is the recorded one": got["shell"] == recs.get("shell", got["shell"]),
                         "os.killpg calls": len(got["killpg"]),
                         "SIGINT sent": got["sent"],
+                        "os.kill refused": got["kill_refused"],
                         "left running": sorted(role for role, pid in recs.items()
                                                if (_runs_now(_proc(pid)) if role in left else _still_running(pid))),
-                        "elapsed in its window": window is None or window[0] <= got["elapsed"] < window[1]}
+                        "elapsed in its window": window is None or (t is not None and window[0] <= t < window[1])}
                 want = {"outcome": outcome,
-                        "stdout closed": True,
+                        "stdout closed": road != "ki-in-enter",
                         "returncode": rc,
                         "the shell reaped": rc is not None,
                         "the run's shell is the recorded one": True,
                         "os.killpg calls": kills,
                         "SIGINT sent": 1 if road.startswith("sigint-") else 0,
+                        "os.kill refused": 1 if road == "refused-kill" else 0,
                         "left running": sorted(left),
                         "elapsed in its window": True}
                 self.assertEqual(seen, want, json.dumps(got))
 
-    # Every way out of run_helper once its shell has started closes the run's stdout and attempts the shell's reap, as
-    # subprocess.run's Popen.__exit__ did: run_helper runs inside the Popen's own context manager, whose __exit__
-    # closes the pipe and reaps the shell, the wait bounded by a quarter second on KeyboardInterrupt. The roads are
-    # _EXIT_ROADS, in three tests by kind. Among the KeyboardInterrupt roads: the bound fires, a holder outside the
+    # The rows of _EXIT_ROADS through ki-at-kill, in three tests by kind: each way out of the run's block they drive
+    # closes the run's stdout and attempts the shell's reap, as subprocess.run's Popen.__exit__ did: run_helper runs
+    # inside the Popen's own context manager, whose __exit__ closes the pipe and reaps the shell, the wait bounded by a
+    # quarter second on KeyboardInterrupt. Among the KeyboardInterrupt roads: the bound fires, a holder outside the
     # group keeps the drain waiting, and SIGINT lands during the drain (with the close after the kill, in the same
     # finally, the interrupt went on out of the kill and left the pipe open); and an interrupt that lands before
     # os.killpg, which leaves the shell running and shows the wait for it bounded.
@@ -926,9 +982,21 @@ class HelperTimeoutEndsTheGroup(_Settings):
     def test_every_cut_run_leaves_its_pipe_closed_and_its_shell_reaped(self):
         self._check_exit_roads(("bound", "cut-wait", "oserror-wait", "fnf-wait", "cut-drain"))
 
-    def test_every_keyboard_interrupt_leaves_the_pipe_closed_and_the_reap_attempted(self):
+    def test_a_first_keyboard_interrupt_in_the_block_leaves_the_pipe_closed_and_the_reap_attempted(self):
         self._check_exit_roads(("sigint-wait-running", "sigint-wait-exited", "sigint-drain", "ki-after-kill",
                                 "ki-fallback", "ki-at-kill"))
+
+    # The roads run_helper's docstring states as limits of that property, the rows of _EXIT_ROADS from cut-at-kill on,
+    # in two tests. Where the kill never signals the running shell (an exception other than KeyboardInterrupt from
+    # os.killpg before the signal, or os.killpg and the fallback's os.kill both refused), Popen.__exit__'s wait has no
+    # bound and the call ends only when the shell does. A KeyboardInterrupt gets no wait for the shell when it lands
+    # before the block is entered (the pipe stays open too), inside Popen.__exit__'s quarter-second wait, or after a
+    # first one in communicate has spent that quarter second.
+    def test_a_kill_that_never_signals_the_running_shell_leaves_an_unbounded_wait_on_it(self):
+        self._check_exit_roads(("cut-at-kill", "refused-kill"))
+
+    def test_a_keyboard_interrupt_before_the_block_or_a_second_one_leaves_the_shell_not_waited_for(self):
+        self._check_exit_roads(("ki-in-enter", "ki-in-exit", "sigint-then-ki-after-kill", "sigint-then-ki-at-kill"))
 
     def test_a_daemonizing_helper_is_not_reached_and_costs_nothing(self):
         # The stated limit's other face, planted: a helper that daemonizes (forks twice, takes a session of its own and
