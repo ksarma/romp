@@ -67141,10 +67141,16 @@ def _push(targets, connect=False, live_map=None):
                 # holding the full build's lock across it serialised two cold connects and blocked the pusher's whole
                 # timeline stage (the cards for every pane behind it). The single-flight lock covers the FULL build alone
                 # (_cached_timeline); a connect racing it still gets its partial at once and the full on the next cycle.
-                skel = build_timeline(now, live_map, with_bars=False, live_only=True)
+                # Both live-only builds are lent the push's map (_serve_live), as the stale-cache lanes build below is:
+                # this runs on the WS handler's thread, outside any cycle scope, and the builds' nested readers otherwise
+                # read liveness afresh per live lane, 176 reads and a median of about 2 s for one page load of a
+                # 30-session state copy (2026-10-06; tests/test_kernel_pusher_snapshot.py). Each lend covers its build alone.
+                with _serve_live(live_map):
+                    skel = build_timeline(now, live_map, with_bars=False, live_only=True)
                 for c in tl_clients:
                     _send_client(c, ("timeline",), {"type": "data", "data": skel})
-                timeline = build_timeline(now, live_map, with_bars=True, live_only=True)   # live bars now (no dead reads)
+                with _serve_live(live_map):
+                    timeline = build_timeline(now, live_map, with_bars=True, live_only=True)   # live bars now (no dead reads)
                 tl_warming = True                                   # this is the PARTIAL cold build — the client keeps its loader up
                 _producer_wake.set()                                # ...if it lands empty (SDK/federation not yet merged), rather than flashing
                 #                                                     "no activity"; a later warmed push (tl_warming False) settles it (the user 2026-07-03)
