@@ -38,6 +38,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -64,10 +65,15 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); } catch (e) { fs.writeSync(2, "no browser: " + e + "\n"); process.exit(3); }
 const out = { errors: [] };
-const finish = async () => { fs.writeFileSync(cfg.out, JSON.stringify(out)); await browser.close(); process.exit(0); };
+// die() runs from the unhandledRejection handler as well as from the drive, so finish() can be reached twice in one
+// process; the reader takes exactly one RESULT: line, so the first finish writes the record and a later one waits for the
+// exit the first makes.
+let finishing = false;
+const finish = async () => { if (finishing) return new Promise(() => {}); finishing = true; lab.writeResult(cfg, out); await browser.close(); process.exit(0); };
 const die = async (why) => { out.died = why; await finish(); };
 process.on("unhandledRejection", async (e) => { await die("unhandled: " + String(e).split("\n")[0]); });
 const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
@@ -231,9 +237,11 @@ class ServedTabSnapshotMenu(unittest.TestCase):
     def _drive(cls):
         cls.result, cls.driver_error = None, None
         cfg = os.path.join(cls.lab, "cfg.json")
-        res = os.path.join(cls.lab, "result.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (cls.port, cls.token), "sids": SIDS, "newName": NEW_NAME}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (cls.port, cls.token), "out": res, "sids": SIDS, "newName": NEW_NAME}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -249,11 +257,15 @@ class ServedTabSnapshotMenu(unittest.TestCase):
             return
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box: the served guard needs one (CI installs none)")
-        if p.returncode != 0 or not os.path.exists(res):
+        if p.returncode != 0:
             cls.driver_error = "driver failed:\n" + (so or "")[-3000:] + "\nkernel:\n" + open(cls.klog).read()[-1500:]
             return
-        with open(res) as f:
-            r = json.load(f)
+        p.stdout = so   # the reader takes the stream communicate() returned (stderr rides it: stderr=STDOUT)
+        try:
+            r = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            cls.driver_error = "%s\nkernel:\n%s" % (e, open(cls.klog).read()[-1500:])
+            return
         if "died" in r:
             cls.driver_error = "driver aborted early: %s\n%s\nkernel:\n%s" % (r["died"], json.dumps(r, indent=1)[-3000:], open(cls.klog).read()[-1500:])
             return
