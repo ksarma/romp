@@ -130,7 +130,8 @@ var GEAR_HTML =
   '<div class=rs-h>Settings</div>' +
   // THE PHONE'S MOVED ACTIONS (iOS item 4g, the glyphs above): a row under the title, above the tabs so every tab shows it,
   // shown only on the web shell's phone layout, and only by a shell that runs the row's taps (openSettings reads the shell's
-  // layout and its marker at each open; the desktop has all three on its rail, an older shell on its bottom bar). A tap closes this card and asks the shell to run the bar button's own handler ({romp:'phoneAct', act}).
+  // layout and its marker at each open, and the card follows the layout while open; the desktop has all three on its rail,
+  // an older shell on its bottom bar). A tap closes this card and asks the shell to run the bar button's own handler ({romp:'phoneAct', act}).
   '<div class=rs-pacts id=rs-pacts hidden>' +
   // Usage carries its sub-line for the state with no reading yet (usageAct below shows it and disables the button)
   '<button type=button class=rs-pact id=rs-pact-usage data-pact=usage title=Usage>' + PACT_USAGE_SVG +
@@ -2198,13 +2199,30 @@ function initGear(post, opts) {
   // the shell's tell (its renderRows, on every write of its readings): re-read Usage while the card is open with the row shown;
   // a closed card asks afresh at its next opening
   window.__rompUsageAct = function () { var r = document.getElementById('rs-pacts'); if (!p.hidden && r && !r.hidden) usageAct(); };
+  // THE ROW FOLLOWS THE LAYOUT WHILE THE CARD IS OPEN (PR 976's round 1, correctness-2 and ui-1). The shell re-tells every iframe
+  // when its layout query changes (kernel _LANDING_MOBILE_JS retell: __rompPanesTell, whose tellLink posts {romp:'link', link,
+  // mob} into this frame), an event, so on that word the card re-reads the row's predicate, the shell's own (phoneShell, never
+  // the word's mob field), and Usage's state with it. A row shown by the change asks for Usage afresh, as an opening does, and
+  // first drops the drop flash's class off its Remote kernels glyph: a host that dropped while the row was hidden left it on a
+  // button with no box, and the flash would play now, late. A row hidden by the change ends its ask. The word is heard only
+  // from the shell's own window (the parent), and only while the card is open: each opening reads the layout itself.
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (window.parent === window || e.source !== window.parent || !m || m.romp !== 'link' || p.hidden) return;
+    var r = document.getElementById('rs-pacts');
+    if (!r) return;
+    var on = phoneShell() && shellActs();
+    if (on === !r.hidden) { if (on) usageAct(); return; }   // the row as it was: Usage re-read, nothing else
+    r.hidden = !on;
+    if (on) { netDropClear(); usagePull(); } else usageWait = 0;
+  });
   function openSettings(tab, section) {
     if (raBack && !raBack.hidden) raHide();   // the Token usage panel up: down first, so the card is what this open shows, never the card under the layer (the read of the panel's close fix)
     if (tab === 'appearance' && !section) section = 'appearance';   // the former Appearance tab is General's section (T404)
     if (!p.hidden) { if (knownTab(tab)) { selectTab(tab); if (section) showSection(section); else clearSectionScroll(); return; } closeSettings(); return; }   // the opener toggles the modal; a named tab on an open panel switches to it, and to its section (T379)
     selectTab(tab);
     var pacts = document.getElementById('rs-pacts');
-    if (pacts) pacts.hidden = !(phoneShell() && shellActs());   // the phone's moved actions (iOS item 4g): the layout (and the shell's marker) read at each open, so a rotation across the breakpoint between opens is followed
+    if (pacts) pacts.hidden = !(phoneShell() && shellActs());   // the phone's moved actions (iOS item 4g): the layout (and the shell's marker) read at each open, and while open on the shell's layout word (the link listener above)
     if (pacts && !pacts.hidden) usagePull();   // ...and whether Usage has a reading to open, from a fresh pull at each open too
     // Signal the SHELL first, then measure (the picker's order, adopted 2026-08-09): feedFull posts
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first

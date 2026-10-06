@@ -40,6 +40,10 @@
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
 // cannot be asked for a reading).
+// Then the row following the layout while the card is open, on a page of its own in a plain context (a fine pointer): the card
+// opened at cfg.actsViewport, the window widened to cfg.wideViewport and narrowed back with the card open, a host dropping
+// while it is wide (the shell's GET /tunnels answering cfg.tunnels2, then cfg.tunnelsDrop), and the row, the glyph and Usage
+// read after each turn.
 // Then the Remote kernels glyph's colours, on a page of its own per theme (cfg.themes: the theme written to the store before
 // the page parses, as the gear writes it) at cfg.actsViewport: the card opened from the bar's Settings, and in it the card's
 // background, the button's own fill (the glyph sits on it) and each colour the glyph can wear, as computed values: the
@@ -545,6 +549,66 @@ try {
     await page.evaluate(() => { window.__rompPhoneActs = true; delete window.__rompUsageReading; delete window.__rompUsagePull; });
     sk.cannotAsk = await openRead();
     out.skew = sk;
+    await context.close();
+  }
+  // the row follows the layout while the card is open (PR 976's round 1, correctness-2 and ui-1): a plain context (a fine
+  // pointer, so the layout query turns at 820px wide), the shell's own GET /tunnels answering cfg.tunnels2 (both hosts up),
+  // the card opened from the bar's Settings at cfg.actsViewport, then the window widened to cfg.wideViewport with the card open,
+  // a host dropping there (cfg.tunnelsDrop) while the row is hidden, and the window narrowed to cfg.actsViewport again; the row
+  // read after each turn once it has had the time to follow (each wait records its outcome), and after the narrowing the glyph
+  // two frames on (no flash for the drop it could not show) and Usage once its ask has ended
+  {
+    let answer = cfg.tunnels2;
+    const context = await browser.newContext({ viewport: { width: cfg.actsViewport[0], height: cfg.actsViewport[1] } });
+    const page = await context.newPage();
+    page.on("pageerror", (e) => { if (out.errors.length < 40) out.errors.push(String(e).slice(0, 300)); });
+    await page.route("**/tunnels", (route) => {
+      const q = route.request();
+      if (q.method() !== "GET" || q.frame() !== page.mainFrame()) return route.continue();
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(answer) });
+    });
+    await page.goto(cfg.url, { waitUntil: "load", timeout: 40000 });
+    await page.waitForSelector("#mtabs", { timeout: 20000 });
+    await page.waitForFunction(() => { const b = document.getElementById("romp-boot"); return !b || b.classList.contains("gone"); }, null, { timeout: 30000 });
+    await page.evaluate(() => (document.fonts ? document.fonts.ready.then(() => true) : true));
+    await page.waitForFunction(() => { const a = document.querySelector("#rail-net .rn-a"); return !!a && a.getAttribute("class") === "rn-a rn-ok"; }, null, { timeout: 15000 });
+    await frames(page);
+    const fl = { vp: cfg.actsViewport, wide: cfg.wideViewport };
+    const gear = (await read(page)).controls.find((c) => c.key === "settings");
+    if (!gear) throw new Error("no Settings on the bar (the layout leg)");
+    await page.mouse.click(gear.left + gear.w / 2, gear.top + gear.h / 2);
+    await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+    const sf = settingsFrameOf(page);
+    if (!sf) throw new Error("no settings frame after the click (the layout leg)");
+    await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+    await frames(page);
+    const rowNow = async () => ({ mobile: await page.evaluate(() => (window.__rompMobileOn ? window.__rompMobileOn() : null)),
+      open: await sf.evaluate(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }),
+      ...(await sf.evaluate(() => { const row = document.getElementById("rs-pacts");
+        return { rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none",
+                 boxes: row ? Array.from(row.querySelectorAll("button")).map((b) => { const c = b.getBoundingClientRect(); return [c.width, c.height]; }) : [] }; })) });
+    const rowIs = (shown) => sf.waitForFunction((want) => { const row = document.getElementById("rs-pacts");
+      return !!row && (!row.hidden && getComputedStyle(row).display !== "none") === want; }, shown, { timeout: 5000 }).then(() => true, () => false);
+    fl.phone = await rowNow();
+    await page.setViewportSize({ width: cfg.wideViewport[0], height: cfg.wideViewport[1] });
+    fl.hid = await rowIs(false);
+    await frames(page);
+    fl.wideRow = await rowNow();
+    answer = cfg.tunnelsDrop;
+    fl.dropped = await page.waitForFunction(() => { const a = document.querySelector("#rail-net .rn-a"); return !!a && a.getAttribute("class") === "rn-a rn-warn"; }, null, { timeout: 15000 }).then(() => true, () => false);
+    await frames(page);
+    fl.dropCls = await sf.evaluate(() => { const n = document.getElementById("rs-pact-net"); return n ? n.getAttribute("class") : null; });
+    await page.setViewportSize({ width: cfg.actsViewport[0], height: cfg.actsViewport[1] });
+    fl.showed = await rowIs(true);
+    await frames(page);
+    await frames(page);
+    fl.narrowRow = await rowNow();
+    fl.glyph = await sf.evaluate(() => { const n = document.getElementById("rs-pact-net"); if (!n) return null;
+      return { cls: n.getAttribute("class"), anims: n.getAnimations ? n.getAnimations().map((a) => (a.animationName || "?") + ":" + a.playState) : null }; });
+    fl.asked = await sf.waitForFunction(() => { const w = document.getElementById("rs-pact-usage-wait"); return !w || w.hidden; }, null, { timeout: 10000 }).then(() => true, () => false);
+    fl.usage = await sf.evaluate(() => { const b = document.getElementById("rs-pact-usage"), un = document.getElementById("rs-pact-usage-none");
+      return b ? { disabled: b.disabled, line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none" } : null } : null; });
+    out.follow = fl;
     await context.close();
   }
   // the Remote kernels glyph's colours in each theme, against the card's background and the button's fill (the Python side

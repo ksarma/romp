@@ -105,7 +105,11 @@ deploy skew, on a page of its own at 390px: the shell publishes its marker (wind
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
 move has) the card opened shows no row (not displayed, its buttons boxless); and with the marker back and the usage script's
 two names deleted (__rompUsageReading and __rompUsagePull, a shell that cannot be asked) the card's Usage is enabled with no
-line. Then the
+line. Then the row following the layout while the card is open, on a page of its own in a plain context (a fine pointer, so
+the layout turns at 820px), the shell's poll answering both hosts up: the card opened at 390px shows its row; the window
+widened to WIDE with the card open hides it (not displayed, its buttons boxless), a host drops there (the class left on the
+hidden glyph, the premise), and the window narrowed to 390px again shows the row, its glyph carrying no flash two frames on,
+and Usage enabled with no line once the ask the row's return makes has ended. Then the
 Remote kernels glyph's colours in the dark and the light theme (THEMES), each on a page of its own at 390px: in the card
 opened from the bar's Settings, every colour the glyph can wear (GLYPH: the button lit and attaching, a node connected,
 dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
@@ -129,7 +133,9 @@ rail's under the move applied to the rail as well; the desktop card's under a mu
 closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
 class (gear.js raHide), where the glyph flashed as the panel closed. The deploy skew's pins are red where the shell
 publishes no marker, where the card reads the layout alone (its row shown with no marker), and where a shell that cannot be
-asked reads as one with no reading (Usage disabled with its line). The contrast pin is red at the shell's literals in the light theme, in
+asked reads as one with no reading (Usage disabled with its line). The layout leg is red where the card reads the layout
+only when it opens (the row still shown in the widened window), and its glyph line red without the clear of the drop's class
+when the row shows again (the flash then plays at the narrowing). The contrast pin is red at the shell's literals in the light theme, in
 all three engines: the dialing grey #8a8a8a reads 2.59:1 and the needs-you red #e5484d 2.94:1 on the button's fill. Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
@@ -190,6 +196,7 @@ THEMES = (("dark", "classic"), ("light", "yatharth-light"))
 GLYPH = ("lit", "attaching", "connected", "dialing", "needs you")   # every colour the glyph can wear, as the driver names them
 GLYPH_FLOOR = 3.0   # the contrast a graphic needs (WCAG's non-text 3:1), against the card's background and the button's fill
 DESKTOP = (1280, 800)
+WIDE = (900, 844)   # the window the layout leg widens to with the card open: past the phone query's 820px, in a fine-pointer context
 RAIL = ((821, 800), (1100, 800))   # the desktop rail: just past the phone query's 820px, and a laptop
 # the shell's own /tunnels poll in the moved-actions leg: two synthetic hosts, one connected and one with no kernel (the glyph
 # on, its nodes the worst two: needs you, connected), then both connected (every node connected)
@@ -512,6 +519,38 @@ def _skew_problems(engine, sk):
     return out
 
 
+def _follow_problems(engine, fl):
+    """The row follows the layout while the card is open (PR 976's round 1, correctness-2 and ui-1): opened on the phone layout
+    with its row, the window widened past 820px hides the row in the open card, and narrowed back shows it again; the row shown
+    again carries no flash for a drop that came while it was hidden, and Usage's state is asked afresh (the lab's reading:
+    enabled, no line)."""
+    out = []
+    where = "%s the row following the layout, %dx%d and %dx%d" % (engine, fl["vp"][0], fl["vp"][1], (fl.get("wide") or WIDE)[0], (fl.get("wide") or WIDE)[1])
+    ph = fl.get("phone") or {}
+    if ph.get("mobile") is not True or not ph.get("open") or not ph.get("rowShown"):
+        out.append("%s: the leg's premise (the card open on the phone layout with its row shown): %r" % (where, ph))
+    wr = fl.get("wideRow") or {}
+    if wr.get("mobile") is not False or not wr.get("open"):
+        out.append("%s: the widened window's premise (the desktop layout, the card still open): %r" % (where, wr))
+    if not fl.get("hid") or wr.get("rowShown") is not False or any(w > 0 or h > 0 for w, h in wr.get("boxes", [])):
+        out.append("%s: the window widened past the phone layout with the card open, and the row stays shown: %r" % (where, wr))
+    if not fl.get("dropped") or "rn-drop" not in (fl.get("dropCls") or "").split():
+        out.append("%s: the drop's premise (the host dropping on the rail's glyph while the window was wide, its class left on the "
+                   "card's hidden glyph): dropped %r, the glyph's class %r" % (where, fl.get("dropped"), fl.get("dropCls")))
+    nr = fl.get("narrowRow") or {}
+    if nr.get("mobile") is not True or not nr.get("open"):
+        out.append("%s: the narrowed window's premise (the phone layout, the card still open): %r" % (where, nr))
+    if not fl.get("showed") or not nr.get("rowShown"):
+        out.append("%s: the window narrowed to the phone layout with the card open, and the row stays hidden: %r" % (where, nr))
+    g = fl.get("glyph")
+    if not g or "rn-drop" in (g["cls"] or "").split() or any(a.startswith("rs-pact-drop:") for a in (g["anims"] or [])):
+        out.append("%s: a host dropped while the row was hidden, and the row shown again flashes its glyph: %r" % (where, g))
+    u = fl.get("usage")
+    if not fl.get("asked") or not u or u.get("disabled") is not False or not u.get("line") or u["line"].get("shown") is not False:
+        out.append("%s: the row shown again does not show Usage enabled with no line once its ask has ended (the lab's reading): %r" % (where, u))
+    return out
+
+
 def _rail_problems(engine, rail):
     """The desktop rail equals af7d18250's at each width (RAIL_AF7), every action on screen and hit at its centre."""
     out = []
@@ -648,7 +687,7 @@ class MtabsFit(unittest.TestCase):
                "viewports": [list(v) for v in PORTRAIT + LANDSCAPE], "dynamicViewport": list(DYNAMIC),
                "actsViewport": list(ACTS), "moved": list(MOVED), "restartRefusal": RESTART_REFUSAL,
                "tunnels": TUNNELS, "tunnels2": TUNNELS2, "tunnelsDrop": TUNNELS_DROP, "themes": [list(t) for t in THEMES],
-               "desktopViewport": list(DESKTOP), "railViewports": [list(v) for v in RAIL],
+               "desktopViewport": list(DESKTOP), "railViewports": [list(v) for v in RAIL], "wideViewport": list(WIDE),
                "result": os.path.join(self.lab, "result-%s.json" % engine)}
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)
         Path(cfg_path).write_text(json.dumps(cfg))
@@ -715,6 +754,7 @@ class MtabsFit(unittest.TestCase):
         problems += _no_reading_problems(engine, r.get("noReading") or {"vp": list(ACTS)})
         problems += _unpulled_problems(engine, r.get("unpulled") or {"vp": list(ACTS)})
         problems += _skew_problems(engine, r.get("skew") or {"vp": list(ACTS)})
+        problems += _follow_problems(engine, r.get("follow") or {"vp": list(ACTS), "wide": list(WIDE)})
         problems += _contrast_problems(engine, r.get("contrast") or {})
         self.assertEqual([tuple(x["vp"]) for x in r["rail"]], list(RAIL), engine + ": every rail width was read")
         problems += _rail_problems(engine, r["rail"])

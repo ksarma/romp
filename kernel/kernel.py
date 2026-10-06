@@ -73982,7 +73982,8 @@ try{if(mobileOn()){promote(p);paintLoading();}}catch(e){}   // [fork] stage 0: a
 try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}}
 window.__rompMobileTab=show;   // the shell's relays bring a pane's tab forward on a phone (the settings listener)
 // the layout flipping (a rotation, a resize across the breakpoint) changes what is on screen with no toggle
-// and no tab switch: the media query's own change event IS that flip, so re-tell the panes on it
+// and no tab switch: the media query's own change event IS that flip, so re-tell the panes on it (the re-tell's link word
+// reaches the settings frame too, whose open card re-reads its row of the bar's moved buttons on it: gear.js, PR 976)
 var retell=function(){try{window.__rompPanesTell&&window.__rompPanesTell();}catch(e){}};
 if(MQ){if(MQ.addEventListener)MQ.addEventListener('change',retell);else if(MQ.addListener)MQ.addListener(retell);}
 // [fork] stage 0: the desktop grid shows every pane the rail has on without a tap, so a flip TO the desktop layout hands
