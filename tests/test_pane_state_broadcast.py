@@ -728,9 +728,10 @@ class PhoneActListener(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        panes = "['f-chat', 'f-fleet', 'f-feed', 'f-files', 'f-timeline'].forEach((id) => { PANES[id] = pane(id); });"
-        harness = _MOBILE_HARNESS.replace(panes, panes.replace("'f-timeline']", "'f-timeline', 'f-settings']"))
-        assert harness != _MOBILE_HARNESS
+        # the harness's pane list gains the settings frame (keyed on the list's tail, the one place it is spelled)
+        tail = "'f-timeline'].forEach((id) => { PANES[id] = pane(id); });"
+        assert _MOBILE_HARNESS.count(tail) == 1
+        harness = _MOBILE_HARNESS.replace(tail, "'f-timeline', 'f-settings'].forEach((id) => { PANES[id] = pane(id); });")
         driver = r"""
 const CALLS = [];
 ['__rompOpenNet', '__rompUsagePanel', '__rompRestart', '__rompOpenErrs', '__rompOpenSettings'].forEach((k) => { window[k] = () => CALLS.push(k); });
