@@ -607,8 +607,9 @@ class HelperTimeoutEndsTheGroup(_Settings):
                 self.assertEqual(cred._HELPER_MEMO["value"], "", "a failed run leaves no value behind")
 
     def test_a_hung_token_command_leaves_no_process(self):
-        # the environment road as kernel/sdk_backend.py and kernel/judge.py call it: logins.token_value with run_helper
-        # labelled "the token command" at the module's bound
+        # the environment road through logins.token_value, handed a copy of the runner kernel/sdk_backend.py and
+        # kernel/judge.py hand it (run_helper labelled "the token command" at the module's bound); the next test drives
+        # the judges' own caller
         self.assertIs(sb._cred, cred, "the SDK backend's credentials module is this one")
         state = Path(tempfile.mkdtemp())
         pids = self._pids()
@@ -619,6 +620,33 @@ class HelperTimeoutEndsTheGroup(_Settings):
         with patch.object(cred, "HELPER_TIMEOUT_S", 1):
             with self.assertRaises(cred.CredentialError) as cm:
                 sb._logins.token_value(state, rec["id"], lambda c: sb._cred.run_helper(c, label="the token command"))
+        elapsed = time.monotonic() - t0
+        recs = _recorded(self, pids)
+        self.assertEqual(str(cm.exception), "the token command timed out after 1 s")
+        self.assertLess(elapsed, 1 + 1.0)
+        self.assertEqual(sorted(role for role, _pid in recs), ["child", "grandchild", "shell"],
+                         "the tree was up before the bound")
+        self.assertEqual(_left(recs), [], "no process of the token command is left running")
+
+    def test_a_hung_token_command_through_the_judges_caller_leaves_no_process(self):
+        # The judges' own road, executed: a judge call billed to a stored login ('login:<id>') runs the record's token
+        # command in kernel/judge.py's _judge_env, which hands logins.token_value its runner. The record lives under the
+        # judge's state root, rebound for this test to a private temp root (jd._rebind_state repoints every directory
+        # derived from it; the root's session-hosts file says off, as for any state root a test mints).
+        self.assertIs(jd._cred, cred, "the judge's credentials module is this one")
+        root = Path(tempfile.mkdtemp())
+        (root / "session-hosts").write_text("off\n")
+        saved = jd.STATE
+        jd._rebind_state(root)
+        self.addCleanup(jd._rebind_state, saved)
+        pids = self._pids()
+        rec = {"id": jd._logins.mint_id(), "label": "Hung", "tokenCmd": self._tree_cmd(pids),
+               "addedAt": int(time.time()) - 86400}
+        jd._logins.write_record(jd.STATE, rec)
+        t0 = time.monotonic()
+        with patch.object(cred, "HELPER_TIMEOUT_S", 1):
+            with self.assertRaises(cred.CredentialError) as cm:
+                jd._judge_env("triage", "login:" + rec["id"])
         elapsed = time.monotonic() - t0
         recs = _recorded(self, pids)
         self.assertEqual(str(cm.exception), "the token command timed out after 1 s")
