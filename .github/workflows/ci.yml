@@ -344,8 +344,10 @@ jobs:
     # takes every shard's slowest run. So a measured run governs shards 1 and 3, and 3.10's projection governs shards 2
     # and 4. The time before the step is the 27 s in the 3.14t cell of run 37212676524 (batch/2026-10-04b, on the public
     # runner; job 111476102341), the longest of its five Linux cells; in run 37415499848 the time before the step was 16
-    # to 33 s in its twenty Linux shard jobs, and at 33 s each cap is the same. So, for each shard, the run that
-    # governs, its projection, the sum, the margin under the rule's figure and the cap: shard 1, measured, the weighted
+    # to 33 s in its twenty Linux shard jobs, and at 33 s each cap is the same. A shorter time before the step never
+    # gives a higher cap: from 23 to 33 s the rule and the margin rule give each shard its cap, and from 16 to 22 s they
+    # give shard 2 50, under its cap of 55. So, for each shard, the run that governs, its projection, the sum, the
+    # margin under the rule's figure and the cap: shard 1, measured, the weighted
     # run's 679 s on 3.14t, and 679 + 600 + 27 = 1306 s, so 25, a margin of 194 s; shard 2, 3.10 projected from the
     # hash-alone run's 1482 s on 3.12, times 1883/1204 is 2318 s, and 2318 + 600 + 27 = 2945 s, so 50 by the rule, a
     # margin of 55 s, under 60 s, so 55; shard 3, measured, the hash-alone run's 661 s on 3.12, and 661 + 600 + 27 =
@@ -948,12 +950,12 @@ jobs:
     # took 31 min 50 s of its 35-minute cap: Run bats 700 s, then this step 1180 s, where at
     # ffab236bd (run 36308512751) the step took 67 s. The growth is fork PR #780's tracked-changes
     # bash guard: batch 925, the one merge between the two heads, added 27,628 lines under tools/
-    # and vendor/track-changents/, about 25,700 of them #780's. node --test runs files side by side
-    # but a file's tests one after another, and the tests of one file,
-    # tools/romp-track-bash-guard.test.mjs, which run the guard as a process and real bash and dash
-    # over tables of shell texts (zsh too where it is installed; the Linux runner has none), add up
-    # to about 1100 s in that run's log (the slowest single test 222 s). That file sets the step's
-    # length; the other 104 files finish inside it.
+    # and vendor/track-changents/, about 25,700 of them #780's. In that run, on the public runner's
+    # 4 CPUs, node --test ran files side by side but a file's tests one after another, and the tests
+    # of one file, tools/romp-track-bash-guard.test.mjs, which run the guard as a process and real
+    # bash and dash over tables of shell texts (zsh too where it is installed; the Linux runner has
+    # none), add up to about 1100 s in that run's log (the slowest single test 222 s). In that run
+    # that file set the step's length; the other 104 files finished inside it.
     # Raising the Shell cap instead would hide the growth, and with the step inside the Shell job a
     # PR that added more than about three minutes of bats time (the job's margin at 1d591384e was
     # 190 s) ran that job past its cap.
@@ -976,16 +978,16 @@ jobs:
     # comment above), and macOS has zsh, whose legs the Linux runner skips. On a development box zsh
     # adds about 18 to 29 percent to that file: 1368 s against CI's 1121 s, less 44 s of work only
     # the box does (a history sweep CI's shallow checkout skips, and a slower strace leg), and
-    # 1571 s against 1222 s in two matched concurrent runs with and without zsh. So the rule gives
-    # about 70 to 76 minutes (twice the public runner's 19 min 40 s, 18 to 29 percent more, and half
-    # again), an estimate that already includes the half again. The
+    # 1571 s against 1222 s in two matched concurrent runs with and without zsh. So the estimate
+    # before rounding is about 70 to 76 minutes (twice the public runner's 19 min 40 s, 18 to 29
+    # percent more, and half again), an estimate that already includes the half again. The
     # macOS cap is 90, 14 minutes past the estimate's upper figure, because two of its inputs are
     # weak: the factor of two comes from the Python suite rather than this step, and about three
     # quarters of that file's time on the box was spent in child processes (the guard run as a node
     # process, bash and dash), whose cost on a macOS runner has not been measured. 90 is past the
     # hour the python job's macOS cap keeps (tests/test_ci_bats_bound.py holds it at 60 or less,
-    # since past an hour a hung cell holds the dispatch): the rule's figure for this step, 70 to 76
-    # minutes, is already past that hour, so a hung macOS cell here holds a dispatch for up to 90
+    # since past an hour a hung cell holds the dispatch): the estimate before rounding for this step,
+    # 70 to 76 minutes, is already past that hour, so a hung macOS cell here holds a dispatch for up to 90
     # minutes. The first macOS run (a dispatch with its macos input on, the one run that selects macOS)
     # measures the step, and the cap is re-read from it. A batch push's run starts the Linux
     # cell alone, so batches are not affected.
@@ -993,7 +995,11 @@ jobs:
     # hooks/romp-track-bash-guard.mjs tests /\bcase\b/ over the whole slice read so far at every
     # `)`: about 210 s of this step on CI, and a stall of about 16 s in the hook itself on a command
     # nested 2000 deep, on a development box); (2) split tools/romp-track-bash-guard.test.mjs so
-    # node runs its parts side by side.
+    # node runs its parts side by side. A split shortens the step only where node runs files side
+    # by side, on the public runner's 4 CPUs and in the macOS cell. On the private runner's 2 CPUs
+    # node runs one file at a time, so there a split also needs the step to pass --test-concurrency
+    # above 1 (vscode-extension's npm test passes 8), and any gain there is to be measured on that
+    # runner, not assumed.
     # The manager handshake step stays in the Shell job for T224's reason (upstream's ruleset
     # requires that job's check). This step is the fork's alone (upstream's ci.yml has no such
     # step), and the fork has no ruleset or branch protection: scripts/batch.py land reads the batch

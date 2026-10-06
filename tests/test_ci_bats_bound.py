@@ -152,7 +152,9 @@ SUITE_RATIO_RUN = 37212676524
 SUITE_RATIO_STEP_S = {"3.10": 1639, "3.11": 1554, "3.12": 1248, "3.13": 1422}
 # the longest and shortest time before the Run pytest step in run UNMEASURED_RATIO_RUN's twenty Linux shard jobs (the jobs
 # API's job start to the step's start; the longest in the 3.14t shard 2 job, 112113103527): the caps take SETUP_S, from
-# CELL_EDGE_RUN, and the cap comment says the longest of these changes no cap
+# CELL_EDGE_RUN, and the cap comment says the longest of these changes no cap, and names the lowest time in this range
+# at which every cap is the same and the figure below it, which
+# test_the_time_before_the_step_is_the_longest_cells_and_the_comment_names_it derives
 RATIO_RUN_BEFORE_S = (16, 33)
 # the margin rule (2026-10-05): a cap that T230b's rule leaves less than this many seconds above the sum goes up 5 minutes
 MARGIN_FLOOR_S = 60
@@ -690,6 +692,39 @@ class PythonJobCeiling(unittest.TestCase):
                 "the same" % (UNMEASURED_RATIO_RUN, lo, hi, jobs, hi))
         self.assertTrue(same in self.joined, "the cap's comment says the ratio run's longest time before the step changes "
                         "no cap (%r)" % same)
+        # a shorter time only lowers a figure, and the comment names the lowest time in the range at which every cap is
+        # the same, and the figure below it (round 2 of fork PR 986's review, 2026-10-06): both derived here, never
+        # written as a literal, so a new phase or ratio that moves them is red until the comment follows. The pin above
+        # stays at the range's top: below the lowest time a shard's figure is under its cap, so the whole range would be
+        # red there.
+        figures = {s: {k: ruled_cap(governing_phase(k)[0], PER_TEST_TIMEOUT_S, s)[0] for k in range(1, self.count + 1)}
+                   for s in range(hi + 1)}
+        for s in range(hi + 1):
+            for k in range(1, self.count + 1):
+                self.assertLessEqual(figures[s][k], self.caps[k], "at %d s before the step shard %d's figure is %d, past "
+                                     "its cap of %d, so the comment's sentence that a shorter time never gives a higher "
+                                     "cap is false" % (s, k, figures[s][k], self.caps[k]))
+        matching = [s for s in range(lo, hi + 1) if figures[s] == self.caps]
+        low = matching[0]
+        self.assertEqual(matching, list(range(low, hi + 1)), "the times in run %d's range at which every cap is the same "
+                         "are not one run of seconds up to %d s: reword the comment and this pin" % (UNMEASURED_RATIO_RUN,
+                                                                                                   hi))
+        self.assertGreater(low, lo, "re-anchor: every time in run %d's range gives each shard its cap, so the comment's "
+                           "sentence on a lower figure says nothing" % UNMEASURED_RATIO_RUN)
+        below = {s: {k: f for k, f in figures[s].items() if f != self.caps[k]} for s in range(lo, low)}
+        lowered = sorted({k for by_k in below.values() for k in by_k})
+        self.assertEqual(len(lowered), 1, "re-anchor: below %d s shards %r get a lower figure, where the comment names "
+                         "one shard" % (low, lowered))
+        k = lowered[0]
+        figure = {by_k.get(k) for by_k in below.values()}
+        self.assertEqual(len(figure), 1, "re-anchor: from %d to %d s shard %d's figure is not one value (%r), where the "
+                         "comment names one" % (lo, low - 1, k, figure))
+        figure = figure.pop()
+        lower = ("A shorter time before the step never gives a higher cap: from %d to %d s the rule and the margin rule "
+                 "give each shard its cap, and from %d to %d s they give shard %d %d, under its cap of %d"
+                 % (low, hi, lo, low - 1, k, figure, self.caps[k]))
+        self.assertTrue(lower in self.joined, "the cap's comment names the lowest time in run %d's range at which every "
+                        "cap is the same, %d s, and the figure below it (%r)" % (UNMEASURED_RATIO_RUN, low, lower))
 
     def test_the_placeholder_figure_is_the_whole_suites_estimate_and_its_comment_states_it(self):
         cell_s, serial_s, two_worker_s = WHOLE_SUITE_ESTIMATE_INPUTS
