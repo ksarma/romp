@@ -26,16 +26,23 @@ THE POPULATION, derived from the tree, never listed:
                 the helper and is not read.
 
 THE RULES.
-  W  No text and no driver file writes to the process's stdout. Each is read with its comment lines blanked (a line
-     whose first non-blank characters are //, /*, or * followed by a space), so a call split across lines is still
-     read; a comment at the end of a code line is read with the code. The forms, each keyed on its spelling
-     (WRITE_FORMS):
+  W  No text and no driver file writes to the process's stdout. Each is read with its comment lines blanked: a line
+     whose first non-blank characters are // is blanked whole, and a line that opens with /* (or with * followed by a
+     space, a / or the line's end, the body of a block comment) is blanked through the */ that closes it on that line,
+     the rest of the line read again the same way (_blank_comments). So a call split across lines is still read, a
+     call after a block comment that closes on its line is read, and a comment that starts after code on a line is read
+     with the code. String literals are read as code, on purpose: a form spelled anywhere outside a comment is refused.
+     The forms, each keyed on its spelling (WRITE_FORMS):
        console         a console member other than error, warn, trace and assert (those four write to stderr; log,
-                       info, debug, dir, table and the rest write to stdout), or a computed member
+                       info, debug, dir, table and the rest write to stdout), or a computed member, white space after
+                       the dot included, on console, globalThis.console or globalThis["console"]
        console-bound   the console object bound to another name, or the console module loaded
-       process.stdout  process.stdout by any member access, optional chaining and a string key included
-       stdout-bound    stdout taken from process by destructuring, or from the process module
-       fd-1            an fs write call (writeSync, write, writeFile, appendFile and their kin) whose first argument is 1
+       process.stdout  process.stdout by any member access, optional chaining and a string key included, on process or
+                       globalThis["process"]
+       stdout-bound    stdout taken from process by destructuring, or the process module loaded at all (process is a
+                       global, so no driver needs to load it, and a loaded copy can reach stdout by any spelling)
+       fd-1            an fs write call (writeSync, write, writeFile, appendFile and their kin), named or under a
+                       string key (fs["writeSync"]), whose first argument is 1
        fd-1-option     a stream opened on fd 1 ({fd: 1})
        stdout-path     a path that names the process's stdout (/dev/stdout, /dev/fd/1, /proc/<pid>/fd/1)
        child-inherits  a child process whose stdout is the driver's (stdio "inherit", or 1, "inherit" or process as its
@@ -100,21 +107,35 @@ HELPER = "lab_result.cjs"
 JS_SUFFIXES = (".mjs", ".cjs", ".js")
 FILE_NAME = re.compile(r"([\w-]+(?:\.[\w-]+)*\.(?:mjs|cjs|js))\b")
 REL_IMPORT = re.compile(r"(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)[\"'](\.{1,2}/[^\"']+)[\"']")
-COMMENT_LINE = re.compile(r"^\s*(?://|/\*|\*(?:\s|/|$))")
+# a comment opener at a line's start (after white space): //, /*, or the * of a block comment's body; after a */ that
+# closes on the line, only // and /* open another
+COMMENT_OPEN = re.compile(r"\s*(//|/\*|\*(?=\s|/|$))")
+COMMENT_OPEN_AFTER = re.compile(r"\s*(//|/\*)")
 LAUNCH = re.compile(r"\.launch\s*\(")
 WRITE_RESULT = re.compile(r"\bwriteResult\s*\(")
-_G = r"(?:(?:globalThis|global)\s*\.\s*)?"
 _Q = "[\"'`]"
+_G = r"(?:(?:globalThis|global)\s*\??\.\s*)?"
+
+
+def _global_key(name):
+    return r"(?:globalThis|global)\s*(?:\?\.\s*)?\[\s*" + _Q + name + _Q + r"\s*\]"
+
+
+_CONSOLE = r"(?:" + _G + r"console\b|" + _global_key("console") + ")"
+_PROCESS = r"(?:" + _G + r"process\b|" + _global_key("process") + ")"
+_LOAD = r"(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s+)"
+_FS_WRITERS = (r"(?:writeSync|write|writev|writevSync|writeFile|writeFileSync|appendFile|appendFileSync|writeString|"
+               r"writeBuffer|writeBuffers)")
 
 WRITE_FORMS = (
-    ("console", re.compile(r"(?<![\w$.])" + _G + r"console\s*(?:\??\.(?!(?:error|warn|trace|assert)\b)[A-Za-z_$]|\[)")),
-    ("console-bound", re.compile(r"=\s*" + _G + r"console\s*(?:[;,)}\]]|$)|(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s+)"
-                                 + _Q + r"(?:node:)?console" + _Q, re.M)),
-    ("process.stdout", re.compile(r"\bprocess\s*(?:\??\.\s*stdout\b|\[\s*" + _Q + "stdout)")),
-    ("stdout-bound", re.compile(r"\bstdout\b.*(?:=\s*" + _G + r"process\s*(?:[;,)}\]]|$)|(?:\brequire\s*\(\s*|\bimport\s*\(\s*|"
-                                r"\bfrom\s+)" + _Q + r"(?:node:)?process" + _Q + ")", re.M)),
-    ("fd-1", re.compile(r"\b(?:writeSync|write|writev|writevSync|writeFile|writeFileSync|appendFile|appendFileSync|"
-                        r"writeString|writeBuffer|writeBuffers)\s*\(\s*1\s*[,)]")),
+    ("console", re.compile(r"(?<![\w$.])" + _CONSOLE + r"\s*(?:\??\.\s*(?!(?:error|warn|trace|assert)\b)[A-Za-z_$]"
+                           r"|(?:\?\.\s*)?\[)")),
+    ("console-bound", re.compile(r"=\s*" + _CONSOLE + r"\s*(?:[;,)}\]]|$)|" + _LOAD + _Q + r"(?:node:)?console" + _Q,
+                                 re.M)),
+    ("process.stdout", re.compile(r"\b" + _PROCESS + r"\s*(?:\??\.\s*stdout\b|(?:\?\.\s*)?\[\s*" + _Q + "stdout)")),
+    ("stdout-bound", re.compile(r"\bstdout\b.*=\s*" + _PROCESS + r"\s*(?:[;,)}\]]|$)|" + _LOAD + _Q + r"(?:node:)?process"
+                                + _Q, re.M)),
+    ("fd-1", re.compile(r"(?:\b" + _FS_WRITERS + r"|\[\s*" + _Q + _FS_WRITERS + _Q + r"\s*\])\s*(?:\?\.\s*)?\(\s*1\s*[,)]")),
     ("fd-1-option", re.compile(r"\bfd\s*:\s*1\b")),
     ("stdout-path", re.compile(r"/dev/stdout\b|/dev/fd/1\b|/proc/[^/\s\"'`]+/fd/1\b")),
     ("child-inherits", re.compile(r"\bstdio\s*:\s*(?:" + _Q + "inherit" + _Q + r"|\[\s*[^,\[\]]*,\s*(?:1|" + _Q + "inherit"
@@ -246,7 +267,23 @@ def population(root=ROOT, globs=None, files=None):
 
 
 def _blank_comments(text):
-    return "\n".join("" if COMMENT_LINE.match(ln) else ln for ln in text.split("\n"))
+    """`text` with its comment lines blanked to spaces, the reading W and LAUNCH use: a line that opens with // is
+    blanked whole; one that opens with /* (or with the * of a block comment's body) is blanked through the */ that
+    closes it on that line, and the rest is read again the same way. A comment that starts after code is left in."""
+    out = []
+    for ln in text.split("\n"):
+        k, rx = 0, COMMENT_OPEN
+        while True:
+            m = rx.match(ln, k)
+            if not m:
+                break
+            s, opener = m.start(1), m.group(1)
+            e = -1 if opener == "//" else ln.find("*/", s + len(opener) if opener == "/*" else s)
+            end = len(ln) if e < 0 else e + 2
+            ln = ln[:s] + " " * (end - s) + ln[end:]
+            k, rx = end, COMMENT_OPEN_AFTER
+        out.append(ln)
+    return "\n".join(out)
 
 
 _JS_TOKEN = re.compile(r"\s+|//|/\*|[\"'`]|/|[A-Za-z_$\u0080-\uffff][\w$\u0080-\uffff]*|\.?\d[\w.]*|.", re.S)
@@ -598,14 +635,20 @@ def _beside_the_helper_call(text, line):
 # the reader never runs, which pass
 FORM_PLANTS = {
     "console": ["console.info(JSON.stringify(out));", "console.table(out);", "console?.log(out);", 'console["log"](out);',
-                "globalThis.console.debug(out);"],
-    "console-bound": ["const say = console;", 'const { log } = require("console");', 'import { log } from "node:console";'],
+                "globalThis.console.debug(out);", "console. log(JSON.stringify(out));", "console\n  .log(out);",
+                'globalThis["console"].log(out);', "console?.['log'](out);", " * a note that ends here */ console.log(out);"],
+    "console-bound": ["const say = console;", 'const { log } = require("console");', 'import { log } from "node:console";',
+                      'const say = globalThis["console"];'],
     "process.stdout": ["process.stdout.write(JSON.stringify(out));", "fs.writeSync(process.stdout.fd, s);",
-                       'process["stdout"].write(s);', "const o = process.stdout;", "process?.stdout.write(s);"],
+                       'process["stdout"].write(s);', "const o = process.stdout;", "process?.stdout.write(s);",
+                       'globalThis["process"].stdout.write(s);', 'process?.["stdout"].write(s);'],
     "stdout-bound": ["const { stdout } = process;", 'import { stdout } from "node:process";',
-                     'const { stdout: o } = require("process");'],
+                     'const { stdout: o } = require("process");', 'require("process").stdout.write(JSON.stringify(out));',
+                     '(await import("node:process")).stdout.write(s);', 'const p = require("process");'],
     "fd-1": ["fs.writeSync(1, JSON.stringify(out));", "fs.writeSync(\n  1, s);", 'require("fs").writeFileSync(1, s);',
-             "fs.write(1, s, () => {});"],
+             "fs.write(1, s, () => {});", 'fs["writeSync"](1, JSON.stringify(out));', "fs.writeSync?.(1, s);",
+             "/* old road */ fs.writeSync(1, JSON.stringify(out));", "/* a */ /* b */ fs.writeSync(1, s);",
+             "/* by */ * fs.writeSync(1, s);"],
     "fd-1-option": ['const w = fs.createWriteStream("", { fd: 1 });'],
     "stdout-path": ['fs.writeFileSync("/dev/stdout", s);', 'fs.appendFileSync("/proc/self/fd/1", s);',
                     'fs.writeFileSync("/dev/fd/1", s);'],
@@ -617,6 +660,12 @@ CLEAN_LINES = [
     "// console.log(out) was the old road; fs.writeSync(1, s) too",
     "  * process.stdout.write(s) in a block comment's body",
     "/* fs.writeSync(1, s) */",
+    "/* a */ /* fs.writeSync(1, s) */",
+    "/*/ fs.writeSync(1, s) */",
+    "/* a */ // console.log(out)",
+    "  * process.stdout.write(s) */",
+    "console. error(s);",
+    "const { argv, env } = process;",
     'console.error("browser-launch-failed: " + e);',
     "console.warn(s); console.trace(); console.assert(ok, s);",
     'page.on("console", (msg) => out.console.push(msg.text()));',
@@ -738,6 +787,13 @@ class Plants(unittest.TestCase):
                     hits = scan_text(_beside_the_helper_call(text, line))
                     self.assertEqual([h[1] for h in hits], [WHOLE_RECORD_FORM[spelling]], hits)
                     self.assertIn(line.strip()[:40], hits[0][2])
+
+    def test_every_form_plant_is_refused_beside_the_helper_call_in_three_real_drivers(self):
+        for where, text in self._real().items():
+            for form, lines in FORM_PLANTS.items():
+                for line in lines:
+                    with self.subTest(driver=where, form=form, line=line):
+                        self.assertIn(form, [h[1] for h in scan_text(_beside_the_helper_call(text, line))])
 
     def test_a_driver_off_the_helper_that_names_write_result_only_where_node_never_runs_it_is_refused(self):
         # each real driver taken off the helper: its lab.writeResult calls become a writer of its own (the record to
