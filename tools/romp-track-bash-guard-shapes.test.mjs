@@ -16,6 +16,8 @@
 // tracked file; and store-io's isTrackedFile is pinned to the steps the verdict copies. Review round 3
 // (2026-09-19) added: a literal relative target after a cd inside a body is refused in a tracked project
 // with the reason, not dropped; bash's -O and an o or O inside an option cluster take the next word.
+// Fork PR 975's round 2 (R5) added: the closure is built once per call however many walks judge takes, and
+// judge's walks per shape (THE ORDER: one for a command fork main's reading refuses).
 // Synthetic: a project under os.tmpdir(), invented paths, no session data.
 //
 // Run: node --test tools/romp-track-bash-guard-shapes.test.mjs
@@ -494,6 +496,62 @@ test('a directory copy to an untracked destination walks the project once, not o
   const started = Date.now();
   evaluate(payload('cp -r base/bundle docs/new'));
   assert.ok(Date.now() - started < 2000, 'well under the installer\'s 10 s hook timeout');
+});
+
+// fork PR 975's round 2 (R5 (i), the reviewer's regression-1): a command that names its head by a variable and holds a `$[` is walked four times (THE
+// TWO WALKS under each of THE OLDER ARITHMETIC's two readings), and each walk made a Map of its own, so the project's markdown tree was walked four
+// times where decision 47 promises one walk per call; the Map is judge's now, shared by every walk
+test('a command naming its head by a variable with a `$[`, walked four times, walks the project\'s markdown tree once', () => {
+  for (let k = 0; k < 30; k++) fs.writeFileSync(path.join(proj, 'sub', `s${k}.md`), `filler ${k}\n`);
+  let reason;
+  const walks = countRootReaddirs(() => { reason = evaluate(payload(`"$c" x; echo $[1] > /dev/null; echo y > ${path.join(proj, 'docs', 'other.md')}`)); });
+  assert.equal(reason, null, 'docs/other.md is not tracked, and every walk allows it');
+  assert.equal(walks, 1, `one closure for the call, not one per walk (${walks})`);
+});
+
+// fork PR 975's round 2 (R5 (ii), THE ORDER; the reviewer's regression-2): judge's first walk is fork main's reading (THE UNREAD HEAD's poison set aside,
+// `$[` read as text), and the head's walks run only when it allows, so a command that reading refuses costs one walk, and an allowed command costs one
+// walk more after a command named by a variable, one or two more with a `$[`, and three more with both. A walk is counted by the lstat each walk makes of
+// the command's literal target outside every project (marker.txt), the per-call memo holding only directories
+test('THE ORDER: a command fork main\'s reading refuses is walked once, with that reading\'s refusal; an allowed command is walked once more after a command named by a variable, once or twice more with a `$[`, three times more with both', () => {
+  const out = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-order-')));
+  try {
+    const marker = path.join(out, 'marker.txt');
+    const M = `echo m > ${marker}`;
+    const walksOf = (command, cwd) => {
+      const real = fs.lstatSync;
+      let n = 0;
+      let reason;
+      fs.lstatSync = function (p, ...rest) { if (path.resolve(String(p)) === marker) n++; return real.call(this, p, ...rest); };
+      try { reason = evaluate(payload(command, cwd)); } finally { fs.lstatSync = real; }
+      return { n, reason };
+    };
+    const allowed = [
+      ['no command named by a variable and no `$[`', `${M}`, 1],
+      ['after a command named by a variable', `"$c" x; ${M}`, 2],
+      ['with a `$[`', `echo $[1] > /dev/null; ${M}`, 2],
+      ['with a `$[` as the command name, a command named by an expansion under the arithmetic reading alone', `$[1] x; ${M}`, 3],
+      ['with both', `"$c" x; echo $[1] > /dev/null; ${M}`, 4],
+    ];
+    for (const [what, command, want] of allowed) {
+      const { n, reason } = walksOf(command, proj);
+      assert.equal(reason, null, `${what}: allowed`);
+      assert.equal(n, want, `${what}: ${want} walks, not ${n}`);
+    }
+    // refused by fork main's reading, the names after the head read: from a cwd in no project the walk with the poison taken allows these, so they
+    // took two walks or more before THE ORDER; from the project the poisoned walk refused first, with its own text (a word it does not read)
+    const byName = `Track-changes is ON for ${report}, so this command is blocked here`;
+    const refused = [
+      ['out', out, `${M}; n=${path.join(proj, 'docs')}; "$c" x; echo y > $n/report.md`],
+      ['out', out, `${M}; n=${path.join(proj, 'docs')}; "$c" x; echo $[1] > /dev/null; echo y > $n/report.md`],
+      ['the project', proj, `${M}; n=${path.join(proj, 'docs')}; "$c" x; echo y > $n/report.md`],
+    ];
+    for (const [where, cwd, command] of refused) {
+      const { n, reason } = walksOf(command, cwd);
+      assert.ok(reason && reason.startsWith(byName), `from ${where}, refused by name, fork main's reading's text: ${reason && reason.split('\n')[0]}`);
+      assert.equal(n, 1, `from ${where}: one walk, not ${n}: ${command}`);
+    }
+  } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
 test('the per-call closure agrees with store-io\'s isTrackedFile on every kind of path', () => {

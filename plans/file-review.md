@@ -5221,10 +5221,10 @@ document stands on its own, each with the reasoning it was given.
     reading is the verdict, so reading `$[` as arithmetic cannot allow a command the guard refuses with `$[` read as
     fork main read it (AS8-root-old-arith-text-lead-out, AS8-root-old-arith-text-dash-out,
     AS8-root-old-arith-text-dq-out, AS8-root-old-arith-text-sum-out, AS8-root-old-arith-text-eval-out, each allowed
-    before the second reading; a `$[` in a text bash runs with `-c`, read under bash's grammar,
-    AS8-root-old-arith-text-bash-c-out, and one after a command named by a variable, which only the second reading's
+    before the text reading; a `$[` in a text bash runs with `-c`, read under bash's grammar,
+    AS8-root-old-arith-text-bash-c-out, and one after a command named by a variable, which only the text reading's
     walk with that head's poison set aside refuses, AS8-root-old-arith-text-two-walks-out, each allowed where the
-    second reading leaves out that grammar or that walk (the text lens's tg-t13-1 and tg-t13-2); the control
+    text reading leaves out that grammar or that walk (the text lens's tg-t13-1 and tg-t13-2); the control
     AS8-ctl-old-arith-text-target-out, a `$[` in a target outside every project, which both readings allow). The
     arithmetic reading has a stated cost, on the restricted side: a double-quoted `$[ ... ]` inside a target from a
     tracked cwd is a word the guard does not read, refused as not literal, where fork main read it as text and allowed
@@ -5236,7 +5236,7 @@ document stands on its own, each with the reasoning it was given.
     fork main and here (B2's boundary); read as text the target ends at the parenthesis or the space, a file named `$[`
     in the cwd, so neither reading refuses it (AS8-residual-old-arith-paren-out, AS8-residual-old-arith-space-out; the
     shell lens on fork PR 975's round 1). The follow-up keeps the bracket's text, to its matching `]`, in the target
-    under the second reading, judged by its spelling as `$[0]` is.
+    under the text reading, judged by its spelling as `$[0]` is.
     A defect fork main has for `$((`, which reading `$[` as arithmetic extends to `$[`, is disclosed: in an unquoted
     here-document body an arithmetic expansion the guard does not read is held in the word as a placeholder, which
     reaches the check of the directory the path passes through, so the refusal names the path with a blank where the
@@ -5432,9 +5432,9 @@ document stands on its own, each with the reasoning it was given.
     command the binding stands for with its paths absolute (M2's one remedy each; the literal-path,
     `&` and literal-value remedies the rounds before offered, which did not lift where a later construct blocked the read,
     are gone). From a cwd in no project all of them stay allowed where fork main's reading of the names allows them too.
-    THE TWO WALKS (fork PR 975's round 1, item 8 as ruled, DUAL): a command that met such a head and was allowed is
-    walked a second time with that one poison set aside, every name read as fork main read it and everything else
-    unchanged, and any refusal of the second walk is the verdict, so this class cannot allow what fork main refuses: a
+    THE TWO WALKS (fork PR 975's round 1, item 8 as ruled, DUAL): a command that met such a head is walked with that one
+    poison set aside as well as with it taken, every name read as fork main read it and everything else unchanged, and
+    any refusal of either walk is the verdict, so this class cannot allow what fork main refuses: a
     target, a `~/` path, a cd's directory, a `sed -i`, an operand of a second command named by a variable, and `$PWD`
     and `$OLDPWD` after a cd through the hidden value (AS5-read-through-*); and after that cd a value made by a
     substitution, a pattern, an operand and `$PWD` in a fresh shell, a copy into the value's directory, a `sed -i` on a
@@ -5443,10 +5443,40 @@ document stands on its own, each with the reasoning it was given.
     main read it at named sites and kept meeting roads its sites did not reach; the reviewer's t8-2, a census of the
     names the read-through read, is moot with it. On the 498 rows the rows test had when DUAL was ruled, the second walk
     ran on 115 of their 929 (row, cwd) pairs, about 2.6 ms more for such a command as a process (a sample measurement
-    of that population, not of the rows today). THE TWO WALKS' B2 DISCLOSURE (M3): the second walk applies a cd's own
-    block and enterable rules as fork main does, where the read-through had held the hidden value's directory before
-    them, so 13 hidden-value cd shapes the pass before refused are allowed, as fork main allows them (the shapes probed
-    for the ruling, B1 to B11, L1 and L2). On 3 that refusal was false, no shell writing a tracked file: B3 (`cd "$X" |
+    of that population, not of the rows today). THE ORDER AND THE COST OF THE WALKS (fork PR 975's round 2, R5; the
+    reviewer's regression-1 and regression-2): judge's first walk is fork main's reading on both axes, THE UNREAD HEAD's
+    poison set aside and `$[` read as a dollar and text (the lexer notes a `$[` under either reading before it chooses
+    one), and the walks that take the poison or read `$[` as arithmetic run only when that walk allows, each only where
+    the first walk met what it reads differently (a walk that met no unread head reads the same with the poison taken,
+    and two readings that met no `$[` lex alike). So a command the first walk refuses is refused at fork main's cost,
+    one walk, with that walk's text. No verdict changed: a refusal of any walk is the verdict in any order, and the 20277
+    distinct (command, cwd) pairs the rows, shapes, main and plan test files judge, each judged in the old order and the
+    new, gave the same verdict on every pair. Five gave a different text, the first walk's now: AS5-subshell-source-poison
+    names the subshell's `source` and AS5-cost-var-two-heads the second head's relative operand, as fork main does (the
+    poisoned read of OUT that row showed is AS5-cost-var-two-heads-abs's, its second head handed an absolute path);
+    AS8-target-head-unset's not-literal reason no longer names the head (its T is never set); AS8-ctl-old-arith-sub's
+    by-name refusal names the copy without the `$[` body it sits in; and the main file's R5-T5 takes the directory-not-known
+    refusal its check already names. The M2 census holds over the new texts. An allowed command still pays every
+    walk it needs: two after a command named by a variable, two or three with a `$[`, up to four with both, each a parse
+    of the whole command (twice where THE ASSIGNING HEAD's function clause applies), so its hook time is up to about twice
+    fork main's after a command named by a variable and up to about four times with a `$[` as well. Measured as a
+    process on a development box (medians of three, nice 19, one core, load about 30 on 60 cores), on adjacent-paren
+    nesting, where the parse grows fastest (below): allowed after a command named by a variable, 7.95 s against fork
+    main's 4.13 s at depth 36 and 14.25 s against 8.23 s at 38; allowed with a `$[` alone, 7.01 s against 3.66 s at 36;
+    allowed with both, 4.57 s against 1.74 s at 32, 6.65 s against 2.69 s at 34 and 10.83 s against 3.24 s at 36, so the
+    installer's 10 s timeout, past which the harness runs the command unjudged and which fork main reaches between depths
+    38 and 40 on that box, comes by depth 36 for such a command; refused by the first walk (a write through a name read
+    after a command named by a variable, from a cwd in no project), 6.95 s against fork main's 6.05 s at 38 and 13.25 s
+    against 11.07 s at 40, where the order before took 13.64 s and 22.66 s. The closure walk is not multiplied: every walk
+    shares the call's one Map of link closures, where each walk had made its own, four walks of the markdown tree for a
+    command with both (`tools/romp-track-bash-guard-shapes.test.mjs` counts one, and the walks per shape). No time-based
+    cutoff stands in for any of this. A follow-up, held: fork main's own parse is exponential in adjacent `((` nesting,
+    about 1.6 to 1.8 times per two levels for the refused shape above (spaced `( (` nesting 80 deep takes 0.13 s), a
+    defect apart from ci.yml's follow-up (1), the per-paren case check that grows with the square of the text read.
+    THE TWO WALKS' B2 DISCLOSURE (M3): the walk with the poison set aside applies a cd's own block and enterable rules
+    as fork main does, where the read-through had held the hidden value's directory before them, so 13 hidden-value cd
+    shapes the pass before refused are allowed, as fork main allows them (the shapes probed for the ruling, B1 to B11,
+    L1 and L2). On 3 that refusal was false, no shell writing a tracked file: B3 (`cd "$X" |
     cat`), B4 (`cd "$X" & wait`) and B8 (`pushd -n "$X"`), each now an allowed row on which no shell writes
     (AS5-dual-ctl-cd-pipe-out, AS5-dual-ctl-cd-bg-out, AS5-dual-ctl-pushd-n-out). On 10 fork main allows the write while
     bash and zsh write it (bash alone for B6), the pre-existing B2 boundary, a relative write after a cd the guard does
@@ -5456,20 +5486,20 @@ document stands on its own, each with the reasoning it was given.
     `command cd` (AS5-residual-hidden-cd-command-out); B7, `builtin cd` (AS5-residual-hidden-cd-builtin-out); B9 and L1,
     `cd -P` (AS5-residual-hidden-cd-P-out); B10 and L2, a cd to a link the command made
     (AS5-residual-hidden-cd-made-link-out); B11, `time cd` (AS5-residual-hidden-cd-time-out). SHELL F3, pre-existing
-    (M3: fork main allows each, and so does its reading in the second walk, while bash and zsh write): from a cwd in no
-    project, a write through a value the command gave after a call of a function holding the head
-    (AS5-residual-f3-func-holds-head-out), an eval after the head (AS5-residual-f3-eval-after-out), a call of a function
-    after the head (AS5-residual-f3-func-call-after-out) and a `.` of a file after the head
+    (M3: fork main allows each, and so does its reading in the walk with the poison set aside, while bash and zsh
+    write): from a cwd in no project, a write through a value the command gave after a call of a function holding the
+    head (AS5-residual-f3-func-holds-head-out), an eval after the head (AS5-residual-f3-eval-after-out), a call of a
+    function after the head (AS5-residual-f3-func-call-after-out) and a `.` of a file after the head
     (AS5-residual-f3-dot-after-out); and `$OLDPWD` in an eval's text (the reviewer's m06,
     AS5-residual-oldpwd-in-eval-out), after a cd in an eval's text, a sourced text or a called function (m07:
     AS5-residual-oldpwd-after-eval-cd-out, AS5-residual-oldpwd-after-sourced-cd-out,
     AS5-residual-oldpwd-after-func-cd-out) and in a fresh shell (AS5-residual-fresh-oldpwd-out); the follow-up reads the
-    names those constructs hide as the second walk reads THE UNREAD HEAD's. Also: a lone `[` operand of such a command
-    after a directory not known is refused (AS1-side-lone-bracket). The NAMES are kept readable when at least one external
-    wrapper precedes the head (M1; the ROAD above is restored whatever the wrapper), so these costs hold behind a chain
-    the shell runs itself (`command`, `builtin`, `exec`, `time` and zsh's precommand modifiers, a builtin, a keyword or a
-    precommand modifier in one of the three shells: AS3-kept-*, one row per such wrapper) and not behind a chain holding
-    an external program.
+    names those constructs hide as the walk with the poison set aside reads THE UNREAD HEAD's. Also: a lone `[` operand
+    of such a command after a directory not known is refused (AS1-side-lone-bracket). The NAMES are kept readable when
+    at least one external wrapper precedes the head (M1; the ROAD above is restored whatever the wrapper), so these
+    costs hold behind a chain the shell runs itself (`command`, `builtin`, `exec`, `time` and zsh's precommand
+    modifiers, a builtin, a keyword or a precommand modifier in one of the three shells: AS3-kept-*, one row per such
+    wrapper) and not behind a chain holding an external program.
     One cost of the `time -o` judgment: the guard does not order time's option against a later chdir, so a relative
     file before `env -C <tracked dir>` is judged in both directories and refused by name, though time writes it in the
     shell's directory (`command time -o report.md env -C <project>/docs flock -c 'true' <lock>` from a cwd in no

@@ -56,7 +56,7 @@ import {
 // through zsh's `path` array, AS8-residual-path-zsh-*; and a `$[` whose bracket holds a parenthesis or opens with a space, which neither reading
 // refuses, disclosed: AS8-residual-old-arith-*; a builtin's or a keyword's bare name, which the sixth verify round's tg-t6-3 had let pass, is
 // refused again under that PATH since R2, its rows the costs AS8-builtin-cd-after-backup and the like); after a command named by
-// a variable, a command its poison let pass is judged again with that poison set aside (THE TWO WALKS: AS5-read-through-*, AS5-dual-*, and the
+// a variable, a command is judged with that poison set aside too, that walk first (THE TWO WALKS and THE ORDER: AS5-read-through-*, AS5-dual-*, and the
 // disclosed allows fork main makes too, AS5-residual-hidden-cd-*, AS5-residual-f3-*, AS5-residual-oldpwd-*, AS5-residual-fresh-oldpwd-out); and
 // the remedies that told the person something that would not work (AS6-*, AS7-*, AS8-*, and the third verify round's AS3-nice-filled-group-pipe,
 // AS8-target-head-unset, AS8-target-two-*, AS8-target-read-and and -body, AS8-target-pwd-unknown, AS8-target-oldpwd, AS6-writer-operand, and the
@@ -206,7 +206,7 @@ test("fork PR 975's round 1, item 8 as ruled (ROOT), THE ASSIGNING HEAD's census
     console.log(`# THE ASSIGNING HEAD's behavioural leg: ${ran.length} (shell, word) pairs run in ${live.join(', ') || 'no shell'} under ${ASSIGN_SHAPES.length} operand shapes, none assigning; reserved words seen assigning ${reservedSeen.join(', ') || 'none'}, each on the may-assign side; ${unreported} (word, shape) runs reported nothing (an error the shell treats as fatal before the operand is read); not run: ${Object.keys(ASSIGN_LEG_SKIP).join(', ')}`);
   } finally { spawnSync('chmod', ['-R', 'u+rwx', root]); fs.rmSync(root, { recursive: true, force: true }); }
 });
-test("the after-source fixes, the rows: a pattern operand of a command named by a variable is judged by its spelling where the directory is not known and refused past the caps, a command named by a variable makes later variable reads unreadable, a `[` and a case pattern are no pattern the command name stands for, a word the shell fills in behind nohup or setsid refuses as behind every wrapper, a mention of PATH under a program leaves PATH readable while every bare name under a PATH the guard does not read refuses once a path is bound, a command allowed after a command named by a variable is judged again with its names read as fork main read them, and each remedy says what works; each with the shells that write", () => {
+test("the after-source fixes, the rows: a pattern operand of a command named by a variable is judged by its spelling where the directory is not known and refused past the caps, a command named by a variable makes later variable reads unreadable, a `[` and a case pattern are no pattern the command name stands for, a word the shell fills in behind nohup or setsid refuses as behind every wrapper, a mention of PATH under a program leaves PATH readable while every bare name under a PATH the guard does not read refuses once a path is bound, a command after a command named by a variable is judged with its names read as fork main read them as well, that walk first, and each remedy says what works; each with the shells that write", () => {
   const w = sixthPassWorld();
   const savedHome = process.env.HOME;
   process.env.HOME = w.HOME;
@@ -261,7 +261,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS5-subshell-no-poison', 'na', 'read c <<< true; ("$c" x); T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
       ['AS5-uncalled-no-poison', 'na', 'read c <<< true; f() { "$c" x; }; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],
       ['AS5-subshell-poison-inside', 'na', 'read c <<< true; T={OUT}/t; ( "$c" x; mkdir -p "$T"; echo y > "$T/a.txt" )', N, ['text', `(${POISONED}, so I do not read \`$T\` here)`]],
-      ['AS5-subshell-source-poison', 'na', `read c <<< true; ( "$c" x; source ${ENV} ); T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"`, N, ['text', `(${POISONED}, so I do not read \`$T\` here)`]],   // a source inside the subshell keeps the poison after its close, as \`(source f)\` does
+      ['AS5-subshell-source-poison', 'na', `read c <<< true; ( "$c" x; source ${ENV} ); T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"`, N, ['text', '(an earlier `source` may assign any name, so I do not read `$T` here)']],   // a source inside the subshell keeps the poison after its close, as \`(source f)\` does; since fork PR 975's round 2 (R5, THE ORDER) the text is fork main's reading's, the head's poison set aside, so the source's poison is the one it names
       ['AS5-called-poison', 'na', 'read c <<< true; f() { "$c" x; }; f; T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, ['text', 'an earlier call of `f`, a function the command defines, may assign any name']],
       // fork main's reading of the names (the same round, B; the round's regression-1): from a cwd in no project the poison had dropped a target the
       // value the command gave puts on a tracked file, where fork main read it and refused by name; THE TWO WALKS (item 8 as ruled, DUAL) walk such a
@@ -279,18 +279,20 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS5-read-through-uncalled-out', 'out', 'X={NA}/docs; read c <<< true; f() { "$c" x; }; echo y > "$X/report.md"', BZ, 'name', null],
       // the control: a value the command gives on no tracked file stays allowed from a cwd in no project (the ruled residual: AS5-semi's twin there)
       ['AS5-ctl-read-through-untracked-out', 'out', 'X={OUT}/scratch; read c <<< true; "$c" x; echo y > "$X/a.txt"', N, 'allow', null],
-      // the second walk reads every name fork main's valueOf reads, PWD and OLDPWD among them (the reviewer's t8-2 on fork PR 975's round 1 pass, whose
-      // census of the read-through's names is moot with the read-through gone): after a cd through a value THE UNREAD HEAD's names hid, `$PWD` is that
-      // directory and `$OLDPWD` the one it left, each read as fork main read it; the controls name an untracked directory
+      // the walk with that poison set aside (judge's first since fork PR 975's round 2, THE ORDER) reads every name fork main's valueOf reads, PWD and
+      // OLDPWD among them (the reviewer's t8-2 on fork PR 975's round 1 pass, whose census of the read-through's names is moot with the read-through
+      // gone): after a cd through a value THE UNREAD HEAD's names hid, `$PWD` is that directory and `$OLDPWD` the one it left, each read as fork main read
+      // it; the controls name an untracked directory
       ['AS5-read-through-pwd-out', 'out', 'X={NA}/docs; read c <<< true; "$c" x; cd "$X"; echo y > "$PWD/report.md"', BZ, 'name', null],
       ['AS5-read-through-oldpwd-out', 'out', 'X={NA}/docs; read c <<< true; "$c" x; cd "$X"; cd {OUT}; echo y > "$OLDPWD/report.md"', BZ, 'name', null],
       ['AS5-ctl-read-through-pwd-untracked-out', 'out', 'X={OUT}/scratch; read c <<< true; "$c" x; cd "$X"; echo y > "$PWD/a.txt"', N, 'allow', null],
       ['AS5-ctl-read-through-oldpwd-untracked-out', 'out', 'X={OUT}/scratch; read c <<< true; "$c" x; cd "$X"; cd {OUT}; echo y > "$OLDPWD/a.txt"', N, 'allow', null],
-      // THE TWO WALKS (item 8 as ruled, DUAL): a command that met a command named by a variable and was allowed is walked again with that head's poison
-      // set aside, so every reading fork main gave stands beside the poisoned one, not only those a read-through site named: after a cd through the hidden
-      // value a target the guard cannot read is in play again (the reviewer's m10-3: a value made by a substitution, a pattern, an operand, `$PWD` in a
-      // fresh shell), and a copy into the value's directory and a `sed -i` on a pattern there are refused by name; each passed at the pass before from a cwd
-      // in no project while bash and zsh wrote; a head inside a substitution carries the switch into its text; the control names an untracked directory
+      // THE TWO WALKS (item 8 as ruled, DUAL): a command that met a command named by a variable is walked with that head's poison set aside as well as
+      // with it taken (the walk with it set aside first since fork PR 975's round 2, THE ORDER), so every reading fork main gave stands beside the
+      // poisoned one, not only those a read-through site named: after a cd through the hidden value a target the guard cannot read is in play again (the
+      // reviewer's m10-3: a value made by a substitution, a pattern, an operand, `$PWD` in a fresh shell), and a copy into the value's directory and a
+      // `sed -i` on a pattern there are refused by name; each passed at the pass before from a cwd in no project while bash and zsh wrote; a head inside a
+      // substitution carries the switch into its text; the control names an untracked directory
       ['AS5-dual-held-unread-target-out', 'out', 'X={NA}/docs; read c <<< true; "$c" x; cd "$X"; n=$(date +report.md); echo y > "$n"', BZ, ['text', 'names "$n", which is not a literal path'], null],
       ['AS5-dual-held-glob-out', 'out', 'X={NA}/docs; read c <<< true; "$c" x; cd "$X"; echo y > report.m?', BZ, 'name', null],
       ['AS5-dual-held-unread-operand-out', 'out', 'X={NA}/docs; read c <<< true; "$c" x; cd "$X"; n=$(date +report.md); cp {NA}/base/report.md "$n"', BZ, ['text', 'names "$n", which is not a literal path'], null],
@@ -299,12 +301,12 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS5-dual-sedi-glob-out', 'out', 'X={NA}/docs; read c <<< true; "$c" x; cd "$X"; sed -i s/N/M/ report.m?', BZ, 'name', null],
       ['AS5-dual-head-in-cmdsub-out', 'out', 'X={NA}/docs; read c <<< true; v=$("$c" x; echo y > "$X/report.md")', BZ, 'name', null],
       ['AS5-dual-ctl-untracked-held-out', 'out', 'X={OUT}/scratch; read c <<< true; "$c" x; cd "$X"; n=$(date +a.txt); echo y > "$n"', N, 'allow', null],
-      // THE TWO WALKS' B2 disclosure (M3: allows fork main makes too, a witness row each, named in decision 47): the second walk applies a cd's own
-      // block and enterable rules as fork main does, where the read-through held the hidden value's directory before them, so a relative write after a
-      // cd through the hidden value that fork main does not follow passes from a cwd in no project while the shells write, as the same cd with no head
-      // before it passes at fork main and at this change (the pre-existing B2 class: a relative write after a cd the guard does not follow). One row per
-      // construct: a cd after `&&`, after `||`, in a conditional group, behind `command` (bash runs the builtin), behind `builtin`, `cd -P`, a cd to a
-      // link the command made, behind `time`
+      // THE TWO WALKS' B2 disclosure (M3: allows fork main makes too, a witness row each, named in decision 47): the walk with the poison set aside
+      // applies a cd's own block and enterable rules as fork main does, where the read-through held the hidden value's directory before them, so a
+      // relative write after a cd through the hidden value that fork main does not follow passes from a cwd in no project while the shells write, as the
+      // same cd with no head before it passes at fork main and at this change (the pre-existing B2 class: a relative write after a cd the guard does not
+      // follow). One row per construct: a cd after `&&`, after `||`, in a conditional group, behind `command` (bash runs the builtin), behind `builtin`,
+      // `cd -P`, a cd to a link the command made, behind `time`
       ['AS5-residual-hidden-cd-and-out', 'out', 'X={NA}/docs; read c <<< true; "$c" x; true && cd "$X"; echo y > report.md', BZ, 'allow', null],
       ['AS5-residual-hidden-cd-or-out', 'out', 'X={NA}/docs; read c <<< true; "$c" x; false || cd "$X"; echo y > report.md', BZ, 'allow', null],
       ['AS5-residual-hidden-cd-cond-group-out', 'out', 'X={NA}/docs; read c <<< true; "$c" x; true && { cd "$X"; }; echo y > report.md', BZ, 'allow', null],
@@ -340,7 +342,11 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // a second command named by a variable blocks the read too (the verify round's T2-3; its T2-4, an \`&\` on a subshell around the command, is allowed
       // since fork PR 975's round 1, B: the subshell's close ends the poison taken inside it, \`&\` or not); the allowed control names the first by its literal path and backgrounds the second (a command the guard reads, not
       // the remedy the refusal gives, which is the path spelled absolute: M2)
-      ['AS5-cost-var-two-heads', 'na', 'read c <<< true; "$c" x; "$d" y; OUT={OUT}/o; mkdir -p "$OUT"; echo y > "$OUT/a.txt"', N, ['text', [`(${POISONED}, so I do not read \`$OUT\` here)`, REMEDY_ABS], NO_CURE]],
+      // since fork PR 975's round 2 (R5, THE ORDER) the first walk is fork main's reading, the poison set aside, and it refuses the second head's relative
+      // operand in the directory the first head may have moved, so that is the text; the read of OUT the poison blocks is AS5-cost-var's and
+      // AS5-cost-var-two-heads-abs's, whose second head is handed an absolute path
+      ['AS5-cost-var-two-heads', 'na', 'read c <<< true; "$c" x; "$d" y; OUT={OUT}/o; mkdir -p "$OUT"; echo y > "$OUT/a.txt"', N, ['dir', ['its command named by `"$d"` names y, a relative path', 'an earlier `"$c"`, a command name that stands for a text I do not read, may move the shell'], NO_CURE]],
+      ['AS5-cost-var-two-heads-abs', 'na', 'read c <<< true; "$c" x; "$d" /dev/null; OUT={OUT}/o; mkdir -p "$OUT"; echo y > "$OUT/a.txt"', N, ['text', [`(${POISONED}, so I do not read \`$OUT\` here)`, REMEDY_ABS], NO_CURE]],
       ['AS5-ctl-cost-var-two-heads-literal-bg', 'na', 'read c <<< true; /usr/bin/true x; "$d" y & OUT={OUT}/o; mkdir -p "$OUT"; echo y > "$OUT/a.txt"', N, 'allow'],
       ['AS5-subshell-bg-no-poison', 'na', 'read c <<< true; ("$c" x) & T={OUT}/t; mkdir -p "$T"; echo y > "$T/a.txt"', N, 'allow'],   // the poison ends at the subshell's close, `&` or not (B)
     ];
@@ -848,15 +854,16 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-root-old-arith-herestring', 'nan', 'p={OUT}/scratch/x.md; : <<< $[p=0]; echo y > "$p"', BZ, ['text', ['which is not a literal path', 'through an arithmetic body']]],
       ['AS8-ctl-old-arith-sub', 'na', 'echo $[ $(cp base/report.md docs/report.md; echo 1) ]', A, 'name'],
       ['AS8-ctl-old-arith-plain', 'na', 'echo $[1+2]; ls docs', N, 'allow'],
-      // THE OLDER ARITHMETIC's two readings (fork PR 975's round 1, the text lens's tg-t12-1): read as arithmetic alone, a `$[ ... ]` in a write target made
-      // the word one the guard does not read, which passes from a cwd in no project, so a target that climbs from it into a project was allowed while bash and
-      // zsh wrote through the folder its number names and dash through a folder named as the `$[` is spelled, where fork main read it as text and
-      // refused (red before the second reading: each was allowed). judge reads a command whose walk met a `$[` again with it read as text, any refusal of that
-      // reading standing: bare, double-quoted (refused by name, as fork main refused it), a sum, dash's folder named `$[0]`, and a `$[` only an eval's text
-      // spells (its quotes split the dollar from the bracket in the command itself); a `$[` in a text bash runs with `-c`, read under bash's grammar (red
-      // where the text switch or the note of a `$[` holds under zsh's grammar alone), and one after a command named by a variable, which only the text
-      // reading's second walk, that head's poison set aside, refuses (red where the second reading runs the first walk alone; the text lens's tg-t13-1
-      // and tg-t13-2); the control, a `$[` in a target outside every project, which both readings allow
+      // THE OLDER ARITHMETIC's two readings (fork PR 975's round 1, the text lens's tg-t12-1): read as arithmetic alone, a `$[ ... ]` in a write target
+      // made the word one the guard does not read, which passes from a cwd in no project, so a target that climbs from it into a project was allowed while
+      // bash and zsh wrote through the folder its number names and dash through a folder named as the `$[` is spelled, where fork main read it as text and
+      // refused (red before the text reading: each was allowed). judge reads every command with `$[` read as text (its first walk since fork PR 975's
+      // round 2, THE ORDER) and one whose walk met a `$[` as arithmetic too, any refusal of either reading standing: bare, double-quoted (refused by name,
+      // as fork main refused it), a sum, dash's folder named `$[0]`, and a `$[` only an eval's text spells (its quotes split the dollar from the bracket
+      // in the command itself); a `$[` in a text bash runs with `-c`, read under bash's grammar (red where the text switch or the note of a `$[` holds
+      // under zsh's grammar alone), and one after a command named by a variable, which only the text reading's walk with that head's poison set aside
+      // refuses (red where the text reading runs only the walk that takes the poison; the text lens's tg-t13-1 and tg-t13-2); the control, a `$[` in a
+      // target outside every project, which both readings allow
       ['AS8-root-old-arith-text-lead-out', 'out', 'mkdir -p 0; echo y > $[0]/../../notes-api/docs/report.md', BZ, ['text', 'names $[0]/../../notes-api/docs/report.md, which is not a literal path'], null],
       ['AS8-root-old-arith-text-dash-out', 'out', "mkdir -p '$[0]'; echo y > $[0]/../../notes-api/docs/report.md", ['dash'], ['text', 'names $[0]/../../notes-api/docs/report.md, which is not a literal path'], null],
       ['AS8-root-old-arith-text-dq-out', 'out', 'mkdir -p 0; echo y > "$[0]"/../../notes-api/docs/report.md', BZ, 'name', null],
@@ -871,8 +878,8 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // M3, pre-existing (fork main allows each, as this change does, while bash and zsh write; a witness row each, named in decision 47; found by the shell
       // lens on fork PR 975's round 1): a `$[` whose bracket holds a parenthesis or opens with a space, in a target that climbs from a cwd in no project into
       // a project. Read as arithmetic it is a word the guard does not read, which passes from such a cwd as `$((0))` does there (B2's boundary); read as text
-      // the target ends at the parenthesis or the space, a file named `$[` in the cwd, so the second reading does not refuse it either. The follow-up keeps
-      // the bracket's text, to its matching `]`, in the target under the second reading, judged by its spelling as `$[0]` is
+      // the target ends at the parenthesis or the space, a file named `$[` in the cwd, so the text reading does not refuse it either. The follow-up keeps
+      // the bracket's text, to its matching `]`, in the target under the text reading, judged by its spelling as `$[0]` is
       ['AS8-residual-old-arith-paren-out', 'out', 'mkdir -p 0; echo y > $[(0)]/../../notes-api/docs/report.md', BZ, 'allow', null],
       ['AS8-residual-old-arith-space-out', 'out', 'mkdir -p 0; echo y > $[ 0 ]/../../notes-api/docs/report.md', BZ, 'allow', null],
       ['AS8-alias-unread-operand-cp', 'nad', `printf 'g=cp\\n' > ../scratch/an; read n < ../scratch/an; alias $n\ng ../base/report.md report.md`, ['dash'], ['text', 'binds a name I do not read']],
@@ -1415,7 +1422,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# THE MADE NAME: ${madeRan.size} of ${Object.keys(MADE).length} rows ran their legs here`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 67, AS6: 19, AS7: 17, AS8: 263 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 263 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
@@ -1788,19 +1795,27 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     assert.ok(hook.includes('if (unreadHead && cmd.writes && cmd.writes.length) { const at = dirNow(); unreadHeadWrites = () => fromDir(at, () => wrapperWrites(cmd)); }') && hook.includes('if (unreadHeadWrites) unreadHeadWrites();'), 'a `time -o FILE` before a command named by a variable is judged before its road moves the directory (behaviour: AS3-time-o-rel-*-dashdash-out, AS3-ctl-time-o-dashdash-untracked)');
     assert.ok(hook.includes('if (unknownDir && !path.isAbsolute(w.text)) w = word(w.text, true, w.raw);') && hook.includes('else { const u0 = unresolved.length; cannotRead(w, how); for (const u of unresolved.splice(u0)) { u.q1 = q1; q1Unresolved.push(u); } return; }'), 'a pattern operand the guard cannot expand is judged by its spelling, or refused past the caps (behaviour: AS4-*-glob, AS4-cap-*)');
     assert.ok(hook.includes("    if (unreadPoison && !frames.some((f) => f.kind === 'function' && !f.running && !f.coproc)) { headPoison.seen = true; if (!headPoison.off) poison(unreadPoison, true); }\n    recordSegment(seg, idx, cmd, preWords);"), 'the poison of a command named by a variable is applied just before recordSegment, never in the body of a function being defined, the first walk taking it and the second setting it aside (behaviour: AS5-semi, AS5-newline, AS5-before, AS5-ctl-bg, AS5-ctl-pipe; AS5-uncalled-no-poison, AS5-called-poison; the second walk: AS5-read-through-*, AS5-dual-*)');
-    assert.ok(hook.includes("if (f.headPoison && !f.otherPoison && (f.kind === 'subshell' || f.coproc)) { varsPoisoned = false; poisonWhy = null; }") && hook.includes('if (!varsPoisoned) { varsPoisoned = true; poisonWhy = why; if (sub && fromHead) sub.headPoison = true; }'), "a subshell's close ends THE UNREAD HEAD's poison taken inside it and nothing more (behaviour: AS5-subshell-no-poison, AS5-subshell-bg-no-poison, AS5-subshell-poison-inside)");
-    // THE TWO WALKS (item 8 as ruled, DUAL): judge walks a command that met such a head a second time with its poison set aside, any refusal of that walk
-    // standing, and the switch reaches the top-level walk and every text through recurse; the read-through's sites are gone with it
-    assert.ok(hook.includes('if (r1 != null || !first.seen) return r1;') && hook.includes('return judgeWalk(command, cwd, { off: true, seen: false });') && hook.includes("builtinsOff, headPoison: headPoison || { off: false, seen: false }, headGate });") && hook.includes('bound, builtinsOff, headPoison, headGate, aliasChain: chain,'), "THE TWO WALKS: a command allowed after a command named by a variable is walked again with that head's poison set aside, any refusal of that walk standing, the switch carried into every text (behaviour: AS5-read-through-*, AS5-dual-* with AS5-dual-head-in-cmdsub-out for the texts, the controls AS5-ctl-read-through-untracked-out and AS5-dual-ctl-untracked-held-out)");
+    // the "nothing more" (`!f.otherPoison`) reds no row since fork PR 975's round 2 (R5, THE ORDER): the walk with the head's poison set aside, judge's first,
+    // keeps a `source`'s poison inside the subshell on its own, so that conjunct only chose which text AS5-subshell-source-poison showed (verified by its
+    // mutant: no row changes); this pin is what holds it
+    assert.ok(hook.includes("if (f.headPoison && !f.otherPoison && (f.kind === 'subshell' || f.coproc)) { varsPoisoned = false; poisonWhy = null; }") && hook.includes('if (!varsPoisoned) { varsPoisoned = true; poisonWhy = why; if (sub && fromHead) sub.headPoison = true; }'), "a subshell's close ends THE UNREAD HEAD's poison taken inside it and nothing more (behaviour: AS5-subshell-no-poison, AS5-subshell-bg-no-poison, AS5-subshell-poison-inside; the nothing more is held by this pin alone)");
+    // THE TWO WALKS (item 8 as ruled, DUAL): judge walks a command that met such a head with its poison set aside as well as taken, any refusal of either
+    // walk standing, and the switch reaches the top-level walk and every text through recurse; the read-through's sites are gone with it. THE ORDER (fork
+    // PR 975's round 2, R5 (ii)): the walk with the poison set aside, `$[` read as text, is the first, and the walks that take the poison run only when it
+    // allows (behaviour for the order: the shapes test's THE ORDER, red where the poisoned walk runs first; for the poison taken: AS5-semi, AS5-newline,
+    // AS5-before and the other AS5 poison rows, red where the walk that takes it is skipped)
+    assert.ok(hook.includes('const names = { off: true, seen: false };') && hook.includes('const r0 = judgeWalk(command, cwd, names, closures);') && hook.includes('if (r0 != null) return r0;') && hook.includes('if (!names.seen) return null;') && hook.includes('return judgeWalk(command, cwd, { off: false, seen: false }, closures);') && hook.includes('if (r1 != null || !first.seen) return r1;') && hook.includes('return judgeWalk(command, cwd, { off: true, seen: false }, closures);') && hook.includes("builtinsOff, headPoison: headPoison || { off: false, seen: false }, headGate });") && hook.includes('bound, builtinsOff, headPoison, headGate, aliasChain: chain,'), "THE TWO WALKS: a command after a command named by a variable is walked with that head's poison set aside, first, and with it taken, any refusal of either walk standing, the switch carried into every text (behaviour: AS5-read-through-*, AS5-dual-* with AS5-dual-head-in-cmdsub-out for the texts, the controls AS5-ctl-read-through-untracked-out and AS5-dual-ctl-untracked-held-out; the order: the shapes test's THE ORDER)");
     assert.ok(!/prePoisonOf|readThroughPoison|headPoisonOnly|preVars|heldOld|holdPre|preHome|real: false/.test(hook), 'no read-through site survives beside the two walks');
-    // THE OLDER ARITHMETIC's two readings (fork PR 975's round 1, the text lens's tg-t12-1): judge reads a command whose walk met a `$[` again, both walks,
-    // with the `$[` read as a dollar and text, any refusal of that reading standing (behaviour: AS8-root-old-arith-text-*, red where the second reading is
-    // off, where the lexer does not note a `$[` it read as arithmetic, or where the second reading reads it as arithmetic too; under bash's grammar,
-    // AS8-root-old-arith-text-bash-c-out, red where the text switch or the note holds under zsh's grammar alone; both walks of the second reading,
-    // AS8-root-old-arith-text-two-walks-out, red where it runs the first walk alone; the control AS8-ctl-old-arith-text-target-out, which both readings
-    // allow); and the reading is put back when judge returns, so a later lex in the same process reads `$[` as arithmetic again (executed below: red
-    // where judge leaves the text reading in place)
-    assert.ok(hook.includes("if (oldArithReading && oldArithReading.text) return { kind: 'dollar', len: 1 };") && hook.includes('if (oldArithReading) oldArithReading.met = true;') && hook.includes('if (r != null || !oldArithReading.met) return r;') && hook.includes('oldArithReading = { text: true, met: false };') && hook.includes('} finally { oldArithReading = prev; }'), "THE OLDER ARITHMETIC's two readings: the lexer notes a `$[` it reads as arithmetic, and judge reads such a command again with it read as text, any refusal standing (behaviour: AS8-root-old-arith-text-*, bash's grammar in AS8-root-old-arith-text-bash-c-out and both walks in AS8-root-old-arith-text-two-walks-out, the control AS8-ctl-old-arith-text-target-out)");
+    // THE OLDER ARITHMETIC's two readings (fork PR 975's round 1, the text lens's tg-t12-1): judge reads a command whose walk met a `$[` both ways, both
+    // walks each, with the `$[` read as a dollar and text and as arithmetic, any refusal of either reading standing. Since THE ORDER (fork PR 975's round
+    // 2, R5 (ii)) the text reading's walk with the poison set aside is judge's first walk, the lexer noting a `$[` under either reading before it chooses,
+    // and the arithmetic reading runs only where that walk allows and noted one (behaviour: AS8-root-old-arith-text-*, red where the text reading is off
+    // or reads it as arithmetic too; the arithmetic reading's rows, AS8-root-old-arith-path-* and the other AS8-root-old-arith-* rows bash and zsh write,
+    // red where the note is taken after the text reading's return or the arithmetic reading is skipped; under bash's grammar,
+    // AS8-root-old-arith-text-bash-c-out; both walks of the text reading, AS8-root-old-arith-text-two-walks-out; the control
+    // AS8-ctl-old-arith-text-target-out, which both readings allow); and the reading is put back when judge returns, so a later lex in the same process
+    // reads `$[` as arithmetic again (executed below: red where judge leaves the text reading in place)
+    assert.ok(hook.includes("if (oldArithReading) oldArithReading.met = true;\n    if (oldArithReading && oldArithReading.text) return { kind: 'dollar', len: 1 };") && hook.includes('const met = oldArithReading.met;') && hook.includes('if (met) {') && hook.includes('oldArithReading = { text: false, met: false };') && hook.includes('oldArithReading = { text: true, met: false };') && hook.includes('} finally { oldArithReading = prev; }'), "THE OLDER ARITHMETIC's two readings: the lexer notes a `$[` under either reading, before the text reading's return, judge reads every command with it read as text first and a command that met one again as arithmetic, any refusal standing (behaviour: AS8-root-old-arith-text-*, the arithmetic reading's AS8-root-old-arith-* rows, bash's grammar in AS8-root-old-arith-text-bash-c-out and both walks in AS8-root-old-arith-text-two-walks-out, the control AS8-ctl-old-arith-text-target-out)");
     w.build();
     assert.equal(guard.evaluate(JSON.stringify({ tool_name: 'Bash', tool_input: { command: w.fill('echo y > {OUT}/scratch/n$[1+1].md') }, cwd: w.cwds.out })), null, 'a `$[` in a target outside every project is allowed in process, both readings run');
     assert.deepEqual(guard.lex('echo $[p=0]').segments.map((g) => g.arith), [['p=0']], 'after judge read a command both ways, a `$[` is arithmetic again for the next lex in the process (the reading is put back)');

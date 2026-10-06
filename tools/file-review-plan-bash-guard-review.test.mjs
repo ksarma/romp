@@ -99,7 +99,18 @@ test('the hook agrees: the closure comes after the veto and the explicit list, n
   const walk = trackedIn.indexOf('if (!closure) { closure = trackedClosure(root); closures.set(root, closure); }');
   assert.ok(veto >= 0 && explicit > veto && empty > explicit && memo > empty && walk > memo, 'the veto, the explicit list, the empty list, the memo, then the walk');
   const evaluateSrc = hook.slice(hook.indexOf('export function evaluate(raw)'), hook.indexOf('const invokedDirectly'));
-  assert.ok(evaluateSrc.includes('const closures = new Map();'), 'one Map per call');
+  // fork PR 975's round 2 (R5 (i), the reviewer's regression-1): the Map is judge's own, made once per call and handed to every walk of every reading,
+  // and no walk makes one of its own (the pin read a slice that also held judgeWalk's Map, so a Map per walk passed it). A source-level backstop: the
+  // executed guard is the shapes test's walk count for a command naming its head by a variable with a `$[` (one walk, where each walk making its own
+  // Map walked four times)
+  const judgeSrc = hook.slice(hook.indexOf('function judge(command, cwd) {'), hook.indexOf('function judgeTwoWalks('));
+  const twoWalksSrc = hook.slice(hook.indexOf('function judgeTwoWalks('), hook.indexOf('function judgeWalk('));
+  const walkSrc = hook.slice(hook.indexOf('function judgeWalk(command, cwd, headPoison, closures) {'), hook.indexOf('const invokedDirectly'));
+  assert.ok(judgeSrc.length > 0 && twoWalksSrc.length > 0 && walkSrc.length > 0, 'judge, judgeTwoWalks and judgeWalk(command, cwd, headPoison, closures) in that order');
+  assert.ok(judgeSrc.includes('const closures = new Map();'), 'one Map per call, made by judge (behaviour: the shapes test\'s walk count)');
+  const walkCalls = [...judgeSrc.matchAll(/judge(?:Walk|TwoWalks)\(([^)]*)\)/g), ...twoWalksSrc.matchAll(/judgeWalk\(([^)]*)\)/g)].map((m) => m[1]);
+  assert.ok(walkCalls.length >= 5 && walkCalls.every((a) => /, closures$/.test(a)), `every walk of every reading is handed judge's Map (behaviour: the shapes test's walk count): ${walkCalls.join(' | ')}`);
+  assert.ok(!/new Map\(\)/.test(twoWalksSrc) && !/\bclosures\s*=\s*new\b/.test(walkSrc), 'no walk makes a Map of its own (behaviour: the shapes test\'s walk count)');
   assert.ok(evaluateSrc.includes('try { guarded = isGuardedPath(t.path, closures); }') && evaluateSrc.includes('if (!guarded) continue;'), 'handed to every target, its stat error a refusal (family 4)');
   assert.ok(hook.includes('ONE walk of the project\'s markdown tree per call'), 'the hook\'s header states the same cost');
   // the walk is what the plan says it is: store-io lists every .md under the root and reads every tracked note

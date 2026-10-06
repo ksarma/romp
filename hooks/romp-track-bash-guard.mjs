@@ -161,7 +161,11 @@
 // listing of the source tree (less than the copy itself pays), skipped when the landing directory
 // does not exist yet under any project that tracks anything; a numeric target costs a listing of
 // its literal directory (bounded by LANDING_SCAN_CAP) and a `..` after an existing directory one
-// realpath.
+// realpath. judge walks the command once where fork main's reading of it refuses, or where it met no
+// command named by a variable and no `$[`; an allowed command is walked twice after a command named by a
+// variable and up to four times where it also met a `$[` (THE TWO WALKS, THE OLDER ARITHMETIC's two
+// readings, THE ORDER), each walk parsing the command again (and twice where THE ASSIGNING HEAD's function
+// clause applies, extractWriteTargets) while the closure walk stays one per call.
 //
 // Round 4 (2026-09-19, the walk-around lens) closed eight more in-model roads: cp/mv/install/ln read a per-writer
 // option table (COPY_OPT), so a flag that takes no argument (`-Z`, a bare `--context`) no longer eats an operand
@@ -1401,14 +1405,16 @@ export const spellWords = (words) => {
 };
 
 // THE OLDER ARITHMETIC's two readings (judge): null outside a judged command, where `$[` is arithmetic; else `text`, whether this reading
-// takes `$[` as a dollar and text (dash's reading and fork main's), and `met`, set where the arithmetic reading met a `$[`, so judge reads
-// the command the second way only then. Synchronous, so never two at once, as activeLinks.
+// takes `$[` as a dollar and text (dash's reading and fork main's), and `met`, set where either reading met a `$[` (before the reading is
+// chosen, so fork main's reading, which judge runs first, records it too), so judge reads the command as arithmetic only then. The two
+// readings lex alike up to the first `$[` they reach, so one meets a `$[` exactly when the other does. Synchronous, so never two at once,
+// as activeLinks.
 let oldArithReading = null;
 // What the `$` at `pos` of `src` begins: { kind, len }. 'numeric' is `$$` or `${$}` (NUMERIC_EXPANSIONS); 'home' is
 // `$HOME` or `${HOME}` (the caller decides whether it stands at the start of a word followed by a slash or the
 // word's end, the one place it is expanded like `~`); 'var' a parameter the hook does not read (`$NAME`, `$1`, `$?`
 // and the other one-character specials); 'brace' a `${...}` of unknown content; 'sub' a `$(`; 'oldarith' a `$[`, the
-// older spelling of `$((` in bash and zsh (lex's oldArith), or 'dollar' for it under the second of THE OLDER ARITHMETIC's
+// older spelling of `$((` in bash and zsh (lex's oldArith), or 'dollar' for it under the text reading of THE OLDER ARITHMETIC's
 // two readings (judge, oldArithReading), dash's and fork main's; 'ansi' a `$'`; 'locale' a `$"`; and 'dollar' a bare `$`
 // before anything else, which bash, zsh and dash all leave as a literal dollar (`$/x` prints `$/x`), so it is text,
 // not an expansion (round 3).
@@ -1433,9 +1439,9 @@ function expansionAt(src, pos, zsh = false) {
     return { kind: 'brace', len: 2 };
   }
   if (next === '(') return { kind: 'sub', len: 2 };
-  if (next === '[') {   // THE OLDER ARITHMETIC: read as arithmetic, the walk noting it met one, or as a dollar and text under the second reading (judge)
-    if (oldArithReading && oldArithReading.text) return { kind: 'dollar', len: 1 };
+  if (next === '[') {   // THE OLDER ARITHMETIC: the walk notes it met one under either reading (judge), then reads it as arithmetic, or as a dollar and text under fork main's reading
     if (oldArithReading) oldArithReading.met = true;
+    if (oldArithReading && oldArithReading.text) return { kind: 'dollar', len: 1 };
     return { kind: 'oldarith', len: 2 };
   }
   if (next === "'") return { kind: 'ansi', len: 2 };
@@ -5552,7 +5558,7 @@ function numericRunsOnly(text, marks) {
 }
 export function extractWriteTargets(command, cwd, shell = null, headPoison = null) {
   // `headPoison` (THE TWO WALKS, judge): `off`, walk with THE UNREAD HEAD's poison set aside, every name read as fork main read it; `seen`, set where the walk
-  // met a head whose poison it took or set aside, so judge walks a second time only then
+  // met a head whose poison it took or set aside, so judge walks with the poison taken only then (THE ORDER: the walk with it set aside comes first)
   const walk = (headGate) => {
     const builtinsOff = { seen: mentionsBuiltinGate(command) };   // THE SHELL'S GATE, set before the walk where the text mentions a gate
     return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0, builtinsOff, headPoison: headPoison || { off: false, seen: false }, headGate });
@@ -8452,9 +8458,9 @@ function extractIn(command, ctx) {
       // names, so a later variable read, a `~/` or `$HOME/` write and a bare cd stay as they would be without the command (`nohup -- "$c"`,
       // `env -- "$c"`, `nohup command -- "$c"` and `command nohup -- "$c"` all qualify; `command -- "$c"`, `time -- "$c"` and
       // the other wrappers the shell runs itself do not, since `"$c"` may then be `.` run in this shell). The rule is about THE UNREAD HEAD alone: a
-      // literal `cd` or `read` behind nohup or env keeps its own reading (an external `cd`, a `read` naming the variable). Where the walk that takes
-      // this poison allows a command that met such a head, judge walks it again with the poison set aside (THE TWO WALKS), so a write fork main's
-      // reading of the names refuses is refused
+      // literal `cd` or `read` behind nohup or env keeps its own reading (an external `cd`, a `read` naming the variable). judge also walks a command
+      // that met such a head with this poison set aside, and that walk comes first (THE TWO WALKS, THE ORDER), so a write fork main's reading of the
+      // names refuses is refused
       const behindExternal = !!cmd.wrapped && cmd.wrappers.some((n) => Object.hasOwn(WRAPPER_OPT, n) && WRAPPER_OPT[n].external === true);
       if (unreadHead && !behindExternal && seg.op !== '|' && seg.op !== '&') unreadPoison = `an earlier \`${headWord.raw}\`, a command name that stands for a text I do not read, may assign any name`;
       // THE UNREAD OPERAND at the head (round 7's twenty-fifth commit; the reviewer's Q1): a command name that is an expansion the resolver did not read, read
@@ -9103,7 +9109,7 @@ function extractIn(command, ctx) {
     }
     // THE UNREAD HEAD's names (above), applied after the segment's own words and redirections were resolved; not from the body of a function being
     // defined (a call of it is read through THE CALLED BODY, whose replay takes the poison; an uncalled one assigns nothing: fork PR 975's round 1, B), and
-    // inside a subshell only until its close (restore); `headPoison.seen` tells judge the walk met it, and the second walk sets it aside (THE TWO WALKS)
+    // inside a subshell only until its close (restore); `headPoison.seen` tells judge the walk met it, and the walk with `off` sets it aside (THE TWO WALKS)
     if (unreadPoison && !frames.some((f) => f.kind === 'function' && !f.running && !f.coproc)) { headPoison.seen = true; if (!headPoison.off) poison(unreadPoison, true); }
     recordSegment(seg, idx, cmd, preWords);   // B2 and the readability rule: this segment's writes hold for the segments after it
   }
@@ -9776,34 +9782,52 @@ function internalErrorRefusal(e, cwd) {
     + `or reject:\n${TRACK_EDIT}`;
 }
 // THE TWO WALKS (fork PR 975's round 1, item 8 as ruled, DUAL, 2026-10-05; the reviewer's poison read-through): a command named by a variable may be
-// `.` or eval, so the first walk takes THE UNREAD HEAD's poison and reads no name after it. Where that walk allows a command that met such a head, the
-// command is walked again with that one poison set aside (`off`), every name read as fork main read it and everything else unchanged, and any refusal of
-// the second walk is the verdict, so this class cannot allow what fork main refused. It replaces the read-through, whose sites read a word as fork main
-// read it one site at a time and kept meeting roads they did not reach (a value made by a substitution, a pattern, an operand, `$PWD` in a fresh shell)
+// `.` or eval, so the head's walk takes THE UNREAD HEAD's poison and reads no name after it, and the command is also walked with that one poison set
+// aside (`off`), every name read as fork main read it and everything else unchanged; any refusal of either walk is the verdict, so this class cannot
+// allow what fork main refused. It replaces the read-through, whose sites read a word as fork main read it one site at a time and kept meeting roads
+// they did not reach (a value made by a substitution, a pattern, an operand, `$PWD` in a fresh shell)
 // THE OLDER ARITHMETIC's two readings (fork PR 975's round 1, the text lens's tg-t12-1, closed as THE TWO WALKS close the poison class): bash and zsh
-// run `$[ ... ]` as arithmetic, dash reads a dollar and text, and fork main read the text. The command is judged with `$[` read as arithmetic (lex's
-// oldArith); where that reading allows a command whose walk met a `$[`, in its own text or in any text it hands over, the command is judged again,
-// both walks, with `$[` read as a dollar and text, everything else unchanged, and any refusal of that reading is the verdict, so reading `$[` as
-// arithmetic cannot allow a command the guard refuses with `$[` read as fork main read it. A walk that met no `$[` reads the same either way, so the
-// second reading runs only then
+// run `$[ ... ]` as arithmetic, dash reads a dollar and text, and fork main read the text. A command whose walk met a `$[`, in its own text or in any
+// text it hands over, is judged with `$[` read as arithmetic (lex's oldArith) and with `$[` read as a dollar and text, both walks each, everything else
+// unchanged, and any refusal of either reading is the verdict, so reading `$[` as arithmetic cannot allow a command the guard refuses with `$[` read as
+// fork main read it
+// THE ORDER (fork PR 975's round 2, R5 (ii); the reviewer's regression-2): the first walk is fork main's reading on both axes, the poison set aside and
+// `$[` read as text, and the head's walks run only when it allows, so a command fork main's reading refuses is refused at fork main's cost, one walk,
+// with that walk's refusal text. A walk that met no unread head reads the same with the poison taken (`off` is read only where `seen` is set), and a
+// reading that met no `$[` lexes the same either way (`met` is set before `text` is read), so a head walk runs only where the first walk's flag says it
+// can read differently: an allowed command is walked twice after a command named by a variable, twice or three times where it met a `$[`, and up to four
+// times where it met both. The verdict is the same in any order (a refusal of any of the walks), only the text a command refused by more than one walk
+// shows depends on it
+// ONE CLOSURE WALK PER CALL (fork PR 975's round 2, R5 (i); the reviewer's regression-1): every walk of every reading shares the call's one Map of link
+// closures (and the memo keyed by it: roots, configs, real directories), all filesystem reads that neither switch nor the command's links touch, so a
+// project's markdown tree is walked once per call however many walks the command takes
 function judge(command, cwd) {
   const prev = oldArithReading;
   boundRoots.clear(); boundRootSeq = 0;   // RULE B's memo is per judge call: its rootMarks are fresh seq numbers, so a cleared map never collides a prior call's
+  const closures = new Map();
   try {
-    oldArithReading = { text: false, met: false };
-    const r = judgeTwoWalks(command, cwd);
-    if (r != null || !oldArithReading.met) return r;
     oldArithReading = { text: true, met: false };
-    return judgeTwoWalks(command, cwd);   // dash's and fork main's reading of `$[`: any refusal stands
+    const names = { off: true, seen: false };
+    const r0 = judgeWalk(command, cwd, names, closures);   // fork main's reading: the names as fork main read them, `$[` as a dollar and text
+    if (r0 != null) return r0;
+    const met = oldArithReading.met;
+    if (met) {
+      oldArithReading = { text: false, met: false };
+      const r1 = judgeTwoWalks(command, cwd, closures);   // `$[` as arithmetic, as bash and zsh run it: the poison taken, then set aside where that walk met an unread head
+      if (r1 != null) return r1;
+    }
+    if (!names.seen) return null;   // no unread head under the text reading: the poison changes nothing there
+    oldArithReading = { text: true, met: false };
+    return judgeWalk(command, cwd, { off: false, seen: false }, closures);   // the poison taken, `$[` as text
   } finally { oldArithReading = prev; }
 }
-function judgeTwoWalks(command, cwd) {
+function judgeTwoWalks(command, cwd, closures) {
   const first = { off: false, seen: false };
-  const r1 = judgeWalk(command, cwd, first);
+  const r1 = judgeWalk(command, cwd, first, closures);
   if (r1 != null || !first.seen) return r1;
-  return judgeWalk(command, cwd, { off: true, seen: false });   // fork main's reading of the names: any refusal stands
+  return judgeWalk(command, cwd, { off: true, seen: false }, closures);   // fork main's reading of the names: any refusal stands
 }
-function judgeWalk(command, cwd, headPoison) {
+function judgeWalk(command, cwd, headPoison, closures) {
   let targets;
   let unresolved;
   let links;
@@ -9812,7 +9836,6 @@ function judgeWalk(command, cwd, headPoison) {
   try { ({ targets, unresolved, links, q1Targets, q1Unresolved } = extractWriteTargets(command, cwd, null, headPoison)); }
   catch (e) { if (isUnknownPath(e)) return statErrorRefusal(e.why && e.why.how ? e.why.how : 'write', e.why && e.why.raw ? e.why.raw : 'the path', e); throw e; }   // any other throw: the catch-all refuses
   const seen = new Set();
-  const closures = new Map();
   for (const t of targets) {
     if (seen.has(t.path)) continue;
     seen.add(t.path);
