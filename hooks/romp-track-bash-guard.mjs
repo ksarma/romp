@@ -5210,7 +5210,7 @@ export const NAME_TABLE_PARAMS = new Set(['BASH_ALIASES', 'BASH_CMDS', 'function
 // disable or remove a function, an alias, a builtin or a hash entry is on it, whatever options the command actually carries. It replaces the hand reasoning
 // the function clause rested on for the autoload/typeset -fu/declare -fu/functions -u roads; FUNCTION_SOURCES and the function-clause second walk stay beside
 // it (they close the later-definition and called-body roads this axis does not model, so removing them would reopen those: kept as the safe side).
-const NAME_RUN_HEADS = new Set(['autoload', 'functions', 'typeset', 'declare', 'enable', 'disable', 'zmodload', 'alias', 'unalias', 'hash', 'rehash', 'unhash', 'unfunction']);
+const NAME_RUN_HEADS = new Set(['autoload', 'functions', 'typeset', 'declare', 'readonly', 'enable', 'disable', 'zmodload', 'alias', 'unalias', 'hash', 'rehash', 'unhash', 'unfunction']);   // readonly: zsh's `readonly -fu g` marks g for autoload, the same as `typeset -fu` (readonly is typeset -r in zsh), so option-insensitively it may change what a name runs
 const RUN_CHANGE_WHY = 'an option form of it can define, change, mark for autoload, enable, disable or remove a function, an alias, a builtin or a hash entry, so it may change what a later name runs';
 const RUN_KEEP_WHY = 'changes no function, alias, builtin or hash entry, so what a later name runs is unchanged by it';
 // derived, over the same population as SHELL_WORD_ASSIGNS, each word classified with a reason (THE NAME-RUN AXIS's census reds on a word it does not classify)
