@@ -180,15 +180,13 @@ the clone updates it:
   option the guard does not know, unless its output goes through `|`, where no remedy is offered; for
   a word the shell fills in, spell it out as the option or the command it stands for, and where its
   output goes through `|` put the command directly before it, with no redirection and no group,
-  subshell or compound around it; behind `nohup` or `setsid`, whose
-  options take no value, a non-literal word is read as the command name, and its operands are judged
-  as for a command named by a variable, unless its output goes through `|` to another command,
-  directly or through an enclosing group, subshell or compound; a command named by a variable keeps its
+  subshell or compound around it; behind `nohup` or `setsid`, as behind every wrapper, a word the
+  shell fills in is refused as the wrapper option the guard does not read; a command named by a variable keeps its
   names readable when an external program wrapper (`nohup`, `setsid`, `env`, `nice` and the like, not a
   shell builtin) precedes it, since it then runs in a child process that cannot set this shell's variables,
   while the directory is judged unknown after it all the same, so a later relative write is refused after
   such a command run in the foreground in this shell (not backgrounded, not before a `|`, and not in a
-  subshell or a substitution), and after the word behind `nohup` or `setsid` wherever it runs), a glued
+  subshell or a substitution)), a glued
   `env -Cdocs` is a chdir, a nested `env -C a
   env -C b` enters a then b under a, `env -S` and sudo's `-e`, `-i`, `-s`, `-R` and `-h` are refused
   outright, and `time -o FILE` is a write of FILE; an `ln -s` whose source is not literal makes the
@@ -247,9 +245,11 @@ the clone updates it:
   `PWD=<dir>; cp x $PWD/docs/report.md` from a tracked cwd is refused as not literal, the reason
   naming the mention); what stays opaque (a name the command never sets, one set in a body, after
   `&&`, in a subshell, by a `read`, a loop, an eval, a sourced file or a function call, after a command named by
-  a variable with no external program wrapper before it, a `$(...)`)
+  a variable with no external program wrapper before it (to the close of a subshell it stands in), a `$(...)`)
   keeps the verdict the working directory gives it, refused as not literal from a cwd in a tracked
-  project and allowed from a cwd in no project. The principle: a guard is strictest where its
+  project and allowed from a cwd in no project, while a command holding a command named by a variable is
+  judged again with every name read as if that command assigned none, and is refused where that second
+  judgment refuses. The principle: a guard is strictest where its
   subject is and loosest where its subject is not; this guard's subject is tracked files inside
   projects, and from a cwd in no project it must not refuse on a value it cannot know (a user in a
   scratch directory writing `$USER.log` or `$(date +%s).md` is ordinary work, and a guard that

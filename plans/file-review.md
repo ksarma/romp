@@ -3734,10 +3734,9 @@ document stands on its own, each with the reasoning it was given.
     `EXPANDED_NAMES`) anywhere in the command outside a `$`-expansion makes that expansion unreadable for the whole
     command and a bare `cd` or `cd ~` unknown (`bareExpandedNames`). (b) FULLY PARSED OR REFUSED: every wrapper in
     `PREFIXES` is parsed against its own option table (`WRAPPER_OPT`) or the command refuses naming the option (an
-    unknown, abbreviated, glued-unknown or non-literal one), the words after it judged by their own project (behind
-    nohup or setsid, `filledHead` in the table, a non-literal word is the command name, its operands judged as those of
-    one named by a variable, unless its output goes through `|` to another command, directly or through an enclosing
-    group, subshell or compound: the after-source fixes, 2026-10-03; a command named by a variable keeps the names
+    unknown, abbreviated, glued-unknown or non-literal one; a non-literal word behind nohup or setsid refuses as behind
+    every wrapper since item 3 was split out, the follow-up below), the words after it judged by their own project (a
+    command named by a variable keeps the names
     readable after it when at least one wrapper before it is an external program, `external` in the table, since it
     then runs in a child process that cannot set this shell's variables, while the directory is judged unknown after it
     behind any wrapper; the rule is about that command alone, and a literal `cd` or `read` behind a wrapper keeps its
@@ -3887,8 +3886,9 @@ document stands on its own, each with the reasoning it was given.
     `plainValue`, `recordPlainWord`, `recordSegment`, `taintWord`): a name is readable only when every write to it in the
     command is a plain top-level `NAME=plain-string` the shell performs as spelled, and any other construct that can write it
     makes it unreadable from that construct on (a plain write after it does not restore it), keyed on the construct's shape
-    (an lvalue-shaped word in any position, the bare identifier as a whole word or a token of a word that is not an option,
-    an assignment inside a `${x=..}` or `${x:=..}` expansion, a name in an arithmetic body, `identifierTokens`) and never on a
+    (an lvalue-shaped word in any position, the bare identifier as a whole word or a token of a word that is not an option (since
+    fork PR 975's item 8 as ruled only under a head that may assign a name it is given, THE ASSIGNING HEAD, whose table
+    the shells are asked for), an assignment inside a `${x=..}` or `${x:=..}` expansion, a name in an arithmetic body, `identifierTokens`) and never on a
     list of commands, the reviewer's framing being B2's own unknown-defaults-to-unreadable doctrine, already applied to a
     `read` and a loop variable, applied to assignment. The classes: a tilde opening an assignment value (`plainValue`: `~/`
     and `~` resolve through HOME, `~+` and `~-` through PWD and OLDPWD, a `~user` and a tilde after a `:` leave the name
@@ -4517,9 +4517,19 @@ document stands on its own, each with the reasoning it was given.
     ../scratch/c2; PATH=../scratch c2 a b`), and a `cat FILE > DEST` binds DEST as cp does; a head through a HOME the
     hook cannot read (one the command reassigns, or HOME after an eval, a source, a command named by a variable or a call
     of a function the command defines) is one
-    the hook cannot read while a path is bound, and one through a PATH the resolver does not read is while a bound path's
-    last component is the head's name (since the after-source fixes, 2026-10-03: before, any bound path, so a copy of a
-    data file beside a mention of PATH refused every later bare command name). THE COMPOUND PRODUCER: a keyword compound before the pipe (`for i in 1; do echo 'cp a b'; done |
+    the hook cannot read while a path is bound, and so is every bare name through a PATH the resolver does not read (fork
+    main's rule, again since fork PR 975's item 8 as ruled: a mention of PATH makes it unreadable only under a head that
+    may assign it in this shell, THE ASSIGNING HEAD, so a `grep -c PATH f` no longer does, and no narrowing to a made
+    path's name is kept, since one rests on knowing every file the command makes, which a list of programs cannot show),
+    and never a name the three shells run as their own builtin where the shell itself looks it up (unquoted,
+    and while THE SHELL'S GATE is not seen: no `enable`, `disable` or `zmodload` in the command, nor one met by a
+    spelling the scan does not read, nor a text or a command name the guard does not read run in this shell); behind a
+    wrapper some shell runs itself (DROP_WRAPPERS, derived from WRAPPER_OPT: `command`, `builtin`, `exec`, `time`,
+    zsh's `noglob`, `nocorrect` and `-`, with the options the table parses for them) such a name is refused and the
+    refusal asks for those words dropped, and where no wrapper can be dropped and the name is a builtin or a reserved
+    word of one of the three shells with no program of that name on the guard's PATH (cd, export, enable, source), or a
+    function the command defines, the refusal names no remedy, as THE SOURCED NAME's refusal of a name `.` or `source`
+    reads does. THE COMPOUND PRODUCER: a keyword compound before the pipe (`for i in 1; do echo 'cp a b'; done |
     bash`; while, until, if and case alike) prints what the list from its head to its closer prints, and the head runs
     the body a number of times the model does not count, so a printer inside it makes the list UNRESOLVABLE (placed on
     the closer segment that carries the pipe, listOutput naming the head) and a body with no printer stays outside the
@@ -4998,7 +5008,7 @@ document stands on its own, each with the reasoning it was given.
     pattern among them). A command named by a variable may be `.` or eval, so it makes every later variable read
     unreadable, as a source does (a member that pipes or is backgrounded aside; the poison is applied just before the
     segment is recorded, after its own words and redirections were resolved). The operands of a command named by a
-    variable behind a chdir wrapper (`env -C docs nohup "$c" report.md`, and the older `env -C docs -- "$c"
+    variable behind a chdir wrapper (`env -C docs nohup -- "$c" report.md`, and the older `env -C docs -- "$c"
     report.md`) are judged in the wrapper's directory (`enterChdirs`), where they were judged in the shell's, and under
     a directory not known where the chdir names a directory the shell fills in or one the command cannot enter. A
     `time -o FILE` is judged as a write where it went unjudged, each an older false allow: before a wrapper whose
@@ -5014,84 +5024,253 @@ document stands on its own, each with the reasoning it was given.
     expandGlob and mayVanish; a class closing past a `/` counts, since zsh globs it across the slash, and so do `[!]`
     and `[^]`, which zsh reads as a class of any one character), so a test after such a construct passes; an arm's
     pattern list of one-word alternatives with no redirection is read as words the shell expands, never as a command
-    (THE CASE PATTERN; its substitutions, arithmetic bodies and assigning expansions still count); behind nohup or
-    setsid a word the shell fills in is the command name (THE FILLED-IN COMMAND), except where its output goes through
-    `|` to another command, directly or through the closer of an enclosing group, subshell or compound
-    (`outputReachesPipe`). THE ROAD is restored behind any wrapper (the mechanism ruling, 2026-10-03, M1,
-    replacing the second and third verify rounds' T2-7 and T3-4, which had dropped it): a program run behind an external
-    wrapper cannot move this shell, but it can change the filesystem a later relative path walks (a symlink it makes),
-    so a relative write after the unread head is refused as a directory not known (AS3-cost-nohup-moves,
-    AS3-nohup-dd-moves, AS3-nohup-then-write, the symlink witness AS3-link-nohup-dd-rel and its env and filled twins).
-    That road is taken after a command named by a variable run in the foreground in this shell; THE UNHELD ROAD exempts
-    a member that pipes into another command, a backgrounded one and one in a subshell or a substitution, which the M3
-    follow-up below discloses. After the program of THE FILLED-IN COMMAND the road is taken wherever it runs:
-    backgrounded, piped, in a `( )` subshell or a backgrounded group, in a `$(..)`, a process substitution, a fresh
-    shell's text, a function body, flock's string, a coproc or a text run behind a chdir wrapper (THE FILESYSTEM ROAD,
-    the sixth verify round's tg-t6-1). Fork main refused those forms as an option nohup does not know, and the round
-    before allowed them while bash and zsh wrote the tracked report through the link. The road is one state every walk
-    of the command shares, re-applied wherever a saved directory state is restored (AS3-fs-*, the controls
-    AS3-ctl-fs-*). Each frame open when the road is taken is marked, the enclosing frames included, so the directory is
-    unknown after the outer close of a group or an if body inside a subshell, or of a subshell inside one (the seventh
-    verify round's tg-m7-3: AS3-fs-nohup-subshell-group, -subshell-if, -subshell-subshell, -group-bg-if). THE ROAD IN A
-    LOOP: a loop body that takes the road runs again after it, so each relative write judged in the body before the road
-    is refused as a directory not known, like the road's later writes (the seventh verify round's tg-m7-2,
-    AS3-fs-loop-*); a loop with no relative word, and one whose road sits in a function it defines and never calls, pass
-    (AS3-ctl-fs-loop-*). A
+    (THE CASE PATTERN; its substitutions, arithmetic bodies and assigning expansions still count). Item 3 is split out
+    (the after-source fixes' reading behind nohup and setsid is reverted here): behind nohup and setsid, as behind every
+    wrapper, a word the shell fills in refuses, the text saying it may be an option of the wrapper or the command the
+    wrapper runs and naming no spelling the guard cannot judge; the after-source fixes read such a word as the command
+    behind those two, and no rule found separates its motivating launch from a write without reading a value the guard
+    cannot read, so under M3 no fix of bug vi exists in this PR (the split-out follow-up at the end of this decision).
+    Such a word is the unknown-option refusal again, as at fork main: fork main's B2 poison follows it, and its operands
+    are judged in the shell's directory, not behind a chdir before the wrapper (two pre-existing allows this restores,
+    disclosed with the follow-ups below). THE ROAD is restored for the `--` spellings
+    a shell runs an external program through (the mechanism ruling, M1): `nohup -- "$c"` and `env -- "$c"` run a program in
+    a child that moves no directory of this shell but can make a symlink a later relative path goes through, so a relative
+    write after it is refused as a directory not known (AS3-nohup-dd-moves, the symlink witness AS3-link-nohup-dd-rel). M1
+    applies whole there (fork PR 975's round 1, A): the program runs in a child, which sets none of this shell's
+    positional
+    parameters (AS3-nohup-dd-positional-out) and moves none of its directories, so THE HELD DIRECTORY, the shell's own
+    directory, keeps its project in play for that relative write from any cwd (AS3-nohup-dd-held-out), through each
+    frame and text that saves and restores the directory: a subshell, a piped group, a function, a loop's or a group's
+    closer, an operand of a later command named by a variable, an eval's text, the program run in an eval's text and a
+    chdir wrapper's command (the reviewer's mut F2: AS3-nohup-dd-held-*-out, AS3-env-dd-held-*-out), save where the
+    program itself runs in a function call or a loop body (a follow-up below); after a cd through a value a command
+    named by a variable hid, $PWD and $OLDPWD are read as fork main read them (THE TWO WALKS below, the reviewer's t8-2:
+    AS5-read-through-pwd-out, AS5-read-through-oldpwd-out). A
     write by an ABSOLUTE path through such a link is judged as spelled, a stated precondition: the guard judges a lexical
     path, and a link an unread program makes, reached by an absolute path, is outside the model, the same way fork main
     allows it (AS3-residual-link-nohup-dd-abs). The relative write's own refusal leads there: its one remedy, the target
     spelled as an absolute path, turns AS3-link-nohup-dd-rel into that allowed row, which bash and zsh run onto the
     tracked report, so on this shape the remedy does not keep the write off a tracked file (the fifth verify round's
-    T5-9). M3's stopping rule leaves eight false allows fork main also allows as
-    disclosed follow-ups, not fixed here: an unread head that is not THE FILLED-IN COMMAND (a command named by a
+    T5-9). M3's stopping rule leaves eleven false allows fork main also allows as
+    disclosed follow-ups, not fixed here: an unread head (a command named by a
     variable with no wrapper, or behind `--`) takes no road where it is backgrounded, piped, in a `( )` subshell or in a
     `$(..)`, so a link it makes there is followed by a later relative write while allowed, and bash and zsh write the
     tracked report (AS3-residual-fs-plain-bg, AS3-residual-fs-plain-pipe, AS3-residual-fs-plain-subshell,
     AS3-residual-fs-plain-cmdsub, AS3-residual-fs-nohup-dd-bg, AS3-residual-fs-env-dd-bg, AS3-residual-fs-nohup-dd-pipe,
-    AS3-residual-fs-nohup-dd-subshell; the follow-up takes THE FILESYSTEM ROAD, above, for every unread head); a `--`
+    AS3-residual-fs-nohup-dd-subshell; the follow-up reads the road such a program takes wherever it runs, for every unread head); a `--`
     before a lead-bearing wrapper's lead reads the lead as the command
     (`timeout -- 5 cp a b` reads `5`, AS3-residual-timeout-dd-lead, and so for each wrapper the table gives a lead, one
     row each, which the rows test derives from the table: flock's lockfile, AS3-residual-flock-dd-lead; taskset's mask,
-    AS3-residual-taskset-dd-lead; chrt's priority, AS3-residual-chrt-dd-lead); a filled-in command behind an external
-    wrapper whose output is piped passes as the unwrapped form does (AS3-residual-nohup-dd-pipe,
-    AS3-residual-env-dd-pipe); a backup side-file run by its explicit path (`cp -b -S zz <prog> <dir>/x; <dir>/xzz ..`)
-    passes, since the guard binds no backup path and the backup narrowing below covers a bare name only
+    AS3-residual-taskset-dd-lead; chrt's priority, AS3-residual-chrt-dd-lead); a command named by a variable behind
+    `nohup --` or `env --` whose output is piped passes as the unwrapped form does (AS3-residual-nohup-dd-pipe,
+    AS3-residual-env-dd-pipe); where the program behind `nohup --` runs in a function call or a loop body, the body is
+    marked as moving the shell, so the call or the loop's close leaves the directory unknown with none held, and a
+    later relative write from a cwd in no project passes while bash and zsh write (the reviewer's t8-9:
+    AS3-residual-nohup-dd-func-held-out, AS3-residual-nohup-dd-loop-held-out; the follow-up holds the directory
+    through the body as THE HELD DIRECTORY holds it after the program); behind `env -C <absolute tracked dir>` before
+    `nohup "$c"`, the filled-in word's operands are judged in the shell's directory, so from a cwd in no project no
+    project is in play and the write passes (the reviewer's e10-3, AS3-residual-envC-abs-nohup-filled-out; the
+    follow-up judges the rest words behind the wrappers' chdirs, as the `time -o` judgment already does); after `nohup
+    "$c"` fork main's B2 poison makes a later variable read unreadable, so from a cwd in no project a target built
+    from a variable that lands on a tracked file is dropped (e10-3, AS3-residual-nohup-filled-poison-out; the
+    follow-up walks such a command again with that poison set aside, as THE TWO WALKS do for THE UNREAD HEAD's); a backup side-file
+    run by its explicit path (`cp -b -S zz <prog> <dir>/x; <dir>/xzz ..`)
+    passes, since the guard binds no backup path and the bare-name refusal below covers a bare name only
     (AS8-residual-backup-explicit-path; the follow-up binds the computed backup paths); and a file the command made
     from a source the guard does not read, run by its absolute path after a construct that leaves the directory
     unknown, passes, since the bound head is read only where the directory is known though an absolute one needs none
     (AS8-residual-bound-abs-after-cd; the follow-up reads an absolute head whatever the directory); a loop body is
     read once, so a relative write in it before a command that moves the shell or makes a link the next pass writes
     through is judged where the first pass stands, when that command is a literal cd, a literal ln or a command named
-    by a variable that is not THE FILLED-IN COMMAND (AS3-residual-loop-cd, AS3-residual-loop-ln,
-    AS3-residual-loop-plain; the follow-up reads the body again from the state its first walk leaves, as THE ROAD IN
-    A LOOP, above, does for the filled-in word: the seventh verify round's tg-m7-2); a text that another program runs
-    once per file or per input line (find's `-exec`, xargs) can run again after the road it takes, but THE ROAD IN A
-    LOOP reads only a shell's loops, so a relative write before THE FILLED-IN COMMAND in that text is judged where its
-    first run stands, and bash, zsh and dash write the tracked report on the second run, through the link the first
-    run made (AS3-residual-repeat-find-exec, AS3-residual-repeat-xargs; the follow-up reads such a text as THE ROAD IN
-    A LOOP reads a loop body); and a reserved word spelled
+    by a variable (AS3-residual-loop-cd, AS3-residual-loop-ln,
+    AS3-residual-loop-plain; the follow-up reads the body again from the state its first walk leaves: the seventh
+    verify round's tg-m7-2); the guard reads no text that another program runs once per file or per input line (find's
+    `-exec`, xargs), so a relative write in such a text before the program that makes a link passes, and bash, zsh and
+    dash write the tracked report on the second run, through the link the first run made
+    (AS3-residual-repeat-find-exec, AS3-residual-repeat-xargs; the follow-up reads such a text, and reads it again as
+    a loop body would be read); and a reserved word spelled
     partly quoted (`i'f'`) is read as the keyword, while the shells look it up as a command name through PATH
     (AS8-residual-partquoted-keyword; the follow-up reads a reserved word only where no character of it is quoted). THE
     NAMES stay readable when at least one wrapper before the head is an
     external program (it runs the head in a child process, which cannot assign this shell's names): a later variable
-    read, a `~/` write and a bare cd after `nohup "$c"` or `nohup -- "$c"` stay as they would without it, and so behind a
-    chain holding an external wrapper whatever else precedes it (`command nohup "$c"`, `nohup command "$c"`:
-    AS3-nohup-no-poison, AS3-nohup-dd-no-poison, AS3-chain-command-nohup-no-poison, AS3-chain-nohup-command-no-poison);
+    read, a `~/` write and a bare cd after `nohup -- "$c"` or `env -- "$c"` stay as they would without it, and so
+    behind a chain holding an external wrapper whatever else precedes it (`command nohup -- "$c"`, `nohup command --
+    "$c"`: AS3-nohup-dd-no-poison, AS3-env-dd-no-poison, AS3-chain-command-nohup-no-poison,
+    AS3-chain-nohup-command-no-poison);
     behind a wrapper the shell runs itself the names are poisoned (AS3-kept-*, one row per such wrapper). The road holds
     behind every wrapper of the table (AS3-road-*, one row per wrapper, which the rows test ties to the table: the
     wrappers the shell runs itself, and the external ones in the form that reaches an unread head, a lead-bearing one as
     `<wrapper> <lead> -- "$c"`, which the guard reads as the command named by a variable while the program runs a command
     named `--`, the refuse side; the sixth verify round's tg-m6-4; AS3-road-command-dd-cd-writes where bash's `command`
-    runs the builtin cd, so the later relative write lands on the tracked report) and behind each chain spelling (`command nohup "$c"`, `time
-    nohup "$c"`, `exec nohup "$c"`, `command nohup -- "$c"`: AS3-chain-*-road, with their names rows AS3-chain-*-no-poison,
-    and the link witness AS3-link-chain-command-nohup-rel). A bare command
-    name under a PATH the guard does not read is refused only where a bound path carries that name, or where a backup
-    option (`-b`, `--backup`, `-S`, `--suffix`) on cp, mv, install or ln made a side-file under a name the guard does not
-    follow (S4-3: AS8-backup-*, a row for each option parseCopyOptions reads, each verb COPY_OPT holds and each text the
-    command runs, eval, `bash -c` and a command substitution, and for each form the parser reads, derived from the
-    option's arity: a bare `--backup`, `--suffix` with its value a word of its own, `-S` with its value glued, `-b` and
-    `-S` after another letter of a cluster, the sixth verify round's tg-m6-1, and `-b` as the first letter of one, `cp -bf`,
-    the seventh's tg-m7-6). THE SHELL'S OWN NAME: a bare name that is a
+    runs the builtin cd, so the later relative write lands on the tracked report) and behind the chain spelling
+    `command nohup -- "$c"`, its reason naming the external wrapper the program runs behind, not the chain's first
+    wrapper (the reviewer's mut F8: AS3-chain-command-nohup-road, with its names row
+    AS3-chain-command-nohup-no-poison). A bare command name under a PATH the guard does not read is refused once the
+    command has bound a path, every such name, the directory known or not (AS8-builtin-gate-var-enable,
+    AS8-backup-after-cd): fork main's rule again (fork PR 975's round 1, item 8 as ruled, ROOT). The after-source fixes
+    had narrowed it to a name a bound or a made path carries, or any name after a backup option, because a mention of
+    PATH in a sed or grep pattern made PATH unreadable and every later bare name was refused (the session's `cp
+    a.service b.service; grep -c PATH b.service; echo done`); the narrowing let a file made under a name the binding
+    does not hold pass, and each repair of it was a list (THE MADE NAME's written paths, S4-3's backup options and THE
+    JUDGED PROGRAMS' writers outside the model, which the reviewer's uniq, gunzip, split, `shuf -o`, dd, busybox cp, a
+    copy of a source the guard does not read into a directory and a one-operand link of one walked around: AS8-made-*,
+    each written by the shells and refused now; S4-3's per-option rows went with the narrowing they pinned,
+    AS8-backup-cp kept). ROOT closes the class at its cause: a mention of a name in a word makes the name unreadable
+    only under a head that may assign a variable it is given in this shell (THE ASSIGNING HEAD), since a child process
+    cannot set this shell's variables, so a grep, a sed or an echo leaves PATH readable and a later program's name
+    passes (AS8-unit-*, AS8-cp-sed-path-ls, and AS8-cp-grep-path-collision, a copy named like that program; the
+    session's rows, whose later name is echo or printf, pass as THE SHELL'S OWN NAME's builtins either way:
+    AS8-cp-grep-path-echo, AS8-cp-echo-path-word, AS8-mv-grep-path-printf). Assignments, `${name=..}`, eval, source,
+    `.`, a call of a function the command defines, a wrapped head, a head the guard does not read (an expansion, or a
+    pattern, which a file named `read` in the cwd turns into the builtin), an alias or a function the command defines,
+    and any head once the command may turn a builtin on keep tainting (AS8-root-print-v, AS8-root-getln,
+    AS8-root-unread-head, AS8-root-glob-head). A head may also be a function when it runs though the walk has not seen
+    it defined there: a definition later in the text that a loop's next pass or a body called after it runs first, zsh's
+    `autoload` and `functions -c`, a `.` through a command named by a variable. So THE ASSIGNING HEAD's function clause:
+    a command that let a mention pass under a head and defines a function of that name anywhere in it, or may define any
+    function (a poison an eval, a source, xargs or a command named by a variable takes, or a word of FUNCTION_SOURCES,
+    derived from the table as the entries whose reason says what they run may assign any name: eval, source, `.`, trap,
+    emulate, fc, r, sched, compgen, zle, zstyle and jobs, and autoload and functions, which define one), is walked
+    again with every mention a write, fork main's rule. Each such command the gate alone allowed while the shells wrote, where fork
+    main refused it (AS8-root-func-later-loop, AS8-root-func-later-keyword, AS8-root-func-later-body,
+    AS8-root-func-later-echo, AS8-root-func-zsh-autoload, AS8-root-func-zsh-functions-c), and the unread head's fork
+    main allowed too, its PATH refusal skipping an unknown directory (AS8-root-func-unread-head-loop); a call of a
+    function the command defines after its definition runs a body the walk read, so it counts for nothing
+    (AS8-ctl-func-call-unrelated). An alias operand whose `=` an expansion may hold (`alias $n`) binds a name the guard
+    does not read, refused at every later command name as an alias whose name it cannot read already was
+    (AS8-root-alias-unread-operand, which the gate alone allowed while dash ran it; AS8-alias-unread-operand-cp, which
+    fork main allowed while dash copied through it), a cost where the operand only prints
+    (AS8-cost-alias-unread-operand). An assignment-shaped word under a program still taints, a stated cost on the
+    restricted side (AS8-cost-mention-assignment-shaped); rule (a), a mention of HOME, PWD or OLDPWD anywhere in the
+    command, is unchanged. THE CENSUS behind it: SHELL_WORD_ASSIGNS classifies every builtin and reserved word of bash,
+    of zsh with every installed module loaded and of dash (187 words on the box it was derived on), each with its
+    reason, and MENTION_TAINT_HEADS, the set the mention rule reads, is derived from it; the census test (THE ASSIGNING
+    HEAD's census) asks each shell present for its words (bash's `compgen -b` and `compgen -k`; zsh's `builtins` and
+    `reswords` after loading the modules, so zparseopts, vared and `print -v` are in it; dash's `type` over a candidate
+    universe holding every identifier in its binary), checks a shell absent on the runner against SHELL_WORDS_DERIVED,
+    the lists derived on that box, and reds on a word the table does not classify. A census that checks only that each
+    word is classified cannot see a word classified wrong, and some were (the completeness check on the item 8 pass found bash's `test -v`,
+    which evaluates an array element's subscript as arithmetic, bash's `jobs -x`, which runs its command in this shell,
+    and zsh's break and continue, whose operand zsh evaluates as arithmetic; the gap pass's own audit found zsh's
+    return, exit, logout, bye and sysseek beside them, and `[[`'s arithmetic comparisons and zsh's repeat count among
+    the reserved words). Under four of them, bash's `test -v` and `jobs -x` and zsh's break and continue, a mention
+    passed while the shells wrote, where fork main refused it (AS8-root-test-v-path, AS8-root-test-v,
+    AS8-root-jobs-x-read-path, AS8-root-jobs-x-read, AS8-root-jobs-x-eval-func, AS8-root-zsh-continue-path,
+    AS8-root-zsh-continue, AS8-root-zsh-break). The other seven, and `[` beside `test`, rest on the census's
+    behavioural leg, which pins them only where the shell is present (zsh's words where zsh is, `[` and `[[` in bash
+    too), and no shape found a write through them at the build before the gap pass: other rules refused first (`[`'s
+    and `[[`'s `-v` and comparisons, a return in a called function, sysseek), no shell wrote (a return, an exit and a bye
+    in a try block), or fork main allowed the write too (zsh's repeat count, AS8-residual-assign-zsh-repeat, and a
+    logout in a try block closed with no `;`, the AS8-residual-zsh-always-* shape). compset moved to the completion
+    group by reasoning alone, and nothing pins it. Each is on the may-assign side now, jobs a
+    word of FUNCTION_SOURCES too, since what it runs may define a function (of the 187 words, 86 may assign a variable
+    they are given and 101 assign none), and the census has a behavioural leg: every word the table calls assign-none
+    that a shell present runs as a builtin is run in that shell under nine operand shapes that assign a name if the word
+    evaluates an operand as arithmetic or as a subscript, or runs a command its operands give, and a word under which
+    the name changed reds. It runs live only, so CI asks bash alone; six words are not run for what running them does
+    (kill, suspend, clone, ztcp, zftp, zsocket), and the gap pass asked them by hand with operands that do nothing; the
+    reserved words `[[` and repeat, which take a grammar of their own, are asked with one arithmetic operand each; and
+    it is a sample of operand shapes, not a proof. THE OLDER ARITHMETIC: bash's and zsh's `$[ ... ]` is `$(( ... ))`
+    spelled the old way, arithmetic run in this shell, which the guard read as a dollar and text, so a name in it was a
+    mention the gate let pass under a program (`ls $[PATH=0]` before a copied cp run by its bare name copied in bash and
+    zsh, where fork main refused it). It is read as an arithmetic expansion now, bare, double-quoted and in a
+    here-document body, its names writes under any head and its substitutions read as commands
+    (AS8-root-old-arith-path-ls, AS8-root-old-arith-path-echo, AS8-root-old-arith-path-dq, AS8-root-old-arith-echo,
+    AS8-root-old-arith-cat, AS8-root-old-arith-grep-dq, AS8-root-old-arith-brace, and AS8-root-old-arith-herestring,
+    which fork main allowed too; the controls AS8-ctl-old-arith-sub and AS8-ctl-old-arith-plain). dash reads it as a
+    dollar and text, as fork main did, and the arithmetic reading alone is not the safe side for that: a word the guard
+    does not read passes from a cwd in no project, so a write target that climbs from a `$[ .. ]` into a project
+    (`mkdir -p 0; echo y > $[0]/../../<project>/docs/report.md`) was allowed from such a cwd while bash and zsh wrote
+    through the folder its number names, where fork main judged the word by its spelling and refused (the text lens's
+    tg-t12-1); dash writes through such a target where a folder named `$[0]` exists
+    (AS8-root-old-arith-text-dash-out). THE OLDER ARITHMETIC's two readings close that by construction, as THE TWO
+    WALKS close the poison class: a command whose walk met a `$[`, in its own text or in a text it hands over, is
+    judged with `$[` read as arithmetic, a name in it a write, as bash and zsh run it, and again with `$[` read as a
+    dollar and text, the word judged by its spelling, as dash runs it and fork main read it, and a refusal of either
+    reading is the verdict, so reading `$[` as arithmetic cannot allow a command the guard refuses with `$[` read as
+    fork main read it (AS8-root-old-arith-text-lead-out, AS8-root-old-arith-text-dash-out,
+    AS8-root-old-arith-text-dq-out, AS8-root-old-arith-text-sum-out, AS8-root-old-arith-text-eval-out, each allowed
+    before the second reading; a `$[` in a text bash runs with `-c`, read under bash's grammar,
+    AS8-root-old-arith-text-bash-c-out, and one after a command named by a variable, which only the second reading's
+    walk with that head's poison set aside refuses, AS8-root-old-arith-text-two-walks-out, each allowed where the
+    second reading leaves out that grammar or that walk (the text lens's tg-t13-1 and tg-t13-2); the control
+    AS8-ctl-old-arith-text-target-out, a `$[` in a target outside every project, which both readings allow). The
+    arithmetic reading has a stated cost, on the restricted side: a double-quoted `$[ ... ]` inside a target from a
+    tracked cwd is a word the guard does not read, refused as not literal, where fork main read it as text and allowed
+    it, and no shell writes a tracked file (`echo y > "scratch/n$[1+1].md"`, AS8-cost-old-arith-dq-target; fork main
+    refuses the unquoted spelling too). Pre-existing and disclosed (M3: fork main allows each while bash and zsh
+    write): a `$[` whose bracket holds a parenthesis or opens with a space, in a target that climbs from a cwd in no
+    project into a project (`mkdir -p 0; echo y > $[(0)]/../../<project>/docs/report.md`, and `$[ 0 ]` in its place).
+    Read as arithmetic it is a word the guard does not read, which passes from such a cwd as `$((0))` does there, at
+    fork main and here (B2's boundary); read as text the target ends at the parenthesis or the space, a file named `$[`
+    in the cwd, so neither reading refuses it (AS8-residual-old-arith-paren-out, AS8-residual-old-arith-space-out; the
+    shell lens on fork PR 975's round 1). The follow-up keeps the bracket's text, to its matching `]`, in the target
+    under the second reading, judged by its spelling as `$[0]` is.
+    A defect fork main has for `$((`, which reading `$[` as arithmetic extends to `$[`, is disclosed: in an unquoted
+    here-document body an arithmetic expansion the guard does not read is held in the word as a placeholder, which
+    reaches the check of the directory the path passes through, so the refusal names the path with a blank where the
+    expansion stood and an error of the check's own (ERR_INVALID_ARG_VALUE), and its remedy, to make that directory
+    readable, does not lift it; for `$[` this refuses a here-document fed to bash that writes through `$[0]` into a
+    folder outside every project, which fork main allowed and where no shell writes a tracked file (the fixer's
+    concern on fork PR 975's round 1). The follow-up reads the placeholder as the expansion it stands for before any
+    path is checked, so a refusal that stands names the word as written and a remedy that lifts it.
+    Pre-existing and disclosed (M3: fork main allows each while a shell writes): a name assigned inside a parameter expansion the guard does not read, by an array
+    subscript, a substring offset, an arithmetic expansion in an operator's word, zsh's `(P)` flag with `::=`, a glob
+    qualifier's code or the `(e)` flag's text (AS8-residual-assign-subscript, AS8-residual-assign-offset,
+    AS8-residual-assign-default-arith, AS8-residual-assign-default-old-arith, AS8-residual-assign-zsh-indirect,
+    AS8-residual-assign-zsh-glob-qualifier, AS8-residual-assign-zsh-e-flag); zsh's repeat count, which the walk reads as
+    no word of a command (AS8-residual-assign-zsh-repeat); the command bash's `jobs -x` runs, which the walk does not
+    peel as a wrapper (AS8-residual-jobs-x-cp); and a trap's action, read where the trap is set while it runs where it
+    fires, after an exit whose status assigns the name it writes through (AS8-residual-assign-zsh-exit-trap); and zsh's
+    try block closed at a `}` with no `;` before `always` (`{ cmd } always { .. }`), whose `}`, `always` and `{` the
+    lexer reads as words of the command inside, so an assignment, a `read` and a cd in the block do not count
+    (AS8-residual-zsh-always-read, AS8-residual-zsh-always-assign, AS8-residual-zsh-always-cd-out; the text lens's
+    tg-t12-9; the control AS8-ctl-zsh-always-semicolon, closed with `;`, refused as at fork main; the follow-up reads
+    that `}` as the group's close where `always` follows). A name
+    outside the table is no builtin of the three shells, so a program, which assigns nothing in this shell; a
+    function or an alias the environment exports is outside the model, as it is for every writer. Pre-existing and
+    disclosed (M3: fork main allows each while the shells write): PATH set inside a call of a function the command
+    defines or an eval's text, or through zsh's `path` array, which zsh ties to PATH (the array assigned, assigned
+    keeping `$path`, appended to with `+=`, an element assigned, read with `read -A path`, or reached by the `(P)` flag
+    with `::=` through a name holding PATH: the sound lens's tg-r12-1), is read as the PATH the command gave, the
+    guard's own, so a copied command run by its bare name passes (AS8-residual-path-func-call, AS8-residual-path-eval,
+    AS8-residual-path-zsh-array, AS8-residual-path-zsh-array-keep, AS8-residual-path-zsh-array-append,
+    AS8-residual-path-zsh-array-element, AS8-residual-path-zsh-read-A, AS8-residual-path-zsh-indirect; the follow-up
+    reads PATH as unreadable once the command is poisoned or names `path`).
+    What the restored refusal leaves in place: a cp, mv, install, ln or ln -s of two operands binds the file it makes,
+    DIR/<the source's name> under a directory, the destination as spelled under `-T` or onto a file, and both where the
+    destination's kind is not known (fork PR 975's round 1, C), and a one-operand ln binds ./<the source's name> (the
+    reviewer's t8-3, closing shell F2); both serve where the refusal does not reach, a PATH the guard reads, whose
+    directories are searched for a bound path of the name (AS8-into-dir-readable-path, AS8-made-one-op-ln-readable-path,
+    each allowed at fork main while every shell wrote), and a cwd in no project, where a bound path of the name is
+    spliced and its operands judged; and `.` and `source` look a name with no slash up the same way, so such a name as
+    their operand is refused, every name, with no remedy (THE SOURCED NAME): a `.` this shell runs whose file is not
+    read is refused itself, its exemption withdrawn by THE SHELL'S GATE, so a full path for the file lifts only a piped
+    or backgrounded `.`, where this refusal is the one that holds (AS8-sourced-dot-piped, AS8-sourced-dot; `source`, no
+    builtin of dash, is refused as a bare name first, as at fork main: AS8-sourced-source). Once the command may turn a
+    builtin off every builtin and keyword of it is refused, as at fork main, and a gate word spelled out after the PATH
+    is set is refused itself (`enable`, `disable` and `zmodload` are no builtins of dash), so THE SHELL'S GATE's rows
+    are refused first at the gate word or the loop's keyword, and the gate is pinned where its own word is not refused:
+    before the PATH is set (AS8-builtin-gate-before-path, and the ANSI-C spelling the scan does not read,
+    AS8-builtin-gate-ansic-before-path) and through a command name read from a file with `$(< file)`, which runs no
+    program (AS8-builtin-gate-while, AS8-builtin-gate-until, AS8-builtin-gate-unread-head-loop,
+    AS8-builtin-gate-unread-trap). M2's no-remedy form now covers a builtin or a reserved word of any of the three
+    shells with no program of its name on the guard's PATH, not only of all three, and a call of a function the command
+    defines, since the blanket refusal meets `enable`, `source`, keywords and functions; a function definition's own
+    name is no lookup and passes (AS8-ctl-function-definition), where fork main refused it. The stated costs, each a
+    cost row on which no shell writes: four are fork main's own refusals the narrowing had lifted, a bare name no made
+    file carries after a copy onto a file, after a `-T` copy, after a copy with no backup option, and under a PATH set
+    to a value the guard does not read (AS8-cost-into-file, AS8-cost-into-dir-T, AS8-cost-backup-none,
+    AS8-cost-unread-path-other-name), and so is a call of a function the command defines (AS8-cost-function-call);
+    another program's name after a one-operand link (AS8-cost-one-op-ln-s-other-name) is a refusal fork main does not
+    make, since fork main bound nothing for one operand and allowed every later name, the link's own name among them
+    while every shell ran it (AS8-made-one-op-ln-s-alone). The rows test runs the shell legs of these rows and of THE
+    ASSIGNING HEAD's witness rows where a name the command makes, binds or expects no shell to find stands for what the
+    runner has (THE MADE NAME's legs: a copy by the program it copies); the legs of AS8-cost-backup-none,
+    AS8-cost-unread-path-other-name and AS8-cost-function-call, whose PATH entry is an expansion the test's reader does
+    not follow, and of AS8-root-global-alias, whose global alias it does not read, do not run, and their writers rest on
+    the probes.
+    THE SHELL'S OWN NAME: a bare name that is a
     builtin or a keyword in bash, zsh and dash alike (ALL_SHELL_BUILTINS) runs before any lookup through PATH, so neither
     refusal applies to it as the name the shell itself looks up (the sixth verify round's tg-t6-3: `cd` and `export`
     after a backup were refused, and the full-path remedy names no program for them). The set is exactly the
@@ -5112,9 +5291,17 @@ document stands on its own, each with the reasoning it was given.
     it meets one in a spelling that scan does not read, such as an ANSI-C quote, or meets a text or a command name it
     does not read run in this shell; each exemption given before that point is then withdrawn and its refusal recorded
     (gateBuiltins). Stated costs, on the restricted side: a mention no shell runs turns the exemption off too
-    (AS8-builtin-gate-mention-cost); a quoted builtin's name stays refused after a backup (AS8-builtin-quoted-echo-cost);
-    and a builtin's name behind `command`, `builtin`, `time` or `exec` stays refused after a backup (zsh's `command` and
-    dash's `time` look the name up through PATH), with a full-path remedy that names no program for cd or export. THE REMEDIES each name ONE that always lifts the refusal (M2,
+    (AS8-builtin-gate-mention-cost); and a quoted builtin's name stays refused after a backup (AS8-builtin-quoted-echo-cost).
+    A builtin's name behind a wrapper some shell runs itself stays refused after a backup: zsh's `command`, dash's
+    `time` and bash's `exec` look the name up through PATH, and dash looks `builtin` itself up there, as bash and dash
+    do zsh's `noglob`, `nocorrect` and `-`. Its one remedy is those words dropped, with the options the table parses
+    for them named whole (`command -p`, `time -p`, `exec -a NAME`), which leaves the shell's own lookup (THE WRAPPER
+    DROPPED, fork PR 975's round 1 pass and the reviewer's t8-4: the full path the refusal had named is no program for
+    cd, export or ulimit; the words are DROP_WRAPPERS, derived from WRAPPER_OPT's entries without the `external` mark;
+    AS8-drop-*, AS8-builtin-exec-echo, AS8-builtin-command-echo). Where no wrapper can be dropped and no program of
+    that name is on the guard's PATH, a bare `cd` after a backup behind an external `env` or after a gate the scan
+    sees, the refusal names no remedy, M2's no-remedy form (the reviewer's t8-10: AS8-drop-noremedy-env-cd,
+    AS8-drop-noremedy-gate-cd). THE REMEDIES each name ONE that always lifts the refusal (M2,
     replacing the context-specific remedies of the rounds before, which did not lift where another construct stood around
     the command): a command name that is a pattern in a directory not known asks for the name without a pattern after a
     cd to a literal absolute directory that exists, as a command of its own (not after `&&`), after the last command that
@@ -5142,7 +5329,9 @@ document stands on its own, each with the reasoning it was given.
     AS3-option-unheld-*); a not-literal target asks for the path spelled out as an absolute path, and so does a `~/` or
     `$HOME/` write where HOME cannot be read (T5-13), while one inside `[[ ... ]]` asks for the comparison written with
     `expr`, which bash, zsh and dash run alike (the sixth verify round's tg-t6-4, AS7-compare-notlit); a bound command name asks for the full path of the program it should run, not a path this
-    command made; a text the guard could not establish asks for the text spelled out. A command named by a variable
+    command made, and the shell's own name behind precommand words for those words dropped, while a sourced name asks
+    for nothing (a full path for the file lifts only a piped or backgrounded `.`, THE SOURCED NAME above); a text the
+    guard could not establish asks for the text spelled out. A command named by a variable
     whose operand is a tracked file is refused with track-edit alone: spelling the command out lifts that refusal only
     where the command merely reads the file, so it is no remedy that always lifts (T5-6; a cost the sixth verify round
     accepted: a command named by a variable that only reads a tracked operand gets no hint that spelling it out lets it
@@ -5164,14 +5353,49 @@ document stands on its own, each with the reasoning it was given.
     the table's chdir options: the second option of one invocation, a directory the command cannot enter, one the guard
     cannot resolve; the fifth verify round's tg-m5-7 and the sixth's tg-m6-5).
     THE COSTS, from a tracked cwd, after a command named by a variable with no external wrapper before it (inside a
-    subshell too, as `(source f)` already was: AS5-cost-subshell), as after a source: a later variable read
+    subshell until its close, since a subshell's names do not come back, and never from the body of a function the command
+    defines and does not call: fork PR 975's round 1, B, AS5-subshell-no-poison, AS5-subshell-bg-no-poison,
+    AS5-uncalled-no-poison, AS5-subshell-poison-inside), as after a source: a later variable read
     (AS5-cost-var), a `~/` or `$HOME/` write (AS5-cost-home), a relative write after a bare `cd` (AS5-cost-cd) and a `~/`
     command name while the command has bound a path (AS5-cost-home-head) are refused. The remedy is the path spelled out
     as an absolute path, the home directory spelled out for a `~/` or `$HOME/` write, and for the `~/` command name the
     command the binding stands for with its paths absolute (M2's one remedy each; the literal-path,
     `&` and literal-value remedies the rounds before offered, which did not lift where a later construct blocked the read,
-    are gone). From a cwd in no project all of them stay allowed. Also: a lone `[` operand of such a command after a
-    directory not known is refused (AS1-side-lone-bracket). The NAMES are kept readable when at least one external
+    are gone). From a cwd in no project all of them stay allowed where fork main's reading of the names allows them too.
+    THE TWO WALKS (fork PR 975's round 1, item 8 as ruled, DUAL): a command that met such a head and was allowed is
+    walked a second time with that one poison set aside, every name read as fork main read it and everything else
+    unchanged, and any refusal of the second walk is the verdict, so this class cannot allow what fork main refuses: a
+    target, a `~/` path, a cd's directory, a `sed -i`, an operand of a second command named by a variable, and `$PWD`
+    and `$OLDPWD` after a cd through the hidden value (AS5-read-through-*); and after that cd a value made by a
+    substitution, a pattern, an operand and `$PWD` in a fresh shell, a copy into the value's directory, a `sed -i` on a
+    pattern there and a head inside a substitution (AS5-dual-*: the reviewer's m10-3, m10-6 and m10-7, and the E5 and
+    E10 shapes; the control AS5-dual-ctl-untracked-held-out). It replaces the read-through, which read a word as fork
+    main read it at named sites and kept meeting roads its sites did not reach; the reviewer's t8-2, a census of the
+    names the read-through read, is moot with it. On the 498 rows the rows test had when DUAL was ruled, the second walk
+    ran on 115 of their 929 (row, cwd) pairs, about 2.6 ms more for such a command as a process (a sample measurement
+    of that population, not of the rows today). THE TWO WALKS' B2 DISCLOSURE (M3): the second walk applies a cd's own
+    block and enterable rules as fork main does, where the read-through had held the hidden value's directory before
+    them, so 13 hidden-value cd shapes the pass before refused are allowed, as fork main allows them (the shapes probed
+    for the ruling, B1 to B11, L1 and L2). On 3 that refusal was false, no shell writing a tracked file: B3 (`cd "$X" |
+    cat`), B4 (`cd "$X" & wait`) and B8 (`pushd -n "$X"`), each now an allowed row on which no shell writes
+    (AS5-dual-ctl-cd-pipe-out, AS5-dual-ctl-cd-bg-out, AS5-dual-ctl-pushd-n-out). On 10 fork main allows the write while
+    bash and zsh write it (bash alone for B6), the pre-existing B2 boundary, a relative write after a cd the guard does
+    not follow allowed from a cwd in no project, as the same cd with no head before it shows at fork main and at this
+    change; each maps to the witness row of its construct: B1, a cd after `&&` (AS5-residual-hidden-cd-and-out); B2,
+    after `||` (AS5-residual-hidden-cd-or-out); B5, in a conditional group (AS5-residual-hidden-cd-cond-group-out); B6,
+    `command cd` (AS5-residual-hidden-cd-command-out); B7, `builtin cd` (AS5-residual-hidden-cd-builtin-out); B9 and L1,
+    `cd -P` (AS5-residual-hidden-cd-P-out); B10 and L2, a cd to a link the command made
+    (AS5-residual-hidden-cd-made-link-out); B11, `time cd` (AS5-residual-hidden-cd-time-out). SHELL F3, pre-existing
+    (M3: fork main allows each, and so does its reading in the second walk, while bash and zsh write): from a cwd in no
+    project, a write through a value the command gave after a call of a function holding the head
+    (AS5-residual-f3-func-holds-head-out), an eval after the head (AS5-residual-f3-eval-after-out), a call of a function
+    after the head (AS5-residual-f3-func-call-after-out) and a `.` of a file after the head
+    (AS5-residual-f3-dot-after-out); and `$OLDPWD` in an eval's text (the reviewer's m06,
+    AS5-residual-oldpwd-in-eval-out), after a cd in an eval's text, a sourced text or a called function (m07:
+    AS5-residual-oldpwd-after-eval-cd-out, AS5-residual-oldpwd-after-sourced-cd-out,
+    AS5-residual-oldpwd-after-func-cd-out) and in a fresh shell (AS5-residual-fresh-oldpwd-out); the follow-up reads the
+    names those constructs hide as the second walk reads THE UNREAD HEAD's. Also: a lone `[` operand of such a command
+    after a directory not known is refused (AS1-side-lone-bracket). The NAMES are kept readable when at least one external
     wrapper precedes the head (M1; the ROAD above is restored whatever the wrapper), so these costs hold behind a chain
     the shell runs itself (`command`, `builtin`, `exec`, `time` and zsh's precommand modifiers, a builtin, a keyword or a
     precommand modifier in one of the three shells: AS3-kept-*, one row per such wrapper) and not behind a chain holding
@@ -5179,28 +5403,14 @@ document stands on its own, each with the reasoning it was given.
     One cost of the `time -o` judgment: the guard does not order time's option against a later chdir, so a relative
     file before `env -C <tracked dir>` is judged in both directories and refused by name, though time writes it in the
     shell's directory (`command time -o report.md env -C <project>/docs flock -c 'true' <lock>` from a cwd in no
-    project, AS3-cost-time-o-over-count; the main road over-counts so by design). The corpus records four of the costs as cost rows with their
-    remedies (a variable read, a `~/` write, a bare `cd`, the subshell form) and five ordinary rows for the shapes these
-    fixes unblock (`nohup` and `setsid` before a command named by a variable, a test and a case pattern after a
-    `source`, a copy beside a mention of PATH). THE RESIDUALS, each pinned in the after-source rows test of
+    project, AS3-cost-time-o-over-count; the main road over-counts so by design). The corpus records three of the costs as cost rows with their
+    remedies (a variable read, a `~/` write, a bare `cd`; the subshell form, a cost until fork PR 975's round 1, is an
+    ordinary
+    row) and three ordinary rows for the shapes these
+    fixes unblock (a test and a case pattern after a `source`, a copy beside a mention of PATH; the `nohup` and `setsid`
+    before a command named by a variable are refused again since item 3 was split out, the follow-up below). THE RESIDUALS, each pinned in the after-source rows test of
     `tools/romp-track-bash-guard.test.mjs` with the verdict it has (allowed, with the shells that write, where a write
-    gets through; AS2-residual-paren refused, a false refusal) and each named here by id, which that test checks:
-    behind nohup or setsid a filled-in word has the
-    reach of a command named by a variable, so every form allowed without the wrapper is allowed with it, a filled-in
-    shell reading its script from `-c` (AS3-residual-nohup-c, AS3-residual-setsid-c, AS3-residual-nohup-env-sh-c), from
-    a file (AS3-residual-nohup-file-script), from a pipe as its last member (AS3-residual-nohup-pipe-in,
-    AS3-residual-nohup-pipe-last-c), from a here-document, a here-string or `<` (AS3-residual-nohup-heredoc,
-    AS3-residual-nohup-herestring, AS3-residual-nohup-stdin-file), its output read through a process substitution, a
-    command substitution or a file another command runs (AS3-residual-nohup-procsub, AS3-residual-nohup-cmdsub-eval,
-    AS3-residual-setsid-cmdsub-eval, AS3-residual-nohup-herestring-feed, AS3-residual-nohup-redirect-then-run), written
-    into a process substitution that runs it (AS3-residual-nohup-procsub-out), piped from a place the walk reading the
-    command does not see, a function body whose call's output is piped (AS3-residual-nohup-func-pipe: the body is read
-    where it is defined) or a `bash -c` script whose command's output is piped (AS3-residual-nohup-bashc-pipe: the
-    script is read on its own), taken by a command substitution through a group around it
-    (AS3-residual-nohup-cmdsub-group), or read from a coprocess (AS3-residual-nohup-coproc); each unwrapped twin passes
-    at fork main. Only a `|` the output reaches, directly or through an enclosing
-    group, subshell or compound, keeps the refusal (AS3-nohup-pipe, AS3-setsid-pipe, AS3-nohup-group-pipe,
-    AS3-nohup-subshell-pipe, AS3-nohup-if-pipe, AS3-setsid-group-pipe). The parenthesized case pattern `(a|b)`, bash's
+    gets through; AS2-residual-paren refused, a false refusal) and each named here by id, which that test checks. The parenthesized case pattern `(a|b)`, bash's
     extglob and zsh's nested patterns are not read as patterns (the lexer ends a segment at `;;` as at `;`), so after
     such a construct an arm is refused when an alternative holds `*`, `?` or `[...]` (AS2-residual-paren, a false
     refusal; drop the leading `(` or cd after the construct) and passes otherwise (AS2-residual-paren-plain); bash's extglob
@@ -5215,6 +5425,21 @@ document stands on its own, each with the reasoning it was given.
     repor[t/x].md` and `cp ../base/report.md repor[!].md` from docs/, and a `./[!]` command name:
     AS1-residual-zsh-class-across-slash, AS1-residual-zsh-neg-class-target, AS1-residual-zsh-caret-class-target,
     AS1-residual-zsh-neg-class-head).
+    SPLIT-OUT FOLLOW-UP (item 3, bug vi): a non-literal word behind nohup or setsid, a launch like `nohup "$PY"
+    tools/train.py --out <out>/run &` from a tracked cwd, is refused again, the cost fork main also pays; the
+    after-source fixes read such a word as the command it runs, and four passes on fork PR 975 found no rule that
+    separates that launch from a write without reading a value the guard cannot read, so under M3 no fix of it exists
+    in this PR. The refusal names no workaround spelling: the guard reads no value the word stands for, nor a script a
+    command runs from a file, so the forms that pass are each a command the guard does not judge either, and naming
+    one would route an agent around the guard. Fork main allows the same write by four spellings from the tracked cwd,
+    each with a script outside the command that copies over a tracked file (`w2`), pre-existing allows disclosed with
+    a witness row each: `read x <<< sh` then `"$x" w2` (AS3-residual-script-var-w2), `nohup -- "$x" w2`
+    (AS3-residual-script-nohup-dd-var-w2), `sh w2` (AS3-residual-script-sh-w2) and `nohup sh w2`
+    (AS3-residual-script-nohup-sh-w2). The filled refusal's one remedy, the word spelled out as the option or the
+    command it stands for, can lead to the last of them where the word stands for an interpreter given a script
+    operand (`nohup "$x" w2` spelled out is `nohup sh w2`), the same unread script, which that witness row pins. The
+    follow-up, which starts from a design note, is tracked outside this repo; the witness rows are in the after-source
+    rows test.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

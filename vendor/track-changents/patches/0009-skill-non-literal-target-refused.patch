@@ -112,12 +112,20 @@
 # the filled-in word's piped remedy asks for (no redirection and no group, subshell or compound around the command), and
 # gives the comparison inside `[[ ]]` its one remedy, `expr`. Their seventh verify round (2026-10-05) says an abbreviation
 # of a wrapper option the guard refuses outright (`env --split`) is refused as that option, never with the long form as its
-# remedy. The diff below is regenerated from the vendored tree.
+# remedy.
+# Fork PR 975 (2026-10-05) splits the reading behind nohup or setsid out (no rule found separates a launch from a write
+# without reading the word's value; plans/file-review.md, decision 47's follow-up): behind nohup or setsid, as behind
+# every wrapper, a word the shell fills in is refused as the wrapper option the guard does not read, so the first clause
+# says so and loses "wherever it runs"; the opaque-name clause says a subshell's close ends the reach of a command named
+# by a variable, whose names do not come back there; and the paragraph adds, in general terms, that a command holding
+# such a command is judged again with every name read as if that command assigned none, and refused where that second
+# judgment refuses (the two walks, which replaced a reading through at named sites). The diff below is regenerated from
+# the vendored tree.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..03ff7e2 100644
+index f7d8bc9..232cd00 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,251 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+@@ -59,6 +59,252 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -178,17 +186,14 @@ index f7d8bc9..03ff7e2 100644
 +option or the command it stands for, and where its output goes through
 +`|` put the command directly before it, with no redirection and no group, subshell
 +or compound around it; behind
-+`nohup` or `setsid`, whose options take no value, a non-literal word is read as the
-+command name, and its operands are judged as for a command named by a variable,
-+unless its output goes through `|` to another command, directly or through an
-+enclosing group, subshell or compound; a command named by a variable keeps its names
++`nohup` or `setsid`, as behind every wrapper, a word the shell fills in is refused
++as the wrapper option the guard does not read; a command named by a variable keeps its names
 +readable when an external program wrapper (`nohup`, `setsid`, `env`, `nice` and the
 +like, not a shell builtin) precedes it, since it then runs in a child process that
 +cannot set this shell's variables, while the directory is judged unknown after it all
 +the same, so a later relative write is refused after such a command run in the
 +foreground in this shell (not backgrounded, not before a `|`, and not in a subshell
-+or a substitution), and after the word behind `nohup` or `setsid` wherever
-+it runs), a glued `env
++or a substitution)), a glued `env
 +-Cdocs` is a chdir,
 +a nested `env -C a env -C b` enters a then b, `env -S` is refused outright and so
 +are sudo's `-e`, `-i`, `-s`, `-R` and `-h`, and `time -o FILE` writes FILE; an `ln
@@ -253,10 +258,14 @@ index f7d8bc9..03ff7e2 100644
 +literal, the reason naming the mention); what stays opaque (a name the command
 +never sets, one set in a body, after `&&`, in a subshell, by a `read`, a loop,
 +an eval, a sourced file or a function call, after a command named by a variable
-+with no external program wrapper before it, a `$(...)`) keeps
++with no external program wrapper before it (to the close of a subshell it stands
++in), a `$(...)`) keeps
 +the verdict the
 +working directory gives it, refused as not literal from a cwd in a tracked
-+project and allowed from a cwd in no project. The principle: a guard is
++project and allowed from a cwd in no project, while a command holding a command
++named by a variable is judged again with every name read as if that command
++assigned none, and is refused where that second judgment refuses. The
++principle: a guard is
 +strictest where its subject is and loosest where its subject is not; this
 +guard's subject is tracked files inside projects, and from a cwd in no project
 +it must not refuse on a value it cannot know (a user in a scratch directory
