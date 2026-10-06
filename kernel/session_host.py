@@ -539,9 +539,9 @@ def _opens_turn(obj: dict) -> bool:
 
 
 # The tags that open a local command's output (a /model switch's confirmation, a typed /cost's answer). The CLI writes every
-# such output with the tag first. Its readers of that output differ: the one that picks the rows its headless path echoes
-# matches either tag anywhere in the text, and others test the start. The test here anchors on how the CLI writes the
-# output, so a free-text row that quotes a tag past the start is never taken for an echo. The kernel's twin is
+# such output with the tag first. Its readers of that output differ: several match either tag anywhere in the text, the one
+# that picks the rows its headless path echoes among them, and others test the start. The test here anchors on how the CLI
+# writes the output, so a free-text row that quotes a tag past the start is never taken for an echo. The kernel's twin is
 # sdk_backend.LOCAL_COMMAND_TAGS, for the same test on the parsed message.
 LOCAL_COMMAND_TAGS = ("<local-command-stdout>", "<local-command-stderr>")
 
@@ -557,14 +557,17 @@ def _cli_echo(obj: dict) -> bool:
     but not in 2.1.266. One member reaches a host outside any turn with no result after it: the confirmation a /model
     switch makes the CLI write when the kernel asks for it over the control channel (client.set_model,
     `<local-command-stdout>Set model to ...`), written before the control_response. A typed local command's output is a
-    member too, and its result follows at once. The others (replayed prompts, a shell command's output) come only from CLI
-    modes romp never turns on. With romp's settings the key alone covers every member.
+    member too, and its result follows at once. A compact summary arrives only inside a /compact line already counted. The
+    others (replayed prompts, a shell command's output) come only from CLI modes romp never turns on. With romp's settings
+    the key alone covers every member.
 
     The text is a second test, for a local command's output that arrives without the key: a row whose text (the string
     content, or its text blocks) STARTS with either tag, the way the CLI writes every such output.
     Anchored, because the first row of a turn the CLI opens itself (a task notification, a peer's message) is free text
     that may quote a tag anywhere. And never for a row stamped with an `origin`: the stamp is the CLI's record of a turn it
-    opened itself, which it writes without the key, so its text decides nothing.
+    opened itself, which it writes without the key, so its text decides nothing. A stamp is an object with a string
+    `kind`, the shape the CLI writes and the only one the SDK's parser keeps, so the kernel's twin
+    (sdk_backend._is_local_command_echo, on the parsed message) reads the same stamps as this test.
 
     Only user rows: an assistant row is always a turn's, or is followed by a result (a local command's own assistant row).
     A tool result's content is never read, and isSynthetic is not the mark, because the CLI's in-turn user rows carry it.
@@ -581,7 +584,9 @@ def _cli_echo(obj: dict) -> bool:
         text = " ".join(str(c.get("text") or "") for c in content if isinstance(c, dict) and c.get("type") == "text")
     else:
         return False
-    return not obj.get("origin") and text.lstrip().startswith(LOCAL_COMMAND_TAGS)
+    origin = obj.get("origin")
+    stamped = isinstance(origin, dict) and isinstance(origin.get("kind"), str)
+    return not stamped and text.lstrip().startswith(LOCAL_COMMAND_TAGS)
 
 
 # THE ORPHAN READER LIVES IN THE KERNEL'S MODULE (kernel/host_transport.py, read_journal_dir and journal_segments) since

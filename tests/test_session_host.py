@@ -729,6 +729,13 @@ ECHO_ROWS = {
         _echo_row("<bash-stdout>invented</bash-stdout><bash-stderr></bash-stderr>", isReplay=True),
     "a compact summary (the key present, false)":
         _echo_row("an invented summary", isReplay=False, isSynthetic=True),
+    # No CLI writes the next two: an `origin` that is not an object with a string kind. The SDK's parser drops such an
+    # origin, so the kernel reads the row as unstamped, and the host reads it the same way (a stamp decides only when the
+    # SDK would keep it).
+    "local-command output with an origin that is a string, which stamps nothing":
+        _echo_row("<local-command-stdout>invented output</local-command-stdout>", origin="peer"),
+    "local-command output with an origin object that has no kind, which stamps nothing":
+        _echo_row("<local-command-stdout>invented output</local-command-stdout>", origin={"from": "invented"}),
 }
 # Rows that still open a turn at zero: only user rows are ever echoes, a user row's tool-result content is never read,
 # isSynthetic is not the mark (the CLI's in-turn user rows carry it), a tag counts only at the start of the text, and a
@@ -881,7 +888,9 @@ class ReplayedEchoes(unittest.TestCase):
         parent_tool_use_id, tool_use_result and origin), so the kernel's test is the content half of the host's. For every
         user row here, the kernel counts a turn exactly when the host's test, run on the row with the key removed, says it
         is no echo. The rows that carry only the key (a replayed prompt, a shell command's output) reach romp only through
-        a CLI mode romp never turns on (replay-user-messages, a bash_command input); the host catches them by the key.
+        a CLI mode romp never turns on (replay-user-messages, a bash_command input), and the host catches them by the key.
+        The exception is a compact summary (the key present, false), which reaches romp only inside a /compact line the
+        kernel has already counted, so its turn frame changes nothing.
         The parse here is a hand-written double. The next case runs the same equality through the real SDK parser where
         the SDK is importable."""
         fn = getattr(sh, "_cli_echo", None)
