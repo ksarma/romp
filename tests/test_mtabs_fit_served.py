@@ -39,10 +39,10 @@ wrap only where it still cannot.
   opens, where it would otherwise play the flash late. Usage explains rather than hides when it has nothing to show
   (romp-manager's call 6): the shell's usage panel opens only over a reading, so with none the card shows Usage disabled
   with the line "No reading yet" under its name, and a tap on it leaves the card open (no engine dispatches a click for a
-  pointer on a disabled button, so the row's handler tests no disabled state: the disabled state is the guard,
-  romp-manager's call 3 at round 1, and a click a script dispatches on it goes past that guard); with a
-  reading, Usage is enabled and
-  opens the panel. The card reads the source the panel's opener reads: each opening asks the shell for a fresh pull
+  pointer on a disabled button); the row's handler returns on a disabled button too, since a click a script dispatches
+  on the button or its glyph, or click() on its label, reaches the handler in every engine (romp-manager's ruling after
+  round 1 restored that check, which its call 3 had dropped); with a reading, Usage is enabled and opens the panel. The
+  card reads the source the panel's opener reads: each opening asks the shell for a fresh pull
   (window.__rompUsagePull, the usage script's own fetch of its readings), Usage shows the romp loader and takes no tap until it ends, and
   then the card asks the usage script's own test over its readings (window.__rompUsageReading, the check the panel's opener
   makes); the shell's renderRows, the one writer of those readings, tells an open card on every change, so a reading that
@@ -104,7 +104,9 @@ Usage with no reading, on a page whose shell's usage pull (its GET under /usage/
 renders over the readings, read empty as the leg's premise): the card opened from the bar's Settings shows Usage disabled
 with the line USAGE_NONE once the opening's ask for a fresh reading has ended; a click at its centre leaves the card open,
 opens no Usage modal and posts no phoneAct (read after a settle: an absence has no event to wait on), and the line still
-shows; then, the card still open, a reading arrives (the lab's own GET /usage payload posted to the shell as the timeline
+shows; a script's clicks on it, click() on its label and a click event dispatched on the button and on its glyph, each
+leave the card open, open no Usage modal and post no phoneAct; then, the card still open, a reading arrives (the lab's
+own GET /usage payload posted to the shell as the timeline
 posts it, the shell's later pulls let through), and the open card shows Usage enabled with no line; the readings emptied (a
 payload with no window and no spend, posted the same way) show it disabled with its line in the open card, filled again
 enabled with no line; then the Token usage panel over the card (#ra-open, which hides the card with no word to the shell),
@@ -152,7 +154,9 @@ of padding, 12px text), and where the accent lights the whole Remote kernels but
 tap closing the card to open nothing); the reading landing in the open card is red where the card reads the state only when
 it opens, and the emptying where the shell's renderRows tells the card only as it fills its readings; the unpulled reading is red where the card answers from the shell's cached readings without a pull (Usage
 disabled with its line, no loader, the tap opening nothing). Both taps on a disabled Usage, with no reading and while the
-opening's pull is out, are red under a mutant that never disables it. The fallback's pin is red under the old rule restored (no wrap), and the
+opening's pull is out, are red under a mutant that never disables it; a script's clicks on a disabled Usage are red
+without the row handler's check of the disabled state (each closes the card and posts phoneAct usage). The fallback's
+pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
 closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
@@ -537,6 +541,16 @@ def _no_reading_problems(engine, nr):
     after = nr.get("afterTap")
     if not after or not after.get("line") or after["line"].get("shown") is not True:
         out.append("%s: after the tap the line saying there is no reading yet is not shown: %r" % (where, after))
+    # a script's clicks on the disabled Usage (romp-manager's ruling after PR 976's round 1): each reaches the row's handler in
+    # every engine, and the handler's check of the disabled state is what keeps it from the shell
+    roads = {d.get("road"): d for d in nr.get("dispatched") or []}
+    for road in ("label", "button", "glyph"):
+        d = roads.get(road) or {}
+        if not d.get("ran") or d.get("disabled") is not True:
+            out.append("%s: the script's click on Usage's %s was not dispatched on a disabled Usage (its premise): %r" % (where, road, d))
+        elif not d.get("settingsOpen") or d.get("cardHidden") is not False or d.get("usage") or d.get("acts") != []:
+            out.append("%s: a script's click on the disabled Usage's %s ran the row's handler (settings open %r, card hidden %r, "
+                       "the Usage modal %r, phoneAct %r)" % (where, road, d.get("settingsOpen"), d.get("cardHidden"), d.get("usage"), d.get("acts")))
     if not nr.get("arrived"):
         out.append("%s: the reading never reached the shell's readout (the second half's premise)" % where)
     still = nr.get("stillOpen") or {}
@@ -603,7 +617,8 @@ def _unpulled_problems(engine, up):
             or not {"fask-swirl-spin", "fileview-pulse"} <= set(d["wait"].get("anims") or []):
         out.append("%s: while the opening's pull is in flight, Usage does not show the romp loader (spinning, its dots pulsing), "
                    "disabled and busy, with no line: %r" % (where, d))
-    # the disabled state is the tap's one guard (romp-manager's call 3 at round 1: the row's handler tests none of its own)
+    # a tap on a disabled Usage reaches nothing: the browser dispatches no click for it (the row's handler, which returns on a
+    # disabled button, is the second guard; a mutant that never disables Usage turns this line red)
     td = up.get("tappedDuring") or {}
     if not td.get("settingsOpen") or td.get("cardHidden") is not False or td.get("usage") or td.get("acts") != []:
         out.append("%s: a tap on Usage while the opening's pull is in flight closed the card or reached the shell: %r" % (where, td))

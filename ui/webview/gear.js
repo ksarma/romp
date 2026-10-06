@@ -2262,14 +2262,15 @@ function initGear(post, opts) {
     if (lg) { lg.hidden = !web; lg.onclick = function () { closeSettings(); try { window.parent.postMessage({ romp: 'openLog' }, '*'); } catch (e) { /* no shell to ask */ } }; }
     // the phone's moved actions (iOS item 4g, GEAR_HTML's #rs-pacts): the card closes first, as for Open log, so the panel the
     // shell opens (or the restart's splash) is never stacked under it, and the shell runs the handler the bottom bar's button
-    // ran (kernel _LANDING_MOBILE_JS, the phoneAct message). Delegated to the row, which this card never rebuilds. On a disabled
-    // button (Usage with no reading, or while the opening's pull is out) no engine dispatches a click for a pointer, a key or a
-    // script's click() on the button itself, nor Chromium and WebKit for a touch tap, so the handler tests nothing of its own and
-    // the disabled state is the guard (romp-manager's call 3 at PR 976's round 1; tests/test_mtabs_fit_served.py taps a disabled
-    // Usage in both states). A script can still reach the handler: a click event it dispatches on the button or its glyph, or
-    // click() on the button's label, gets here in Chromium, WebKit and Firefox (measured). Nothing in the tree does any of these.
+    // ran (kernel _LANDING_MOBILE_JS, the phoneAct message). Delegated to the row, which this card never rebuilds. A disabled
+    // button (Usage with no reading, or while the opening's pull is out) runs nothing: the handler returns when the button the
+    // click lands in is disabled. A person's tap never gets here on one (no engine dispatches a click for a pointer, a key or a
+    // script's click() on a disabled button itself, nor Chromium and WebKit for a touch tap), but a script's click does: a click
+    // event dispatched on the button or its glyph, or click() on its label, reaches this handler in Chromium, WebKit and Firefox
+    // (measured), so the disabled state alone did not keep it from the shell (romp-manager's ruling after PR 976's round 1
+    // restored the check, which its call 3 had dropped; tests/test_mtabs_fit_served.py dispatches all three on a disabled Usage).
     var pacts = document.getElementById('rs-pacts');
-    if (pacts) pacts.addEventListener('click', function (e) { var b = e.target && e.target.closest ? e.target.closest('.rs-pact') : null; if (!b || !pacts.contains(b)) return; closeSettings(); try { window.parent.postMessage({ romp: 'phoneAct', act: b.getAttribute('data-pact') }, '*'); } catch (err) { /* no shell to ask */ } });
+    if (pacts) pacts.addEventListener('click', function (e) { var b = e.target && e.target.closest ? e.target.closest('.rs-pact') : null; if (!b || !pacts.contains(b) || b.disabled) return; closeSettings(); try { window.parent.postMessage({ romp: 'phoneAct', act: b.getAttribute('data-pact') }, '*'); } catch (err) { /* no shell to ask */ } });
     // the unread count the bar's opener used to draw (T290): the shell posts {romp:'logUnseen', n} on every
     // repaint of its Log and answers {romp:'logUnseenQuery'}; the label reads "Open log · N" (9+ past nine)
     var lgn = lg ? lg.querySelector('.rs-log-n') : null;

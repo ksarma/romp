@@ -32,7 +32,8 @@
 // /usage/) answers no rows, so the shell holds no reading (the rail's readout, which renders over the readings, read empty as
 // the premise); the card opened from the bar's Settings, its Usage button read once the opening's ask has ended (disabled,
 // its sub-line), a click at its centre, and after a settle (an absence has no event to wait on) the card, the Usage modal
-// and the phoneAct messages the shell heard read; then, the card still open, a reading arrives (the lab's own GET /usage
+// and the phoneAct messages the shell heard read; then a script's clicks on the disabled Usage (click() on its label, a click
+// event dispatched on the button and on its glyph), each read the same way; then, the card still open, a reading arrives (the lab's own GET /usage
 // payload posted to the shell as the timeline posts it, the shell's later pulls let through), Usage read again in the open
 // card; then the readings emptied (a payload with no window and no spend, posted the same way) and filled again, Usage read
 // after each; then, each from an opening, the readings emptied and filled while the Token usage panel stands over the card
@@ -499,6 +500,39 @@ try {
       await frames(page);
       nr.tapped = await kit.shellNow(sf);
       nr.afterTap = await kit.usageNow(sf);
+      // ...then a script's clicks on the disabled Usage (romp-manager's ruling after PR 976's round 1: a click a script
+      // dispatches reaches the row's handler, which must return on a disabled button): click() on its label, a click event
+      // dispatched on the button and on its glyph, each read after a settle with the phoneAct messages it alone brought. A
+      // dispatch that closed the card is followed by an opening, so the next one, and the rest of the leg, meet the card open
+      nr.dispatched = [];
+      for (const road of ["label", "button", "glyph"]) {
+        const had = (await kit.shellNow(sf)).acts.length;
+        const ran = await sf.evaluate((how) => {
+          const b = document.querySelector("#rs-pacts [data-pact=usage]");
+          if (!b) return { ran: false };
+          const label = Array.from(b.querySelectorAll("span")).find((n) => !n.children.length && n.textContent.trim() === "Usage");
+          const target = how === "label" ? label : how === "glyph" ? b.querySelector("svg") : b;
+          if (!target) return { ran: false, disabled: b.disabled };
+          const disabled = b.disabled;
+          if (how === "label") target.click(); else target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+          return { ran: true, disabled };
+        }, road);
+        await frames(page);
+        await sleep(3 * (cfg.settleMs || 100));
+        await frames(page);
+        const after = await kit.shellNow(sf);
+        nr.dispatched.push({ road, ...ran, settingsOpen: after.settingsOpen, cardHidden: after.cardHidden, usage: after.usage, acts: after.acts.slice(had) });
+        if (!after.settingsOpen || after.cardHidden) {
+          await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } });
+          await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 }).catch(() => null);
+          await frames(page);
+          await kit.openCard();
+          await kit.askEnded(sf);
+          await frames(page);
+        }
+      }
+      // each dispatch kept the phoneAct messages it brought; the record starts empty again for the leg's later reads
+      await page.evaluate(() => { window.__mtabsActs.length = 0; });
     }
     // a reading arrives with the card still open: the lab's own payload, posted as the timeline posts it (the shell's pulls go
     // to the lab from here); the open card's Usage read again, then clicked
@@ -603,9 +637,9 @@ try {
     up.asked = held.length;
     await frames(page);
     up.during = await kit.usageNow(sf);
-    // a tap on Usage while the pull is held: the button is disabled, and that alone keeps the tap from the shell (the row's
-    // handler tests no disabled state), so the card stays open and no phoneAct is posted; read after a settle, since an
-    // absence has no event to wait on
+    // a tap on Usage while the pull is held: the button is disabled, so the browser dispatches no click for the tap (and the
+    // row's handler returns on a disabled button besides), the card stays open and no phoneAct is posted; read after a settle,
+    // since an absence has no event to wait on
     if (up.during) {
       await page.mouse.click(up.during.left + up.during.w / 2, up.during.top + up.during.h / 2);
       await frames(page);
