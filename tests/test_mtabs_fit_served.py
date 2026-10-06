@@ -200,7 +200,8 @@ opening's pull is out, are red under a mutant that never disables it; a script's
 without the row handler's check of the disabled state (each closes the card and posts phoneAct usage). The failed reads
 are red where an error status reads as no reading and a failure leaves the line as it was (No reading yet after the
 error status and after the abort in transit), and the hung pull where the card's pull carries no bound (the loader still
-up). With the ok answers between the failures, the abort in transit and the hung pull are red under a mutant whose failed
+up) and where it leaves the override unread and aborts at the kernel's 10 s (the loader still up HANG_WAIT_MS after the
+click). With the ok answers between the failures, the abort in transit and the hung pull are red under a mutant whose failed
 path leaves the flag as it was (No reading yet after each), and the three ok answers under a mutant where an ok answer
 leaves a flag a failure set (Couldn't load after each). The failed read over a cached reading is red where the card says
 Couldn't load only over no reading (Usage enabled with neither line). The reopen race is red where every read's end writes the flag,
@@ -288,10 +289,11 @@ USAGE_NONE = "No reading yet"   # the card's line under a disabled Usage (gear.j
 USAGE_ERR = "Couldn't load"     # ...and its line there where the shell's last read of the readings failed
 ERROR_STATUS = 500   # the kernel's answer to the opening's pull where a leg needs an error status (the driver answers it)
 # the bound the failed-read leg sets on the shell's pull (window.__rompUsagePullMs) for the pull it never answers, in ms: the
-# kernel's own is 10 s, which each engine's leg would otherwise wait out; and how long the leg waits for the bound to end the
-# loader before it reads the wait as hung
+# kernel's own is 10 s, which each engine's leg would otherwise wait out; and how long after the click the leg waits for the
+# bound to end the loader, well under that 10 s, so an end only the default makes (an override the pull does not apply) reads
+# as hung (romp-manager's decision on PR 976's round 1 builds; ui/webview/usage-pull-bound.test.ts holds the default itself)
 HANG_MS = 1500
-HANG_WAIT_MS = 15000
+HANG_WAIT_MS = 5000
 # ...and the bound it sets for the reopen race, in ms: long enough that the held pull ends only when the driver ends it
 RACE_MS = 60000
 SAME = 0.01   # px: the row and the tabs loading and with a reading are equal by construction (the same layout), so compared exactly
@@ -744,9 +746,10 @@ def _failed_problems(engine, fr):
     d = hg.get("during")
     if not hg.get("held") or not d or d.get("disabled") is not True or not d.get("wait") or d["wait"].get("shown") is not True:
         out.append("%s: the hung pull's premise (the opening's pull held, Usage showing the romp loader): held %r, %r" % (where, hg.get("held"), d))
-    if not hg.get("ended") or (hg.get("elapsed") or 0) < HANG_MS:
+    if not hg.get("ended") or not HANG_MS <= (hg.get("elapsed") or 0) <= HANG_WAIT_MS:
         out.append("%s: the kernel never answered the opening's pull, and the loader did not end on the pull's bound (%d ms, set "
-                   "on the shell) within %d ms: ended %r, %r ms after the click" % (where, HANG_MS, HANG_WAIT_MS, hg.get("ended"), hg.get("elapsed")))
+                   "on the shell) between %d and %d ms after the click: ended %r, %r ms after the click" % (
+                       where, HANG_MS, HANG_MS, HANG_WAIT_MS, hg.get("ended"), hg.get("elapsed")))
     if not_failed(hg.get("after")):
         out.append("%s: the kernel never answered the opening's pull, and once the bound ended it Usage is not disabled with the "
                    "line %r (and without %r): %r" % (where, USAGE_ERR, USAGE_NONE, hg.get("after")))
