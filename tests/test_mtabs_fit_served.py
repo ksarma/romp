@@ -150,10 +150,14 @@ three, an opening whose pull the driver answers ok with no rows shows Usage disa
 ok answer clears the failure, and the next failure starts from a read that did not fail). Then the reopen race, three
 times: the card opened over a pull the driver holds, closed, and opened again over a later pull, and the held pull ended
 after that one. The later pull answered with no rows and the held one failed in transit; the later one failed in transit
-and the held one answered ok with no rows; the later one reached the lab and the held one answered with ERROR_STATUS. In
-each, once the held pull's end has run in the shell, Usage keeps the later pull's answer: USAGE_NONE alone, USAGE_ERR
-alone, enabled with neither line (a wrapper over window.__rompUsagePull records the order the two end in, and RACE_MS set
-on the shell keeps the held pull from ending on its own bound). Then an opening over ERROR_STATUS (the readings emptied,
+and the held one was let through to the lab's reading; the later one reached the lab and the held one answered with
+ERROR_STATUS. Once the held pull's end has run in the shell, Usage keeps the later pull's answer in the first and the
+third, USAGE_NONE alone and enabled with neither line, and in the second the held pull's ok answer still writes its
+reading, which fills the readout, and Usage is enabled beside USAGE_ERR, the later pull's failure kept (romp-manager's
+decision 6 on round 1's builds); in each, Usage read once more through the card's own surface (the shell's layout word,
+which the open card answers by reading Usage afresh, read once a probe word posted after it has arrived) is the same, and
+the shell's flag (window.__rompUsageFailed) is the later pull's (a wrapper over window.__rompUsagePull records the order
+the two end in, and RACE_MS set on the shell keeps the held pull from ending on its own bound). Then an opening over ERROR_STATUS (the readings emptied,
 Usage disabled beside USAGE_ERR), the card left open, and the lab's own GET /usage payload posted to the shell as the
 timeline posts it: once the readout fills, Usage is enabled with neither line, the forward being a read too. And an
 opening whose pull reaches the lab then shows Usage enabled with neither line; then, the shell holding that reading, an opening whose
@@ -229,9 +233,14 @@ path leaves the flag as it was (No reading yet after each), and the three ok ans
 leaves a flag a failure set (Couldn't load after each). The failed read over a cached reading is red where the card says
 Couldn't load only over no reading (Usage enabled with neither line). The reopen race is red where every read's end writes the flag,
 and an error status empties the readings, whichever later read has ended: Usage turns from No reading yet to Couldn't
-load, from Couldn't load to No reading yet, and from enabled to Couldn't load; and each turn is red under a mutant that
-drops one of the three checks, the failed path's (the first turn), the answer's flag write (the second) and the error
-status's return (the third, No reading yet: the readings emptied). The forward after a failed read is red without the
+load, from disabled beside Couldn't load to enabled with neither line, and from enabled to Couldn't load (in Chromium); and
+each turn is red under a mutant that drops one of the three checks, the failed path's (the first turn), the answer's flag
+write (the second, Usage enabled with neither line, and the third's read through the card's surface, where the outdated
+error status set the flag and told no card: Couldn't load, the flag true) and the error status's return (the third, No
+reading yet: the readings emptied). The second turn is red too under a mutant that drops every outdated answer
+(`else return;`: the readout empty and Usage disabled beside Couldn't load), and the first turn's read through the card's
+surface under one whose late failure sets the flag and skips only the card's tell (Couldn't load there and the flag true,
+where the card's own read still shows No reading yet), in Chromium. The forward after a failed read is red without the
 forward's clear of the flag (Usage enabled beside USAGE_ERR once the readout fills, in Chromium). The row and the tabs are red where Usage keeps two
 lines' height in every state (Usage 43.64px tall, 43.65 in Firefox, where Restart kernel is 28.8, at every width in both
 themes); under a
@@ -766,13 +775,15 @@ def _failed_problems(engine, fr):
     answered with an error status, one that fails in transit, and one the kernel never answers (ended by the pull's bound,
     set to HANG_MS on the shell here) each end with Usage disabled and the line USAGE_ERR, never USAGE_NONE, and the card
     open; after each of them, an opening whose pull the kernel answers ok with no rows shows Usage disabled with USAGE_NONE
-    alone; in the reopen race, the card's earlier pull ending after the reopened card's pull (failed in transit, answered ok
-    with no rows, or answered with ERROR_STATUS) leaves Usage on the later pull's answer; after an opening over ERROR_STATUS,
-    a reading the timeline forwards to the shell shows Usage enabled with neither line (PR 976's round 2); a later opening
-    whose pull reads the lab's reading shows Usage enabled with neither line; and then, with that reading cached, an opening
-    whose pull fails in transit shows Usage enabled with USAGE_ERR, one click opening the Usage modal; and, the shell holding a
-    window reading of its own and the card's pull ended by its bound, a tap whose own pull is held opens the Usage modal
-    within 1 s over that reading with its age, and the open modal follows the held pull's fresher answer (PR 976's round 2)."""
+    alone; in the reopen race, the card's earlier pull ending after the reopened card's pull (failed in transit, let through
+    to the lab's reading, or answered with ERROR_STATUS) leaves the flag the later pull's and, failing, the readings as they
+    were, while its ok answer still writes its reading (Usage enabled beside USAGE_ERR there), read in the card and again
+    through its surface (PR 976's round 2); after an opening over ERROR_STATUS, a reading the timeline forwards to the shell
+    shows Usage enabled with neither line (PR 976's round 2); a later opening whose pull reads the lab's reading shows Usage
+    enabled with neither line; and then, with that reading cached, an opening whose pull fails in transit shows Usage enabled
+    with USAGE_ERR, one click opening the Usage modal; and, the shell holding a window reading of its own and the card's pull
+    ended by its bound, a tap whose own pull is held opens the Usage modal within 1 s over that reading with its age, and the
+    open modal follows the held pull's fresher answer (PR 976's round 2)."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -830,15 +841,21 @@ def _failed_problems(engine, fr):
                 or u["err"].get("text") != USAGE_ERR or not u.get("line") or u["line"].get("shown") is not False)
     # the reopen race: the card's pull A held, the card reopened over pull B, B ended; then A ended after B (the order the
     # driver's wrapper over the shell's pull recorded). A read that ends after a later one has ended changes neither the flag
-    # nor, with an error status, the readings, so Usage keeps B's answer: A failing in transit after B answered no rows; A
-    # answered ok with no rows after B failed in transit (each of the two flag writes, the failed path's and the answer's); A
-    # answered with ERROR_STATUS after B reached the lab (the error status's emptying of the readings)
-    for key, a_end, b_end, what, b_wrong, b_state in (
-            ("raceTransit", "failed", "answered", "failed in transit", not_none, "disabled with the line %r alone" % USAGE_NONE),
-            ("raceOk", "answered", "failed", "was answered ok with no rows", not_failed,
-             "disabled with the line %r alone" % USAGE_ERR),
+    # nor, with an error status, the readings, and its ok answer still writes the readings (romp-manager's decisions 5 and 6
+    # on PR 976's round 1 builds): A failing in transit after B answered no rows leaves USAGE_NONE alone (the failed path's
+    # check); A let through to the lab's reading after B failed in transit fills the readout and leaves Usage enabled beside
+    # USAGE_ERR, B's failure kept (the answer's flag write, and the ok answer that still writes: PR 976's round 2, tests-1); A
+    # answered with ERROR_STATUS after B reached the lab leaves Usage enabled with neither line (the error status's emptying of
+    # the readings). Each is read once more through the card's own surface, the shell's layout word, with the shell's flag
+    # (PR 976's round 2, tests-2): a late failure that wrote the flag and skipped only the card's tell would show there
+    for key, a_end, b_end, what, b_wrong, b_state, a_wrong, a_state, flag in (
+            ("raceTransit", "failed", "answered", "failed in transit", not_none, "disabled with the line %r alone" % USAGE_NONE,
+             not_none, "disabled with the line %r alone" % USAGE_NONE, False),
+            ("raceOk", "answered", "failed", "was let through to the lab's reading", not_failed,
+             "disabled with the line %r alone" % USAGE_ERR, not_enabled_failed,
+             "enabled beside the line %r, the later pull's failure kept and the held pull's reading written" % USAGE_ERR, True),
             ("raceStatus", "answered", "answered", "was answered with an error status (%d)" % ERROR_STATUS, not_enabled,
-             "enabled with neither line")):
+             "enabled with neither line", not_enabled, "enabled with neither line", False)):
         rc = fr.get(key) or {}
         p = rc.get("pulls") or []
         order = (len(p) >= 2 and p[0].get("end") == a_end and p[1].get("end") == b_end
@@ -848,9 +865,19 @@ def _failed_problems(engine, fr):
                        "shows Usage %s, the held pull ending after it): held %r, the later ask ended %r, the held pull's end "
                        "run %r, the pulls' ends %r, Usage %r" % (where, b_state, rc.get("held"), rc.get("bAsked"), rc.get("aEnded"),
                                                                  p, rc.get("afterB")))
-        if b_wrong(rc.get("afterA")):
-            out.append("%s: the card's earlier pull %s after the reopened card's pull had ended, and Usage is no longer %s: %r"
-                       % (where, what, b_state, rc.get("afterA")))
+        if a_wrong(rc.get("afterA")):
+            out.append("%s: the card's earlier pull %s after the reopened card's pull had ended, and Usage is not %s: %r"
+                       % (where, what, a_state, rc.get("afterA")))
+        if key == "raceOk" and rc.get("readout") is not True:
+            out.append("%s: the card's earlier pull %s after the reopened card's pull had ended, and the shell's readout is not "
+                       "filled: its ok answer wrote no reading (%r)" % (where, what, rc.get("readout")))
+        if not rc.get("surfaceArrived"):
+            out.append("%s: the shell's layout word and the probe after it never reached the card (the surface read's premise): %r"
+                       % (where, rc.get("surfaceArrived")))
+        elif a_wrong(rc.get("afterSurface")) or rc.get("flag") is not flag:
+            out.append("%s: the card's earlier pull %s after the reopened card's pull had ended, and read again through the card's "
+                       "surface (the shell's layout word) Usage is not %s, or the shell's flag is not %r: %r, flag %r"
+                       % (where, what, a_state, flag, rc.get("afterSurface"), rc.get("flag")))
         if card_closed(rc.get("shell") or {}):
             out.append("%s: the reopen race's card closed or reached the shell: %r" % (where, rc.get("shell")))
     # the timeline's forward after a failed read (PR 976's round 2, tests-3): an opening over ERROR_STATUS (the readings emptied,

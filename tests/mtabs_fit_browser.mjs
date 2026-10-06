@@ -49,14 +49,16 @@
 // once each ask has ended (the hung one also while it is held, with the time from the click to the loader's end), and after
 // each of the three over a pull answered ok with no rows, Usage read again; then three times the card opened over a held
 // pull, closed, and opened again over a later pull (answered with no rows, failed in transit, reaching the lab), Usage read
-// before and after the held pull ends (failed in transit, answered ok with no rows, answered with cfg.errorStatus); then over a
-// pull answered with cfg.errorStatus, the card left open, the lab's own GET /usage payload posted to the shell as the timeline
-// posts it, and Usage read once the readout fills; then over a pull that reaches the lab, Usage read again; then, that reading
-// in the shell, over a pull failed in transit, Usage read and clicked, its effect read; then, the modal closed, the shell
-// given a window reading of its own (a pull answered with a synthetic one, read at an opening), the card opened over a pull
-// held past cfg.hangMs (the bound set on the shell) and Usage read, the bound raised to cfg.raceMs, Usage clicked with the
-// tap's own pull held, the Usage modal awaited for 1 s and its content read (its window section, its age line), then the held
-// pull answered with a fresher synthetic reading and the open modal read once its age line follows.
+// before and after the held pull ends (failed in transit, let through to the lab's reading, answered with cfg.errorStatus),
+// with the shell's readout, and once more through the card's own surface (the shell's layout word, read once a probe word
+// posted after it has arrived) with the shell's flag (window.__rompUsageFailed); then over a pull answered with
+// cfg.errorStatus, the card left open, the lab's own GET /usage payload posted to the shell as the timeline posts it, and
+// Usage read once the readout fills; then over a pull that reaches the lab, Usage read again; then, that reading in the
+// shell, over a pull failed in transit, Usage read and clicked, its effect read; then, the modal closed, the shell given a
+// window reading of its own (a pull answered with a synthetic one, read at an opening), the card opened over a pull held past
+// cfg.hangMs (the bound set on the shell) and Usage read, the bound raised to cfg.raceMs, Usage clicked with the tap's own pull
+// held, the Usage modal awaited for 1 s and its content read (its window section, its age line), then the held pull answered
+// with a fresher synthetic reading and the open modal read once its age line follows.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -770,14 +772,22 @@ try {
     }
     fr.okAfterHang = await turn("empty");
     // the reopen race (the check of PR 976's decisions after round 1): the card's pull A held, the card closed and opened
-    // again over pull B, B ended and Usage read; then A ends, and Usage is read again. Three turns: B answered no rows and A
-    // failing in transit (its route aborted); B failing in transit and A answered ok with no rows; B reaching the lab (a
-    // reading) and A answered with an error status. B started after A and has ended, so A changes neither the flag nor, with
-    // an error status, the readings: Usage keeps B's answer (No reading yet, Couldn't load, enabled with neither line). A
-    // wrapper over the shell's pull (the card calls whatever window.__rompUsagePull holds at each opening) records the order
-    // the two pulls end in, and when A's end has run in the shell, the event Usage is read after; A's bound is set long here
-    // (window.__rompUsagePullMs = cfg.raceMs), so that A ends when its route ends it and not on its own
+    // again over pull B, B ended and Usage read; then A ends, and Usage is read again with the shell's readout. Three turns: B
+    // answered no rows and A failing in transit (its route aborted); B failing in transit and A let through to the lab's
+    // reading; B reaching the lab (a reading) and A answered with an error status. B started after A and has ended, so A
+    // changes neither the flag nor, with an error status, the readings, and its ok answer still writes the readings
+    // (romp-manager's decisions 5 and 6 on PR 976's round 1 builds): Usage keeps B's answer in the first and the third (No
+    // reading yet; enabled with neither line), and in the second the lab's reading fills the readout and Usage is enabled
+    // beside B's Couldn't load. A wrapper over the shell's pull (the card calls whatever window.__rompUsagePull holds at each
+    // opening) records the order the two pulls end in, and when A's end has run in the shell, the event Usage is read after;
+    // A's bound is set long here (window.__rompUsagePullMs = cfg.raceMs), so that A ends when its route ends it and not on its
+    // own. Then Usage is read once more through the card's own surface, not the tell alone (PR 976's round 2, tests-2): the
+    // shell's layout word ({romp:'link'}), which the open card answers by reading Usage afresh, posted from the shell's window
+    // with a probe word after it, read once the probe has arrived, with the shell's own flag (window.__rompUsageFailed)
     {
+      let probes = 0;
+      const sf0 = settingsFrameOf(page);   // loaded by the turns above; the probe's listener goes on its window
+      if (!sf0) throw new Error("no settings frame for the race's probe (the failed-read leg)");
       await page.evaluate((ms) => {
         window.__rompUsagePullMs = ms;
         const ask = window.__rompUsagePull; window.__mtabsAsk = ask; window.__mtabsEnds = 0;
@@ -791,6 +801,8 @@ try {
       const race = async (bMode, endA) => {
         const rc = {};
         await page.evaluate(() => { window.__mtabsPulls = []; });
+        await sf0.evaluate(() => { window.__mtabsProbes = window.__mtabsProbes || []; if (!window.__mtabsProbeOn) { window.__mtabsProbeOn = true;
+          window.addEventListener("message", (e) => { if (e.data && e.data.romp === "mtabs-probe") window.__mtabsProbes.push(e.data.n); }); } });
         mode = "hang";
         await kit.openCard();
         for (let i = 0; i < 50 && !held.length; i++) await sleep(100);
@@ -806,12 +818,20 @@ try {
         rc.pulls = await page.evaluate(() => window.__mtabsPulls.map((r) => ({ end: r.end, at: r.at })));
         await frames(page);
         rc.afterA = await kit.usageNow(sf);
+        rc.readout = await page.evaluate(() => { const r = document.getElementById("rail-usage"); return !!r && r.innerHTML !== ""; });
+        const n = ++probes;
+        await page.evaluate((k) => { const t = document.getElementById("f-settings").contentWindow;
+          t.postMessage({ romp: "link", link: "", mob: true }, "*"); t.postMessage({ romp: "mtabs-probe", n: k }, "*"); }, n);
+        rc.surfaceArrived = await sf.waitForFunction((k) => (window.__mtabsProbes || []).includes(k), n, { timeout: 5000 }).then(() => true, () => false);
+        await frames(page);
+        rc.afterSurface = await kit.usageNow(sf);
+        rc.flag = await page.evaluate(() => (typeof window.__rompUsageFailed === "function" ? window.__rompUsageFailed() : null));
         rc.shell = await kit.shellNow(sf);
         await kit.closeCard();
         return rc;
       };
       fr.raceTransit = await race("empty", (route) => route.abort("failed"));
-      fr.raceOk = await race("transit", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) }));
+      fr.raceOk = await race("transit", (route) => route.continue());
       fr.raceStatus = await race("lab", (route) => route.fulfill({ status: cfg.errorStatus, contentType: "application/json", body: JSON.stringify({ error: "synthetic failure" }) }));
       await page.evaluate(() => { window.__rompUsagePull = window.__mtabsAsk; delete window.__mtabsAsk; delete window.__rompUsagePullMs; });
     }
