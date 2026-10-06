@@ -14307,9 +14307,8 @@ def _is_command_stdout(msg) -> bool:
     return bool(_LOCAL_STDOUT_RE.match(text))
 
 
-# The tags that open a local command's output, which the CLI writes with the tag first and recognises by the start of the
-# text: the twin of the host's session_host.LOCAL_COMMAND_TAGS (tests/test_session_host.py ReplayedEchoes pins the two
-# equal, and their verdicts).
+# The tags that open a local command's output, which the CLI writes with the tag first: the twin of the host's
+# session_host.LOCAL_COMMAND_TAGS (tests/test_session_host.py ReplayedEchoes pins the two equal, and their verdicts).
 LOCAL_COMMAND_TAGS = ("<local-command-stdout>", "<local-command-stderr>")
 
 
@@ -14318,12 +14317,12 @@ def _is_local_command_echo(msg) -> bool:
     running as a turn (2026-10-06). The one that reaches the kernel outside a turn is a model switch's confirmation:
     client.set_model makes the CLI write `<local-command-stdout>Set model to ...` before its control_response, and no
     result follows it. The CLI flags every echo isReplay, but the SDK drops that key when it parses the row, so the
-    kernel reads the text the way the CLI writes and recognises a local command's output: either tag at the START of
-    the text (the string content, or the text blocks; a tool result's content is never read). Anchored, and never for
-    a message with an `origin`, because the first row of a turn the CLI opens itself carries that stamp and free text
-    that may quote a tag. That is the content half of the host's test, session_host._cli_echo, which reads the key as
-    well. _is_command_stdout's match, stdout only, decides what the chat renders. This one reads both tags, because
-    the question here is whether the CLI runs a turn."""
+    kernel reads the text the way the CLI writes a local command's output: either tag at the START of the text (the
+    string content, or the text blocks; a tool result's content is never read). Anchored, and never for a message with
+    an `origin`, because the first row of a turn the CLI opens itself carries that stamp and free text that may quote a
+    tag. That is the content half of the host's test, session_host._cli_echo, which reads the key as well.
+    _LOCAL_STDOUT_RE, stdout only, decides what the chat renders (msg_to_atom, and _is_command_stdout for the failure
+    line). This one reads both tags, because the question here is whether the CLI runs a turn."""
     c = getattr(msg, "content", None)
     if isinstance(c, str):
         text = c

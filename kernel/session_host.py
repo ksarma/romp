@@ -539,7 +539,9 @@ def _opens_turn(obj: dict) -> bool:
 
 
 # The tags that open a local command's output (a /model switch's confirmation, a typed /cost's answer). The CLI writes every
-# such output with the tag first, and its own recognisers of that output test the start of the text. The kernel's twin is
+# such output with the tag first. Its readers of that output differ: the one that picks the rows its headless path echoes
+# matches either tag anywhere in the text, and others test the start. The test here anchors on how the CLI writes the
+# output, so a free-text row that quotes a tag past the start is never taken for an echo. The kernel's twin is
 # sdk_backend.LOCAL_COMMAND_TAGS, for the same test on the parsed message.
 LOCAL_COMMAND_TAGS = ("<local-command-stdout>", "<local-command-stderr>")
 
@@ -559,7 +561,7 @@ def _cli_echo(obj: dict) -> bool:
     modes romp never turns on. With romp's settings the key alone covers every member.
 
     The text is a second test, for a local command's output that arrives without the key: a row whose text (the string
-    content, or its text blocks) STARTS with either tag, the way the CLI writes every such output and reads it back.
+    content, or its text blocks) STARTS with either tag, the way the CLI writes every such output.
     Anchored, because the first row of a turn the CLI opens itself (a task notification, a peer's message) is free text
     that may quote a tag anywhere. And never for a row stamped with an `origin`: the stamp is the CLI's record of a turn it
     opened itself, which it writes without the key, so its text decides nothing.
@@ -1134,7 +1136,8 @@ class SessionHost:
         self.kernel = None
         self.inflight = 0               # open turns: a text-bearing user line fed opens one; a result closes ALL of them (the CLI folds
         #                                 queued lines into the running turn and answers with one result); an output row after the result
-        #                                 (an assistant or user row: the CLI running a queued line as its own turn) re-opens one
+        #                                 (an assistant or user row: the CLI running a queued line as its own turn) re-opens one, never
+        #                                 a row the CLI echoes for input it is not running (_cli_echo)
         self.idle_since = self.now()
         self.exit_info = None
         self.ending = None              # (deadline, cause) once `end` was requested
@@ -1511,8 +1514,8 @@ class SessionHost:
             # fold (the kernel's own settle learned this on 2026-07-09; the host re-created it, and every attach then
             # adopted the stale count from the hello: a session that read Ready yet swallowed every send, 2026-09-18).
             # A line the CLI runs as a SEPARATE turn instead re-opens the count from the output side below: its first
-            # assistant or user row after this result (its own user line was counted before the result, so nothing on
-            # the input side can tell a fold from a queue; the output can).
+            # assistant or user row after this result that is not an echo (_cli_echo). Its own user line was counted before
+            # the result, so nothing on the input side can tell a fold from a queue; the output can.
             self.inflight = 0
             self.idle_since = self.now()
             if self._reexec_pending is not None:                  # a kernel asked mid-turn: the turn's end is the event
