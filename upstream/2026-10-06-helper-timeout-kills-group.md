@@ -3,7 +3,7 @@ title: run_helper starts the helper in a session of its own and ends a run the b
 status: candidate
 where: kernel/credentials.py (run_helper: the shell starts in a session of its own, a run that does not finish ends with SIGKILL to its process group, then a drain bounded by the new HELPER_DRAIN_S and p.kill() as the fallback; the docstring says why, and the comment at the kill says what the kill does not reach and what the session changes for a helper); tests/test_credentials.py (HelperTimeoutEndsTheGroup: a hung tree of three processes, the helper's own session, three asks of a hung operator helper through helper_key, the token command road through logins.token_value, an exception that cuts the wait, and the stated limits planted: a process that left the group holding stdout, a daemonizing helper, and the finished roads, which kill nothing; HelperRun.test_a_timeout_is_a_static_word_too also asserts that its script and the script's sleep are gone); upstream/2026-10-06-helper-timeout-kills-group.md (this entry)
 added: 2026-10-06
-pr:
+pr: 987
 tier: fix
 offered:
 closed:
