@@ -130,7 +130,9 @@ reads that fail, on a page of its own at 390px, the shell's boot pull answering 
 premise): the card opened over an opening's pull the driver answers with ERROR_STATUS, over one it aborts in transit,
 and over one it holds unanswered under a bound of HANG_MS set on the shell (window.__rompUsagePullMs; the loader read
 while it is held, and its end read at least HANG_MS and at most HANG_WAIT_MS after the click), shows Usage disabled with
-the line USAGE_ERR and not USAGE_NONE once each ask has ended, the card open and nothing posted; and an opening whose
+the line USAGE_ERR and not USAGE_NONE once each ask has ended, the card open and nothing posted; after each of the
+three, an opening whose pull the driver answers ok with no rows shows Usage disabled with USAGE_NONE and not USAGE_ERR (an
+ok answer clears the failure, and the next failure starts from a read that did not fail); and an opening whose
 pull reaches the lab then shows Usage enabled with neither line. Then the deploy skew, on a page of its own at 390px:
 the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
@@ -178,7 +180,9 @@ opening's pull is out, are red under a mutant that never disables it; a script's
 without the row handler's check of the disabled state (each closes the card and posts phoneAct usage). The failed reads
 are red where an error status reads as no reading and a failure leaves the line as it was (No reading yet after the
 error status and after the abort in transit), and the hung pull where the card's pull carries no bound (the loader still
-up); the row's heights are red where the loader is a line the reading's state does not have (the row taller while
+up). With the ok answers between the failures, the abort in transit and the hung pull are red under a mutant whose failed
+path leaves the flag as it was (No reading yet after each), and the three ok answers under a mutant where an ok answer
+leaves a flag a failure set (Couldn't load after each); the row's heights are red where the loader is a line the reading's state does not have (the row taller while
 loading than with a reading, in both themes). The layout word's source is red under a mutant of the card's link listener
 that does not check the word's source (the row hidden by the settings frame's own word and by the chat pane's). The
 fallback's pin is red under the old rule restored (no wrap), and the
@@ -678,7 +682,8 @@ def _failed_problems(engine, fr):
     """The reads that fail (romp-manager's rulings after PR 976's round 1): with no reading in the shell, an opening's pull
     answered with an error status, one that fails in transit, and one the kernel never answers (ended by the pull's bound,
     set to HANG_MS on the shell here) each end with Usage disabled and the line USAGE_ERR, never USAGE_NONE, and the card
-    open; a later opening whose pull reads the lab's reading shows Usage enabled with neither line."""
+    open; after each of them, an opening whose pull the kernel answers ok with no rows shows Usage disabled with USAGE_NONE
+    alone; a later opening whose pull reads the lab's reading shows Usage enabled with neither line."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -712,6 +717,19 @@ def _failed_problems(engine, fr):
                    "line %r (and without %r): %r" % (where, USAGE_ERR, USAGE_NONE, hg.get("after")))
     if card_closed(hg.get("shell") or {}):
         out.append("%s: the hung pull's card closed or reached the shell: %r" % (where, hg.get("shell")))
+
+    def not_none(u):
+        return (not u or u.get("disabled") is not True or not u.get("line") or u["line"].get("shown") is not True
+                or u["line"].get("text") != USAGE_NONE or not u.get("err") or u["err"].get("shown") is not False)
+    # after each failure, an opening whose pull the kernel answers ok with no rows: USAGE_NONE alone. So an ok answer clears the
+    # failure, and the failure after it starts from a read that did not fail: the line each failure shows above is its own doing,
+    # not a flag an earlier failure left set
+    for key, after in (("okAfterStatus", "the error status"), ("okAfterTransit", "the failure in transit"),
+                       ("okAfterHang", "the hung pull")):
+        t = fr.get(key) or {}
+        if not t.get("asked") or not_none(t.get("usage")):
+            out.append("%s: after %s, an opening whose pull the kernel answered ok with no rows does not show Usage disabled with "
+                       "the line %r alone (%r hidden): asked %r, %r" % (where, after, USAGE_NONE, USAGE_ERR, t.get("asked"), t.get("usage")))
     lab = fr.get("lab") or {}
     u = lab.get("usage")
     if not lab.get("asked") or not u or u.get("disabled") is not False or (u.get("line") or {}).get("shown") is not False \
