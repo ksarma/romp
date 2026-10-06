@@ -36,6 +36,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -83,6 +84,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -186,14 +188,7 @@ out.refused = await page.evaluate(async (paths) => {
   }
   return out;
 }, { outside: cfg.outside, secret: "docs/.env", dressed: "docs/report.md", missing: "docs/nope.md" });
-// The full result goes to cfg.resultPath and the RESULT: line names it (2026-10-05; the shape of the result file
-// tests/return_from_background_browser.mjs writes). Loading playwright leaves stdout non-blocking, so one writeSync to a pipe
-// writes what the pipe has room for and the rest is lost: up to 64 KiB, and 8 KiB on a loaded machine (a user past
-// fs.pipe-user-pages-soft gets minimum-size pipes, pipe(7)), where this record, about 18 KB in a measured run, was cut at
-// 8 KiB and the Python side read a cut line.
-const line = { resultPath: cfg.resultPath || null };
-try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { line.resultWriteError = String(e).slice(0, 200); }
-fs.writeSync(1, "RESULT:" + JSON.stringify(line) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -288,22 +283,14 @@ class ServedFilePreview(unittest.TestCase):
         lab_ports.release(getattr(cls, "lab", ""))
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
-    def _full_result(self, line, result_path, p):
-        """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is
-        non-blocking, so one write to a pipe delivers what the pipe has room for, which is 8 KiB on a loaded machine, and
-        this record (about 18 KB in a measured run, 2026-10-05) printed whole was cut there."""
-        head = json.loads(line[len("RESULT:"):])
-        self.assertEqual(head.get("resultPath"), result_path, "the driver named its result file: %r" % head)
-        self.assertTrue(not head.get("resultWriteError") and os.path.exists(result_path), "the driver wrote its result (%r):\n%s" % (
-            head.get("resultWriteError"), (p.stdout[-1500:] + p.stderr[-1500:])))
-        return json.loads(Path(result_path).read_text(encoding="utf-8"))
-
     def test_a_hover_previews_the_file_or_its_section_after_the_dwell_and_a_refused_path_is_text_with_no_request(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID, "outside": self.outside, "cold": self.cold,
+                "shots": os.environ.get("PV_SHOTS", "")}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID, "outside": self.outside, "cold": self.cold,
-                       "shots": os.environ.get("PV_SHOTS", ""),
-                       "resultPath": os.path.join(self.lab, "result.json")}, f)   # the driver's full record; its RESULT: line names it
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -312,9 +299,7 @@ class ServedFilePreview(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = self._full_result(line, os.path.join(self.lab, "result.json"), p)
+        r = lab_result.read(p, tgt)
         # the links, as the kernel's verdict dressed them
         by = {}
         for l in r["links"]:

@@ -38,6 +38,7 @@ import functools
 import http.server
 import json
 import lab_dist
+import lab_result
 import os
 import re
 import subprocess
@@ -247,6 +248,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -673,14 +675,7 @@ await step("geometry", async () => {
   R.geoShort = await fresh(1200, 280, false);
 });
 if (cfg.shots) await page.screenshot({ path: cfg.shots });
-// The full result goes to cfg.resultPath and the RESULT: line names it (2026-10-05; the shape of the result file
-// tests/return_from_background_browser.mjs writes). Loading playwright leaves stdout non-blocking, so one writeSync to a pipe
-// writes what the pipe has room for and the rest is lost: up to 64 KiB, and 8 KiB on a loaded machine (a user past
-// fs.pipe-user-pages-soft gets minimum-size pipes, pipe(7)), where this record, about 19 KB in a measured run, was cut at
-// 8 KiB and the Python side read a cut line.
-const line = { resultPath: cfg.resultPath || null };
-try { fs.writeFileSync(cfg.resultPath, JSON.stringify(R)); } catch (e) { line.resultWriteError = String(e).slice(0, 200); }
-fs.writeSync(1, "RESULT:" + JSON.stringify(line) + "\n");
+lab.writeResult(cfg, R);
 await browser.close();
 process.exit(0);
 """.replace("NOW_PLACEHOLDER", str(NOW - 30)).replace("SID_PLACEHOLDER", SID)
@@ -739,10 +734,12 @@ class ServedHistory(unittest.TestCase):
         cls.thr = threading.Thread(target=cls.srv.serve_forever, daemon=True)
         cls.thr.start()
         cfg = os.path.join(cls.lab, "cfg.json")
+        conf = {"url": "http://127.0.0.1:%d/" % cls.srv.server_address[1],
+                "shots": os.environ.get("APIH_HOVER_SHOT", "")}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"url": "http://127.0.0.1:%d/" % cls.srv.server_address[1],
-                       "shots": os.environ.get("APIH_HOVER_SHOT", ""),
-                       "resultPath": os.path.join(cls.lab, "result.json")}, f)   # the driver's full record; its RESULT: line names it
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -753,23 +750,7 @@ class ServedHistory(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this machine: the served hover needs one (CI installs none)")
         if p.returncode != 0:
             raise AssertionError("driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        if line is None:
-            raise AssertionError("driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        cls.R = cls._full_result(line, os.path.join(cls.lab, "result.json"), p)
-
-    @staticmethod
-    def _full_result(line, result_path, p):
-        """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is
-        non-blocking, so one write to a pipe delivers what the pipe has room for, which is 8 KiB on a loaded machine, and
-        this record (about 19 KB in a measured run, 2026-10-05) printed whole was cut there."""
-        head = json.loads(line[len("RESULT:"):])
-        if head.get("resultPath") != result_path:
-            raise AssertionError("the driver named its result file: %r" % (head,))
-        if head.get("resultWriteError") or not os.path.exists(result_path):
-            raise AssertionError("the driver wrote its result (%r):\n%s" % (head.get("resultWriteError"), p.stdout[-1500:] + p.stderr[-1500:]))
-        with open(result_path, encoding="utf-8") as f:
-            return json.load(f)
+        cls.R = lab_result.read(p, tgt)
 
     def test_the_driver_hit_no_script_error(self):
         self.assertEqual(self.R["err"], {})
