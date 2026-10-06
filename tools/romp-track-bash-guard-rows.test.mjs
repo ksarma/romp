@@ -913,6 +913,13 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-ruleS-ctl-noredir', 'nad', 'mkdir -p 10 11; p={OUT}/x; true; echo y > "$p/../report.md"', N, 'allow'],
       ['AS8-ruleS-table-bash-ba', 'na', `OUT={OUT}/scratch\nshopt -s expand_aliases\nBASH_ALIASES[grep]=read\ngrep OUT <<< {NA}/docs\necho x > "$OUT/report.md"`, ['bash'], ['text', 'which is not a literal path']],
       ['AS8-ruleS-table-bash-split', 'na', `OUT={OUT}/scratch\nshopt -s expand_aliases\nprintf -v 'BASH_''ALIASES[grep]' read\ngrep OUT <<< {NA}/docs\necho x > "$OUT/report.md"`, ['bash'], ['text', 'which is not a literal path']],
+      // fork PR 975's gap pass (R1, 2026-10-06): fresh-1's zsh road. `printf -v 'functions[grep]'` writes the zsh functions associative array, defining grep;
+      // the quoted lvalue still names the table (identifierTokens reads quoted text), so clause (b) gives the command fork main's reading and the write
+      // through the redefined grep's assignment refuses. Closed at head but unwitnessed before. Base refused; the pre-round-2 head allowed; zsh wrote. Clause
+      // (b)'s census (THE COMMAND TABLES) verifies each committed name is a writable special parameter of an installed shell; it does not derive the set, so
+      // a new table name is caught only once committed. Today's set (functions, aliases, galiases, saliases, commands, their dis_ twins, BASH_ALIASES/CMDS)
+      // is complete for the shells installed.
+      ['AS8-ruleS-table-zsh-functions-printfv', 'na', `OUT={OUT}/scratch\nprintf -v 'functions[grep]' 'read "$@"'\ngrep OUT <<< {NA}/docs\necho x > "$OUT/report.md"`, ['zsh'], ['text', 'which is not a literal path']],
       ['AS8-ruleS-nameRun-typeset-fu', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; typeset -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       ['AS8-ruleS-nameRun-declare-fu', 'na', `cp /usr/bin/cp {OUT}/scratch/c2; printf '%s\\n' {OUT}/scratch > {OUT}/p; mkdir -p {OUT}/fp; printf 'read "$@"\\n' > {OUT}/fp/g; fpath[1]={OUT}/fp; declare -fu g; g PATH < {OUT}/p; c2 {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'name', 'name'],
       // fork PR 975's gap pass (R1, 2026-10-06): `readonly -fu g` marks g for autoload in zsh the same way `typeset -fu` does (readonly is typeset -r in zsh), so readonly
@@ -1597,7 +1604,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# RESTS_ON_PROBES: ${RESTS_ON_PROBES.size} rows whose rebinding the gate cannot know; ${ranHere.size} of ${rows.length} rows ran their legs here; the rest ran none here: ${rows.map((r) => r[0]).filter((id) => !ranHere.has(id) && !RESTS_ON_PROBES.has(id) && !guardOnly.includes(id)).join(', ') || 'none'}`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 283 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 284 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
