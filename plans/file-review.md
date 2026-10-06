@@ -5373,7 +5373,12 @@ document stands on its own, each with the reasoning it was given.
     stays open, pre-existing, is disclosed with witness rows, each allowed at base, head and rule B while bash, zsh and
     dash write: a `cp -r` directory copy, where only the top directory is bound (AS8-residual-ruleB-cp-r-dir); `dd of=` and
     `tee` writers under a readable PATH, outside the binding model (AS8-residual-ruleB-dd, AS8-residual-ruleB-tee); and a
-    failed `ln -s` onto an existing name (AS8-residual-ruleB-failed-lns-exist). THE MOVED LINK RE-RESOLVES (fork PR 975's
+    failed `ln -s` onto an existing name (AS8-residual-ruleB-failed-lns-exist). OUTSIDE THE BINDING MODEL (fork PR 975's
+    round 2 gap pass, pre-existing at base): zsh's `mapfile` associative array (zsh/mapfile) maps a filename to its
+    contents, so `mapfile[<path>]=x` writes that file while the guard reads an array-element assignment, not a write
+    (AS8-residual-mapfile-zsh, zsh writes); and a copy of cp made after an unread program behind a wrapper and a relative
+    cd leave the cwd unknown binds nothing (no directory to resolve the destination against), so a later bare name on a
+    readable PATH is no writer the command made and passes (AS8-residual-copy-unknown-cwd, bash and zsh write). THE MOVED LINK RE-RESOLVES (fork PR 975's
     round 2 gap pass, R3): a command-made RELATIVE symlink carried unchanged into a directory on a readable PATH by a
     preserving op (mv, a hard `ln`, cp -a/-P/-r) has text that re-resolves against the NEW directory; rule B first bound
     the link's OLD target (not a path the command made) and let the moved name pass, while a real bash, zsh and dash ran

@@ -1239,6 +1239,14 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-residual-ruleB-dd', 'na', 'cp /usr/bin/cp zc; dd if=zc of={OUT}/scratch/zc2 status=none; chmod +x {OUT}/scratch/zc2; PATH={OUT}/scratch:/usr/bin:/bin; zc2 {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
       ['AS8-residual-ruleB-tee', 'na', 'cp /usr/bin/cp zc; tee {OUT}/scratch/zc2 < zc > /dev/null; chmod +x {OUT}/scratch/zc2; PATH={OUT}/scratch:/usr/bin:/bin; zc2 {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
       ['AS8-residual-ruleB-failed-lns-exist', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; ln -s /usr/bin/true {OUT}/scratch/c2; PATH={OUT}/scratch:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
+      // fork PR 975's gap pass (outside R1-R6, 2026-10-06; pre-existing, found while verifying): two write channels the model does not reach, each allowed at
+      // base, the pre-round-2 head and this change while a real shell writes, witnessed here as residuals (decision 47). ZSH MAPFILE: zsh's `mapfile`
+      // associative array (zsh/mapfile) maps a filename to its contents, so `mapfile[<path>]=x` WRITES that file; the guard reads it as an array-element
+      // assignment, not a file write, so a tracked path written this way passes (zsh writes). A COPY AFTER THE CWD IS UNKNOWN: once an unread program behind a
+      // wrapper and a relative cd leave the cwd unknown, a copy of cp binds nothing (no directory to resolve the destination against), so a later bare name on
+      // a readable PATH is not a writer the command made and passes; bash and zsh write (dash does not take the held-directory path).
+      ['AS8-residual-mapfile-zsh', 'na', 'zmodload zsh/mapfile 2>/dev/null; mapfile[docs/report.md]=poison', ['zsh'], 'allow'],
+      ['AS8-residual-copy-unknown-cwd', 'na', 'read c <<< true; nohup -- "$c" x; cd build; cp /usr/bin/cp {OUT}/scratch/c2; PATH={OUT}/scratch:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', BZ, 'allow'],
       // a file this command writes another way than by a copy, a move or a link (a printf redirection, a tee), whose name passed under a PATH the guard
       // does not read while every shell ran it (the reviewer's (b), F-a's unbound writers): refused as every bare name is once a path is bound; such a
       // file is never spliced (a printf'd script copied on with `cat` and run under a builtin's name stays the builtin's: AS8-builtin-noenable-script)
@@ -1477,6 +1485,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     const CP = '/usr/bin/cp';
     const W2 = '{W}/tools/w2';
     const RESTS_ON_PROBES = new Set([
+      'AS8-residual-mapfile-zsh',   // `zmodload zsh/mapfile` loads a module whose builtins the gate does not know, so it cannot tell what the line rebinds; the writer rests on the three-hook probe (zsh writes)
       'AS8-armed-c2', 'AS8-armed-c2-unread-source', 'AS8-armed-c2-untracked', 'AS8-armed-echo', 'AS8-armed-mv-untracked', 'AS8-backup-after-cd',
       'AS8-backup-cp', 'AS8-builtin-bound-env-echo', 'AS8-builtin-cd-after-backup', 'AS8-builtin-cd-same-name', 'AS8-builtin-cd-same-name-untracked',
       'AS8-builtin-command-echo', 'AS8-builtin-dash-pctbuiltin-dash-c', 'AS8-builtin-dash-pctbuiltin-echo', 'AS8-builtin-dash-pctbuiltin-printf',
@@ -1510,7 +1519,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       'AS8-root-old-arith-path-ls': { c2: CP }, 'AS8-root-old-arith-path-echo': { c2: CP }, 'AS8-root-old-arith-path-dq': { c2: CP },
       'AS8-residual-path-zsh-array': { c2: CP }, 'AS8-residual-path-zsh-array-keep': { c2: CP }, 'AS8-residual-path-zsh-array-append': { c2: CP },
       'AS8-residual-path-zsh-array-element': { c2: CP }, 'AS8-residual-path-zsh-read-A': { c2: CP }, 'AS8-residual-path-zsh-indirect': { c2: CP },
-      'AS8-residual-path-zsh-scalar': { c2: CP }, 'AS8-ruleB-corr4-lns-3operand': { c2a: CP },
+      'AS8-residual-path-zsh-scalar': { c2: CP }, 'AS8-ruleB-corr4-lns-3operand': { c2a: CP }, 'AS8-residual-copy-unknown-cwd': { c2: CP },
       'AS8-residual-assign-zsh-glob-qualifier': { 'e:p=0:': 'absent' },   // the reader takes zsh's glob qualifier for a command, which bash and dash never reach (a syntax error)
       // fork PR 975's round 2 (tests-3): the made names of THE BOUND NAME's rows, R3's rows and the residuals beside them
       ...Object.fromEntries(['AS8-into-dir-cp', 'AS8-into-dir-cp-made', 'AS8-into-dir-install', 'AS8-into-dir-ln', 'AS8-into-dir-ln-s', 'AS8-into-dir-mv',
@@ -1640,7 +1649,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# RESTS_ON_PROBES: ${RESTS_ON_PROBES.size} rows whose rebinding the gate cannot know; ${ranHere.size} of ${rows.length} rows ran their legs here; the rest ran none here: ${rows.map((r) => r[0]).filter((id) => !ranHere.has(id) && !RESTS_ON_PROBES.has(id) && !guardOnly.includes(id)).join(', ') || 'none'}`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 296 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 298 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
