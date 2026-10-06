@@ -124,12 +124,13 @@ class RailUsage(unittest.TestCase):
         # 2. the spend section ends with its OWN age line, from the newest contributor's
         #    last-record moment (event time, not a poll time);
         # 3. a FAILED fleet pull re-renders from the cached rows, so every age line keeps climbing
-        #    instead of freezing at a quietly lying "3m ago".
+        #    instead of freezing at a quietly lying "3m ago". The pull goes through the usage script's one bounded
+        #    helper since PR 976's round 2 (ui/webview/usage-pull-bound.test.ts holds that every read does).
         self.assertNotIn("rate-limit telemetry unavailable", self.html)
         self.assertNotIn("_telemUnavail", self.html)
         self.assertIn("if(sAt)h+='<div class=ru-tip-age>last charge recorded '+fmtAgo(sAt)+'</div>';", self.html)
         self.assertIn("if(typeof u.spendAt==='number')det._spendAt=u.spendAt;", self.html)
-        self.assertIn("pullFleet().then(done,function(){if(ROWS.length)renderRows(ROWS,SELF);done();});", self.html)
+        self.assertIn("boundedPull().then(done,function(){if(ROWS.length)renderRows(ROWS,SELF);done();});", self.html)
         # the kernel side: the payload stamps spend.json's own mtime on both spend-attaching arms
         ksrc = open(os.path.join(BIN, "romp-kernel")).read()
         self.assertEqual(ksrc.count('out["spendAt"] = sa'), 2, "the key-only arm and the mixed-host arm")

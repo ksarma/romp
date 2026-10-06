@@ -51,7 +51,11 @@
 // pull, closed, and opened again over a later pull (answered with no rows, failed in transit, reaching the lab), Usage read
 // before and after the held pull ends (failed in transit, answered ok with no rows, answered with cfg.errorStatus); then over a
 // pull that reaches the lab, Usage read again; then, that reading in the shell, over a pull failed in transit, Usage read and
-// clicked, its effect read.
+// clicked, its effect read; then, the modal closed, the shell given a window reading of its own (a pull answered with a
+// synthetic one, read at an opening), the card opened over a pull held past cfg.hangMs (the bound set on the shell) and Usage
+// read, the bound raised to cfg.raceMs, Usage clicked with the tap's own pull held, the Usage modal awaited for 1 s and its
+// content read (its window section, its age line), then the held pull answered with a fresher synthetic reading and the open
+// modal read once its age line follows.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -712,8 +716,14 @@ try {
       if (mode === "transit") return route.abort("failed");
       if (mode === "empty") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) });
       if (mode === "hang") { held.push(route); return undefined; }
+      if (mode === "bars") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(barsReading(false)) });
       return route.continue();
     }));
+    // a window reading of the shell's own (the at-once leg below): this machine's five-hour window, 12% used, reported ten
+    // minutes ago, so the panel over it shows a window section and its age (updated 10m ago); and a fresher one, 34% used and
+    // reported now (updated just now), the answer the leg gives the tap's held pull
+    const barsReading = (fresh) => { const now = Math.floor(Date.now() / 1000);
+      return { rows: [{ host: "", usage: { fiveHour: { pct: fresh ? 34 : 12, resetsAt: now + 3 * 3600 }, t: fresh ? now : now - 600 } }], host: "" }; };
     const [w, h] = cfg.actsViewport;
     await page.setViewportSize({ width: w, height: h });
     await frames(page);
@@ -825,6 +835,57 @@ try {
         cd.clicked = await kit.shellNow(sf);
       }
       fr.cached = cd;
+    }
+    // ...and the tap opening the panel at once over the reading the shell holds (PR 976's round 2, romp-manager's first rule):
+    // the modal closed, the shell given a window reading of its own (a pull answered with barsReading, read at an opening:
+    // Usage enabled), then the card opened over a pull held past cfg.hangMs (set on the shell), which the bound ends, so the
+    // newest read failed over that reading: Usage enabled beside Couldn't load. The bound raised to cfg.raceMs, so the tap's
+    // own pull, held too, ends only when the leg ends it; Usage clicked, and the Usage modal awaited for 1 s: its content
+    // read (a window section, its age line), then the held pull answered with the fresher reading, and the open modal read
+    // once its age line follows (updated just now, the modal still open). The phoneAct record starts empty for the click
+    {
+      const at = {};
+      await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } window.__mtabsActs.length = 0; });
+      at.barsTurn = await turn("bars");
+      mode = "hang";
+      await page.evaluate((ms) => { window.__rompUsagePullMs = ms; }, cfg.hangMs);
+      const sf = await kit.openCard();
+      for (let i = 0; i < 50 && !held.length; i++) await sleep(100);
+      at.cardHeld = held.length;
+      at.cardEnded = await sf.waitForFunction(() => { const x = document.getElementById("rs-pact-usage-wait"); return !!x && x.hidden; }, null, { timeout: cfg.hangWaitMs }).then(() => true, () => false);
+      await frames(page);
+      for (const route of held.splice(0)) { try { await route.abort(); } catch (e) { /* the page aborted it first */ } }
+      at.usage = await kit.usageNow(sf);
+      at.reading = await page.evaluate(() => typeof window.__rompUsageReading === "function" && window.__rompUsageReading());
+      await page.evaluate((ms) => { window.__rompUsagePullMs = ms; }, cfg.raceMs);
+      // the modal's content: whether it is up (the backdrop on, the tip a modal and shown), its window section and its age line
+      const modalNow = () => page.evaluate(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip");
+        const up = !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block";
+        const age = t ? t.querySelector(".ru-tip-age") : null;
+        return { up, windows: !!t && !!t.querySelector(".ru-tip-win"), age: age ? age.textContent.trim() : null, bySession: !!document.getElementById("ru-bysession") }; });
+      if (at.usage) {
+        const t0 = Date.now();
+        await page.mouse.click(at.usage.left + at.usage.w / 2, at.usage.top + at.usage.h / 2);
+        at.opened = await page.waitForFunction(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip");
+          return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }, null, { timeout: 1000 }).then(() => true, () => false);
+        at.elapsed = Date.now() - t0;
+        for (let i = 0; i < 20 && !held.length; i++) await sleep(50);
+        at.tapHeld = held.length;
+        at.clicked = await kit.shellNow(sf);
+        at.before = await modalNow();
+        mode = "lab";
+        for (const route of held.splice(0)) {
+          try { await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(barsReading(true)) }); } catch (e) { /* the page ended it first */ }
+        }
+        at.followed = await page.waitForFunction(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip");
+          const age = t ? t.querySelector(".ru-tip-age") : null;
+          return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block" && !!age && /just now/.test(age.textContent); },
+        null, { timeout: 10000 }).then(() => true, () => false);
+        at.after = await modalNow();
+        await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } });
+      }
+      await page.evaluate(() => { delete window.__rompUsagePullMs; });
+      fr.atOnce = at;
     }
     out.failedReads = fr;
     await context.close();

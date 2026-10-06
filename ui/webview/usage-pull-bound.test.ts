@@ -11,6 +11,9 @@
 // mocked, where an AbortController with a timer of the same bound aborts the fetch at the bound, the read is marked failed and
 // the card told, and the card's own code (gear.js usageAct, run over that shell) lands in Couldn't load; the timer takes the
 // override too, and a pull that ends first clears it.
+// Then PR 976's round 2. Every read of the readings goes through the script's one bounded helper (boundedPull): a census of
+// the script's code finds the read's name in its declaration and in the helper alone, so no caller reaches the read unbounded,
+// and the card's name and the panel's opener reach the helper.
 import { test, mock } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -28,42 +31,64 @@ function between(src: string, a: string, b: string): string {
   assert.equal(src.indexOf(a, i + 1), -1, "once: " + a.slice(0, 60));
   return src.slice(i, j);
 }
-const PULL = between(USAGE, "window.__rompUsagePull=function(){", "// the API-health dot sits inside this cell");
-// the script's read of the readings, the function __rompUsagePull hands its signal to, found by its opening statement
+// the script's read of the readings, found by its opening statement (it numbers its reads), and the code the cases lift: the
+// read, __rompUsageFailed and __rompUsageReading as kernel.py has them
 const READ_NAME = (USAGE.match(/function (\w+)\(sig\)\{var ok=false,n=\+\+PULLS;/) || [])[1];
 assert.ok(READ_NAME, "the read of the readings, numbering its pulls");
 const READ = between(USAGE, "function " + READ_NAME + "(sig){", "function pull(ack){");
 const FAILED = between(USAGE, "window.__rompUsageFailed=function(){", "\n");
-// the comment over the pull, as prose: its lines from the one that opens it down to the pull, each line's // taken off
-const NOTE = between(USAGE, "// ...and the source behind those answers", "window.__rompUsagePull=function(){")
+const READING = between(USAGE, "window.__rompUsageReading=function(){", "\n");
+// ...and, read when a case needs it, the one bounded helper with the card's name for it, from the helper down to the next
+// section's comment, and the comment over it as prose: its lines from the one that opens it down to the helper, each line's
+// // taken off. A case that needs neither runs where they are missing
+const pullCode = () => between(USAGE, "function boundedPull(){", "// the API-health dot sits inside this cell");
+const note = () => between(USAGE, "// ...and the source behind those answers", "function boundedPull(){")
   .split("\n").map((l) => l.replace(/^\/\/ ?/, "").trim()).filter(Boolean).join(" ");
 
-type Pulled = { url: string; signal: AbortSignal | null };
-type World = { pull: () => Promise<unknown>; failed: () => boolean; win: Record<string, unknown>; fetches: Pulled[]; tells: number; renders: number };
-// the pull's code in a world of its own: that read, __rompUsageFailed and __rompUsagePull as kernel.py has them, over a fetch
-// that answers ok with no rows, or never answers and rejects when its signal aborts (as a real fetch does); renderRows and the
-// card's tell counted
-function world(answer: "ok" | "hang"): World {
-  const w: World = { pull: () => Promise.resolve(), failed: () => false, win: {}, fetches: [], tells: 0, renders: 0 };
+type Answer = { ok: boolean; rows: unknown[] } | "fail";
+type Pending = { url: string; signal: AbortSignal | null; end: (a: Answer) => void };
+type World = { pull: () => Promise<unknown>; failed: () => boolean; reading: () => boolean; read: () => Promise<unknown>;
+  win: Record<string, unknown>; fetches: Pending[]; tells: number; renders: number; last: unknown[] };
+// the pull's code in a world of its own: the read, __rompUsageFailed and __rompUsageReading as kernel.py has them, with the
+// bounded helper where a case asks for it, over a fetch that
+// answers ok with no rows ("ok"), never answers and rejects when its signal aborts, as a real fetch does ("hang"), or waits
+// for the case to end it ("held": an ok answer with rows, an error status, or a failure in transit). renderRows stands for the
+// script's own: it keeps each row that has a usage as the readings (tipHTML then says there is a reading) and tells the card;
+// the card's tell is counted, and a case can hook it
+function world(answer: "ok" | "hang" | "held", parts: { helper?: boolean } = { helper: true }, onTell?: () => void): World {
+  const w: World = { pull: () => Promise.resolve(), failed: () => false, reading: () => false, read: () => Promise.resolve(),
+    win: {}, fetches: [], tells: 0, renders: 0, last: [] };
+  const tell = () => { w.tells++; if (onTell) onTell(); };
+  const renderRows = (rows: unknown[]) => { w.renders++; w.last = (rows || []).filter((r) => !!(r && (r as { usage?: unknown }).usage)); tell(); };
   const fetchStub = (url: string, opts?: { signal?: AbortSignal }) => {
     const signal = (opts && opts.signal) || null;
-    w.fetches.push({ url, signal });
-    if (answer === "ok") return Promise.resolve({ ok: true, json: () => Promise.resolve({ rows: [], host: "" }) });
-    return new Promise((_resolve, reject) => { if (signal) signal.addEventListener("abort", () => reject(signal.reason), { once: true }); });
+    return new Promise((resolve, reject) => {
+      const end = (a: Answer) => {
+        if (a === "fail") reject(new TypeError("synthetic failure in transit"));
+        else resolve({ ok: a.ok, json: () => Promise.resolve({ rows: a.rows, host: "" }) });
+      };
+      w.fetches.push({ url, signal, end });
+      if (answer === "ok") end({ ok: true, rows: [] });
+      if (signal) signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
   };
-  const made = new Function("window", "fetch", "renderRows", "notices", "cardTell",
-    "var READ_FAILED=false,PULLS=0,PULL_ENDED=0,SELF='';\n" + READ + "\n" + FAILED + "\n" + PULL +
-    "\nreturn { pull: window.__rompUsagePull, failed: window.__rompUsageFailed };")(
-    w.win, fetchStub, () => { w.renders++; }, () => undefined, () => { w.tells++; });
+  const made = new Function("window", "fetch", "renderRows", "notices", "cardTell", "tipHTML",
+    "var READ_FAILED=false,PULLS=0,PULL_ENDED=0,SELF='';\n" + READ + "\n" + FAILED + "\n" + READING + "\n" +
+    (parts.helper ? pullCode() + "\n" : "") +
+    "return { pull: window.__rompUsagePull, failed: window.__rompUsageFailed, reading: window.__rompUsageReading," +
+    " read: " + READ_NAME + " };")(
+    w.win, fetchStub, renderRows, () => undefined, tell, () => (w.last.length ? "a reading" : ""));
   w.pull = made.pull;
   w.failed = made.failed;
+  w.reading = made.reading;
+  w.read = made.read;
   return w;
 }
 
 test("the bound's default is 10 s, the figure the kernel's comment states, and the comment gives the reason for it", () => {
-  const code = PULL.match(/\(window\.__rompUsagePullMs\|0\)\|\|(\d+)/);
+  const code = pullCode().match(/\(window\.__rompUsagePullMs\|0\)\|\|(\d+)/);
   assert.ok(code, "the pull's default, read after the override");
-  const said = NOTE.match(/(\d+) s: the kernel answers \/usage\/\w+ from usage\.json/);
+  const said = note().match(/(\d+) s: the kernel answers \/usage\/\w+ from usage\.json/);
   assert.ok(said, "the comment states the bound in seconds where it gives the reason");
   assert.equal(Number(code![1]), 10000, "the default is 10 s");
   assert.equal(Number(said![1]) * 1000, Number(code![1]), "the comment's figure is the code's");
@@ -72,7 +97,7 @@ test("the bound's default is 10 s, the figure the kernel's comment states, and t
   for (const why of [
     "from usage.json and the tunnel supervisor's cached readings, dialing nothing, so an answer takes well under a second even over a phone's network",
     "within seconds rather than after the 20 s the spend panel allows its heavier read",
-  ]) assert.ok(NOTE.includes(why), "the reason: " + why);
+  ]) assert.ok(note().includes(why), "the reason: " + why);
 });
 
 test("the pull's abort is set at 10 s with no override, and at window.__rompUsagePullMs where that is set", async () => {
@@ -185,4 +210,52 @@ test("without AbortSignal.timeout, the fallback's timer takes window.__rompUsage
     assert.equal(done!.aborted, false, "the timer was cleared when the pull ended first: nothing aborts it at the bound");
     assert.equal(ok.failed(), false);
   });
+});
+
+// The census (PR 976's round 2, romp-manager's first rule): the script's code with each whole-line comment dropped and each
+// trailing one cut (the kernel's two spellings of one: three spaces then //, and // right after a statement's ;), so a name in
+// a comment counts for nothing
+function codeOf(src: string): string {
+  return src.split("\n").map((ln) => {
+    if (ln.trimStart().startsWith("//")) return "";
+    for (const mark of ["   //", ";//"]) { const i = ln.indexOf(mark); if (i >= 0) ln = ln.slice(0, i) + (mark === ";//" ? ";" : ""); }
+    return ln;
+  }).join("\n");
+}
+// the end of the braced body that opens at `open` (the index of its {), by depth
+function bodyEnd(code: string, open: number): number {
+  assert.equal(code[open], "{", "a body opens here");
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === "{") depth++;
+    else if (code[i] === "}" && --depth === 0) return i;
+  }
+  return assert.fail("the body never closes");
+}
+
+test("every read of the readings goes through the one bounded helper: no caller reaches the read unbounded, and the card's name, the panel's opener and pull() reach the helper", () => {
+  const code = codeOf(USAGE);
+  const head = "function boundedPull(){";
+  const at = code.indexOf(head);
+  assert.ok(at >= 0, "the script's one bounded helper, boundedPull");
+  assert.equal(code.indexOf(head, at + 1), -1, "declared once");
+  const end = bodyEnd(code, at + head.length - 1);
+  // every use of the read's name in the code: its declaration, and inside the helper's body alone. A call anywhere else (a
+  // caller reaching the read with no bound) or the name handed on as a value is listed with the code around it
+  const decl = code.indexOf("function " + READ_NAME + "(sig){") + "function ".length;
+  const uses = Array.from(code.matchAll(new RegExp("\\b" + READ_NAME + "\\b", "g")), (m) => m.index as number);
+  const stray = uses.filter((i) => i !== decl && !(i > at && i < end)).map((i) => code.slice(Math.max(0, i - 50), i + 30).replace(/\s+/g, " "));
+  assert.deepEqual(stray, [], "the read reached outside the bounded helper");
+  assert.equal(uses.length, 2, "the read's name: its declaration and the helper's one call");
+  assert.ok(code.slice(at, end).includes(READ_NAME + "(sig)"), "the helper hands the read the abort signal it sets");
+  // the card's name for the pull is the helper itself, and the panel's opener and pull() call the helper by its own name, so
+  // a page that wraps or deletes the window name (as the served test's race does) leaves the opener's bound in place
+  assert.ok(/window\.__rompUsagePull=boundedPull;/.test(code), "window.__rompUsagePull is bound to the helper");
+  const panel = between(code, "window.__rompUsagePanel=function(){", "window.__rompUsageReading=function(){");
+  assert.ok(/boundedPull\(\)\.then\(openIt,openIt\)/.test(panel), "the panel's opener pulls through the helper");
+  assert.ok(!/__rompUsagePull\b/.test(panel), "the panel's opener does not read the window name");
+  const pullAt = code.indexOf("function pull(ack){");
+  assert.ok(pullAt >= 0, "pull(), the readout's click and the 60 s refresh");
+  const pullFn = code.slice(pullAt, bodyEnd(code, pullAt + "function pull(ack)".length));
+  assert.ok(/boundedPull\(\)\.then\(done,/.test(pullFn), "pull() pulls through the helper");
 });

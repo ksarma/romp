@@ -71444,10 +71444,13 @@ if(slot){moveApiCell(cell,function(){slot.appendChild(cell);});}else if(cell.par
 // a HOVER tip already open re-renders in place when fresh data lands (the 60s pull, the timeline's
 // live forward) — the user 2026-08-14, replacing the footer's click-me hint with the refresh itself.
 // Re-anchor the top edge after the swap: new content can change the tip's height, and it hangs ABOVE
-// the rail. The mobile modal keeps its own pull-then-open path (openIt).
+// the rail. The phone's panel (the .ru-modal tip, __rompUsagePanel below) follows them too: a tap after a failed read opens it
+// at once over the reading this script still holds, while the refresh behind it is out, and that refresh's answer lands here
+// (PR 976's round 2); the refresh never opens the panel itself.
 if(tip.style.display==='block'&&!tip.classList.contains('ru-modal')){var th=tipHTML();
 if(th){tip.innerHTML=th;var rr=el.getBoundingClientRect();
 tip.style.top=Math.max(6,rr.top-tip.offsetHeight-8)+'px';}}
+else if(tip.style.display==='block'){var mh=tipHTML();if(mh)modalPaint(mh);}
 // the spend modal's Totals section is these same rows: an open modal follows every landing too (T247)
 if(typeof SP!=='undefined'&&SP.open&&SP.data){var ts=document.getElementById('rsp-totals');if(ts)ts.innerHTML=totalsHTML(SP.data);}
 cardTell();}
@@ -71626,23 +71629,32 @@ tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
 // Mobile usage PANEL (the user 2026-07-11): the same window bars the desktop tooltip shows, opened as a
 // centered modal from the phone's Usage button (the rail, and its hover, do not exist on mobile): on the
 // bottom bar until iOS item 4g, in the settings card since (the A-map's usage, by phoneAct).
-// Pulls fresh first so the numbers aren't a stale boot snapshot; any tap or Escape dismisses.
+// Pulls fresh first so the numbers aren't a stale boot snapshot; any tap or Escape dismisses. Where the newest read failed and
+// this script still holds a reading, the tap opens the panel at once over that reading, whose age the panel shows, and the
+// refresh runs behind it: its answer reaches the open panel through renderRows, and it never opens the panel itself, so a
+// panel closed in the meantime stays closed and nothing opens over a settings card opened since (PR 976's round 2: the card
+// says Couldn't load beside an enabled Usage there, and its tap waited on a pull that could run the whole bound, 10 s with
+// nothing on screen). Every other tap pulls first and opens on the pull's end, as before. Both pulls are bounded (boundedPull).
+// The panel's content, h being tipHTML over the readings: the windows and spend, and under them the deeper level, one tap away
+// here too (T247): the rail and its click do not exist on a phone, and a compact view must never dead-end (progressive
+// disclosure). openIt paints it, and renderRows repaints it on each write while the panel is open.
+function modalPaint(h){
+tip.innerHTML=h+'<div class=ru-tip-more><button class=rsp-btn id=ru-bysession>By session \u2192</button></div>';   // its own row, the hover's button size (T247b review: inside .ru-tip-age it read as a 10px annotation at .55)
+var bs=document.getElementById('ru-bysession');if(bs)bs.onclick=function(e){e.stopPropagation();var off=window.__rompUsageClose;if(off)off();openSpend();};}
 window.__rompUsagePanel=function(){
 function openIt(){var h=tipHTML();if(!h)return;
 try{window.__rompApiClose&&window.__rompApiClose();}catch(e){}   // one modal on #ru-back at a time (the API detail does the same)
-// the deeper level is one tap away here too (T247): the rail — and its click — do not exist on a
-// phone, and a compact view must never dead-end (progressive disclosure)
-tip.innerHTML=h+'<div class=ru-tip-more><button class=rsp-btn id=ru-bysession>By session \u2192</button></div>';   // its own row, the hover's button size (T247b review: inside .ru-tip-age it read as a 10px annotation at .55)
+modalPaint(h);
 tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';tip.style.display='block';
 back.classList.add('on');
 var off=function(){tip.style.display='none';tip.classList.remove('ru-modal');back.classList.remove('on');
 window.__rompUsageClose=null;};
-var bs=document.getElementById('ru-bysession');if(bs)bs.onclick=function(e){e.stopPropagation();off();openSpend();};
 // Escape lands via _LANDING_ESC_JS (shell AND pane documents — the shell-only listener this modal
 // used to bind was deaf whenever focus sat inside a pane iframe); the backdrop tap stays.
 window.__rompUsageClose=off;
 back.onclick=off;}
-pullFleet().then(openIt,openIt);};
+if(READ_FAILED&&tipHTML()){openIt();boundedPull().then(function(){},function(){});return;}
+boundedPull().then(openIt,openIt);};
 // whether the panel above has anything to open (iOS item 4g, 2026-10-05): openIt's own test, a non-empty tipHTML over the readings
 // in LAST, for the phone's Usage button in the settings card (gear.js usageAct). That button lives in the #f-settings document,
 // out of this script's reach, so the card asks this: Usage enabled where a tap opens the panel, disabled with a line saying
@@ -71657,15 +71669,19 @@ window.__rompUsageReading=function(){return !!tipHTML();};
 // forward (render) is a reading that arrived, so it clears it too. The card asks this at every answer, with a reading or
 // without one (romp-manager's decision on PR 976's round 1 builds): with no reading, Usage is disabled and says Couldn't load;
 // with one, which a request with no answer leaves in LAST, Usage stays enabled beside that line and opens the panel over the
-// reading, whose age lines keep climbing while the reads fail (pull's failed path)
+// reading at once, whose age lines keep climbing while the reads fail (pull's failed path)
 window.__rompUsageFailed=function(){return READ_FAILED;};
 // ...and the source behind those answers, read fresh as the panel's opener reads it (PR 976's round 1, correctness-1 and
 // extra6-1): the card calls this at each opening (gear.js usagePull) and shows the romp loader on Usage until the promise
-// settles, then asks __rompUsageReading and __rompUsageFailed. It runs the script's own fetch of the readings directly, the
-// one the panel's opener runs, never pull(), which returns at once while a pull it started is in flight and would leave the
-// card on the answer before. A pull whose answer the fetch reads writes LAST through renderRows, which tells the card. The
-// card's pull carries a bounded abort, so the loader ends on an event even when the kernel never answers (ui/CLAUDE.md's
-// waiting rule: a backstop so the wait can never trap the user; romp-manager's ruling after PR 976's round 1). 10 s: the
+// settles, then asks __rompUsageReading and __rompUsageFailed. It is boundedPull, the one road to the script's own fetch of
+// the readings: the panel's opener and pull() take it too, so no read runs unbounded (PR 976's round 2; a census in
+// ui/webview/usage-pull-bound.test.ts holds that nothing else calls the fetch). The card calls it directly, never pull(),
+// which returns at once while a pull it started is in flight and would leave the card on the answer before. A pull whose
+// answer the fetch reads writes LAST through renderRows, which tells the card. The pull carries a bounded abort, so the
+// card's loader ends on an event even when the kernel never answers (ui/CLAUDE.md's waiting rule: a backstop so the wait can
+// never trap the user; romp-manager's ruling after PR 976's round 1), and a hung read can no longer hold pull()'s busy flag,
+// which made every later click and 60 s refresh return at once. The card reads the helper through this name and the panel's
+// opener by the helper's own, so a page that replaces the name cannot take the opener's bound away. 10 s: the
 // kernel answers /usage/fleet from usage.json and the tunnel supervisor's cached readings, dialing nothing, so an answer takes
 // well under a second even over a phone's network, and a person looking at the card then sees Couldn't load within
 // seconds rather than after the 20 s the spend panel allows its heavier read. The abort rejects the
@@ -71677,10 +71693,11 @@ window.__rompUsageFailed=function(){return READ_FAILED;};
 // bounded there too; ui/webview/usage-pull-bound.test.ts runs this code with AbortSignal.timeout deleted). An engine whose
 // fetch cannot be aborted runs the pull unbounded: Safari before 12.1, which has no AbortController before 11.1 and, in 11.1
 // and 12.0, one whose signal fetch ignores (there the timer fires and the fetch goes on)
-window.__rompUsagePull=function(){var ms=(window.__rompUsagePullMs|0)||10000,sig=null,t=0;
+function boundedPull(){var ms=(window.__rompUsagePullMs|0)||10000,sig=null,t=0;
 if(typeof AbortSignal!=='undefined'&&typeof AbortSignal.timeout==='function')sig=AbortSignal.timeout(ms);
 else if(typeof AbortController==='function'){var ac=new AbortController();sig=ac.signal;t=setTimeout(function(){ac.abort();},ms);}
-var p=pullFleet(sig);if(t){var stop=function(){clearTimeout(t);};p.then(stop,stop);}return p;};
+var p=pullFleet(sig);if(t){var stop=function(){clearTimeout(t);};p.then(stop,stop);}return p;}
+window.__rompUsagePull=boundedPull;
 // the API-health dot sits inside this cell (T301): a pointer arriving on the DOT gets the dot's own tip, not this one
 el.addEventListener('mouseenter',function(ev){var c=document.getElementById('rail-api');
 if(c&&ev&&typeof ev.clientX==='number'){var at=document.elementFromPoint(ev.clientX,ev.clientY);if(at&&(at===c||c.contains(at)))return;}showTip(ev);});
@@ -71701,14 +71718,14 @@ var _ruBusy=false;
 // /usage/fleet is /usage plus one row per OTHER Claude account in the fleet (the remote readings come from
 // the tunnel supervisor's own cached poll, so this never dials anything). It collapses to a single row \u2014
 // today's exact rendering \u2014 whenever every machine is signed into the same login.
-// sig, where given, is the abort signal the fetch carries (__rompUsagePull's bound); READ_FAILED (__rompUsageFailed above) says
-// how the read ended, set before renderRows tells the settings card, and on a failure the card is told here, since no renderRows
-// runs; the failure still rejects, so pull() and the panel's opener take their failed paths as before. Each read is numbered as
-// it starts (PULLS), and the newest to end so far is marked (PULL_ENDED). A read that fails after a later read has ended changes
-// nothing: not the flag, not the readings (an error status would empty them), not the card. The card's reopen starts a pull
-// while the one before may still be out, and that older pull failing late would otherwise turn the answer the newer one had
-// shown into Couldn't load (the check of PR 976's decisions after round 1). An ok answer such a read gets still writes the
-// readings, as every ok answer does, and leaves the flag as the later read set it
+// sig is the abort signal the fetch carries, the bound of boundedPull above, which is the one caller (PR 976's round 2);
+// READ_FAILED (__rompUsageFailed above) says how the read ended, set before renderRows tells the settings card, and on a failure
+// the card is told here, since no renderRows runs; the failure still rejects, so pull() and the panel's opener take their failed
+// paths as before. Each read is numbered as it starts (PULLS), and the newest to end so far is marked (PULL_ENDED). A read that
+// fails after a later read has ended changes nothing: not the flag, not the readings (an error status would empty them), not the
+// card. The card's reopen starts a pull while the one before may still be out, and that older pull failing late would
+// otherwise turn the answer the newer one had shown into Couldn't load (the check of PR 976's decisions after round 1). An ok
+// answer such a read gets still writes the readings, as every ok answer does, and leaves the flag as the later read set it
 function pullFleet(sig){var ok=false,n=++PULLS;
 var newest=function(){if(n<PULL_ENDED)return false;PULL_ENDED=n;return true;};   // whether no later read has ended; marks this one
 return fetch('/usage/fleet',sig?{cache:'no-store',signal:sig}:{cache:'no-store'}).then(function(r){ok=r.ok;return r.ok?r.json():null;})
@@ -71721,7 +71738,7 @@ var done=function(){_ruBusy=false;el.style.opacity='';};
 // a FAILED pull re-renders from the cached rows (the user 2026-08-24, fail loudly): the age lines
 // are computed at render time, so repainting makes "updated/recorded … ago" keep climbing — a dead
 // kernel route shows visibly aging data, never a frozen "3m ago" that quietly lies for hours
-pullFleet().then(done,function(){if(ROWS.length)renderRows(ROWS,SELF);done();});}
+boundedPull().then(done,function(){if(ROWS.length)renderRows(ROWS,SELF);done();});}
 // ── The usage MODAL (T247, the user 2026-09-07): the CLICK on the readout opens the deeper level of
 // the same story — gist (the rail) → hover (per host, the windows) → modal (per SESSION: who spent
 // what, and a histogram of spend over time stacked by session in each session's identity color).

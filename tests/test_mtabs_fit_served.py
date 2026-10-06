@@ -51,7 +51,11 @@ wrap only where it still cannot.
   shell's last read got an error status, no answer, or no answer before the card's pull's bound (an abort after 10 s,
   window.__rompUsageFailed telling the card), Usage shows the line "Couldn't load", never "No reading yet": disabled where
   the shell holds no reading, and enabled where it still holds one (a request with no answer leaves the readings as they
-  were), its tap opening the panel over that reading (romp-manager's decision on round 1's builds).
+  were), its tap opening the panel over that reading (romp-manager's decision on round 1's builds). That tap opens the
+  panel at once, whose age lines say how old the reading is, while the refresh runs behind it, and the open panel follows
+  the refresh's answer (romp-manager's first rule at round 2: the tap had waited on its own pull, which carried no bound,
+  with nothing on screen). Every read of the readings goes through the usage script's one bounded helper: the card's pull,
+  the panel opener's, and the readout's click and 60 s refresh.
   Usage is one line tall in every state, as the row's other buttons are, and holds the loader's width (romp-manager's
   decision on round 1's builds), so loading to a reading, the common path, moves neither the row nor the tabs under it,
   and the row is no taller for Usage: the loader shows in the name's place, the two laid out in one cell, so Usage is
@@ -153,7 +157,13 @@ on the shell keeps the held pull from ending on its own bound). And an opening w
 pull reaches the lab then shows Usage enabled with neither line; then, the shell holding that reading, an opening whose
 pull fails in transit shows Usage enabled with the line USAGE_ERR beside its name, seen, and not USAGE_NONE, the card open
 and nothing posted,
-and one click on Usage closes the card, posts phoneAct usage and opens the Usage modal over that reading. Then the deploy
+and one click on Usage closes the card, posts phoneAct usage and opens the Usage modal over that reading. Then the tap
+opening the panel at once: the modal closed, the shell given a window reading of its own (a pull the driver answers with a
+synthetic five-hour window reported ten minutes before, read at an opening), the card opened over a pull held past HANG_MS,
+which the bound ends (Usage enabled beside USAGE_ERR, the reading kept), the bound raised to RACE_MS, and Usage clicked
+with the tap's own pull held: the Usage modal is up within 1 s of the click over that reading, its window section and its
+age line (updated 10m ago), and once the held pull is answered with a fresher reading of the same window, reported then,
+the open modal follows it (updated just now). Then the deploy
 skew, on a page of its own at 390px:
 the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
@@ -756,7 +766,9 @@ def _failed_problems(engine, fr):
     alone; in the reopen race, the card's earlier pull ending after the reopened card's pull (failed in transit, answered ok
     with no rows, or answered with ERROR_STATUS) leaves Usage on the later pull's answer; a later opening whose pull reads
     the lab's reading shows Usage enabled with neither line; and then, with that reading cached, an opening whose pull fails in
-    transit shows Usage enabled with USAGE_ERR, one click opening the Usage modal."""
+    transit shows Usage enabled with USAGE_ERR, one click opening the Usage modal; and, the shell holding a window reading of
+    its own and the card's pull ended by its bound, a tap whose own pull is held opens the Usage modal within 1 s over that
+    reading with its age, and the open modal follows the held pull's fresher answer (PR 976's round 2)."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -808,6 +820,10 @@ def _failed_problems(engine, fr):
     def not_enabled(u):
         return (not u or u.get("disabled") is not False or not u.get("line") or u["line"].get("shown") is not False
                 or not u.get("err") or u["err"].get("shown") is not False)
+
+    def not_enabled_failed(u):
+        return (not u or u.get("disabled") is not False or not u.get("err") or u["err"].get("shown") is not True
+                or u["err"].get("text") != USAGE_ERR or not u.get("line") or u["line"].get("shown") is not False)
     # the reopen race: the card's pull A held, the card reopened over pull B, B ended; then A ended after B (the order the
     # driver's wrapper over the shell's pull recorded). A read that ends after a later one has ended changes neither the flag
     # nor, with an error status, the readings, so Usage keeps B's answer: A failing in transit after B answered no rows; A
@@ -860,6 +876,30 @@ def _failed_problems(engine, fr):
     if not cd.get("opened") or ck.get("settingsOpen") or ck.get("cardHidden") is not True or ck.get("acts") != ["usage"]:
         out.append("%s: over a cached reading with the line %r, one click on Usage did not close the card and open the Usage "
                    "modal: opened %r, %r" % (where, USAGE_ERR, cd.get("opened"), ck))
+    # the tap opens at once (PR 976's round 2, romp-manager's first rule): the shell holds a window reading of its own, the
+    # card's pull is held past HANG_MS and ends on the bound (Usage enabled beside USAGE_ERR), and a tap whose own pull is held
+    # opens the Usage modal within 1 s over that reading, its window section and its age line (updated 10m ago); the held pull
+    # answered with a fresher reading of the same window (reported now), the open modal follows it (updated just now)
+    at = fr.get("atOnce") or {}
+    bt = at.get("barsTurn") or {}
+    if not bt.get("asked") or not_enabled(bt.get("usage")) or not at.get("cardHeld") or not at.get("cardEnded") \
+            or at.get("reading") is not True or not_enabled_failed(at.get("usage")):
+        out.append("%s: the at-once tap's premise (a window reading in the shell showing Usage enabled, then the card's pull held "
+                   "and ended by its bound, the reading kept, Usage enabled beside %r): %r" % (
+                       where, USAGE_ERR, {k: at.get(k) for k in ("barsTurn", "cardHeld", "cardEnded", "reading", "usage")}))
+    bf = at.get("before") or {}
+    if not at.get("opened") or bf.get("up") is not True or bf.get("windows") is not True or "10m ago" not in (bf.get("age") or ""):
+        out.append("%s: with the newest read failed over a cached reading, a tap on Usage whose own pull is held does not open the "
+                   "Usage modal within 1 s over that reading with its age: opened %r (%r ms after the click), %r" % (
+                       where, at.get("opened"), at.get("elapsed"), bf))
+    ak = at.get("clicked") or {}
+    if not at.get("tapHeld") or ak.get("settingsOpen") or ak.get("cardHidden") is not True or ak.get("acts") != ["usage"]:
+        out.append("%s: the at-once tap did not close the card, post phoneAct usage and hold its own pull: held %r, %r" % (
+            where, at.get("tapHeld"), ak))
+    af = at.get("after") or {}
+    if not at.get("followed") or af.get("up") is not True or "just now" not in (af.get("age") or ""):
+        out.append("%s: the tap's held pull ended with a fresher reading, and the open Usage modal did not follow it: followed %r, "
+                   "%r" % (where, at.get("followed"), af))
     return out
 
 
