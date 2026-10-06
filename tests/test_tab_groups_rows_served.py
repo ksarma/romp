@@ -30,6 +30,7 @@ ui/webview/tab-groups.test.ts and dragslot.test.ts. All fixtures synthetic (the 
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -69,6 +70,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -171,14 +173,7 @@ await page.waitForFunction(() => document.body.classList.contains("dense-chrome"
 await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 const dense = await survey();
 const rec = { open, clicked, dropped, light, resized, dense };
-// The full result goes to cfg.resultPath and the RESULT: line names it (2026-10-05; the shape of the result file
-// tests/return_from_background_browser.mjs writes). Loading playwright leaves stdout non-blocking, so one writeSync to a pipe
-// writes what the pipe has room for and the rest is lost: up to 64 KiB, and 8 KiB on a loaded machine (a user past
-// fs.pipe-user-pages-soft gets minimum-size pipes, pipe(7)), where this record, about 24 KB in a measured run, was cut at
-// 8 KiB and the Python side read a cut line.
-const line = { resultPath: cfg.resultPath || null };
-try { fs.writeFileSync(cfg.resultPath, JSON.stringify(rec)); } catch (e) { line.resultWriteError = String(e).slice(0, 200); }
-fs.writeSync(1, "RESULT:" + JSON.stringify(line) + "\n");
+lab.writeResult(cfg, rec);
 await browser.close();
 process.exit(0);
 """
@@ -243,38 +238,28 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         pair of sids the driver drags at the opening width, src onto the end of dst with a real Chromium drag, for a
         survey right after the drop's rebuild (`dropped` in the result)."""
         cfg = os.path.join(self.lab, name + ".json")
-        result_path = os.path.join(self.lab, name + "-result.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "rows": rows,
+                "width": width, "resizeTo": resize_to, "drag": drag,
+                "visible": len([s for s in SESSIONS if s[2] != "archived"]) + 1,   # web-search has two copies
+                "twoTag": next(sid for (n, sid, _t) in SESSIONS if n == "web-search"),
+                "shots": os.environ.get("TABROWS_SHOTS", "")}
+        tgt = lab_result.target(self.lab, name)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "rows": rows,
-                       "width": width, "resizeTo": resize_to, "drag": drag,
-                       "visible": len([s for s in SESSIONS if s[2] != "archived"]) + 1,   # web-search has two copies
-                       "twoTag": next(sid for (n, sid, _t) in SESSIONS if n == "web-search"),
-                       "shots": os.environ.get("TABROWS_SHOTS", ""),
-                       "resultPath": result_path}, f)   # the driver's full record; its RESULT: line names it
+            json.dump(conf, f)
         driver = os.path.join(self.lab, name + ".mjs")
         with open(driver, "w") as f:
             f.write(script)
-        # Two tests drive "inline" into this one class lab, so the second run would find the first run's file. Removing
-        # it before each run means a run that writes no record fails in _full_result instead of passing on a stale one.
-        Path(result_path).unlink(missing_ok=True)
+        # Two tests drive "inline" into this one class lab, so the second run would find the first run's file. The reader
+        # refuses a file whose nonce is not this drive's, which is the guard; the file is still removed before each run, so
+        # a drive that writes none leaves no file behind to read.
+        Path(tgt["resultPath"]).unlink(missing_ok=True)
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        return self._full_result(line, result_path, p)
-
-    def _full_result(self, line, result_path, p):
-        """The driver's record, from the file its RESULT: line names. The line stays short: the driver's stdout is
-        non-blocking, so one write to a pipe delivers what the pipe has room for, which is 8 KiB on a loaded machine, and
-        this record (about 24 KB in a measured run, 2026-10-05) printed whole was cut there."""
-        head = json.loads(line[len("RESULT:"):])
-        self.assertEqual(head.get("resultPath"), result_path, "the driver named its result file: %r" % head)
-        self.assertTrue(not head.get("resultWriteError") and os.path.exists(result_path), "the driver wrote its result (%r):\n%s" % (
-            head.get("resultWriteError"), (p.stdout[-1500:] + p.stderr[-1500:])))
-        return json.loads(Path(result_path).read_text(encoding="utf-8"))
+        return lab_result.read(p, tgt)
 
     @staticmethod
     def _sections(items):

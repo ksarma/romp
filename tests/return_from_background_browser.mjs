@@ -19,12 +19,14 @@
 //   * scripts keep running while the documents read hidden, which a suspended phone's do not: the hidden dwell is short
 //     (cfg.hiddenDwellMs) so the closes land as the FIN a thawed tab receives, and the timers the closes arm are still
 //     pending at the return.
-// Prints one compact `RESULT:` JSON line and writes the full result (every dial's record) to cfg.resultPath; exits 3 when
-// the browser does not launch (the Python side turns that into a skip).
+// Hands its record (every dial's among it) to the Python side through tests/lab_result.cjs, to the file cfg.resultPath
+// names, with one short `RESULT:` line naming it; exits 3 when the browser does not launch (the Python side turns that into
+// a skip).
 // Never touches a live kernel: cfg.healthz names the LAB port and is asserted before any request. Synthetic sessions only.
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import http from "node:http";
+import lab from "./lab_result.cjs";
 
 const require = createRequire(process.env.EXT_PKG);
 const playwright = require("playwright");
@@ -57,13 +59,12 @@ let browser;
 try { browser = await playwright[engine].launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 
-// the full result (every dial's record: hundreds in the refused regime) goes to cfg.resultPath; the RESULT: line stays
-// compact, since one writeSync to a pipe delivers 64 KiB and the rest is lost (the desktop refused leg, first run)
+// the record (every dial's: hundreds in the refused regime) goes through the shared helper; dialsN is the driver's own count
+// of the dials it recorded, which the Python side holds the record's dial list to
 const result = async (extra) => {
   Object.assign(out, extra || {});
-  if (cfg.resultPath) { try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { out.resultWriteError = String(e).slice(0, 200); } }
-  const compact = { ...out, dials: undefined, dialsN: out.dials.length, wsWords: undefined, vis: undefined, resultPath: cfg.resultPath || null };
-  fs.writeSync(1, "RESULT:" + JSON.stringify(compact) + "\n");
+  out.dialsN = out.dials.length;
+  lab.writeResult(cfg, out);
   try { await browser.close(); } catch (e) { /* closing */ }
   process.exit(0);
 };

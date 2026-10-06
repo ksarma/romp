@@ -73,6 +73,7 @@ any request. Synthetic sessions only; no real data.
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -201,7 +202,7 @@ def _rows(path):
 
 
 def measure(rows, r):
-    """The leg's measurements: `rows` the lab's client-diag rows, `r` the driver's RESULT. Rows are the run's own by wid
+    """The leg's measurements: `rows` the lab's client-diag rows, `r` the driver's record. Rows are the run's own by wid
     (every pane document and the kernel's wsopen rows carry the dashboard's id); windows are the driver's wall clock
     against the rows' `t` (whole seconds), one second of slack each side."""
     wid = r.get("wid") or ""
@@ -393,7 +394,8 @@ class ReturnFromBackground(unittest.TestCase):
                "holdActiveFullMs": hold_active_full_ms,   # fresh-2 (review round 3): the driver's proxy holds the boot chat dial's frames naming the active tab for this long
                "showFilesControl": tap == "files",   # extra9-2 (review round 3): the Files tab exists only with the gear's Files control on (romp:settings.showFilesControl, the literal true); the install seeds it before the shell parses
                "shots": os.path.join(self.lab, "return-harness-" + name) if os.environ.get("RETURN_HARNESS_SHOTS") else ""}
-        cfg["resultPath"] = os.path.join(self.lab, "result-%s.json" % name)   # the full result; the RESULT: line is a compact copy
+        tgt = lab_result.target(self.lab, name)   # this drive's result file and nonce (tests/lab_result.py)
+        cfg.update(tgt)
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % name)
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
@@ -407,13 +409,9 @@ class ReturnFromBackground(unittest.TestCase):
                 self.skipTest("no playwright chromium on this box: the served leg needs one (CI installs it)")
             self.skipTest("optional: no playwright %s on this machine: %s" % (engine, p.stderr.strip()[-300:]))
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        r = json.loads(line[len("RESULT:"):])
-        self.assertNotIn("died", r, "driver aborted early: %r (kernel log tail: %s)" % (r.get("died"), Path(self.klog).read_text()[-800:]))
-        self.assertTrue(os.path.exists(cfg["resultPath"]), "the driver wrote its full result: %r" % r.get("resultWriteError"))
-        full = json.loads(Path(cfg["resultPath"]).read_text(encoding="utf-8"))
-        self.assertEqual(len(full.get("dials") or []), r.get("dialsN"), "the full result carries every dial the compact line counted")
+        full = lab_result.read(p, tgt)
+        self.assertNotIn("died", full, "driver aborted early: %r (kernel log tail: %s)" % (full.get("died"), Path(self.klog).read_text()[-800:]))
+        self.assertEqual(len(full.get("dials") or []), full.get("dialsN"), "the record carries every dial the driver counted")
         return name, full
 
     def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False):
