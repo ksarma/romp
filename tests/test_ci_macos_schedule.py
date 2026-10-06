@@ -7,7 +7,7 @@ release gate was the first macOS run in two weeks and found twenty-nine accumula
 run is billed, and the scheduled run added its Linux jobs and the macOS cells, which bill at about ten times the Linux rate,
 every week, so on 2026-10-04 the schedule was commented out. On 2026-10-06 its two lines, the schedule: key and its cron
 entry, became lines 1 and 2 of the shape switch (ci.yml's header, THE SHAPE SWITCH; tests/test_ci_shards.py's
-ShapeSwitch): both commented under full, the default, and both live under smaller, where the weekly run takes 3.10, 3.11
+ShapeSwitch): both commented under full, the shape as built, and both live under smaller, where the weekly run takes 3.10, 3.11
 and 3.13 on Linux. No matrix job's os: expression names the schedule
 event any more, so the weekly run, in either shape, takes none of the macOS cells; bringing them back is a change to the
 three os: expressions, the user's call once the first month's bill is read.
@@ -18,8 +18,9 @@ Pins, each over ci.yml's text, read with tests/test_ci_workflow_concurrency.py's
 2. DISPATCH KEPT: workflow_dispatch is a trigger, and each matrix job's os: expression, evaluated for a dispatch with
    its macos input on, gives macos-latest, so such a dispatch still runs the macOS cells beside the Linux ones.
 3. THE SCHEDULE LINES: the on: block's schedule: key and its one cron entry (the switch's lines 1 and 2, shape_lines),
-   in block form, hold one weekly cron at a fixed minute and hour, the hour a quiet one Pacific (08 to 13 UTC) and the
-   minute off the top of the hour, where GitHub delays and drops more scheduled runs. Under full both are commented, the
+   in block form, hold one weekly cron at a fixed minute and hour, the hour scheduled a quiet one Pacific (08:00 to
+   13:59 UTC; the run can start hours later, ci.yml's on: block says how late) and the minute off the top of the hour,
+   where GitHub delays and drops more scheduled runs. Under full both are commented, the
    on: block has no schedule trigger and no line of the workflow is a live cron entry; under smaller both are live, the
    schedule a trigger with that one entry. Red at the commit before the switch, whose two commented lines held minute 0
    and whose python-version axis had no shape literal for shape_lines to read.
@@ -108,7 +109,8 @@ class MacosSchedulePaused(unittest.TestCase):
         self.assertEqual((dom, month), ("*", "*"), "weekly, not monthly")
         self.assertRegex(dow, r"^[0-6]$", "one day of the week")
         self.assertTrue(minute.isdigit() and hour.isdigit(), "a fixed minute and hour")
-        self.assertIn(int(hour), range(8, 14), "a quiet hour Pacific: 08:00 to 13:00 UTC is midnight to 06:00 Pacific")
+        self.assertIn(int(hour), range(8, 14), "scheduled for a quiet hour Pacific: 08:00 to 13:59 UTC is about midnight "
+                      "to 06:00 Pacific; the start can be hours later (ci.yml's on: block)")
         self.assertNotEqual(int(minute), 0, "off the top of the hour, when GitHub delays and drops more scheduled runs")
         for shape in SHAPES:
             src = with_shape(self.wf, shape)

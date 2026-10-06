@@ -67,6 +67,11 @@ At the commit before these pins, all four are red: the header named secret-scan.
    that those three lines decide which figures are billed. Red at the commit before the switch: the header stated none
    of smaller's figures and had no sentence on the switch, and the python job's python-version axis had no shape
    literal.
+8. SECRET-SCAN'S TRIGGER (2026-10-06, within TheSums): secret-scan.yml's push trigger has no filter, read from that file
+   (the push trigger alone, and no branch or path filter under it), so it runs on every push, a batch push among them,
+   and the header says so (SCAN_TRIGGER): a batch run's figure counts the copy on a batch push, and WEEK_PUSHES counts
+   the other pushes. A filter added to that file turns this red, so the header's sentence and the inputs are re-read
+   with it. Red at the commit before it: the header said the workflow runs on each push that is not a batch push.
 Text pins: they hold what the header says and that its sums agree with the inputs here, not what GitHub bills; the first
 private batch run's billed minutes are the measurement."""
 import math
@@ -80,12 +85,15 @@ ROOT = os.path.dirname(HERE)
 # the checkout root on sys.path before the import from a sibling module, as tests/test_ci_macos_schedule.py does
 sys.path.insert(0, ROOT)
 from tests.test_ci_workflow_concurrency import (  # noqa: E402
-    BATCH_X, JOBS, MAIN, SHA_A, SHAPES, dispatch_run, job_lines, job_value, python_version_axis, python_versions, run,
-    triggers, with_shape)
+    BATCH_X, JOBS, MAIN, SHA_A, SHAPES, dispatch_run, job_lines, job_value, push_filters, python_version_axis,
+    python_versions, run, triggers, with_shape)
 from tests import test_ci_bats_bound as bound  # noqa: E402
 
 WF = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 WORKFLOWS = os.path.dirname(WF)
+SCAN_WF = os.path.join(WORKFLOWS, "secret-scan.yml")
+# the header's statement of secret-scan.yml's trigger, which TheSums holds to that file's push filter (item 8)
+SCAN_TRIGGER = "secret-scan.yml runs on each push, a batch push included"
 
 # ---- the inputs, each a literal of this file ---------------------------------------------------------------------------
 # a batch run: the twenty shard jobs (the header's derivation from the python job's cap comment, which shard_jobs_total
@@ -380,6 +388,18 @@ class TheSums(unittest.TestCase):
         self.assertEqual(len(re.findall(r"a month in all", self.text)), 1, "one total in all")
         self.assertTrue("one or two a month" in self.text, "the header says manual runs are counted at the normal pace, "
                         "one or two a month")
+
+    def test_the_header_states_secret_scans_trigger_as_that_files_push_filter_reads(self):
+        with open(SCAN_WF, encoding="utf-8") as fh:
+            scan = fh.read()
+        self.assertEqual(sorted(triggers(scan)), ["push"], "secret-scan.yml runs on a push alone; a trigger added there "
+                         "is priced in the header and in WEEK_PUSHES")
+        self.assertEqual(push_filters(scan), {}, "secret-scan.yml's push trigger has no filter, so it runs on every push, "
+                         "a batch push among them; a filter added there changes the header's sentence on its trigger, "
+                         "the batch figure's copy and WEEK_PUSHES")
+        self.assertTrue(SCAN_TRIGGER in self.text, "the header states secret-scan.yml's trigger as that file has it, "
+                        "every push with a batch push included (%r), where WEEK_PUSHES counts the other pushes and a batch "
+                        "run's figure counts the copy on a batch push" % SCAN_TRIGGER)
 
 
 class TheAllowance(unittest.TestCase):

@@ -6779,7 +6779,7 @@ class CiJobs(unittest.TestCase):
         section = doc[start:doc.index("\n## ", start + 1)]
         para = re.sub(r"\s+", " ", section)
         m = re.search(r"`Python <version> \(ubuntu-latest, shard <shard>\)` for each shard \(([^)]*)\) and each Linux cell a "
-                      r"batch push runs: under ci\.yml's full shape, the default \(([^)]*)\), and under its smaller shape "
+                      r"batch push runs: under ci\.yml's full shape, as built \(([^)]*)\), and under its smaller shape "
                       r"\(([^)]*)\)", para)
         self.assertIsNotNone(m, "the python job's checks are named as `Python <version> (ubuntu-latest, shard <shard>)` with "
                                 "the shards and each shape's versions")

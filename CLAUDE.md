@@ -243,8 +243,9 @@ so there is no list to write. **gitleaks** covers them, in two places:
   trigger has no branch filter, so every branch push is scanned, once, with no
   run cancelled by a later one (2026-09-30), and it has no `pull_request`
   trigger (dropped 2026-10-04, since the private runner bills every run).
-  `ci.yml`'s `Secret scan (gitleaks)` job runs the same job on a batch push and
-  a manual run (`ci.yml`'s weekly schedule is paused), and
+  `ci.yml`'s `Secret scan (gitleaks)` job runs the same job on a batch push, a
+  manual run, and, under `ci.yml`'s smaller shape alone, its weekly schedule
+  (THE SHAPE SWITCH in `ci.yml`'s header), and
   `tests/test_ci_secret_scan.py` holds the two copies equal but for the job's
   name. Each run scans all of history from a pinned, checksummed binary: the
   commit its push put on its ref, and every branch and tag the checkout

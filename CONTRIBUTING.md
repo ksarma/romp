@@ -122,7 +122,7 @@ every bash.
 On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
 each batch head, and GitHub's CI runs once per batch, on the push of the batch
 branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux under its
-full shape, the default, or across 3.12 and 3.14t alone under its smaller shape,
+full shape, as built, or across 3.12 and 3.14t alone under its smaller shape,
 where 3.10, 3.11 and 3.13 run on a weekly schedule (`ci.yml`'s header, THE SHAPE
 SWITCH: switching is a three-line change); member PRs and merges to main run none
 of it (`docs/batching.md`). Each Linux interpreter

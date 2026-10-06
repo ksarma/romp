@@ -3,7 +3,7 @@
 
 Triggers (2026-09-27): the workflow runs on a push to a batch branch (`batch/**`) and by hand
 (workflow_dispatch), and, under the smaller shape alone (2026-10-06), on a weekly schedule; under full, the
-default, nothing runs on a schedule. The shape is a switch of three lines that must agree, the on: block's
+shape as built, nothing runs on a schedule. The shape is a switch of three lines that must agree, the on: block's
 two schedule lines, its schedule: key and cron entry (both commented under full, both live under smaller),
 and the 'full' or 'smaller' literal that opens the python job's python-version expression (shape_lines,
 shape_of and with_shape below read and set it; tests/test_ci_shards.py's ShapeSwitch holds what each shape

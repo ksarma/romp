@@ -86,8 +86,8 @@ Once, already done on this fork: delete branches on merge, squash and rebase mer
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
 on, admin bypass) is optional and comes after the first batch has shown the check names. The checks
 to require are the job checks a batch push reports: `Python <version> (ubuntu-latest, shard <shard>)`
-for each shard (1, 2, 3 and 4) and each Linux cell a batch push runs: under ci.yml's full shape, the
-default (3.10, 3.11, 3.12, 3.13 and 3.14t), and under its smaller shape (3.12 and 3.14t). Under the
+for each shard (1, 2, 3 and 4) and each Linux cell a batch push runs: under ci.yml's full shape, as
+built (3.10, 3.11, 3.12, 3.13 and 3.14t), and under its smaller shape (3.12 and 3.14t). Under the
 smaller shape 3.10, 3.11 and 3.13 run on the weekly schedule and on a manual run alone, so a ruleset
 must not require their names: a required check that no batch push reports holds every batch.
 Switching the shape is a three-line change in ci.yml (its header, THE SHAPE SWITCH, names the three

@@ -45,7 +45,7 @@ literal, and any change to it is red until the literal changes with it, on purpo
    (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES, or ON_LINES_SMALLER, the
    same block with the weekly schedule's two lines live (2026-10-06). CI runs on a push to a batch branch and by hand, and,
    under the smaller shape alone, on a weekly schedule (the workflow's header, THE SHAPE SWITCH: the schedule: key and its
-   cron entry are commented under full, the default, and live under smaller; tests/test_ci_shards.py holds the two lines
+   cron entry are commented under full, the shape as built, and live under smaller; tests/test_ci_shards.py holds the two lines
    in agreement with the python job's python-version literal, so this check accepts either block and leaves the shape to
    that pin): a paths or paths-ignore
    filter added to push, or its branch pattern narrowed, starts no run for the batch pushes it filters, and
@@ -54,7 +54,7 @@ literal, and any change to it is red until the literal changes with it, on purpo
    the concurrency block stay free (tests/test_ci_workflow_concurrency.py reads concurrency, and its CiTriggers reads the
    triggers and the push filter).
    tests/test_ci_macos_schedule.py still reads the schedule and the dispatch: this equality refuses any other change to the
-   block, and that module says what the lines must mean (the schedule lines one weekly cron at a quiet hour Pacific, live
+   block, and that module says what the lines must mean (the schedule lines one weekly cron scheduled for a quiet hour Pacific, live
    under smaller alone, the manual dispatch kept, and no matrix expression selecting macOS on the schedule), so a change
    made on purpose updates ON_LINES and ON_LINES_SMALLER here and must still pass that module. The
    block holds the dispatch's macos input too (2026-10-05), and tests/test_ci_macos_input.py says what it must mean: a

@@ -14,7 +14,8 @@ name: CI
 # on the batch push; a move of main after that last read is not stopped, and batch.py finish reports
 # it loudly from the merge commit's first parent (docs/batching.md).
 # THE SHAPE SWITCH (2026-10-06): the python job runs in one of two shapes, chosen by three lines that must agree.
-# full, the default: every batch push runs Python 3.10, 3.11, 3.12, 3.13 and 3.14t, and nothing runs on a schedule.
+# full, the shape as built: every batch push runs Python 3.10, 3.11, 3.12, 3.13 and 3.14t, and nothing runs
+# on a schedule.
 # smaller: a batch push runs 3.12 and 3.14t alone; a weekly scheduled run on main runs 3.10, 3.11 and 3.13, on Linux
 # alone, with every other Linux job; a manual run still runs all five. In both shapes each interpreter runs as
 # SHARD_COUNT shard jobs on Linux under the same caps, and the macOS cells run only on a manual run with its macos input
@@ -74,9 +75,10 @@ name: CI
 # the week to 2026-10-04 (2026-09-28 to 2026-10-04) scaled to 30 days
 # (tests/test_ci_cost_estimate.py holds these sums to their inputs). The rates for secret-scan.yml
 # and pr-tier.yml were measured on 2026-10-05 and supersede the 2,730 and 2,290 minutes a month this
-# estimate gave them before. secret-scan.yml runs on each push that is not a batch push: 238 in that
-# week by the repository activity API (187 branch pushes, 35 branch creations, 3 force-pushes and 13
-# merges to main; pushes to batch branches and branch deletions not counted), where the earlier 212
+# estimate gave them before. secret-scan.yml runs on each push, a batch push included (a batch run's
+# figure above counts that copy); the other pushes were 238 in that week by the repository activity
+# API (187 branch pushes, 35 branch creations, 3 force-pushes and 13 merges to main; pushes to batch
+# branches and branch deletions not counted), where the earlier 212
 # counted this workflow's runs on pull requests outside batch branches and on pushes to main, so
 # about 1,020 a month at 3 billed minutes a run (75 over its 25 runs in that week), about 3,060
 # minutes. pr-tier.yml runs on each pull request opened, reopened, labeled or unlabeled: 152 in that
@@ -188,10 +190,10 @@ on:
         type: boolean
         default: false
   # The weekly schedule, lines 1 and 2 of the shape switch (the header's THE SHAPE SWITCH): both
-  # commented under full, the default, so no scheduled run can start; both live under smaller, where the
-  # weekly run on main runs 3.10, 3.11 and 3.13 on Linux alone, with every other Linux job. Line 3 is the
-  # python job's python-version expression; switch all three (tests/test_ci_shards.py fails unless they
-  # agree).
+  # commented under full, the shape as built, so no scheduled run can start; both live under smaller,
+  # where the weekly run on main runs 3.10, 3.11 and 3.13 on Linux alone, with every other Linux job.
+  # Line 3 is the python job's python-version expression; switch all three (tests/test_ci_shards.py
+  # fails unless they agree).
   # The weekly macOS run stays PAUSED (2026-10-04) until the first month's bill on the private runner is
   # read, in both shapes: on a private repository every run is billed, and the macOS cells bill at
   # about ten times the Linux rate (about 1,320 Linux minutes' worth in run 36716348831, the header's
@@ -202,9 +204,14 @@ on:
   # gate was the first macOS run in two weeks, and it found twenty-nine failures that had accumulated
   # unseen. Until they are back, a manual dispatch with its macos input on is the release day's and a
   # platform-sensitive change's run.
-  # The smaller shape's weekly run is at a quiet hour Pacific (Monday 10:17 UTC is 03:17 Pacific in
-  # summer, 02:17 in winter), and at minute 17 rather than on the hour, since GitHub delays scheduled
-  # runs more at the start of each hour and may drop some.
+  # The smaller shape's weekly run is scheduled for Monday 10:17 UTC (03:17 Pacific in summer, 02:17 in
+  # winter), at minute 17 rather than on the hour, since GitHub documents that scheduled runs are delayed
+  # more at the start of each hour and that some may be dropped. The scheduled time is not the start
+  # time: main's weekly cron at 10:00 UTC started 6 h 16 min to 9 h 6 min late on this repository (runs
+  # 35624503138, 36461933863 and 37360905751, 09:16 to 12:05 Pacific), and about as late on the project
+  # (runs 35623182872, 36461122557 and 37359769689). tier-policy.yml's hourly cron at minute 17 ran about
+  # 5 times a day rather than 24 (146 scheduled runs from 2026-09-09 to 2026-10-06), so minute 17 did not
+  # keep that cron on time, and this run may start in the Pacific working morning.
   # schedule:   # shape switch, line 1 of 3: commented under 'full', live under 'smaller'
   #   - cron: "17 10 * * 1"   # shape switch, line 2 of 3: commented under 'full', live under 'smaller'
 
@@ -295,16 +302,17 @@ jobs:
     # 3, 554 s and 466 s, 3.08 and 3.95 GB (3.20 and 4.09); shard 4, 1066 s and 1143 s, 2.98 and 3.01 GB (3.33 and
     # 3.27). No worker was killed. The largest worker, shard 1's on 3.14t, is 0.17 GB under the 5 GB target. Every
     # worker's peak rose against the weighted run: by 0.18 to 0.36 GB in shards 1, 2 and 4, and in shard 3 by 0.78 GB on
-    # 3.12 and 1.49 GB on 3.14t; on 3.12 the four shards ran 64, 194, 192 and 208 more tests. The phases moved both
+    # 3.12 and 1.48 GB on 3.14t; on 3.12 the four shards ran 64, 194, 192 and 208 more tests. The phases moved both
     # ways, and these runs started at 1-minute loads of 8 to 21 where the weighted run's started at 15 to 64, so the two
-    # runs' phases are not a like-for-like comparison. For shard 3, two instrumented runs, one at each head at the same
-    # time (pytest -v with each output line stamped, so not a wall measurement), found the phase 12 to 13 percent longer
-    # at the merged head, 577 s against 515 s on 3.12 and 487 s against 431 s on 3.14t, and the run at the earlier head
-    # reached the weighted run's peaks again, to within 0.02 GB. The shard's worker held about 0.1 GB more once its 234
-    # test files were collected (224 before), and the new tests/test_ephemeral_port_census.py, which walks every file
-    # under tests/, added about 0.5 GB on 3.12 and 0.6 GB on 3.14t in its setup and kept it. So the worker held about
-    # 0.8 GB more on 3.12 and about 1.0 GB more on 3.14t when tests/test_served_pins_read_elements.py began, the file in
-    # which both instrumented 3.14t runs peak.
+    # runs' phases are not a like-for-like comparison. For shard 3, two instrumented runs, one at each head, back to back
+    # on 2026-10-06 (the merged head's from 00:44 UTC at a 1-minute load of 17.90, the earlier head's from 00:54 UTC at
+    # 22.44, 3.12 and 3.14t side by side in each; pytest -v with each output line stamped, so not a wall measurement),
+    # found the phase 12 to 13 percent longer at the merged head, 577 s against 515 s on 3.12 and 487 s against 431 s on
+    # 3.14t, and the run at the earlier head reached the weighted run's worker peaks again, to within 0.02 GB. The
+    # shard's worker held about 0.1 GB more once its 234 test files were collected (224 before), and the new
+    # tests/test_ephemeral_port_census.py, which walks every file under tests/, added about 0.5 GB on 3.12 and 0.6 GB on
+    # 3.14t in its setup and kept it. So the worker held about 0.8 GB more on 3.12 and about 1.0 GB more on 3.14t when
+    # tests/test_served_pins_read_elements.py began, the file in which both instrumented 3.14t runs peak.
     # Each shard's cap is T230b's rule for its governing phase, then the margin rule: the phase, plus the 600 s per-test
     # timeout, plus the time before the step, rounded up to a multiple of 5 minutes, and then 5 minutes more when that
     # leaves less than 60 s between the sum and the cap. The figures are in the expression's matrix.shard clauses, one
@@ -361,8 +369,10 @@ jobs:
         # 'smaller'. Under full every run gets all five interpreters. Under smaller a manual run gets all five, the
         # weekly schedule 3.10, 3.11 and 3.13, and any other run (a batch push; a pull_request, were it a trigger)
         # 3.12 and 3.14t, so a trigger added later cannot quietly run all five. The values are JSON strings, so 3.10
-        # stays "3.10". An exclude entry below whose value a run's list lacks matches nothing. 3.14t is
-        # setup-python's spelling for the free-threaded build (see the header).
+        # stays "3.10". An exclude entry below whose value a run's list lacks matches nothing: GitHub's matrix parser
+        # (MatrixBuilder.cs in actions/runner) checks an exclude entry's keys alone and matches its values against each
+        # cell, and run 37344074782, a manual run with macos off, accepted six entries naming macos-latest, a value its
+        # os list lacked. 3.14t is setup-python's spelling for the free-threaded build (see the header).
         python-version: ${{ fromJSON('full' == 'smaller' && github.event_name != 'workflow_dispatch' && (github.event_name == 'schedule' && '["3.10","3.11","3.13"]' || '["3.12","3.14t"]') || '["3.10","3.11","3.12","3.13","3.14t"]') }}   # shape switch, line 3 of 3: 'full' or 'smaller'
         # The shards: tests/conftest.py assigns each test file to one of SHARD_COUNT shards (its CI's shards
         # section), and the Run pytest step hands it the cell's shard, so it skips the other shards' files. The axis
@@ -1209,7 +1219,7 @@ jobs:
     # step), about 59 min 49 s, 1211 s under 80. The header's sentence on the first private batch
     # run names this job for that run to confirm.
     # Until 2026-10-05 the cap was 50, the expected time and half again from the step's own time:
-    # the step's 1930 s and about 16 s of setup in main's run above were about 32 min 30 s, and
+    # the step's 1930 s in run 36388144219 and about 16 s of setup were about 32 min 30 s, and
     # half again about 49 minutes; 50 then also covered the phase plus the 600 s per-test timeout
     # plus setup (about 42 min 30 s) and the three PRs above together (about 329 s more, a job of
     # about 37 min 55 s). On 2026-10-05 it was set to 60, the slowest job then measured (49 min

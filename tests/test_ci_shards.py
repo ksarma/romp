@@ -34,6 +34,14 @@ Two kinds of pin:
    3.10 and 3.13 unsharded, on a dispatch with macos on alone, in both. Every interpreter runs on a batch push or on the
    schedule, and none on both. Red at the commit before the switch, whose python-version axis was a flow list with no
    shape literal.
+4. Prose that holds in both shapes (ProseHoldsInBothShapes, 2026-10-06): switching the shape is a three-line change, so
+   no other tracked line may say which shape is in force. A spelling census over every tracked text file (`git
+   ls-files`, through tests/ref_reader_census.py's tracked_files) for the two phrasings found stale after the switch was
+   built: full named as the default shape, and ci.yml's weekly schedule called paused, each matched across line breaks
+   and comment markers (ONE_SHAPE_SPELLINGS). It reads those two phrasings, not their meaning, so another wording of
+   either claim passes it. Red at the commit before it: CLAUDE.md called the weekly schedule paused, and ci.yml,
+   secret-scan.yml, CONTRIBUTING.md, docs/batching.md, three test modules' docstrings and one test's pattern named full
+   as the default.
 """
 import itertools
 import os
@@ -49,6 +57,7 @@ sys.path.insert(0, ROOT)
 from tests.conftest import (  # noqa: E402
     HEAVY_MODULES, SHARD_COUNT, SHARD_ENV, hash_shard, is_test_file, parse_shard, shard_of, shard_repo_path)
 from tests.ci_shard_probe import PROBE_ITEM  # noqa: E402
+from tests.ref_reader_census import tracked_files  # noqa: E402
 from tests.test_ci_workflow_concurrency import (  # noqa: E402
     MAIN, SHA_A, SHAPES, SWITCH_LINES, _children, _keys_at, _strip_comment, _unquote, dispatch_run, evaluate,
     every_python, job_lines, os_list, python_versions, run, set_line, shape_lines, shape_of, triggers, with_shape)
@@ -506,6 +515,73 @@ class ShapeSwitch(unittest.TestCase):
                 self.assertEqual(sorted(batch | weekly), sorted(DISPATCH_PYTHONS), "every interpreter runs at least weekly")
                 self.assertEqual(batch & weekly, set(), "no interpreter is billed on both a batch push and the schedule")
         self.assertEqual(every_python(self.src), sorted(FIVE))
+
+
+# ---- prose that holds in both shapes (2026-10-06) ----------------------------------------------------------------------
+# The two phrasings of a claim about ci.yml that one of its shapes makes false, each found stale after the switch was
+# built: full named as the default shape (false once the three lines say smaller), and ci.yml's weekly schedule called
+# paused (false under smaller, whose weekly run is live). Between two words a pattern admits any run of blanks, line breaks
+# and comment markers, so a phrase folded over comment lines is read.
+_GAP = rb"[\s#*/>]+"
+ONE_SHAPE_SPELLINGS = (
+    re.compile(rb"\bfull(?:" + _GAP + rb"shape)?," + _GAP + rb"the" + _GAP + rb"default\b", re.I),
+    re.compile(rb"\bweekly" + _GAP + rb"schedule" + _GAP + rb"is" + _GAP + rb"paused\b", re.I),
+)
+
+
+def one_shape_phrases(data):
+    """[(line number, the phrase with its blanks and line breaks made single spaces)] for each match of
+    ONE_SHAPE_SPELLINGS in the bytes `data`."""
+    return [(data.count(b"\n", 0, m.start()) + 1, re.sub(rb"\s+", b" ", m.group(0)).decode("utf-8", "replace"))
+            for pattern in ONE_SHAPE_SPELLINGS for m in pattern.finditer(data)]
+
+
+def one_shape_hits(rels, root=ROOT):
+    """[(path, line number, phrase)] over the text files among `rels`, paths under `root`: a symlink or a path that is not
+    a regular file is not read, and a file with a NUL in its first 8000 bytes is not text (git's own test), as
+    tests/ref_reader_census.py reads the tree."""
+    hits = []
+    for rel in rels:
+        path = os.path.join(root, rel)
+        if os.path.islink(path) or not os.path.isfile(path):
+            continue
+        with open(path, "rb") as fh:
+            data = fh.read()
+        if b"\0" not in data[:8000]:
+            hits.extend((rel, n, phrase) for n, phrase in one_shape_phrases(data))
+    return hits
+
+
+class ProseHoldsInBothShapes(unittest.TestCase):
+    """Item 4 of the module docstring: no tracked text says which shape is in force, by the census's two phrasings."""
+
+    def test_no_tracked_text_names_the_shape_in_force(self):
+        rels = tracked_files(ROOT)
+        self.assertIn(".github/workflows/ci.yml", rels, "the listing is not this repository's: re-anchor this pin")
+        self.assertEqual(one_shape_hits(rels), [], (
+            "tracked text that one shape of ci.yml's switch makes false (path, line, phrase above): switching the shape "
+            "is a three-line change (ci.yml's header, THE SHAPE SWITCH), so no other line may say which shape is in "
+            "force; say what each shape does instead. A spelling census of two phrasings, not of their meaning."))
+
+    def test_the_census_reads_a_folded_phrase_and_passes_the_neutral_ones(self):
+        # each red sample assembled here, so this file's own text holds no phrase the census reads
+        full, default, weekly = b"full", b"default", b"weekly schedule"
+        red = (b"x\n# " + full + b", the\n# " + default + b": every batch push",
+               b"under its " + full + b" shape, the " + default + b", or",
+               b"a manual run (`ci.yml`'s " + weekly + b" is\n  paused), and",
+               b"  // " + full.upper() + b", THE " + default.upper())
+        for data in red:
+            with self.subTest(data=data):
+                self.assertEqual(len(one_shape_phrases(data)), 1)
+        self.assertEqual(one_shape_phrases(red[0])[0], (2, full.decode() + ", the # " + default.decode()))
+        green = (b"commented under " + full + b", the shape as built, and",
+                 b"its schedule was paused from 2026-10-04",
+                 b"The weekly macOS run stays PAUSED until the bill is read",
+                 b"under " + full + b", the " + default + b"s",
+                 b"under " + full + b" the " + default)
+        for data in green:
+            with self.subTest(data=data):
+                self.assertEqual(one_shape_phrases(data), [])
 
 
 class TheReadersThemselves(unittest.TestCase):

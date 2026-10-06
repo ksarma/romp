@@ -67,6 +67,12 @@ equal their literals. The checks here:
    while the comment still names it is red, with the floor over SERVED_RUNS and the floor with that job counted. The
    floor is a lower bound, as the extension job's is (tests/test_ci_bats_bound.py::ExtensionJobCeiling): a cap above the
    rule's figure, with its sentence saying so, is green.
+5. Each step time the served-pages job's comment cites as `the step's <s> s` names the run whose step it was right after
+   the figure, `the step's <s> s in run <id>` (STEP_FORM), a pair STEP_TIMES records (the jobs API), and each recorded
+   pair is cited so. A step time whose run the comment names by its place (`main's run above`) points at another run
+   once a paragraph naming other runs is put above it: on 2026-10-06 the history sentence's 1930 s, run 36388144219's
+   served step, sat below two runs of main whose steps took 2973 s and 2852 s. Red at the commit before it, whose
+   sentence named no run.
 A job's key written twice is refused by job_block with the reason (the other module's check 2 states which spellings it
 reads).
 
@@ -217,6 +223,12 @@ RULE_SENTENCE = re.compile(r"(\d+) min (\d+) s and half again is (\d+) min (\d+)
 # How the job's comment names a job counted as a lower bound: `job <id> (run <id>, attempt <n>), at least <s> s`. Check 4
 # reads it both ways: each LOWER_BOUND record named so, and each job named so recorded in SERVED_RUNS with those figures.
 BOUND_FORM = re.compile(r"job (\d+) \(run (\d+), attempt (\d+)\), at least (\d+) s")
+# The step times the job's comment cites as `the step's <s> s` (STEP_CITED), each as (run, seconds): run 36388144219's
+# served step, 06:50:49 to 07:22:59 UTC on 2026-09-28 by the jobs API, the step's own time the cap of 50 was sized from.
+# Check 5 holds each citation to name its run right after the figure (STEP_FORM) with a pair recorded here.
+STEP_TIMES = ((36388144219, 1930),)
+STEP_CITED = re.compile(r"\bthe step's (\d+) s\b")
+STEP_FORM = re.compile(r"the step's (\d+) s in run (\d+)\b")
 
 
 def name_in_comment(r):
@@ -393,6 +405,35 @@ def check_served_cap_floor(src, runs=SERVED_RUNS):
     return faults
 
 
+def check_step_times_name_their_run(src, steps=STEP_TIMES):
+    """Check 5: each `the step's <s> s` in the served-pages job's comment-only lines, joined with one space, names its run
+    right after the figure, `the step's <s> s in run <id>`, with a (run, seconds) pair `steps` records; and each pair
+    `steps` records is cited so."""
+    try:
+        block = job_block(SERVED_JOB, lines(src))
+    except WorkflowShape as e:
+        return [str(e)]
+    comment = " ".join(l.strip(" \t")[1:].strip(" \t") for l in block if l.lstrip(" \t").startswith("#"))
+    faults, cited = [], set()
+    for m in STEP_CITED.finditer(comment):
+        form = STEP_FORM.match(comment, m.start())
+        if form is None:
+            faults.append("the served-pages job's comment cites the step's %s s without its run right after the figure "
+                          "(`the step's %s s in run <id>`): a run named by its place in the comment points at another run "
+                          "once a paragraph naming other runs is put above it" % (m.group(1), m.group(1)))
+            continue
+        pair = (int(form.group(2)), int(form.group(1)))
+        if pair not in steps:
+            faults.append("the served-pages job's comment cites the step's %d s in run %d, a pair STEP_TIMES does not "
+                          "record (%r)" % (pair[1], pair[0], steps))
+        cited.add(pair)
+    for run, secs in steps:
+        if (run, secs) not in cited:
+            faults.append("the served-pages job's comment does not cite run %d's step as `the step's %d s in run %d`"
+                          % (run, secs, run))
+    return faults
+
+
 class ServedPagesJob(unittest.TestCase):
     def assertNoFaults(self, faults, why):
         if faults:
@@ -433,14 +474,22 @@ class ServedPagesJob(unittest.TestCase):
             "commit; a slower job measured since, or one cancelled at the cap, joins SERVED_RUNS, and the comment's jobs, "
             "its sentence and the cap change together."))
 
+    def test_5_each_step_time_the_comment_cites_names_its_run(self):
+        self.assertNoFaults(check_step_times_name_their_run(raw()), (
+            "A step time the served-pages job's comment cites does not name its run right after the figure, or names a "
+            "pair STEP_TIMES does not record, or a recorded pair is not cited (above). Write `the step's <s> s in run "
+            "<id>`, and record the pair in STEP_TIMES from the jobs API's step times."))
+
 
 class EachCheckRedsOnItsDefect(unittest.TestCase):
     """Every check against a synthetic workflow built from the module's constants: green as built, red on each change planted
     into it: a one-field edit in each job, the served step put back in the extension job, a second setup-node in the served
     job, an env on the served step, a step writing GITHUB_ENV before it, a working-directory change, a cap and its comment's
     sentence lowered together under the rule, a job the cap is sized from changed or dropped in the comment, the cancelled
-    jobs dropped from the jobs check 4 reads, missing data in them, and the rest below."""
-    CHECKS = (check_served_job, check_extension_job, check_served_name_once_in, check_served_cap_floor)
+    jobs dropped from the jobs check 4 reads, missing data in them, a step time's run named by its place or changed, and
+    the rest below."""
+    CHECKS = (check_served_job, check_extension_job, check_served_name_once_in, check_served_cap_floor,
+              check_step_times_name_their_run)
     # The served job's cap line as the literal writes it, and its minutes.
     CAP_LINE = [l for l in EXPECTED_SERVED_JOB if l.startswith("    timeout-minutes: ")][0]
     CAP = int(CAP_LINE.rsplit(" ", 1)[1])
@@ -458,6 +507,9 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
     BOUND_LINES = (("    # cancelled at the cap: job %d (run %d," % BOUND_RUNS[0][:2],
                     "    #   attempt %d), at least %d s;" % BOUND_RUNS[0][2:4])
                    + tuple("    # and job %d (run %d, attempt %d), at least %d s;" % r[:4] for r in BOUND_RUNS[1:]))
+    # The step time check 5 reads, folded between `run` and the run's id as ci.yml's comment may fold it.
+    STEP_LINES = ("    # the cap of 50 came from the step's %d s in run" % STEP_TIMES[0][1],
+                  "    #   %d and 16 s of setup" % STEP_TIMES[0][0])
 
     @classmethod
     def synthetic(cls):
@@ -467,7 +519,7 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
         served = list(EXPECTED_SERVED_JOB)
         served[4:4] = ["    # a comment before the cap's neighbours"]
         at = served.index(cls.CAP_LINE)
-        served[at:at] = list(cls.RUN_LINES + cls.BOUND_LINES + cls.RULE_LINES)
+        served[at:at] = list(cls.RUN_LINES + cls.BOUND_LINES + cls.STEP_LINES + cls.RULE_LINES)
         at = served.index("      - name: " + SERVED_STEP)
         served[at + 1:at + 1] = ["        # the step's own comment"]
         return "\n".join(["name: CI", "on: [push]", "jobs:", "  python:", "    runs-on: ubuntu-latest", ""] + ext + served)
@@ -505,7 +557,17 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
         bound_secs_line = self.BOUND_LINES[1]
         first_measured, second_measured = self.MEASURED_RUNS[:2]
         first_bound, second_bound = self.BOUND_RUNS[:2]
+        step_1, step_2 = self.STEP_LINES
+        step_run, step_secs = STEP_TIMES[0]
         plants = (
+            (check_step_times_name_their_run, "the step time's run named by its place, as the history sentence had it",
+             "served", step_1, ["    # the cap of 50 came from the step's %d s and 16 s of setup in main's run above"
+                                % step_secs]),
+            (check_step_times_name_their_run, "the step time's run id changed alone", "served", step_2,
+             [step_2.replace("#   %d " % step_run, "#   %d " % (step_run + 1))]),
+            (check_step_times_name_their_run, "the step time changed alone", "served", step_1,
+             [step_1.replace("step's %d s" % step_secs, "step's %d s" % (step_secs + 1))]),
+            (check_step_times_name_their_run, "the step time dropped from the comment", "served", step_1, []),
             (check_served_cap_floor, "the cap line dropped", "served", cap_line, []),
             (check_served_cap_floor, "the cap quoted, not a plain integer", "served", cap_line,
              ["    timeout-minutes: '%d'" % cap]),
