@@ -7,7 +7,10 @@ transcript text anywhere: every string here is invented.
 Behaviour:
   * `-v` / `--version` on the command line: prints a version line and exits (the SDK's version check).
   * A `control_request` on stdin is answered with a success `control_response` (an initialize gets
-    `hooks_applied`; the hook callback ids it registers are remembered per event).
+    `hooks_applied`; the hook callback ids it registers are remembered per event). A `set_model` that changes the
+    model is ECHOED first, as the real CLI does it (2.1.276 on): the /model local command's confirmation, a `user`
+    record with string content `<local-command-stdout>Set model to <model></local-command-stdout>`, flagged
+    `isReplay: true`, written before the answer and outside any turn, with no result after it.
   * A `user` message runs one TURN: a `system`/`init` record first (once), then an `assistant` record,
     then the scripted extras, then a `result` record. Tokens in the message text:
       sleep=N          the turn lasts N seconds before its result (default 0.2)
@@ -60,6 +63,7 @@ _responses: dict[str, dict] = {}
 _resp_cv = threading.Condition()
 _interrupted = threading.Event()
 _init_sent = False
+_model = "fake-model"      # the model a set_model switches away from (an echo only when it changes)
 
 
 def emit(obj: dict) -> None:
@@ -156,6 +160,7 @@ def run_turn(text: str) -> None:
 def handle(line: str) -> None:
     """One stdin line, on the READER thread: control traffic is answered or recorded at once (a turn in
     progress must be able to receive its response), user messages queue for the turn runner."""
+    global _model
     if _log:
         try:
             with open(_log, "a") as f:
@@ -171,6 +176,11 @@ def handle(line: str) -> None:
         req = obj.get("request") or {}
         rid = obj.get("request_id")
         resp = {"subtype": "success", "request_id": rid, "response": {}}
+        if req.get("subtype") == "set_model" and req.get("model") and req.get("model") != _model:
+            _model = str(req["model"])
+            emit({"type": "user", "message": {"role": "user", "content": "<local-command-stdout>Set model to %s</local-command-stdout>" % _model},
+                  "session_id": SESSION_ID, "parent_tool_use_id": None, "uuid": str(uuid.uuid4()),
+                  "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()), "isReplay": True})
         if req.get("subtype") == "interrupt":
             _interrupted.set()            # like the real CLI: the current turn ends with an interrupted result
         if req.get("subtype") == "initialize":

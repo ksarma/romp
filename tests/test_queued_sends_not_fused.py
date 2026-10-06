@@ -1026,6 +1026,58 @@ class OneFedTextAtATime(unittest.TestCase):
         self._wait(lambda: len(c.writes) == 3, "the fed turn's init is")
         self.assertEqual(c.writes[2], ("B behind it", "turn-2"))
 
+    def _echo(self, client, content):
+        """The CLI's echo of a local command (2026-10-06): a user row carrying `<local-command-stdout>` or
+        `<local-command-stderr>`, which the CLI writes for input it is not running as a turn. The one that reaches
+        romp outside a turn is a model switch's confirmation, which client.set_model makes the CLI write with no
+        result after it. The CLI flags the row isReplay and the SDK drops the flag when it parses it, so the
+        message reaches the kernel as a plain UserMessage."""
+        return self._push(client, _UserMessage(content, uuid=self._uid()))
+
+    def test_a_local_command_echo_counts_no_turn_and_releases_no_hold(self):
+        """A model switch's echo arriving at idle was counted as a turn the CLI opened itself (_turn_frame took
+        every main-conversation UserMessage), and no result ever settled it: busy() read True for good, a typed
+        command or a model pick parked behind it and every send parked behind those, and a Stop pressed over it
+        latched a hold on every send. Arriving between a feed from idle and the fed turn's init, it released the
+        hold with the text still in the CLI's queue. An echo counts no turn and witnesses no take; the CLI's own
+        user record of a turn it opened still does
+        (test_a_turn_the_cli_opens_itself_is_stamped_injected_through_the_stream)."""
+        S = sb.SdkSession._turn_frame
+        for label, content in (("stdout, string", "<local-command-stdout>Set model to claude-y</local-command-stdout>"),
+                               ("stderr, string", "<local-command-stderr>an invented failure</local-command-stderr>"),
+                               ("stdout, text block", [_TextBlock("<local-command-stdout>Set model to claude-y</local-command-stdout>")]),
+                               ("stderr past the start", "an invented preface <local-command-stderr>invented</local-command-stderr>")):
+            with self.subTest(echo=label):
+                self.assertFalse(S(_UserMessage(content), _AssistantMessage, _ResultMessage, _SystemMessage))
+        for label, content in (("plain string", "an invented note"), ("plain text block", [_TextBlock("an invented note")]),
+                               ("a notification", [_TextBlock(NOTIF)])):
+            with self.subTest(turn=label):
+                self.assertTrue(S(_UserMessage(content), _AssistantMessage, _ResultMessage, _SystemMessage))
+        # through the stream, the member that reaches romp outside a turn: a model switch's stdout confirmation (a stderr
+        # row comes only from a typed local command, whose result follows at once; msg_to_atom renders it as a plain user
+        # atom, whose working re-assert that result clears)
+        s, c = self.s, self._idle_after_the_first_turn()
+        self.assertFalse(self.be.busy(SID))
+        self._echo(c, "<local-command-stdout>Set model to claude-y</local-command-stdout>")
+        self._echo(c, [_TextBlock("<local-command-stdout>Set model to claude-z</local-command-stdout>")])
+        self._handled(self._echo(c, "<local-command-stdout>Set model to claude-x</local-command-stdout>"))
+        self.assertEqual(s.inflight, 0, "an echo counts no turn at idle")
+        self.assertFalse(self.be.busy(SID))
+        self.assertEqual(s.snapshot()["state"], "waiting")
+        c.phase = "pre-turn-2"
+        s.enqueue("A from idle")
+        self._wait(lambda: len(c.writes) == 2, "A fed")
+        self.assertIs(s._untaken["fresh"], True)
+        s.enqueue("B behind it")
+        self._reacted(self._echo(c, "<local-command-stdout>Set model to claude-y</local-command-stdout>"), c)
+        self.assertEqual(len(c.writes), 2, "an echo is not the fed turn's take")
+        self.assertIsNotNone(s._untaken)
+        self.assertEqual(s.inflight, 1)
+        c.phase = "turn-2"
+        self._init(c)
+        self._wait(lambda: len(c.writes) == 3, "the fed turn's init is")
+        self.assertEqual(c.writes[2], ("B behind it", "turn-2"))
+
     def test_a_turn_the_cli_opens_itself_starts_the_working_clock_at_its_first_frame(self):
         """snapshot() reads `since` for a turn in flight. A fed turn sets it at the pop; a turn the CLI opened
         by itself set nothing, so the card wore the previous fed turn's start for it, and a stale interrupt

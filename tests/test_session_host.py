@@ -689,6 +689,167 @@ class ParkedRules(unittest.TestCase):
         self.assertLess(sh.HOOK_TIMEOUT_S, 600.0, "inside the CLI's default hook budget (the T303 probe)")
 
 
+def _echo_row(content, **extra):
+    """A `user` row as the CLI writes one to stdout, `content` its message content; `extra` adds top-level keys (isReplay,
+    isSynthetic, parent_tool_use_id). Every value is invented."""
+    rec = {"type": "user", "message": {"role": "user", "content": content}, "session_id": FSID, "parent_tool_use_id": None,
+           "uuid": "11111111-2222-3333-4444-0000000000e0"}
+    rec.update(extra)
+    return rec
+
+
+def _assistant_row(text):
+    return {"type": "assistant", "message": {"role": "assistant", "model": "fake-model", "content": [{"type": "text", "text": text}]},
+            "session_id": FSID, "parent_tool_use_id": None, "uuid": "11111111-2222-3333-4444-0000000000e1"}
+
+
+# The population (2026-10-06): the rows the CLI writes for input it is NOT running as a turn, derived from what the CLI
+# itself marks. Every user row it echoes carries the isReplay key (its SDK schema's SDKUserMessageReplay); its own test for
+# evidence that a turn is running skips a user row that has the key, whatever its value; and its own recogniser of a local
+# command's output is either tag anywhere in the text. On romp's road the one member that arrives outside a turn with no
+# result after it is the first: the confirmation a /model switch makes the CLI write when the kernel asks for it over the
+# control channel.
+ECHO_ROWS = {
+    "a model switch's echo (string content, isReplay true)":
+        _echo_row("<local-command-stdout>Set model to fake-model-2</local-command-stdout>", isReplay=True),
+    "the same echo as a text block":
+        _echo_row([{"type": "text", "text": "<local-command-stdout>Set model to fake-model-2</local-command-stdout>"}], isReplay=True),
+    "a local command's error output (isReplay true)":
+        _echo_row("<local-command-stderr>an invented failure</local-command-stderr>", isReplay=True),
+    "local-command output without the key":
+        _echo_row("<local-command-stdout>invented output</local-command-stdout>"),
+    "local-command error output without the key, as a text block":
+        _echo_row([{"type": "text", "text": "<local-command-stderr>invented</local-command-stderr>"}]),
+    "the tag past the start of the text (the CLI's own test is a substring)":
+        _echo_row("an invented preface <local-command-stdout>invented</local-command-stdout>"),
+    "a replayed prompt (isReplay true, plain text)":
+        _echo_row("an invented prompt the CLI already ran", isReplay=True),
+    "a replayed shell command's output (isReplay true)":
+        _echo_row("<bash-stdout>invented</bash-stdout><bash-stderr></bash-stderr>", isReplay=True),
+    "a compact summary (the key present, false)":
+        _echo_row("an invented summary", isReplay=False, isSynthetic=True),
+}
+# Rows that still open a turn at zero: only user rows are ever echoes, a user row's tool-result content is never read, and
+# isSynthetic is not the mark (the CLI's in-turn user rows carry it).
+TURN_ROWS = {
+    "an assistant row (a queued line running as its own turn)": _assistant_row("working on it"),
+    "an assistant row carrying the tag (a local command's own assistant row, which a result follows)":
+        _assistant_row("<local-command-stdout>invented</local-command-stdout>"),
+    "the CLI's own user row with text and no key (a turn it opened itself)": _echo_row("an invented notification"),
+    "a user row flagged isSynthetic without the key": _echo_row([{"type": "text", "text": "an invented reminder"}], isSynthetic=True),
+    "a tool result whose content mentions the tag":
+        _echo_row([{"type": "tool_result", "tool_use_id": "toolu_invented", "content": "<local-command-stdout>x</local-command-stdout>"}]),
+}
+
+
+class ReplayedEchoes(unittest.TestCase):
+    """A row the CLI writes for input it is not running opens no turn (2026-10-06). The host re-opened its turn count on ANY
+    assistant or user row arriving at zero, so the echo a /model switch makes the CLI write (a user row flagged isReplay,
+    carrying the local command's <local-command-stdout> confirmation, written outside any turn and followed by no result)
+    left the count at one for good: every attaching kernel was told a turn was open, the unattached grace never ended the
+    CLI, and a re-exec waited for a result that never came. In-process: the constructor and _track, no CLI and no socket.
+    HostProcess's two echo cases drive the same row through the fake CLI."""
+
+    def setUp(self):
+        self.state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.state, True)
+        d = Path(self.state) / "hosts" / SID
+        d.mkdir(parents=True, mode=0o700)
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": self.state, "protocol": 1,
+                "cli_path": FAKE, "cwd": self.state, "unattached_grace_s": 3600}
+        (d / "spawn.json").write_text(json.dumps(spec)); (d / "spawn.json").chmod(0o600)
+        self.host = sh.SessionHost(str(d / "spawn.json"), lease_api={"write_lease": lambda sd, lease: None,
+                                                                     "remove_lease": lambda sd, sid: True,
+                                                                     "proc_start": lambda pid: None})
+        self.addCleanup(self.host.journal.close)
+        self.off = 0
+
+    def _feed(self, rec):
+        self.host._track(rec, self.off)
+        self.off += 1
+
+    def _reopened(self):
+        p = Path(self.state) / "hosts" / SID / "host.log"
+        rows = [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        return [r for r in rows if r.get("kind") == "turn-reopened"]
+
+    RESULT = {"type": "result", "subtype": "success", "is_error": False, "num_turns": 1, "result": "done", "session_id": FSID,
+              "uuid": "11111111-2222-3333-4444-0000000000e2"}
+
+    def test_one_predicate_names_the_rows_the_cli_echoes(self):
+        fn = getattr(sh, "_cli_echo", None)
+        self.assertIsNotNone(fn, "the host names the rows the CLI writes for input it is not running (the base had no such "
+                                 "test and re-opened a turn for every one)")
+        for name, rec in ECHO_ROWS.items():
+            with self.subTest(echo=name):
+                self.assertTrue(fn(rec), name)
+        for name, rec in TURN_ROWS.items():
+            with self.subTest(turn=name):
+                self.assertFalse(fn(rec), name)
+        for rec in ({"type": "result"}, {"type": "system", "subtype": "init"}, {"type": "user"}, {"type": "user", "message": "x"},
+                    {"type": "control_request", "isReplay": True}):
+            with self.subTest(other=rec):
+                self.assertFalse(fn(rec), rec)
+
+    def test_an_echo_after_a_result_leaves_the_count_closed_and_a_real_turn_still_reopens_it(self):
+        """Each echo, arriving after a result: the count stays 0 and host.log gains no turn-reopened row (the base read 1 and
+        wrote one for every echo). Each turn row after a result still re-opens it: 1, and exactly one row."""
+        for name, rec in ECHO_ROWS.items():
+            with self.subTest(echo=name):
+                self._feed(self.RESULT)
+                before = len(self._reopened())
+                self._feed(rec)
+                self.assertEqual(self.host.inflight, 0, "an echo the CLI writes after a result opens no turn: %s" % name)
+                self.assertEqual(len(self._reopened()), before, "and logs no turn-reopened row: %s" % name)
+        for name, rec in TURN_ROWS.items():
+            with self.subTest(turn=name):
+                self._feed(self.RESULT)
+                before = len(self._reopened())
+                self._feed(rec)
+                self.assertEqual(self.host.inflight, 1, "a row of a turn the CLI runs re-opens the count: %s" % name)
+                self.assertEqual(len(self._reopened()), before + 1, "with one turn-reopened row: %s" % name)
+                self._feed(_assistant_row("the turn goes on"))
+                self.assertEqual(len(self._reopened()), before + 1, "and none for the turn's later rows: %s" % name)
+
+    def test_the_kernel_reads_the_same_local_command_echoes_off_the_parsed_message(self):
+        """The kernel counts a turn the CLI opened from the PARSED message (SdkSession._turn_frame), and the SDK drops the
+        isReplay key when it parses a row (claude_agent_sdk 0.2.156, message_parser's user branch keeps the content, uuid,
+        parent_tool_use_id, tool_use_result and origin), so the kernel's test is the content half of the host's. For every
+        user row here, the kernel counts a turn exactly when the host's test, run on the row with the key removed, says it
+        is no echo. The rows that carry only the key (a replayed prompt, a shell command's output) reach romp only through
+        a CLI mode romp never turns on (replay-user-messages, a bash_command input); the host catches them by the key."""
+        fn = getattr(sh, "_cli_echo", None)
+        self.assertIsNotNone(fn, "the host's predicate")
+        self.assertEqual(getattr(sb, "LOCAL_COMMAND_TAGS", None), sh.LOCAL_COMMAND_TAGS, "the kernel reads the host's two tags")
+
+        class TextBlock:
+            def __init__(self, text): self.text = text
+
+        class ToolResultBlock:
+            def __init__(self, tool_use_id, content): self.tool_use_id, self.content, self.is_error = tool_use_id, content, None
+
+        class UserMessage:
+            def __init__(self, content, uuid, parent_tool_use_id):
+                self.content, self.uuid, self.parent_tool_use_id = content, uuid, parent_tool_use_id
+                self.tool_use_result, self.origin = None, None
+
+        class Other:
+            pass
+
+        def parsed(rec):            # the SDK's parse of a user row: a list becomes blocks, a string stays one, the key is gone
+            c = rec["message"]["content"]
+            if isinstance(c, list):
+                c = [TextBlock(b["text"]) if b["type"] == "text" else ToolResultBlock(b["tool_use_id"], b.get("content")) for b in c]
+            return UserMessage(c, rec.get("uuid"), rec.get("parent_tool_use_id"))
+
+        for name, rec in list(ECHO_ROWS.items()) + list(TURN_ROWS.items()):
+            if rec["type"] != "user":
+                continue
+            with self.subTest(row=name):
+                keyless = {k: v for k, v in rec.items() if k != "isReplay"}
+                self.assertEqual(sb.SdkSession._turn_frame(parsed(rec), Other, Other, Other), not fn(keyless), name)
+
+
 # ── the host as a process, this test as the kernel ─────────────────────────────────────────────
 class KernelSide:
     """A tiny synchronous kernel stand-in over the host's socket."""
@@ -4950,6 +5111,55 @@ class HostProcess(unittest.TestCase):
         self.assertFalse(fn({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}))
         self.assertFalse(fn({"type": "user", "message": {"role": "user", "content": ""}}))
         self.assertFalse(fn({"type": "user"}))
+
+    def _switch_model(self, k, model="fake-model-2"):
+        """Ask the CLI for a model switch over the control channel, as the kernel's client.set_model does, and wait for the
+        CLI's echo of it and then its answer (the fake writes them in the real CLI's order, the echo first). Returns both."""
+        rid = "11111111-2222-3333-4444-0000000000c1"
+        k.send({"t": "in", "data": json.dumps({"type": "control_request", "request_id": rid,
+                                               "request": {"subtype": "set_model", "model": model}})})
+        echo = k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "user", timeout=15)
+        ans = k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "control_response"
+                           and (f["data"].get("response") or {}).get("request_id") == rid, timeout=15)
+        self.assertIs(echo["data"].get("isReplay"), True, "the fake CLI wrote the real CLI's echo: %r" % echo["data"])
+        self.assertLess(echo["offset"], ans["offset"], "the echo comes before the answer, as the real CLI writes them")
+        return echo, ans
+
+    def test_a_model_switchs_echo_after_a_result_leaves_no_open_turn_for_the_next_attach(self):
+        """The stuck-Working shape of 2026-10-06: a model switch asked for after a turn's result makes the CLI write the
+        local command's confirmation as a user row flagged isReplay, outside any turn, with no result after it. The host
+        counted that row as a queued line running as its own turn, so the count stayed at one: every kernel that attached
+        afterwards was told a turn was open (the session read Working with nothing running). The echo opens no turn."""
+        host, sock, spec = self._start()
+        k, _ = self._attach(sock)
+        k.send({"t": "in", "data": self._user("one sleep=0")})
+        k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result", timeout=15)
+        echo, ans = self._switch_model(k)
+        k.send({"t": "detach"}); k.close()
+        k2, hello = self._attach(sock, ack=ans["offset"], pid=4343)
+        self.assertEqual(hello["inflight"], 0, "no open turn after the echo (the base reported one, for a turn nothing would end)")
+        self.assertNotIn("turn-reopened", [r["kind"] for r in self._hostlog()], "the echo re-opened nothing")
+        k2.send({"t": "in", "data": self._user("two sleep=0")})                   # and the idle CLI takes the next send at once
+        k2.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result" and f["offset"] > ans["offset"], timeout=15)
+        k2.close()
+
+    def test_an_unattached_cli_whose_last_row_is_a_model_switchs_echo_is_ended_after_the_grace(self):
+        """The grace gate reads the same count: with the echo counted as an open turn, an unattached host never ended its
+        idle CLI (test_an_unattached_idle_cli_is_ended_after_the_grace is the same case without the echo)."""
+        host, sock, spec = self._start(unattached_grace_s=1)
+        k, _ = self._attach(sock)
+        k.send({"t": "in", "data": self._user("hi sleep=0.1")})
+        k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result", timeout=15)
+        self._switch_model(k)
+        k.send({"t": "detach"}); k.close()
+        try:
+            host.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            self.fail("the host never ended its idle unattached CLI: the echo held the count open (host.log kinds %r)"
+                      % [r["kind"] for r in self._hostlog()])
+        kinds = [r["kind"] for r in self._hostlog()]
+        self.assertIn("unattached-grace-expired", kinds)
+        self.assertNotIn("turn-reopened", kinds)
 
     def test_a_detached_kernel_reattaches_and_replays_from_its_ack_while_the_turn_kept_running(self):
         host, sock, spec = self._start()

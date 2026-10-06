@@ -11497,14 +11497,19 @@ class SdkSession:
         keeps streaming after the main turn's result, and its frames say nothing about the main
         conversation's prompt queue. Counted, they read an idle session as running a turn nothing would
         settle until some later result, and one arriving between a feed from idle and the fed turn's
-        init would release the hold with the text still in the CLI's queue."""
+        init would release the hold with the text still in the CLI's queue.
+        Nor is the CLI's ECHO of a local command (_is_local_command_echo), a user row for input the CLI
+        is not running: a model switch's `<local-command-stdout>` confirmation, which client.set_model
+        makes the CLI write outside any turn and which no result follows. Counted, it read an idle
+        session as running a turn nothing would ever settle (2026-10-06), and it would release a hold
+        the same way a subagent's frame did."""
         if getattr(msg, "parent_tool_use_id", None):
             return False
         if isinstance(msg, (AssistantMessage, ResultMessage)):
             return True
         if isinstance(msg, SystemMessage):
             return getattr(msg, "subtype", None) == "init"
-        return type(msg).__name__.lstrip("_") == "UserMessage"
+        return type(msg).__name__.lstrip("_") == "UserMessage" and not _is_local_command_echo(msg)
 
     def _untaken_taken(self, msg, AssistantMessage, ResultMessage, SystemMessage) -> bool:
         """Has the CLI TAKEN the last fed text (self._untaken), so the next queued text may be fed
@@ -14300,6 +14305,35 @@ def _is_command_stdout(msg) -> bool:
     else:
         return False
     return bool(_LOCAL_STDOUT_RE.match(text))
+
+
+# The CLI's own recogniser of a local command's output, either tag anywhere in the text: the twin of the host's
+# session_host.LOCAL_COMMAND_TAGS (tests/test_session_host.py ReplayedEchoes pins the two equal, and their verdicts).
+LOCAL_COMMAND_TAGS = ("<local-command-stdout>", "<local-command-stderr>")
+
+
+def _is_local_command_echo(msg) -> bool:
+    """A UserMessage that is the CLI's ECHO of a local command's output, a row the CLI writes for input it is not
+    running as a turn (2026-10-06). The one that reaches the kernel outside a turn is a model switch's confirmation:
+    client.set_model makes the CLI write `<local-command-stdout>Set model to ...` before its control_response, and no
+    result follows it. The CLI flags every echo isReplay, but the SDK drops that key when it parses the row, so the
+    kernel reads the CLI's own recogniser of the output instead: either tag anywhere in the text (the string content,
+    or the text blocks; a tool result's content is never read). That is the content half of the host's test,
+    session_host._cli_echo, which reads the key as well. _is_command_stdout's anchored match decides what the chat
+    renders; this follows the CLI's substring test, because the question here is whether the CLI runs a turn."""
+    c = getattr(msg, "content", None)
+    if isinstance(c, str):
+        text = c
+    elif isinstance(c, list):
+        parts = []
+        for b in c:
+            t = (b.get("text") if b.get("type") == "text" else None) if isinstance(b, dict) else getattr(b, "text", None)
+            if isinstance(t, str):
+                parts.append(t)
+        text = " ".join(parts)
+    else:
+        return False
+    return any(tag in text for tag in LOCAL_COMMAND_TAGS)
 
 
 def _failure_consequence(msg, settled: bool = True) -> str:
