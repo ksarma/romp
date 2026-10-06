@@ -299,7 +299,13 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   // read as if that command assigned none and refused where that second judgment refuses (item 8 as ruled, the two walks, which replaced B's
   // read-through of the reviewer's regression-1; the read-through's own wording is pinned off every surface)
   const README = fs.readFileSync(path.resolve(HERE, '..', 'hooks', 'README.md'), 'utf8');
-  const INSTALL = fs.readFileSync(path.resolve(HERE, '..', 'docs', 'install.md'), 'utf8');
+  // The installer's section on the tooling it puts in ~/.claude/ moved out of docs/install.md into docs/reference.md on fork main,
+  // so the third surface is that section of docs/reference.md, up to the next `## ` or `### ` heading; the messages keep its old label.
+  const REFERENCE = fs.readFileSync(path.resolve(HERE, '..', 'docs', 'reference.md'), 'utf8');
+  const INSTALL_HEADING = '### What the installer links into `~/.claude/`';
+  const installMatch = new RegExp('^' + INSTALL_HEADING.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\n([\\s\\S]*?)(?=^#{2,3} |(?![\\s\\S]))', 'm').exec(REFERENCE);
+  assert.ok(installMatch && installMatch[1].trim().length > 0, `docs/reference.md has the section ${INSTALL_HEADING}`);
+  const INSTALL = installMatch[1];
   const prose = [SKILL, README, INSTALL].map((t) => t.replace(/\s+/g, ' '));
   for (const clause of ['behind `nohup` or `setsid`, as behind every wrapper, a word the shell fills in is refused as the wrapper option the guard does not read; a command named by a variable keeps its names readable when an external program wrapper (`nohup`, `setsid`, `env`, `nice` and the like, not a shell builtin) precedes it, since it then runs in a child process that cannot set this shell\'s variables, while the directory is judged unknown after it all the same, so a later relative write is refused after such a command run in the foreground in this shell (not backgrounded, not before a `|`, and not in a subshell or a substitution)', 'a sourced file or a function call, after a command named by a variable with no external program wrapper before it (to the close of a subshell it stands in), a `$(...)`', 'allowed from a cwd in no project, while a command holding a command named by a variable is judged again with every name read as if that command assigned none, and is refused where that second judgment refuses']) {
     assert.deepEqual(prose.map((t) => t.includes(clause)), [true, true, true], `the skill, hooks/README.md and docs/install.md each carry: ${clause}`);

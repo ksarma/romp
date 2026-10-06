@@ -2411,7 +2411,7 @@ class Wiring(unittest.TestCase):
                       "the poll's failed ending posts nothing whatever the window offers (review round 8), and no empty tag is posted")
 
     def test_the_landing_ships_the_banner_and_the_shell_relay(self):
-        self.assertIn("_stale_block(v) + _update_block() + _rdrift_block()", self.src)
+        self.assertIn("_stale_block(v, pv) + _update_block() + _rdrift_block()", self.src)
         self.assertIn("window.__rompUpdateOffer=offer", self.src)
         self.assertIn("m.type==='updateAvail'&&window.__rompUpdateOffer", self.src)
         self.assertIn("window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'',m.manager)", self.src,

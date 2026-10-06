@@ -276,7 +276,7 @@ export const CHANGES_UNREAD_UNDER_EDIT = "This file has pending changes that wer
 const STATUS_DEADLINE_MS = 15000;
 // The head's row when the reload the panel asked for FAILED (the seam's error() on the paint that put the failure pane
 // in place of the file, Slice 7 item 3): the seam's own words in parentheses, then what the person is looking at and
-// the way out, the shape of the deadline row (bytesLate). Exported so the guide's sentence can carry the words.
+// the way out, the shape of the deadline row (bytesLate). Exported so the reference's sentence can carry the words.
 export const BYTES_FAILED = "The file could not be read again";
 // The tail both bytes rows share: what the view shows and the way out (the Reload the row offers, fcreload).
 const BYTES_LATE_TAIL = "; the view still shows the earlier text, with no change marked on it. Reload to read the file again.";
@@ -781,7 +781,7 @@ type PanelCard = Card & { confirmedAt?: number; hintedCopy?: boolean };
 type Shown = { editing: boolean; pictured: boolean; draws: boolean };
 type WordedCard = PanelCard & { shown: Shown };
 /** What the save copyUnsureWords asks for does, for a passage comment: the host's comment verb mints a NEW comment on the
- *  copy the selection is made in, so the guessed card keeps its tag until it is resolved (docs/guide.md says the same).
+ *  copy the selection is made in, so the guessed card keeps its tag until it is resolved (docs/reference.md says the same).
  *  The guessed copy's Reveal carries it in its title after the line it names, and the open card says it in a line of its
  *  own under the words that ask for the save (renderCard), since a button's title never reaches touch: on a phone the
  *  person who followed the instruction saw the old card still tagged and still asking for the save just made, with
@@ -3016,7 +3016,7 @@ class Panel {
     const v: HeadVerdict = headVerdict(r.status, r.headers.get("X-Romp-Mtime-Ns"));
     if (v.kind === "stop") {
       this.stopped.add(target);
-      // "checking … for changes", the guide's own words for this loop — never "watching": the row sits under
+      // "checking … for changes", the reference's own words for this loop — never "watching": the row sits under
       // the Track changes toggle, and a tracked file whose refresh stopped is still tracked
       this.errors.set("poll", { text: "Stopped checking " + target + " for changes: the kernel answered " + v.status
         + (v.status === 413 ? " (too large to serve)" : " (not a type it serves)") + ". Reload to try again.", reload: true });
@@ -7273,7 +7273,7 @@ class Panel {
     // there): the hashes alone say whether the file changed, and a tag of its own says the page did not render
     const gone = this.pageGone(c);
     const regionSt = c.target ? regionState(c.target, this.status) : "current";
-    // A RESOLVED region has no staleness left to report: the plan and the guide end "stale" at resolve or re-place, the
+    // A RESOLVED region has no staleness left to report: the plan and the reference end "stale" at resolve or re-place, the
     // picture paints no rectangle for it (paintRegions), and the card offers no Re-place — so the stale tag, whose title
     // names that button, and the unknown tag and note would point at nothing; a page the PDF lost is no different. Its
     // card wears "resolved" alone (the 2026-09-06 review, which found a resolved region wearing both).
@@ -7533,7 +7533,7 @@ class Panel {
           // ending the unmapped read named the next line while the mark and the Reveal's landing were on this one
           const line = src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom - (s && s.bom ? 1 : 0)) + 1) + ")" : "";
           // with Show changes inline off, Raw paints no mark either (paintChanges), so the title promises the place and not
-          // a mark — the guide's "opens the Raw view at the change" — and the click cues the row it lands on (landOn), which
+          // a mark — the reference's "opens the Raw view at the change" — and the click cues the row it lands on (landOn), which
           // is what reaches a finger; on, Raw shows every change, a deletion as its point
           rv.title = cs.marks ? "Show the change in the Raw view" + line
             : "Open the Raw view at the change" + line + "; the marks are off, so the change is not marked there";

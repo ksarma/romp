@@ -30,7 +30,22 @@ const hook = read('hooks', 'romp-track-bash-guard.mjs');
 const install = read('install.sh');
 const uninstall = read('bin', 'romp-uninstall');
 const hooksReadme = read('hooks', 'README.md');
-const guide = read('docs', 'guide.md').replace(/\s+/g, ' ');
+// The install doc's section on the tooling the installer puts in ~/.claude/ (a developer surface the property stands on) and
+// the guide's Files section (the user-facing text) live in docs/reference.md since fold 4 moved the fork's sections out of
+// docs/install.md and docs/guide.md (the front pages are the project's, CLAUDE.md "The documentation front pages"). The
+// surfaces keep their old labels below where the hook header, decision 47 and the ledger entry still name them that way.
+// The two scans that keep the developer paragraph and the deleted ninth class out of user-facing text read all of
+// docs/reference.md outside the installer section, not the Files pane alone: fold 4 moved more of the fork guide there (the
+// chat's paragraphs, the Waiting on you pane, the token file), and those scans covered the whole fork guide before.
+const reference = read('docs', 'reference.md');
+function refSection(heading) {
+  const m = new RegExp('^' + heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\n([\\s\\S]*?)(?=^#{2,3} |(?![\\s\\S]))', 'm').exec(reference);
+  assert.ok(m, `docs/reference.md has the section ${heading}`);
+  return m[1];
+}
+const installSection = refSection('### What the installer links into `~/.claude/`');
+const filesSection = refSection('## The Files pane');
+const guide = filesSection.replace(/\s+/g, ' ');
 const prompt = read('claude', 'romp-session-prompt.md').replace(/\s+/g, ' ');
 
 function between(doc, from, to) {
@@ -217,7 +232,7 @@ test('the Tests and Docs sections name the modules and the doc sentences this sl
 // why. The mutation pass over that round inverted each clause and nothing went red: the plan and the skill were pinned,
 // these three were not. Held here to the hook's set, as decision 47's sentence is above; the shapes themselves are run
 // in tools/romp-track-bash-guard.test.mjs (the numeric-set test).
-const installDoc = read('docs', 'install.md').replace(/\s+/g, ' ');
+const installDoc = installSection.replace(/\s+/g, ' ');
 const ledger = read('upstream', '2026-09-18-track-guard-non-literal-targets.md').replace(/\s+/g, ' ');
 
 // THE SIGNAL NAMES the README pin reads (round 7 of fork PR #780 review, thirty-eighth commit; the thirty-ninth derives them from what a trap
@@ -728,7 +743,7 @@ test('the best-effort contract and its unmodelled-writer list are stated identic
     'hook header': read('hooks', 'romp-track-bash-guard.mjs'),
     'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'),
     'hooks/README.md': read('hooks', 'README.md'),
-    'docs/install.md': read('docs', 'install.md'),
+    'docs/install.md': installSection,
   };
   const READER = 'the guard refuses a write only when it recognises the command as a writer it knows';   // the skill's statement opens so
   for (const [name, text] of Object.entries(surfaces)) {
@@ -1002,7 +1017,7 @@ test("decision 47, the hook and the prose surfaces record round 5's fifth addend
   assert.ok(fixture.population.includes('placement of the write against the construct'), 'and its population statement carries the dimension');
   const brace = JSON.parse(fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-brace-matrix.json'), 'utf8'));
   assert.ok(brace.note.includes('POPULATION (stated since round 5\'s fifth addendum'), 'the brace fixture states its population');
-  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
+  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': installSection, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
   for (const [name, text] of Object.entries(prose)) {
     const flat = text.replace(/\s+/g, ' ');
     assert.ok(flat.includes("`[[ a > f ]]` and `(( a > f ))` compare in bash and zsh and are read in dash's grammar too since round 5's fifth addendum"), `${name} states the two-grammar reading`);
@@ -1052,7 +1067,7 @@ test("decision 47, the hook and the prose surfaces record the fifth addendum's s
   assert.ok(ps.rows > ps.residualRows, 'the literal rows outnumber the residual ones');
   // the three prose surfaces carry the second fix-up's sentence
   const SENT = "since its second fix-up the same day an expansion nested in a `${...}` word (`${x:-$(cp a b)}`, a backtick, a `<(...)`) is read as the command it runs in every position, and a literal echo or printf piped into a shell reading stdin is that shell's script (a producer the guard cannot see, `cat f | bash`, stays unread, as does a script handed to a shell outside the set it reads, busybox sh or ash among them)";
-  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
+  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': installSection, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
   for (const [name, text] of Object.entries(prose)) assert.ok(text.replace(/\s+/g, ' ').includes(SENT), `${name} carries the second fix-up's sentence`);
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
@@ -1069,7 +1084,7 @@ test("decision 47 and the hook header record the seventh pass's attacker: nestin
   assert.ok(hook.includes("const ZSH_MODIFIERS = new Set(['noglob', 'nocorrect', '-']);") && hook.includes("'chrt', 'numactl', ...ZSH_MODIFIERS]);"), 'the three modifiers, and they are in PREFIXES');
   for (const m of ['noglob', 'nocorrect', "'-'"]) assert.ok(new RegExp(`^  ${m}: \\{ argShort: '', flagShort: '', argLong: \\[\\], flagLong: \\[\\] \\},$`, 'm').test(hook), `${m} has an empty option table`);
   for (const m of ['noglob', 'nocorrect', "'-'"]) assert.ok(hook.includes(`  ${m}: 'is a zsh precommand modifier, so in zsh the shell\\'s own cd runs and moves it, and no command in bash and dash, which stay',`), `${m} has its wrapped-cd text`);
-  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
+  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': installSection, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
   for (const [name, text] of Object.entries(prose)) assert.ok(/`exec`, and since the seventh pass zsh's precommand modifiers `noglob`, `nocorrect` and `-`, which hid the writer behind them\)/.test(text.replace(/\s+/g, ' ')), `${name} names the modifiers in the wrapper list`);
   assert.ok(!hook.includes('carries an option the shell fills in ('), 'the poison M1\'s per-segment detector shadowed is gone');
   assert.ok(hook.includes("if (readonlyNames.has(name)) return;") && hook.includes("if (readonlyNames.has(name)) continue;"), 'a readonly name keeps its value in both recording paths');
@@ -1119,7 +1134,7 @@ test("decision 47, the hook and the prose surfaces record the fifth addendum's t
   for (const [name, text] of [['the hook header', hook], ['decision 47', d47], ['hooks/README.md', hooksReadme]]) assert.ok(text.replace(/\s+/g, ' ').includes("zsh's brace-body compound"), `${name} names the brace-body closer residual`);
   // the three prose surfaces carry the third fix-up's sentence
   const SENT3 = "and since its third fix-up the same day an unquoted here-document body's expansions are read as the commands they run and the expanded body is the consumer's script (a quoted delimiter keeps the body as written), a `$(echo '...')` or a backtick with literal operands is the text it prints where the shell puts it (so `bash -c \"$(echo 'cp a b')\"` and `$(echo cp) a b` copy), a `${x:-word}` alone is read as a script under its default word, zsh's `=(cmd)` runs its command, a shell fed through a subshell, a group, an if or loop body, a `/dev/stdin` operand, a `<(echo '...')` script, a redirection on the compound's closer or a `-c` script's inner shell reads what was piped or redirected to it, and a copying writer whose one unquoted operand the shell may split into two refuses while a project is in play (a `${...}` word the guard cannot read as a script, a producer outside its output model (since round 6's second commit, 2026-09-21, the model reads a subshell or a group of echo, printf and silent commands as what it prints), a redirection on the closing brace of zsh's brace-body compound and a command whose name is an expansion the resolver never reads stay unread and are named)";
-  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
+  const prose = { 'hooks/README.md': hooksReadme, 'docs/install.md': installSection, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md') };
   for (const [name, text] of Object.entries(prose)) assert.ok(text.replace(/\s+/g, ' ').includes(SENT3), `${name} carries the third fix-up's sentence`);
   const censusSrc = fs.readFileSync(path.join(REPO, 'tools', 'romp-track-bash-guard-census.mjs'), 'utf8');
   assert.ok(censusSrc.includes("STDIN_NAMES: { side: 'WRITE'"), 'the census names the stdin names with their side');
@@ -1139,13 +1154,13 @@ test("round 6, second commit: THE RESIDUAL PROPERTY is stated identically on the
     'hook header': hook,
     'decision 47': d47,
     'hooks/README.md': hooksReadme,
-    'docs/install.md': read('docs', 'install.md'),
+    'docs/install.md': installSection,
     'the ledger entry': read('upstream', '2026-09-18-track-guard-non-literal-targets.md'),
   };
   const body = PROPERTY.slice(PROPERTY.indexOf('the guard refuses a write only when'));
   for (const [name, text] of Object.entries(surfaces)) assert.ok(norm(text).includes(body), `${name} carries THE RESIDUAL PROPERTY identical`);
   // the user-facing surfaces carry none of the developer paragraph: not its statement, not its label, not a clause of its provenance
-  const userFacing = { 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'docs/guide.md': read('docs', 'guide.md') };
+  const userFacing = { 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'docs/guide.md': read('docs', 'guide.md'), 'docs/reference.md outside the installer section': reference.replace(installSection, '') };
   for (const [name, text] of Object.entries(userFacing)) {
     const n = norm(text);
     assert.ok(!n.includes(body.slice(0, 200)) && !n.includes('the residual property') && !n.includes("stated since the first commit of this round") && !n.includes('b2 as ruled, with its boundary'), `${name} carries no part of the developer paragraph of THE RESIDUAL PROPERTY`);
@@ -1212,7 +1227,7 @@ test("round 6, fifth commit: decision 47 and the hook header record the paramete
   for (const fn of ['fdsFor', 'passthroughCat', 'defLineOf', 'functionBodies', 'fnChain', 'readingParams', 'assignmentValue', 'glueOf', 'paramsOf', 'unreadValues', 'candidateTexts', 'movedAny', 'runFunction', 'callArgs']) assert.ok(hook.includes(fn), `the hook has ${fn}`);
   assert.ok(hook.includes("if (src[i + 1] === '&') { i += 2; expect = { kind: 'dup', fd: fdDigits }; continue; }"), 'the lexer records a `<&` dup (pinned by execution in the fifth commit\'s rows test)');
   assert.ok(hook.includes("if (sub.moved && opts.adopt) {"), 'recurse adopts the directory state of a text this shell ran (pinned by execution in the fifth commit\'s rows test)');
-  for (const [name, text] of [['the hook header', hook], ['the vendored SKILL.md', read('vendor', 'track-changents', 'skill', 'SKILL.md')], ['hooks/README.md', hooksReadme], ['docs/install.md', read('docs', 'install.md')]]) assert.ok(text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes('is not a write it refuses: the contract is the write that lands on a tracked file'), `${name} says a deletion or a move away is not a write the guard refuses`);
+  for (const [name, text] of [['the hook header', hook], ['the vendored SKILL.md', read('vendor', 'track-changents', 'skill', 'SKILL.md')], ['hooks/README.md', hooksReadme], ['docs/install.md', installSection]]) assert.ok(text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes('is not a write it refuses: the contract is the write that lands on a tracked file'), `${name} says a deletion or a move away is not a write the guard refuses`);
   // (D) the round's rule for committed text: the reviewer is "the reviewer", never a session name, on the files the offer changes
   const sessionName = new RegExp(['romp', 'manager'].join('-') + "'s");   // the reviewer's session name, assembled so this file does not spell it either
   for (const rel of ['hooks/romp-track-bash-guard.mjs', 'plans/file-review.md', 'tools/romp-track-bash-guard.test.mjs']) assert.ok(!sessionName.test(read(...rel.split('/'))), `${rel} names the reviewer, not a session`);
@@ -1351,7 +1366,7 @@ test("round 6, thirteenth commit: decision 47 and the hook header record the emp
   // refused and pinned in the guard's test ("round 7, twenty-fifth commit, the rows"), and the class is gone from every surface the property stands on
   // and from RESIDUAL_CLASSES; the records above keep the thirteenth commit's filing as history, and each surface's record of the deletion is read here
   const CLASS = "a positional the resolver reads at the word by a model the shell does not keep, an element's emptiness, a binding a later shift or unset removed, zsh's subscript grammar beyond one index";
-  const surfaces = { 'the hook header': hook, 'decision 47': d47, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'hooks/README.md': hooksReadme, 'docs/install.md': read('docs', 'install.md'), 'docs/guide.md': read('docs', 'guide.md'), 'the ledger entry': read('upstream', '2026-09-18-track-guard-non-literal-targets.md') };
+  const surfaces = { 'the hook header': hook, 'decision 47': d47, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'hooks/README.md': hooksReadme, 'docs/install.md': installSection, 'docs/guide.md': read('docs', 'guide.md'), 'docs/reference.md outside the installer section': reference.replace(installSection, ''), 'the ledger entry': read('upstream', '2026-09-18-track-guard-non-literal-targets.md') };
   for (const [name, text] of Object.entries(surfaces)) assert.ok(!text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes(CLASS), `${name} no longer states the ninth class`);
   for (const [name, text] of [['decision 47', d47], ['the hook header', hook], ['the ledger entry', surfaces['the ledger entry']]]) assert.ok(text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase().includes("round 7's twenty-fifth commit") || text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes('ROUND 7 OF FORK PR #780 REVIEW, TWENTY-FIFTH COMMIT (2026-09-23'), `${name} records the deletion`);
   const guardTest = read('tools', 'romp-track-bash-guard.test.mjs');

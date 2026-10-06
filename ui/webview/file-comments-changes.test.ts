@@ -28,7 +28,10 @@ import {
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
 const MODEL = web("file-comments-model.ts");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's Files section lives in docs/reference.md ("## The Files pane", up to the Artifacts pane) since the front pages
+// became the project's (CLAUDE.md "The documentation front pages"; fold 4 moved every fork paragraph there).
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const REF_FILES = ((at: number) => REF.slice(at, REF.indexOf("\n## The Artifacts pane", at)))(REF.indexOf("\n## The Files pane\n"));
 
 // ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
 const SID = "11111111-2222-3333-4444-555555555555";
@@ -326,7 +329,7 @@ test("the paint pass: unpaintChanges before each repaint, the change painters af
 test("vocabulary: the person's words in the panel and the guide; CONTEXT.md's terms, never the format's", () => {
   assert.doesNotMatch(SRC, /\b(thread|suggestion|annotation)s?\b/i);
   assert.doesNotMatch(web("file-comments-changes.test.ts").split("\n").filter((l) => !l.includes("/i);")).join("\n"), /fleet/i);
-  const files = GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")).replace(/\s+/g, " ");
+  const files = REF_FILES.replace(/\s+/g, " ");
   for (const phrase of ["**Accept**", "**Reject**", "**Accept all**", "**Reject all**", "**Reveal**", "accept the", "pending changes", "keeps the text", "puts the old text back"]) {
     assert.ok(files.includes(phrase), "guide Files section: " + phrase);
   }

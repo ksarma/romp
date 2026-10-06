@@ -9,7 +9,7 @@
 //     that normalize to one path: a region drawn on the second figure was anchored to the first's embed line, and the
 //     second embed's rectangle was painted on the first figure;
 //   • a resolved region comment wears "resolved" alone: no stale tag (whose title names Re-place), no unknown tag or
-//     note, no Re-place button, no rectangle — the plan and the guide end "stale" at resolve or re-place;
+//     note, no Re-place button, no rectangle — the plan and the reference end "stale" at resolve or re-place;
 //   • the panel over a PDF body: the browser's frame takes no layer (Slice 4 renders pages), so no overlay, no drag
 //     offered, and a whole-file comment still renders as a card;
 //   • a pending region on a standalone image survives the poll's reload of the picture: the composer's rectangle and
