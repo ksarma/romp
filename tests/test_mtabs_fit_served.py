@@ -38,7 +38,7 @@ wrap only where it still cannot.
   card is open at the drop: a closed card runs no animation, so the class a drop left on its copy is cleared when the card
   opens, where it would otherwise play the flash late. Usage explains rather than hides when it has nothing to show
   (romp-manager's call 6): the shell's usage panel opens only over a reading, so with none the card shows Usage disabled
-  with the line "No reading yet" under its name, and a tap on it leaves the card open (no engine dispatches a click for a
+  with the line "No reading yet" beside its name, and a tap on it leaves the card open (no engine dispatches a click for a
   pointer on a disabled button); the row's handler returns on a disabled button too, since a click a script dispatches
   on the button or its glyph, or click() on its label, reaches the handler in every engine (romp-manager's ruling after
   round 1 restored that check, which its call 3 had dropped); with a reading, Usage is enabled and opens the panel. The
@@ -338,7 +338,7 @@ BAR_ACTS = ("merr", "mbell", "settings")   # the three left on it, in their orde
 # the lab's answer to the shell's POST /restart in the moved-actions leg (the driver answers it; the kernel never sees it): the
 # manager's refusal shape, so the shell's restart handler runs to its end (splash down, these words on the rail's button)
 RESTART_REFUSAL = "synthetic refusal: the lab kernel stays up"
-USAGE_NONE = "No reading yet"   # the card's line under a disabled Usage (gear.js), the words a person reads
+USAGE_NONE = "No reading yet"   # the card's line beside a disabled Usage's name (gear.js), the words a person reads
 USAGE_ERR = "Couldn't load"     # ...and its line there where the shell's last read of the readings failed
 ERROR_STATUS = 500   # the kernel's answer to the opening's pull where a leg needs an error status (the driver answers it)
 # the bound the failed-read leg sets on the shell's pull (window.__rompUsagePullMs) for the pull it never answers, in ms: the

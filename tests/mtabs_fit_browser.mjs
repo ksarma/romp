@@ -31,7 +31,7 @@
 // Then Usage with no reading, on a page of its own at cfg.actsViewport: the shell's usage pull (the main frame's GET under
 // /usage/) answers no rows, so the shell holds no reading (the rail's readout, which renders over the readings, read empty as
 // the premise); the card opened from the bar's Settings, its Usage button read once the opening's ask has ended (disabled,
-// its sub-line), a click at its centre, and after a settle (an absence has no event to wait on) the card, the Usage modal
+// the line beside its name), a click at its centre, and after a settle (an absence has no event to wait on) the card, the Usage modal
 // and the phoneAct messages the shell heard read; then a script's clicks on the disabled Usage (click() on its label, a click
 // event dispatched on the button and on its glyph), each read the same way; then, the card still open, a reading arrives (the lab's own GET /usage
 // payload posted to the shell as the timeline posts it, the shell's later pulls let through), Usage read again in the open
