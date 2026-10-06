@@ -2280,7 +2280,14 @@ _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_g
                  # calls came with round 2's pass of PR 959, whose module runs left this file out (the ratchet already names
                  # the module at that pass's commit); the ratchet named it in the first full sweep after PR 959 merged
                  # local-sweep-gate (fork PR 926's branch), 2026-10-04
-                 "test_batch_tool.py"}
+                 "test_batch_tool.py",
+                 # test_kernel_pusher_snapshot.py copies its own synthetic world, a temporary directory the test built
+                 # (its names, transcripts and state), into a second temporary directory, so the cold live-first connect
+                 # test can compare a lent push with an unlent push over a fresh copy of the same world (the copy's name
+                 # files get later mtimes, so no cache serves the first world's rows); it builds no dist and copies none.
+                 # The copytree came with the timeline connect push's liveness fix, whose module runs left this file out;
+                 # the ratchet named the module in that branch's first full sweep, 2026-10-06
+                 "test_kernel_pusher_snapshot.py"}
 _KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
                 "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves
 # the only files that may import upstream's dist_copy or call copy_dist without the lab_dist. prefix (the header above,

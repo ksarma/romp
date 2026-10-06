@@ -1,7 +1,7 @@
 ---
 title: A timeline connect push lends its liveness map to the lane builds it runs, over a stale cache and on a cold live-first connect, so the builds' nested readers stop reading liveness again for every lane
 status: candidate
-where: kernel/kernel.py (_push: the connect push's stale-cache lane build and the cold live-first connect's two live-only builds run inside _serve_live); tests/test_kernel_pusher_snapshot.py (TimelineConnectReadsLivenessOnce, _HeldClock, SID3: new); upstream/2026-10-06-timeline-connect-live-once.md (this entry)
+where: kernel/kernel.py (_push: the connect push's stale-cache lane build and the cold live-first connect's two live-only builds run inside _serve_live); tests/test_kernel_pusher_snapshot.py (TimelineConnectReadsLivenessOnce, _HeldClock, SID3: new); tests/test_lab_dist.py (_TREE_COPIERS: the module copies its own synthetic world, never dist); upstream/2026-10-06-timeline-connect-live-once.md (this entry)
 added: 2026-10-06
 pr:
 tier: fix
