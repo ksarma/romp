@@ -601,6 +601,44 @@ class HelperTimeoutEndsTheGroup(_Settings):
         self.assertFalse(_still_running(recs["escaped"], 10), "the escaped process made its write and exited")
         self.assertEqual(Path(wrote).read_text(), "EPIPE", "its write fails: the run closed its end of the pipe")
 
+    def test_the_group_is_signalled_while_its_shell_is_still_unreaped(self):
+        # The order that keeps the group's id from reuse: the shell's pid is the group's id, and while the shell is
+        # unreaped (running, or a zombie) no new process can take that pid, nor a new group that id, so os.killpg
+        # reaches only the helper's group. A spy on os.killpg reads, at the call, the run's returncode and whether /proc
+        # still has the shell: (None, True). Two shapes, since each wrong order shows in a different one. A hung lone
+        # member (the shell execs a sleep) is red when the shell is reaped first (p.kill() and p.wait() before the
+        # kill). A shell that exits at once after starting a holder of stdout in a session of its own leaves the run
+        # waiting on the pipe with the shell a zombie at the bound, so a mere poll before the kill reaps it and frees
+        # the id: red there, and green in the first shape, where the shell still runs and the poll reaps nothing.
+        real_killpg = os.killpg
+        holder = ("import os, sys, time; os.setsid(); open(sys.argv[1], 'a').write('holder %d\\n' % os.getpid()); "
+                  "time.sleep(30)")
+        for shape in ("a hung lone member", "a shell that exited, a holder of stdout outside the group"):
+            with self.subTest(shape=shape):
+                pids = self._pids()
+                if shape == "a hung lone member":
+                    bound, roles = 1, ["shell"]
+                    cmd = "echo shell $$ >> %s; exec sleep 30" % shlex.quote(pids)
+                else:
+                    bound, roles = 2, ["holder", "shell"]
+                    cmd = "%s & echo shell $$ >> %s" % (
+                        " ".join(shlex.quote(a) for a in (sys.executable, "-c", holder, pids)), shlex.quote(pids))
+                SeenPopen, seen = _seen_popen()
+                at_kill = []
+
+                def spy(pgid, sig, seen=seen, at_kill=at_kill):
+                    mine = [p for p in seen if p.pid == pgid]
+                    at_kill.append((mine[0].returncode if mine else "not the run's shell",
+                                    os.path.exists("/proc/%d" % pgid)))
+                    return real_killpg(pgid, sig)
+                with patch.object(subprocess, "Popen", SeenPopen), patch.object(os, "killpg", spy):
+                    with self.assertRaises(cred.CredentialError) as cm:
+                        cred.run_helper(cmd, timeout_s=bound)
+                recs = _recorded(self, pids)
+                self.assertEqual(str(cm.exception), "apiKeyHelper timed out after %d s" % bound)
+                self.assertEqual(sorted(role for role, _pid in recs), roles, "up before the bound")
+                self.assertEqual(at_kill, [(None, True)], "at the kill, the shell is unreaped and /proc still has it")
+
     def test_an_exception_that_cuts_the_wait_ends_the_group_too_and_goes_on_unchanged(self):
         # KeyboardInterrupt, or any exception raised while communicate waits, takes the same road as the bound: the
         # group is ended and the exception goes on as it was raised. A BaseException of the test's own stands in for
