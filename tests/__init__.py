@@ -367,3 +367,8 @@ sys.modules.setdefault("sdk_blocker", _sdk_blocker)
 # ring-keyed census of the problem ring's doors that tests/test_session_env.py pins, registered the same way.
 from . import env_ring_census as _env_ring_census  # noqa: E402
 sys.modules.setdefault("env_ring_census", _env_ring_census)
+# `import lab_result` in the served-lab modules (tests/lab_result.py, the one reader of a served driver's record, the
+# Python half of tests/lab_result.cjs, 2026-10-06) resolves the same way: they import it at the top, beside lab_dist and
+# lab_ports, before they put tests/ on sys.path (a module collected before any that puts it there failed to import).
+from . import lab_result as _lab_result  # noqa: E402
+sys.modules.setdefault("lab_result", _lab_result)
