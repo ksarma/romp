@@ -21,6 +21,7 @@ notes-api world. Skips LOUDLY without the extension deps or a Playwright browser
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -100,6 +101,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -156,7 +158,7 @@ fs.writeFileSync(cfg.phase1, JSON.stringify(out));
 for (let i = 0; i < 600; i++) { if (fs.existsSync(cfg.go2)) break; await page.waitForTimeout(250); }
 out.tabSeenAgain = await waitRemoteTab(90000);
 await openPanel(); out.c = await settledRow(30000); await page.waitForTimeout(3000); out.c2 = await readRow(); await closePanel();
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -215,9 +217,12 @@ class ServedRemotesPanelLoading(unittest.TestCase):
     def _drive(cls, remote_proc):
         cfg = os.path.join(cls.lab, "cfg.json")
         phase1, go2 = os.path.join(cls.lab, "phase1.json"), os.path.join(cls.lab, "go2")
+        conf = {"landing": "http://127.0.0.1:%d/?token=%s" % (cls.hport, cls.htoken), "host": HOST,
+                "phase1": phase1, "go2": go2}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"landing": "http://127.0.0.1:%d/?token=%s" % (cls.hport, cls.htoken), "host": HOST,
-                       "phase1": phase1, "go2": go2}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -248,11 +253,11 @@ class ServedRemotesPanelLoading(unittest.TestCase):
         if p.returncode != 0:
             cls.driver_error = "driver failed:\n" + so[-3000:] + se[-3000:]
             return
-        line = next((ln for ln in so.splitlines() if ln.startswith("RESULT:")), None)
-        if line is None:
-            cls.driver_error = "driver printed no result:\n" + so[-3000:] + se[-3000:]
-            return
-        cls.result = json.loads(line[len("RESULT:"):])
+        p.stdout, p.stderr = so, se   # the reader takes the streams communicate() returned
+        try:
+            cls.result = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            cls.driver_error = str(e)
 
     @classmethod
     def tearDownClass(cls):

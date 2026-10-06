@@ -18,6 +18,7 @@ and for nothing else (ROMP_SERVED_TESTS_REQUIRE=1 turns the skips red where the 
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -65,6 +66,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -441,7 +443,8 @@ async function drag(page, x0, y0, waypoints, { release = true, escape = false } 
   await ctx.close();
 }
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify(out) + "\n", () => process.exit(0));
+lab.writeResult(cfg, out);
+process.exit(0);
 """
 
 
@@ -498,8 +501,11 @@ class ServedPaneDocking(unittest.TestCase):
     @classmethod
     def _drive(cls):
         cfg = os.path.join(cls.lab, "cfg.json")
+        conf = {"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token), "api": SID_API, "ring": RING, "shots": os.environ.get("PANE_DOCK_SHOTS", "")}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token), "api": SID_API, "ring": RING, "shots": os.environ.get("PANE_DOCK_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         Path(driver).write_text(DRIVER)
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=420,
@@ -507,9 +513,7 @@ class ServedPaneDocking(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box: the served leg needs one (CI installs none)")
         assert p.returncode == 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        assert line, "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-2000:]
-        cls.r = json.loads(line[len("RESULT:"):])
+        cls.r = lab_result.read(p, tgt)
         if os.environ.get("PANE_DOCK_SHOTS"):
             with open(os.path.join(os.environ["PANE_DOCK_SHOTS"], "result.json"), "w") as f:
                 json.dump(cls.r, f, indent=1)

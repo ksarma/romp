@@ -51,6 +51,7 @@ EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
 import lab_dist  # noqa: E402
 import lab_ports  # noqa: E402
+import lab_result  # noqa: E402
 import test_ship_reship_served as _lab  # noqa: E402  the lab kernel's environment
 
 SID_R = "11111111-2222-3333-4444-000000000951"   # the remote's session (api), files on the remote disk only
@@ -66,6 +67,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -150,7 +152,7 @@ if (fr) {
         nameStyle: nm ? { fontWeight: getComputedStyle(nm).fontWeight, fontSize: parseFloat(getComputedStyle(nm).fontSize), color: getComputedStyle(nm).color, chip: nm.style.getPropertyValue("--chip-bg") } : null }; });
     return { background: getComputedStyle(card).backgroundColor, menuBg, classes: Array.from(card.classList), rows, fg: getComputedStyle(document.body).color };
   });
-  if (cfg.pickerOnly) { process.stdout.write("RESULT:" + JSON.stringify(out) + "\n"); await browser.close(); process.exit(0); }   // the remote-first run covers the picker leg alone
+  if (cfg.pickerOnly) { lab.writeResult(cfg, out); await browser.close(); process.exit(0); }   // the remote-first run covers the picker leg alone
   // pick the remote session: the listing is answered by the kernel that owns it, the thumbnail rides the host relay
   await fr.click('#art-picker .ctx-item[data-sid="TESTHOST:' + cfg.rsid + '"]', { timeout: 15000 }).catch(() => {});
   await fr.waitForFunction(() => document.querySelectorAll(".art-row").length >= 2, null, { timeout: 90000 }).catch(() => {});
@@ -199,7 +201,7 @@ if (fr) {
       frames: window.__sends.filter((x) => (x.type === "watchArtifacts" || x.type === "listArtifacts") && (x.sid === rid || x.sid === "TESTHOST:" + rid)).map((x) => x.type) }), cfg.rsid);
   }
 }
-process.stdout.write("RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 """
 
@@ -327,9 +329,12 @@ class ArtifactsRemoteServed(unittest.TestCase):
         if type(self)._r is None:
             cfg = os.path.join(self.lab, "cfg.json")
             stage = os.path.join(self.lab, "stage"); os.makedirs(stage, exist_ok=True)
+            conf = {"landing": "http://127.0.0.1:%d/?token=%s" % (self.hport, self.htoken), "rsid": SID_R, "lsid": SID_L, "stage": stage,
+                    "delayActiveChat": 1000}   # the reproduction of the picker-mark race (the module docstring): the first activeChat frame a pane socket receives lands a second late
+            tgt = lab_result.target(self.lab, "main")   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"landing": "http://127.0.0.1:%d/?token=%s" % (self.hport, self.htoken), "rsid": SID_R, "lsid": SID_L, "stage": stage,
-                           "delayActiveChat": 1000}, f)   # the reproduction of the picker-mark race (the module docstring): the first activeChat frame a pane socket receives lands a second late
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "driver.mjs")
             Path(driver).write_text(DRIVER)
             # the driver and this test meet on stage files: at stage-1 the remote kernel is stopped (the host down), at stage-2 it is
@@ -359,11 +364,14 @@ class ArtifactsRemoteServed(unittest.TestCase):
             p.stdout, p.stderr = out, err
             if "browser-launch-failed" in p.stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
-                type(self)._fail = "the driver produced no RESULT (stderr: %s; hub: %s; remote: %s)" % (p.stderr[-2000:], open(self.hlog).read()[-1200:], open(self.rlog).read()[-800:])
+            try:
+                r, why = lab_result.read(p, tgt), None
+            except lab_result.ResultError as e:
+                r, why = None, str(e)
+            if why:
+                type(self)._fail = "%s\nhub: %s\nremote: %s" % (why, open(self.hlog).read()[-1200:], open(self.rlog).read()[-800:])
                 self.fail(type(self)._fail)
-            type(self)._r = json.loads(line[len("RESULT:"):])
+            type(self)._r = r
         print("ARTREMOTE:", json.dumps(type(self)._r), file=sys.stderr)
         return type(self)._r
 
@@ -376,20 +384,26 @@ class ArtifactsRemoteServed(unittest.TestCase):
             self.fail(type(self)._fail_rf)
         if getattr(type(self), "_r2", None) is None:
             cfg = os.path.join(self.lab, "cfg-remote-first.json")
+            conf = {"landing": "http://127.0.0.1:%d/?token=%s" % (self.hport, self.htoken), "rsid": SID_R, "lsid": SID_L,
+                    "delayActiveChat": 1000, "bootRemoteFirst": True, "pickerOnly": True}
+            tgt = lab_result.target(self.lab, "remote-first")   # this drive's own result file and nonce, apart from the main run's
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"landing": "http://127.0.0.1:%d/?token=%s" % (self.hport, self.htoken), "rsid": SID_R, "lsid": SID_L,
-                           "delayActiveChat": 1000, "bootRemoteFirst": True, "pickerOnly": True}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "driver-remote-first.mjs")
             Path(driver).write_text(DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=400,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
-                type(self)._fail_rf = "the remote-first driver produced no RESULT (stderr: %s)" % p.stderr[-2000:]
+            try:
+                r, why = lab_result.read(p, tgt), None
+            except lab_result.ResultError as e:
+                r, why = None, str(e)
+            if why:
+                type(self)._fail_rf = "the remote-first driver: %s" % why
                 self.fail(type(self)._fail_rf)
-            type(self)._r2 = json.loads(line[len("RESULT:"):])
+            type(self)._r2 = r
         print("ARTREMOTE-FIRST:", json.dumps(type(self)._r2), file=sys.stderr)
         return type(self)._r2
 

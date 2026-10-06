@@ -29,6 +29,7 @@ EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
 import lab_dist                                       # noqa: E402
 import lab_ports                                      # noqa: E402
+import lab_result                                     # noqa: E402
 import test_ship_reship_served as _lab                # noqa: E402
 from test_postal_cards_served import send_pair        # noqa: E402  the exact outgoing send_message pair shape
 
@@ -42,6 +43,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 const browser = await chromium.launch({});
 const out = { themes: {}, err: null };
 try {
@@ -84,7 +86,7 @@ try {
   }
 } catch (e) { out.err = String(e && e.stack || e).slice(0, 800); }
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 """
 
 
@@ -157,15 +159,20 @@ class MailBoxStrokes(unittest.TestCase):
         if why:
             cls.tearDownClass(); raise unittest.SkipTest("kernel never served /healthz: " + why)
         cfg = os.path.join(cls.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?skeleton=1&wid=mb&token=%s" % (cls.port, cls.token), "lab": cls.lab}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?skeleton=1&wid=mb&token=%s" % (cls.port, cls.token), "lab": cls.lab}, f)
+            json.dump(conf, f)
         drv = os.path.join(cls.lab, "driver.mjs")
         Path(drv).write_text(DRIVER)
         p = subprocess.run(["node", drv], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        cls.result = json.loads(line[len("RESULT:"):]) if line else None
         cls.driver_out = (p.stdout + p.stderr)[-2500:]
+        try:
+            cls.result = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:   # no record: every test fails on the missing result and shows why
+            cls.result, cls.driver_out = None, str(e)
         # copy the screenshots to drops for the eye (both themes, full + the box clip)
         try:
             os.makedirs(drops, exist_ok=True)

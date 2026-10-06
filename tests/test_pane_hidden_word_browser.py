@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import unittest
 from romp_load import load_source
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -71,11 +72,12 @@ class PaneHiddenWordInBrowsers(unittest.TestCase):
             self.td.cleanup()
 
     def _drive(self, browser):
-        env = dict(os.environ, NODE_PATH=self.node_path)
+        tgt = lab_result.target(self.td.name, browser)   # this drive's result file and nonce (tests/lab_result.py)
+        env = dict(os.environ, NODE_PATH=self.node_path, **lab_result.env(tgt))
         r = subprocess.run(["node", os.path.join(HERE, "pane_hidden_word_browser.js"), self.spec, browser],
                            capture_output=True, text=True, timeout=240, env=env)
         self.assertEqual(r.returncode, 0, "the driver failed:\n" + r.stderr[-3000:])
-        o = json.loads(r.stdout.strip().splitlines()[-1])
+        o = lab_result.read(r, tgt)
         if o.get("skipped"):
             declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
             if declared and browser not in [e.strip() for e in declared.split(",")]:

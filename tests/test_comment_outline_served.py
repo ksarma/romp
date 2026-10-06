@@ -23,6 +23,7 @@ light screenshot. Skips LOUDLY without the extension deps or a Playwright browse
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -108,6 +109,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -186,7 +188,7 @@ await page.waitForFunction((tid) => !document.querySelector(`.cmt-outline[data-t
 await page.waitForTimeout(300);
 const afterRead = await measure();
 afterRead.popover = await page.evaluate(() => !!document.querySelector("#cmt-pop"));
-fs.writeSync(1, "RESULT:" + JSON.stringify({ dark, scrolled, light, narrow, widened, afterRead }) + "\n");
+lab.writeResult(cfg, { dark, scrolled, light, narrow, widened, afterRead });
 await browser.close();
 process.exit(0);
 """
@@ -274,9 +276,12 @@ class ServedCommentOutline(unittest.TestCase):
 
     def test_the_cue_by_row_count_dashed_in_the_needs_you_red_gone_once_read(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "minMarks": 4, "read": "tid-1",
+                "shots": os.environ.get("COMMENT_SHOTS", "")}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "minMarks": 4, "read": "tid-1",
-                       "shots": os.environ.get("COMMENT_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -285,9 +290,7 @@ class ServedCommentOutline(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         RED = "rgb(192, 57, 43)"   # --st-awaiting-bg, the tab strip's needs-you red, the same in both themes
 
         def ringed(th, red, label):

@@ -1,11 +1,14 @@
 // The browser driver for tests/test_pane_hidden_word_browser.py: bundles the chat page's publisher from
 // ui/webview/chat-visibility.ts with esbuild, opens a shell page in the named playwright browser and walks one chat
 // frame through shown, hidden the shell's way, shown again, reading what the frame's shim decides and its two
-// inputs at each step; a second frame is never shown. Prints one JSON line: the readings per shell, or
-// {skipped: reason} when playwright or the browser is absent. NODE_PATH names the node_modules that hold
-// playwright and esbuild (the Python side sets it). Synthetic pages only; nothing is served from a kernel.
+// inputs at each step; a second frame is never shown. Its record, the readings per shell or {skipped: reason}
+// when playwright or the browser is absent, goes to the Python side through tests/lab_result.cjs, to the result file
+// the LAB_RESULT environment variable names. NODE_PATH names the node_modules that hold playwright and esbuild (the
+// Python side sets both). Synthetic pages only; nothing is served from a kernel.
 "use strict";
 const fs = require("fs");
+const lab = require("./lab_result.cjs");   // the record's one road to the Python side
+const target = lab.targetFromEnv();        // this drive's result file and nonce (tests/lab_result.py env())
 const spec = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const browserName = process.argv[3];
 
@@ -90,14 +93,14 @@ async function walk(browser, shell, install) {
 
 (async () => {
   let pw;
-  try { pw = require("playwright"); } catch (e) { process.stdout.write(JSON.stringify({ skipped: "playwright is not installed: " + e.message })); return; }
+  try { pw = require("playwright"); } catch (e) { lab.writeResult(target, { skipped: "playwright is not installed: " + e.message }); return; }
   let browser;
   try { browser = await pw[browserName].launch(); }
-  catch (e) { process.stdout.write(JSON.stringify({ skipped: String((e && e.message) || e).split("\n")[0] })); return; }
+  catch (e) { lab.writeResult(target, { skipped: String((e && e.message) || e).split("\n")[0] }); return; }
   try {
     const install = bundleInstall();
     const out = {};
     for (const shell of ["desktop", "phone"]) out[shell] = await walk(browser, shell, install);
-    process.stdout.write(JSON.stringify(out));
+    lab.writeResult(target, out);
   } finally { await browser.close(); }
 })().catch((e) => { console.error((e && e.stack) || e); process.exit(1); });

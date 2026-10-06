@@ -25,6 +25,7 @@ ride ui/webview/scroll-marks.test.ts. All fixtures synthetic.
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -51,6 +52,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -90,7 +92,7 @@ await page.evaluate(() => {
 await page.waitForTimeout(400);            // several frames — the repaint is event-keyed, not timed; this is slack
 const after = await measure();
 if (cfg.shots) await page.screenshot({ path: cfg.shots + "-after-growth.png" });
-fs.writeSync(1, "RESULT:" + JSON.stringify({ before, after }) + "\n");
+lab.writeResult(cfg, { before, after });
 await browser.close();
 process.exit(0);
 """
@@ -108,7 +110,7 @@ await page.click(".turn-toolgroup .toolgroup-line");
 await page.waitForSelector(".turn-toolgroup:not(.expanded)", { timeout: 10000 });
 await page.waitForTimeout(400);
 const closed = await measure();
-fs.writeSync(1, "RESULT:" + JSON.stringify({ collapsed, expanded, closed }) + "\n");
+lab.writeResult(cfg, { collapsed, expanded, closed });
 await browser.close();
 process.exit(0);
 """
@@ -184,9 +186,12 @@ class ServedNotchFollowsGrowth(unittest.TestCase):
 
     def _drive(self, script, name):
         cfg = os.path.join(self.lab, name + ".json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+                "shots": os.environ.get("NOTCH_GROWTH_SHOTS", "")}
+        tgt = lab_result.target(self.lab, name)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
-                       "shots": os.environ.get("NOTCH_GROWTH_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, name + ".mjs")
         with open(driver, "w") as f:
             f.write(script)
@@ -195,9 +200,7 @@ class ServedNotchFollowsGrowth(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        return json.loads(line[len("RESULT:"):])
+        return lab_result.read(p, tgt)
 
     def test_a_notch_follows_its_message_when_a_rendered_turn_grows_after_the_paint(self):
         r = self._drive(DRIVER, "growth")

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -45,6 +46,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -127,7 +129,7 @@ reloaded.saved = saved;
 reloaded.savedRow = savedRow;
 reloaded.asks = await page.evaluate(() => ({ loadAround: window.__sent.filter((m) => m.type === "loadAround").length, loadOlder: window.__sent.filter((m) => m.type === "loadOlder").length, needFull: window.__sent.filter((m) => m.type === "needFull").length }));
 const r3 = await bottomCheck(cfg.lastUuid, transcriptOrder());   // R3 (2026-09-19), the last measurement: the bottom of the view is the transcript's newest row, in the file's order
-fs.writeSync(1, "RESULT:" + JSON.stringify({ boot, settled, reloaded, r3 }) + "\n");
+lab.writeResult(cfg, { boot, settled, reloaded, r3 });
 await browser.close();
 process.exit(0);
 """
@@ -169,7 +171,7 @@ reloaded.savedRow = savedRow;
 reloaded.stripText = await page.evaluate(() => { const n = document.querySelector(".tx-landing-notice"); return n ? n.textContent : ""; });
 reloaded.asks = await page.evaluate(() => ({ loadAround: window.__sent.filter((m) => m.type === "loadAround").length, needFull: window.__sent.filter((m) => m.type === "needFull").length }));
 const r3 = await bottomCheck(cfg.lastUuid, transcriptOrder());   // R3 (2026-09-19), the last measurement: the bottom of the view is the transcript's newest row, in the file's order
-fs.writeSync(1, "RESULT:" + JSON.stringify({ boot, atHead, reloaded, r3 }) + "\n");
+lab.writeResult(cfg, { boot, atHead, reloaded, r3 });
 await browser.close();
 process.exit(0);
 """
@@ -220,7 +222,7 @@ reloaded.savedRow = savedRow;
 reloaded.trail = await page.evaluate(() => (typeof window.__rompLandTrail === "function" ? window.__rompLandTrail() : null));
 reloaded.asks = await page.evaluate(() => ({ loadAround: window.__sent.filter((m) => m.type === "loadAround").length, loadOlder: window.__sent.filter((m) => m.type === "loadOlder").length, needFull: window.__sent.filter((m) => m.type === "needFull").length, ready: window.__sent.filter((m) => m.type === "ready").length }));
 const r3 = await bottomCheck(cfg.lastUuid, transcriptOrder());   // R3 (2026-09-19), the last measurement: the bottom of the view is the transcript's newest row, in the file's order
-fs.writeSync(1, "RESULT:" + JSON.stringify({ boot, settled, reloaded, r3 }) + "\n");
+lab.writeResult(cfg, { boot, settled, reloaded, r3 });
 await browser.close();
 process.exit(0);
 """
@@ -292,11 +294,14 @@ class ServedReloadRestoreMidRun(unittest.TestCase):
 
     def _drive(self, script, name):
         cfg = os.path.join(self.lab, name + ".json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
+                "deepUuid": self.deep_uuid, "deepT": self.deep_t, "base": self.base,
+                "transcript": self.transcript, "lastUuid": self.last_uuid,
+                "shots": os.environ.get("RELOAD_MIDRUN_SHOTS", "")}
+        tgt = lab_result.target(self.lab, name)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
-                       "deepUuid": self.deep_uuid, "deepT": self.deep_t, "base": self.base,
-                       "transcript": self.transcript, "lastUuid": self.last_uuid,
-                       "shots": os.environ.get("RELOAD_MIDRUN_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, name + ".mjs")
         with open(driver, "w") as f:
             f.write(script)
@@ -305,9 +310,7 @@ class ServedReloadRestoreMidRun(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        return json.loads(line[len("RESULT:"):])
+        return lab_result.read(p, tgt)
 
     def _assert_bottom(self, b):
         """R3 (the client merge guard, 2026-09-19): scrolled to the bottom after the restore, the last rendered row is the transcript's

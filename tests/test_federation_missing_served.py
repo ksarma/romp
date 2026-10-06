@@ -10,6 +10,7 @@ only."""
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -71,16 +72,23 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 const out = { t0: Date.now(), fedRequests: 0 };
+// The route handler below calls die() without awaiting it, beside the drive's own waits, so two deaths can start in one
+// process, and one can still be under way when the drive reaches its end; the reader takes exactly one RESULT: line, so
+// the first death writes the record and a later death, or the end of the drive, waits for the exit the first makes.
+let dying = false;
 const die = async (why) => {
+  if (dying) return new Promise(() => {});
+  dying = true;
   out.ms = Date.now() - out.t0;
   try { out.atDeath = await page.evaluate(() => { const w = document.getElementById("f-chat") && document.getElementById("f-chat").contentWindow;
     return { arrangement: localStorage.getItem("romp:vieworder"), sessionList: w && w.__rompSessionList ? w.__rompSessionList().map((r) => String(r.id)) : null }; }); } catch (e) { /* page gone */ }
-  fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n"); await browser.close(); process.exit(0); };
+  lab.writeResult(cfg, { ...out, died: why }); await browser.close(); process.exit(0); };
 const T = 20000;
 const waitFn = async (fn, arg, why) => page.waitForFunction(fn, arg, { timeout: T }).catch(async (e) => { await die(why + " (" + String(e).split("\n")[0] + ")"); });
 const chatDoc = () => document.getElementById("f-chat") && document.getElementById("f-chat").contentDocument;
@@ -198,7 +206,8 @@ await waitFn((c) => { const v = JSON.parse(localStorage.getItem("romp:vieworder"
 out.third = { ...out.third, arrangement: await arrangement(), strip: (await strip()).map((t) => t.id),
               sessionList: await page.evaluate(() => { const w = document.getElementById("f-chat").contentWindow; return (w.__rompSessionList ? w.__rompSessionList() : []).map((r) => String(r.id)); }) };
 out.ms = Date.now() - out.t0;
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+if (dying) await new Promise(() => {});
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -253,9 +262,12 @@ class ServedFederationMissing(unittest.TestCase):
     @classmethod
     def _drive(cls):
         cfg = os.path.join(cls.lab, "cfg.json")
+        conf = {"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token), "sidA": SID_A, "sidB": SID_B, "sidC": SID_C,
+                "plant": cls.plant}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (cls.port, cls.token), "sidA": SID_A, "sidB": SID_B, "sidC": SID_C,
-                       "plant": cls.plant}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -271,11 +283,11 @@ class ServedFederationMissing(unittest.TestCase):
         if p.returncode != 0:
             cls.driver_error = "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
             return
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        if line is None:
-            cls.driver_error = "driver printed no result:\n" + p.stdout[-3000:]
+        try:
+            r = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            cls.driver_error = str(e)
             return
-        r = json.loads(line[len("RESULT:"):])
         if "died" in r:
             cls.driver_error = "driver aborted early: %s\n%s" % (r["died"], json.dumps(r, indent=1)[-2500:])
             return

@@ -39,6 +39,7 @@ import sys
 sys.path.insert(0, HERE)
 import lab_dist                          # noqa: E402
 import lab_ports                         # noqa: E402
+import lab_result                        # noqa: E402
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
 
 REQUIRE = os.environ.get("ROMP_SERVED_TESTS_REQUIRE") == "1"
@@ -112,6 +113,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -122,7 +124,7 @@ const docsOf = (pg, into) => pg.on("response", (rs) => { if (rs.request().resour
   into.push({ status: rs.status(), reauth: rs.headers()["x-romp-reauth"] || null }); });
 out.notesDocs = [];
 docsOf(page, out.notesDocs);
-const die = async (why) => { fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n"); await browser.close(); process.exit(0); };
+const die = async (why) => { lab.writeResult(cfg, { ...out, died: why }); await browser.close(); process.exit(0); };
 const rail = () => page.evaluate(() => Array.from(document.querySelectorAll(".rail-btn[data-pane]")).map((b) => ({ pane: b.getAttribute("data-pane"), text: b.textContent, hidden: b.hidden, on: b.classList.contains("on") })));
 const body = () => page.evaluate(() => ({ cls: document.body.className.split(/\s+/).filter((c) => /^po-/.test(c)).sort(), attr: JSON.parse(document.body.getAttribute("data-panes") || "null") }));
 const banner = () => page.evaluate(() => { const b = document.getElementById("rstale"); if (!b) return null;
@@ -311,7 +313,7 @@ out.phoneBoot.requests = bootRequests.slice();
 await qp.click("#mtabs button[data-pane=notes]"); await qp.waitForTimeout(800);
 out.phoneNotesTap = { notesSrc: await qp.evaluate(() => document.getElementById("f-notes").getAttribute("src")), requests: bootRequests.slice() };
 await qctx.close();
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -388,9 +390,12 @@ class ServedPaneRegistry(unittest.TestCase):
 
     def _drive(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token), "api": "http://127.0.0.1:%d" % self.port, "token": self.token,
+                "shot": os.environ.get("ROMP_LAB_SHOT") or ""}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token), "api": "http://127.0.0.1:%d" % self.port, "token": self.token,
-                       "shot": os.environ.get("ROMP_LAB_SHOT") or ""}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -405,9 +410,7 @@ class ServedPaneRegistry(unittest.TestCase):
                 self.fail("ROMP_SERVED_TESTS_REQUIRE=1 but no Chromium launched: " + p.stderr[-500:])
             raise unittest.SkipTest("no playwright browser on this box: the served leg needs one")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         self.assertNotIn("died", r, "driver aborted early: %r" % r)
         return r
 

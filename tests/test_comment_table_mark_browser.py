@@ -30,6 +30,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -57,6 +58,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -93,7 +95,7 @@ let popped = true;
 try { await page.waitForSelector('#cmt-pop[data-mode="thread"]', { timeout: 10000 }); } catch (e) { popped = false; }
 out.pop = await page.evaluate(() => { const p = document.getElementById("cmt-pop"); if (!p) return null; const r = p.getBoundingClientRect(); return { mode: p.dataset.mode, top: r.top, left: r.left, width: r.width, height: r.height, visible: getComputedStyle(p).display !== "none" }; });
 out.popped = popped;
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -172,10 +174,13 @@ class ServedCommentTableMark(unittest.TestCase):
 
     def test_marks_on_a_cell_and_on_a_row_leave_the_tables_rows_cells_and_columns_untouched(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
+                "tidCell": TID_CELL, "tidRow": TID_ROW,
+                "shots": os.environ.get("TBL_SHOTS", ""), "shotSuffix": "-before" if self.before else ""}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
-                       "tidCell": TID_CELL, "tidRow": TID_ROW,
-                       "shots": os.environ.get("TBL_SHOTS", ""), "shotSuffix": "-before" if self.before else ""}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -184,9 +189,7 @@ class ServedCommentTableMark(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         if self.before and not os.environ.get("TBL_BEFORE_ASSERT"):
             self.skipTest("a before-the-change dist: screenshots only, the assertions describe the change")
         for theme in ("dark", "light"):

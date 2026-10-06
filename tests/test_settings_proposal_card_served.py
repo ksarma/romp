@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -40,6 +41,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -80,7 +82,7 @@ const first = { tt: await facts(cfg.keys.tt), cs: await facts(cfg.keys.cs) };
 // (2) Apply on the task-tracking card, then Keep mine on the Suggest /compact card
 const apply = first.tt ? await click(cfg.keys.tt, "Apply") : null;
 const keep = first.cs ? await click(cfg.keys.cs, "Keep mine") : null;
-process.stdout.write("RESULT:" + JSON.stringify({ first, apply, keep, errors }) + "\n");
+lab.writeResult(cfg, { first, apply, keep, errors });
 await browser.close();
 """
 
@@ -163,19 +165,25 @@ class SettingsProposalCardServed(unittest.TestCase):
         if self._r is None:
             cfg = os.path.join(self.lab, "card.json")
             base = "http://127.0.0.1:%d" % self.port
+            conf = {"feed": base + "/feed?token=" + self.token, "token": self.token, "keys": self.keys}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"feed": base + "/feed?token=" + self.token, "token": self.token, "keys": self.keys}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "card.mjs")
             Path(driver).write_text(DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=400,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
-                type(self)._fail = "the driver produced no RESULT (stderr: %s; kernel: %s)" % (p.stderr[-2000:], open(self.klog).read()[-1500:])
+            try:
+                r, why = lab_result.read(p, tgt), None
+            except lab_result.ResultError as e:
+                r, why = None, str(e)
+            if why:
+                type(self)._fail = "%s\nkernel: %s" % (why, open(self.klog).read()[-1500:])
                 self.fail(type(self)._fail)
-            type(self)._r = json.loads(line[len("RESULT:"):])
+            type(self)._r = r
             type(self)._after = self._get("/version")
         print("PROPOSALCARD:", json.dumps(self._r), file=sys.stderr)
         return self._r
