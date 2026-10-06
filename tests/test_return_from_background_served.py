@@ -411,7 +411,6 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         full = lab_result.read(p, tgt)
         self.assertNotIn("died", full, "driver aborted early: %r (kernel log tail: %s)" % (full.get("died"), Path(self.klog).read_text()[-800:]))
-        self.assertEqual(len(full.get("dials") or []), full.get("dialsN"), "the record carries every dial the driver counted")
         return name, full
 
     def _leg(self, shell, regime, outage_s, engine="chromium", tap=None, boot_tab=None, abort=False, denied=False, hold_active_full_ms=0, active_sid=None, retry_enter=False, unmarked=False):

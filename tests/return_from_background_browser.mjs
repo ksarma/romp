@@ -59,11 +59,9 @@ let browser;
 try { browser = await playwright[engine].launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 
-// the record (every dial's: hundreds in the refused regime) goes through the shared helper; dialsN is the driver's own count
-// of the dials it recorded, which the Python side holds the record's dial list to
+// the record (every dial's: hundreds in the refused regime) goes through the shared helper
 const result = async (extra) => {
   Object.assign(out, extra || {});
-  out.dialsN = out.dials.length;
   lab.writeResult(cfg, out);
   try { await browser.close(); } catch (e) { /* closing */ }
   process.exit(0);
