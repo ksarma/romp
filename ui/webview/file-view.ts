@@ -5564,7 +5564,8 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
   "msg-restorefiles", "nm", "none", "notice-act", "notice-caret", "notice-sub", "off", "on", "opening", "opening-line-dots",
   "pane-gone", "path-full-retry", "path-load-note", "pending", "ph", "picker-action", "picker-be-opt", "picker-browse",
   "picker-dir", "picker-lifted", "rail-day", "rail-sticky", "repeat", "resolved", "rewound", "rl-dots", "romp-acted",
-  "romp-bubble", "romp-tl-tip", "rs-dragging", "rs-fastin", "rs-jrow", "rs-login-rm", "rs-off", "rs-pact", "rs-pane-gone", "rs-row",
+  "romp-bubble", "romp-tl-tip", "rs-dragging", "rs-fastin", "rs-jrow", "rs-login-rm", "rs-off", "rs-pact", "rs-pact-dot",
+  "rs-pane-gone", "rs-row",
   "rs-stale-toast", "rs-widget", "rs-widget-demo", "scroll-mark", "sel", "send-held", "sending", "sess-exit", "slash-arg",
   "slash-key-hint", "sn-applying", "sn-known", "sn-trust", "snap-act", "snap-count", "snap-note", "snap-sess", "st-cleared",
   "tab", "tab-close", "tab-closed", "tab-compacting-fill", "tab-dot", "tab-group-count", "tab-group-head", "tab-label",
@@ -5703,8 +5704,8 @@ const SHEET_CONTEXT_CLASSES: ReadonlySet<string> = new Set([
   "ask-btn", "composer-stage-btn", "confirm-actions", "ctx-swatch", "fask-secbtn", "fc-arrivals", "fc-clip", "fc-replies",
   "fc-sec", "fconfirm-btn", "feed-cols", "fileview-load", "fl-prov-swirl", "fold-caret", "host-dial-swirl", "meta-held-mark",
   "path-load-spin", "picker-dir-hint", "pulse", "ra-group", "ra-metric", "ra-openbtn", "ra-periods", "rail-hit", "rl-o",
-  "romp-lightbox-img", "rs-lifted", "rs-nudge", "show", "slash-spin", "stop-btn", "tab-group-caret", "tab-ph-swirl",
-  "tab-widgets-gear", "wt-hostload"
+  "romp-lightbox-img", "rs-lifted", "rs-nudge", "rs-pact-swirl", "show", "slash-spin", "stop-btn", "tab-group-caret",
+  "tab-ph-swirl", "tab-widgets-gear", "wt-hostload"
 ]);
 /** A file document's author markup with the classes that would lift an element over the picture's control taken off it: on the
  *  sanitizer's body, before any pass of the viewer's own, every element loses the classes of SHEET_STACK_CLASSES, which the sheets
