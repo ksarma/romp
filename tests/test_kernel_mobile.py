@@ -2945,6 +2945,12 @@ class BellRuleReader(unittest.TestCase):
         for ch in " \t\n\r\f":
             with self.subTest(ch="U+%04X" % ord(ch)):
                 self.assertEqual(self._read('#x{background:url(%s"it\'s.png")}' % ch), {"mbell": set(), "rail-bell": set()})
+        # and _URL skips each of the five before an unquoted body, so a brace in that body is refused. A skip that left one out read no
+        # url() there and kept the cases above green, where Chromium 151 and WebKit 26.5 read an unquoted url() and dim a busy bell
+        # under it (the check of the whitespace fix, 2026-10-06)
+        for ch in " \t\n\r\f":
+            with self.subTest(skip="U+%04X" % ord(ch)), self.assertRaisesRegex(AssertionError, re.escape("an unquoted url() holds")):
+                self._read('#x{a:url(%sx}@font-face{{)}#mtabs #mbell.busy{opacity:.45}}' % ch)
 
     def test_each_stated_over_refusal_is_refused_and_what_an_author_writes_instead_is_read(self):
         # the over-refusals _bell_rule_classes states, the safe side (the coordinator's call 2 at review round 1's head and that round's
