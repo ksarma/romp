@@ -715,6 +715,48 @@ class MobileScript(unittest.TestCase):
         self.assertLess(html.index("window.__rompMobileTab=show;"), html.index("window.__rompPanesTell=broadcastAll;"))   # broadcastAll since review round 1 of D3 (2026-09-18): the re-tell reaches every iframe
 
 
+class PhoneActListener(unittest.TestCase):
+    """The phone script's phoneAct listener, executed (PR 976's round 1, tests-1): the settings card's three moved buttons
+    (Usage, Remote kernels and Restart kernel, iOS item 4g) post {romp:'phoneAct', act} from the settings document, and the
+    shell runs the A-map handler their bar buttons ran. The rule: only those three acts, and only from the settings frame's
+    window. Run in node over the mobile harness with a settings pane added and the five handlers the A-map calls stubbed to
+    record their names: each of the three acts from the settings frame runs exactly its handler; errs and settings (whose
+    buttons stay on the bar) and an act named after an inherited property run nothing from it; restart from the chat pane's
+    window, from the shell's own window and with no source runs nothing. The pane-source helper a shell may read before its
+    own check (window.__rompPaneSourceOk) is stubbed to admit every frame, so these cases hold the listener's own source check
+    wherever that helper is read first. tests/test_kernel_mobile.py's pin of the listener's text is the secondary guard."""
+
+    @classmethod
+    def setUpClass(cls):
+        panes = "['f-chat', 'f-fleet', 'f-feed', 'f-files', 'f-timeline'].forEach((id) => { PANES[id] = pane(id); });"
+        harness = _MOBILE_HARNESS.replace(panes, panes.replace("'f-timeline']", "'f-timeline', 'f-settings']"))
+        assert harness != _MOBILE_HARNESS
+        driver = r"""
+const CALLS = [];
+['__rompOpenNet', '__rompUsagePanel', '__rompRestart', '__rompOpenErrs', '__rompOpenSettings'].forEach((k) => { window[k] = () => CALLS.push(k); });
+window.__rompPaneSourceOk = () => true;
+const SF = PANES['f-settings'].contentWindow, CHAT = PANES['f-chat'].contentWindow;
+const run = (act, src, none) => { CALLS.length = 0; const m = { romp: 'phoneAct', act };
+  MSGS.forEach((f) => f(none ? { data: m } : { data: m, source: src })); return CALLS.slice(); };
+console.log(JSON.stringify({
+  net: run('net', SF), usage: run('usage', SF), restart: run('restart', SF),
+  errs: run('errs', SF), settings: run('settings', SF), inherited: run('toString', SF),
+  restartFromChat: run('restart', CHAT), restartFromShell: run('restart', window), restartNoSource: run('restart', null, true),
+  marker: window.__rompPhoneActs === true }));
+"""
+        cls.out = _run(harness + km._LANDING_MOBILE_JS + driver)
+
+    def test_each_moved_act_from_the_settings_frame_runs_exactly_its_handler_and_nothing_else_runs(self):
+        # one comparison, so a red names every case that ran the wrong thing
+        self.assertEqual({k: v for k, v in self.out.items() if k != "marker"}, {
+            "net": ["__rompOpenNet"], "usage": ["__rompUsagePanel"], "restart": ["__rompRestart"],
+            "errs": [], "settings": [], "inherited": [],
+            "restartFromChat": [], "restartFromShell": [], "restartNoSource": []})
+
+    def test_the_script_publishes_the_marker_beside_the_listener(self):
+        self.assertIs(self.out["marker"], True, "window.__rompPhoneActs, which gear.js shellActs reads before it shows the row")
+
+
 # ── every road into the mobile script's show() (pass 5, the author's label, 2026-09-20, the reviewer's round-4 ui-2) ─────────────────────────
 # show() is the one writer of body data-tab and the remembered tab (romp-mobile-tab). The reviewer's round 3 ruled one of its callers (the Log row's
 # switch, gated on the layout probe in pass 4) and the reviewer's round 4 found another ungated (the feed's browse arm, gated in pass 5): a fix at one site with the population
