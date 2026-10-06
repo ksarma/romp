@@ -27,7 +27,7 @@ literal, and any change to it is red until the literal changes with it, on purpo
    file through the same refusal, so each of them is red too while one of the four is there.
 2. The vendored-tooling job's block, with its comment-only lines removed and nothing else changed (indentation, trailing
    blanks, the blank line before the next job and every value stay as written), EQUALS EXPECTED_JOB: every key, step and
-   field, both caps (30 on Linux, 90 on macOS) and the node version. The block runs from the job's key line to the next line
+   field, both caps (45 on Linux, 90 on macOS) and the node version. The block runs from the job's key line to the next line
    that starts, after none or two spaces, with a character other than a blank or `#`: the next job's key or a top-level
    key. A line at one space, or one that a tab leads, is a key of neither mapping (YAML refuses both), so it stays inside
    the block, where the literal refuses it. A comment-only line inside a block scalar would be content, since YAML reads it
@@ -142,9 +142,13 @@ defaults: check (a workflow-level defaults: is check 3's red), and the cap range
 EachCheckRedsOnItsDefect runs every check against a synthetic workflow built from the same constants: green as built, and red
 on each change it plants, the hiding roads named above among them, so a check that stopped reading would be red there.
 
-The caps in the literal. Linux, 30 minutes: the step took 1180 s (19 min 40 s) at 1d591384e, and 30 is that time and half
-again. macOS, 90 minutes: the step has never run on macOS on the fork (it came after Run bats, which was red on every macOS
-run there), so the cap starts from the estimate in the job's comment, 70 to 76 minutes: twice the Linux time, since the macOS
+The caps in the literal. Linux, 45 minutes (TheLinuxCap holds it to its measurement and rule): on the private runner's
+2 CPUs node --test runs one test file at a time (its default concurrency is os.availableParallelism() - 1 files at once, 3
+on the public runner's 4 CPUs), and the step took 1664.87 s on 2 CPUs (LINUX_2CPU_STEP_S), so the job's rule, that time
+and half again rounded up to a multiple of 5 minutes, gives 45. It was 30 until 2026-10-06: the step's 1180 s (19 min 40 s)
+on the public runner in run 36388144219, and half again. macOS, 90 minutes: the step has never run on macOS on the fork (it
+came after Run bats, which was red on every macOS run there), so the cap starts from the estimate in the job's comment, 70
+to 76 minutes: twice the public runner's Linux time, since the macOS
 cells ran the Python suite about twice as long as the Linux cells, then 18 to 29 percent more for macOS's zsh legs, then half
 again. 90 is 14 minutes past 76 because two of the estimate's inputs are weak (the job's comment names them). It is also past
 the hour the python job's macOS cap keeps (tests/test_ci_bats_bound.py holds that cap at 60 or less, since past an hour a hung
@@ -152,6 +156,7 @@ cell holds the dispatch): the estimate alone is past that hour, so a hung macOS 
 90 minutes. The first macOS run (a dispatch with its macos input on, the one run that selects macOS) measures the step; the cap is then re-read from it, and
 the literal changes with it."""
 import difflib
+import math
 import os
 import re
 import tempfile
@@ -164,6 +169,27 @@ WF = os.path.join(WF_DIR, "ci.yml")
 JOB = "vendored-tooling"
 STEP = "Vendored tooling and host-script tests (node --test)"
 CMD = "node --test tools/*.test.mjs vendor/track-changents/hooks/*.test.mjs"
+# The Linux cap's measurement (2026-10-06, the review's first round of fork PR 986): the step's command over this branch,
+# with node 22, took LINUX_2CPU_STEP_S of wall time under a systemd CPUQuota of 200 percent, 2 CPUs as on the private
+# runner, against 1326.29 s under 400 percent; 1148 tests and no failure in each. node --test runs
+# os.availableParallelism() - 1 test files at once, so one at a time on 2 CPUs where the public runner, with 4, ran three,
+# and the public runner's times are not the private runner's. The development box that measured it has zsh, whose legs
+# the Linux runner skips, so the figure counts legs CI does not run; the cap and ci.yml's cost estimate
+# (tests/test_ci_cost_estimate.py) take it as measured.
+LINUX_2CPU_STEP_S = 1664.87
+# the step's time on the public runner the Linux cap was sized from until 2026-10-06 (run 36388144219), and that cap
+PUBLIC_STEP_S, PUBLIC_CAP = 1180, 30
+
+
+def cap_by_rule(expected_s):
+    """The job's rule, as its comment in ci.yml states it: the expected time and half again, rounded up to a multiple of 5
+    minutes."""
+    return 5 * math.ceil(expected_s * 1.5 / 300)
+
+
+def min_s(seconds):
+    """seconds as the job's comment writes a duration, '<m> min <s> s', rounded to the second."""
+    return "%d min %d s" % divmod(round(seconds), 60)
 
 # The vendored-tooling job as ci.yml writes it, comment-only lines removed and nothing else changed, one line per item: the
 # key line, the job's keys, its matrix, its three steps, and the blank line before the next job.
@@ -171,7 +197,7 @@ EXPECTED_JOB = (
     "  vendored-tooling:",
     "    name: Vendored tooling (node --test, ${{ matrix.os }})",
     "    runs-on: ${{ matrix.os }}",
-    "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 90 || 30 }}",
+    "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 90 || 45 }}",
     "    strategy:",
     "      fail-fast: false",
     "      matrix:",
@@ -668,6 +694,37 @@ class VendoredToolingJob(unittest.TestCase):
             "cap. If a second run is meant, change this check and say why in the commit."))
 
 
+class TheLinuxCap(unittest.TestCase):
+    """The Linux cap is the job's rule over the step's time on 2 CPUs (the review's first round of fork PR 986, 2026-10-06):
+    node --test runs one test file at a time there, so the public runner's time, three files at once on 4 CPUs, is not
+    the expected time. Red at the commit before it, whose literal and line held 30, the rule's figure for the public
+    runner's 1180 s; and red on a job comment that no longer states the measurement and the rule's arithmetic."""
+
+    def test_the_linux_cap_is_the_rules_figure_for_the_step_on_2_cpus(self):
+        m = re.fullmatch(r"    timeout-minutes: \$\{\{ matrix\.os == 'macos-latest' && \d+ \|\| (\d+) \}\}", EXPECTED_JOB[3])
+        self.assertTrue(m, "EXPECTED_JOB's cap line moved: re-anchor this pin")
+        self.assertEqual(int(m.group(1)), cap_by_rule(LINUX_2CPU_STEP_S), "the Linux cap is the step's %s s on 2 CPUs and "
+                         "half again, rounded up to a multiple of 5 minutes: %d" % (LINUX_2CPU_STEP_S,
+                                                                                     cap_by_rule(LINUX_2CPU_STEP_S)))
+        self.assertEqual(cap_by_rule(PUBLIC_STEP_S), PUBLIC_CAP, "the same rule over the public runner's 1180 s gave 30, the "
+                         "cap until 2026-10-06")
+        self.assertGreater(cap_by_rule(LINUX_2CPU_STEP_S), PUBLIC_CAP, "re-anchor: the 2-CPU figure no longer moves the cap")
+
+    def test_the_jobs_comment_states_the_measurement_and_the_arithmetic(self):
+        block = job_block(JOB, lines(raw()))
+        joined = " ".join(l.strip()[1:].strip() for l in block if l.strip().startswith("#"))
+        for piece in ("node --test runs one test file at a time",
+                      "os.availableParallelism() - 1",
+                      "%s s under a CPUQuota of 200 percent" % LINUX_2CPU_STEP_S,
+                      "%s s is %s, and half again is %s, so %d" % (LINUX_2CPU_STEP_S, min_s(LINUX_2CPU_STEP_S),
+                                                                  min_s(LINUX_2CPU_STEP_S * 1.5),
+                                                                  cap_by_rule(LINUX_2CPU_STEP_S)),
+                      "rounded up to a multiple of 5 minutes",
+                      "first private batch run"):
+            with self.subTest(piece=piece):
+                self.assertTrue(piece in joined, "the vendored-tooling job's comment states %r" % piece)
+
+
 def check_name_once_in(src):
     """Check 6 over one workflow text, the synthetic workflow's form of it."""
     return check_name_once(NAME_TEXT, [("ci.yml", src)])
@@ -759,7 +816,7 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
             (check_job, "a quoted key", "job", key, [key, "    \"if\": false"]),
             (check_job, "a step-level if:", "job", run, [run, "        if: false"]),
             (check_job, "a container:", "job", key, [key, "    container: node:22"]),
-            (check_job, "the Linux cap 30 to 31, a legitimate one-field edit", "job", cap, [cap.replace("|| 30", "|| 31")]),
+            (check_job, "the Linux cap 45 to 46, a legitimate one-field edit", "job", cap, [cap.replace("|| 45", "|| 46")]),
             (check_job, "the macOS cap 90 to 60", "job", cap, [cap.replace("&& 90", "&& 60")]),
             (check_job, "a trailing blank", "job", run, [run + " "]),
             (check_job, "a line at one space", "job", run, [run, " if: false"]),

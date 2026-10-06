@@ -32,9 +32,9 @@ name: CI
 # break that shows only on 3.10, 3.11 or 3.13 lands on main and shows at the next weekly run, up to a week later, and a
 # scheduled run tests main's latest commit with main's copy of this file, so the weekly run starts only once the switch
 # is on main. Under smaller, make the first run on the private repository a manual run of main, which runs every
-# interpreter, so that the shard caps, which 3.10's projections govern, can be re-derived from it, since its batch
-# pushes carry 3.12 and 3.14t alone; and a ruleset that requires checks by name must not require the 3.10, 3.11 or 3.13
-# jobs, which no batch push reports (docs/batching.md, the maintainer section).
+# interpreter, so that the shard caps, which take projections for 3.10, 3.11 and 3.13, can be re-derived from it,
+# since its batch pushes carry 3.12 and 3.14t alone; and a ruleset that requires checks by name must not require the
+# 3.10, 3.11 or 3.13 jobs, which no batch push reports (docs/batching.md, the maintainer section).
 # Cost: a public repository is not billed for these runs. A private one is billed for each run by
 # the job-minute, each job rounded up to a whole minute, and this repository moves to a private one
 # (approved 2026-10-04) whose runner, the private runner here, has 2 CPUs and 8 GB, where the public
@@ -53,24 +53,24 @@ name: CI
 # after the Run pytest step in that interpreter's cell of run 37212676524 (batch/2026-10-04b, 18 to
 # 27 s before and 2 to 3 s after), each job rounded up to a whole minute: 12, 25, 11 and 21 or 22
 # minutes for an interpreter's four shards (10, 21, 11 and 21 for 3.12; 12, 25, 8 and 21 for 3.14t),
-# 337 for the twenty shard jobs (352 for the fifteen jobs of three shards). The other Linux jobs at
-# their times in that run, on the public runner: 50 for Served pages, 41 for Shell, 15 for Vendored
-# tooling, 7 for vscode-extension and 3 for the secrets job, 116 minutes (95 in run 37179700919, 111
-# in run 37128151383). With secret-scan.yml's copy, about 3 minutes (below), a batch run bills about
-# 456 minutes (471 with three shards). At 0.006 dollars a minute, GitHub's posted rate for its Linux
-# 2-core x64 runner (read 2026-10-05), that is about 2.74 dollars a run. The caps and this estimate
-# take different phases: the caps take each shard's slowest measured run of the three runs of four
-# shards on 3.12 and 3.14t, and for 3.10, 3.11 and 3.13 their projected phases of each shard's slowest
-# 3.12 run (the python job's cap comment), the estimate the weighted run's measured ones, and with 3.10,
-# 3.11 and 3.13 at those projected phases and 3.12 and 3.14t at the weighted run's, a batch run would
-# bill about 500 minutes, 44 more than the estimate's 456. The fork had 30 CI runs on batch branches
-# in the 30 days to 2026-10-04 and none in the 30 days before (23 in September; 27 since 2026-09-21,
-# when batches began to land daily, about 58 a month at that rate), so about 82 dollars a month at
-# 30 runs and about 159 at 58. A manual run, Linux alone by default (below), bills about 453
-# minutes, about 2.72 dollars. Manual runs are counted at the normal pace, one or two a month, here
-# two: of the 29 in the 30 days to 2026-10-04, 28 came from 2026-09-27 on, CI-infrastructure work on
-# four branches, and one came in the 22 days before. So about 14,600 minutes and about 88 dollars a
-# month for this workflow at 30 batch runs, and about 27,400 minutes and about 164 dollars at 58.
+# 337 for the twenty shard jobs (352 for the fifteen jobs of three shards). The other Linux jobs at their times in
+# that run, on the public runner, but for Vendored tooling: 50 for Served pages, 41 for Shell, 28 for Vendored
+# tooling, from its step's time on 2 CPUs (below) and the job's 11 s outside that step in that run, where its time in
+# that run gave 15, 7 for vscode-extension and 3 for the secrets job, 129 minutes (116 with Vendored tooling at 15; 95
+# in run 37179700919 and 111 in run 37128151383 at the public runner's times). With secret-scan.yml's copy, about
+# 3 minutes (below), a batch run bills about 469 minutes (484 with three shards). At 0.006 dollars a minute, GitHub's
+# posted rate for its Linux 2-core x64 runner (read 2026-10-05), that is about 2.81 dollars a run. The caps and this
+# estimate take different phases: the caps take each shard's slowest measured run of the three runs of four shards on
+# 3.12 and 3.14t, and for 3.10, 3.11 and 3.13 their projected phases of each shard's slowest 3.12 run, by that shard's
+# own ratios (the python job's cap comment), the estimate the weighted run's measured ones, and with 3.10, 3.11 and
+# 3.13 at those projected phases and 3.12 and 3.14t at the weighted run's, a batch run would bill about 477 minutes, 8
+# more than the estimate's 469. The fork had 30 CI runs on batch branches in the 30 days to 2026-10-04 and none in the
+# 30 days before (23 in September; 27 since 2026-09-21, when batches began to land daily, about 58 a month at that
+# rate), so about 84 dollars a month at 30 runs and about 163 at 58. A manual run, Linux alone by default (below),
+# bills about 466 minutes, about 2.80 dollars. Manual runs are counted at the normal pace, one or two a month, here
+# two: of the 29 in the 30 days to 2026-10-04, 28 came from 2026-09-27 on, CI-infrastructure work on four branches,
+# and one came in the 22 days before. So about 15,000 minutes and about 90 dollars a month for this workflow at 30
+# batch runs, and about 28,100 minutes and about 169 dollars at 58.
 # The repository's other workflows add about 4,200 minutes a month, about 25 dollars, at the pace of
 # the week to 2026-10-04 (2026-09-28 to 2026-10-04) scaled to 30 days
 # (tests/test_ci_cost_estimate.py holds these sums to their inputs). The rates for secret-scan.yml
@@ -94,30 +94,33 @@ name: CI
 # both (on 20 pull requests, their files read on 2026-10-06; a newer push cancels an older run, so
 # fewer may bill), at 1 billed minute a run (each of its 4 runs on a pull request that week), about
 # 330 minutes a month. tier-policy.yml's one job is skipped outside the project's repository (its
-# job-level if:), so its runs bill nothing. So about 18,800 minutes and about 113 dollars a month in
-# all at 30 batch runs, and about 31,600 minutes and about 189 dollars at 58. Those are the full shape's
-# figures. Under the smaller shape (above), by the same method, a batch run's shard jobs are 3.12's and 3.14t's alone,
-# 129 minutes, so a batch run bills about 248 minutes, about 1.49 dollars; the weekly run bills 3.10's, 3.11's and
-# 3.13's shard jobs, 208 minutes, and the other Linux jobs, 116, without secret-scan.yml's copy: the weekly run bills
-# about 324 minutes, about 1.94 dollars, so about 1,390 minutes and about 8 dollars a month at 30/7 (about 4.3) runs a
-# month; a manual run is unchanged. With 3.10, 3.11 and 3.13 at the caps' projections, a weekly run would bill about 368
-# minutes, 44 more than the estimate's 324. So about 9,700 minutes and about 58 dollars a month for this workflow
-# under the smaller shape at 30 batch runs, and about 16,700 minutes and about 100 dollars at 58, and about 13,900
-# minutes and about 84 dollars a month with the other workflows at 30 batch runs, and about 20,900 minutes and about
-# 125 dollars at 58: about 64 dollars a month less than full at 58. The shape switch's three lines (above) decide
-# which of the two is billed: flipping them from full to smaller is the whole change. These dollars are the
-# list price, and every minute here would be billed at list price: GitHub documents 50,000 included
-# minutes a month for Enterprise Cloud on standard GitHub-hosted runners such as these, charged to
-# the repository's owner (read 2026-10-05), and the owner's other repositories use them up in about
-# the first week of each month. One of them alone used about 28,000 on 1 to 4 October 2026, a pace
-# that spends the 50,000 in about seven days (its runs' jobs read from the jobs API, each rounded up
-# to a whole minute; the owner's billing figures could not be read). The times of this workflow's
-# other Linux jobs are the public runner's, on 4 CPUs and 16 GB. A local measurement on
-# 2026-10-05, under a systemd CPUQuota of 200 percent against 400 percent, found their longest steps
-# barely slower on 2 CPUs: a sample of the served-page tests ran 539 s against 554 s, and two samples
-# of the bats suites ran 9 percent longer and 17 percent shorter (the second moved by the machine's
-# load). Two things are not measured: the private runner's 8 GB memory limit and its speed per core.
-# The first private batch run confirms the Served pages and Shell caps, and the shard caps are
+# job-level if:), so its runs bill nothing. So about 19,200 minutes and about 115 dollars a month in all at 30 batch
+# runs, and about 32,300 minutes and about 194 dollars at 58. Those are the full shape's figures. Under the smaller
+# shape (above), by the same method, a batch run's shard jobs are 3.12's and 3.14t's alone, 129 minutes, so a batch
+# run bills about 261 minutes, about 1.57 dollars; the weekly run bills 3.10's, 3.11's and 3.13's shard jobs,
+# 208 minutes, and the other Linux jobs, 129, without secret-scan.yml's copy: the weekly run bills about 337 minutes,
+# about 2.02 dollars, so about 1,440 minutes and about 9 dollars a month at 30/7 (about 4.3) runs a month; a manual
+# run is unchanged. With 3.10, 3.11 and 3.13 at the caps' projections, a weekly run would bill about 345 minutes, 8
+# more than the estimate's 337. So about 10,200 minutes and about 61 dollars a month for this workflow under the
+# smaller shape at 30 batch runs, and about 17,500 minutes and about 105 dollars at 58, and about 14,400 minutes and
+# about 87 dollars a month with the other workflows at 30 batch runs, and about 21,700 minutes and about 130 dollars
+# at 58: about 64 dollars a month less than full at 58. The shape switch's three lines (above) decide which of the two
+# is billed: flipping them from full to smaller is the whole change. These dollars are the list price, and every
+# minute here would be billed at list price: GitHub documents 50,000 included minutes a month for Enterprise Cloud on
+# standard GitHub-hosted runners such as these, charged to the repository's owner (read 2026-10-05), and the owner's
+# other repositories use them up in about the first week of each month. One of them alone used about 28,000 on 1 to 4
+# October 2026, a pace that spends the 50,000 in about seven days (its runs' jobs read from the jobs API, each rounded
+# up to a whole minute; the owner's billing figures could not be read). The times of this workflow's other Linux jobs
+# are the public runner's, on 4 CPUs and 16 GB, but for Vendored tooling's. A local measurement on 2026-10-05, under a
+# systemd CPUQuota of 200 percent against 400 percent, found the served-page tests and the bats suites barely slower
+# on 2 CPUs: a sample of the served-page tests ran 539 s against 554 s, and two samples of the bats suites ran
+# 9 percent longer and 17 percent shorter (the second moved by the machine's load). That sample does not cover the
+# Vendored tooling job: its step is node --test, which runs os.availableParallelism() - 1 test files at once, three on
+# the public runner's 4 CPUs and one on the private runner's 2, and measured the same way on 2026-10-06 the step took
+# 1664.87 s on 2 CPUs against 1326.29 s on 4, 25.5 percent longer, where its time in run 37212676524 was 834 s; the
+# estimate bills that 2-CPU time (the job's comment gives the measurement). Two things are not measured: the private
+# runner's 8 GB memory limit and its speed per core.
+# The first private batch run confirms the Served pages, Shell and Vendored tooling caps, and the shard caps are
 # re-derived from its times (the python job's cap comment). The
 # estimate made for one worker per cell, before the first measurement: by the serial ratio measured on
 # four CPUs (1437 s against 739 s) the cells of
@@ -129,7 +132,7 @@ name: CI
 # of the secrets job once, for the push (that file has had no pull_request trigger since 2026-10-04),
 # about 3 minutes a run (2 to 5 measured, and more as the history grows; that file's header gives the
 # runs). A manual run (workflow_dispatch) runs the Linux jobs alone by default, in both shapes the jobs and cells a
-# batch push runs under full, but not secret-scan.yml's copy, about 2.72 dollars by the estimate above. With its macos input on (2026-10-05; the on: block
+# batch push runs under full, but not secret-scan.yml's copy, about 2.80 dollars by the estimate above. With its macos input on (2026-10-05; the on: block
 # says why it is off by default) it adds the macOS cells: 132 runner minutes in run 36716348831,
 # billed at about ten times the Linux rate, so about 1,320 Linux minutes' worth, about 8 dollars,
 # and a floor: the 3.13 cell was cancelled at its 60-minute cap, the 3.10 cell
@@ -323,30 +326,45 @@ jobs:
     # header's rate), where a timeout shows as a cancelled, red job and costs a rerun. A shard's governing phase is the
     # largest of every measured run of the shard above, in the three runs of four shards, the hash-alone run, the
     # weighted run and the merged-main run, on 3.12 and 3.14t, and of each of those runs' projected phase on each
-    # interpreter not measured locally, 3.10, 3.11 and 3.13: the run's 3.12 phase times that interpreter's Run pytest
-    # seconds over 3.12's in run 37212676524 (batch/2026-10-04b, on the public runner), rounded up to the second. A
-    # projection, not a measurement. In that run the Run pytest steps took 1639 s on 3.10, 1554 s on 3.11, 1248 s on
-    # 3.12 and 1422 s on 3.13, so 3.10's projection is the largest on every shard, and it passes each measured run. The
-    # time before the step is the 27 s in the 3.14t cell of that run (job 111476102341), the longest of its five Linux
-    # cells. So, for each shard, the run that governs, its projection, the sum, the margin under the rule's figure and
-    # the cap: shard 1, 3.10 projected from the hash-alone run's 553 s on 3.12, times 1639/1248 is 727 s, and
-    # 727 + 600 + 27 = 1354 s, so 25, a margin of 146 s; shard 2, 3.10 projected from the hash-alone run's 1482 s on
-    # 3.12, times 1639/1248 is 1947 s, and 1947 + 600 + 27 = 2574 s, so 45, a margin of 126 s; shard 3, 3.10 projected
-    # from the hash-alone run's 661 s on 3.12, times 1639/1248 is 869 s, and 869 + 600 + 27 = 1496 s, so 25 by the rule,
-    # a margin of 4 s, under 60 s, so 30; shard 4, 3.10 projected from the weighted run's 1237 s on 3.12, times
-    # 1639/1248 is 1625 s, and 1625 + 600 + 27 = 2252 s, so 40, a margin of 148 s. Shards 1 and 4 ran other files in the
+    # interpreter not measured locally, 3.10, 3.11 and 3.13: the run's 3.12 phase times that shard's Run pytest seconds
+    # on that interpreter over its seconds on 3.12 in run 37415499848 (a dispatch of this branch on 2026-10-06, one
+    # worker a job on the public runner), rounded up to the second. A projection, not a measurement. Each shard takes
+    # its own ratio, since the ratio varies by shard (2026-10-06). In that run the Run pytest steps took, by shard:
+    # shard 1, 523 s on 3.10, 580 s on 3.11, 581 s on 3.12 and 556 s on 3.13, ratios to 3.12 of 0.90, 1.00 and 0.96;
+    # shard 2, 1883 s on 3.10, 1219 s on 3.11, 1204 s on 3.12 and 1417 s on 3.13, ratios to 3.12 of 1.56, 1.01 and 1.18;
+    # shard 3, 633 s on 3.10, 560 s on 3.11, 663 s on 3.12 and 572 s on 3.13, ratios to 3.12 of 0.95, 0.84 and 0.86;
+    # shard 4, 1146 s on 3.10, 890 s on 3.11, 1104 s on 3.12 and 1067 s on 3.13, ratios to 3.12 of 1.04, 0.81 and 0.97.
+    # Shard 2's 3.10 ratio is the largest, and it moved between runs: 1.45 in run 37415501622 (2000 s against 1383 s,
+    # the same day, with two memory-sampling steps added to this file; its shard 2 jobs ran to the end, with three
+    # failures), and 0.91 in run 37344074782 (1265 s against 1396 s), a dispatch before main was merged into this
+    # branch. The slowest tests of that shard on 3.10 are the PeerStateLock census tests of
+    # tests/test_postal_remote_sids_mirror.py: in run 37415499848 the two slowest took 158 s and 123 s on 3.10, against
+    # 32 s and 25 s on 3.12. Shard 2's projection multiplies figures from both sides of main's merge: the hash-alone
+    # run's 1482 s was measured before it and the 1.56 after it. The rule takes that product as the worst case, as it
+    # takes every shard's slowest run. So a measured run governs shards 1 and 3, and 3.10's projection governs shards 2
+    # and 4. The time before the step is the 27 s in the 3.14t cell of run 37212676524 (batch/2026-10-04b, on the public
+    # runner; job 111476102341), the longest of its five Linux cells; in run 37415499848 the time before the step was 16
+    # to 33 s in its twenty Linux shard jobs, and at 33 s each cap is the same. So, for each shard, the run that
+    # governs, its projection, the sum, the margin under the rule's figure and the cap: shard 1, measured, the weighted
+    # run's 679 s on 3.14t, and 679 + 600 + 27 = 1306 s, so 25, a margin of 194 s; shard 2, 3.10 projected from the
+    # hash-alone run's 1482 s on 3.12, times 1883/1204 is 2318 s, and 2318 + 600 + 27 = 2945 s, so 50 by the rule, a
+    # margin of 55 s, under 60 s, so 55; shard 3, measured, the hash-alone run's 661 s on 3.12, and 661 + 600 + 27 =
+    # 1288 s, so 25, a margin of 212 s; shard 4, 3.10 projected from the weighted run's 1237 s on 3.12, times 1146/1104
+    # is 1285 s, and 1285 + 600 + 27 = 1912 s, so 35, a margin of 188 s. Shards 1 and 4 ran other files in the
     # hash-alone run than the rule CI runs gives them: tests/test_thread_stop_census.py ran in shard 4 there and in
     # shard 1 in the weighted run and the merged-main run, which follow that rule. The caps count all three runs;
-    # counting the weighted run and the merged-main run alone would change neither cap: shard 1's governing phase would
-    # be 695 s (3.10 projected from the weighted run's 529 s on 3.12), and 695 + 600 + 27 = 1322 s, still 25, and shard
-    # 4's cap already comes from the weighted run. The merged-main run governs no cap: counted alone it would give 25,
-    # 40, 25 and 35, by 3.10's projections of its 3.12 phases. Each cap is re-derived from the first run on the private
-    # repository's 2-CPU runners, whose jobs give the private runner's own phases and setup times; the fork's public
-    # runners have more CPUs, so the fork's CI times are not that measurement. Each step's time is the jobs API's.
-    # tests/test_ci_bats_bound.py holds each cap to its governing phase and the rule, and this comment to the figures.
-    # The caps are keyed on the shard alone and hold in both shapes (the header's THE SHAPE SWITCH): under smaller a
-    # batch push runs 3.12 and 3.14t alone, and the caps keep 3.10's projections, since 3.10 still runs on the weekly
-    # run and on a manual run.
+    # counting the weighted run and the merged-main run alone would change neither cap: shard 1's cap already comes from
+    # the weighted run, and shard 4's cap already comes from the weighted run. The merged-main run governs no cap:
+    # counted alone it would give 25, 50, 25 and 35. Until 2026-10-06 the caps were 25, 45, 30 and 40, by one ratio for
+    # the whole suite, from run 37212676524 (1639 s on 3.10, 1554 s on 3.11, 1248 s on 3.12 and 1422 s on 3.13), in
+    # which 3.10's ratio to 3.12 was 1.31; each shard's own ratio took shard 2 from 45 to 55, shard 3 from 30 to 25 and
+    # shard 4 from 40 to 35. Each cap is re-derived from the first run on the private repository's 2-CPU runners, whose
+    # jobs give the private runner's own phases and setup times; the fork's public runners have more CPUs, so the fork's
+    # CI times are not that measurement. Each step's time is the jobs API's. tests/test_ci_bats_bound.py holds each cap
+    # to its governing phase and the rule, and this comment to the figures. The caps are keyed on the shard alone and
+    # hold in both shapes (the header's THE SHAPE SWITCH): under smaller a batch push runs 3.12 and 3.14t alone, and the
+    # caps keep the projections of 3.10, 3.11 and 3.13, since those interpreters still run on the weekly run and on a
+    # manual run.
     # 90 is the figure each shard's cap held before the shards were measured. The whole suite's estimated one-worker
     # phase gave it: the slowest finished two-worker Linux cell, the 3.10 cell of run
     # 37208049133 (a dispatch of fork PR 959's branch on 2026-10-04, job 111453304880), 2312 s in its pytest step,
@@ -355,7 +373,7 @@ jobs:
     # public runner). With two workers on the public runner the same rule gave 50 (the 3.14t cell of run 37158350467:
     # 2276 + 600 + 32 = 2908 s, about 48 min 28 s), the Linux cap from 2026-10-02 to 2026-10-04, after the 40 fork PR
     # 926's branch set on 2026-09-30 from run 36664031774 and the 35 main had before that PR.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 25 || matrix.shard == '2' && 45 || matrix.shard == '3' && 30 || 40 }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || matrix.shard == '1' && 25 || matrix.shard == '2' && 55 || matrix.shard == '3' && 25 || 35 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -933,15 +951,27 @@ jobs:
     # Raising the Shell cap instead would hide the growth, and with the step inside the Shell job a
     # PR that added more than about three minutes of bats time (the job's margin at 1d591384e was
     # 190 s) ran that job past its cap.
-    # The cap here is the expected time and half again. Linux: 1180 s is 19 min 40 s, and half
-    # again is about 30 minutes. macOS has never run this step on the fork (it came after Run bats,
-    # which was red on every macOS run there). The macOS cells ran the Python suite about twice as
-    # long as the Linux cells (the python job's comment above), and macOS has zsh, whose legs the
-    # Linux runner skips. On a development box zsh adds about 18 to 29 percent to that file: 1368 s
-    # against CI's 1121 s, less 44 s of work only the box does (a history sweep CI's shallow
-    # checkout skips, and a slower strace leg), and 1571 s against 1222 s in two matched concurrent
-    # runs with and without zsh. So the rule gives about 70 to 76 minutes (twice 19 min 40 s, 18 to
-    # 29 percent more, and half again), an estimate that already includes the half again. The
+    # The cap here is the expected time and half again, rounded up to a multiple of 5 minutes.
+    # Linux: on the private runner's 2 CPUs node --test runs one test file at a time, since by
+    # default it runs os.availableParallelism() - 1 files at once, 3 on the public runner's 4 CPUs
+    # and 1 on 2. So the expected time is the step's time on 2 CPUs, measured on 2026-10-06 in the
+    # review's first round of fork PR 986: the step's command over this branch, with node 22, two
+    # copies at once on a development box, took 1664.87 s under a CPUQuota of 200 percent and
+    # 1326.29 s under 400 percent, 25.5 percent longer, with 1148 tests and no failure in each;
+    # three node:test files that each wait 2 s took 2.94 times as long with 2 CPUs as with 4.
+    # 1664.87 s is 27 min 45 s, and half again is 41 min 37 s, so 45. The box has zsh, whose legs
+    # the Linux runner skips (below), so that time counts legs CI does not run; the cap and the
+    # header's cost estimate take it as measured. The header's sentence on the first private batch
+    # run names this job for that run to confirm. Until 2026-10-06 the Linux cap was 30: the step's
+    # 1180 s on the public runner, 19 min 40 s, and half again, 29 min 30 s. macOS has never run
+    # this step on the fork (it came after Run bats, which was red on every macOS run there). The
+    # macOS cells ran the Python suite about twice as long as the Linux cells (the python job's
+    # comment above), and macOS has zsh, whose legs the Linux runner skips. On a development box zsh
+    # adds about 18 to 29 percent to that file: 1368 s against CI's 1121 s, less 44 s of work only
+    # the box does (a history sweep CI's shallow checkout skips, and a slower strace leg), and
+    # 1571 s against 1222 s in two matched concurrent runs with and without zsh. So the rule gives
+    # about 70 to 76 minutes (twice the public runner's 19 min 40 s, 18 to 29 percent more, and half
+    # again), an estimate that already includes the half again. The
     # macOS cap is 90, 14 minutes past the estimate's upper figure, because two of its inputs are
     # weak: the factor of two comes from the Python suite rather than this step, and about three
     # quarters of that file's time on the box was spent in child processes (the guard run as a node
@@ -968,7 +998,7 @@ jobs:
     # tests/test_ci_vendored_job.py holds this job, its comments aside, equal to a literal (every
     # key, step and field, both caps and the node version), so a change here changes that literal
     # too, on purpose.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 90 || 30 }}
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 90 || 45 }}
     strategy:
       fail-fast: false
       matrix:

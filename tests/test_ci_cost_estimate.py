@@ -17,17 +17,26 @@ Pins over ci.yml's header comment (its comment lines before `on:`, joined into o
    the header, so a workflow added later is priced there or stated free.
 2. THE SUMS (TheSums): the header states the figures this file derives from inputs of its own, each a literal here (the
    jobs API's seconds and minutes and the runs, pulls, issue-events and activity APIs' counts, read on 2026-10-05 and
-   2026-10-06): a batch run's and a manual run's minutes, the batch runs' dollars, ci.yml's minutes and dollars a month and
-   the totals in all at 30 and 58 batch runs, each other workflow's minutes, their sum and its dollars, and the minutes the
-   allowance sentence quotes. Each stated figure must be within its rounding of the derived one.
+   2026-10-06; the vendored-tooling job's step time on 2 CPUs is tests/test_ci_vendored_job.py's literal, which that
+   module holds the job's cap to): a batch run's and a manual run's minutes, the batch runs' dollars, ci.yml's minutes
+   and dollars a month and the totals in all at 30 and 58 batch runs, each other workflow's minutes, their sum and its
+   dollars, and the minutes the allowance sentence quotes. Each stated figure must be within its rounding of the derived
+   one.
 3. THE ALLOWANCE (TheAllowance): the header says its dollars are the list price and that every minute here would be billed
    at it, states the included minutes GitHub documents for the plan (50,000 a month for Enterprise Cloud, read
    2026-10-05), and says the owner's other repositories use them up in about the first week of each month, with the
    minutes one of them used on 1 to 4 October 2026 and the days 50,000 last at that pace.
 4. THE CAPS THE FIRST PRIVATE RUN CONFIRMS (CapsTheFirstPrivateRunConfirms): each Linux job other than the python shards
    whose time in run 37212676524 was more than half its cap is named in the header's sentence on the first private batch
-   run. On 2 CPUs where the public runner has 4, a job bound by the CPUs takes at most about twice as long, so a job under
-   half its cap does not reach it by the CPU count alone, and one over half can.
+   run. On 2 CPUs where the public runner has 4, a job bound by the CPUs whose work does not divide by the CPU count takes
+   at most about twice as long, so a job under half its cap does not reach it by the CPU count alone, and one over half
+   can. That bound does not hold for node --test, which runs os.availableParallelism() - 1 test files at once: three on
+   4 CPUs and one on 2, so a job of such files can take up to three times as long (three files that each wait 2 s took
+   2.94 times as long on 2 CPUs as on 4, in the review's first round of fork PR 986), and a pin keyed on half the cap
+   misses it. The vendored-tooling job is that job: its time in OTHER_JOB_S is its step's measured on 2 CPUs
+   (TWO_CPU_MEASURED; tests/test_ci_vendored_job.py's LINUX_2CPU_STEP_S), not a 4-CPU time, and the sentence names it on
+   that ground, since a development box's CPUQuota is not the private runner, whatever its share of its cap. Red at the
+   commit before it (2026-10-06): the sentence named the Served pages and Shell jobs alone.
 At the commit before these pins, all four are red: the header named secret-scan.yml alone of the other workflows, stated
 161 and 238 dollars as the total in all, said nothing of an allowance, and had no sentence on the first private batch run.
 5. THE TWO PREMISES (TheTwoPremises, 2026-10-05): the python job's shard caps take each unmeasured interpreter's
@@ -43,7 +52,11 @@ At the commit before these pins, all four are red: the header named secret-scan.
    estimate, at the weighted run's projections, the caps' basis until the slowest-run rule. Red at the commit before the
    sentence named 3.12 and 3.14t: it said the two take different phases for 3.10, 3.11 and 3.13 alone, and did not say
    where the figure holds 3.12 and 3.14t. The sentence counts the runs of four shards in words, three since the
-   merged-main run joined them (2026-10-06); red at the commit before it, whose header said the two runs.
+   merged-main run joined them (2026-10-06); red at the commit before it, whose header said the two runs. The
+   projections take each shard's own ratio of each unmeasured interpreter to 3.12 since 2026-10-06
+   (tests/test_ci_bats_bound.py's UNMEASURED_RATIO_STEP_S), and the figures moved with them: 500 minutes, 44 more than
+   the estimate's 456, and the weekly run's 368, 44 more than its 324, by the suite-wide ratio the projections took
+   until then; red at the commit before the move, whose header stated those.
 6. THE MEASURED RATES (2026-10-05, within TheSums and TheAllowance): a measurement of the fork's activity on 2026-10-05,
    re-derived from the APIs on 2026-10-06, replaced three inputs, and the header states each rate with its week and what
    was counted. pr-tier.yml is priced at its four trigger events, 152 in the week to 2026-10-04, where the earlier 534
@@ -88,6 +101,7 @@ from tests.test_ci_workflow_concurrency import (  # noqa: E402
     BATCH_X, JOBS, MAIN, SHA_A, SHAPES, dispatch_run, job_lines, job_value, push_filters, python_version_axis,
     python_versions, run, triggers, with_shape)
 from tests import test_ci_bats_bound as bound  # noqa: E402
+from tests import test_ci_vendored_job as vendored  # noqa: E402
 
 WF = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 WORKFLOWS = os.path.dirname(WF)
@@ -98,10 +112,19 @@ SCAN_TRIGGER = "secret-scan.yml runs on each push, a batch push included"
 # ---- the inputs, each a literal of this file ---------------------------------------------------------------------------
 # a batch run: the twenty shard jobs (the header's derivation from the python job's cap comment, which shard_jobs_total
 # repeats), each other Linux job at its
-# seconds in run 37212676524 (batch/2026-10-04b, on the public runner; the jobs API), each rounded up to a whole minute, and
-# secret-scan.yml's copy on the push, about 3 minutes (that file's header); a manual run is the same Linux jobs without it
+# seconds in run 37212676524 (batch/2026-10-04b, on the public runner; the jobs API), but for the vendored-tooling job
+# (TWO_CPU_MEASURED), each rounded up to a whole minute, and secret-scan.yml's copy on the push, about 3 minutes (that
+# file's header); a manual run is the same Linux jobs without it. The vendored-tooling job runs node --test one test file
+# at a time on 2 CPUs (item 4 of the docstring), so its figure is its step's time measured on 2 CPUs
+# (tests/test_ci_vendored_job.py's LINUX_2CPU_STEP_S, 1664.87 s; the review's first round of fork PR 986, 2026-10-06) and
+# the job's seconds outside that step in run 37212676524 (job 111476100146: 845 s, the step 834 s), about 28 minutes,
+# where its public-runner time, 845 s, gave 15.
 SHARD_JOBS_MIN = 337
-OTHER_JOB_S = {"served-pages": 2951, "shell": 2426, "vendored-tooling": 845, "vscode-extension": 370, "secrets": 167}
+VENDORED_EDGE_S = 845 - 834
+OTHER_JOB_S = {"served-pages": 2951, "shell": 2426, "vendored-tooling": vendored.LINUX_2CPU_STEP_S + VENDORED_EDGE_S,
+               "vscode-extension": 370, "secrets": 167}
+# the jobs whose OTHER_JOB_S figure is a measurement on 2 CPUs, not a time on the public runner's 4 (item 4)
+TWO_CPU_MEASURED = ("vendored-tooling",)
 SECRET_SCAN_RUN_MIN = 3   # also each push's run in the week to 2026-10-04: 75 billed minutes over its 25 runs
 RATE = 0.006   # dollars a minute, GitHub's posted rate for its Linux 2-core x64 runner (read 2026-10-05)
 BATCH_RUNS = (30, 58)   # a month: the 30 days to 2026-10-04, and the rate since 2026-09-21
@@ -133,23 +156,23 @@ OTHER_REPO_DAYS = 4             # the days that figure spans
 # full's figures carry the names they had before the shape switch; smaller's are named for it, and the weekly run is
 # smaller's alone (under full no scheduled run can start)
 STATED = {
-    "batch run minutes": (456, 1), "manual run minutes": (453, 1),
-    "batch dollars at 30": (82, 1), "batch dollars at 58": (159, 1),
+    "batch run minutes": (469, 1), "manual run minutes": (466, 1),
+    "batch dollars at 30": (84, 1), "batch dollars at 58": (163, 1),
     "secret-scan pushes": (1020, 10), "secret-scan minutes": (3060, 10), "pr-tier minutes": (650, 10),
     "main-push minutes": (170, 10), "docs pull-request minutes": (330, 10),
     "other minutes": (4200, 100), "other dollars": (25, 1),
-    "ci minutes at 30": (14600, 100), "ci minutes at 58": (27400, 100), "ci dollars at 30": (88, 1),
-    "ci dollars at 58": (164, 1),
-    "all minutes at 30": (18800, 100), "all minutes at 58": (31600, 100), "all dollars at 30": (113, 1),
-    "all dollars at 58": (189, 1),
+    "ci minutes at 30": (15000, 100), "ci minutes at 58": (28100, 100), "ci dollars at 30": (90, 1),
+    "ci dollars at 58": (169, 1),
+    "all minutes at 30": (19200, 100), "all minutes at 58": (32300, 100), "all dollars at 30": (115, 1),
+    "all dollars at 58": (194, 1),
     "other repository minutes on 1 to 4 October": (28000, 1000),
-    "smaller batch run minutes": (248, 1), "smaller batch run dollars": (1.49, 0.01),
-    "weekly run minutes": (324, 1), "weekly run dollars": (1.94, 0.01),
-    "weekly minutes a month": (1390, 10), "weekly dollars a month": (8, 1),
-    "smaller ci minutes at 30": (9700, 100), "smaller ci minutes at 58": (16700, 100),
-    "smaller ci dollars at 30": (58, 1), "smaller ci dollars at 58": (100, 1),
-    "smaller all minutes at 30": (13900, 100), "smaller all minutes at 58": (20900, 100),
-    "smaller all dollars at 30": (84, 1), "smaller all dollars at 58": (125, 1),
+    "smaller batch run minutes": (261, 1), "smaller batch run dollars": (1.57, 0.01),
+    "weekly run minutes": (337, 1), "weekly run dollars": (2.02, 0.01),
+    "weekly minutes a month": (1440, 10), "weekly dollars a month": (9, 1),
+    "smaller ci minutes at 30": (10200, 100), "smaller ci minutes at 58": (17500, 100),
+    "smaller ci dollars at 30": (61, 1), "smaller ci dollars at 58": (105, 1),
+    "smaller all minutes at 30": (14400, 100), "smaller all minutes at 58": (21700, 100),
+    "smaller all dollars at 30": (87, 1), "smaller all dollars at 58": (130, 1),
     "smaller saving dollars at 58": (64, 1),
 }
 
@@ -245,10 +268,10 @@ CELL_EDGE_S = bound.CELL_EDGE_S
 # the stated figures: a batch run's minutes with each unmeasured interpreter's shard jobs at its own projected phases, the
 # ones the caps take (the projections of each shard's slowest 3.12 run of the rounds), and that figure less the
 # estimate's batch run; exact, since each job is rounded up to a whole minute before the sum
-PROJECTED_STATED = {"projected batch run minutes": 500, "projected difference": 44}
+PROJECTED_STATED = {"projected batch run minutes": 477, "projected difference": 8}
 # the same for the smaller shape's weekly run, whose interpreters are all unmeasured: its minutes with each at the caps'
 # projected phases, and the difference from the estimate's weekly run
-PROJECTED_WEEKLY_STATED = {"projected weekly run minutes": 368, "projected weekly difference": 44}
+PROJECTED_WEEKLY_STATED = {"projected weekly run minutes": 345, "projected weekly difference": 8}
 # the header's word for the count of measured runs of four shards (tests/test_ci_bats_bound.py's MEASURED_RUNS)
 RUN_COUNT_WORDS = {2: "two", 3: "three"}
 
@@ -437,12 +460,22 @@ class CapsTheFirstPrivateRunConfirms(unittest.TestCase):
         self.assertTrue(sentences, "the header has no sentence on the %s" % CONFIRM)
         self.assertTrue(any("the shard caps are re-derived from its times" in s for s in sentences), "the header's "
                         "sentence on the %s says the shard caps are re-derived from its times" % CONFIRM)
+        self.assertTrue(set(TWO_CPU_MEASURED) <= set(OTHER_JOB_S), "each job measured on 2 CPUs has a time here")
         due = []
         for job, secs in sorted(OTHER_JOB_S.items()):
             cap = linux_cap(src, job)
-            if secs * 2 > cap * 60:
+            display = job_value(src, job, "name").split(" (")[0]
+            if job in TWO_CPU_MEASURED:
+                # its own ground: its time and its cap come from a development box's 2-CPU measurement, not the
+                # private runner's, whose speed per core is not measured; the half-cap rule below reads 4-CPU times
                 due.append(job)
-                display = job_value(src, job, "name").split(" (")[0]
+                with self.subTest(job=job):
+                    self.assertTrue(any(display in s for s in sentences), "the %s job's time here, %.0f s, is a "
+                                    "measurement on 2 CPUs under a CPUQuota on a development box, not on the private "
+                                    "runner, and its cap (%d minutes in ci.yml) is sized from it: the header's sentence on "
+                                    "the %s names it (%r)" % (job, secs, cap, CONFIRM, display))
+            elif secs * 2 > cap * 60:
+                due.append(job)
                 with self.subTest(job=job):
                     self.assertTrue(any(display in s for s in sentences), "the %s job took %d s of its %d-minute cap in "
                                     "run 37212676524 on 4 CPUs, past half of it, so on 2 it can reach the cap: the header's "
@@ -450,6 +483,8 @@ class CapsTheFirstPrivateRunConfirms(unittest.TestCase):
         self.assertTrue(due, "no job is past half its cap: re-read the population (the served-pages job took 2951 s in "
                         "run 37212676524, past half of its cap, 50 minutes then, 60 on 2026-10-05, 75 for a few hours "
                         "on 2026-10-06 and 80 since)")
+        self.assertIn("vendored-tooling", due, "re-anchor: the vendored-tooling job is not due, so the confirm sentence's "
+                      "reason for it (item 4) no longer holds")
 
 
 class TheTwoPremises(unittest.TestCase):
