@@ -71671,9 +71671,15 @@ window.__rompUsageFailed=function(){return READ_FAILED;};
 // seconds rather than after the 20 s the spend panel allows its heavier read. The abort rejects the
 // fetch, which pullFleet's failed path takes like any request with no answer. window.__rompUsagePullMs, where set, replaces
 // the 10 s (tests/test_mtabs_fit_served.py holds a pull unanswered under a shorter one), as __rompSpendTimeoutMs does for the
-// spend panel. An engine without AbortSignal.timeout (Safari before 16) runs the pull without the bound, as before it
-window.__rompUsagePull=function(){var ms=(window.__rompUsagePullMs|0)||10000;
-return pullFleet((typeof AbortSignal!=='undefined'&&typeof AbortSignal.timeout==='function')?AbortSignal.timeout(ms):null);};
+// spend panel. The abort is AbortSignal.timeout's where the engine has it. Where it does not (Safari before 16), an
+// AbortController with a timer of the same bound aborts the fetch instead, the shape the spend panel's bound below has, and
+// the timer is cleared when the pull ends first (romp-manager's decision on PR 976's round 1 builds: the pull is
+// bounded there too; ui/webview/usage-pull-bound.test.ts runs this code with AbortSignal.timeout deleted). An engine without
+// AbortController as well (Safari before 12.1) cannot abort a fetch, and the pull runs unbounded there
+window.__rompUsagePull=function(){var ms=(window.__rompUsagePullMs|0)||10000,sig=null,t=0;
+if(typeof AbortSignal!=='undefined'&&typeof AbortSignal.timeout==='function')sig=AbortSignal.timeout(ms);
+else if(typeof AbortController==='function'){var ac=new AbortController();sig=ac.signal;t=setTimeout(function(){ac.abort();},ms);}
+var p=pullFleet(sig);if(t){var stop=function(){clearTimeout(t);};p.then(stop,stop);}return p;};
 // the API-health dot sits inside this cell (T301): a pointer arriving on the DOT gets the dot's own tip, not this one
 el.addEventListener('mouseenter',function(ev){var c=document.getElementById('rail-api');
 if(c&&ev&&typeof ev.clientX==='number'){var at=document.elementFromPoint(ev.clientX,ev.clientY);if(at&&(at===c||c.contains(at)))return;}showTip(ev);});

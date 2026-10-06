@@ -6,8 +6,12 @@
 // it within 5 s of the click, so an override the pull does not apply reads as hung there; the default itself, 10 s, is out of
 // that test's reach. This file holds it: the value and the reason the kernel's comment gives for it (a source pin, so the value
 // cannot change without the reason being rewritten beside it), and the pull's own code, lifted from kernel.py and run here, set
-// at the default with no override and at the override where one is set.
-import { test } from "node:test";
+// at the default with no override and at the override where one is set. And an engine without AbortSignal.timeout (Safari
+// before 16; romp-manager's fourth decision on those builds): the same code run with AbortSignal.timeout deleted and the timers
+// mocked, where an AbortController with a timer of the same bound aborts the fetch at the bound, the read is marked failed and
+// the card told, and the card's own code (gear.js usageAct, run over that shell) lands in Couldn't load; the timer takes the
+// override too, and a pull that ends first clears it.
+import { test, mock } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -89,4 +93,96 @@ test("the pull's abort is set at 10 s with no override, and at window.__rompUsag
   } finally {
     Object.defineProperty(AbortSignal, "timeout", saved!);
   }
+});
+
+// the card's own code for Usage's state (gear.js usageAct), run over a shell that answers with the given reading and read
+// failure: the button's disabled state and which of its two lines shows
+const GEAR = read("ui", "webview", "gear.js");
+const USAGE_ACT = between(GEAR, "  function usageAct() {", "  // the opening's ask:");
+class El {
+  hidden = true;
+  disabled = false;
+  attrs: Record<string, string> = {};
+  setAttribute(k: string, v: string) { this.attrs[k] = v; }
+  removeAttribute(k: string) { delete this.attrs[k]; }
+}
+function usageCard(shell: { reading: () => boolean; failed: () => boolean }): { disabled: boolean; none: boolean; err: boolean } {
+  const els: Record<string, El> = { "rs-pact-usage": new El(), "rs-pact-usage-none": new El(), "rs-pact-usage-err": new El(), "rs-pact-usage-wait": new El() };
+  const win = { parent: { __rompUsageReading: shell.reading, __rompUsageFailed: shell.failed } };
+  const act = new Function("document", "window", "var usageWait = 0;\n" + USAGE_ACT + "\nreturn usageAct;")(
+    { getElementById: (id: string) => els[id] || null }, win);
+  act();
+  return { disabled: els["rs-pact-usage"].disabled, none: !els["rs-pact-usage-none"].hidden, err: !els["rs-pact-usage-err"].hidden };
+}
+function track(p: Promise<unknown>): { done: boolean; ok: boolean; err: unknown } {
+  const s = { done: false, ok: false, err: null as unknown };
+  p.then(() => { s.done = true; s.ok = true; }, (e) => { s.done = true; s.err = e; });
+  return s;
+}
+const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+// an engine without AbortSignal.timeout: the static method deleted for the test's length, setTimeout mocked, both put back
+async function withoutTimeout(fn: () => Promise<void>): Promise<void> {
+  const saved = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
+  assert.ok(saved, "this node has AbortSignal.timeout to delete");
+  delete (AbortSignal as unknown as { timeout?: unknown }).timeout;
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    assert.equal(typeof (AbortSignal as unknown as { timeout?: unknown }).timeout, "undefined", "the premise: no AbortSignal.timeout");
+    await fn();
+  } finally {
+    mock.timers.reset();
+    Object.defineProperty(AbortSignal, "timeout", saved!);
+  }
+}
+
+test("where AbortSignal.timeout is absent, an AbortController with a timer of the same bound aborts the pull at 10 s, and the card lands in Couldn't load", async () => {
+  await withoutTimeout(async () => {
+    const w = world("hang");
+    const s = track(w.pull());
+    await flush();
+    const sig = w.fetches.length === 1 ? w.fetches[0].signal : null;
+    assert.ok(sig, "the fetch carries an abort signal");
+    mock.timers.tick(9999);
+    await flush();
+    assert.equal(s.done, false, "the pull is still out 1 ms before the bound");
+    assert.equal(sig!.aborted, false);
+    assert.equal(w.failed(), false);
+    mock.timers.tick(1);
+    await flush();
+    assert.equal(sig!.aborted, true, "aborted at the bound");
+    assert.ok(s.done && !s.ok, "the pull rejects");
+    assert.equal((s.err as Error).name, "AbortError");
+    assert.equal(w.failed(), true, "the read is marked failed (__rompUsageFailed)");
+    assert.equal(w.tells, 1, "and the card is told");
+    assert.equal(w.renders, 0, "the readings are left as they were");
+    // the card over that shell: with no reading, Usage disabled with Couldn't load and not No reading yet; with a reading the
+    // shell still holds, Usage enabled beside the same line
+    assert.deepEqual(usageCard({ reading: () => false, failed: w.failed }), { disabled: true, none: false, err: true });
+    assert.deepEqual(usageCard({ reading: () => true, failed: w.failed }), { disabled: false, none: false, err: true });
+  });
+});
+
+test("without AbortSignal.timeout, the fallback's timer takes window.__rompUsagePullMs, and a pull that ends first clears it", async () => {
+  await withoutTimeout(async () => {
+    const w = world("hang");
+    w.win.__rompUsagePullMs = 1500;
+    const s = track(w.pull());
+    await flush();
+    const sig = w.fetches.length === 1 ? w.fetches[0].signal : null;
+    assert.ok(sig, "the fetch carries an abort signal");
+    mock.timers.tick(1499);
+    await flush();
+    assert.equal(sig!.aborted, false, "still out 1 ms before the override");
+    mock.timers.tick(1);
+    await flush();
+    assert.ok(sig!.aborted && s.done && !s.ok && w.failed(), "aborted at the override, the read marked failed");
+    const ok = world("ok");
+    await ok.pull();
+    const done = ok.fetches.length === 1 ? ok.fetches[0].signal : null;
+    assert.ok(done, "the answered fetch carried an abort signal too");
+    mock.timers.tick(10000);
+    await flush();
+    assert.equal(done!.aborted, false, "the timer was cleared when the pull ended first: nothing aborts it at the bound");
+    assert.equal(ok.failed(), false);
+  });
 });
