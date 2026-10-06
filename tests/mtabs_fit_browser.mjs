@@ -41,8 +41,8 @@
 // Then a reading the kernel holds and the shell has not pulled, on a page of its own at cfg.actsViewport: the shell's boot
 // pull answers no rows and every later one goes to the lab, the Sessions pane unloaded (read as the premise); the card
 // opened, its ask for a fresh pull held while Usage is read (the romp loader in the name's place, its animations, the
-// button disabled and busy) and tapped at its centre, the shell's side read after a settle, then let through, Usage read once
-// the ask has ended, and one click on it, its effect read.
+// button disabled and busy, whether the name is seen, as at every read of Usage) and tapped at its centre, the shell's side
+// read after a settle, then let through, Usage read once the ask has ended, and one click on it, its effect read.
 // Then the reads that fail, on a page of its own at cfg.actsViewport: the shell's boot pull answers no rows, and the card is
 // opened over an opening's pull answered with an error status (cfg.errorStatus), one failed in transit (the route aborts it),
 // and one never answered (held) under a shorter bound set on the shell (window.__rompUsagePullMs = cfg.hangMs), Usage read
@@ -70,7 +70,8 @@
 // pointer moved onto the button's centre (its transitions off first): its hovered fill, its colours, and whether :hover holds;
 // then, the pointer moved off, the card opened again over each answer to the opening's pull (held, the lab's reading, no rows,
 // an error status), the window taken through cfg.heightWidths in each, and at each width the row's height, Usage's box beside
-// Remote kernels' height, the tabs' offset in the card and their top in the window, and the line Usage shows.
+// Restart kernel's top and height, Usage's words' box, the loader's laid-out box and the button's parts, the tabs' offset in
+// the card and their top in the window, the line Usage shows, and whether its name is seen.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -470,8 +471,12 @@ try {
         const er = document.getElementById("rs-pact-usage-err"), row = document.getElementById("rs-pacts");
         if (!b) return null;
         const c = b.getBoundingClientRect();
+        // the name, seen or not: its computed visibility and display, and a box to be seen in (the loader shows in its place)
+        const nm = b.querySelector(".rs-pact-name"), ns = nm && getComputedStyle(nm), nb = nm && nm.getBoundingClientRect();
         return { disabled: b.disabled, busy: b.getAttribute("aria-busy"), left: r(c.left + ctx.left), top: r(c.top + ctx.top), w: r(c.width), h: r(c.height),
                  rowH: row ? r(row.getBoundingClientRect().height) : null,
+                 name: nm ? { shown: ns.visibility === "visible" && ns.display !== "none" && nb.width > 0 && nb.height > 0,
+                              visibility: ns.visibility, display: ns.display, w: r(nb.width) } : null,
                  line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none", text: un.textContent.trim() } : null,
                  err: er ? { shown: !er.hidden && getComputedStyle(er).display !== "none", text: er.textContent.trim() } : null,
                  wait: wt ? { shown: !wt.hidden && getComputedStyle(wt).display !== "none", text: wt.textContent.trim(),
@@ -1082,8 +1087,9 @@ try {
     // closed and opened again from the bar's Settings over the opening's pull held (the loader up), the window taken through
     // cfg.heightWidths with the card open and read at each, the pull let through (the lab's reading: Usage enabled) and the
     // widths read again; then the same over no rows (No reading yet) and over an error status (Couldn't load). At each: the
-    // window's width, the row's height, Usage's box, its top beside Restart kernel's top and height, the tabs' offset from the
-    // top of the card's content and their top in the window, and which of Usage's lines shows
+    // window's width, the row's height, Usage's box, its top beside Restart kernel's top and height, what Usage's width is made
+    // of (below), the tabs' offset from the top of the card's content and their top in the window, which of Usage's lines
+    // shows, and whether its name is seen
     {
       const hs = {};
       await page.mouse.move(1, 1);
@@ -1105,10 +1111,22 @@ try {
         const b = document.getElementById("rs-pact-usage"), rs = document.querySelector("#rs-pacts [data-pact=restart]");
         if (!row || !card || !b) return null;
         const rr = row.getBoundingClientRect(), cr = card.getBoundingClientRect(), br = b.getBoundingClientRect();
+        // what Usage's width is made of: its words' box and the loader's laid-out box (laid out unseen while the name shows, out
+        // of the layout while a line shows), and the button's parts, each laid-out child's width, the gap between them and the
+        // side padding and borders; and the name, seen or not (its computed visibility and display, and a box to be seen in)
+        const wt = document.getElementById("rs-pact-usage-wait"), tx = b.querySelector(".rs-pact-txt"), bs = getComputedStyle(b);
+        const px = (v) => parseFloat(v) || 0, laid = Array.from(b.children).filter((c) => getComputedStyle(c).display !== "none");
+        const nm = b.querySelector(".rs-pact-name"), ns = nm && getComputedStyle(nm), nb = nm && nm.getBoundingClientRect();
         return { vw: window.innerWidth, rowShown: !row.hidden && getComputedStyle(row).display !== "none", rowH: rr.height,
                  tabsAt: tabs ? tabs.getBoundingClientRect().top - cr.top + card.scrollTop : null, tabsTop: tabs ? tabs.getBoundingClientRect().top : null,
                  usageW: br.width, usageH: br.height, usageTop: br.top, restartH: rs ? rs.getBoundingClientRect().height : null,
                  restartTop: rs ? rs.getBoundingClientRect().top : null,
+                 txtW: tx ? tx.getBoundingClientRect().width : null,
+                 waitW: wt && getComputedStyle(wt).display !== "none" ? wt.getBoundingClientRect().width : null,
+                 parts: { kids: laid.map((c) => c.getBoundingClientRect().width), gap: px(bs.columnGap),
+                          pad: px(bs.paddingLeft) + px(bs.paddingRight), border: px(bs.borderLeftWidth) + px(bs.borderRightWidth) },
+                 name: nm ? { shown: ns.visibility === "visible" && ns.display !== "none" && nb.width > 0 && nb.height > 0,
+                              visibility: ns.visibility, display: ns.display } : null,
                  disabled: b.disabled, wait: shown(document.getElementById("rs-pact-usage-wait")), none: shown(document.getElementById("rs-pact-usage-none")),
                  err: shown(document.getElementById("rs-pact-usage-err")) };
       });

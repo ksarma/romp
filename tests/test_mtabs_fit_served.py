@@ -131,9 +131,9 @@ card, posts phoneAct usage and opens the Usage modal. Then a reading the kernel 
 of its own at 390px: the shell's boot pull answers no rows and every later pull reaches the lab, with the Sessions pane
 unloaded so no timeline forwards a reading (both read as the premise); the card's opening asks the shell for a pull (a GET
 under /usage/ after the opening), and while that request is held Usage shows the romp loader in its name's place (the
-swirl spinning, the wordmark, the dots pulsing), disabled and busy, with no line, and a tap at its centre leaves the card
-open and posts no phoneAct; let through, the ask ends with Usage
-enabled, no line and no loader, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then the
+swirl spinning, the wordmark, the dots pulsing, the name unseen), disabled and busy, with no line, and a tap at its centre
+leaves the card open and posts no phoneAct; let through, the ask ends with Usage
+enabled, no line and no loader, its name seen, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then the
 reads that fail, on a page of its own at 390px, the shell's boot pull answering no rows (the readout read empty as the
 premise): the card opened over an opening's pull the driver answers with ERROR_STATUS, over one it aborts in transit,
 and over one it holds unanswered under a bound of HANG_MS set on the shell (window.__rompUsagePullMs; the loader read
@@ -148,7 +148,8 @@ each, once the held pull's end has run in the shell, Usage keeps the later pull'
 alone, enabled with neither line (a wrapper over window.__rompUsagePull records the order the two end in, and RACE_MS set
 on the shell keeps the held pull from ending on its own bound). And an opening whose
 pull reaches the lab then shows Usage enabled with neither line; then, the shell holding that reading, an opening whose
-pull fails in transit shows Usage enabled with the line USAGE_ERR and not USAGE_NONE, the card open and nothing posted,
+pull fails in transit shows Usage enabled with the line USAGE_ERR beside its name, seen, and not USAGE_NONE, the card open
+and nothing posted,
 and one click on Usage closes the card, posts phoneAct usage and opens the Usage modal over that reading. Then the deploy
 skew, on a page of its own at 390px:
 the shell publishes its marker (window.__rompPhoneActs) and the card opened
@@ -177,8 +178,11 @@ SEPARATION_FLOOR or more from the connected node's colour in OKLab; then, on the
 the opening's pull held (the loader up, the shell's bound set to RACE_MS meanwhile) with the window taken through the
 portrait widths (HEIGHT_WIDTHS), then the pull let through to the lab's reading and the widths taken again: at each, the
 row's height, Usage's width and height, and the tabs' offset in the card and their top in the window are the same loading
-and with the reading, to SAME px, and Usage is as tall as Restart kernel (on another line of the row there) in both; the
-same widths are read over no rows and over ERROR_STATUS, and not compared. Then a desktop
+and with the reading, to SAME px, and Usage is as tall as Restart kernel (on another line of the row there) in both; in
+both, too, Usage holds the loader's width: its words are as wide as the loader's laid-out box, and Usage as wide as its
+glyph and those words with the gap between them, its side padding and its borders, both to SAME px, and it is narrower
+than it is over no rows and over ERROR_STATUS (those two states read at the same widths, and compared only for that); and
+Usage's name is unseen while loading and seen with the reading and beside either line. Then a desktop
 window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the
 bell,
 the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
@@ -209,11 +213,22 @@ and an error status empties the readings, whichever later read has ended: Usage 
 load, from Couldn't load to No reading yet, and from enabled to Couldn't load; and each turn is red under a mutant that
 drops one of the three checks, the failed path's (the first turn), the answer's flag write (the second) and the error
 status's return (the third, No reading yet: the readings emptied). The row and the tabs are red where Usage keeps two
-lines' height in every state (Usage 43.64px tall where Restart kernel is 28.8, at every width in both themes); under a
+lines' height in every state (Usage 43.64px tall, 43.65 in Firefox, where Restart kernel is 28.8, at every width in both
+themes); under a
 mutant that lays the loader out only while it shows (Usage 106px wide loading and 82 with a reading at every width, and at
 320px the row a line shorter with the reading, in Chromium); and under one that lays it under the name (Usage 43.64px tall
 loading, so the row is 14.85px taller loading than with the reading from 360px, and a line and that much taller at 320px,
-in Chromium). The layout word's source is red under a mutant of the card's link listener
+in Chromium). Usage's width is red where its words are as wide as its widest line in every state (in all three engines, at
+every width in both themes: the words 80px wide where the loader is 64 in Chromium, 76.36 where it is 62.94 in WebKit and
+76.38 where it is 62.93 in Firefox, and Usage as wide loading and with a reading as with either line, 122, 118.36 and
+118.38px); and in Chromium under five mutants of gear.css: both lines laid out unseen beside the name (the words 150px wide,
+Usage 192 where No reading yet makes it 168), Usage given No reading yet's width as its least (168px, where its parts come
+to 106, and no narrower than with either line), a least width of 130px (its parts' check alone), the words given a least
+width of 80px (the words' check alone), and the loader one of 126px (Usage 168px loading and with a reading, as wide as with
+No reading yet: the check that it is narrower, alone). The name is red where it stays seen while the loader shows (in all
+three engines, at every width in both themes and over the unpulled reading), and in Chromium under a mutant that drops the
+rule hiding it while Usage is busy (the same lines) and one that hides it in every state (unseen with a reading, beside
+either line, after the unpulled reading's pull and over the cached reading). The layout word's source is red under a mutant of the card's link listener
 that does not check the word's source (the row hidden by the settings frame's own word and by the chat pane's). The
 fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
@@ -296,7 +311,8 @@ HANG_MS = 1500
 HANG_WAIT_MS = 5000
 # ...and the bound it sets for the reopen race, in ms: long enough that the held pull ends only when the driver ends it
 RACE_MS = 60000
-SAME = 0.01   # px: the row and the tabs loading and with a reading are equal by construction (the same layout), so compared exactly
+SAME = 0.01   # px: the row and the tabs loading and with a reading are equal by construction (the same layout), so compared exactly;
+              # so are Usage's words and the loader's box, and Usage's width and its parts' sum (the same layout's own boxes)
 HEIGHT_WIDTHS = tuple(w for w, _ in PORTRAIT)   # ...at each phone width in portrait, where the row wraps
 # the themes the Remote kernels glyph's colours are measured in, by the gear's theme ids: the dark default and the light theme
 # (no rule in feed.css or gear.css reads the Yatharth dark theme's class, so the default stands for both dark themes)
@@ -680,8 +696,9 @@ def _no_reading_problems(engine, nr):
 
 def _unpulled_problems(engine, up):
     """A reading the kernel holds and the shell has not pulled: the card's opening asks the shell for a fresh pull, shows the
-    romp loader on Usage while it is in flight (the button disabled, no line, a tap on it reaching nothing), and once it ends
-    shows Usage enabled with no line; one click opens the Usage modal (PR 976's round 1, correctness-1 and extra6-1)."""
+    romp loader on Usage while it is in flight, in the name's place (the button disabled, no line, the name unseen, a tap on it
+    reaching nothing), and once it ends shows Usage enabled with no line and its name seen; one click opens the Usage modal
+    (PR 976's round 1, correctness-1 and extra6-1)."""
     out = []
     where = "%s Usage over an unpulled reading at %dx%d" % (engine, up["vp"][0], up["vp"][1])
     pre = up.get("premise") or {}
@@ -706,6 +723,13 @@ def _unpulled_problems(engine, up):
     if not a or a.get("disabled") is not False or a.get("busy") is not None or not a.get("line") or a["line"].get("shown") is not False \
             or (a.get("wait") or {}).get("shown") is not False:
         out.append("%s: after the opening's pull, Usage is not enabled with no line and no loader: %r" % (where, a))
+    # the loader shows in the name's place (romp-manager's decision on PR 976's round 1 builds): the name unseen while the pull
+    # is in flight, and seen once it has ended
+    if ((d or {}).get("name") or {}).get("shown") is not False:
+        out.append("%s: while the opening's pull is in flight, Usage's name is seen, where the loader shows in its place: %r" % (
+            where, (d or {}).get("name")))
+    if ((a or {}).get("name") or {}).get("shown") is not True:
+        out.append("%s: after the opening's pull, Usage's name is not seen: %r" % (where, (a or {}).get("name")))
     clicked = up.get("clicked") or {}
     if not up.get("opened") or clicked.get("settingsOpen") or clicked.get("cardHidden") is not True or clicked.get("acts") != ["usage"]:
         out.append("%s: one click on Usage did not close the card and open the Usage modal: opened %r, %r" % (where, up.get("opened"), clicked))
@@ -815,6 +839,9 @@ def _failed_problems(engine, fr):
             or cu["err"].get("text") != USAGE_ERR or not cu.get("line") or cu["line"].get("shown") is not False:
         out.append("%s: the opening's pull failed in transit over a cached reading, and Usage is not enabled with the line %r "
                    "(and without %r): %r" % (where, USAGE_ERR, USAGE_NONE, cu))
+    if ((cu or {}).get("name") or {}).get("shown") is not True:
+        out.append("%s: the opening's pull failed in transit over a cached reading, and Usage's name is not seen beside the line "
+                   "%r: %r" % (where, USAGE_ERR, (cu or {}).get("name")))
     if card_closed(cd.get("shell") or {}):
         out.append("%s: the failed read over a cached reading closed the card or reached the shell before the click: %r" % (where, cd.get("shell")))
     ck = cd.get("clicked") or {}
@@ -830,9 +857,13 @@ def _height_problems(engine, contrast):
     the opening's pull held (the loader up) and then let through to the lab's reading (Usage enabled) give the row the same
     height, Usage the same box, and the tabs the same offset in the card and the same top in the window, compared to SAME px;
     and in both states Usage is one line, as tall as Restart kernel (a one-line button of the same dress, on another line of
-    the row at these widths, so the row's stretch cannot make the two equal), so the row is no taller for it. No reading yet and
-    Couldn't load are read at the same widths and not compared: the line beside the name widens Usage, which can wrap the row
-    onto one more line on a narrow window (the module's docstring gives the widths)."""
+    the row at these widths, so the row's stretch cannot make the two equal), and as wide as the loader: its words as wide as
+    the loader's laid-out box, and Usage as wide as its glyph and those words with its gap, side padding and borders, so
+    nothing else widens it. So the row is no taller for Usage than its name or the loader makes it. In both states, too, Usage
+    is narrower than with No reading yet or Couldn't load, the widest states, whose width the decision turned down; those two
+    are read at the same widths and otherwise not compared: the line beside the name widens Usage, which can wrap the row onto
+    one more line on a narrow window (the module's docstring gives the widths). And the loader shows in the name's place: the
+    name unseen while loading, and seen with a reading and beside either line."""
     out = []
     num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
     for name, theme in THEMES:
@@ -872,6 +903,42 @@ def _height_problems(engine, contrast):
                 elif abs(r["usageH"] - r["restartH"]) > SAME:
                     out.append("%s at %dpx: with %s Usage is %.2f px tall where Restart kernel is %.2f: the row is taller for Usage" % (
                         where, w, s, r["usageH"], r["restartH"]))
+            # ...and as wide as the loader, not the widest state (the same decision): loading and with a reading, Usage's words are
+            # as wide as the loader's laid-out box, and Usage as wide as its glyph and those words with the gap between them, its
+            # side padding and its borders, so nothing else widens it; and it is narrower than with either line. The two equalities
+            # pin the width the decision chose; the third, the one it turned down
+            for s, r in (("loading", ld), ("a reading", rd)):
+                tw, lw, pt = r.get("txtW"), r.get("waitW"), r.get("parts") or {}
+                kids = pt.get("kids") if isinstance(pt.get("kids"), list) else []
+                if not num(tw) or not num(lw):
+                    out.append("%s at %dpx: with %s Usage's words or the loader's laid-out box unread (words %r, loader %r)" % (
+                        where, w, s, tw, lw))
+                elif abs(tw - lw) > SAME:
+                    out.append("%s at %dpx: with %s Usage's words are %.2f px wide where the loader is %.2f: Usage does not hold the "
+                               "loader's width" % (where, w, s, tw, lw))
+                if not kids or not all(num(x) for x in kids) or not all(num(pt.get(k)) for k in ("gap", "pad", "border")) \
+                        or not num(r.get("usageW")):
+                    out.append("%s at %dpx: Usage's parts unread with %s: %r" % (where, w, s, r))
+                else:
+                    fit = sum(kids) + pt["gap"] * (len(kids) - 1) + pt["pad"] + pt["border"]
+                    if abs(r["usageW"] - fit) > SAME:
+                        out.append("%s at %dpx: with %s Usage is %.2f px wide where its glyph and words with its gap, padding and "
+                                   "borders come to %.2f: something else widens it" % (where, w, s, r["usageW"], fit))
+                for line, o in ((USAGE_NONE, no), (USAGE_ERR, fl)):
+                    if not num(r.get("usageW")) or not num(o.get("usageW")):
+                        out.append("%s at %dpx: Usage's width unread with %s or with the line %r (%r, %r)" % (
+                            where, w, s, line, r.get("usageW"), o.get("usageW")))
+                    elif r["usageW"] >= o["usageW"] - SAME:
+                        out.append("%s at %dpx: with %s Usage is %.2f px wide, no narrower than with the line %r (%.2f): it holds the "
+                                   "widest state's width, not the loader's" % (where, w, s, r["usageW"], line, o["usageW"]))
+            # ...and the loader shows in the name's place: the name unseen while it shows, and seen with a reading and beside
+            # either line (its computed visibility and display, and a box)
+            for s, r, seen in (("loading", ld, False), ("a reading", rd, True), ("the line %r" % USAGE_NONE, no, True),
+                               ("the line %r" % USAGE_ERR, fl, True)):
+                nm = r.get("name")
+                if not isinstance(nm, dict) or nm.get("shown") is not seen:
+                    out.append("%s at %dpx: with %s Usage's name is %s: %r" % (
+                        where, w, s, "seen, where the loader shows in its place" if not seen else "not seen", nm))
     return out
 
 
