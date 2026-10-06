@@ -4,8 +4,9 @@
 kernel/credentials.py is the whole of romp's contact with API credentials, and this module pins it:
   * the settings reader follows Claude Code's precedence (managed, project local, project, user) and reads
     the empty string as "helper disabled", a null as "not defined here";
-  * the in-process helper run follows the CLI's contract (one line on stdout, exit 0) and its TTL memo, and
-    never sees the kernel's own environment;
+  * the in-process helper run follows the CLI's contract (one line on stdout, exit 0) and its TTL memo,
+    never sees the kernel's own environment, runs in a session of its own, and when the bound cuts it leaves
+    no process of its group running (a process that left the group is the stated exception);
   * the boot check stops the kernel on any retired provider line, the marker, or a key in the kernel's
     environment, naming variables and files only;
   * the judges launch keyless for a key-billed call (the first pass after boot like every later one) and
@@ -16,7 +17,12 @@ Synthetic values throughout: the fixture helper prints a string no validator wou
 import inspect
 import json
 import os
+import select
+import shlex
+import signal
 import stat
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -64,6 +70,89 @@ def _runs(marker):
         return len(marker.read_text())
     except OSError:
         return 0
+
+
+def _proc(pid):
+    """/proc/<pid>/stat as (state, ppid, pgrp, session, starttime), or None when no process has the pid (it was
+    reaped) or the platform has no /proc."""
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            s = f.read()
+    except OSError:
+        return None
+    rest = s[s.rindex(")") + 2:].split()
+    return rest[0], int(rest[1]), int(rest[2]), int(rest[3]), rest[19]
+
+
+def _still_running(pid, wait_s=1.0):
+    """Whether `pid` still runs once its exit has been waited for, up to wait_s: a ceiling only a process that is left
+    pays, far longer than a process SIGKILLed before the call returned takes to exit, and shorter than what the hung
+    helpers here have left to sleep, so one the kill missed is still running at the ceiling. On Linux the exit is an
+    event, the pidfd turning readable, and /proc/<pid>/stat then says what is there: nothing (reaped), or a zombie
+    ('Z': exited, its parent not yet done reaping it), both ended because both are shown not to run. Without
+    pidfd_open, os.kill(pid, 0) is polled and a pid no process has is ended."""
+    if hasattr(os, "pidfd_open"):
+        try:
+            fd = os.pidfd_open(pid)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            fd = None                           # a kernel without pidfd_open: the poll below
+        if fd is not None:
+            try:
+                select.select([fd], [], [], wait_s)
+            finally:
+                os.close(fd)
+            st = _proc(pid)
+            return st is not None and st[0] != "Z"
+    deadline = time.monotonic() + wait_s
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        if time.monotonic() >= deadline:
+            return True
+        time.sleep(0.05)
+
+
+def _recorded(test, pidfile):
+    """The (role, pid) lines the helper's processes wrote to `pidfile`, read right after the call. Each one /proc shows
+    running is ended when the test ends, by SIGKILL to its pid after /proc/<pid>/stat shows the same start time, so a
+    red run leaves nothing behind and a reused pid is never signalled."""
+    try:
+        recs = [(ln.split()[0], int(ln.split()[1])) for ln in Path(pidfile).read_text().splitlines() if ln.strip()]
+    except OSError:
+        recs = []
+    starts = {pid: st[4] for _role, pid in recs for st in [_proc(pid)] if st is not None and st[0] != "Z"}
+
+    def end_the_left():
+        for pid, start in starts.items():
+            st = _proc(pid)
+            if st is not None and st[0] != "Z" and st[4] == start:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+    test.addCleanup(end_the_left)
+    return recs
+
+
+def _left(recs):
+    """The recorded processes still running after the exit wait, each with what /proc/<pid>/stat shows of it."""
+    return [(role, pid, _proc(pid)) for role, pid in recs if _still_running(pid)]
+
+
+def _seen_popen():
+    """A subprocess.Popen that keeps every instance it makes, so a test reads the run's own Popen after the call (its
+    returncode says whether run_helper reaped the shell it started), and the list it keeps them in."""
+    seen = []
+
+    class SeenPopen(subprocess.Popen):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            seen.append(self)
+    return SeenPopen, seen
 
 
 class _Settings(unittest.TestCase):
@@ -338,11 +427,141 @@ class HelperRun(_Settings):
                 cred.helper_key()
 
     def test_a_timeout_is_a_static_word_too(self):
-        script, _ = _helper_script(tempfile.mkdtemp(), body="#!/bin/sh\nsleep 5\necho late\n")
+        # The script records its own pid, and its sleep records the sleep's (an inner sh that writes its pid and then
+        # execs the sleep in its place), so the test can tell both are gone: before run_helper killed the helper's
+        # process group, the timeout ended the shell that ran the script and left the script and its sleep running.
+        d = tempfile.mkdtemp()
+        pids = os.path.join(d, "pids")
+        script, _ = _helper_script(d, body="#!/bin/sh\necho script $$ >> %s\n"
+                                           "/bin/sh -c 'echo sleep $$ >> \"$0\"; exec sleep 5' %s\necho late\n"
+                                           % (shlex.quote(pids), shlex.quote(pids)))
         self._write("user", {"apiKeyHelper": script})
         with patch.object(cred, "HELPER_TIMEOUT_S", 1):
             with self.assertRaisesRegex(cred.CredentialError, "timed out"):
                 cred.helper_key()
+        recs = _recorded(self, pids)
+        self.assertEqual(sorted(role for role, _pid in recs), ["script", "sleep"], "both were up before the bound")
+        self.assertEqual(_left(recs), [], "the timeout leaves neither the script nor its sleep running")
+
+
+@unittest.skipUnless(os.path.isdir("/proc/self"), "reads the helper's processes from /proc")
+class HelperTimeoutEndsTheGroup(_Settings):
+    """run_helper starts the helper's shell in a session of its own, and a run the bound cuts ends with SIGKILL to that
+    session's process group, then a bounded drain of the pipe that reaps the shell. Before, subprocess.run's timeout
+    killed the shell alone, and under dash (Debian's and Ubuntu's /bin/sh, which forks even a lone command) the hung
+    command and everything it forked ran on with the helper's environment, one more each time helper_key asked again.
+    The helpers are synthetic: each process writes 'role pid' to a temp file, and the test reads /proc for each."""
+
+    def _pids(self):
+        return os.path.join(tempfile.mkdtemp(), "pids")
+
+    def _tree_cmd(self, pids):
+        """A hung command: the shell forks a child sh, which forks a sleep (the grandchild); every one holds stdout."""
+        q = shlex.quote(pids)
+        return ("echo shell $$ >> %s; /bin/sh -c 'echo child $$ >> \"$0\"; sleep 30 & echo grandchild $! >> \"$0\"; "
+                "wait' %s & wait" % (q, q))
+
+    def test_a_hung_tree_is_ended_whole_within_the_bound_and_its_shell_reaped(self):
+        pids = self._pids()
+        cmd = self._tree_cmd(pids)
+        SeenPopen, seen = _seen_popen()
+        t0 = time.monotonic()
+        with patch.object(subprocess, "Popen", SeenPopen):
+            with self.assertRaises(cred.CredentialError) as cm:
+                cred.run_helper(cmd, timeout_s=1)
+        elapsed = time.monotonic() - t0
+        recs = _recorded(self, pids)
+        self.assertEqual(str(cm.exception), "apiKeyHelper timed out after 1 s")
+        self.assertLess(elapsed, 1 + 1.0, "the call raises within the bound and a small margin")
+        self.assertEqual(sorted(role for role, _pid in recs), ["child", "grandchild", "shell"],
+                         "the tree was up before the bound")
+        self.assertEqual(_left(recs), [], "no process of the tree is left running")
+        mine = [p for p in seen if p.args == cmd]
+        self.assertEqual(len(mine), 1, "one Popen for the run")
+        self.assertEqual(mine[0].pid, dict((r, p) for r, p in recs)["shell"])
+        self.assertEqual(mine[0].returncode, -signal.SIGKILL,
+                         "the call reaped the shell it started, ended by the group's SIGKILL")
+
+    def test_the_helper_runs_in_a_session_and_process_group_of_its_own(self):
+        # the shell reads its own /proc/self/stat (fields 1, 5 and 6: pid, process group, session) and prints them as
+        # the key; a run in the kernel's session, or in a group of its own inside it, is red here
+        out = cred.run_helper('read -r s < /proc/self/stat; set -- $s; echo "$1:$5:$6"', timeout_s=5)
+        pid, pgrp, sid = (int(x) for x in out.split(":"))
+        self.assertEqual((pgrp, sid), (pid, pid), "the shell leads its own session and its own group")
+        self.assertNotEqual(sid, os.getsid(0), "not the caller's session")
+        self.assertNotEqual(pgrp, os.getpgrp(), "not the caller's group")
+
+    def test_each_ask_of_a_hung_operator_helper_leaves_no_process(self):
+        # helper_key asks again on every call while the helper keeps failing (a failed run is not memoized): three asks,
+        # each cut by the bound, each leaving nothing of the run it made
+        pids = self._pids()
+        q = shlex.quote(pids)
+        script, _ = _helper_script(tempfile.mkdtemp(), body="#!/bin/sh\necho script $$ >> %s\nsleep 30 &\n"
+                                                             "echo sleep $! >> %s\nwait\n" % (q, q))
+        self._write("user", {"apiKeyHelper": script})
+        SeenPopen, seen = _seen_popen()
+        with patch.object(cred, "HELPER_TIMEOUT_S", 1):
+            for ask in range(3):
+                t0 = time.monotonic()
+                with patch.object(subprocess, "Popen", SeenPopen):
+                    with self.assertRaises(cred.CredentialError) as cm:
+                        cred.helper_key()
+                elapsed = time.monotonic() - t0
+                recs = _recorded(self, pids)
+                self.assertEqual(str(cm.exception), "apiKeyHelper timed out after 1 s", "ask %d" % ask)
+                self.assertLess(elapsed, 1 + 1.0, "ask %d" % ask)
+                self.assertEqual(len(recs), 2 * (ask + 1),
+                                 "ask %d: the script and its sleep were up before the bound" % ask)
+                self.assertEqual(_left(recs), [], "ask %d leaves no process" % ask)
+                mine = [p for p in seen if p.args == script]
+                self.assertEqual(len(mine), ask + 1)
+                self.assertEqual(mine[-1].returncode, -signal.SIGKILL, "ask %d: the shell reaped" % ask)
+                self.assertEqual(cred._HELPER_MEMO["value"], "", "a failed run leaves no value behind")
+
+    def test_a_hung_token_command_leaves_no_process(self):
+        # the environment road as kernel/sdk_backend.py and kernel/judge.py call it: logins.token_value with run_helper
+        # labelled "the token command" at the module's bound
+        self.assertIs(sb._cred, cred, "the SDK backend's credentials module is this one")
+        state = Path(tempfile.mkdtemp())
+        pids = self._pids()
+        rec = {"id": sb._logins.mint_id(), "label": "Hung", "tokenCmd": self._tree_cmd(pids),
+               "addedAt": int(time.time()) - 86400}
+        sb._logins.write_record(state, rec)
+        t0 = time.monotonic()
+        with patch.object(cred, "HELPER_TIMEOUT_S", 1):
+            with self.assertRaises(cred.CredentialError) as cm:
+                sb._logins.token_value(state, rec["id"], lambda c: sb._cred.run_helper(c, label="the token command"))
+        elapsed = time.monotonic() - t0
+        recs = _recorded(self, pids)
+        self.assertEqual(str(cm.exception), "the token command timed out after 1 s")
+        self.assertLess(elapsed, 1 + 1.0)
+        self.assertEqual(sorted(role for role, _pid in recs), ["child", "grandchild", "shell"],
+                         "the tree was up before the bound")
+        self.assertEqual(_left(recs), [], "no process of the token command is left running")
+
+    def test_a_process_that_left_the_group_holding_stdout_is_not_reached_and_costs_the_drain(self):
+        # The stated limit, planted: a process that moves to a session of its own (os.setsid, as a daemonizing helper
+        # does) is outside the group the kill reaches, so it runs on; it still holds stdout, so the drain waits its
+        # whole bound (HELPER_DRAIN_S) for an end of the pipe that does not come, and the call raises that much later.
+        # Unbounded, the drain would wait for this process to exit, 30 s here.
+        pids = self._pids()
+        code = ("import os, sys, time; os.setsid(); open(sys.argv[1], 'a').write('escaped %d\\n' % os.getpid()); "
+                "time.sleep(30)")
+        cmd = "%s & echo shell $$ >> %s; wait" % (" ".join(shlex.quote(a) for a in (sys.executable, "-c", code, pids)),
+                                                  shlex.quote(pids))
+        t0 = time.monotonic()
+        with self.assertRaises(cred.CredentialError) as cm:
+            cred.run_helper(cmd, timeout_s=2)
+        elapsed = time.monotonic() - t0
+        recs = dict((role, pid) for role, pid in _recorded(self, pids))
+        self.assertEqual(str(cm.exception), "apiKeyHelper timed out after 2 s")
+        self.assertEqual(sorted(recs), ["escaped", "shell"], "both were up before the bound")
+        self.assertGreaterEqual(elapsed, 2 + cred.HELPER_DRAIN_S - 0.1, "the drain waited its bound")
+        self.assertLess(elapsed, 2 + cred.HELPER_DRAIN_S + 1.0, "and no longer: the drain is bounded")
+        self.assertFalse(_still_running(recs["shell"], 0), "the shell was in the group")
+        st = _proc(recs["escaped"])
+        self.assertTrue(st is not None and st[0] != "Z", "the process that left the group runs on: %r" % (st,))
+        self.assertEqual((st[2], st[3]), (recs["escaped"], recs["escaped"]), "in a session and a group of its own")
 
 
 class BootCheck(unittest.TestCase):

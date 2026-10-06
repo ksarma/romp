@@ -21,6 +21,7 @@ whatever let a less secure key path exist, and keep only the most secure one):
 stdlib only, loaded by path as `romp_credentials` from the kernel, the SDK backend and the judges."""
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -47,6 +48,7 @@ HELPER_KEY = "apiKeyHelper"
 HELPER_TTL_VAR = "CLAUDE_CODE_API_KEY_HELPER_TTL_MS"      # the CLI's own refresh interval, in milliseconds
 HELPER_TTL_DEFAULT_MS = 300_000                          # five minutes: the CLI's documented default
 HELPER_TIMEOUT_S = 15
+HELPER_DRAIN_S = 2           # after a run that did not finish is killed: the wait for its pipe to close
 # The environment the helper runs with, and nothing more (a whitelist, never a copy: the kernel's
 # environment carries the serve token, full control of every session, which no third-party script may
 # see). PATH to run, HOME and CLAUDE_CONFIG_DIR and the XDG names to find its own config, the rest for
@@ -519,28 +521,71 @@ def helper_env() -> dict:
 
 
 def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
-    """Run the helper once, the way Claude Code runs it: through /bin/sh, stdin /dev/null (a prompt would
+    """Run the helper once through /bin/sh, as Claude Code runs it: stdin /dev/null (a prompt would
     hang until the timeout), stderr discarded and never logged (a secret manager's diagnostics can quote
     its own token), stdout the key: non-empty, one line, no whitespace, at most 16 KiB, one trailing
     newline forgiven (a script's echo adds one). Every failure is a CredentialError in static words that
     open with `label`: the box's own apiKeyHelper by default, a stored login's token command when a launch
     or a judge call runs one the same way (logins.token_value, the environment road since 2026-09-14).
-    `timeout_s` overrides the bound for a test; HELPER_TIMEOUT_S otherwise."""
+    `timeout_s` overrides the bound for a test; HELPER_TIMEOUT_S otherwise.
+
+    The shell starts in a session of its own, and a run that does not finish (the bound, or an exception
+    such as KeyboardInterrupt) ends with SIGKILL to that session's whole process group. subprocess.run's
+    timeout killed the shell alone, and dash, the /bin/sh of Debian and Ubuntu, forks even a lone command:
+    the hung command, and every process it had forked, ran on after the timeout with the helper's
+    environment, one more each time helper_key asked again. The session makes the group the helper's alone,
+    so the kill never reaches the kernel's own group. It also leaves the helper without a controlling
+    terminal, and outside a terminal's foreground group (the comment at the kill has the consequences and
+    what the kill does not reach)."""
     bound = HELPER_TIMEOUT_S if timeout_s is None else timeout_s
+    p = None
     try:
-        r = subprocess.run(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.DEVNULL, timeout=bound, check=False, env=helper_env())
+        p = subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, env=helper_env(), start_new_session=True)
+        out = p.communicate(timeout=bound)[0]
     except FileNotFoundError:
         raise CredentialError("%s could not run: /bin/sh is not available" % label) from None
     except subprocess.TimeoutExpired:
         raise CredentialError("%s timed out after %d s" % (label, bound)) from None
     except OSError:
         raise CredentialError("%s could not be run" % label) from None
-    if r.returncode:
-        raise CredentialError("%s is not on the manager's PATH (exit 127)" % label if r.returncode == 127
+    finally:
+        if p is not None and p.returncode is None:
+            # The run did not finish (communicate sets returncode only once the shell is reaped). With
+            # start_new_session the shell's pid is the group's id, and the group holds every process the
+            # helper forked that did not leave it. SIGKILL to the group, then a drain bounded by
+            # HELPER_DRAIN_S: it reads the pipe to its end, which comes once every holder of the write end
+            # has exited, and reaps the shell, so the call returns after the group is gone and leaves no
+            # zombie. p.kill() is the fallback when the drain runs out.
+            # Not covered: a process that left the group itself (setsid, setpgid, a daemonizing helper) is
+            # not signalled and runs on. If it still holds stdout, the drain waits its whole bound for an
+            # end that does not come, the call raises that much later, and the process keeps a pipe whose
+            # read end is closed below, so its next write to stdout fails (EPIPE, or SIGPIPE for a shell).
+            # The finished roads kill nothing: a process the helper leaves running without stdout outlives
+            # a run that exited, as it always did. What the session changes for a helper: it has no
+            # controlling terminal, so opening /dev/tty to prompt fails at once (the systemd unit gives the
+            # kernel no terminal, so there it failed before too; a kernel started in a terminal gave the
+            # helper that terminal), and a terminal's Ctrl-C signals the kernel's group, not the helper. A
+            # run on the thread that takes the KeyboardInterrupt ends the group here; a run on another
+            # thread goes on to its bound, and a helper still running when the kernel exits runs on.
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                p.communicate(timeout=HELPER_DRAIN_S)
+            except Exception:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            if p.stdout is not None:
+                p.stdout.close()
+    if p.returncode:
+        raise CredentialError("%s is not on the manager's PATH (exit 127)" % label if p.returncode == 127
                               else "%s failed (non-zero exit)" % label)
     try:
-        value = r.stdout.decode("utf-8")
+        value = out.decode("utf-8")
     except UnicodeError:
         raise CredentialError("%s printed bytes that are not a key" % label) from None
     if value.endswith("\n"):
