@@ -721,7 +721,10 @@ class PhoneActListener(unittest.TestCase):
     shell runs the A-map handler their bar buttons ran. The rule: only those three acts, and only from the settings frame's
     window. Run in node over the mobile harness with a settings pane added and the five handlers the A-map calls stubbed to
     record their names: each of the three acts from the settings frame runs exactly its handler; errs and settings (whose
-    buttons stay on the bar) and an act named after an inherited property run nothing from it; restart from the chat pane's
+    buttons stay on the bar) and an act named after an inherited property run nothing from it, the inherited one a recording
+    function the driver defines on Object.prototype under a name of its own, not enumerable and deleted after the run, so a
+    listener that took an inherited property for an act would be seen running it (PR 976's round 2, tests-4: the built-in
+    toString the case posted before records nothing when run, so it could not tell); restart from the chat pane's
     window, from the shell's own window and with no source runs nothing. The pane-source helper a shell may read before its
     own check (window.__rompPaneSourceOk) is stubbed to admit every frame, so these cases hold the listener's own source check
     wherever that helper is read first. tests/test_kernel_mobile.py's pin of the listener's text is the secondary guard."""
@@ -739,11 +742,16 @@ window.__rompPaneSourceOk = () => true;
 const SF = PANES['f-settings'].contentWindow, CHAT = PANES['f-chat'].contentWindow;
 const run = (act, src, none) => { CALLS.length = 0; const m = { romp: 'phoneAct', act };
   MSGS.forEach((f) => f(none ? { data: m } : { data: m, source: src })); return CALLS.slice(); };
-console.log(JSON.stringify({
+// the inherited act: every object inherits it, the A-map too, and running it records its name
+const INHERITED = '__phoneActInheritedProbe';
+Object.defineProperty(Object.prototype, INHERITED, { value: () => { CALLS.push(INHERITED); }, configurable: true, writable: true, enumerable: false });
+const OUT = {
   net: run('net', SF), usage: run('usage', SF), restart: run('restart', SF),
-  errs: run('errs', SF), settings: run('settings', SF), inherited: run('toString', SF),
+  errs: run('errs', SF), settings: run('settings', SF), inherited: run(INHERITED, SF),
   restartFromChat: run('restart', CHAT), restartFromShell: run('restart', window), restartNoSource: run('restart', null, true),
-  marker: window.__rompPhoneActs === true }));
+  marker: window.__rompPhoneActs === true };
+delete Object.prototype[INHERITED];
+console.log(JSON.stringify(OUT));
 """
         cls.out = _run(harness + km._LANDING_MOBILE_JS + driver)
 
