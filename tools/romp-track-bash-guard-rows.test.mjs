@@ -1051,6 +1051,10 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-residual-path-zsh-array-element', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; path[1]={OUT}/scratch; c2 base/report.md docs/report.md', ['zsh'], 'allow'],
       ['AS8-residual-path-zsh-read-A', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; read -A path <<< {OUT}/scratch; c2 base/report.md docs/report.md', ['zsh'], 'allow'],
       ['AS8-residual-path-zsh-indirect', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; n=PATH; : ${(P)n::={OUT}/scratch:$PATH}; c2 base/report.md docs/report.md', ['zsh'], 'allow'],
+      // fork PR 975's gap pass (R6, 2026-10-06): the ruling's own scalar form of the zsh `path` array tied to PATH. `path=DIR` (no parentheses) sets the
+      // tied array to one element, so PATH becomes DIR; base, the pre-round-2 head and this change all allow it (zsh writes), the residual the array rows
+      // name, witnessed here with its own row
+      ['AS8-residual-path-zsh-scalar', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; path={OUT}/scratch; c2 base/report.md docs/report.md', ['zsh'], 'allow'],
       // M3, pre-existing (fork main allows each, as this change does, while a shell writes; a witness row each, named in decision 47; found by the completeness
       // check on fork PR 975's gap pass): a name an expansion the guard does not read assigns, inside an array subscript, a substring offset, an arithmetic
       // expansion in an operator's word (the older spelling too), zsh's `(P)` flag with `::=`, a glob qualifier's code or the `(e)` flag's text; zsh's
@@ -1199,6 +1203,10 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // correctness-4 (the existing-directory ln -s of a bound source, a false allow this PR introduced, and an empty PATH entry read as the cwd)
       ['AS8-ruleB-corr4-lns-existdir', 'na', 'mkdir -p {OUT}/d; cp /usr/bin/cp {OUT}/c2; ln -s {OUT}/c2 {OUT}/d; PATH={OUT}/d:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
       ['AS8-ruleB-corr4-empty-path', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; cd {OUT}/scratch; PATH=:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      // fork PR 975's gap pass (R6, 2026-10-06): correctness-4's three-operand `ln -s` form. `ln -s SRC1 SRC2 DIR` links each source under DIR (the targetDir
+      // branch binds each); a bound name in DIR on a readable PATH then runs the linked cp. Base and the pre-round-2 head allow it, rule B refuses it (a made
+      // path the link names), closed but unwitnessed before. Red at the pre-round-2 head, with real writes in all three shells
+      ['AS8-ruleB-corr4-lns-3operand', 'na', 'cp /usr/bin/cp {OUT}/c2a; cp /usr/bin/cp {OUT}/c2b; ln -s {OUT}/c2a {OUT}/c2b {OUT}/scratch; PATH={OUT}/scratch:/usr/bin:/bin; c2a base/report.md docs/report.md', A, 'name'],
       // fork PR 975's gap pass (R3, 2026-10-06): a preserving op (mv, a hard `ln`, cp -a/-P/-r) of a command-made RELATIVE symlink into a directory on a
       // readable PATH, then run by its bare name. The moved link's text re-resolves against its NEW directory, where this command stages a copy of cp, so a
       // real bash, zsh and dash each run the cp and write the tracked file. Fork main refuses (a mention taints PATH, every bound name refuses); the PR's
@@ -1502,6 +1510,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       'AS8-root-old-arith-path-ls': { c2: CP }, 'AS8-root-old-arith-path-echo': { c2: CP }, 'AS8-root-old-arith-path-dq': { c2: CP },
       'AS8-residual-path-zsh-array': { c2: CP }, 'AS8-residual-path-zsh-array-keep': { c2: CP }, 'AS8-residual-path-zsh-array-append': { c2: CP },
       'AS8-residual-path-zsh-array-element': { c2: CP }, 'AS8-residual-path-zsh-read-A': { c2: CP }, 'AS8-residual-path-zsh-indirect': { c2: CP },
+      'AS8-residual-path-zsh-scalar': { c2: CP }, 'AS8-ruleB-corr4-lns-3operand': { c2a: CP },
       'AS8-residual-assign-zsh-glob-qualifier': { 'e:p=0:': 'absent' },   // the reader takes zsh's glob qualifier for a command, which bash and dash never reach (a syntax error)
       // fork PR 975's round 2 (tests-3): the made names of THE BOUND NAME's rows, R3's rows and the residuals beside them
       ...Object.fromEntries(['AS8-into-dir-cp', 'AS8-into-dir-cp-made', 'AS8-into-dir-install', 'AS8-into-dir-ln', 'AS8-into-dir-ln-s', 'AS8-into-dir-mv',
@@ -1631,7 +1640,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# RESTS_ON_PROBES: ${RESTS_ON_PROBES.size} rows whose rebinding the gate cannot know; ${ranHere.size} of ${rows.length} rows ran their legs here; the rest ran none here: ${rows.map((r) => r[0]).filter((id) => !ranHere.has(id) && !RESTS_ON_PROBES.has(id) && !guardOnly.includes(id)).join(', ') || 'none'}`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 294 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 296 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived

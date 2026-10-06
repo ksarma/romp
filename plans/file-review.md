@@ -5306,11 +5306,12 @@ document stands on its own, each with the reasoning it was given.
     function or an alias the environment exports is outside the model, as it is for every writer. Pre-existing and
     disclosed (M3: fork main allows each while the shells write): PATH set inside a call of a function the command
     defines or an eval's text, or through zsh's `path` array, which zsh ties to PATH (the array assigned, assigned
-    keeping `$path`, appended to with `+=`, an element assigned, read with `read -A path`, or reached by the `(P)` flag
-    with `::=` through a name holding PATH: the sound lens's tg-r12-1), is read as the PATH the command gave, the
-    guard's own, so a copied command run by its bare name passes (AS8-residual-path-func-call, AS8-residual-path-eval,
-    AS8-residual-path-zsh-array, AS8-residual-path-zsh-array-keep, AS8-residual-path-zsh-array-append,
-    AS8-residual-path-zsh-array-element, AS8-residual-path-zsh-read-A, AS8-residual-path-zsh-indirect; the follow-up
+    keeping `$path`, appended to with `+=`, an element assigned, the scalar form `path=DIR` that sets the one-element
+    array, read with `read -A path`, or reached by the `(P)` flag with `::=` through a name holding PATH: the sound
+    lens's tg-r12-1), is read as the PATH the command gave, the guard's own, so a copied command run by its bare name
+    passes (AS8-residual-path-func-call, AS8-residual-path-eval, AS8-residual-path-zsh-array,
+    AS8-residual-path-zsh-array-keep, AS8-residual-path-zsh-array-append, AS8-residual-path-zsh-array-element,
+    AS8-residual-path-zsh-read-A, AS8-residual-path-zsh-indirect, AS8-residual-path-zsh-scalar; the follow-up
     reads PATH as unreadable once the command is poisoned or names `path`).
     What the restored refusal leaves in place: a cp, mv, install, ln or ln -s of two operands binds the file it makes,
     DIR/<the source's name> under a directory, the destination as spelled under `-T` or onto a file, and both where the
@@ -5364,7 +5365,8 @@ document stands on its own, each with the reasoning it was given.
     tainted PATH (extra4-1: AS8-ruleB-extra4-cp, -mv, -ln, -install, -catredir, -filedst, -out), an `ln -s` two-operand,
     relative-target or -t form (tests-1: AS8-ruleB-tests1-lns-two, -lns-relsrc, -lns-t), the existing-directory `ln -s` a
     false allow this PR introduced and an empty PATH entry read as the cwd (correctness-4: AS8-ruleB-corr4-lns-existdir,
-    -corr4-empty-path). WITH A MEMO (each bound path spliced once per head lookup, boundRoots, cleared per judge call):
+    -corr4-empty-path, and the three-operand `ln -s SRC1 SRC2 DIR` form -corr4-lns-3operand, each source linked under DIR
+    and bound). WITH A MEMO (each bound path spliced once per head lookup, boundRoots, cleared per judge call):
     unmemoized the splice of a crafted diamond of copies is exponential (a depth-18 diamond took about 16.3 seconds, past
     the installer's 10-second timeout, where a killed hook would let the command run); the memo brings it under half a
     second on the same box with the same verdicts, and a timing check holds the depth-18 diamond under one second. What
