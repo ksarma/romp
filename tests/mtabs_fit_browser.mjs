@@ -44,8 +44,10 @@
 // button disabled and busy) and tapped at its centre, the shell's side read after a settle, then let through, Usage read once
 // the ask has ended, and one click on it, its effect read.
 // Then the reads that fail, on a page of its own at cfg.actsViewport: the shell's boot pull answers no rows, and the card is
-// opened over an opening's pull answered with an error status (cfg.errorStatus) and one failed in transit (the route aborts
-// it), Usage read once each ask has ended, then over a pull that reaches the lab, Usage read again.
+// opened over an opening's pull answered with an error status (cfg.errorStatus), one failed in transit (the route aborts it),
+// and one never answered (held) under a shorter bound set on the shell (window.__rompUsagePullMs = cfg.hangMs), Usage read
+// once each ask has ended (the hung one also while it is held, with the time from the click to the loader's end), then over
+// a pull that reaches the lab, Usage read again.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -60,7 +62,9 @@
 // background, the button's own fill (the glyph sits on it) and each colour the glyph can wear, as computed values: the
 // glyph lit and attaching (its svg's colour, the strokes' currentColor) and each node's fill as connected, dialing and needs you,
 // each read with that class set on the element and the element's transitions off, then put back; then the same with the
-// pointer moved onto the button's centre (its transitions off first): its hovered fill, its colours, and whether :hover holds.
+// pointer moved onto the button's centre (its transitions off first): its hovered fill, its colours, and whether :hover holds;
+// then, the pointer moved off, the card opened again over each answer to the opening's pull (held, the lab's reading, no rows,
+// an error status), and in each the row's height, Usage's box, the tabs' offset in the card and the line Usage shows.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -676,16 +680,19 @@ try {
   // the reads that fail (romp-manager's rulings after PR 976's round 1), on a page of its own at cfg.actsViewport: the shell's
   // boot pull answers no rows, so it holds no reading (the rail's readout read empty as the premise). Then the card opened from
   // the bar's Settings over each way the opening's pull can fail, Usage read once its ask has ended and the card closed: the
-  // kernel answering with an error status (cfg.errorStatus), and the request failing in transit (aborted by the route). Then
-  // an opening whose pull reaches the lab (a reading), where Usage is read once more: the failure's line does not outlive the
-  // failure
+  // kernel answering with an error status (cfg.errorStatus); the request failing in transit (aborted by the route); and the
+  // kernel never answering (the request held), under a shorter bound set on the shell (window.__rompUsagePullMs = cfg.hangMs),
+  // with Usage read while it is held, the time from the click to the loader's end, and Usage after it. Then an opening whose
+  // pull reaches the lab (a reading), where Usage is read once more: the failure's line does not outlive the failure
   {
     let mode = "boot", boots = 0;
+    const held = [];
     const { context, page } = await boot(false, (pg) => pg.route((url) => url.pathname.startsWith("/usage/"), (route) => {
       if (route.request().frame() !== pg.mainFrame()) return route.continue();
       if (mode === "boot") { boots++; return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) }); }
       if (mode === "status") return route.fulfill({ status: cfg.errorStatus, contentType: "application/json", body: JSON.stringify({ error: "synthetic failure" }) });
       if (mode === "transit") return route.abort("failed");
+      if (mode === "hang") { held.push(route); return undefined; }
       return route.continue();
     }));
     const [w, h] = cfg.actsViewport;
@@ -709,6 +716,26 @@ try {
     };
     fr.status = await turn("status");
     fr.transit = await turn("transit");
+    // the hung pull: the bound set short on the shell, the request held and never answered
+    {
+      const hg = { ms: cfg.hangMs };
+      mode = "hang";
+      await page.evaluate((ms) => { window.__rompUsagePullMs = ms; }, cfg.hangMs);
+      const t0 = Date.now();
+      const sf = await kit.openCard();
+      for (let i = 0; i < 50 && !held.length; i++) await sleep(100);
+      hg.held = held.length;
+      hg.during = await kit.usageNow(sf);
+      hg.ended = await sf.waitForFunction(() => { const x = document.getElementById("rs-pact-usage-wait"); return !!x && x.hidden; }, null, { timeout: cfg.hangWaitMs }).then(() => true, () => false);
+      hg.elapsed = Date.now() - t0;
+      await frames(page);
+      hg.after = await kit.usageNow(sf);
+      hg.shell = await kit.shellNow(sf);
+      await kit.closeCard();
+      await page.evaluate(() => { delete window.__rompUsagePullMs; });
+      for (const route of held.splice(0)) { try { await route.abort(); } catch (e) { /* the page aborted it first */ } }
+      fr.hang = hg;
+    }
     fr.lab = await turn("lab");
     out.failedReads = fr;
     await context.close();
@@ -869,7 +896,15 @@ try {
   // rest and with the pointer on the button
   out.contrast = {};
   for (const [name, theme] of cfg.themes || []) {
-    const { context, page } = await boot(false, null, theme);
+    // the shell's usage pull (its GET under /usage/), let through to the lab until the row's heights below steer it
+    let usageMode = "lab";
+    const usageHeld = [];
+    const { context, page } = await boot(false, (pg) => pg.route((url) => url.pathname.startsWith("/usage/"), (route) => {
+      if (route.request().frame() !== pg.mainFrame() || usageMode === "lab") return route.continue();
+      if (usageMode === "hold") { usageHeld.push(route); return undefined; }
+      if (usageMode === "empty") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) });
+      return route.fulfill({ status: cfg.errorStatus, contentType: "application/json", body: JSON.stringify({ error: "synthetic failure" }) });
+    }), theme);
     const [w, h] = cfg.actsViewport;
     await page.setViewportSize({ width: w, height: h });
     await frames(page);
@@ -918,6 +953,62 @@ try {
       await frames(page);
       const hv = await colours(true);
       out.contrast[name].hover = { hovered: hv.hovered, fill: hv.fill, colours: hv.colours };
+    }
+    // ...then the row's height in each state of Usage (romp-manager's ruling after PR 976's round 1: the loader takes the row's
+    // final height, so the tabs under it do not move), the pointer moved off the card first: the card closed and opened again
+    // from the bar's Settings over each answer to the opening's pull, held (the loader up), then let through (the lab's reading:
+    // Usage enabled), then no rows (No reading yet), then an error status (Couldn't load). In each: the row's height, Usage's
+    // box, the tabs' offset from the top of the card's content, and which of Usage's lines shows
+    {
+      const hs = {};
+      await page.mouse.move(1, 1);
+      const openC = async () => {
+        await page.mouse.click(gear.left + gear.w / 2, gear.top + gear.h / 2);
+        await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+        await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+        await frames(page);
+      };
+      const closeC = async () => {
+        await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+        await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+        await frames(page);
+      };
+      const ended = () => sf.waitForFunction(() => { const x = document.getElementById("rs-pact-usage-wait"); return !x || x.hidden; }, null, { timeout: 10000 }).then(() => true, () => false);
+      const rowRead = () => sf.evaluate(() => {
+        const shown = (el) => (el ? !el.hidden && getComputedStyle(el).display !== "none" : null);
+        const row = document.getElementById("rs-pacts"), card = document.querySelector("#rsettings .rs-card"), tabs = document.getElementById("rs-tabs");
+        const b = document.getElementById("rs-pact-usage");
+        if (!row || !card || !b) return null;
+        const rr = row.getBoundingClientRect(), cr = card.getBoundingClientRect(), br = b.getBoundingClientRect();
+        return { rowH: rr.height, tabsAt: tabs ? tabs.getBoundingClientRect().top - cr.top + card.scrollTop : null, usageW: br.width, usageH: br.height,
+                 disabled: b.disabled, wait: shown(document.getElementById("rs-pact-usage-wait")), none: shown(document.getElementById("rs-pact-usage-none")),
+                 err: shown(document.getElementById("rs-pact-usage-err")) };
+      });
+      await closeC();
+      usageMode = "hold";
+      await openC();
+      for (let i = 0; i < 50 && !usageHeld.length; i++) await sleep(100);
+      hs.held = usageHeld.length;
+      await frames(page);
+      hs.loading = await rowRead();
+      usageMode = "lab";
+      for (const route of usageHeld.splice(0)) await route.continue();
+      hs.readingEnded = await ended();
+      await frames(page);
+      hs.reading = await rowRead();
+      await closeC();
+      usageMode = "empty";
+      await openC();
+      hs.noneEnded = await ended();
+      await frames(page);
+      hs.none = await rowRead();
+      await closeC();
+      usageMode = "error";
+      await openC();
+      hs.failedEnded = await ended();
+      await frames(page);
+      hs.failed = await rowRead();
+      out.contrast[name].heights = hs;
     }
     await context.close();
   }

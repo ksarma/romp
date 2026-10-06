@@ -47,10 +47,12 @@ wrap only where it still cannot.
   then the card asks the usage script's own test over its readings (window.__rompUsageReading, the check the panel's opener
   makes); the shell's renderRows, the one writer of those readings, tells an open card on every change, so a reading that
   lands while the card is open shows at once; a shell that cannot be asked leaves Usage enabled with no line, as its bar
-  button was. A read that failed is not a read that found no reading (romp-manager's ruling after round 1): where the
-  shell's last read got an error status or no answer (window.__rompUsageFailed telling the card), Usage is disabled with
-  the line "Couldn't load", never "No reading yet". The Remote kernels glyph wears the accent while a host is connected
-  or attaching, on the glyph
+  button was. A read that failed is not a read that found no reading (romp-manager's rulings after round 1): where the
+  shell's last read got an error status, no answer, or no answer before the card's pull's bound (an abort after 10 s,
+  window.__rompUsageFailed telling the card), Usage is disabled with the line "Couldn't load", never "No reading yet".
+  Usage keeps one box in every state, the loader's, a reading's, no reading's and a failed read's, so the row and the
+  tabs under it do not move when the pull ends. The Remote kernels glyph wears the accent while a host is connected or
+  attaching, on the glyph
   alone as on the rail, and the button's label keeps the card's text colour (PR 976's round 1, ui-3). The glyph sits on its
   button's own fill, which the button keeps on hover, its border and label still turning accent (round 1, extra6-2), and
   every colour it wears reads at 3:1 or more (a graphic, romp-manager's call 7) on the card and on that fill, at rest and
@@ -125,14 +127,17 @@ swirl spinning, the wordmark, the dots pulsing), disabled and busy, with no line
 open and posts no phoneAct; let through, the ask ends with Usage
 enabled, no line and no loader, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then the
 reads that fail, on a page of its own at 390px, the shell's boot pull answering no rows (the readout read empty as the
-premise): the card opened over an opening's pull the driver answers with ERROR_STATUS and over one it aborts in transit
-shows Usage disabled with the line USAGE_ERR and not USAGE_NONE once each ask has ended, the card open and nothing
-posted; and an opening whose pull reaches the lab then shows Usage enabled with neither line. Then the deploy skew, on a
-page of its own at 390px: the shell publishes its marker (window.__rompPhoneActs) and the card opened
+premise): the card opened over an opening's pull the driver answers with ERROR_STATUS, over one it aborts in transit,
+and over one it holds unanswered under a bound of HANG_MS set on the shell (window.__rompUsagePullMs; the loader read
+while it is held, and its end read at least HANG_MS and at most HANG_WAIT_MS after the click), shows Usage disabled with
+the line USAGE_ERR and not USAGE_NONE once each ask has ended, the card open and nothing posted; and an opening whose
+pull reaches the lab then shows Usage enabled with neither line. Then the deploy skew, on a page of its own at 390px:
+the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
 move has) the card opened shows no row (not displayed, its buttons boxless); and with the marker back and the usage script's
 two names deleted (__rompUsageReading and __rompUsagePull, a shell that cannot be asked) the card's Usage is enabled with no
-line. Then the row following the layout while the card is open, on a page of its own in a plain context (a fine pointer, so
+line. Then the row following the layout while the card is open, on a page of its own in a plain context (a fine pointer,
+so
 the layout turns at 820px), the shell's poll answering both hosts up: the card opened at 390px shows its row; the window
 widened to WIDE with the card open hides it (not displayed, its buttons boxless), a host drops there (the class left on the
 hidden glyph, the premise), and the window narrowed to 390px again shows the row, its glyph carrying no flash two frames on,
@@ -146,7 +151,11 @@ opened from the bar's Settings, every colour the glyph can wear (GLYPH: the glyp
 dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
 colour read with its class set and the element's transitions off; and again with the pointer moved onto the button (its
 transitions off), against the fill it wears hovered, :hover read as the premise; and the needs-you red stays
-SEPARATION_FLOOR or more from the connected node's colour in OKLab. Then a desktop window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell,
+SEPARATION_FLOOR or more from the connected node's colour in OKLab; then, on the same page, the card opened again over
+each answer to the opening's pull (held, so the loader shows; the lab's reading; no rows; ERROR_STATUS), the row's
+height, Usage's width and height and the tabs' offset in the card are the same in all four, to SAME px. Then a desktop
+window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the
+bell,
 the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
 clicked at its centre, shows no row of moved actions (not displayed, its buttons boxless: the rail has its own).
 MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
@@ -165,7 +174,9 @@ disabled with its line, no loader, the tap opening nothing). Both taps on a disa
 opening's pull is out, are red under a mutant that never disables it; a script's clicks on a disabled Usage are red
 without the row handler's check of the disabled state (each closes the card and posts phoneAct usage). The failed reads
 are red where an error status reads as no reading and a failure leaves the line as it was (No reading yet after the
-error status and after the abort in transit). The fallback's pin is red under the old rule restored (no wrap), and the
+error status and after the abort in transit), and the hung pull where the card's pull carries no bound (the loader still
+up); the row's heights are red where the loader is a line the reading's state does not have (the row taller while
+loading than with a reading, in both themes). The fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
 closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
@@ -238,6 +249,12 @@ RESTART_REFUSAL = "synthetic refusal: the lab kernel stays up"
 USAGE_NONE = "No reading yet"   # the card's line under a disabled Usage (gear.js), the words a person reads
 USAGE_ERR = "Couldn't load"     # ...and its line there where the shell's last read of the readings failed
 ERROR_STATUS = 500   # the kernel's answer to the opening's pull where a leg needs an error status (the driver answers it)
+# the bound the failed-read leg sets on the shell's pull (window.__rompUsagePullMs) for the pull it never answers, in ms: the
+# kernel's own is 10 s, which each engine's leg would otherwise wait out; and how long the leg waits for the bound to end the
+# loader before it reads the wait as hung
+HANG_MS = 1500
+HANG_WAIT_MS = 15000
+SAME = 0.01   # px: the row's heights in Usage's states are equal by construction (the same layout), so they are compared exactly
 # the themes the Remote kernels glyph's colours are measured in, by the gear's theme ids: the dark default and the light theme
 # (no rule in feed.css or gear.css reads the Yatharth dark theme's class, so the default stands for both dark themes)
 THEMES = (("dark", "classic"), ("light", "yatharth-light"))
@@ -647,8 +664,9 @@ def _unpulled_problems(engine, up):
 
 def _failed_problems(engine, fr):
     """The reads that fail (romp-manager's rulings after PR 976's round 1): with no reading in the shell, an opening's pull
-    answered with an error status and one that fails in transit each end with Usage disabled and the line USAGE_ERR, never
-    USAGE_NONE, and the card open; a later opening whose pull reads the lab's reading shows Usage enabled with neither line."""
+    answered with an error status, one that fails in transit, and one the kernel never answers (ended by the pull's bound,
+    set to HANG_MS on the shell here) each end with Usage disabled and the line USAGE_ERR, never USAGE_NONE, and the card
+    open; a later opening whose pull reads the lab's reading shows Usage enabled with neither line."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -670,12 +688,53 @@ def _failed_problems(engine, fr):
             out.append("%s: %s, and Usage is not disabled with the line %r (and without %r): %r" % (where, what, USAGE_ERR, USAGE_NONE, t.get("usage")))
         if card_closed(t.get("shell") or {}):
             out.append("%s: %s, and the card closed or reached the shell: %r" % (where, what, t.get("shell")))
+    hg = fr.get("hang") or {}
+    d = hg.get("during")
+    if not hg.get("held") or not d or d.get("disabled") is not True or not d.get("wait") or d["wait"].get("shown") is not True:
+        out.append("%s: the hung pull's premise (the opening's pull held, Usage showing the romp loader): held %r, %r" % (where, hg.get("held"), d))
+    if not hg.get("ended") or (hg.get("elapsed") or 0) < HANG_MS:
+        out.append("%s: the kernel never answered the opening's pull, and the loader did not end on the pull's bound (%d ms, set "
+                   "on the shell) within %d ms: ended %r, %r ms after the click" % (where, HANG_MS, HANG_WAIT_MS, hg.get("ended"), hg.get("elapsed")))
+    if not_failed(hg.get("after")):
+        out.append("%s: the kernel never answered the opening's pull, and once the bound ended it Usage is not disabled with the "
+                   "line %r (and without %r): %r" % (where, USAGE_ERR, USAGE_NONE, hg.get("after")))
+    if card_closed(hg.get("shell") or {}):
+        out.append("%s: the hung pull's card closed or reached the shell: %r" % (where, hg.get("shell")))
     lab = fr.get("lab") or {}
     u = lab.get("usage")
     if not lab.get("asked") or not u or u.get("disabled") is not False or (u.get("line") or {}).get("shown") is not False \
             or (u.get("err") or {"shown": False}).get("shown") is not False:
         out.append("%s: after the failures, an opening whose pull read the lab's reading does not show Usage enabled with "
                    "neither line: %r" % (where, lab))
+    return out
+
+
+def _height_problems(engine, contrast):
+    """The row keeps one height in every state of Usage (romp-manager's ruling after PR 976's round 1: the loader takes the
+    row's final height, so the tabs under it do not move), in the dark and the light theme: the loader up while the opening's
+    pull is held, a reading, no reading and a failed read give the row the same height, Usage the same box (its width too, so
+    a narrower window wraps the row the same way in every state) and the tabs the same offset in the card, compared to SAME px."""
+    out = []
+    for name, theme in THEMES:
+        where = "%s the row's height, %s theme (%s)" % (engine, name, theme)
+        hs = (contrast.get(name) or {}).get("heights") or {}
+        st = {k: hs.get(k) or {} for k in ("loading", "reading", "none", "failed")}
+        if not hs.get("held") or st["loading"].get("wait") is not True or st["loading"].get("disabled") is not True:
+            out.append("%s: the loading state's premise (the opening's pull held, the loader up, Usage disabled): held %r, %r" % (where, hs.get("held"), st["loading"]))
+        if not hs.get("readingEnded") or st["reading"].get("disabled") is not False or st["reading"].get("none") or st["reading"].get("err"):
+            out.append("%s: the reading state's premise (Usage enabled with neither line once the pull reached the lab): %r" % (where, st["reading"]))
+        if not hs.get("noneEnded") or st["none"].get("none") is not True:
+            out.append("%s: the no-reading state's premise (the line %r once the pull answered no rows): %r" % (where, USAGE_NONE, st["none"]))
+        if not hs.get("failedEnded") or st["failed"].get("err") is not True:
+            out.append("%s: the failed state's premise (the line %r once the pull answered an error status): %r" % (where, USAGE_ERR, st["failed"]))
+        for k, what in (("rowH", "the row's height"), ("usageH", "Usage's height"), ("usageW", "Usage's width"),
+                        ("tabsAt", "the tabs' offset in the card")):
+            vals = {s: st[s].get(k) for s in st}
+            if any(not isinstance(v, (int, float)) for v in vals.values()):
+                out.append("%s: %s unread in a state: %r" % (where, what, vals))
+            elif max(vals.values()) - min(vals.values()) > SAME:
+                out.append("%s: %s differs between Usage's states (loading, reading, no reading, failed): %s" % (
+                    where, what, ", ".join("%s %.2f" % (s, v) for s, v in vals.items())))
     return out
 
 
@@ -933,7 +992,7 @@ class MtabsFit(unittest.TestCase):
                "tunnels": TUNNELS, "tunnels2": TUNNELS2, "tunnelsDrop": TUNNELS_DROP,
                "tunnelsAttach": TUNNELS_ATTACH, "tunnelsNone": TUNNELS_NONE, "themes": [list(t) for t in THEMES],
                "desktopViewport": list(DESKTOP), "railViewports": [list(v) for v in RAIL], "wideViewport": list(WIDE),
-               "errorStatus": ERROR_STATUS,
+               "errorStatus": ERROR_STATUS, "hangMs": HANG_MS, "hangWaitMs": HANG_WAIT_MS,
                "result": os.path.join(self.lab, "result-%s.json" % engine)}
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)
         Path(cfg_path).write_text(json.dumps(cfg))
@@ -1004,6 +1063,7 @@ class MtabsFit(unittest.TestCase):
         problems += _skew_problems(engine, r.get("skew") or {"vp": list(ACTS)})
         problems += _follow_problems(engine, r.get("follow") or {"vp": list(ACTS), "wide": list(WIDE)})
         problems += _contrast_problems(engine, r.get("contrast") or {})
+        problems += _height_problems(engine, r.get("contrast") or {})
         self.assertEqual([tuple(x["vp"]) for x in r["rail"]], list(RAIL), engine + ": every rail width was read")
         problems += _rail_problems(engine, r["rail"])
         self.assertEqual(r["desktop"]["display"], "none", engine + ": the desktop shows no phone bar: %r" % (r["desktop"],))

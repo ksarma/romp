@@ -134,10 +134,10 @@ var GEAR_HTML =
   // an older shell on its bottom bar). A tap closes this card and asks the shell to run the bar button's own handler ({romp:'phoneAct', act}).
   '<div class=rs-pacts id=rs-pacts hidden>' +
   // Usage carries its sub-line for the state with no reading yet (usageAct below shows it and disables the button), and in
-  // the same place the one for a read that failed (Couldn't load: the shell's last read of the readings got an error status
-  // or no answer; usageAct)
+  // the same place the one for a read that failed (Couldn't load: the shell's last read of the readings got an error status,
+  // no answer, or no answer in time; usageAct)
   '<button type=button class=rs-pact id=rs-pact-usage data-pact=usage title=Usage>' + PACT_USAGE_SVG +
-  '<span class=rs-pact-txt><span>Usage</span><span class=rs-pact-none id=rs-pact-usage-none hidden>No reading yet</span>' +
+  '<span class=rs-pact-txt><span class=rs-pact-name>Usage</span><span class=rs-pact-none id=rs-pact-usage-none hidden>No reading yet</span>' +
   '<span class=rs-pact-none id=rs-pact-usage-err hidden>Couldn\'t load</span>' +
   // and, in the same place again, the romp loader while the card's opening asks the shell for a fresh reading (usagePull below)
   '<span class=rs-pact-wait id=rs-pact-usage-wait hidden aria-hidden=true><span class=rs-pact-swirl></span><span>romp</span>' +
@@ -2172,8 +2172,8 @@ function initGear(post, opts) {
   // change (its renderRows calls window.__rompUsageAct below), so the line never outlives the readings it describes.
   // A read that failed is not a read that found nothing (romp-manager's ruling after PR 976's round 1, as for the shell that
   // cannot be asked above): where the shell holds no reading and its last read of them failed (__rompUsageFailed: an error
-  // status or no answer), Usage is disabled with its other line, Couldn't load, and never says No reading yet. With a reading,
-  // Usage opens the panel over it whatever the last read did, so neither line shows.
+  // status, no answer, or none before the pull's bound), Usage is disabled with its other line, Couldn't load, and never says
+  // No reading yet. With a reading, Usage opens the panel over it whatever the last read did, so neither line shows.
   var usageWait = 0, usageSeq = 0;   // the opening's pull in flight: its number, 0 when none is
   function usageAct() {
     var b = document.getElementById('rs-pact-usage'), none = document.getElementById('rs-pact-usage-none'),
@@ -2203,7 +2203,8 @@ function initGear(post, opts) {
   }
   // the opening's ask: the shell's pull (__rompUsagePull, kernel _LANDING_USAGE_JS, the fetch the panel's opener runs), the
   // loader up until its promise settles either way, then the answer; a later ask (the card closed and opened again) outdates an
-  // earlier one, whose settling then changes nothing. A shell without the pull is asked at once, as before.
+  // earlier one, whose settling then changes nothing. The shell's pull carries a bounded abort (10 s, the kernel says why), so
+  // a kernel that never answers ends the loader too, in Couldn't load. A shell without the pull is asked at once, as before.
   function usagePull() {
     var w = null, ask = null;
     try { w = window.parent; if (w !== window && typeof w.__rompUsagePull === 'function') ask = w.__rompUsagePull; } catch (e) { ask = null; }

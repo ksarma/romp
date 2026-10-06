@@ -71659,8 +71659,17 @@ window.__rompUsageFailed=function(){return READ_FAILED;};
 // extra6-1): the card calls this at each opening (gear.js usagePull) and shows the romp loader on Usage until the promise
 // settles, then asks __rompUsageReading and __rompUsageFailed. It runs the script's own fetch of the readings directly, the
 // one the panel's opener runs, never pull(), which returns at once while a pull it started is in flight and would leave the
-// card on the answer before. A pull whose answer the fetch reads writes LAST through renderRows, which tells the card
-window.__rompUsagePull=function(){return pullFleet();};
+// card on the answer before. A pull whose answer the fetch reads writes LAST through renderRows, which tells the card. The
+// card's pull carries a bounded abort, so the loader ends on an event even when the kernel never answers (ui/CLAUDE.md's
+// waiting rule: a backstop so the wait can never trap the user; romp-manager's ruling after PR 976's round 1). 10 s: the
+// kernel answers /usage/fleet from usage.json and the tunnel supervisor's cached readings, dialing nothing, so an answer takes
+// well under a second even over a phone's network, and a person looking at the card then sees why Usage is greyed out
+// (Couldn't load) within seconds rather than after the 20 s the spend panel allows its heavier read. The abort rejects the
+// fetch, which pullFleet's failed path takes like any request with no answer. window.__rompUsagePullMs, where set, replaces
+// the 10 s (tests/test_mtabs_fit_served.py holds a pull unanswered under a shorter one), as __rompSpendTimeoutMs does for the
+// spend panel. An engine without AbortSignal.timeout (Safari before 16) runs the pull without the bound, as before it
+window.__rompUsagePull=function(){var ms=(window.__rompUsagePullMs|0)||10000;
+return pullFleet((typeof AbortSignal!=='undefined'&&typeof AbortSignal.timeout==='function')?AbortSignal.timeout(ms):null);};
 // the API-health dot sits inside this cell (T301): a pointer arriving on the DOT gets the dot's own tip, not this one
 el.addEventListener('mouseenter',function(ev){var c=document.getElementById('rail-api');
 if(c&&ev&&typeof ev.clientX==='number'){var at=document.elementFromPoint(ev.clientX,ev.clientY);if(at&&(at===c||c.contains(at)))return;}showTip(ev);});
@@ -71681,11 +71690,11 @@ var _ruBusy=false;
 // /usage/fleet is /usage plus one row per OTHER Claude account in the fleet (the remote readings come from
 // the tunnel supervisor's own cached poll, so this never dials anything). It collapses to a single row \u2014
 // today's exact rendering \u2014 whenever every machine is signed into the same login.
-// READ_FAILED (__rompUsageFailed above) says how the read ended, set before renderRows tells the settings card, and on a failure
-// the card is told here, since no renderRows runs; the failure still rejects, so pull() and the panel's opener take their failed
-// paths as before
-function pullFleet(){var ok=false;
-return fetch('/usage/fleet',{cache:'no-store'}).then(function(r){ok=r.ok;return r.ok?r.json():null;})
+// sig, where given, is the abort signal the fetch carries (__rompUsagePull's bound); READ_FAILED (__rompUsageFailed above) says
+// how the read ended, set before renderRows tells the settings card, and on a failure the card is told here, since no renderRows
+// runs; the failure still rejects, so pull() and the panel's opener take their failed paths as before
+function pullFleet(sig){var ok=false;
+return fetch('/usage/fleet',sig?{cache:'no-store',signal:sig}:{cache:'no-store'}).then(function(r){ok=r.ok;return r.ok?r.json():null;})
 .then(function(d){READ_FAILED=!ok;var rows=(d&&d.rows)||[];SELF=(d&&d.host)||SELF;
 var local=rows.length?rows[0].usage:null;
 notices(local);renderRows(rows,SELF);},function(e){READ_FAILED=true;cardTell();throw e;});}

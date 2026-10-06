@@ -62,13 +62,27 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    button), and its sub-line under the name in the card's 11px note size and muted text, left unfaded so the reason reads */
 #rsettings .rs-pact:disabled { cursor: default; color: var(--text-faint, #6e7681); }
 #rsettings .rs-pact:disabled svg { opacity: .4; }
-#rsettings .rs-pact-txt { display: flex; flex-direction: column; align-items: flex-start; }
+/* Usage keeps one box in every state, so the row under the title, and the tabs under it, never move when the opening's pull
+   ends (romp-manager's ruling after PR 976's round 1: the loader takes the row's final height). Its words are a grid of two
+   lines: the sub-lines (No reading yet, Couldn't load, the loader) share the second line and all stay laid out there, the
+   ones not shown invisible (their [hidden] rules below), so the words are as wide as the widest of them in every state and a
+   row too narrow for Usage beside Remote kernels wraps the same way whichever shows; a no-break space holds the first line at
+   the name's size, and the name spans both lines, centred beside the glyph where no sub-line shows (Usage enabled) and on the
+   first line over the sub-line where one does (Usage disabled, in each of the three). The box is the same by construction,
+   the placeholder laying out as the name does and the sub-lines as themselves, not by a figure kept in step */
+#rsettings .rs-pact-txt { display: grid; justify-items: start; }
+#rsettings .rs-pact-txt::before { content: "\a0"; grid-area: 1 / 1; }
+#rsettings .rs-pact-txt > * { grid-area: 2 / 1; }
+#rsettings .rs-pact-txt > .rs-pact-name { grid-area: 1 / 1 / 3 / 2; align-self: center; }
+#rsettings .rs-pact:disabled .rs-pact-name { align-self: start; }
 #rsettings .rs-pact-none { font-size: 11px; line-height: 1.35; color: var(--text-muted, #9aa0a6); }
+#rsettings .rs-pact-none[hidden] { display: block; visibility: hidden; }
 /* ...and in the sub-line's place while the card asks the shell for a fresh reading (gear.js usagePull, PR 976's round 1): the
    romp loader, per the waiting rule (ui/CLAUDE.md), the swirl, the wordmark and three pulsing accent dots, at the sub-line's
    size and colour; the keyframes are feed.css's own for its loaders (fask-swirl-spin, fileview-pulse), which this page loads */
 #rsettings .rs-pact-wait { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1.35; color: var(--text-muted, #9aa0a6); }
-#rsettings .rs-pact-wait[hidden] { display: none; }
+#rsettings .rs-pact-wait[hidden] { visibility: hidden; }
+#rsettings .rs-pact-wait[hidden] > * { animation: none; }   /* laid out, unseen: nothing to animate */
 #rsettings .rs-pact-swirl { width: 11px; height: 11px; flex: none; background: url(../media/romp-swirl-glyph.svg) center / contain no-repeat;
   animation: fask-swirl-spin 7s linear infinite; }
 #rsettings .rs-pact-dot { width: 3px; height: 3px; flex: none; border-radius: 50%; background: var(--accent, #9cd2ff);

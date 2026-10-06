@@ -651,7 +651,10 @@ class Route(unittest.TestCase):
         self.assertEqual(status, 403, "a cross-site page's cookie is refused")
         self.assertIn("fetchDoc(h?'/remote/'+encodeURIComponent(h)+'/api-health':'/api-health')", JS)
         self.assertIn("fetch(u,{cache:'no-store'})", JS)
-        self.assertIn("fetch('/usage/fleet',{cache:'no-store'})", km._LANDING_USAGE_JS, "the same shape as the shell's other read")
+        # the settings card's pull passes an abort signal (__rompUsagePull's bound, PR 976), which sends no header: both of the
+        # fetch's option sets keep cache no-store and the default credentials
+        self.assertIn("fetch('/usage/fleet',sig?{cache:'no-store',signal:sig}:{cache:'no-store'})", km._LANDING_USAGE_JS,
+                      "the same shape as the shell's other read")
 
     def test_a_missing_backend_is_a_loud_503_that_the_section_shows_as_its_failure_line(self):
         km._sdk = lambda: None
