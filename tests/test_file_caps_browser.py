@@ -60,6 +60,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -97,13 +98,15 @@ def _pdf():
 
 
 # The shared head of every driver: the browser, the config, and the helpers each scene uses. A driver reports one
-# RESULT line of booleans, statuses and lengths; no credential value leaves the browser or this process.
+# record of booleans, statuses and lengths, through tests/lab_result.cjs (the record to the drive's result file, one short
+# RESULT: line naming it); no credential value leaves the browser or this process.
 HEAD = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const pw = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await pw[cfg.engine].launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -210,7 +213,7 @@ await page.waitForTimeout(300);
 out.sockets = sockets.length;
 out.socketsCarryKey = sockets.every((u) => new URL(u).searchParams.get("k") === key);
 out.files = files;
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -259,7 +262,7 @@ await pa.waitForURL((u) => new URL(u).pathname === "/", { timeout: cfg.deadline 
 await pa.evaluate((s) => localStorage.removeItem(s), slotA);
 await pa.goto(cfg.origin + "/chat");
 out.noKeyHop = await waitLogin(pa);
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -285,7 +288,7 @@ for (let i = 0; i < cfg.rounds; i++) {
   await ctx.close();
 }
 out.runs = runs;
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -387,7 +390,7 @@ out.runs = runs;
   out.planted = r;
   await ctx.close();
 }
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -475,7 +478,7 @@ const watch = (ctx) => {
   out.another = r;
   await ctx.close();
 }
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -524,7 +527,7 @@ await w.goto(cfg.origin + "/waiting");
 await w.waitForSelector("a.wt-link", { timeout: cfg.deadline }).catch(() => {});
 out.waitingText = await open(w, "a.url-link:not(.wt-link)");
 out.waitingChip = await open(w, "a.wt-link");
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -622,9 +625,12 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
 
     def _drive(self, src, **extra):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = dict({"origin": "http://127.0.0.1:%d" % self.port, "token": self.token, "sid": SID, "deadline": 30000,
+                     "engine": ENGINE}, **extra)
+        tgt = lab_result.target(self.lab, self._testMethodName)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump(dict({"origin": "http://127.0.0.1:%d" % self.port, "token": self.token, "sid": SID, "deadline": 30000,
-                            "engine": ENGINE}, **extra), f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(src)
@@ -637,13 +643,19 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         mask = lambda s: s.replace(self.token, "<token>")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + mask(p.stdout[-3000:] + p.stderr[-3000:]) + "\nkernel:\n" + self._klog_tail())
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + mask(p.stdout[-3000:]))
-        self.assertNotIn(self.token, line, "the driver's report carries no credential")
+        why = None   # the reader's refusal carries both streams' tails: masked, and raised outside the handler so no unmasked copy chains on
+        try:
+            r = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            why = mask(str(e))
+        if why is not None:
+            self.fail(why)
+        report = json.dumps(r, separators=(",", ":"), ensure_ascii=False)
+        self.assertNotIn(self.token, report, "the driver's report carries no credential")
         if os.environ.get("FILE_CAPS_REPORT"):     # a directory: each scene's report (booleans, statuses, lengths) for the record
             with open(os.path.join(os.environ["FILE_CAPS_REPORT"], ENGINE + "-" + self._testMethodName + ".json"), "w") as f:
-                f.write(line[len("RESULT:"):] + "\n")
-        return json.loads(line[len("RESULT:"):])
+                f.write(report + "\n")
+        return r
 
     def test_a_signed_in_page_loads_its_images_files_downloads_and_sockets(self):
         r = self._drive(SIGNED_IN)

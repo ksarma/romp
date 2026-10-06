@@ -52,6 +52,7 @@ the notes-api demo world, placeholder uuids, host TESTHOST)."""
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -80,7 +81,8 @@ def svg(w, h, fill):
     return '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"><rect width="%d" height="%d" fill="%s"/></svg>\n' % (w, h, w, h, fill)
 
 
-# The roads, in one page's life. The driver reports one RESULT line of booleans, statuses and counts.
+# The roads, in one page's life. The driver reports one record of booleans, statuses and counts, through tests/lab_result.cjs
+# (loaded in fc.HEAD; the record to the drive's result file, one short RESULT: line naming it).
 DRIVER = fc.HEAD + r"""
 const ctx = await browser.newContext(VIEW);
 const page = await ctx.newPage();
@@ -240,7 +242,7 @@ out.refused = answered.filter((f) => f.status === 401 || f.status === 403).map((
 out.imagesWithoutCap = asked.filter((f) => f.kind === "image" && !f.cap);
 out.images = asked.filter((f) => f.kind === "image").length;
 out.errors = errors;
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -320,11 +322,14 @@ class SvgPictureUnderThePageKey(unittest.TestCase):
 
     def _drive(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"base": "http://127.0.0.1:%d" % self.port, "secret": self.secret, "sid": SID, "deadline": 30000, "short": 5000,
+                "engine": "chromium", "diagram": self.diagram, "late": self.late, "lateNote": self.late_note,
+                "lateSvg": svg(30, 20, "#2a8a4a"), "svgB": svg(50, 30, "#c83c3c"), "svgC": svg(60, 30, "#8a2ac8"),
+                "svgBroken": '<svg xmlns="http://www.w3.org/2000/svg" width="50" height="30"><rect width="50"'}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py); fc.HEAD loads the helper
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"base": "http://127.0.0.1:%d" % self.port, "secret": self.secret, "sid": SID, "deadline": 30000, "short": 5000,
-                       "engine": "chromium", "diagram": self.diagram, "late": self.late, "lateNote": self.late_note,
-                       "lateSvg": svg(30, 20, "#2a8a4a"), "svgB": svg(50, 30, "#c83c3c"), "svgC": svg(60, 30, "#8a2ac8"),
-                       "svgBroken": '<svg xmlns="http://www.w3.org/2000/svg" width="50" height="30"><rect width="50"'}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -335,13 +340,19 @@ class SvgPictureUnderThePageKey(unittest.TestCase):
             raise unittest.SkipTest(SKIP_BROWSER)
         mask = lambda s: s.replace(self.secret, "<secret>")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + mask(p.stdout[-3000:] + p.stderr[-3000:]) + "\nkernel:\n" + self._klog_tail())
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + mask(p.stdout[-3000:]))
-        self.assertNotIn(self.secret, line, "the driver's report carries no credential")
+        why = None   # the reader's refusal carries both streams' tails: masked, and raised outside the handler so no unmasked copy chains on
+        try:
+            r = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            why = mask(str(e))
+        if why is not None:
+            self.fail(why)
+        report = json.dumps(r, separators=(",", ":"), ensure_ascii=False)
+        self.assertNotIn(self.secret, report, "the driver's report carries no credential")
         if os.environ.get("SVG_CAPS_REPORT"):     # a directory: the report (booleans, statuses, counts) for the record
             with open(os.path.join(os.environ["SVG_CAPS_REPORT"], "svg-picture-caps.json"), "w") as f:
-                f.write(line[len("RESULT:"):] + "\n")
-        return json.loads(line[len("RESULT:"):])
+                f.write(report + "\n")
+        return r
 
     def _on_address(self, pc, road, v=False):
         """The property on one road: the picture is there, its src is this page's own /file address and never a blob: or data:
