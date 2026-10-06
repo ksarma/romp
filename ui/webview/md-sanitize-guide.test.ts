@@ -18,15 +18,17 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const GUIDE = path.resolve(process.cwd(), "..", "docs", "guide.md");
+// The fork's paragraph moved out of the guide's Files section into docs/reference.md's "### A file's own HTML" (merged
+// there with the project's copy of the same paragraph) when the front pages became the project's (CLAUDE.md "The
+// documentation front pages"); the clauses are read from that section's paragraph.
+const REF = path.resolve(process.cwd(), "..", "docs", "reference.md");
 
-/** The "A file's own HTML" paragraph of the guide's Files section, split into its sentences and clauses. */
+/** The "A file's own HTML" paragraph (docs/reference.md, the section of that name), split into its sentences and clauses. */
 function htmlParagraphClauses(): string[] {
-  const guide = fs.readFileSync(GUIDE, "utf8");
-  const files = guide.split("\n### Files\n")[1].split("\n## ")[0];
-  const from = files.indexOf("**A file's own HTML.**");
-  assert.ok(from >= 0, "the Files section has the paragraph");
-  const rest = files.slice(from);
+  const ref = fs.readFileSync(REF, "utf8");
+  const head = ref.indexOf("\n### A file's own HTML\n");
+  assert.ok(head >= 0, "the reference has the section");
+  const rest = ref.slice(ref.indexOf("\n\n", head + 1) + 2);
   const end = rest.indexOf("\n\n");
   const para = (end < 0 ? rest : rest.slice(0, end)).replace(/\n/g, " ");
   return para.split(/[;.]\s+/);

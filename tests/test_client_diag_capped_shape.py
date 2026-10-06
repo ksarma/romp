@@ -33,11 +33,16 @@ with its keys read, a scalar, or a value built elsewhere, which the census canno
 exists for its writer. Every writer of an object, or of a value built elsewhere, must have a DRIVE below, keyed on its
 file and function, that runs it with nothing to drop and with keys dropped; a writer without one fails the census
 naming its file, line, function and shape. A scalar cannot carry a dropped list, so a scalar-valued site is classified
-and owes no drive (ui/webview/anchor-map.ts's TRIM_STATS counter is one); a docstring is prose whatever it spells,
+and owes no drive (ui/webview/anchor-map.ts's TRIM_STATS counter is one). A value built elsewhere that is a scalar the
+census cannot read as one is classified the same way only where SCALAR_SITES below keys its exact site (the file, the
+function as the census names it, the expression written) and a proof shows the value is a scalar. The one population
+today is the Artifacts pane's listing flag (the project's PR 1911): listArtifacts answers `capped` true when the listing
+bound at ARTIFACTS_MAX entries, a socket reply and never a client-diag row; its kernel site is proven by a run of the
+writer under the bound and over it, its page site by its double negation. A docstring is prose whatever it spells,
 and a message string that says a thing is capped has no script shape, so neither is a site. The marker's own shape (`true` beside `bytes`) is the allowlist module's pin, not this one's: this
 module holds every emitted `capped` to the one property that a capped object names at least one key.
 
-Synthetic fixtures only: a placeholder dashboard id, invented figures."""
+Synthetic fixtures only: a placeholder dashboard id and session id, invented figures and paths."""
 import ast
 import contextlib
 import functools
@@ -399,6 +404,58 @@ def drive_client_diag_line():
 
 DRIVES = {KERNEL_WRITER: drive_client_diag_line}
 
+
+# ---- the scalars the census cannot read as one: classified per site, each with its proof -------------------------------
+
+LISTING_SID = "11111111-2222-3333-4444-666666666666"
+
+
+def prove_artifacts_list():
+    """kernel/kernel.py _artifacts_list, the listArtifacts answer, run with its doors stubbed (the one-sid row, the cached parse,
+    the walk's mentions) so that _artifacts_items, which computes the flag, runs for real: (label, the `capped` the body carried,
+    the error) for a listing under ARTIFACTS_MAX and one over it. The paths are invented and none exists, so each entry is
+    marked missing and no file is read."""
+    names = ("_session_row", "_parse_cached", "_artifacts_mentions")
+    saved = {n: getattr(km, n) for n in names}
+    out = []
+    try:
+        km._session_row = lambda sid, now=None: {"sid": sid, "path": "/nonexistent/transcript.jsonl"} if sid == LISTING_SID else None
+        km._parse_cached = lambda path: {"turns": []}
+        for label, n in (("a listing under the bound", 1), ("a listing over the bound", km.ARTIFACTS_MAX + 1)):
+            km._artifacts_mentions = lambda sid, turns, link_cache=None, n=n: [("/nonexistent/f%04d.md" % i, 1700000000 + i, "write")
+                                                                               for i in range(n)]
+            body, err = km._artifacts_list(LISTING_SID, 1700000000)
+            out.append((label, (body or {}).get(MEMBER), err))
+    finally:
+        for n, f in saved.items():
+            setattr(km, n, f)
+    return out
+
+
+# One key per site: (file, the function as the census names it, the expression written). The value is the proof that what the
+# site writes is a scalar: a function that runs the writer and returns what it wrote, or None where the expression is itself the
+# proof. Keyed on the expression, so a site that changes what it writes is refused again until its proof is redone.
+SCALAR_SITES = {
+    # the Artifacts pane's listing flag (the project's PR 1911): _artifacts_items computes it as len(items) > ARTIFACTS_MAX
+    ("kernel/kernel.py", "_artifacts_list", "capped"): prove_artifacts_list,
+    # the page's copy of the same flag, read from the artifactsListing frame (the census names the message handler's
+    # `if (m.type === "artifactsListing") {` arm `if`): JavaScript's `!!` yields a boolean whatever its operand holds
+    ("ui/webview/artifacts.ts", "if", "!!m.capped"): None,
+}
+
+
+def scalar_site(s):
+    """The SCALAR_SITES key that classifies site `s`, or None: only a value built elsewhere, at a keyed writer, whose written
+    expression is the keyed one whole (the census's text of a script member's value runs on to the line's end, so the key must
+    end where the member does)."""
+    if s.kind != "built elsewhere":
+        return None
+    for key in SCALAR_SITES:
+        if (s.file, s.function) == key[:2] and re.match(re.escape(key[2]) + r"\s*(?:[,}]|$)", s.detail):
+            return key
+    return None
+
+
 OWED = ("the reader case declined on 2026-09-21 (bin/romp perf client, tests/romp-perf-client.bats: a capped object naming no key is "
         "counted as a shed row and names nothing) is now owed")
 
@@ -410,12 +467,35 @@ class CappedShape(unittest.TestCase):
                                "nothing pins nothing" % MEMBER)
         writers = {s.writer for s in sites}
         self.assertIn(KERNEL_WRITER, writers, "the rig: the census does not see the kernel's writer %s:%s among %s" % (KERNEL_WRITER + (sorted(writers),)))
+        classified = []
         for s in sites:
             if s.kind == "scalar":
                 continue   # a scalar cannot carry a dropped list: classified, no drive owed (anchor-map.ts's TRIM_STATS counter is one)
+            key = scalar_site(s)
+            if key is not None:
+                classified.append(key)   # a scalar the census cannot read as one, keyed on its site: its proof runs below
+                continue
             self.assertIn(s.writer, DRIVES, "%r writes a `%s` member: a writer this pin has no drive for. Add a drive to DRIVES keyed %r "
-                                            "that runs it with nothing to drop and with keys dropped; if it can emit capped {bytes, "
-                                            "dropped: []} (bytes with an empty dropped list), %s" % (s, MEMBER, s.writer, OWED))
+                                            "that runs it with nothing to drop and with keys dropped (or, for a scalar the census cannot "
+                                            "read as one, a SCALAR_SITES entry keyed on the site with its proof); if it can emit capped "
+                                            "{bytes, dropped: []} (bytes with an empty dropped list), %s" % (s, MEMBER, s.writer, OWED))
+        for key in sorted(SCALAR_SITES):
+            self.assertIn(key, classified, "a classification whose site the census no longer finds: %s; the site moved, was renamed or "
+                                           "writes another expression, so key it on its new form and redo its proof" % (key,))
+            self.assertEqual(classified.count(key), 1, "%s classifies %d sites: a key names one site, so another write of the same "
+                                                       "expression owes its own key and proof" % (key, classified.count(key)))
+            proof = SCALAR_SITES[key]
+            if proof is None:
+                self.assertTrue(key[2].startswith("!!"), "%s: a classification without a run must write a double negation, a boolean "
+                                                         "by the operator" % (key,))
+                continue
+            reached = set()
+            for label, value, err in proof():
+                self.assertIs(type(value), bool, "%s %s carried on '%s' a `%s` of %r (error %r), not a boolean: its classification in "
+                                                 "SCALAR_SITES no longer holds, so the site owes the drive the census asks of a value "
+                                                 "built elsewhere" % (key[0], key[1], label, MEMBER, value, err))
+                reached.add(value)
+            self.assertEqual(reached, {False, True}, "the rig: the proof of %s %s reached %r, not both values" % (key[0], key[1], sorted(reached)))
         objects, markers, absent = 0, 0, 0   # what the drives REACHED: the rig below reads these, not the drives' labels
         for key, drive in sorted(DRIVES.items()):
             self.assertIn(key, writers, "a drive whose writer the census no longer finds: %s; the writer moved or was renamed, so key the "

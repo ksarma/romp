@@ -60,12 +60,29 @@ markdown_extensions:
 plugins:
   - search
 
+# Contributor process stays out of the site's navigation: pr-tiers.md is for
+# people sending pull requests, not for people using Romp, and the repo's own
+# CLAUDE.md and the tier check reach it by path. It still builds, and still
+# answers at /pr-tiers/.
+# a page in neither nav nor not_in_nav is an ORPHAN and the strict build fails on it (2026-09-21): MkDocs reports one at
+# info by default, which strict mode does not promote, so the level is raised here; a page meant to stay out of the nav is
+# listed below
+# The fork's own pages stay out of the nav the same way: batching.md is the fork's PR process, and adr/ holds decision records.
+validation:
+  nav:
+    omitted_files: warn
+not_in_nav: |
+  pr-tiers.md
+  codex.md
+  batching.md
+  adr/0001-user-todos-authority-tier.md
+  adr/0002-file-comments-in-the-track-changents-sidecar.md
+
 nav:
   - Overview: index.md
   - Install: install.md
   - Guide: guide.md
   - Reference: reference.md
-  - PR tiers: pr-tiers.md
   - Internals:
       - How Romp works: architecture.md
       - Judges: judges.md

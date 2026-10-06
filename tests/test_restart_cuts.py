@@ -676,14 +676,16 @@ class UnrequestedSignal(unittest.TestCase):
             self.assertEqual(km._parked_quiet_deploy("1111111", now=t), t - 5, "the drift stand-down still holds")
 
     def test_a_sibling_born_after_the_park_files_the_same_row_for_the_stop_of_itself(self):
-        # the same park and stop/stop note read by a kernel started AFTER the park (a dynamic kernel or a
-        # stateDir-less aux under this root; its start sits between the two rows). To this kernel's walk the
+        # the same park and stop/stop note read by a kernel started AFTER the park, whose start sits between
+        # the two rows: the successor of the kernel that filed it, since the manager starts no second kernel on
+        # one root (another profile can follow on the same root once the first stops; the walk tells the
+        # note's kernel by its pid and does not read its `kernel` field). To this kernel's walk the
         # park is a predecessor's and the note answers, so the cut row names the note, as it did before the
         # change; the kernel that filed the park files the same row now (the case above), so which kernel
         # the manager stopped no longer decides the record, and the park stays visible to the one that filed it
         t = int(time.time())
         park = {"t": t - 5, "action": "main-converge", "tag": "restart", "when": "quiet", "sha": "1111111"}
-        note = {"t": t, "action": "manager-sigterm", "kernel": "k29900", "pid": os.getpid(),
+        note = {"t": t, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(),
                 "reason": "stop", "trigger": "stop"}
         self.AUDIT.write_text(json.dumps(park) + "\n" + json.dumps(note) + "\n")
         with mock.patch.object(km, "_STARTED", t - 3), \
@@ -1169,15 +1171,18 @@ class RequestOnRecord(unittest.TestCase):
         self.assertEqual(self._reason(now=1080, started=1011), "", "nor is one from before this kernel started")
 
     def test_a_quiet_request_survives_a_stop_of_one_other_kernel(self):
-        # POST /stop naming one kernel (a dynamic kernel under this root has no root of its own) writes a
-        # `stop` note with trigger `stop` for that pid and leaves the manager's park armed; the row cannot be
+        # POST /stop naming one kernel writes a `stop` note with trigger `stop` for that pid under the root it
+        # serves (here another pid on this root, which is this kernel's predecessor or successor, since the
+        # manager starts no second kernel on one root; another profile can follow on the same root once the
+        # first stops, and the walk tells the note's kernel by its pid and does not read its `kernel` field)
+        # and leaves the manager's park armed; the row cannot be
         # told from the stop that took every kernel down, so the park stays on record, and so does a stray
         # kill of the predecessor with the manager alive. The held converge self-heals at the backstop bound;
         # a released one would cut the turns the quiet window was to spare. The row above settles nothing
         # wherever it sits: a note or a verdict is classified before the 90 s window and the start bound end
         # the walk, so one older than the window (now=1101) or older than this kernel (started=1011) is
         # passed over and the park beneath it is still read
-        for above in ({"t": 1010, "action": "manager-sigterm", "kernel": "k29900", "pid": os.getpid() + 100000,
+        for above in ({"t": 1010, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid() + 100000,
                        "reason": "stop", "trigger": "stop"},
                       {"t": 1010, "action": "signal", "pid": os.getpid() + 100000, "managerStopped": False,
                        "reason": km.SIGNAL_REASON_UNREQUESTED}):
@@ -1196,7 +1201,8 @@ class RequestOnRecord(unittest.TestCase):
         # settles a PREDECESSOR's park only, so the row stays this kernel's own request inside the window
         # (now=1080, as before) and past it (now=1101, where a note older than 90 s used to end the walk
         # and the same park read as nothing on record). The same rows for a kernel started after the park
-        # are a predecessor's park settled by the restart above it, at either age
+        # are a predecessor's park settled by the restart above it, at either age. The walk tells the note's
+        # kernel by its pid and does not read its `kernel` field, so the id written there is not read
         park = {"t": 1000, "action": "main-converge", "tag": "restart", "when": "quiet", "sha": "1111111"}
         note = {"t": 1010, "action": "manager-sigterm", "kernel": "k29900", "pid": os.getpid() + 100000,
                 "reason": "restart", "trigger": "restart"}

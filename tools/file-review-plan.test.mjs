@@ -287,7 +287,8 @@ const slice2 = section('### Slice 2: the session\'s changes as accept/reject car
 const surface = section('### The surface, in its Slice 2 state', '### Commenting from either view, and in every format');
 const styles = read('ui', 'webview', 'styles.css');
 const feed = read('ui', 'webview', 'feed.css');
-const guide = read('docs', 'guide.md');
+// the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front pages are the project's, CLAUDE.md "The documentation front pages")
+const guide = read('docs', 'reference.md');
 
 test('the margin-layout note stands beside the Slice 2 build note and names what was asked and what was built', () => {
   assert.ok(slice2.includes('The margin-layout follow-on (2026-09-07), panel side.'), 'the note, in the Slice 2 section');
@@ -337,7 +338,7 @@ test('the note\'s fold statement is the sheets\': the row\'s computed flex-direc
 
 test('the UX bullet on progressive disclosure carries the margin clause, the guide says the same, and the Tests section names the three modules', () => {
   assert.ok(surface.includes('beside the body each card sits level with the passage it is about and scrolls with the text, so the margin itself is the glance (the margin-layout follow-on, under Slice 2)'));
-  const files = guide.slice(guide.indexOf('### Files')).replace(/\s+/g, ' ');
+  const files = guide.slice(guide.indexOf('\n## The Files pane\n')).replace(/\s+/g, ' ');
   assert.ok(files.includes('opens a panel beside the file, where each card sits level with the passage it is about and scrolls with the text; when the column is narrow the panel drops below the file and lists the cards instead.'));
   assert.ok(tests.includes('`ui/webview/card-layout.test.ts`, `file-comments-margin.test.ts` and `file-comments-margin-browser.test.ts` (the margin-layout follow-on, 2026-09-07)'));
   for (const f of ['card-layout.test.ts', 'file-comments-margin.test.ts', 'file-comments-margin-browser.test.ts']) {

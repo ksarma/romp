@@ -1220,6 +1220,103 @@ test("Rendered: a failed figure's label at the box's TOP level (an html block wh
   }
 });
 
+// ── Rendered: a figure's "Open the picture" control is a companion, left out with the label (the link-navigation follow-on's L3) ──
+/** The control file-view.ts places after a loaded figure (decideFigureControl): `button.fv-figopen[data-fv-figopen]`, the img's
+ *  next sibling in the img's own parent, holding the glyph's clone (an svg) and no text of the note's; with `label`, a text node
+ *  of its own after the glyph, the label-bearing variant CONTROL_CLASSES' entry is for (the real control has none). */
+function figureOpenControl(img: FakeElement, label?: string): FakeElement {
+  const doc = img.ownerDocument, parent = img.parentNode as FakeElement;
+  const b = doc.createElement("button"); b.setAttribute("class", "fileview-btn fileview-icon fv-figopen"); b.setAttribute("data-fv-figopen", ""); b.setAttribute("type", "button"); b.setAttribute("title", "Open the picture");
+  const svg = doc.createElement("svg"); svg.setAttribute("viewBox", "0 0 16 16"); const path = doc.createElement("path"); path.setAttribute("d", "M2 9V2h7"); svg.appendChild(path); b.appendChild(svg);
+  if (label !== undefined) b.appendChild(doc.createTextNode(label));
+  const i = parent.childNodes.indexOf(img);
+  parent.insertBefore(b, parent.childNodes[i + 1] ?? null);
+  return b;
+}
+
+test("Rendered: a figure's Open the picture control (button.fv-figopen, the img's next sibling, a glyph with no text) at the box's TOP level is no block's node, as the failed figure's label is: the img's html block owns its img alone, or the panel's wrap around it, the control answers no block, the paragraph after pairs and paints, the README shape owns its img and its div with the control between, and beside prose the caption still maps (the file review's round 7, tests-2: this had a source-text pin alone under a name claiming the executed property)", () => {
+  const tags = (els: Element[]): string[] => els.map((e) => ((e as unknown as FakeElement).getAttribute("class") || "").split(" ").includes("fc-imgwrap") ? "IMG" : e.tagName);
+  const wrapImg = (img: FakeElement): FakeElement => {
+    const doc = img.ownerDocument, parent = img.parentNode as FakeElement;
+    const wrap = doc.createElement("span"); wrap.setAttribute("class", "fc-imgwrap");
+    parent.insertBefore(wrap, img); parent.removeChild(img); wrap.appendChild(img);
+    return wrap;
+  };
+  const src = "# Report\n\n<img src=\"figs/plot.png\" alt=\"fig\">\n\nAfter the figure.\n";
+  const spans = sourceBlockSpans(src);
+  assert.equal(src.slice(spans[1].start, spans[1].end), "<img src=\"figs/plot.png\" alt=\"fig\">", "block 1 is the img's html block");
+  for (const panel of [false, true]) {
+    const what = panel ? "panel open (the wrap around the img)" : "panel closed";
+    const { box } = buildRendered(src);
+    const img = firstEl(box, "IMG");
+    assert.equal(img.parentNode, box, what + ": the html block's img is a top-level node");
+    assert.deepEqual(tags(renderedBlockElements(El(box), src, 1)), ["IMG"], what + ": before any control the block owns its img");
+    const ctrl = figureOpenControl(img);
+    assert.equal(ctrl.parentNode, box, what + ": the control is a top-level node too");
+    assert.equal(box.childNodes.indexOf(ctrl), box.childNodes.indexOf(img) + 1, what + ": the img's next sibling");
+    assert.equal(allText(ctrl, null).length, 0, what + ": the control holds no text node (a glyph)");
+    if (panel) { const wrap = wrapImg(img); assert.equal(box.childNodes.indexOf(ctrl), box.childNodes.indexOf(wrap) + 1, what + ": the control follows the wrap"); }
+    assert.deepEqual(tags(renderedBlockElements(El(box), src, 1)), ["IMG"], what + ": with the control the block owns its img alone (without isFigureCompanion's fv-figopen arm a top-level button is a content node and the block owns [IMG, BUTTON])");
+    assert.equal(renderedBlockIndex(El(box), src, El(ctrl)), -1, what + ": the control is no block's node");
+    const after = firstEl(box, "P");
+    assert.equal(after.textContent, "After the figure.");
+    assert.equal(renderedBlockIndex(El(box), src, El(after)), 2, what + ": the paragraph after pairs");
+    const s2 = src.indexOf("After the figure.");
+    const marks = paintRendered(El(box), src, { start: s2, end: s2 + "After the figure.".length }, "fc-hl") as unknown as FakeElement[] | null;
+    assert.ok(marks && marks.length, what + ": a comment on the paragraph after the figure paints");
+    assert.equal(marks!.map((m) => m.textContent).join(""), "After the figure.");
+    assert.equal(ctrl.parentNode, box, what + ": the control stands where it was");
+  }
+  // the README shape: the img and an unclosed <div align="center"> in one html block, the control between them
+  const src2 = "<img src=\"logo.png\" alt=\"l\">\n<div align=\"center\">\n\n# Head 003\n\nPara 004 echo foxtrot.\n\n</div>\n\nAfter 005 hotel india.\n";
+  const { box: box2 } = buildRendered(src2);
+  const img2 = firstEl(box2, "IMG");
+  const div = firstEl(box2, "DIV", 1);
+  const ctrl2 = figureOpenControl(img2);
+  assert.ok(box2.childNodes.indexOf(div) > box2.childNodes.indexOf(ctrl2) && box2.childNodes.indexOf(ctrl2) > box2.childNodes.indexOf(img2), "the control stands between the img and the div");
+  assert.deepEqual(tags(renderedBlockElements(El(box2), src2, 0)), ["IMG", "DIV"], "the html block owns the img and the div, never the control (without the arm: [IMG, BUTTON, DIV])");
+  assert.equal(renderedBlockIndex(El(box2), src2, El(firstEl(div, "H1"))), 1, "the heading nested in the div maps to its block");
+  // inside a paragraph: the control beside the img, the caption maps and paints, the control untouched
+  const caption = "The caption says what the plot showed.";
+  const src3 = "# Report\n\nBefore the figure.\n\n![p95 latency](figs/plot.png) " + caption + "\n\nAfter the figure.\n";
+  const { box: box3 } = buildRendered(src3);
+  const p = firstEl(box3, "P", 1);
+  const img3 = firstEl(p, "IMG");
+  const ctrl3 = figureOpenControl(img3);
+  assert.equal(p.childNodes.indexOf(ctrl3), p.childNodes.indexOf(img3) + 1, "the control is the img's next sibling inside the paragraph");
+  assert.equal(renderedBlockIndex(El(box3), src3, El(p)), 2, "the paragraph is block 2's node");
+  const start = src3.indexOf(caption);
+  const capText = allText(p, null).find((t) => t.data.includes(caption))!;
+  const at = capText.data.indexOf(caption);
+  const r = ok(mapRenderedSelection(sel({ node: capText, offset: at }, { node: capText, offset: at + caption.length }), El(box3), src3), "the caption maps beside the control");
+  assert.deepEqual(r.range, { start, end: start + caption.length }); assert.equal(r.quote, caption);
+  const marks3 = paintRendered(El(box3), src3, { start, end: start + caption.length }, "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(marks3 && marks3.length, "the highlight paints");
+  assert.equal(marks3!.map((m) => m.textContent).join(""), caption);
+  assert.equal(ctrl3.parentNode, p, "the control stands where it was"); assert.equal(ctrl3.childNodes.length, 1);
+});
+
+test("Rendered: the Open the picture control carrying a text node of its own beside the img inside a paragraph: the caption still maps to its own offsets and paints, the control's text skipped as the fence's Copy button's is (the file review's round 8, extra9-1: the executed case of anchor-map.ts's fv-figopen entry, which the glyph-only control above cannot red on; without the entry the walk reads the label as the paragraph's text and refuses the block as not matching the file)", () => {
+  const caption = "The caption says what the plot showed.";
+  const src = "# Report\n\nBefore the figure.\n\n![p95 latency](figs/plot.png) " + caption + "\n\nAfter the figure.\n";
+  const { box } = buildRendered(src);
+  const p = firstEl(box, "P", 1);
+  const img = firstEl(p, "IMG");
+  const ctrl = figureOpenControl(img, "Open");
+  assert.equal(ctrl.textContent, "Open", "the fixture: the control carries a text node");
+  assert.equal(p.childNodes.indexOf(ctrl), p.childNodes.indexOf(img) + 1, "the control is the img's next sibling inside the paragraph");
+  const start = src.indexOf(caption);
+  const capText = allText(p, null).find((t) => t.data.includes(caption))!;
+  const at = capText.data.indexOf(caption);
+  const r = ok(mapRenderedSelection(sel({ node: capText, offset: at }, { node: capText, offset: at + caption.length }), El(box), src), "the caption maps beside the labelled control (without anchor-map.ts's fv-figopen entry: refused, the label counted as the paragraph's text)");
+  assert.deepEqual(r.range, { start, end: start + caption.length }); assert.equal(r.quote, caption);
+  const marks = paintRendered(El(box), src, { start, end: start + caption.length }, "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(marks && marks.length, "the highlight paints");
+  assert.equal(marks!.map((m) => m.textContent).join(""), caption);
+  assert.equal(ctrl.parentNode, p, "the control stands where it was"); assert.equal(ctrl.textContent, "Open", "its text untouched");
+});
+
+
 // ── change marks (Slice 2, contract D4) ────────────────────────────────────────────────────────────
 // The changes are built through the engine's own toHunks over synthetic ops (the notes-api world), so
 // the painter is fed the exact hunk shape the host ships: kind ins | del | sub, curFrom/curTo in

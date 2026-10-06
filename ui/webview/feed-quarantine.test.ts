@@ -50,7 +50,9 @@ test("the decision carries the card's sid so a remote hold's verdict reaches the
 
 test("the decision dialog: read-only body, Approve/Deny, deny step offers a note to the sender", () => {
   assert.match(FEED, /function showQuarantineDialog\(/);
-  const dlg = FEED.slice(FEED.indexOf("function showQuarantineDialog"), FEED.indexOf("function showPickerDialog"));
+  const a = FEED.indexOf("function showQuarantineDialog"), b = FEED.indexOf("function showDenyNoteDialog(", a);
+  assert.ok(a > 0 && b > a, "the fork's decision dialog sits above upstream's deny-note prompt");
+  const dlg = FEED.slice(a, b);
   assert.match(dlg, /document\.body\.appendChild\(overlay\)/);
   // the body is a read-only view, not a textarea (editing was cut)
   assert.match(dlg, /el\("div", "qdlg-view"\)/);
@@ -64,4 +66,28 @@ test("the decision dialog: read-only body, Approve/Deny, deny step offers a note
   // only no-decision exit, and the message stays held
   assert.doesNotMatch(dlg, /"Cancel"/);
   assert.match(dlg, /if \(e\.target === overlay\) overlay\.remove\(\)/);
+});
+
+// Kept from upstream PR 1885's rewrite of this file: the notice action's KIND on the noticeAction wire and the quarantine
+// kind's deny-note prompt, both taken in fold 4 beside the quarantine card above, which this fork keeps (upstream's pins of
+// the card's removal are not taken).
+test("a notice action posts its KIND on the wire, with the stored body; an older frame's route reads as send; only a held-mail Deny takes a click-time input", () => {
+  assert.match(FEED, /actions: \{ label: string; kind\?: string; route\?: string; body: Record<string, unknown> \}\[\];/, "the record: kind, with route for an older frame");
+  assert.match(FEED, /const kind = act\.kind \|\| \(act\.route === "\/send" \? "send" : ""\);/);
+  assert.match(FEED, /vscodeApi\?\.postMessage\(\{ type: "noticeAction", itemId: it\.itemId, sid: it\.sid, kind, body: act\.body, \.\.\.\(input \? \{ input \} : \{\}\) \}\);/,
+    "kind and body, the input member only when the click made one; the sid rides for federation");
+  assert.match(FEED, /if \(kind === "quarantine" && act\.body && \(act\.body as any\)\.verdict === "deny"\) showDenyNoteDialog\(\(note\) => go\(note \? \{ note \} : undefined\)\);\s*\n\s*else go\(\);/);
+  assert.doesNotMatch(FEED, /type: "noticeAction"[^\n]*route:/, "no route on the wire");
+});
+
+test("the deny-note prompt: on document.body, two choices and no Cancel, the backdrop closes without deciding", () => {
+  const dlg = FEED.slice(FEED.indexOf("function showDenyNoteDialog("), FEED.indexOf("function showPickerDialog"));
+  assert.ok(dlg.length > 0 && dlg.length < 3000, "one small function");
+  assert.match(dlg, /document\.body\.appendChild\(overlay\)/);
+  assert.match(dlg, /el\("textarea", "qdlg-text qdlg-feedback"\)/);
+  assert.match(dlg, /withNote\.textContent = "Deny & send note"/); assert.match(dlg, /bare\.textContent = "Deny without note"/);
+  assert.match(dlg, /onDeny\(note \|\| undefined\)/); assert.match(dlg, /bare\.onclick = \(\) => \{ overlay\.remove\(\); onDeny\(undefined\); \};/);
+  assert.doesNotMatch(dlg, /"Cancel"/, "no Cancel button (the user 2026-07-26: approve or deny, nothing else)");
+  assert.match(dlg, /if \(e\.target === overlay\) overlay\.remove\(\)/, "the backdrop is the only no-decision exit");
+  assert.doesNotMatch(dlg, /qdlg-view/, "no read-only body view: the message text is the card's body and the modal's");
 });

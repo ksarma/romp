@@ -229,33 +229,27 @@ class Payload(unittest.TestCase):
         self.assertNotIn('out["bootAt"]', inspect.getsource(km.Handler.do_GET), "the route stamps no second number")
 
 
-_JD_WIRES = ("_LOGIN_AUTH_ENV_FN", "_USAGE_REFRESH_FN", "_DEFAULT_AUTH_FN", "_DEFAULT_LOGIN_FN", "_API_HEALTH_NOTE_FN")
-#   the judge-module names kernel/kernel.py's _sdk_locked assigns (its `jd._..._FN =` lines), the set
-#   _sdk_locked_for_real saves before the call and puts back after it; a wire the kernel adds joins this tuple
-
-
 def _sdk_locked_for_real(recorder):
     """The kernel's _sdk_locked run for REAL, with the backend module it loads swapped for `recorder`: the class the
     construction builds in SdkBackend's place and then wires, the way it wires the live backend. The names the construction
-    reaches for (the module loader, the path check, the catalog cache and refresh, the binary lookup, the boot mark, the
-    problem report) are stubbed for the call and put back; the kernel's singleton slot too, and the FIVE wires the
-    construction sets on the judge module (_JD_WIRES: _LOGIN_AUTH_ENV_FN, _USAGE_REFRESH_FN, _DEFAULT_AUTH_FN,
-    _DEFAULT_LOGIN_FN, _API_HEALTH_NOTE_FN) go back to their SAVED values, never a literal None. That module object is
-    one per process (the loader re-executes a loaded name into the same object, so every kernel copy in the worker
-    shares it): a wire left pointing at this module's kernel copy reached every later test in the worker, and a saved
-    value put back keeps the order of modules out of it. Returns (backend, problems, stderr): what _sdk_locked
-    returned, the problem rows it filed, the text it wrote."""
+    reaches for (the import notice, the module loader, the catalog cache and refresh, the binary lookup, the boot mark, the
+    problem report) are stubbed for the call and put back, and so is the path check the import notice runs, which the
+    stubbed notice never reaches (kept so the case holds if that stub is ever dropped); the kernel's singleton slot and the
+    judge module's five wires too, each to its saved value, never to None (a wire left pointing at this module's kernel copy
+    reaches every later test in the worker). Returns (backend, problems, stderr): what _sdk_locked returned, the problem
+    rows it filed, the text it wrote."""
     fake = types.SimpleNamespace(SdkBackend=recorder, startup_auth_env=lambda *a, **k: {})
     names = ("_sdk_backend", "load_source", "_sdk_import_notice", "_ensure_sdk_on_path", "_model_catalog_boot",
              "_claude_bin", "_mark_boot", "_sdk_problem")
     saved = {n: getattr(km, n) for n in names}
-    saved_jd = {n: getattr(km.jd, n) for n in _JD_WIRES}
+    wires = ("_LOGIN_AUTH_ENV_FN", "_USAGE_REFRESH_FN", "_DEFAULT_AUTH_FN", "_DEFAULT_LOGIN_FN", "_API_HEALTH_NOTE_FN")
+    saved_jd = {w: getattr(km.jd, w) for w in wires}
     problems = []
     try:
         km._sdk_backend = None
         km.load_source = lambda name, path: fake
         km._sdk_import_notice = lambda: True         # the import notice runs before that load; quiet here
-        km._ensure_sdk_on_path = lambda: True
+        km._ensure_sdk_on_path = lambda: True        # behind the import notice: not reached while that is stubbed
         km._model_catalog_boot = lambda _async=True: False   # the boot's one catalog call (T296): stubbed whole
         km._claude_bin = lambda: "/bin/true"
         km._mark_boot = lambda *a, **k: None
@@ -266,8 +260,8 @@ def _sdk_locked_for_real(recorder):
     finally:
         for n in names:
             setattr(km, n, saved[n])
-        for n, v in saved_jd.items():
-            setattr(km.jd, n, v)
+        for w in wires:
+            setattr(km.jd, w, saved_jd[w])
     return be, problems, err.getvalue()
 
 
@@ -493,13 +487,12 @@ class TheBootRoadCall(unittest.TestCase):
     """The construction calls the backend's post_boot_notices ONCE, after it has wired the notice door (on_notice) on the
     backend's class. The constructor's boot echo reseed runs inside __init__, before that door exists, so it PARKS the
     dropped-sends notice cards of the held sends past the age line, and this call is the only road that posts them: with
-    the three lines gone (the getattr, the guard, the call) a stale boot flags the sends and posts nothing, every test
-    green (the 2026-09-17 fold's kernel review, round 2 item 1; the backend's half is tests/test_restart_redelivery_stale.py's
-    TheBootRoad, which calls the method itself). Pinned by execution here, through the real _sdk_locked with a recorder
-    backend that reads the door at call time the way the backend's post_notice resolves it (getattr on the class), and by
-    text in tests/test_notice_card_store.py. No fail-loud backstop in _boot_reconcile: that thread starts inside the
-    constructor and runs beside the kernel's wiring, so a non-empty parked list there is a boot in progress, not a skipped
-    call, and two drainers would race."""
+    the three lines gone (the getattr, the guard, the call) a stale boot flags the sends and posts nothing (the backend's
+    half is tests/test_restart_redelivery_stale.py's TheBootRoad, which calls the method itself). Pinned by execution here,
+    through the real _sdk_locked with a recorder backend that reads the door at call time the way the backend's post_notice
+    resolves it (getattr on the class), and by text in tests/test_notice_card_store.py. No backstop in _boot_reconcile: that
+    thread starts inside the constructor and runs beside the kernel's wiring, so a non-empty parked list there is a boot in
+    progress, not a skipped call, and two drainers would race."""
 
     def test_the_kernel_posts_the_parked_boot_notices_once_after_wiring_the_door(self):
         seen = []
@@ -730,12 +723,19 @@ class Docs(unittest.TestCase):
         self.assertIn("`/version`'s `started` is the whole-second boot time", doc)
         self.assertIn("the payload serves that stamp as `bootAt`, and the kernel log says when it was moved", doc)
 
-    def test_the_guide_tells_the_user_what_the_hover_shows(self):
-        guide = Path(DOCS, "guide.md").read_text()
-        self.assertIn("the history under it", guide)
-        self.assertIn("the last 15 minutes", guide)
-        self.assertIn("A kernel restart shows as its own line there", guide)
-        self.assertIn("every connected kernel", guide)
+    def test_the_docs_tell_the_user_what_the_dot_and_its_hover_show(self):
+        # The guide keeps the dot and how to read it; the hover's contents moved to the reference
+        # with the rest of the interface detail (CLAUDE.md "The documentation front pages"), so the
+        # pin follows the text: the one-line mention here, every fact it defers to there.
+        guide = re.sub(r"\s+", " ", Path(DOCS, "guide.md").read_text())
+        self.assertIn("The bottom bar carries a small dot for how the API is treating your sessions", guide)
+        self.assertIn("red while errors are being met on any connected machine, gray when nothing is calling it", guide)
+        doc = re.sub(r"\s+", " ", Path(DOCS, "reference.md").read_text())
+        self.assertIn("Under the lines, the **History** draws one stacked histogram per machine", doc)
+        self.assertIn("the label gray when no kernel has API traffic in the windows", doc)
+        self.assertIn("(`60`, `300`, `900` seconds, ending at `asOf`)", doc, "the windows the reading counts, 15 minutes the longest")
+        self.assertIn("a `kernel restarted` divider is inserted", doc, "a restart reads as its own line")
+        self.assertIn("The signal covers every connected kernel, not only the one serving the page.", doc)
 
     def test_the_reference_names_the_three_failed_reads(self):
         self.assertIn("A read that fails (a non-2xx, no answer, or an answer without the signal's shape) shows one line "

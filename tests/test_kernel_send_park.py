@@ -251,8 +251,8 @@ class SdkForwardsAndBatch(unittest.TestCase):
     """The user 2026-07-17: get typed messages in AS SOON AS POSSIBLE (no interrupt), and when a pile is
     queued, send them ALL AT ONCE: the kernel drains the pile in one pass. The SDK enqueues each and its
     inputs() hands them to the CLI one message each, in order (2026-09-08, when two texts sent during one
-    turn reached the agent as one fused message; that incident superseded the one-turn fold for SDK
-    sessions); a backend with no fold (Codex) gets them merged into one message. A backend that
+    turn reached the agent as one fused message; that superseded the one-turn merge for SDK sessions); a
+    backend with no such queue (Codex) gets them merged into one message. A backend that
     forwards its own sends (forwards_sends) takes a composer send even MID-TURN, instead of the kernel
     parking it until the turn ends; slash-command drive ops still park in press order — except a model
     pick on a backend that declares model_switches_live, which fires and keeps order by going first

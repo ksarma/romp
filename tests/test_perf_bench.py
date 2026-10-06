@@ -13,7 +13,7 @@ driven as a subprocess with the env recipe a person would use plus the load_modu
 promoted to an error (LOAD_MODULE_DEPRECATION_AS_ERROR), so the kernel never loads in-process here;
 the tool module itself is loaded for direct checks of its fake client's frame labelling and of the
 tripwire's allow rule (its import pulls in only the standard library), and the event model alone
-(kernel/event_model.py, under a private name) for the fold-checkpoint shadow, whose write door is the
+(kernel/event_model.py, under a private name) for the checkpoint shadow, whose write door is the
 event model's own (CheckpointShadow)."""
 import atexit
 import contextlib
@@ -66,7 +66,7 @@ EXPECTED_NEUTRALIZED = {
     "km._badge_push", "romp_kernel_perf_bench.subprocess", "romp_judge.subprocess", "romp_sdk_backend.subprocess",
     "romp_credentials.subprocess",   # loaded by sdk_backend; its credential helper runs as a subprocess (review find, 2026-09-08)
     "km._atomic_write (shadowed)", "km._read_state_json (shadow overlay)", "km._order_audit_path (shadowed)",
-    "em.set_checkpoint_dir (shadowed)",   # the fold checkpoints' directory provider, pointed at the shadow (2026-09-18)
+    "em.set_checkpoint_dir (shadowed)",   # the event model's checkpoint directory provider, pointed at the shadow
     "pwd.getpwnam (counted)", "pwd.getpwuid (counted)"}
 # The caches whose emptiness the cold rows' PROOF rests on: the event model's parse-layer caches (the
 # per-sample assembly check reads _ASM_CACHE and the counters), the kernel's parse cache (the
@@ -83,13 +83,16 @@ EXPECTED_NEUTRALIZED = {
 EXPECTED_COLD_CACHES = {"kernel": {"_parse_cache", "_feed_memo", "_caps_memo", "_thread_reg_memo", "_states_overlay_cache", "_lanes_memo"},
                         "event_model": {"_JSONL_CACHE", "_ASM_CACHE"}}
 # The writes a normal run is known to aim at the copy, every one of which the tool's shadow takes: the
-# import-time repo-root marker, the tab-order audit and the session order the push maintains, and the fold
-# checkpoints' directory (recorded when the guard installs, whether or not a document lands). The test asks
-# that these appear among the shadowed paths and that the copy itself changed by nothing (the tree hash
-# below); it does not pin the shadowed set exactly, so a kernel that adds a write path reports it in the
-# tool's output without failing the tool's test (review find, 2026-09-08), while one that reaches the copy
-# fails the hash.
-EXPECTED_SHADOWED = {"checkpoints", "order-audit.jsonl", "repo-root", "session-order.json"}
+# tab-order audit and the session order the push maintains, and the event model's checkpoints directory
+# (recorded when the guard installs, whether or not a document lands). The test asks that these appear among
+# the shadowed paths and that the copy itself changed by nothing (the tree hash below); it does not pin the
+# shadowed set exactly, so a kernel that adds a write path reports it in the tool's output without failing
+# the tool's test (review find, 2026-09-08), while one that reaches the copy fails the hash. One path is
+# pinned absent: the repo-root marker, which the kernel wrote at import until its instance lock moved it
+# into main(), after the bind (NOT_WRITTEN_AT_IMPORT); an import that writes it again is the defect that
+# move closed, and an older candidate checkout that still writes it there lands it in the shadow.
+EXPECTED_SHADOWED = {"checkpoints", "order-audit.jsonl", "session-order.json"}
+NOT_WRITTEN_AT_IMPORT = "repo-root"
 REDACTED_PREFIX = "/XXXX/XXXXXX"     # what a redaction tool leaves where a home path stood
 
 
@@ -483,21 +486,25 @@ class PerfBench(unittest.TestCase):
     def test_the_copy_is_byte_identical_after_a_run(self):
         # the paths the kernel aims at the copy (EXPECTED_SHADOWED) were redirected to the tool's shadow (the
         # checkpoints directory by its provider, whether or not a document follows), so the copy has the same
-        # directories, files and bytes it started with; without the shadow the run creates repo-root,
-        # session-order.json and order-audit.jsonl inside it
+        # directories, files and bytes it started with; without the shadow the run creates session-order.json
+        # and order-audit.jsonl inside it. The import itself aims no repo-root marker at it any more
+        # (NOT_WRITTEN_AT_IMPORT): the kernel writes that record in main(), after its bind
         self._ok(self.main)
         self.assertEqual(self.state_after, self.state_before, "the state copy is only read")
         self.assertEqual(self.claude_after, self.claude_before, "the transcripts are only read")
         self.assertIn("writes into the state copy: 0 changed, 0 new, 0 removed", self.main.stdout)
-        shadowed_line = next(l for l in self.main.stdout.splitlines() if l.startswith("writes redirected to the private dir, not the copy (paths, landed or not): "))
+        prefix = "writes redirected to the private dir, not the copy (paths, landed or not): "
+        shadowed_line = next(l for l in self.main.stdout.splitlines() if l.startswith(prefix))
+        shadowed = shadowed_line[len(prefix):].split(", ")
         for name in EXPECTED_SHADOWED:
-            self.assertIn(name, shadowed_line)
+            self.assertIn(name, shadowed)
+        self.assertNotIn(NOT_WRITTEN_AT_IMPORT, shadowed, "the kernel import writes no repo-root marker: %s" % shadowed_line)
 
     def test_the_census_runs_on_the_error_path_and_names_what_was_searched(self):
         # a claude dir with no projects/ at all: discovery finds nothing, the window and the backfill both
         # count zero, and the run stops with the counts it worked from. The census still runs and prints,
-        # the JSON carries it beside the error, and the copy is untouched (the kernel WAS imported, so
-        # without the shadow repo-root would be in it)
+        # the JSON carries it beside the error, and the copy is untouched (the kernel WAS imported, and the
+        # guard had pointed the checkpoints directory at the shadow; the import itself wrote nothing there)
         root = self._scratch_root("perf-bench-nofind-")
         state, claude = build_synthetic(root, web_turns=3)
         empty_claude = os.path.join(root, "claude-empty")
@@ -514,15 +521,15 @@ class PerfBench(unittest.TestCase):
         self.assertIn("--cwd-map", r.stderr, "the error points at the redacted-copy remedy")
         self.assertNotIn(root, r.stderr.split("perf-bench: discovery")[1], "the error names counts, not paths")
         self.assertIn("writes into the state copy: 0 changed, 0 new, 0 removed", r.stdout)
-        self.assertIn("writes redirected to the private dir, not the copy (paths, landed or not): checkpoints, repo-root", r.stdout,
-                      "the import-time marker, which landed, and the checkpoints directory the guard pointed the provider "
-                      "at before the run stopped, which received no document")
+        self.assertIn("writes redirected to the private dir, not the copy (paths, landed or not): checkpoints\n", r.stdout,
+                      "the checkpoints directory the guard pointed the provider at before the run stopped, which received "
+                      "no document, and nothing else: the kernel import aims no repo-root marker at the copy")
         self.assertEqual(_tree_hash(state), before, "an error run leaves the copy byte-identical too")
         with open(out_json) as f:
             out = json.load(f)
         self.assertIn("no transcript for any", out["error"])
         self.assertEqual((out["writes"]["changed"], out["writes"]["new"], out["writes"]["removed"]), (0, 0, 0))
-        self.assertEqual(out["writes"]["shadowed"], ["checkpoints", "repo-root"])
+        self.assertEqual(out["writes"]["shadowed"], ["checkpoints"])
         self.assertIn("(partial: the run stopped on an error)", r.stdout)
 
     def test_transcripts_older_than_the_window_are_found_by_the_backfill(self):
@@ -651,14 +658,28 @@ class PerfBench(unittest.TestCase):
     def test_refuses_the_live_default_dir_without_the_flag(self):
         root = self._scratch_root("perf-bench-live-")
         state, claude = build_synthetic(root, web_turns=3)
+        # What each check shows. The census line's absence shows only that the run stopped before run(), which
+        # prints the census: a tool that imported the kernel before its refusal would stop there too and print none.
+        # The import witness is the tree hash and mtime check at the end: an import of the kernel against this
+        # directory leaves a path in it, which today is serve-token.lock (the serve-token mint takes that lock at
+        # import), so the directory would no longer hash the same. (The witness used to be the repo-root marker,
+        # which the kernel wrote at import until its instance lock moved that record into main(), after the bind.)
+        census = "writes into the state copy"
+        before = (_tree_hash(state), {str(p): os.stat(p).st_mtime_ns for p in Path(state).rglob("*")})
         r = run_tool(["--state", state, "--claude-dir", claude, "--repo", ROOT, "--iters", "1"],
                      env_extra={"XDG_STATE_HOME": root})
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("--i-know-this-is-live", r.stderr)
-        self.assertFalse(os.path.exists(os.path.join(state, "repo-root")), "the kernel was never imported against it")
+        self.assertNotIn(census, r.stdout, "the run reached run() and its census (whether it imported the kernel is the "
+                                           "tree hash check's to say)")
         r = run_tool(["--state", state, "--claude-dir", claude, "--repo", ROOT, "--iters", "1"],
                      env_extra={"ROMP_STATE_DIR": state})
         self.assertEqual(r.returncode, 2, "ROMP_STATE_DIR names the live dir too")
+        self.assertNotIn(census, r.stdout, "the run reached run() and its census (whether it imported the kernel is the "
+                                           "tree hash check's to say)")
+        self.assertEqual((_tree_hash(state), {str(p): os.stat(p).st_mtime_ns for p in Path(state).rglob("*")}), before,
+                         "a refusal changed the live directory's bytes, paths or mtimes: the import witness, since a "
+                         "kernel import leaves serve-token.lock there")
 
     def test_live_flag_benches_a_mirror_and_leaves_the_original_alone(self):
         root = self._scratch_root("perf-bench-live-")
@@ -1069,12 +1090,12 @@ class Recorders(unittest.TestCase):
         self.assertEqual(km._order_audit_path(), Path(self.shadow_root) / "order-audit.jsonl")
         self.assertEqual(shadow.written, ["checkpoints", "session-order.json", "order-audit.jsonl"])
 
-    def test_the_fold_checkpoint_directory_is_moved_into_the_shadow(self):
+    def test_the_checkpoint_directory_is_moved_into_the_shadow(self):
         # kernel/judge.py installs the provider `lambda: STATE / "checkpoints"` at import, and the event model writes every
-        # fold checkpoint into the directory it names, at run time, with Path.write_text and os.replace: a door neither the
-        # _atomic_write shadow nor the import-time write_text diversion covers, so a run left one document per transcript in
-        # the copy (2026-09-18). The guard hands the event model a provider naming the shadow's directory, recorded as a
-        # diverted path at install so the report names it whether or not a document lands in the run
+        # checkpoint document into the directory it names, at run time, with Path.write_text and os.replace: a door neither
+        # the _atomic_write shadow nor the import-time write_text diversion covers, so a run left one document per transcript
+        # in the copy. The guard hands the event model a provider naming the shadow's directory, recorded as a redirected
+        # path at install so the report names it whether or not a document lands in the run
         km = self._kernel()
         names, rec, shadow = self._guards(km)
         self.assertIn("em.set_checkpoint_dir (shadowed)", names)
@@ -1110,15 +1131,14 @@ class Recorders(unittest.TestCase):
 
 
 class CheckpointShadow(unittest.TestCase):
-    """The fold checkpoints against the REAL event model (kernel/event_model.py under a private name: the one romp
-    module this file runs in-process, because the write door under test is the event model's own). checkpoint_write
-    composes one JSON document per folded JSONL file, writes it with Path.write_text beside its target and os.replace()s
-    it into the directory the provider names; kernel/judge.py installs `lambda: STATE / "checkpoints"` at import. The
-    tool's shadow took neither step (its write_text diversion covers the kernel import only; the document is not an
-    _atomic_write), so a run wrote one document per transcript into the copy (91 files after one bounded run against a
-    39-session copy, 2026-09-18, listed as new by the census) and the next run restored from them, which made its cold
-    rows warm. install_guards now points the provider at the shadow: the document lands there under the event model's
-    own name for it, and the copy's file census is what it was."""
+    """The checkpoints against the REAL event model (kernel/event_model.py under a private name: the one romp module this
+    file runs in-process, because the write door under test is the event model's own). checkpoint_write composes one JSON
+    document per JSONL file read resumably (fold_records with a ckpt name), writes it with Path.write_text beside its target
+    and os.replace()s it into the directory the provider names; kernel/judge.py installs `lambda: STATE / "checkpoints"` at
+    import. The tool's shadow took neither step (its write_text diversion covers the kernel import only; the document is not
+    an _atomic_write), so a run wrote one document per transcript into the copy, listed as new by the census, and the next
+    run restored from them, which made its cold rows warm. install_guards points the provider at the shadow: the document
+    lands there under the event model's own name for it, and the copy's file census is what it was."""
 
     def setUp(self):
         self.pb = load_source("perf_bench_ckpt_under_test", TOOL)
@@ -1131,7 +1151,7 @@ class CheckpointShadow(unittest.TestCase):
         self.addCleanup(self.em.set_checkpoint_dir, None)
         root = tempfile.mkdtemp(prefix="perf-bench-ckpt-")
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
-        # a tiny state copy: one registered session and its states log, the file the kernel's states-overlay fold reads
+        # a tiny state copy: one registered session and its states log, the file the kernel's states overlay reads
         self.state = os.path.join(root, "romp")
         for d in ("names", "sdk", "states"):
             os.makedirs(os.path.join(self.state, d))
@@ -1155,17 +1175,23 @@ class CheckpointShadow(unittest.TestCase):
                                _refresh_remote_prices=None, _warm_fleet_bg=None, _system_notify=None,
                                _push_notify=None, _push_forward=None, _badge_push=None)
 
-    def test_a_fold_checkpoint_lands_in_the_shadow_and_the_copy_census_is_unchanged(self):
+    def _read_log(self, kinds=None):
+        """The states log read resumably under the name benchStates, the way the kernel's states overlay reads it."""
+        return self.em.fold_records({}, self.log, list, lambda st, r: st + [r["state"]],
+                                    on=None if kinds is None else kinds.append, ckpt="benchStates")
+
+    def test_a_checkpoint_lands_in_the_shadow_and_the_copy_census_is_unchanged(self):
         em = self.em
         before = _tree_hash(self.state)
         rec = self.pb.new_recorder()
         shadow = self.pb.StateShadow(self.state, self.shadow_root, rec["refused_writes"])
         names = self.pb.install_guards(self._kernel(), None, shadow, rec)
-        # a named fold over the states log, as the kernel's states overlay runs it: the first fold reads the file whole
-        # and leaves the path dirty; the write that follows is the settle's (and the exit drain's) checkpoint_write
+        self.assertEqual(em._asm_ckpt_file(self.log).parent, Path(self.shadow_root, "checkpoints"),
+                         "the assembly's documents derive their directory from the same provider, so one guard covers them")
+        # the first read of the file steps every record and leaves the path dirty; the write that follows is the
+        # settle's (and the exit drain's) checkpoint_write
         kinds = []
-        folded = em.fold_records({}, self.log, list, lambda st, r: st + [r["state"]], on=kinds.append, ckpt="benchStates")
-        self.assertEqual((folded, kinds), (["waiting", "working"], ["refold"]))
+        self.assertEqual((self._read_log(kinds), kinds), (["waiting", "working"], ["refold"]))
         self.assertIn(self.log, em.checkpoint_dirty())
         self.assertTrue(em.checkpoint_write(self.log), "the document was written")
         self.assertEqual(_tree_hash(self.state), before, "the copy gained no checkpoints directory and no document")
@@ -1180,21 +1206,20 @@ class CheckpointShadow(unittest.TestCase):
         self.assertIn("checkpoints", shadow.written)
         self.assertEqual(rec["refused_writes"], [])
 
-    def test_the_restore_in_a_later_fold_reads_the_shadow_document_not_the_copy(self):
-        # the second half of the promise: a fresh fold of the file (the next run's cold row, or a cache the tool empties)
+    def test_the_restore_in_a_later_read_uses_the_shadow_document_not_the_copy(self):
+        # the second half of the promise: a fresh read of the file (the next run's cold row, or a cache the tool empties)
         # finds the document where the guard put it, so the tail read resumes from the shadow and the copy's absence of a
         # checkpoints directory is never a fallback the event model counts
         em = self.em
         rec = self.pb.new_recorder()
         shadow = self.pb.StateShadow(self.state, self.shadow_root, rec["refused_writes"])
         self.pb.install_guards(self._kernel(), None, shadow, rec)
-        em.fold_records({}, self.log, list, lambda st, r: st + [r["state"]], ckpt="benchStates")
+        self._read_log()
         self.assertTrue(em.checkpoint_write(self.log))
         with em._JSONL_CACHE_LOCK:                          # what a restart does to the in-memory side
             em._JSONL_CACHE.clear()
         kinds = []
-        folded = em.fold_records({}, self.log, list, lambda st, r: st + [r["state"]], on=kinds.append, ckpt="benchStates")
-        self.assertEqual((folded, kinds), (["waiting", "working"], ["restore"]))
+        self.assertEqual((self._read_log(kinds), kinds), (["waiting", "working"], ["restore"]))
         self.assertFalse(os.path.exists(os.path.join(self.state, "checkpoints")), "still nothing under the copy")
         self.assertEqual(em.checkpoint_stats()["fallbacks"], {}, "the restore verified against the shadow's document")
 

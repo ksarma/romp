@@ -153,6 +153,13 @@ if [[ -n "${MOCK_CURL_SEND_404:-}" && "$url" == */send ]]; then
 fi
 if [[ -n "${MOCK_CURL_SEND_REFUSED:-}" && "$url" == */send ]]; then printf '{"ok": false, "error": "no running backend owns web — the message was not delivered"}%b\n' "${_w//\%\{http_code\}/200}"; exit 0; fi
 if [[ -n "${MOCK_CURL_NOTICE_REFUSE:-}" && "$url" == */notice ]]; then echo '{"ok": false, "error": "attachment refused: not a file"}'; exit 0; fi
+if [[ -n "${MOCK_CURL_NOTICE_OK:-}" && "$url" == */notice ]]; then echo "$MOCK_CURL_NOTICE_OK"; exit 0; fi
+if [[ -n "${MOCK_CURL_BOARDS:-}" && "$url" == */boards ]]; then echo "$MOCK_CURL_BOARDS"; exit 0; fi
+if [[ -n "${MOCK_CURL_BOARD_REFUSE:-}" && "$url" == */board ]]; then echo "$MOCK_CURL_BOARD_REFUSE"; exit 0; fi
+if [[ -n "${MOCK_CURL_BOARD_DEFINED:-}" && "$url" == */board ]]; then echo "$MOCK_CURL_BOARD_DEFINED"; exit 0; fi
+if [[ -n "${MOCK_CURL_PANES:-}" && "$url" == */panes ]]; then echo "$MOCK_CURL_PANES"; exit 0; fi
+if [[ -n "${MOCK_CURL_PANE_REFUSE:-}" && "$url" == */pane ]]; then echo "$MOCK_CURL_PANE_REFUSE"; exit 0; fi
+if [[ -n "${MOCK_CURL_PANE_DEFINED:-}" && "$url" == */pane ]]; then echo "$MOCK_CURL_PANE_DEFINED"; exit 0; fi
 if [[ -n "${MOCK_CURL_WATCH_PR_REFUSE:-}" && "$url" == */watch-pr ]]; then
   echo '{"ok": false, "retryable": true, "error": "the watch could not be saved ([Errno 28] No space left on device) - nothing is watching TESTORG/testrepo#7; retry once the state directory takes writes again"}'
   exit 0
@@ -2487,7 +2494,7 @@ FAKE
     [[ "$output" == *"not running"* ]]
 }
 
-@test "romp-manager: /ensure spawns an additional kernel on demand, idempotently" {
+@test "romp-manager: /ensure refuses a port no profile names, and spawns a kernels.json profile's kernel on demand, idempotently" {
     command -v node >/dev/null 2>&1 || skip "node not available"
     command -v curl >/dev/null 2>&1 || skip "curl not available"
     local mgr; mgr="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
@@ -2498,38 +2505,62 @@ FAKE
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
 
-    local cport mport kport; free_port cport mport kport
+    local cport mport kport pport; free_port cport mport kport pport
     # the manager's write doors (/ensure, /stop) take the serve token: mint one under the hermetic state root
     local tok=ensure-test-token; unset ROMP_SERVE_TOKEN; mkdir -p "$XDG_STATE_HOME/romp"; printf '%s\n' "$tok" > "$XDG_STATE_HOME/romp/serve-token"
     # Launch the manager in the background; it auto-spawns 'main' on mport via the fake launcher.
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
-        node "$mgr" up >/dev/null 2>&1 &
+        node "$mgr" up >/dev/null 2>"$TEST_DIR/manager.log" &
     MGR_PID=$!   # teardown reaps this
 
-    # Wait for the control endpoint to come up (≤ ~3s)
+    # Wait for the control endpoint to come up (about 3 s at most)
     local i
     for i in $(seq 1 30); do
         curl -fsS "http://127.0.0.1:$cport/status" >/dev/null 2>&1 && break
         sleep 0.1
     done
 
-    # Ensure a second kernel on kport → freshly spawned
-    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport"
+    # A port no kernels.json profile names: its kernel would run on the primary's state root, so the
+    # manager answers 409 (not -f: the body is the point) naming the kernel, the primary's port and the
+    # remedy for each road (a profile with a stateDir no other kernel uses; a kernel started by hand needs
+    # its own ROMP_STATE_DIR), and spawns nothing.
+    run curl -sS -o "$TEST_DIR/ensure-body" -w '%{http_code}' -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport"
     [ "$status" -eq 0 ]
-    [[ "$output" == *'"spawned":true'* ]]
-    [[ "$output" == *"\"port\":$kport"* ]]
-    [[ "$output" == *"\"id\":\"k$kport\""* ]]
-
-    # Ensuring the same port again is idempotent — no second spawn
-    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"spawned":false'* ]]
-
-    # /status now lists both the default 'main' kernel and the on-demand one
+    [ "$output" = 409 ]
+    run cat "$TEST_DIR/ensure-body"
+    [[ "$output" == *'"ok":false'* ]]
+    [[ "$output" == *"kernel 'k$kport' (port $kport) is not started"* ]]
+    [[ "$output" == *"the primary kernel on port $mport"* ]]
+    [[ "$output" == *"with a stateDir no other kernel uses"* ]]
+    [[ "$output" == *"A kernel started by hand, which the manager does not see, needs its own ROMP_STATE_DIR."* ]]
     run curl -fsS "http://127.0.0.1:$cport/status"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"id":"main"'* ]]
-    [[ "$output" == *"\"id\":\"k$kport\""* ]]
+    [[ "$output" != *"\"id\":\"k$kport\""* ]]
+    [ "$(grep -c "kernel 'k$kport' (port $kport) is not started" "$TEST_DIR/manager.log")" -eq 1 ]
+    run grep -c " → :$kport " "$TEST_DIR/manager.log"
+    [ "$output" = 0 ]
+
+    # A kernels.json profile with its own stateDir, added while the manager runs (every spawn and every
+    # /ensure reads the file fresh): /ensure spawns it on demand...
+    printf '{"kernels": [{"id": "aux", "port": %s, "stateDir": "%s"}]}\n' "$pport" "$TEST_DIR/aux-state" \
+        > "$XDG_STATE_HOME/romp/kernels.json"
+    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$pport"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"spawned":true'* ]]
+    [[ "$output" == *"\"port\":$pport"* ]]
+    [[ "$output" == *'"id":"aux"'* ]]
+
+    # ...and ensuring the same port again is idempotent: no second spawn
+    run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$pport"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"spawned":false'* ]]
+
+    # /status now lists both the default 'main' kernel and the profile's
+    run curl -fsS "http://127.0.0.1:$cport/status"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"id":"main"'* ]]
+    [[ "$output" == *'"id":"aux"'* ]]
 
     # Graceful shutdown (teardown also reaps via MGR_PID as a backstop)
     curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/stop" >/dev/null 2>&1 || true
@@ -2545,19 +2576,25 @@ FAKE
 
     local cport mport kport; free_port cport mport kport
     local tok=restart-all-test-token; unset ROMP_SERVE_TOKEN; mkdir -p "$XDG_STATE_HOME/romp"; printf '%s\n' "$tok" > "$XDG_STATE_HOME/romp/serve-token"
+    # a 2nd kernel in the registry: a kernels.json profile with its own stateDir, which the boot pass spawns beside main
+    printf '{"kernels": [{"id": "aux", "port": %s, "stateDir": "%s"}]}\n' "$kport" "$TEST_DIR/aux-state" \
+        > "$XDG_STATE_HOME/romp/kernels.json"
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
-    for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:$cport/status" >/dev/null 2>&1 && break; sleep 0.1; done
-    curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/ensure?port=$kport" >/dev/null   # a 2nd kernel in the registry
+    for i in $(seq 1 30); do
+        curl -fsS "http://127.0.0.1:$cport/status" 2>/dev/null | grep -q '"id":"aux"' && break
+        sleep 0.1
+    done
+    run curl -fsS "http://127.0.0.1:$cport/status"
+    [[ "$output" == *'"id":"main"'* ]]
+    [[ "$output" == *'"id":"aux"'* ]]
 
     run curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/restart-all"
     [ "$status" -eq 0 ]
-    # the response lists EVERY kernel it kicked — the default 'main' AND the on-demand one (not just main)
-    [[ "$output" == *'"restarted"'* ]]
-    [[ "$output" == *'main'* ]]
-    [[ "$output" == *"k$kport"* ]]
+    # the response lists EVERY kernel it kicked: the default 'main' AND the profile's (not just main)
+    [[ "$output" == *'"restarted":["main","aux"]'* ]]
 
     curl -fsS -X POST -H "X-Romp-Token: $tok" "http://127.0.0.1:$cport/stop" >/dev/null 2>&1 || true
 }
@@ -3040,10 +3077,10 @@ PY
     touch "$MOCK_LOG"
     mkdir -p "$XDG_STATE_HOME/romp"
     printf 'tok-test' > "$XDG_STATE_HOME/romp/serve-token"
-    # fake kernel of today's shape: the effort setter refused the level, so the echo carries `refused`
-    # (the setter's words) and NO `effort` key, while the model it took is echoed as before. The old
-    # reader keyed the dropped-ask WARNING on the effort echo's PRESENCE, so a refusal printed as an
-    # older kernel that did not acknowledge --effort: a false protocol gap in place of the kernel's answer.
+    # fake kernel whose effort setter refused the level: the echo carries `refused` (the setter's words: the kernel's
+    # own sentence from _effort_refusal, which names the level) and NO `effort` key, while the model it took is
+    # echoed as before. A reader that keys the dropped-ask WARNING on the effort echo's PRESENCE prints a refusal
+    # as an older kernel that did not acknowledge --effort: a false protocol gap in place of the kernel's answer.
     python3 - "$TEST_DIR/port" "$TEST_DIR/req.log" <<'PY' &
 import sys, json
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -3072,24 +3109,32 @@ srv.handle_request()
 PY
     local srv=$!
     until [ -s "$TEST_DIR/port" ]; do sleep 0.05; done
-    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --model claude-fable-5 --effort turbo opt
+    # the two streams apart (run_romp merges them): the refusal is a warning on stderr while the started and
+    # applied lines stay on stdout, so a script reading stdout sees what it saw before. stderr goes to a file
+    # rather than through `run --separate-stderr`, a flag bats warns on unless the file declares a minimum version.
+    local _out _err _st=0
+    _out="$(ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" "$ROMP_SCRIPT" new --model claude-fable-5 --effort turbo opt 2>"$TEST_DIR/err")" || _st=$?
     kill "$srv" 2>/dev/null || true
-    # the session exists: the refusal is a warning on stderr, the exit status the created path's
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"started \"opt\""* ]]
+    _err="$(cat "$TEST_DIR/err")"
+    # the session exists: the exit status is the created path's
+    [ "$_st" -eq 0 ]
+    [[ "$_out" == *"started \"opt\""* ]]
     grep -q '"effort": "turbo"' "$TEST_DIR/req.log"
-    # one line: the prefix and the kernel's own sentence, which names the level and the reason itself
-    # (review round 2: a prefix of its own said both twice). Pinned as the exact line, so a second
-    # copy of the level or of the refusal on it fails here, as does a second line carrying the sentence.
+    # one stderr line names the asked level and the kernel's own reason, and nothing about it reaches stdout. The
+    # line is the prefix and the kernel's sentence alone, which names the level and the reason itself (review round
+    # 2: a prefix of its own said both twice). Pinned as the exact line, so a second copy of the level or of the
+    # refusal on it fails here, as does a second stderr line carrying the sentence.
+    [ "$(grep -c 'refused' "$TEST_DIR/err")" -eq 1 ]
     local _refused_line
-    _refused_line="$(printf '%s\n' "$output" | grep -F "Couldn't set effort")"
+    _refused_line="$(grep -F "Couldn't set effort" "$TEST_DIR/err")"
     [ "$_refused_line" = "romp new: Couldn't set effort 'turbo': the session's backend refused it." ]
-    # the kernel ANSWERED the ask; it did not drop it, so no older-kernel warning
-    [[ "$output" != *"did not acknowledge"* ]]
-    [[ "$output" != *"older kernel"* ]]
-    # what the kernel took is still reported, and that line does not name effort
+    [[ "$_out" != *"refused"* ]]
+    # the kernel ANSWERED the ask; it did not drop it, so no older-kernel warning on either stream
+    [[ "$_out$_err" != *"did not acknowledge"* ]]
+    [[ "$_out$_err" != *"older kernel"* ]]
+    # what the kernel took is still reported, on stdout, and that line does not name effort
     local _applied_line
-    _applied_line="$(printf '%s\n' "$output" | grep 'romp new: applied')"
+    _applied_line="$(printf '%s\n' "$_out" | grep 'romp new: applied')"
     [ "$_applied_line" = "romp new: applied model claude-fable-5" ]
 }
 
@@ -3355,14 +3400,138 @@ PY
 }
 
 
-@test "card: posts key, title, body and session to /notice; ROMP_SID is the default; usage errors exit 2" {
-    # T370 (plans/notice-cards.md): door three of the kernel's post_notice, romp watch's mechanics
+@test "board: define posts the definition to /board with the command's id, list and show read /boards, remove posts the id; usage errors exit 2; a refusal exits 1" {
+    # plans/card-boards.md, phase three: the board store's command-line door, romp watch's mechanics
     _stub_curl
     touch "$MOCK_LOG"
     export ROMP_SERVE_TOKEN=testtok
-    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card --title "A new version of the figure is ready" --body "regenerated after the sweep" --key figure --needs-you --producer figure
+    export ROMP_KERNEL_PORT=29855
+    # define: the JSON's missing id takes the command's; the body rides -d, the token never the command line
+    local defn='{"title": "Notes", "categories": [{"id": "new", "title": "New", "chip": "neutral"}], "defaultCategory": "new", "rules": [], "sort": {"key": "t", "dir": "desc"}, "subSorts": [], "groupBy": null, "order": [], "notify": [], "needsYou": null, "kinds": ["notice"]}'
+    MOCK_CURL_BOARD_DEFINED='{"ok": true, "board": {"id": "notes", "categories": [{"id": "new"}]}}' run "$ROMP_SCRIPT" board define notes --json "$defn"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"romp board: defined notes (1 category)"* ]]
+    grep -q -- '-X POST http://127.0.0.1:29855/board' "$MOCK_LOG"
+    grep -q -- '"id": "notes"' "$MOCK_LOG"
+    grep -q -- '--config -' "$MOCK_LOG"
+    [ "$(grep -c -- "testtok" "$MOCK_LOG")" -eq 0 ]   # the token never rides the command line (a count, the ratchet's rule for negatives)
+    # …from a file too, and an id inside the JSON that disagrees with the command's is a usage error
+    printf '%s' "$defn" > "$TEST_DIR/notes.json"
+    MOCK_CURL_BOARD_DEFINED='{"ok": true, "board": {"id": "notes", "categories": [{"id": "new"}]}}' run "$ROMP_SCRIPT" board define notes --from "$TEST_DIR/notes.json"
+    [[ "$status" -eq 0 ]]
+    run "$ROMP_SCRIPT" board define notes --json '{"id": "scratch"}'
+    [[ "$status" -eq 2 ]]
+    [[ "$output" == *"names id 'scratch', the command 'notes'"* ]]
+    run "$ROMP_SCRIPT" board define notes --json 'not json'
+    [[ "$status" -eq 2 ]]
+    # list and show read /boards
+    local rows='{"boards": [{"id": "feed", "title": "Feed", "categories": [{"id": "working"}, {"id": "needs_input"}, {"id": "completed"}], "source": "code"}, {"id": "notes", "title": "Notes", "categories": [{"id": "new"}], "source": "data"}]}'
+    MOCK_CURL_BOARDS="$rows" run "$ROMP_SCRIPT" board list
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"feed  Feed  working/needs_input/completed  [code]"* ]]
+    [[ "$output" == *"notes  Notes  new"* ]]
+    MOCK_CURL_BOARDS="$rows" run "$ROMP_SCRIPT" board show notes
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *'"title": "Notes"'* ]]
+    [[ "$output" != *'"source"'* ]]
+    MOCK_CURL_BOARDS="$rows" run "$ROMP_SCRIPT" board show scratch
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"no board scratch"* ]]
+    MOCK_CURL_BOARDS='{"boards": [{"id": "feed", "title": "Feed", "categories": [], "source": "code"}]}' run "$ROMP_SCRIPT" board list
+    [[ "$output" == *"feed  Feed"* ]]
+    # remove posts the id; a refusal names the reason and exits 1
+    : > "$MOCK_LOG"
+    MOCK_CURL_BOARD_DEFINED='{"ok": true}' run "$ROMP_SCRIPT" board remove notes
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"romp board: removed notes"* ]]
+    grep -q -- '{"remove": "notes"}' "$MOCK_LOG"
+    MOCK_CURL_BOARD_REFUSE='{"ok": false, "error": "2 standing cards still name board '"'"'notes'"'"': dismiss them first"}' run "$ROMP_SCRIPT" board remove notes
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"romp board: refused: 2 standing cards still name board"* ]]
+    # usage: no verb, an unknown verb, define with neither source, show with no id
+    run "$ROMP_SCRIPT" board
+    [[ "$status" -eq 2 ]]
+    run "$ROMP_SCRIPT" board rename notes
+    [[ "$status" -eq 2 ]]
+    run "$ROMP_SCRIPT" board define notes
+    [[ "$status" -eq 2 ]]
+    run "$ROMP_SCRIPT" board show
+    [[ "$status" -eq 2 ]]
+    [[ "$output" == *"usage: romp board define <id>"* ]]
+}
+
+@test "pane: define posts the definition to /pane with the command's id, list and show read /panes, remove posts the id; usage errors exit 2; a refusal exits 1" {
+    # plans/panes-as-data.md, phase one: the pane registry's command-line door, the board door's twin
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export ROMP_KERNEL_PORT=29855
+    # define: the JSON's missing id takes the command's; the body rides -d, the token never the command line
+    local defn='{"title": "Notes", "source": "pane:notes", "on": true}'
+    MOCK_CURL_PANE_DEFINED='{"ok": true, "pane": {"id": "notes", "title": "Notes", "source": "pane:notes", "on": true, "experimental": false, "protocol": "romp"}, "rev": "abc123"}' run "$ROMP_SCRIPT" pane define notes --json "$defn"
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"romp pane: defined notes (pane:notes): open dashboards offer a reload; the pane shows on their next load"* ]]
+    grep -q -- '-X POST http://127.0.0.1:29855/pane' "$MOCK_LOG"
+    grep -q -- '"id": "notes"' "$MOCK_LOG"
+    grep -q -- '"source": "pane:notes"' "$MOCK_LOG"
+    grep -q -- '--config -' "$MOCK_LOG"
+    [ "$(grep -c -- "testtok" "$MOCK_LOG")" -eq 0 ]   # the token never rides the command line (a count, the ratchet's rule for negatives)
+    # ...from a file too, and an id inside the JSON that disagrees with the command's is a usage error
+    printf '%s' "$defn" > "$TEST_DIR/notes-pane.json"
+    MOCK_CURL_PANE_DEFINED='{"ok": true, "pane": {"id": "notes", "source": "pane:notes"}}' run "$ROMP_SCRIPT" pane define notes --from "$TEST_DIR/notes-pane.json"
+    [[ "$status" -eq 0 ]]
+    run "$ROMP_SCRIPT" pane define notes --json '{"id": "scratch"}'
+    [[ "$status" -eq 2 ]]
+    [[ "$output" == *"names id 'scratch', the command 'notes'"* ]]
+    run "$ROMP_SCRIPT" pane define notes --json 'not json'
+    [[ "$status" -eq 2 ]]
+    # list and show read /panes: the shipped panes wear [builtin], an experimental one says so, show strips the flag
+    local rows='{"panes": [{"id": "chat", "title": "Chat", "source": "/chat", "on": true, "experimental": false, "protocol": "romp", "builtin": true}, {"id": "notes", "title": "Notes", "source": "pane:notes", "on": true, "experimental": true, "protocol": "romp", "builtin": false}], "rev": "abc123"}'
+    MOCK_CURL_PANES="$rows" run "$ROMP_SCRIPT" pane list
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"chat  Chat  /chat  romp  [builtin]"* ]]
+    [[ "$output" == *"notes  Notes  pane:notes  romp  experimental"* ]]
+    MOCK_CURL_PANES="$rows" run "$ROMP_SCRIPT" pane show notes
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *'"source": "pane:notes"'* ]]
+    [[ "$output" != *'"builtin"'* ]]
+    MOCK_CURL_PANES="$rows" run "$ROMP_SCRIPT" pane show scratch
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"no pane scratch"* ]]
+    # an empty list never comes from the door (the shipped panes are listed first), so the command has no line for it: it prints the
+    # rows it was given, here none, and exits 0 (the 1919 read: the branch that said "no panes" was unreachable, and is gone)
+    MOCK_CURL_PANES='{"panes": [], "rev": "0"}' run "$ROMP_SCRIPT" pane list
+    [[ "$status" -eq 0 ]]
+    [[ -z "$output" ]]
+    # remove posts the id; a refusal names the reason and exits 1
+    : > "$MOCK_LOG"
+    MOCK_CURL_PANE_DEFINED='{"ok": true, "rev": "0"}' run "$ROMP_SCRIPT" pane remove notes
+    [[ "$status" -eq 0 ]]
+    [[ "$output" == *"romp pane: removed notes"* ]]
+    grep -q -- '{"remove": "notes"}' "$MOCK_LOG"
+    MOCK_CURL_PANE_REFUSE='{"ok": false, "error": "id '"'"'feed'"'"' is a shipped pane'"'"'s and is reserved"}' run "$ROMP_SCRIPT" pane define feed --json '{"source": "/feed"}'
+    [[ "$status" -eq 1 ]]
+    [[ "$output" == *"romp pane: refused: id 'feed' is a shipped pane's and is reserved"* ]]
+    # usage: no verb, an unknown verb, define with neither source, show with no id
+    run "$ROMP_SCRIPT" pane
+    [[ "$status" -eq 2 ]]
+    run "$ROMP_SCRIPT" pane rename notes
+    [[ "$status" -eq 2 ]]
+    run "$ROMP_SCRIPT" pane define notes
+    [[ "$status" -eq 2 ]]
+    run "$ROMP_SCRIPT" pane show
+    [[ "$status" -eq 2 ]]
+    [[ "$output" == *"usage: romp pane define <id>"* ]]
+}
+
+@test "card: -t/-m post title, text and the session to /notice; ROMP_SID is the default; -k names the card; usage errors exit 2" {
+    # T370 (plans/notice-cards.md, "Owner-less cards and the terse command"): door three of the kernel's post_notice
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "A new version of the figure is ready" -m "regenerated after the sweep" -k figure --needs-you --producer figure
     [ "$status" -eq 0 ]
-    [[ "$output" == *"romp card: posted"* ]]
+    [[ "$output" == *"romp card: posted (key figure)"* ]]
     grep '/notice' "$MOCK_LOG" | grep -q '"key": *"figure"'
     grep '/notice' "$MOCK_LOG" | grep -q '"title": *"A new version of the figure is ready"'
     grep '/notice' "$MOCK_LOG" | grep -q '"body": *"regenerated after the sweep"'
@@ -3371,23 +3540,109 @@ PY
     grep '/notice' "$MOCK_LOG" | grep -q '"id": *"11111111-2222-3333-4444-555555555555"'
     # the token never rides the command line: curl reads it from the piped config
     [ "$(grep '/notice' "$MOCK_LOG" | grep -c 'testtok')" -eq 0 ]
-    # --session sends a NAME
-    run env ROMP_SID= "$ROMP_SCRIPT" card --key sweep --title "Sweep done: see the plot" --session web
+    # the long forms still work, --body as --message's alias; -s sends a NAME
+    run env ROMP_SID= "$ROMP_SCRIPT" card --key sweep --title "Sweep done: see the plot" --body "the plot is in the folder" --session web
     [ "$status" -eq 0 ]
     grep '/notice' "$MOCK_LOG" | grep -q '"name": *"web"'
     grep '/notice' "$MOCK_LOG" | grep -q '"key": *"sweep"'
-    # the key is REQUIRED (a slug of the title made an edited title a second card): usage, exit 2, nothing posted
-    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card --title "Sweep done: see the plot"
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"--key is the card's stable name"* ]]
-    [ "$(grep -c '/notice' "$MOCK_LOG")" -eq 2 ]
-    # outside a session with no --session: a loud usage refusal, never a silent guess
-    run env ROMP_SID= "$ROMP_SCRIPT" card --key x --title "x"
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"--session <name> required"* ]]
+    grep '/notice' "$MOCK_LOG" | grep -q '"body": *"the plot is in the folder"'
+    # usage errors: no title; -s with --no-session (two homes); a bad --expires; a third bare word
     run run_romp card
     [ "$status" -eq 2 ]
-    run run_romp card --key x --title "x" --expires soon
+    run env ROMP_SID= "$ROMP_SCRIPT" card -t x -s web --no-session
+    [ "$status" -eq 2 ]
+    run run_romp card -k x -t "x" --expires soon
+    [ "$status" -eq 2 ]
+    run env ROMP_SID= "$ROMP_SCRIPT" card "one" "two" "three"
+    [ "$status" -eq 2 ]
+    [ "$(grep -c '/notice' "$MOCK_LOG")" -eq 2 ]
+}
+
+@test "card: no -k mints a key, printed for the next revision, never a slug of the title; the shorthand romp card \"title\" \"text\"" {
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "Sweep Done: see the plot" -m "some text"
+    [ "$status" -eq 0 ]
+    _k="$(printf '%s' "$output" | sed -n 's/.*posted (key \([0-9a-f]*\)).*/\1/p')"
+    [ "${#_k}" -eq 8 ]                                      # the first eight hex of a uuid4
+    [[ "$output" == *"a post with -k $_k revises it"* ]]     # the line says how to revise
+    grep '/notice' "$MOCK_LOG" | grep -q "\"key\": *\"$_k\""   # the same key rode the payload
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c -i 'sweep-done\|sweep_done')" -eq 0 ]   # never a slug of the title
+    # the shorthand: a bare first word is the title, a bare second the text
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card "Backups finished" "all three volumes"
+    [ "$status" -eq 0 ]
+    grep '/notice' "$MOCK_LOG" | grep -q '"title": *"Backups finished"'
+    grep '/notice' "$MOCK_LOG" | grep -q '"body": *"all three volumes"'
+    [ "$(grep -c '/notice' "$MOCK_LOG")" -eq 2 ]
+}
+
+@test "card: no session named posts an OWNER-LESS card (no id, no name); inside a session --no-session forces it" {
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    # outside a session with no -s: owner-less, said so on the success line (the user 2026-09-18: a card at the top of the feed)
+    run env ROMP_SID= "$ROMP_SCRIPT" card -t "Remember the standup moved" -m "to 10:30"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"at the top of the feed (no session)"* ]]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"id"')" -eq 0 ]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"name"')" -eq 0 ]
+    grep '/notice' "$MOCK_LOG" | grep -q '"title": *"Remember the standup moved"'
+    # inside a session: ROMP_SID owns by default; --no-session forces owner-less
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "Mine" -m "x"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"posted (key"* ]]
+    [[ "$output" != *"(no session)"* ]]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"id": *"11111111-2222-3333-4444-555555555555"')" -eq 1 ]
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card --no-session -t "Everyone" -m "x"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"(no session)"* ]]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"id"')" -eq 1 ]   # still the one from the default post
+    [ "$(grep -c '/notice' "$MOCK_LOG")" -eq 3 ]
+}
+
+@test "card: -b/-c ride the body as board and category; the posted line names the board and says when the post created it; -c alone names a feed category" {
+    # plans/notice-cards.md, "The card command names its board" (card boards phase three): the kernel resolves where the card
+    # files and answers with the row's board and category and, when the post minted the board or the category, a `created` word
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    MOCK_CURL_NOTICE_OK='{"ok": true, "notice": {"key": "fig", "rev": 1, "board": "figures", "category": "new", "created": "board"}}' \
+        run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "The accuracy figure is ready" -k fig -b figures -c new
+    [ "$status" -eq 0 ]
+    grep '/notice' "$MOCK_LOG" | grep -q '"board": *"figures"'
+    grep '/notice' "$MOCK_LOG" | grep -q '"category": *"new"'
+    [[ "$output" == *"romp card: posted (key fig, rev 1) on board figures/new (board figures created with category new)"* ]]
+    # the long forms; a known board answers with no created word; a category the post added says so
+    MOCK_CURL_NOTICE_OK='{"ok": true, "notice": {"key": "fig", "rev": 2, "board": "figures", "category": "kept", "created": "category"}}' \
+        run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "Kept" -k fig --board figures --category kept
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"on board figures/kept (category kept added to board figures)"* ]]
+    MOCK_CURL_NOTICE_OK='{"ok": true, "notice": {"key": "fig", "rev": 3, "board": "figures", "category": "new"}}' \
+        run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "Again" -k fig -b figures
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"on board figures/new: it shows until"* ]]
+    [[ "$output" != *"created"* ]]
+    # -c alone names a feed category: the body carries category and no board, and the line stays the feed's
+    MOCK_CURL_NOTICE_OK='{"ok": true, "notice": {"key": "w", "rev": 1, "board": "feed", "category": "working"}}' \
+        run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "Working on it" -k w -c working
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"posted (key w, rev 1) on the feed:"* ]]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"category": *"working"')" -eq 1 ]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"board": *"feed"')" -eq 0 ]
+    # an owner-less card on a board: the line says both where it filed and that it has no session (the 1861 read, low)
+    MOCK_CURL_NOTICE_OK='{"ok": true, "notice": {"key": "o", "rev": 1, "sid": "notes", "board": "figures", "category": "new"}}' \
+        run env ROMP_SID= "$ROMP_SCRIPT" card -t "A note on the figures board" -k o -b figures
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"on board figures/new, with no session: it shows until"* ]]
+    # neither flag: neither member rides (an older kernel sees today's body)
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "Plain" -k p
+    [ "$status" -eq 0 ]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep '"key": *"p"' | grep -c '"board"')" -eq 0 ]
+    # usage: a flag with no value, or with a value that is another flag
+    run env ROMP_SID= "$ROMP_SCRIPT" card -t x -b
+    [ "$status" -eq 2 ]
+    run env ROMP_SID= "$ROMP_SCRIPT" card -t x -c -b figures
     [ "$status" -eq 2 ]
 }
 
@@ -3395,8 +3650,29 @@ PY
     _stub_curl
     touch "$MOCK_LOG"
     export ROMP_SERVE_TOKEN=testtok
-    run env ROMP_SID=11111111-2222-3333-4444-555555555555 MOCK_CURL_NOTICE_REFUSE=1 "$ROMP_SCRIPT" card --key x --title "x" --attach /nowhere.png
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 MOCK_CURL_NOTICE_REFUSE=1 "$ROMP_SCRIPT" card -k x -t "x" --attach /nowhere.png
     [ "$status" -eq 1 ]
     [[ "$output" == *"romp card: refused — attachment refused: not a file"* ]]
     [[ "$output" != *"romp card: posted"* ]]
+}
+
+@test "card: carries no actions: an action flag is a usage error and no post names actions, so no command posts a held-mail button" {
+    # fold 4's one-pass review (2026-10-02): the quarantine action kind is posted by the kernel alone on this fork
+    # (NOTICE_ACTION_KINDS_INTERNAL), refused on POST /notice (tests/test_kernel_trust.py, HeldMailKindIsTheKernels); the command
+    # posts through that route and has no way to carry an action at all, which this pins
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    _act='{"label": "Mark as read", "kind": "quarantine", "body": {"mid": "m1", "verdict": "approve"}}'
+    for flag in --action --actions -a; do
+        run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "New message from api" "$flag" "$_act"
+        [ "$status" -eq 2 ]
+    done
+    [ "$(grep -c '/notice' "$MOCK_LOG")" -eq 0 ]
+    # the command's flags in one post: the payload carries no actions member
+    run env ROMP_SID=11111111-2222-3333-4444-555555555555 "$ROMP_SCRIPT" card -t "New message from api" -m "hello" -k m1 \
+        --needs-you --expires 60 --producer postal -b mail -c new --attach "$TEST_DIR/figure.png"
+    [ "$status" -eq 0 ]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"producer": *"postal"')" -eq 1 ]
+    [ "$(grep '/notice' "$MOCK_LOG" | grep -c '"actions"')" -eq 0 ]
 }

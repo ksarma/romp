@@ -34,7 +34,7 @@ import served_css   # noqa: E402  a served text with its comments blanked (loads
 
 TUNNELS = {
     "tunnels": [{
-        "host": "TESTHOST", "kernelPort": 29855, "localPort": 51000, "busPort": 51001,
+        "host": "TESTHOST", "kernelPort": 29855, "localPort": 1, "busPort": 2,
         "checkin": False, "checkinPeer": False, "hasToken": True, "status": "up", "detail": "",
         "sids": ["11111111-2222-3333-4444-555555555555"], "trust": "directed",
         "kernelSha": "abc1234", "localSha": "abc1234", "outOfDate": False,
@@ -115,6 +115,7 @@ function alert(m){ ALERTS.push(String(m)); }
 const setTimeout_ = setTimeout;
 // listeners are RECORDED so a test can deliver a pane's postMessage (the hostsPending row copy)
 const window = { _l:{}, addEventListener(k,f){ (this._l[k]=this._l[k]||[]).push(f); }, location:{reload(){}} };
+window.__rompPaneSourceOk = () => true;   // the shell's source check (the boot script's, plans/panes-as-data.md): this stub's posts stand for a protocol pane's
 const console_err = [];
 const console = { error(...a){ console_err.push(a.map(String).join(' ')); }, log(){}, warn(){} };
 

@@ -56,7 +56,8 @@ class NewRoutePrefs(unittest.TestCase):
                        km._sdk_ready, km._create_sdk_session, km._push_soon, km._codex)
         km._live_map = lambda: []
         km._set_model_or_park = lambda be, sid, v: self.calls.append(("model", sid, v))
-        # the effort setter answers (took, parked) and the prefs pass reads `took` (a refused level is not echoed as applied)
+        # the effort setter answers (took, parked), the shape the prefs pass reads: a level it took is echoed,
+        # a level it refused is not (the refusing stub is per test)
         km._set_effort_or_park = lambda be, sid, v: (self.calls.append(("effort", sid, v)), (True, False))[1]
         km.Sessions.backend_for = staticmethod(lambda sid: object())
         km._push_soon = lambda: None
@@ -117,27 +118,29 @@ class NewRoutePrefs(unittest.TestCase):
         self.assertEqual(self.calls, [("model", SID, "claude-fable-5")])
 
     def test_a_refused_effort_is_not_echoed_as_applied_and_the_echo_carries_the_refusal(self):
-        # the setter's verdict used to be dropped here too: a Codex level the model's catalog does not offer was echoed
-        # back as applied, so `romp new` printed it as applied and exited 0 while nothing changed (the catch-up fold's
-        # review, 2026-09-18). The echo now carries the refusal in the setter's own words, and stderr says so once.
+        # _set_effort_or_park answers (took, parked) so a caller can be loud about a refusal, and the setEffort op
+        # and the typed /effort route both read it; this door discarded it and echoed the asked level as applied,
+        # so `romp new --effort` printed the level as applied and exited 0 while nothing changed. The echo now
+        # carries the refusal in the setter's own words under `refused`, no `effort` key, and stderr says so once.
         km._live_names = lambda *_: {"opt": SID}
         fake_codex = object()
         km.Sessions.backend_for = staticmethod(lambda sid: fake_codex)
-        km._codex = lambda: fake_codex                                  # the Codex words: the catalog does not offer it
+        km._codex = lambda: fake_codex                     # the session's backend IS the Codex one: catalog wording
         km._set_effort_or_park = lambda be, sid, v: (self.calls.append(("effort", sid, v)), (False, False))[1]
         err = io.StringIO()
         with redirect_stderr(err):
             r = self._post({"name": "opt", "dir": self.dir, "model": "claude-fable-5", "effort": "bogus-level"})
         self.assertTrue(r["ok"] and r["existing"], "the open itself stands: the session runs, one pref was refused")
-        self.assertEqual(r.get("model"), "claude-fable-5", "the model pick is echoed on its own verdict")
+        self.assertEqual(r.get("model"), "claude-fable-5", "the model pick is echoed on its own")
         self.assertNotIn("effort", r, "a refused level is never echoed as applied")
-        self.assertEqual(r.get("refused"), km._effort_refusal(fake_codex, "bogus-level"))
-        self.assertIn("Codex catalog does not offer", r["refused"])
-        self.assertIn("'bogus-level'", r["refused"], "the refused level is named")
+        self.assertEqual(r.get("refused"), km._effort_refusal(fake_codex, "bogus-level"),
+                         "the refusal is the setter's own sentence, the one the setEffort op and /effort answer with")
+        self.assertIn("Codex catalog does not offer", r["refused"], "the Codex singleton's wording, not the backend's")
         self.assertEqual(self.calls, [("model", SID, "claude-fable-5"), ("effort", SID, "bogus-level")],
                          "the setter was asked, and said no")
-        self.assertIn("refused", err.getvalue(), "one stderr line, as the typed route writes")
-        self.assertIn("bogus-level", err.getvalue())
+        # one stderr line in the typed route's shape, the door named so a log reader can tell which one refused
+        self.assertEqual([ln for ln in err.getvalue().splitlines() if "refused" in ln],
+                         ["effort 'bogus-level' for %s refused by object (POST /new)" % SID])
 
 
 class NewRouteEnv(unittest.TestCase):
