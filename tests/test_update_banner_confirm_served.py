@@ -58,6 +58,7 @@ live manager of a development box and restarted every session on it. The kernel 
 (absent means no manager started it), and the floor stays regardless: no probe here depends on the code
 under test to keep it off a live deployment."""
 import json
+import lab_result
 import os
 import re
 import shutil
@@ -180,8 +181,9 @@ function state() {
            prevented: PREVENTED, stopped: STOPPED };
 }
 // the wait after a confirmed POST polls /update-check on a 3 s timer; the scenario ends the process
-// once its result is out, so no poll ever fires
-function out(o) { process.stdout.write("RESULT:" + JSON.stringify(o) + "\n"); setTimeout(function () { process.exit(0); }, 0); }
+// once its result is out, so no poll ever fires. The result goes through tests/lab_result.cjs to the target run_banner
+// hands over in LAB_RESULT (the record to that file, one short RESULT: line naming it)
+function out(o) { var lab = require(JSON.parse(process.env.LAB_RESULT).resultLib); lab.writeResult(lab.targetFromEnv(), o); setTimeout(function () { process.exit(0); }, 0); }
 """
 
 
@@ -194,17 +196,18 @@ def run_banner(scenario, check=None):
         raise unittest.SkipTest("node not installed")
     pre = "".join("CHECK[%s] = %s;\n" % (json.dumps(k), json.dumps(v)) for k, v in (check or {}).items())
     d = tempfile.mkdtemp(prefix="upd-banner-")
-    path = os.path.join(d, "banner.js")
-    with open(path, "w") as f:
-        f.write(HARNESS + pre + km._UPD_JS + "\n" + km._LANDING_ESC_JS + "\n(async function(){\nawait tick(); await tick();\n"
-                + scenario + "\n})();\n")
-    r = subprocess.run([node, path], capture_output=True, text=True, timeout=60, env=dict(os.environ, **DEAD_PORTS))
-    shutil.rmtree(d, ignore_errors=True)
-    if r.returncode != 0:
-        raise AssertionError("node failed:\n" + r.stderr)
-    line = next((ln for ln in r.stdout.splitlines() if ln.startswith("RESULT:")), None)
-    assert line, "no RESULT line:\n" + r.stdout
-    return json.loads(line[len("RESULT:"):])
+    try:
+        path = os.path.join(d, "banner.js")
+        with open(path, "w") as f:
+            f.write(HARNESS + pre + km._UPD_JS + "\n" + km._LANDING_ESC_JS + "\n(async function(){\nawait tick(); await tick();\n"
+                    + scenario + "\n})();\n")
+        tgt = lab_result.target(d)   # this drive's result file and nonce (tests/lab_result.py), handed over in LAB_RESULT
+        r = subprocess.run([node, path], capture_output=True, text=True, timeout=60, env=dict(os.environ, **DEAD_PORTS, **lab_result.env(tgt)))
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr)
+        return lab_result.read(r, tgt)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 class TwoClicks(unittest.TestCase):
@@ -1143,6 +1146,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const pw = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await pw[cfg.engine].launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -1490,8 +1494,10 @@ await step("tabIntoPane", async () => {
   return { onConfirm, after, paneActive, posts: posts - before };
 });
 await browser.close();
-// the result exceeds a pipe's 64 KB: node writes to a pipe asynchronously, so the exit waits for the write
-process.stdout.write("RESULT:" + JSON.stringify(R) + "\n", () => process.exit(0));
+// the record (past a pipe's 64 KB) to this drive's result file, one short RESULT: line naming it; writeResult returns once
+// the line is written, so the exit cannot cut it
+lab.writeResult(cfg, R);
+process.exit(0);
 """
 
 
@@ -1588,8 +1594,11 @@ class Browser(unittest.TestCase):
         engines = [e.strip() for e in declared.split(",") if e.strip()]
         for leg, engine, launch in cls.LEGS:
             cfg = os.path.join(lab, leg + ".json")
+            conf = {"leg": leg, "engine": engine, "launch": launch, "page": page, "pane": PANE, "checks": CHECKS, "labels": LABELS}
+            tgt = lab_result.target(lab, leg)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"leg": leg, "engine": engine, "launch": launch, "page": page, "pane": PANE, "checks": CHECKS, "labels": LABELS}, f)
+                json.dump(conf, f)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=600,
                                env=dict(base, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg, **DEAD_PORTS))
             if p.returncode == 3:
@@ -1600,10 +1609,10 @@ class Browser(unittest.TestCase):
                 continue
             if p.returncode != 0:
                 raise AssertionError("%s driver failed:\n%s%s" % (leg, p.stdout[-3000:], p.stderr[-3000:]))
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
-                raise AssertionError("%s driver printed no result:\n%s%s" % (leg, p.stdout[-3000:], p.stderr[-3000:]))
-            cls.R[leg] = json.loads(line[len("RESULT:"):])
+            try:
+                cls.R[leg] = lab_result.read(p, tgt)
+            except lab_result.ResultError as e:
+                raise AssertionError("%s driver: %s" % (leg, e)) from None
         shutil.rmtree(lab, ignore_errors=True)
         if not cls.R:
             # no leg ran: the loud reasons first, so an "optional:" one never hides a declared engine's failed launch
