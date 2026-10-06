@@ -141,8 +141,12 @@ def _title_sites(src):
     """Every place a pane title flows into code, derived from the live kernel source with ast (so string escapes and
     docstrings are decoded, never grepped), by the enclosing top-level function (<module> for a module-level read):
     the _pane_label CALL sites and the ["title"] SUBSCRIPT reads. The census asserts this is the classified set, so a
-    NEW title reader (a new sink) fails it. A title read spelled .get("title") is a form this census does not read
-    (a stated limit); the live tree carries every pane-title sink as a subscript or through _pane_label."""
+    NEW title reader (a new sink) fails it. Two forms this census does not read (stated limits): a title read spelled
+    .get("title"), and a whole-record serialization that carries the title without naming it (a json.dumps of a pane or
+    board record). The JSON API routes take the second form: GET /panes, GET /boards, the POST /pane and /board echoes
+    and the /feed.json board frame serialize dict(d, ...) per record, title included, and serve application/json, where
+    json.dumps escapes the title for that context, so they are inert. Every title reader in the live tree that places the
+    title into an HTML or JavaScript context does so as a subscript or through _pane_label."""
     tree = ast.parse(src)
     label_calls, title_reads = set(), set()
 
