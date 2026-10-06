@@ -3,7 +3,7 @@ title: The remote Artifacts lab's remote-first run also reads the picker's mark 
 status: candidate
 where: tests/test_artifacts_remote_served.py (DRIVER: the remote-shown read in the remote-first run's cfg.pickerOnly branch; ArtifactsRemoteServed.test_on_a_remote_first_boot_the_pre_switch_confirms_and_the_wait_still_certifies_the_switch_to_the_hubs_own: its four holds and the mark with the remote shown; ArtifactsRemoteServed._result_remote_first: its docstring); upstream/2026-10-06-tests-artifacts-remote-shown-read.md (this entry)
 added: 2026-10-06
-pr:
+pr: 982
 tier: docs
 offered:
 closed:
