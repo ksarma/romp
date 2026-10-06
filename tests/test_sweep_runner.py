@@ -3336,7 +3336,8 @@ class Checkout(_Base):
                          "every git of the run had the figure as its soft and hard limit")
         runner = w.result()["runner"]
         self.assertEqual(runner.get("git_memory"), figure)
-        self.assertNotIn("git_memory_why", runner)
+        self.assertFalse("git_memory_why" in runner,
+                         "the run set the limit, so it records no reason (runner.git_memory_why)")
         w.change({"README.md": "# notes-api, a second commit\n"})
         p = subprocess.run([sys.executable, "-c", self.MEMORY_NOT_LINUX_DRIVER, str(SWEEP), "run", "--tree", w.tree, "--python",
                             w.python, "--workers", "2"], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -4848,8 +4849,9 @@ class WorkflowCommentLines(unittest.TestCase):
             self.assertEqual(SEED_CI.count(anchor), 1, anchor)
         self.assertTrue(SEED_CI.endswith(SEED_SERVED_STEP), "the served step's job is the seed's last")
         sweep.read_install_plan(self.tree(SEED_CI), "HEAD")
-        self.assertEqual(sweep.read_served_step(self.tree(SEED_CI), "HEAD")["env"],
-                         {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+        self.assertTrue(sweep.read_served_step(self.tree(SEED_CI), "HEAD")["env"]
+                        == {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"},
+                        "the seed's served step reads with its two switches and their values, as ci.yml writes them")
 
     def test_a_python_job_step_after_a_shallow_comment_is_read_and_refused(self):
         """A step the runner does not read, placed after a comment at column 0 or 2 inside the python job, is refused by
@@ -4879,8 +4881,9 @@ class WorkflowCommentLines(unittest.TestCase):
         for indent in (0, 2, 4, 8, 10):
             with self.subTest(indent=indent):
                 ci = SEED_CI.replace(self.SERVED_ENV, require + " " * indent + "# between the two\n" + engines)
-                self.assertEqual(sweep.read_served_step(self.tree(ci), "HEAD")["env"],
-                                 {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+                self.assertTrue(sweep.read_served_step(self.tree(ci), "HEAD")["env"]
+                                == {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"},
+                                "a comment between the two switches leaves both read, with their values")
 
     def test_any_other_shallow_line_in_a_job_is_refused_naming_it(self):
         """A line under a job indented one to three spaces that is not a comment, the next job's line or a top-level key
@@ -4911,8 +4914,9 @@ class WorkflowCommentLines(unittest.TestCase):
         served = [c for c in w.calls() if c["leg"] == "served"][-1]
         self.assertEqual({k: v for k, v in served["values"].items() if k.startswith("ROMP_SERVED_TESTS_")},
                          {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"}, p.stdout + p.stderr)
-        self.assertEqual(w.result()["runner"]["served"]["env"],
-                         {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+        self.assertTrue(w.result()["runner"]["served"]["env"]
+                        == {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"},
+                        "the result records both switches of the served env, with their values")
 
 
 # Drives run_leg in a process of its own, which becomes a subreaper as the runner does: the leg's status is taken by
@@ -5033,7 +5037,8 @@ class Subreaper(_Base):
         w.run(check=0)
         runner = w.result()["runner"]
         self.assertIs(runner.get("subreaper"), True, "the result records runner.subreaper")
-        self.assertNotIn("subreaper_why", runner)
+        self.assertFalse("subreaper_why" in runner,
+                         "a runner that is a subreaper records no reason (runner.subreaper_why)")
 
     def test_a_prctl_that_fails_refuses_the_run_by_name_before_any_leg(self):
         """A libc whose prctl fails: the runner exits 2 naming prctl PR_SET_CHILD_SUBREAPER and the errno's text, no leg
@@ -5105,7 +5110,7 @@ class ReapWhileLegRuns(unittest.TestCase):
         p = w.run(check=0)
         seen = self.seen(marks, "orphan")
         ((_i, grandchild, parent),) = seen["adopted"]
-        self.assertEqual(parent, seen["runner"], "premise: the grandchild was reparented to the runner, the subreaper")
+        self.assertTrue(parent == seen["runner"], "premise: the grandchild was reparented to the runner, the subreaper")
         self.assertEqual(seen["early"], {str(grandchild): None},
                          "the grandchild exited during the leg and the runner reaped it then (Z: a zombie left for the "
                          "leg's end)")
@@ -5124,8 +5129,8 @@ class ReapWhileLegRuns(unittest.TestCase):
                 p = w.run(check=0 if expected == 0 else 1)
                 seen = self.seen(marks, "orphans")
                 self.assertEqual(len(seen["adopted"]), 20)
-                self.assertEqual({parent for _i, _pid, parent in seen["adopted"]}, {seen["runner"]},
-                                 "premise: every grandchild was reparented to the runner")
+                self.assertTrue({parent for _i, _pid, parent in seen["adopted"]} == {seen["runner"]},
+                                "premise: every grandchild was reparented to the runner")
                 self.assertEqual(sorted(set(seen["early"].values()), key=str), [None],
                                  "premise: the ten that exited during the leg were reaped then, so orphans were being "
                                  "reaped around the leg's exit")
@@ -5218,7 +5223,8 @@ class ReapWhileLegRuns(unittest.TestCase):
         w.ctl({"action": {"bats": "idle"}, "marks": marks})
         p = w.run(check=0)
         seen = self.seen(marks, "idle")
-        self.assertEqual(seen["adopted_parent"], seen["runner"], "premise: the grandchild was reparented to the runner")
+        self.assertTrue(seen["adopted_parent"] == seen["runner"],
+                        "premise: the grandchild was reparented to the runner")
         self.assertLess(seen["cpu"], 0.5, "the runner used %.2f s of CPU in the leg's two idle seconds" % seen["cpu"])
         self.assertEqual(w.result()["legs"]["bats"]["rc"], 0, p.stdout + p.stderr)
 
@@ -8947,7 +8953,9 @@ class LegEnvironment(_Base):
         for r in (first, second):
             got = r["runner"].get("leg_env")
             self.assertIsNotNone(got, "the result records the leg environment's allowlist and hash")
-            self.assertEqual(got, {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()})
+            self.assertEqual(sorted(got), ["allow", "hash"], "the record holds the allowlist and the hash alone")
+            self.assertEqual(got["allow"], list(sweep.LEG_ALLOW), "the recorded allowlist is the reader's")
+            self.assertEqual(got["hash"], sweep.policy_hash(), "the recorded hash is the reader's constant")
 
     # The leg environment hash the runner before round 2 recorded: every result the owner's runner wrote at the round-1
     # fix head carries it, read from those records (the focused re-check at the round-2 fix head read them).
@@ -9370,7 +9378,7 @@ class PytestEnvironment(_Base):
         w = self.w
         w.run(check=0)
         runner = w.result()["runner"]
-        self.assertIn("sdk", runner, "the result records the pytest leg's environment")
+        self.assertTrue("sdk" in runner, "the result records the pytest leg's environment")
         sdk = runner["sdk"]
         self.assertEqual(sdk["version"], SEED_PIN, "the SDK's version, as the venv reports it")
         self.assertRegex(sdk["key"], r"^[0-9a-f]{20}$")
@@ -9880,8 +9888,12 @@ class PytestEnvironment(_Base):
         self.assertTrue(w.setups())
         for s in w.setups():
             with self.subTest(setup=s["kind"]):
-                self.assertEqual(s["pip_env"], {"PIP_CONFIG_FILE": os.devnull, "PIP_DISABLE_PIP_VERSION_CHECK": "1",
-                                                "PIP_NO_INPUT": "1"})
+                self.assertEqual(sorted(s["pip_env"]),
+                                 ["PIP_CONFIG_FILE", "PIP_DISABLE_PIP_VERSION_CHECK", "PIP_NO_INPUT"],
+                                 "the build sees pip's three settings and no pip variable of the batchers")
+                self.assertTrue(s["pip_env"] == {"PIP_CONFIG_FILE": os.devnull, "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+                                                 "PIP_NO_INPUT": "1"},
+                                "pip's config file off, its version check off, no input")
 
     def test_a_leg_rerun_of_pytest_runs_in_the_venv_and_one_of_another_leg_builds_none(self):
         w = self.w
@@ -9891,7 +9903,7 @@ class PytestEnvironment(_Base):
         w.ctl({})
         setups = len(w.setups())
         w.run("--leg", "bats", "--flake", self.FLAKE, check=1)
-        self.assertNotIn("sdk", w.result()["runner"], "a re-run without the pytest leg builds no environment")
+        self.assertFalse("sdk" in w.result()["runner"], "a re-run without the pytest leg builds no environment")
         self.assertEqual(len(w.setups()), setups, "and probes none")
         w.run("--leg", "pytest", "--flake", self.FLAKE, check=0)
         sdk = self.sdk()
@@ -10047,7 +10059,7 @@ class ServedLeg(_Base):
         w = self.w
         w.run(check=0)
         first = w.result()["runner"]["served"]
-        self.assertIn("key", first, "the served leg's venv is recorded, by its key")
+        self.assertTrue("key" in first, "the served leg's venv is recorded, by its key")
         self.assertIs(first["built"], True)
         w.change({"README.md": "# notes-api, again\n"})
         w.run(check=0)
@@ -10194,7 +10206,9 @@ class ServedLeg(_Base):
         rec = w.result()["legs"]["served"]["env_set"]
         self.assertEqual({k: rec.get(k) for k in ("ROMP_SERVED_TESTS_REQUIRE", "ROMP_SERVED_TESTS_ENGINES")},
                          {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"}, "recorded as set values")
-        self.assertEqual(w.result()["runner"]["served"]["env"], {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+        self.assertTrue(w.result()["runner"]["served"]["env"]
+                        == {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"},
+                        "the result records the served step's env as ci.yml writes it")
         hash_before = w.result()["runner"]["leg_env"]["hash"]
         engines = "          ROMP_SERVED_TESTS_ENGINES: chromium\n"
         require = '          ROMP_SERVED_TESTS_REQUIRE: "1"\n'
@@ -10359,7 +10373,7 @@ class ServedLeg(_Base):
         r = w.result()
         self.assertEqual(call["exe"], r["runner"]["served"]["python"], "in the served venv")
         self.assertEqual((r["runner"]["served"]["key"], r["runner"]["served"]["built"]), (first["key"], False), "reused")
-        self.assertNotIn("sdk", r["runner"], "a re-run without the pytest leg builds no pytest venv")
+        self.assertFalse("sdk" in r["runner"], "a re-run without the pytest leg builds no pytest venv")
         self.assertEqual(r["runner"]["served"]["job"], "vscode-extension")
         self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "pass")
 
@@ -11483,7 +11497,9 @@ class CiParity(unittest.TestCase):
         pytest leg's venv, and it carries no SDK switch, since CI's served step installs none."""
         job, env, run = self.step(SERVED_LABEL)
         self.assertEqual(sweep.SERVED_STEP, SERVED_LABEL)
-        self.assertEqual((self.served["job"], self.served["env"], self.served["globs"]), (job, env, self.served_globs()))
+        self.assertEqual(self.served["job"], job, "the runner reads the served step's job")
+        self.assertTrue(self.served["env"] == env, "the runner reads the served step's env: block as written")
+        self.assertEqual(self.served["globs"], self.served_globs(), "the runner reads the served step's globs")
         self.assertTrue({"install", "python"} <= set(self.served), "the runner reads the step's pip lines and its job's Python")
         self.assertEqual(self.served["install"], [shlex.split(line) for line in run.splitlines()
                                                   if line.strip().startswith("python -m pip install")])
@@ -11589,7 +11605,7 @@ class CiParity(unittest.TestCase):
             st = job["steps"][name]
             with self.subTest(step=name):
                 self.assertEqual([k for k in st["keys"] if k not in sweep.INSTALL_STEP_KEYS], [])
-                self.assertEqual(st["env"], {}, "an install step's env changes what it installs")
+                self.assertTrue(st["env"] == {}, "an install step's env changes what it installs")
                 self.assertIn(st["values"].get("shell", "bash"), ("bash",), "the runner reads a step bash runs")
         self.assertEqual(re.findall(r"(?m)^(env|defaults):", self.text), [], "a workflow-level env: or defaults: reaches every step")
 
