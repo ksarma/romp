@@ -693,7 +693,8 @@ CLEAN_LINES = [
     "function f(stdout) { return stdout; }\nconst { argv } = process;",
     # a key that ends in fd is not fd
     'const w = fs.createWriteStream("", { myfd: 1 }); const v = { "myfd": 1 };',
-    # the first stdio entry ends at its first comma outside parens: stderr inherited, stdin inherited, stdout a file
+    # the first stdio entry ends at its first comma outside parens. Neither line inherits stdout (a pipe in both): the first
+    # opens a file as stdin and inherits stderr, the second inherits stdin
     'spawn(cmd, args, { stdio: [fs.openSync(f, "r"), "pipe", "inherit"] });',
     'spawn(cmd, args, { "stdio": ["inherit", "pipe", "pipe"] });',
 ]
