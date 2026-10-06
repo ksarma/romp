@@ -58,6 +58,19 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   (`self.addCleanup(lab_ports.release, lab)`); the census reads every module under
   `tests/` that reserves, and every class in it that does, in its own body or
   through a function its module defines, for that release.
+  Every served driver hands its record to pytest through `tests/lab_result.cjs`.
+  The module mints the drive's target with `lab_result.target(lab, name)` and
+  hands it to the driver in its cfg (`cfg.update(tgt)`); the driver calls
+  `lab.writeResult(cfg, record)`, which writes the record to the target's file
+  and prints one short `RESULT:` line naming it; the module reads the record back
+  with `lab_result.read(p, tgt)`. A record printed whole on stdout reached pytest
+  through one write to a pipe, and a write to a full or non-blocking pipe (8 KiB
+  on a loaded machine) lost the record's tail without a throw. The target carries
+  a nonce minted per drive, which must match on the line and in the file, so a
+  file an earlier drive left at the same path never passes. The header of
+  `tests/lab_result.cjs` states the protocol and how each kind of driver loads the
+  helper. `tests/test_lab_result_census.py` refuses every other write to a served
+  driver's stdout, keyed on the spellings its docstring lists.
   Golden transcript fixtures: `test_romp_events_golden.py` + `fixtures/`.
   Run: `python3 -m pytest tests/ -q` (~20s; a stalled run is a hang, not slow).
   The `_HAVE_SDK`-gated classes in `test_sdk_backend.py` (OptionsAssembly, the
