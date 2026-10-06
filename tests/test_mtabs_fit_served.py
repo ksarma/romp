@@ -38,7 +38,9 @@ wrap only where it still cannot.
   card is open at the drop: a closed card runs no animation, so the class a drop left on its copy is cleared when the card
   opens, where it would otherwise play the flash late. Usage explains rather than hides when it has nothing to show
   (romp-manager's call 6): the shell's usage panel opens only over a reading, so with none the card shows Usage disabled
-  with the line "No reading yet" under its name, and a tap on it leaves the card open; with a reading, Usage is enabled and
+  with the line "No reading yet" under its name, and a tap on it leaves the card open (a disabled button takes no click,
+  so the row's handler tests no disabled state: the disabled state is the guard, romp-manager's call 3 at round 1); with a
+  reading, Usage is enabled and
   opens the panel. The card reads the source the panel's opener reads: each opening asks the shell for a fresh pull
   (window.__rompUsagePull, the usage script's own fetch of its readings), Usage shows the romp loader and takes no tap until it ends, and
   then the card asks the usage script's own test over its readings (window.__rompUsageReading, the check the panel's opener
@@ -108,7 +110,8 @@ enabled with no line; and one click closes the card, posts phoneAct usage and op
 of its own at 390px: the shell's boot pull answers no rows and every later pull reaches the lab, with the Sessions pane
 unloaded so no timeline forwards a reading (both read as the premise); the card's opening asks the shell for a pull (a GET
 under /usage/ after the opening), and while that request is held Usage shows the romp loader in its sub-line's place (the
-swirl spinning, the wordmark, the dots pulsing), disabled and busy, with no line; let through, the ask ends with Usage
+swirl spinning, the wordmark, the dots pulsing), disabled and busy, with no line, and a tap at its centre leaves the card
+open and posts no phoneAct; let through, the ask ends with Usage
 enabled, no line and no loader, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then the
 deploy skew, on a page of its own at 390px: the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
@@ -139,7 +142,8 @@ of padding, 12px text), and where the accent lights the whole Remote kernels but
 1's ui-3). The no-reading pins are red at the card without that state (Usage enabled with no reading, and its
 tap closing the card to open nothing); the reading landing in the open card is red where the card reads the state only when
 it opens, and the emptying where the shell's renderRows tells the card only as it fills its readings; the unpulled reading is red where the card answers from the shell's cached readings without a pull (Usage
-disabled with its line, no loader, the tap opening nothing). The fallback's pin is red under the old rule restored (no wrap), and the
+disabled with its line, no loader, the tap opening nothing). Both taps on a disabled Usage, with no reading and while the
+opening's pull is out, are red under a mutant that never disables it. The fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
 closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
@@ -546,8 +550,8 @@ def _no_reading_problems(engine, nr):
 
 def _unpulled_problems(engine, up):
     """A reading the kernel holds and the shell has not pulled: the card's opening asks the shell for a fresh pull, shows the
-    romp loader on Usage while it is in flight (the button disabled, no line), and once it ends shows Usage enabled with no
-    line; one click opens the Usage modal (PR 976's round 1, correctness-1 and extra6-1)."""
+    romp loader on Usage while it is in flight (the button disabled, no line, a tap on it reaching nothing), and once it ends
+    shows Usage enabled with no line; one click opens the Usage modal (PR 976's round 1, correctness-1 and extra6-1)."""
     out = []
     where = "%s Usage over an unpulled reading at %dx%d" % (engine, up["vp"][0], up["vp"][1])
     pre = up.get("premise") or {}
@@ -561,6 +565,10 @@ def _unpulled_problems(engine, up):
             or not {"fask-swirl-spin", "fileview-pulse"} <= set(d["wait"].get("anims") or []):
         out.append("%s: while the opening's pull is in flight, Usage does not show the romp loader (spinning, its dots pulsing), "
                    "disabled and busy, with no line: %r" % (where, d))
+    # the disabled state is the tap's one guard (romp-manager's call 3 at round 1: the row's handler tests none of its own)
+    td = up.get("tappedDuring") or {}
+    if not td.get("settingsOpen") or td.get("cardHidden") is not False or td.get("usage") or td.get("acts") != []:
+        out.append("%s: a tap on Usage while the opening's pull is in flight closed the card or reached the shell: %r" % (where, td))
     if not up.get("ended") or not up.get("readout"):
         out.append("%s: the opening's pull did not land (the ask ended %r, the readout filled %r)" % (where, up.get("ended"), up.get("readout")))
     a = up.get("after")

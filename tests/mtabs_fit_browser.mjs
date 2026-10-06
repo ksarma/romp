@@ -39,7 +39,8 @@
 // Then a reading the kernel holds and the shell has not pulled, on a page of its own at cfg.actsViewport: the shell's boot
 // pull answers no rows and every later one goes to the lab, the Sessions pane unloaded (read as the premise); the card
 // opened, its ask for a fresh pull held while Usage is read (the romp loader in the sub-line's place, its animations, the
-// button disabled and busy), then let through, Usage read once the ask has ended, and one click on it, its effect read.
+// button disabled and busy) and tapped at its centre, the shell's side read after a settle, then let through, Usage read once
+// the ask has ended, and one click on it, its effect read.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -557,6 +558,16 @@ try {
     up.asked = held.length;
     await frames(page);
     up.during = await kit.usageNow(sf);
+    // a tap on Usage while the pull is held: the button is disabled, and that alone keeps the tap from the shell (the row's
+    // handler tests no disabled state), so the card stays open and no phoneAct is posted; read after a settle, since an
+    // absence has no event to wait on
+    if (up.during) {
+      await page.mouse.click(up.during.left + up.during.w / 2, up.during.top + up.during.h / 2);
+      await frames(page);
+      await sleep(3 * (cfg.settleMs || 100));
+      await frames(page);
+      up.tappedDuring = await kit.shellNow(sf);
+    }
     hold = false;
     for (const route of held.splice(0)) await route.continue();
     up.ended = await kit.askEnded(sf);
