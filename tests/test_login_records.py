@@ -324,7 +324,11 @@ class TheTokenCommand(unittest.TestCase):
             try:
                 pid = int(pidfile.read_text())
             except (OSError, ValueError):
-                return          # no record, no child: the shell writes the pid right after the fork, a second before the cut
+                # No record. Either the cut came before the fork and there is no child, or, on a starved CPU, it came
+                # between the fork and the write: then the sleep keeps running until its 30 s are up, and the run-end
+                # process check names it and fails the run if it outlasts the check's wait. A run_helper that ended the
+                # command's whole process group would close that window.
+                return
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
