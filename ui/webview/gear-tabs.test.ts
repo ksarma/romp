@@ -285,7 +285,11 @@ test("the strip's gear glyph opens the Chat tab at its Tab strip section through
 test("the Token usage panel's every close returns to the settings card (the T409 tidy's read): one function, three callers, no bare hide of the layer", () => {
   // a bare hide left the card hidden with the shell's transparent full-window frame still over the page; the served settings lab
   // presses the close, then Escape, then a click that must land
-  assert.match(GEAR, /function raHide\(e\) \{ if \(e && e\.stopPropagation\) e\.stopPropagation\(\); raBack\.hidden = true; p\.hidden = false; \}/, "the close's click stops before the card's click-outside listener, which would close the settings outright");
+  // the close also clears the drop flash's class off the card's Remote kernels glyph before the card shows (PR 976's round 1,
+  // fresh-1: a host that dropped while the panel hid the card flashed it late at this close); a pin on the text, which guards
+  // that the call stays in this one function: tests/test_mtabs_fit_served.py's Token usage panel case runs the close and reads
+  // the glyph
+  assert.match(GEAR, /function raHide\(e\) \{ if \(e && e\.stopPropagation\) e\.stopPropagation\(\); raBack\.hidden = true; netDropClear\(\); p\.hidden = false; \}/, "the close's click stops before the card's click-outside listener, which would close the settings outright");
   assert.match(GEAR, /if \(raClose\) raClose\.onclick = raHide;/);
   assert.match(GEAR, /if \(e\.target === raBack\) raHide\(e\); \}\);/, "the backdrop");
   assert.match(GEAR, /if \(e\.key === 'Escape' && raBack && !raBack\.hidden\) raHide\(\); \}\);/, "the panel's Escape");
