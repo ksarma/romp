@@ -129,8 +129,8 @@ var GEAR_HTML =
   '<div id=rsettings hidden><div class=rs-card>' +
   '<div class=rs-h>Settings</div>' +
   // THE PHONE'S MOVED ACTIONS (iOS item 4g, the glyphs above): a row under the title, above the tabs so every tab shows it,
-  // shown only on the web shell's phone layout (openSettings reads the shell's layout at each open; the desktop has all
-  // three on its rail). A tap closes this card and asks the shell to run the bar button's own handler ({romp:'phoneAct', act}).
+  // shown only on the web shell's phone layout, and only by a shell that runs the row's taps (openSettings reads the shell's
+  // layout and its marker at each open; the desktop has all three on its rail, an older shell on its bottom bar). A tap closes this card and asks the shell to run the bar button's own handler ({romp:'phoneAct', act}).
   '<div class=rs-pacts id=rs-pacts hidden>' +
   // Usage carries its sub-line for the state with no reading yet (usageAct below shows it and disables the button)
   '<button type=button class=rs-pact id=rs-pact-usage data-pact=usage title=Usage>' + PACT_USAGE_SVG +
@@ -2142,22 +2142,29 @@ function initGear(post, opts) {
     pcard.addEventListener('focusout', function (e) { var host = hostOf(e.target); if (host && !(e.relatedTarget && host.contains(e.relatedTarget))) placeRowHosts(host); });
   }
   function closeSettings() { endDrags(); if (raBack && !raBack.hidden) raHide(); clearSectionScroll(); p.hidden = true; setModalCls(false); feedFull(false); }   // the reset FIRST, while the card still has a layout: a hidden card ignores a scroll write and keeps its old offset for the next open (measured); a pending section ask dies with the panel (round two, LOW 2 and 7)
-  // the web shell's phone layout, read from the shell's own predicate (kernel _LANDING_MOBILE_JS __rompMobileOn, the media
-  // query the shell lays its bottom bar out by); false in VS Code (a cross-origin parent) and on a page of its own
   // the drop flash's class off the card's Remote kernels glyph (the kernel's flashDrop puts it there; gear.css #rs-pact-net.rn-drop)
   function netDropClear() { var n = document.getElementById('rs-pact-net'); if (n) n.classList.remove('rn-drop'); }
+  // the web shell's phone layout, read from the shell's own predicate (kernel _LANDING_MOBILE_JS __rompMobileOn, the media
+  // query the shell lays its bottom bar out by); false in VS Code (a cross-origin parent) and on a page of its own
   function phoneShell() { try { var w = window.parent; return w !== window && typeof w.__rompMobileOn === 'function' && !!w.__rompMobileOn(); } catch (e) { return false; } }
+  // whether the shell runs the row's taps (PR 976's round 1, kernel-1): the marker its phone script publishes beside the phoneAct
+  // listener (kernel _LANDING_MOBILE_JS __rompPhoneActs). A shell running a build from before the move (left open across the
+  // restart that deploys it) has neither, and still has the three on its bottom bar, so the card shows no row there.
+  function shellActs() { try { var w = window.parent; return w !== window && w.__rompPhoneActs === true; } catch (e) { return false; } }
   // Usage with no reading (iOS item 4g; romp-manager's call, explain rather than hide). The shell's usage panel opens only over a
   // reading (kernel _LANDING_USAGE_JS: __rompUsagePanel's openIt returns on an empty tipHTML), so a tap on Usage before the
   // first reading closed this card and opened nothing. The readings sit in the shell's usage script (its LAST), which this
   // document cannot read; that script answers through __rompUsageReading, its own test over them, and the card asks at each
   // open (as phoneShell asks for the layout): Usage enabled where the panel has something to open, disabled with its sub-line
-  // (No reading yet) where it has not. A disabled button takes no tap, so the card stays open and the line says why.
+  // (No reading yet) where it has not. A disabled button takes no tap, so the card stays open and the line says why. A shell
+  // that cannot be asked (no __rompUsageReading, or one that throws) is not a shell with no reading (PR 976's round 1,
+  // kernel-1): Usage stays as its bar button always was, enabled with no line, and its tap runs the shell's own handler.
   function usageAct() {
-    var b = document.getElementById('rs-pact-usage'), none = document.getElementById('rs-pact-usage-none'), has = false;
-    try { var w = window.parent; has = w !== window && typeof w.__rompUsageReading === 'function' && !!w.__rompUsageReading(); } catch (e) { has = false; }
-    if (b) b.disabled = !has;
-    if (none) none.hidden = has;
+    var b = document.getElementById('rs-pact-usage'), none = document.getElementById('rs-pact-usage-none'), asked = false, has = false;
+    try { var w = window.parent; if (w !== window && typeof w.__rompUsageReading === 'function') { has = !!w.__rompUsageReading(); asked = true; } } catch (e) { asked = false; }
+    var no = asked && !has;   // the shell answered, and it holds no reading
+    if (b) b.disabled = no;
+    if (none) none.hidden = !no;
   }
   function openSettings(tab, section) {
     if (raBack && !raBack.hidden) raHide();   // the Token usage panel up: down first, so the card is what this open shows, never the card under the layer (the read of the panel's close fix)
@@ -2165,7 +2172,7 @@ function initGear(post, opts) {
     if (!p.hidden) { if (knownTab(tab)) { selectTab(tab); if (section) showSection(section); else clearSectionScroll(); return; } closeSettings(); return; }   // the opener toggles the modal; a named tab on an open panel switches to it, and to its section (T379)
     selectTab(tab);
     var pacts = document.getElementById('rs-pacts');
-    if (pacts) pacts.hidden = !phoneShell();   // the phone's moved actions (iOS item 4g): the layout is read at each open, so a rotation across the breakpoint between opens is followed
+    if (pacts) pacts.hidden = !(phoneShell() && shellActs());   // the phone's moved actions (iOS item 4g): the layout (and the shell's marker) read at each open, so a rotation across the breakpoint between opens is followed
     if (pacts && !pacts.hidden) usageAct();   // ...and whether Usage has a reading to open, at each open too
     // Signal the SHELL first, then measure (the picker's order, adopted 2026-08-09): feedFull posts
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first

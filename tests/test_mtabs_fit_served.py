@@ -23,7 +23,9 @@ wrap only where it still cannot.
   kernel's restart is machinery too, rarely used and costly to hit by accident, and with it gone the default row needs 322px
   in Chromium and 318px in WebKit and Firefox (358 and 353px with the Files tab on), so the bar is one row at every phone
   width from 360px with the Files tab on or off. The bell stays on the bar. The three now sit in the settings card, a row of
-  buttons under its title, above the tabs (so whichever tab the card opens at shows them), shown only on the phone layout.
+  buttons under its title, above the tabs (so whichever tab the card opens at shows them), shown only on the phone layout
+  and only where the shell publishes the marker beside the listener that runs them (window.__rompPhoneActs), so a phone
+  shell still running a build from before the move, which has the three on its bar, gets no row whose taps run nothing.
   One click on the bar's Settings opens the card, one click on the button closes the card and runs the handler the bar's
   button ran (the shell's A-map, reached by a phoneAct message from the settings document, whose accepted acts are exactly
   the three), so Usage opens its modal, Remote kernels its panel and Restart kernel the kernel's restart (POST /restart), as
@@ -39,7 +41,7 @@ wrap only where it still cannot.
   with the line "No reading yet" under its name, and a tap on it leaves the card open; with a reading, Usage is enabled and
   opens the panel. The card asks the shell at each opening, through the usage script's own test over its readings
   (window.__rompUsageReading, the check the panel's opener makes), so a reading that arrives between two openings shows at
-  the second. The Remote kernels glyph sits on its button's own fill, and every colour it wears reads at 3:1 or more (a
+  the second; a shell that cannot be asked leaves Usage enabled with no line, as its bar button was. The Remote kernels glyph sits on its button's own fill, and every colour it wears reads at 3:1 or more (a
   graphic, romp-manager's call 7) on the card and on that fill in both themes: in the light theme its dialing grey and
   needs-you red are darker than the shell's (feed.css's --rn-wait and --rn-warn, #777777 and #dc3f46 where the shell has
   #8a8a8a and #e5484d, which read 2.59 and 2.94:1 on that theme's button fill, #e7ded2).
@@ -90,6 +92,10 @@ with the line USAGE_NONE; a click at its centre leaves the card open, opens no U
 a settle: an absence has no event to wait on), and the line still shows; then a reading arrives (the lab's own GET /usage
 payload posted to the shell as the timeline posts it, the shell's later pulls let through), and at the card's next opening
 Usage is enabled with no line, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then the
+deploy skew, on a page of its own at 390px: the shell publishes its marker (window.__rompPhoneActs) and the card opened
+from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
+move has) the card opened shows no row (not displayed, its buttons boxless); and with the marker back and the usage script's
+answer deleted (__rompUsageReading, a shell that cannot be asked) the card's Usage is enabled with no line. Then the
 Remote kernels glyph's colours in the dark and the light theme (THEMES), each on a page of its own at 390px: in the card
 opened from the bar's Settings, every colour the glyph can wear (GLYPH: the button lit and attaching, a node connected,
 dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
@@ -110,7 +116,9 @@ reading that arrived later never enables Usage. The fallback's pin is red under 
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
 closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
-class (gear.js raHide), where the glyph flashed as the panel closed. The contrast pin is red at the shell's literals in the light theme, in
+class (gear.js raHide), where the glyph flashed as the panel closed. The deploy skew's pins are red where the shell
+publishes no marker, where the card reads the layout alone (its row shown with no marker), and where a shell that cannot be
+asked reads as one with no reading (Usage disabled with its line). The contrast pin is red at the shell's literals in the light theme, in
 all three engines: the dialing grey #8a8a8a reads 2.59:1 and the needs-you red #e5484d 2.94:1 on the button's fill. Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
@@ -427,6 +435,27 @@ def _no_reading_problems(engine, nr):
     return out
 
 
+def _skew_problems(engine, sk):
+    """The deploy skew (PR 976's round 1, kernel-1): the shell publishes its marker beside the phoneAct listener, the card shows
+    its row where the marker is and not where it is missing (a shell from before the move, with the phone layout and the three
+    still on its bar), and a shell that cannot be asked for a reading leaves Usage as its bar button was, enabled with no line."""
+    out = []
+    where = "%s deploy skew at %dx%d" % (engine, sk["vp"][0], sk["vp"][1])
+    if sk.get("marker") is not True:
+        out.append("%s: the shell publishes no marker beside its phoneAct listener (window.__rompPhoneActs %r)" % (where, sk.get("marker")))
+    head = sk.get("head") or {}
+    if not head.get("rowShown"):
+        out.append("%s: with the shell's marker, the card's row of moved actions is not shown: %r" % (where, head))
+    older = sk.get("older") or {}
+    if older.get("rowShown") is not False or any(w > 0 or h > 0 for w, h in older.get("boxes", [])):
+        out.append("%s: with the phone layout and no marker (a shell from before the move), the card shows the row: %r" % (where, older))
+    ca = sk.get("cannotAsk") or {}
+    u = ca.get("usage")
+    if not ca.get("rowShown") or not u or u.get("disabled") is not False or not u.get("line") or u["line"].get("shown") is not False:
+        out.append("%s: where the shell cannot be asked for a reading, Usage is not enabled with no line, as its bar button was: %r" % (where, ca))
+    return out
+
+
 def _rail_problems(engine, rail):
     """The desktop rail equals af7d18250's at each width (RAIL_AF7), every action on screen and hit at its centre."""
     out = []
@@ -628,6 +657,7 @@ class MtabsFit(unittest.TestCase):
         problems += _problems(where, d["after"])
         problems += _acts_problems(engine, r["acts"])
         problems += _no_reading_problems(engine, r.get("noReading") or {"vp": list(ACTS)})
+        problems += _skew_problems(engine, r.get("skew") or {"vp": list(ACTS)})
         problems += _contrast_problems(engine, r.get("contrast") or {})
         self.assertEqual([tuple(x["vp"]) for x in r["rail"]], list(RAIL), engine + ": every rail width was read")
         problems += _rail_problems(engine, r["rail"])

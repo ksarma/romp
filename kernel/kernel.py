@@ -74033,6 +74033,11 @@ b.addEventListener('click',function(){var f=A[b.getAttribute('data-act')];if(f)f
 // their bar buttons ran. Only those three acts, and only from the settings document: the others keep their buttons on the bar.
 window.addEventListener('message',function(e){var m=e.data,sf=document.getElementById('f-settings');
 if(!m||m.romp!=='phoneAct'||(m.act!=='net'&&m.act!=='usage'&&m.act!=='restart')||!sf||e.source!==sf.contentWindow)return;A[m.act]();});
+// ...and the marker that says so, published beside that listener and nowhere else: the settings card shows its row of the
+// three only where the shell carries it (gear.js shellActs; PR 976's round 1, kernel-1). Across the restart that deploys the
+// move, a phone shell still running the build before it loads the new settings page with no listener here and the three still
+// on its bar; with no marker the card shows no row there, whose taps would run nothing.
+window.__rompPhoneActs=true;
 window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
 if(m.romp==='toggleFleet')userSwitch(m.to==='chat'?'chat':'fleet');});
 var shellOpened=false;   // T265: this socket's REOPEN is the kernel-restart signal — the shell asks /version whose kernel answered

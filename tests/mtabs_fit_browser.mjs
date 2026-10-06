@@ -31,6 +31,10 @@
 // shell heard read; then a reading arrives (the lab's own GET /usage payload posted to the shell as the timeline posts it,
 // the shell's later pulls let through), the card closed and opened again, Usage read again, and one click on it, its effect
 // read.
+// Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
+// (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
+// the phone layout and no marker), and Usage at one with the marker back and the usage script's answer deleted (a shell that
+// cannot be asked for a reading).
 // Then the Remote kernels glyph's colours, on a page of its own per theme (cfg.themes: the theme written to the store before
 // the page parses, as the gear writes it) at cfg.actsViewport: the card opened from the bar's Settings, and in it the card's
 // background, the button's own fill (the glyph sits on it) and each colour the glyph can wear, as computed values: the
@@ -429,6 +433,46 @@ try {
       nr.clicked = await shellNow(sf);
     }
     out.noReading = nr;
+    await context.close();
+  }
+  // the deploy skew (PR 976's round 1, kernel-1): the card shows its row only where the shell publishes the marker beside the
+  // listener that runs the row's taps (window.__rompPhoneActs). On a page of its own at cfg.actsViewport: the shell's marker
+  // read, the card opened from the bar's Settings and its row read; the marker deleted (a parent with the phone layout and no
+  // marker, as a shell from before the move is) and the card opened and read again; then the marker put back and the usage
+  // script's answer deleted (__rompUsageReading: a shell that cannot be asked for a reading) and Usage read at the next opening
+  {
+    const { context, page } = await boot(false);
+    const [w, h] = cfg.actsViewport;
+    await page.setViewportSize({ width: w, height: h });
+    await frames(page);
+    await sleep(cfg.settleMs || 100);
+    await frames(page);
+    const gear = (await read(page)).controls.find((c) => c.key === "settings");
+    if (!gear) throw new Error("no Settings on the bar (the skew leg)");
+    const openRead = async () => {
+      await page.mouse.click(gear.left + gear.w / 2, gear.top + gear.h / 2);
+      await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+      const sf = settingsFrameOf(page);
+      if (!sf) throw new Error("no settings frame after the click (the skew leg)");
+      await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+      await frames(page);
+      const got = await sf.evaluate(() => { const row = document.getElementById("rs-pacts"), ub = document.getElementById("rs-pact-usage"), un = document.getElementById("rs-pact-usage-none");
+        return { rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none",
+                 boxes: row ? Array.from(row.querySelectorAll("button")).map((b) => { const c = b.getBoundingClientRect(); return [c.width, c.height]; }) : [],
+                 usage: ub ? { disabled: ub.disabled, line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none" } : null } : null }; });
+      await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+      await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+      await frames(page);
+      return got;
+    };
+    const sk = { vp: [w, h] };
+    sk.marker = await page.evaluate(() => window.__rompPhoneActs === true);
+    sk.head = await openRead();
+    await page.evaluate(() => { delete window.__rompPhoneActs; });
+    sk.older = await openRead();
+    await page.evaluate(() => { window.__rompPhoneActs = true; delete window.__rompUsageReading; });
+    sk.cannotAsk = await openRead();
+    out.skew = sk;
     await context.close();
   }
   // the Remote kernels glyph's colours in each theme, against the card's background and the button's fill (the Python side
