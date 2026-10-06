@@ -24,6 +24,10 @@
 // the glyph read at the card's next opening, and a drop with the card open, the glyph read while its flash runs; then, the
 // host back up, the Token usage panel opened over the card (#ra-open), a drop while it is up, the panel closed (#ra-close),
 // and the glyph read two frames after the card shows again.
+// Then the glyph's marching and unlit states, on the same page: with the card open, a host attaching (cfg.tunnelsAttach), the
+// glyph's classes beside the rail's and its connector path's computed animation, dashes and running animations; the hosts
+// settled (cfg.tunnelsDrop) and read again; no host at all (cfg.tunnelsNone) and read again; then the hosts back up, the card
+// closed, no host again, and the glyph read at the card's next opening.
 // Then Usage with no reading, on a page of its own at cfg.actsViewport: the shell's usage pull (the main frame's GET under
 // /usage/) answers no rows, so the shell holds no reading (the rail's readout, which renders over the readings, read empty as
 // the premise); the card opened from the bar's Settings, its Usage button read once the opening's ask has ended (disabled,
@@ -364,6 +368,62 @@ try {
       await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
       await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
       acts.drop = drop;
+    }
+    // the glyph's marching and unlit states (PR 976's round 1, tests-2 and fresh-2), each read from the poll that brings it.
+    // With the card open: cfg.tunnelsAttach, the host that answered with no kernel now attaching (a busy turn with no drop: the
+    // drop cue fires only for a host that was up), the card's glyph read beside the rail's, with its connector path's computed
+    // animation and dashes and the animations it runs (an open card: a hidden one runs none); then cfg.tunnelsDrop again, both
+    // hosts settled, the same read; then cfg.tunnelsNone, no host at all, the glyph read with the card open. Then the hosts
+    // back up (cfg.tunnels2), the card closed, cfg.tunnelsNone again, and the glyph read at the card's next opening. An empty
+    // list drops no host either, so no flash crosses the reads. Each wait records its outcome, so a red run lists every line.
+    {
+      const sf = settingsFrame();
+      const st = {};
+      const gear = acts.bar.controls.find((c) => c.key === "settings");
+      const railTurns = (pred) => page.waitForFunction(pred, null, { timeout: 15000 }).then(() => true, () => false);
+      const railCls = () => page.evaluate(() => document.getElementById("rail-net").getAttribute("class"));
+      const glyphState = () => sf.evaluate(() => { const n = document.getElementById("rs-pact-net"); if (!n) return null;
+        const p = n.querySelector("svg path"), cs = p ? getComputedStyle(p) : null;
+        return { cls: n.getAttribute("class"), cardHidden: document.getElementById("rsettings").hidden,
+                 anim: cs ? cs.animationName : null, dash: cs ? cs.strokeDasharray : null,
+                 runs: p && p.getAnimations ? p.getAnimations().map((a) => (a.animationName || "?") + ":" + a.playState) : null }; });
+      const openCard = async () => {
+        await clickCentre(gear);
+        await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+        await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+        await frames(page);
+      };
+      const closeCard = async () => {
+        await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+        await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+        await frames(page);
+      };
+      await openCard();
+      answer = cfg.tunnelsAttach;
+      st.attachPolled = await railTurns(() => document.getElementById("rail-net").classList.contains("busy"));
+      await frames(page);
+      st.attaching = { card: await glyphState(), rail: await railCls() };
+      answer = cfg.tunnelsDrop;
+      st.settledPolled = await railTurns(() => !document.getElementById("rail-net").classList.contains("busy"));
+      await frames(page);
+      st.settled = { card: await glyphState(), rail: await railCls() };
+      answer = cfg.tunnelsNone;
+      st.nonePolled = await railTurns(() => !document.getElementById("rail-net").classList.contains("on"));
+      await frames(page);
+      st.noneOpen = { card: await glyphState(), rail: await railCls() };
+      answer = cfg.tunnels2;
+      st.backUp = await railTurns(() => document.getElementById("rail-net").classList.contains("on"));
+      await frames(page);
+      st.upBeforeClose = await glyphState();
+      await closeCard();
+      answer = cfg.tunnelsNone;
+      st.noneClosedPolled = await railTurns(() => !document.getElementById("rail-net").classList.contains("on"));
+      await frames(page);
+      st.noneClosed = await glyphState();
+      await openCard();
+      st.noneReopened = { card: await glyphState(), rail: await railCls() };
+      await closeCard();
+      acts.states = st;
     }
     out.acts = acts;
     await context.close();

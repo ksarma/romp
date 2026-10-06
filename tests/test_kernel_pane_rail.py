@@ -237,8 +237,11 @@ class PaneRailTest(unittest.TestCase):
         # the motion cue (the user 2026-07-12): while any tunnel is authorizing/connecting/starting the
         # glyph turns accent and its connector dashes MARCH — class-driven off the same /tunnels poll
         # (event-based: it clears the moment every tunnel settles), armed optimistically on Attach click
-        # so the icon moves the instant the user acts. The phone's Remote kernels button carries the same classes, in the
-        # settings card since iOS item 4g, where gear.css styles them (#rs-pact-net.busy).
+        # so the icon moves the instant the user acts. These pins read the rail's rules and paint as source text. The phone's
+        # Remote kernels button, in the settings card since iOS item 4g, takes the same classes from the same paint, and
+        # gear.css styles them there (#rs-pact-net.busy); tests/test_mtabs_fit_served.py executes that copy in a served card:
+        # lit and busy beside the rail while a host attaches, its connector dashes marching (rs-pact-march running), and
+        # neither once the hosts settle (PR 976's round 1, tests-2).
         self.assertIn("@keyframes rnet-march", self.html)
         self.assertIn(".rail-act.busy svg path{stroke-dasharray:3 3;", self.html)
         # the bar's half of these rules (#mtabs .mact.busy) styled the bar's Remote kernels button, which left the bar in iOS
@@ -251,9 +254,10 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("paintIcon(ts.some(function(t){return t.status==='up';}),busy||!!pushing.length,fleetNodes(ts))",
                       self.html)
         self.assertIn("icon.classList.add('busy')", self.html, "Attach click arms the motion before the poll")
-        # the phone's Remote kernels button mirrors on/busy: in the settings card since iOS item 4g (gear.js #rs-pact-net), so
-        # mnet() finds it in the settings document; tests/test_mtabs_fit_served.py reads the painted state in three engines
-        self.assertIn("d?d.getElementById('rs-pact-net'):null", self.html, "the phone's Remote kernels button mirrors on/busy")
+        # where the paint finds the phone's Remote kernels button: in the settings card since iOS item 4g (gear.js
+        # #rs-pact-net), so mnet() looks in the settings document. A source pin of that lookup alone; that the copy then
+        # carries on and busy is the served test's to show (tests/test_mtabs_fit_served.py, the glyph's states)
+        self.assertIn("d?d.getElementById('rs-pact-net'):null", self.html, "mnet() finds the phone's Remote kernels button in the settings document")
 
     def test_keyboard_shortcuts_live_in_the_settings_modal(self):
         # folded into settings (the user 2026-06-30): no standalone ? modal in the shell anymore

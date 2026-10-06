@@ -92,7 +92,11 @@ a host that was up answering with no kernel): with the card closed the poll drop
 its glyph carries no flash; then the host comes back and drops again with the card open, and the glyph's flash runs; then
 the host comes back again, the Token usage panel opens over the card (#ra-open, which hides the card with no message to the
 shell), the host drops while the panel is up, the panel closes (#ra-close), and two frames after the card shows again its
-glyph carries no flash. Then
+glyph carries no flash. Then the glyph's states, on the same page: with the card open, a poll that turns the host with no
+kernel to attaching (TUNNELS_ATTACH) marks the card's glyph lit and busy as the rail's is, its connector path's computed
+animation rs-pact-march running over dashes of 3 and 3 (by value); the hosts settled (TUNNELS_DROP again) take busy and the
+march off; a poll with no host (TUNNELS_NONE) leaves the glyph unlit with the card open; and with the hosts back up and the
+card closed, the same poll leaves the glyph unlit at the card's next opening. Then
 Usage with no reading, on a page whose shell's usage pull (its GET under /usage/) answers no rows (the rail's readout, which
 renders over the readings, read empty as the leg's premise): the card opened from the bar's Settings shows Usage disabled
 with the line USAGE_NONE once the opening's ask for a fresh reading has ended; a click at its centre leaves the card open,
@@ -139,7 +143,10 @@ disabled with its line, no loader, the tap opening nothing). The fallback's pin 
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
 closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
-class (gear.js raHide), where the glyph flashed as the panel closed. The deploy skew's pins are red where the shell
+class (gear.js raHide), where the glyph flashed as the panel closed. The glyph's states are red under mutants of their
+paint: busy no longer toggled on the card's copy (the busy line, and the march line with it), the march rule gone from
+gear.css (the march line), the copy's lit class added by the poll and never taken off (the open card's unlit line), and the
+opening's copy of that class made the same way as well (both unlit lines). The deploy skew's pins are red where the shell
 publishes no marker, where the card reads the layout alone (its row shown with no marker), and where a shell that cannot be
 asked reads as one with no reading (Usage disabled with its line). The layout leg is red where the card reads the layout
 only when it opens (the row still shown in the widened window), and its glyph line red without the clear of the drop's class
@@ -222,6 +229,12 @@ TUNNELS2 = {"tunnels": [{"host": "TESTHOST", "status": "up"}, {"host": "PEERHOST
 # ...and the drop: PEERHOST, up in TUNNELS2, answers with no kernel, so that poll is a host dropping (the glyph's flash)
 TUNNELS_DROP = {"tunnels": [{"host": "TESTHOST", "status": "up"}, {"host": "PEERHOST", "status": "no-kernel"}],
                 "peersMode": False, "autoUpdate": False, "local": {"host": "", "ver": "", "sha": ""}}
+# ...the attach: PEERHOST, with no kernel in TUNNELS_DROP, connecting (a status the shell reads as in flight), so that poll
+# turns the glyph busy with no drop (the drop cue fires only for a host that was up)
+TUNNELS_ATTACH = {"tunnels": [{"host": "TESTHOST", "status": "up"}, {"host": "PEERHOST", "status": "connecting"}],
+                  "peersMode": False, "autoUpdate": False, "local": {"host": "", "ver": "", "sha": ""}}
+# ...and no host at all: the glyph unlit, its nodes unpainted; an empty list drops no host either
+TUNNELS_NONE = {"tunnels": [], "peersMode": False, "autoUpdate": False, "local": {"host": "", "ver": "", "sha": ""}}
 # The desktop rail at af7d18250 (fork main, before this PR), read by this module's driver against that tree in this lab: the
 # shown actions in order, each with its width, height and top, and its left and right edges as offsets from the gear's left
 # edge; for the gear itself its right edge as an offset from the window's right edge, its top and height. The gear is a text
@@ -433,6 +446,53 @@ def _acts_problems(engine, acts):
             or any(a.startswith("rs-pact-drop:") for a in (ra_after["anims"] or [])):
         out.append("%s: a host dropped while the Token usage panel hid the card, and the card's glyph flashes when the panel "
                    "closes: %r" % (where, ra))
+    return out
+
+
+def _dashes(v):
+    """A computed stroke-dasharray as its lengths, by value ('3px, 3px', '3, 3' and '3px 3px' alike); 'none' as []."""
+    v = (v or "").strip()
+    return [] if v in ("", "none") else [float(x) for x in re.findall(r"[\d.]+", v)]
+
+
+def _states_problems(engine, acts):
+    """The card glyph's marching and unlit states (PR 976's round 1, tests-2 and fresh-2): with the card open, a host attaching
+    marks the card's copy busy beside the rail's and its connector dashes march (rs-pact-march running, dashes of 3 and 3),
+    and the hosts settling take that off; no host up leaves the copy unlit with the card open, and at the card's next opening
+    after a poll with no host came while it was closed."""
+    out = []
+    where = "%s the glyph's states at %dx%d" % (engine, acts["vp"][0], acts["vp"][1])
+    st = acts.get("states") or {}
+    cls = lambda s: set((s or "").split())
+    att = st.get("attaching") or {}
+    card = att.get("card") or {}
+    if not st.get("attachPolled") or "busy" not in cls(att.get("rail")):
+        out.append("%s: the attaching poll never marked the rail's glyph busy (the premise): %r" % (where, att))
+    if card.get("cardHidden") is not False or not {"on", "busy"} <= cls(card.get("cls")):
+        out.append("%s: a host attaching with the card open, and the card's glyph is not lit and busy as the rail's is: %r" % (where, att))
+    if card.get("anim") != "rs-pact-march" or _dashes(card.get("dash")) != [3.0, 3.0] or "rs-pact-march:running" not in (card.get("runs") or []):
+        out.append("%s: a host attaching with the card open, and the card glyph's connector dashes do not march "
+                   "(rs-pact-march running over dashes of 3 and 3): %r" % (where, card))
+    sett = st.get("settled") or {}
+    sc = sett.get("card") or {}
+    if not st.get("settledPolled") or "busy" in cls(sett.get("rail")):
+        out.append("%s: the settled poll never took busy off the rail's glyph (the premise): %r" % (where, sett))
+    if not sc or "busy" in cls(sc.get("cls")) or sc.get("anim") != "none" or any(x.startswith("rs-pact-march:") for x in (sc.get("runs") or [])):
+        out.append("%s: the hosts settled, and the card's glyph still marches: %r" % (where, sc))
+    none = st.get("noneOpen") or {}
+    nc = none.get("card") or {}
+    if not st.get("nonePolled") or "on" in cls(none.get("rail")):
+        out.append("%s: the poll with no host never put the rail's glyph out (the premise): %r" % (where, none))
+    if not nc or nc.get("cardHidden") is not False or "on" in cls(nc.get("cls")):
+        out.append("%s: no host up with the card open, and the card's glyph is still lit: %r" % (where, none))
+    if not st.get("backUp") or "on" not in cls((st.get("upBeforeClose") or {}).get("cls")) or not st.get("noneClosedPolled") \
+            or (st.get("noneClosed") or {}).get("cardHidden") is not True:
+        out.append("%s: the closed half's premise (the hosts back up and the card's glyph lit, then the card closed when the "
+                   "poll with no host came): %r" % (where, st))
+    reo = st.get("noneReopened") or {}
+    rc = reo.get("card") or {}
+    if not rc or rc.get("cardHidden") is not False or "on" in cls(rc.get("cls")) or "on" in cls(reo.get("rail")):
+        out.append("%s: no host up came while the card was closed, and the card's glyph is lit at its next opening: %r" % (where, reo))
     return out
 
 
@@ -733,7 +793,8 @@ class MtabsFit(unittest.TestCase):
                "healthz": "http://127.0.0.1:%d/healthz" % self.port, "settleMs": 100,
                "viewports": [list(v) for v in PORTRAIT + LANDSCAPE], "dynamicViewport": list(DYNAMIC),
                "actsViewport": list(ACTS), "moved": list(MOVED), "restartRefusal": RESTART_REFUSAL,
-               "tunnels": TUNNELS, "tunnels2": TUNNELS2, "tunnelsDrop": TUNNELS_DROP, "themes": [list(t) for t in THEMES],
+               "tunnels": TUNNELS, "tunnels2": TUNNELS2, "tunnelsDrop": TUNNELS_DROP,
+               "tunnelsAttach": TUNNELS_ATTACH, "tunnelsNone": TUNNELS_NONE, "themes": [list(t) for t in THEMES],
                "desktopViewport": list(DESKTOP), "railViewports": [list(v) for v in RAIL], "wideViewport": list(WIDE),
                "result": os.path.join(self.lab, "result-%s.json" % engine)}
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)
@@ -798,6 +859,7 @@ class MtabsFit(unittest.TestCase):
         problems += _problems(where + " (before)", d["before"])
         problems += _problems(where, d["after"])
         problems += _acts_problems(engine, r["acts"])
+        problems += _states_problems(engine, r["acts"])
         problems += _no_reading_problems(engine, r.get("noReading") or {"vp": list(ACTS)})
         problems += _unpulled_problems(engine, r.get("unpulled") or {"vp": list(ACTS)})
         problems += _skew_problems(engine, r.get("skew") or {"vp": list(ACTS)})
