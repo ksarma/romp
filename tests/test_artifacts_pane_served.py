@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -38,6 +39,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -115,7 +117,7 @@ if (fr) {
 await page.click('.rail-btn[data-pane="artifacts"]');
 await page.waitForFunction(() => !document.body.classList.contains("po-artifacts"), null, { timeout: 10000 }).catch(() => {});
 out.hidden = await page.evaluate(() => ({ poClass: document.body.classList.contains("po-artifacts"), display: getComputedStyle(document.getElementById("artifacts-pane")).display }));
-process.stdout.write("RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 """
 
@@ -196,19 +198,23 @@ class ArtifactsPaneServed(unittest.TestCase):
         if self._r is None:
             cfg = os.path.join(self.lab, "artifacts.json")
             base = "http://127.0.0.1:%d" % self.port
+            conf = {"landing": base + "/?token=" + self.token, "token": self.token, "sid": SID}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"landing": base + "/?token=" + self.token, "token": self.token, "sid": SID}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "artifacts.mjs")
             Path(driver).write_text(DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=500,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
-                type(self)._fail = "the driver produced no RESULT (stderr: %s; kernel: %s)" % (p.stderr[-2000:], open(self.klog).read()[-1500:])
+            try:
+                r = lab_result.read(p, tgt)
+            except lab_result.ResultError as e:
+                type(self)._fail = "the driver handed back no record: %s\nkernel: %s" % (e, open(self.klog).read()[-1500:])
                 self.fail(type(self)._fail)
-            type(self)._r = json.loads(line[len("RESULT:"):])
+            type(self)._r = r
         print("ARTIFACTS:", json.dumps(self._r), file=sys.stderr)
         return self._r
 

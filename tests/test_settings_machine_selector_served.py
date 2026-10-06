@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -43,6 +44,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -98,7 +100,7 @@ out.two = await survey(setF);
 out.two.options = await setF.evaluate(() => { const b = document.getElementById("rs-scope-btn"); if (!b) return []; b.click(); return Array.from(document.querySelectorAll("#rs-scope-list .rs-scope-opt")).map((o) => o.textContent.trim()); });   // no button (a gear without the selector): report, do not throw
 // (3) pick B: the row reads B's value; a click applies to B alone and pins it there
 const picked = await setF.evaluate((peer) => { const opt = Array.from(document.querySelectorAll("#rs-scope-list .rs-scope-opt")).find((o) => o.textContent.trim() === peer); if (!opt) return false; opt.querySelector("input").click(); return true; }, cfg.peer);
-if (!picked) { await browser.close(); process.stdout.write("RESULT:" + JSON.stringify(out) + "\n", () => process.exit(0)); }
+if (!picked) { await browser.close(); lab.writeResult(cfg, out); process.exit(0); }
 await setF.evaluate(() => { const l = document.getElementById("rs-scope-list"); if (l && !l.hidden) document.getElementById("rs-scope-btn").click(); });   // the list stays open for several picks; close it before the row is clicked
 await setF.waitForFunction(() => document.getElementById("rs-scope-label").textContent !== "All kernels", null, { timeout: 5000 }).catch(() => {});
 await setF.waitForTimeout(900);
@@ -149,7 +151,7 @@ await page.waitForFunction((peer) => Array.from(document.querySelectorAll("#rnet
 out.popover = await page.evaluate((peer) => { const row = Array.from(document.querySelectorAll("#rnet-list .rnet-row")).find((r) => r.textContent.includes(peer)); if (!row) return null; const pin = row.querySelector(".rnet-pin");
   return { text: row.textContent.replace(/\s+/g, " ").trim().slice(0, 120), pin: pin ? { text: pin.textContent, title: pin.title } : null }; }, cfg.peer);
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify(out) + "\n", () => process.exit(0));
+lab.writeResult(cfg, out); process.exit(0);
 """
 
 
@@ -238,10 +240,13 @@ class ServedMachineSelector(unittest.TestCase):
             base_a = "http://127.0.0.1:%d" % self.a["port"]
             base_b = "http://127.0.0.1:%d" % self.b["port"]
             cfg = os.path.join(self.lab, "cfg.json")
+            conf = {"landing": base_a + "/?token=" + self.a["token"], "tunnels": base_a + "/tunnels?token=" + self.a["token"],
+                    "versionA": base_a + "/version?token=" + self.a["token"], "versionB": base_b + "/version?token=" + self.b["token"],
+                    "peer": PEER}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"landing": base_a + "/?token=" + self.a["token"], "tunnels": base_a + "/tunnels?token=" + self.a["token"],
-                           "versionA": base_a + "/version?token=" + self.a["token"], "versionB": base_b + "/version?token=" + self.b["token"],
-                           "peer": PEER}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "selector.mjs")
             Path(driver).write_text(DRIVER)
             # the driver surveys the one-kernel state first; the check-in lands while it does (the driver then waits for the row)
@@ -265,12 +270,13 @@ class ServedMachineSelector(unittest.TestCase):
                 p.kill(); stdout, stderr = p.communicate()
             if "browser-launch-failed" in stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
-                type(self)._fail = "the driver produced no RESULT (stderr: %s; kernel A: %s; kernel B: %s; ack %r; rows %r)" % (
-                    stderr[-2000:], open(self.a["log"]).read()[-1500:], open(self.b["log"]).read()[-800:], type(self)._checkin_ack, type(self)._rows_seen)
+            try:
+                r = lab_result.read(subprocess.CompletedProcess(p.args, p.returncode, stdout, stderr), tgt)
+            except lab_result.ResultError as e:
+                type(self)._fail = "the driver handed back no record: %s\nkernel A: %s; kernel B: %s; ack %r; rows %r" % (
+                    e, open(self.a["log"]).read()[-1500:], open(self.b["log"]).read()[-800:], type(self)._checkin_ack, type(self)._rows_seen)
                 self.fail(type(self)._fail)
-            type(self)._r = json.loads(line[len("RESULT:"):])
+            type(self)._r = r
         print("SELECTOR:", json.dumps(self._r), file=sys.stderr)
         return self._r
 

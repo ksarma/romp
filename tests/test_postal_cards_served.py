@@ -18,6 +18,7 @@ import ast
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -174,6 +175,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -366,9 +368,10 @@ for (const pass of [{ width: 1000, theme: "dark" }, { width: 520, theme: "dark" 
   await page.close();
 }
 await browser.close();
-// through the stream, drained before the exit: a single synchronous write of a line past the pipe's 64 KiB buffer came out
-// truncated (the T390 measurements pushed this result past it), and the reader saw an unterminated string
-process.stdout.write("RESULT:" + JSON.stringify(results) + "\n", () => process.exit(0));
+// the record goes to the drive's result file and stdout carries one short line naming it (tests/lab_result.cjs): a single
+// write of the record as a line past the pipe's 64 KiB buffer came out truncated once (the T390 measurements pushed this
+// result past it)
+lab.writeResult(cfg, results); process.exit(0);
 """
 
 
@@ -446,10 +449,13 @@ class ServedPostalCards(unittest.TestCase):
             print("RESULT:" + json.dumps(cls._r), file=sys.stderr)
             return cls._r
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "count": self.count,
+                "shots": os.environ.get("POSTAL_SHOTS", ""),
+                "palettes": {name: list(p["bg"]) for name, p in PALETTES.items()}}   # every colour the gear offers
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "count": self.count,
-                       "shots": os.environ.get("POSTAL_SHOTS", ""),
-                       "palettes": {name: list(p["bg"]) for name, p in PALETTES.items()}}, f)   # every colour the gear offers
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -458,9 +464,7 @@ class ServedPostalCards(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         print("RESULT:" + json.dumps(r), file=sys.stderr)   # the whole measurement rides the captured stderr (-rA shows it for a pass too)
         cls._r = r
         return r

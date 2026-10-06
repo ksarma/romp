@@ -18,6 +18,7 @@ import glob
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -126,6 +127,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));   // {chat, remote:"TESTHOST:<sid>", bare:"<sid>"}
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -187,7 +189,7 @@ try {
 } catch (e) {
   out.died = String(e).slice(0, 400);
 }
-process.stdout.write("RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 """
 
@@ -254,23 +256,28 @@ class FederatedCutFloor(unittest.TestCase):
     def _result(self):
         if type(self)._r is None:
             cfg = os.path.join(self.lab, "cfg.json")
+            conf = {"chat": "http://127.0.0.1:%d/chat?skeleton=1&wid=%s&token=%s" % (self.hport, WID, self.htoken),
+                    "remote": REMOTE, "bare": SID_R}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"chat": "http://127.0.0.1:%d/chat?skeleton=1&wid=%s&token=%s" % (self.hport, WID, self.htoken),
-                           "remote": REMOTE, "bare": SID_R}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "driver.mjs")
             Path(driver).write_text(DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=400,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 raise unittest.SkipTest("no playwright browser")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
             klog = ""
             try:
                 klog = open(self.rlog).read()[-1200:]
             except OSError:
                 pass
-            self.assertIsNotNone(line, "no RESULT (stderr: %s)\nremote kernel:\n%s" % (p.stderr[-1500:], klog))
-            type(self)._r = json.loads(line[len("RESULT:"):])
+            try:
+                r = lab_result.read(p, tgt)
+            except lab_result.ResultError as e:
+                self.fail("%s\nremote kernel:\n%s" % (e, klog))
+            type(self)._r = r
         print("FEDCUTFLOOR seed=%r r=%s" % (getattr(type(self), "seed", None), json.dumps(type(self)._r)), file=sys.stderr)
         return type(self)._r
 

@@ -27,6 +27,7 @@ and `web-comment-1`, the notes-api demo world, placeholder uuids."""
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -77,6 +78,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -131,7 +133,7 @@ out.promoted = await openThread(cfg.promoted, false);
 await page.click("#cmt-pop .cmt-x");
 await page.waitForSelector("#cmt-pop", { state: "detached", timeout: 5000 });
 out.open = await openThread(cfg.open, true);
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -237,9 +239,12 @@ class ServedPromotedPopup(unittest.TestCase):
 
     def _drive(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
+                "promoted": PROMOTED, "open": OPEN, "w": VIEW_W, "h": VIEW_H}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
-                       "promoted": PROMOTED, "open": OPEN, "w": VIEW_W, "h": VIEW_H}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -249,9 +254,7 @@ class ServedPromotedPopup(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box — the served popup needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
                          + "\nkernel:\n" + open(self.klog).read()[-2000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        return json.loads(line[len("RESULT:"):])
+        return lab_result.read(p, tgt)
 
     def test_a_promoted_threads_popup_reads_as_a_quote_a_line_and_one_button(self):
         out = self._drive()

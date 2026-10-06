@@ -8,6 +8,7 @@ an expired notice leaves at the next build. Synthetic only (placeholder ids, inv
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -35,6 +36,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -202,7 +204,7 @@ const r8 = await post({ id: cfg.sid, key: "figboard", title: "A figure on its ow
 const id8 = "notice:" + cfg.sid + ":figboard:" + (r8.notice || {}).rev;
 await page.waitForFunction(() => (window.__feedNotices || []).some((f) => f.some((k) => k.includes(":figboard:"))), null, { timeout: 30000 }).catch(() => {});   // the frame carries the card, the feed shows it not (phase four)
 const onBoard = { post: r8, card: await cardFacts(id8) };
-process.stdout.write("RESULT:" + JSON.stringify({ first, second, latched, done2, stillThere, toasts, rearmed, afterClear, undone, revision, expiry, refused, errors, diag, r7, ownerless, byName, onBoard, bare, judgeBefore, judgeAfter }) + "\n");
+lab.writeResult(cfg, { first, second, latched, done2, stillThere, toasts, rearmed, afterClear, undone, revision, expiry, refused, errors, diag, r7, ownerless, byName, onBoard, bare, judgeBefore, judgeAfter });
 await browser.close();
 """
 
@@ -275,19 +277,23 @@ class NoticeCardsServed(unittest.TestCase):
         if self._r is None:
             cfg = os.path.join(self.lab, "notices.json")
             base = "http://127.0.0.1:%d" % self.port
+            conf = {"feed": base + "/feed?token=" + self.token, "notice": base + "/notice", "perf": base + "/perf", "token": self.token, "sid": SID, "png": self.png}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"feed": base + "/feed?token=" + self.token, "notice": base + "/notice", "perf": base + "/perf", "token": self.token, "sid": SID, "png": self.png}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "notices.mjs")
             Path(driver).write_text(DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=400,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
-                type(self)._fail = "the driver produced no RESULT (stderr: %s; kernel: %s)" % (p.stderr[-2000:], open(self.klog).read()[-1500:])
+            try:
+                r = lab_result.read(p, tgt)
+            except lab_result.ResultError as e:
+                type(self)._fail = "the driver handed back no record: %s\nkernel: %s" % (e, open(self.klog).read()[-1500:])
                 self.fail(type(self)._fail)
-            type(self)._r = json.loads(line[len("RESULT:"):])
+            type(self)._r = r
         print("NOTICES:", json.dumps(self._r), file=sys.stderr)
         return self._r
 

@@ -23,6 +23,7 @@ in node in test_dashboard_auto_reload.py regardless. All fixtures synthetic."""
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -73,13 +74,14 @@ import { spawn } from "node:child_process";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 const out = {};
 const die = async (why) => {
-  fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n");
+  lab.writeResult(cfg, { ...out, died: why });
   await browser.close();
   process.exit(0);
 };
@@ -124,7 +126,7 @@ const waitFree = () => new Promise((resolve) => {
 });
 const relaunch = async (env) => { const freed = await waitFree(); if (freed !== true) await die("the killed kernel's instance lock never freed: " + freed);
   const k = spawn(cfg.relaunch.cmd, [], { env, detached: true,
-  stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] }); k.unref(); fs.writeSync(1, "KPID:" + k.pid + "\n"); return k; };
+  stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] }); k.unref(); lab.writeLine("KPID", k.pid); return k; };
 
 // ---- load, scroll to mid-history ----
 await page.goto(cfg.url);
@@ -212,7 +214,7 @@ if (!out.reloadedOnAccept) await die("no reload after accepting the changed buil
 fr = await waitChat();
 out.noticesFinal = await notices();
 out.bannerFinal = await banner();
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -277,10 +279,13 @@ class ServedAutoReload(unittest.TestCase):
 
     def test_a_newer_build_is_offered_not_now_is_kept_reload_is_a_click_and_a_same_build_restart_is_invisible(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
+                "kernelPid": self.kernel.pid, "bumpFile": self.bump_file,
+                "relaunch": _lab.relaunch_cfg(self.env, self.klog)}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token),
-                       "kernelPid": self.kernel.pid, "bumpFile": self.bump_file,
-                       "relaunch": _lab.relaunch_cfg(self.env, self.klog)}, f)
+            json.dump(conf, f)
         # the file carries only what the driver and the relaunched kernel need: the probe the lab planted in its
         # kernel's environment (checked first, so the file check cannot pass without it) must not be in it (names
         # only in the report, never the values)
@@ -302,9 +307,7 @@ class ServedAutoReload(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served leg needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         self.assertNotIn("died", r, "driver aborted early: %r" % r)
         OFFER = "A newer romp build is ready."
         BEHIND = "A newer romp build is ready; this page is behind the kernel and some actions fall back to older paths until you reload."

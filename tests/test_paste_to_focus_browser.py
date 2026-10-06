@@ -18,6 +18,7 @@ dev box with the extension installed, which is where ships are gated. All fixtur
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -45,6 +46,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -107,7 +109,7 @@ await shell.waitForFunction(() => { const b = document.getElementById("romp-boot
 await shell.evaluate(() => { document.getElementById("romp-boot")?.remove(); });   // belt and braces: the splash must not eat the drag
 out.shell = await run("chat iframe in the shell", chat, shell);
 
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -174,8 +176,11 @@ class ServedPaste(unittest.TestCase):
     def _drive(self):
         cfg = os.path.join(self.lab, "cfg.json")
         base = "http://127.0.0.1:%d" % self.port
+        conf = {"chat": base + "/chat?token=" + self.token, "landing": base + "/?token=" + self.token}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": base + "/chat?token=" + self.token, "landing": base + "/?token=" + self.token}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -184,9 +189,7 @@ class ServedPaste(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served paste needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        return json.loads(line[len("RESULT:"):])
+        return lab_result.read(p, tgt)
 
     def _check(self, r):
         label = r["label"]
