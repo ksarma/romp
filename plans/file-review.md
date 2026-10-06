@@ -5178,7 +5178,9 @@ document stands on its own, each with the reasoning it was given.
     HEAD's census) asks each shell present for its words (bash's `compgen -b` and `compgen -k`; zsh's `builtins` and
     `reswords` after loading the modules, so zparseopts, vared and `print -v` are in it; dash's `type` over a candidate
     universe holding every identifier in its binary), checks a shell absent on the runner against SHELL_WORDS_DERIVED,
-    the lists derived on that box, and reds on a word the table does not classify. A census that checks only that each
+    the lists derived on that box (CI's Linux runner asks bash and dash live and checks zsh, which it lacks, against the
+    committed list; the macOS cell has zsh, and its bash 3.2.57, below SHELL_FLOOR, is checked against the list), and
+    reds on a word the table does not classify. A census that checks only that each
     word is classified cannot see a word classified wrong, and some were (the completeness check on the item 8 pass found bash's `test -v`,
     which evaluates an array element's subscript as arithmetic, bash's `jobs -x`, which runs its command in this shell,
     and zsh's break and continue, whose operand zsh evaluates as arithmetic; the gap pass's own audit found zsh's
@@ -5197,8 +5199,8 @@ document stands on its own, each with the reasoning it was given.
     they are given and 101 assign none), and the census has a behavioural leg: every word the table calls assign-none
     that a shell present runs as a builtin is run in that shell under nine operand shapes that assign a name if the word
     evaluates an operand as arithmetic or as a subscript, or runs a command its operands give, and a word under which
-    the name changed reds. It runs live only, so CI's Linux runner asks bash and dash (the macos cell adds zsh but a
-    bash below SHELL_FLOOR); six words are not run for what running them does
+    the name changed reds. It runs live only, so CI's Linux runner asks bash and dash (on the macOS cell zsh runs it,
+    and bash, 3.2.57 there, below SHELL_FLOOR, does not); six words are not run for what running them does
     (kill, suspend, clone, ztcp, zftp, zsocket), and the gap pass asked them by hand with operands that do nothing; the
     reserved words `[[` and repeat, which take a grammar of their own, are asked with one arithmetic operand each; and
     it is a sample of operand shapes, not a proof. RULE S (fork PR 975's round 2, R1, 2026-10-06; ruleSafeOf): ROOT's
@@ -5278,8 +5280,11 @@ document stands on its own, each with the reasoning it was given.
     expansion stood and an error of the check's own (ERR_INVALID_ARG_VALUE), and its remedy, to make that directory
     readable, does not lift it; for `$[` this refuses a here-document fed to bash that writes through `$[0]` into a
     folder outside every project, which fork main allowed and where no shell writes a tracked file (the fixer's
-    concern on fork PR 975's round 1). The follow-up reads the placeholder as the expansion it stands for before any
-    path is checked, so a refusal that stands names the word as written and a remedy that lifts it.
+    concern on fork PR 975's round 1; AS8-cost-old-arith-heredoc-placeholder-out, its witness since round 2's tests-5).
+    No kind of the M2 census classifies that refusal and its remedy does not lift it, since the directory is readable
+    already, so the census holds it as its one stated exception (M2_STANDS), asserting that the refusal stands after
+    the remedy. The follow-up reads the placeholder as the expansion it stands for before any path is checked, so a
+    refusal that stands names the word as written and a remedy that lifts it, and that pin turns red.
     Pre-existing and disclosed (M3: fork main allows each while a shell writes): a name assigned inside a parameter expansion the guard does not read, by an array
     subscript, a substring offset, an arithmetic expansion in an operator's word, zsh's `(P)` flag with `::=`, a glob
     qualifier's code or the `(e)` flag's text (AS8-residual-assign-subscript, AS8-residual-assign-offset,
@@ -5333,10 +5338,19 @@ document stands on its own, each with the reasoning it was given.
     make, since fork main bound nothing for one operand and allowed every later name, the link's own name among them
     while every shell ran it (AS8-made-one-op-ln-s-alone). The rows test runs the shell legs of these rows and of THE
     ASSIGNING HEAD's witness rows where a name the command makes, binds or expects no shell to find stands for what the
-    runner has (THE MADE NAME's legs: a copy by the program it copies); the legs of AS8-cost-backup-none,
-    AS8-cost-unread-path-other-name and AS8-cost-function-call, whose PATH entry is an expansion the test's reader does
-    not follow, and of AS8-root-global-alias, whose global alias it does not read, do not run, and their writers rest on
-    the probes.
+    runner has (THE MADE NAME's legs: a copy by the program it copies). Fork PR 975's round 2 (tests-3) found 97 rows
+    whose legs ran on no runner and ruled the class: every row whose program is a name the command makes stands in THE
+    MADE NAME's map (THE BOUND NAME's writers into a directory and its one-operand links, AS8-into-dir-*,
+    AS8-made-one-op-ln* and AS8-made-nonlit-into-dir; the copies of cp under a readable PATH and through a PATH set in a
+    function or an eval; RULE B's rows; an alias of cp whose name the reader takes from a file; and a backup run by its
+    full path), and the rows test's gate reads the command after a lead-bearing wrapper's lead where a `--` ends the
+    wrapper's options (timeout, chrt, taskset, chroot and flock; it read the lead as the program, so the four
+    AS3-residual-*-dd-lead rows ran no leg). A row whose command rebinds a name the test's reader cannot know (a PATH
+    entry that is an expansion, as in `PATH=$X:$PATH`, or a global alias's name, as in AS8-root-global-alias) runs no
+    leg on any runner, whatever stands in for its names: the 90 such rows (AS8-cost-backup-none,
+    AS8-cost-unread-path-other-name and AS8-cost-function-call among them, and the armed and backup rows the round's
+    refuter moved out of the map) are named by id in RESTS_ON_PROBES beside the map, a census holds that list equal to
+    the rows the gate reports so, both ways, and their writers rest on the probes.
     RULE B on the bound map (fork PR 975's round 2, R3): one bind helper (bindWrite) serves every writer of the map,
     bindUnder's callers and the `cat SRC > DEST` site, and the map keys on the made path (the links this command made
     followed, and the path as spelled) and holds a SET of values, each the source resolved to an absolute path at the
@@ -5403,6 +5417,13 @@ document stands on its own, each with the reasoning it was given.
     AS8-residual-shadow-zsh-out; the follow-up reads a write to a function or alias table as a definition the guard
     does not read and refuses every later use of the name); and dash's `%builtin` road from a cwd in no project, where
     the refusal is not in play and the script run is no text the guard reads (AS8-residual-dash-pctbuiltin-echo-out).
+    Also pre-existing and disclosed (correctness-3's `[`, allowed at fork main and here while dash writes): dash looks
+    `[` up through PATH before `%builtin` as it does test, and the bare-name lookup does not search `[` at all, on the
+    premise that it is a builtin in every shell, so a script written into place as `[`, or a copy of cp made under that
+    name, runs from a directory ahead of `%builtin`, from a tracked cwd and from one in no project, and through `dash -c`
+    from bash (AS8-residual-dash-pctbuiltin-bracket, AS8-residual-dash-pctbuiltin-bracket-dash-c,
+    AS8-residual-dash-pctbuiltin-bracket-copy; zsh stops at the unquoted `[` of the file's path and makes no file); the
+    follow-up reads `[` as the name dash looks up, as test is read.
     A follow-up from a design note (held follow-ups): the exemption may return only under rule S's clause (b), no word
     naming a command table, and clause (c), the option-insensitive second census axis, which closes zsh's `autoload`
     and `typeset -fu` forms, and never where dash may run the line with PATH set or unreadable, since echo, printf,

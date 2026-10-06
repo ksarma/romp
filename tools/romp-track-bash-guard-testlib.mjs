@@ -336,7 +336,10 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // and dash
 const SHELL_OWN = new Set(['!', '{', '}', '[[', ']]', '((', '))', 'if', 'then', 'elif', 'else', 'fi', 'case', 'esac', 'for', 'foreach', 'select', 'while', 'until', 'do', 'done', 'in', 'end', 'function', '.', ':', '[', 'alias', 'autoload', 'bg', 'bind', 'bindkey', 'break', 'builtin', 'bye', 'caller', 'cd', 'chdir', 'compgen', 'complete', 'compopt', 'continue', 'declare', 'dirs', 'disable', 'disown', 'echo', 'emulate', 'enable', 'eval', 'exit', 'export', 'false', 'fc', 'fg', 'float', 'functions', 'getln', 'getopts', 'hash', 'help', 'history', 'integer', 'jobs', 'kill', 'let', 'limit', 'local', 'logout', 'mapfile', 'popd', 'print', 'printf', 'private', 'pushd', 'pushln', 'pwd', 'read', 'readarray', 'readonly', 'rehash', 'return', 'sched', 'set', 'setopt', 'shift', 'shopt', 'source', 'suspend', 'test', 'times', 'trap', 'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unfunction', 'unhash', 'unlimit', 'unset', 'unsetopt', 'vared', 'wait', 'whence', 'where', 'which', 'zcompile', 'zformat', 'zle', 'zmodload', 'zparseopts', 'zstyle', 'sysopen', 'sysread', 'sysseek', 'syswrite', 'zsystem', 'zf_chgrp', 'zf_chmod', 'zf_chown', 'zf_ln', 'zf_mkdir', 'zf_mv', 'zf_rm', 'zf_rmdir', 'zf_sync', 'zstat', 'zselect', 'zsocket', 'ztcp', 'zpty']);
 // a wrapper runs the command after its options and operands: `arg` the options that take the next word, `operands` the words before the
-// command, `assign` the NAME=VALUE words it takes (`any`: every word holding `=`, as env takes one, `BASH_FUNC_c%%=..` among them, since
+// command, which still follow a `--` that ends the options (THE LEAD AFTER `--`, fork PR 975's round 2, tests-3: `timeout -- 5 cp a b` runs cp
+// with 5 as the duration, as chrt's priority, taskset's mask, chroot's root and flock's lockfile follow theirs; the walk read the lead as the
+// program, so the rows that spell it there, AS3-residual-*-dd-lead, ran no leg; zsh's repeat, a word of the shell's own, reads a `--` as its count, an error, so its reading is unchanged),
+// `assign` the NAME=VALUE words it takes (`any`: every word holding `=`, as env takes one, `BASH_FUNC_c%%=..` among them, since
 // the fifty-second commit, whose execve record found env's command unread past such a word), `text` the options whose next word is a
 // command line it runs, `query` an option under which it runs nothing, `sub` a subcommand word first, `own` a shell's own word (no program
 // looked up), which the walk reads as a program where it is spelled as a path and, for `time` alone, at the places below. The walk reads
@@ -815,7 +818,7 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
         let operands = spec.operands || 0;
         while (i < words.length) {
           const t = words[i].text;
-          if (t === '--') { i++; break; }
+          if (t === '--') { i++; if (!spec.own) i += operands; break; }   // THE LEAD AFTER `--`: the words before the command still follow the `--`
           if (spec.query && spec.query.test(t)) return;
           if (spec.text && spec.text.includes(t)) { if (words[i + 1]) readAs(true, () => readText(words[i + 1].text, depth + 1, cond)); i += 2; continue; }
           if (spec.arg && spec.arg.includes(t)) { i += 2; continue; }

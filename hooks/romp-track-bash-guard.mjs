@@ -8229,7 +8229,10 @@ function extractIn(command, ctx) {
       }
       // a bare name, or `[[`, which dash (having no `[[` keyword and no `[[` builtin) looks up as an external command and finds through PATH
       // (round 6's tenth commit: `cp /usr/bin/cp '../scratch/[['; PATH=../scratch:$PATH; [[ a b` ran cp in dash while `[[` was glob-marked and
-      // skipped the lookup); `[` is a builtin in every shell, so a bound `[` never runs, and it is not searched here
+      // skipped the lookup); `[` is not searched here, on the premise that it is a builtin in every shell, so a bound `[` never runs. The premise
+      // fails in dash under a PATH that holds a directory and then `%builtin`, where dash looks `[` up through PATH first and runs a file made under
+      // that name; fork main does not search it either, so this is pre-existing and disclosed (fork PR 975's round 2, correctness-3's `[`:
+      // AS8-residual-dash-pctbuiltin-bracket and its -dash-c and -copy twins, decision 47), the follow-up reading `[` as dash's name as test is read
       const bareName = hw.literal && !hw.text.includes('/') ? hw.text : (hw.text === '[[' && hw.marks && /^u+$/.test(hw.marks) ? '[[' : null);
       if (bareName != null) {
         const pathValue = pathValueAt(seg, hIdx);

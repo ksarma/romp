@@ -16,8 +16,8 @@ import { fileURLToPath } from 'node:url';
 // a namespace import, as the shared module takes the hook, so a run against an older hook reports each test on its own
 import * as guard from '../hooks/romp-track-bash-guard.mjs';
 import {
-  BY_NAME_RE, HAS_SHELL, HOOK, NAMED_PROBE, ROMP_NOUNS, SHELL_PROBE, escapeRe, namedPresent, outsideDir, presenceOf, realPresence,
-  shellsFor, sixthPassWorld, spawnLeg, spawnSync,
+  BY_NAME_RE, HAS_SHELL, HOOK, NAMED_PROBE, ROMP_NOUNS, SHELL_PROBE, WRAPPERS, escapeRe, namedPresent, outsideDir, presenceOf, programsInvoked,
+  realPresence, shellsFor, sixthPassWorld, spawnLeg, spawnSync,
 } from './romp-track-bash-guard-testlib.mjs';
 
 // ── the after-source fixes (2026-10-03): the guard after a directory it does not follow ──
@@ -43,7 +43,7 @@ import {
 // and, from fork PR 975's round 2, a builtin's name the command shadowed with a function or an alias through a table write the guard does not read
 // (AS8-builtin-shadow-*, fresh-2) or that dash looked up through PATH before `%builtin` (AS8-builtin-dash-pctbuiltin-*, correctness-3), both let
 // pass by the builtin exemption that round took out (R2), with the disclosed allows fork main makes too (AS8-residual-shadow-*,
-// AS8-residual-dash-pctbuiltin-echo-out).
+// AS8-residual-dash-pctbuiltin-echo-out, and dash's PATH-first `[`, which the bare-name lookup never searched: AS8-residual-dash-pctbuiltin-bracket*).
 // The false refusals: a `[` test (AS1-*), a case pattern read as a command name (AS2-*), the poison after a command named by a variable behind a
 // chain holding an external program wrapper (AS3-*-no-poison; the mechanism ruling's M1 keeps the poison behind a wrapper the shell runs itself,
 // AS3-kept-*, and the directory judged unknown after it behind any wrapper, AS3-road-*, AS3-chain-*-road and AS3-*-moves), and a bare command name
@@ -51,7 +51,7 @@ import {
 // whose census is the test before this one, and under a PATH the guard does not read every bare name refuses again, fork main's rule, with the
 // cost rows AS8-cost-*; a mention under a word the table had on the wrong side, and a name in bash's and zsh's older arithmetic `$[ ... ]`, a write
 // again: AS8-root-test-v and AS8-root-test-v-path, AS8-root-jobs-x-*, AS8-root-zsh-*, AS8-root-old-arith-*, with the controls AS8-ctl-old-arith-*
-// and the cost AS8-cost-old-arith-dq-target, the `$[` read as text too, any refusal of that reading standing, AS8-root-old-arith-text-*; and the
+// and the costs AS8-cost-old-arith-dq-target and AS8-cost-old-arith-heredoc-placeholder-out, the `$[` read as text too, any refusal of that reading standing, AS8-root-old-arith-text-*; and the
 // assignments fork main does not read either, disclosed: AS8-residual-assign-*, AS8-residual-jobs-x-cp, AS8-residual-zsh-always-*, and PATH
 // through zsh's `path` array, AS8-residual-path-zsh-*; and a `$[` whose bracket holds a parenthesis or opens with a space, which neither reading
 // refuses, disclosed: AS8-residual-old-arith-*; a builtin's or a keyword's bare name, which the sixth verify round's tg-t6-3 had let pass, is
@@ -76,7 +76,7 @@ import {
 // `compgen -b` and `compgen -k`; zsh's `builtins` and `reswords` keys after loading every module installed under its module_path (zsh/newuser aside,
 // which defines no builtin and may run its install function), so zparseopts, vared, print and the zsh/files and zsh/system words are in it; dash has no
 // list, so `type` is asked of a candidate universe (the bash and zsh populations, the committed dash list and every identifier in the dash binary) and
-// the words it calls a shell builtin or keyword are its population. A shell absent on the runner (on CI's Linux runner that is zsh, since it asks bash and dash live; the macos cell adds zsh but a bash below SHELL_FLOOR) is checked against the
+// the words it calls a shell builtin or keyword are its population. A shell absent on the runner (on CI's Linux runner that is zsh, since it asks bash and dash live; on the macOS cell, which has zsh, it is bash, whose 3.2.57 is below SHELL_FLOOR) is checked against the
 // lists below, derived on this box on bash 5.2.21, zsh 5.9 and dash 0.5.12 by the same method; the test says which shells it asked live
 const SHELL_WORDS_DERIVED = {
   bash: ['!', '.', ':', '[', '[[', ']]', 'alias', 'bg', 'bind', 'break', 'builtin', 'caller', 'case', 'cd', 'command', 'compgen', 'complete', 'compopt', 'continue', 'coproc', 'declare', 'dirs', 'disown', 'do', 'done', 'echo', 'elif', 'else', 'enable', 'esac', 'eval', 'exec', 'exit', 'export', 'false', 'fc', 'fg', 'fi', 'for', 'function', 'getopts', 'hash', 'help', 'history', 'if', 'in', 'jobs', 'kill', 'let', 'local', 'logout', 'mapfile', 'popd', 'printf', 'pushd', 'pwd', 'read', 'readarray', 'readonly', 'return', 'select', 'set', 'shift', 'shopt', 'source', 'suspend', 'test', 'then', 'time', 'times', 'trap', 'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unset', 'until', 'wait', 'while', '{', '}'],
@@ -112,7 +112,7 @@ const assigningCensus = (pops, table) => {
 // in every shell it runs. Six words are not run, each for what running it would do (ASSIGN_LEG_SKIP); the gap pass asked them by hand with operands
 // that do nothing (signal 0, a closed port on the loopback address). Reserved words are no builtins and take a grammar of their own: `[[`'s arithmetic
 // comparison and zsh's repeat count are asked with one operand each (RESERVED_ASSIGN_PROBES). The leg is live only: a shell absent on the runner is not
-// asked (CI's Linux runner runs the leg in bash and dash; the macos cell adds zsh but a bash below SHELL_FLOOR), and the test says which shells it ran. A sample of operand shapes, not a proof: a word that assigns only under some other
+// asked (CI's Linux runner runs the leg in bash and dash; on the macOS cell zsh runs it, and bash, 3.2.57 there, below SHELL_FLOOR, does not), and the test says which shells it ran. A sample of operand shapes, not a proof: a word that assigns only under some other
 // operand is outside what the leg can see
 const ASSIGN_SHAPES = [["'p=1'"], ["'0*(p=1)+1'"], ['-v', "'a[p=1]'"], ['-x', 'eval', "'p=1'"], ['eval', "'p=1'"], ["'+0*(p=1)'"], ['1', '-eq', "'0*(p=1)+1'"], ['-u', "'0*(p=1)'", "'0*(p=1)'"], ['-n', "'0*(p=1)+1'"]];
 const ASSIGN_LEG_SKIP = { kill: 'sends a signal to the process its operand names', suspend: 'stops the shell', clone: 'starts a shell on the terminal it names', ztcp: 'opens a network connection', zftp: 'opens a network connection', zsocket: 'opens a socket' };
@@ -963,6 +963,13 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // the arithmetic reading's stated cost (fork PR 975's round 1, a concern the fixer raised): a double-quoted `$[ ... ]` inside a target from a tracked
       // cwd is a word the guard does not read, refused as not literal, where fork main read it as text and allowed it, and no shell writes a tracked file
       ['AS8-cost-old-arith-dq-target', 'na', 'echo y > "scratch/n$[1+1].md"', N, ['text', 'names "scratch/n$[1+1].md", which is not a literal path']],
+      // and the cost fork main has for `$((` that reading `$[` as arithmetic extends to `$[` (fork PR 975's round 2, tests-5): in an unquoted here-document
+      // body an arithmetic expansion the guard does not read is held in the word as a placeholder, which reaches the check of the directory the path passes
+      // through, so the refusal names the path with a blank where the expansion stood and an error of the check's own, and its remedy, to make that directory
+      // readable, does not lift it (the directory is readable); fork main allowed this here-document fed to bash, and no shell writes a tracked file. The
+      // M2 census holds it as its one stated exception (M2_STANDS below), so the follow-up, which reads the placeholder as the expansion it stands for,
+      // turns that pin red
+      ['AS8-cost-old-arith-heredoc-placeholder-out', 'out', 'mkdir -p {OUT}/scratch/0; bash <<EOF\necho y > {OUT}/scratch/$[0]/a.txt\nEOF', N, ['text', ['and I could not check {OUT}/scratch on that path', 'ERR_INVALID_ARG_VALUE']], null],
       // M3, pre-existing (fork main allows each, as this change does, while bash and zsh write; a witness row each, named in decision 47; found by the shell
       // lens on fork PR 975's round 1): a `$[` whose bracket holds a parenthesis or opens with a space, in a target that climbs from a cwd in no project into
       // a project. Read as arithmetic it is a word the guard does not read, which passes from such a cwd as `$((0))` does there (B2's boundary); read as text
@@ -1256,6 +1263,14 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ...[['echo', 'echo x'], ['printf', 'printf x'], ['test', 'test -n x']].map(([n, call]) => [`AS8-builtin-dash-pctbuiltin-${n}`, 'na', `printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/${n}; chmod +x {OUT}/scratch/${n}; printf '%s\\n' {OUT}/scratch > {OUT}/p; read X < {OUT}/p; PATH=$X:%builtin:$PATH; ${call}`, ['dash'], ['text', [ANY_NAME, `its command name names ${n},`]], null]),
       ['AS8-builtin-dash-pctbuiltin-dash-c', 'na', "printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; printf '%s\\n' {OUT}/scratch > {OUT}/p; dash -c 'read X < {OUT}/p; PATH=$X:%builtin:$PATH; echo x'", A, ['text', [ANY_NAME, 'its command name names echo,']], null],
       ['AS8-residual-dash-pctbuiltin-echo-out', 'out', "printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; printf '%s\\n' {OUT}/scratch > {OUT}/p; read X < {OUT}/p; PATH=$X:%builtin:$PATH; echo x", ['dash'], 'allow', null],
+      // M3, pre-existing (fork PR 975's round 2, correctness-3's `[`; fork main allows each, as this change does, while dash writes; a witness row each,
+      // named in decision 47): dash looks `[` up through PATH before `%builtin` too, and the bare-name lookup does not search `[` at all, on the premise
+      // that it is a builtin in every shell, so a script written into place as `[`, or a copy of cp made under that name, runs from a directory ahead of
+      // `%builtin` while allowed from a tracked cwd and from one in no project; reachable from bash through `dash -c` (zsh stops at the unquoted `[` of
+      // the file's path, a pattern it cannot match, and makes no file). The follow-up reads `[` as the name dash looks up, as it reads test
+      ['AS8-residual-dash-pctbuiltin-bracket', 'na', "printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/[; chmod +x {OUT}/scratch/[; PATH={OUT}/scratch:%builtin:$PATH; [ x ]", ['dash'], 'allow'],
+      ['AS8-residual-dash-pctbuiltin-bracket-dash-c', 'na', "printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/[; chmod +x {OUT}/scratch/[; dash -c 'PATH={OUT}/scratch:%builtin:$PATH; [ x ]'", ['bash', 'dash'], 'allow'],
+      ['AS8-residual-dash-pctbuiltin-bracket-copy', 'na', 'cp /usr/bin/cp {OUT}/scratch/[; PATH={OUT}/scratch:%builtin:$PATH; [ {NA}/base/report.md {NA}/docs/report.md', ['dash'], 'allow'],
     );
     // item 8, the session's second case: a target holding a variable the guard cannot read (a substitution's value) is refused, naming the ONE
     // remedy that always lifts it, the path spelled out as an absolute path (M2: the literal-value clause the rounds before offered, which did not
@@ -1399,11 +1414,40 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     // NOT RUN. For the rows below, each such name is asked as what it stands for: a made copy by the presence of the program it copies, a bound name as
     // present wherever the shell is (its body runs a builtin), and a name no shell should find or reach by its absence here, THE RECORDED ABSENCES' turn
     // (NOT RUN where the runner has a program of that name, since the row was measured without one; the table itself cannot hold these rows, whose test runs
-    // after its pin). Every other program the command runs is gated as before, and a rebinding the reader cannot know (a PATH entry that is an expansion, a
-    // global alias's name) still holds the leg NOT RUN: AS8-cost-backup-none, AS8-cost-unread-path-other-name, AS8-cost-function-call and
-    // AS8-root-global-alias, whose writers rest on the probes
+    // after its pin). Every other program the command runs is gated as before. Fork PR 975's round 2 (tests-3) found 97 rows that ran no leg on any runner
+    // and ruled the class: a row whose program is a name the command makes stands in this map, the rule over every such row, not a list of the ones
+    // found (THE BOUND NAME's writers into a directory and its one-operand links, AS8-into-dir-*, AS8-made-one-op-ln*, AS8-made-nonlit-into-dir, by the
+    // world's w2 they copy; the copies of cp under a readable PATH and through a PATH set in a function or an eval, AS8-into-dir-readable-path,
+    // AS8-made-one-op-ln-readable-path, AS8-residual-path-func-call, AS8-residual-path-eval; RULE B's rows, AS8-ruleB-* and AS8-residual-ruleB-cp-r-dir,
+    // made after the finding; an alias of cp whose name the reader takes from a file, AS8-alias-unread-operand-cp; and a backup run by its full path,
+    // AS8-residual-backup-explicit-path, whose key is that path filled in, as the gate reads it). A rebinding the reader cannot know (a PATH entry that
+    // is an expansion, `PATH=$X:$PATH` and its kin, or a global alias's name) holds the leg NOT RUN whatever the map says, so each such row is named in
+    // RESTS_ON_PROBES below, its writers resting on the probes (the armed and backup rows the round's refuter moved out of this map among them), and the
+    // census after the rows holds that list equal to the rows the gate reports so, both ways
     const CP = '/usr/bin/cp';
     const W2 = '{W}/tools/w2';
+    const RESTS_ON_PROBES = new Set([
+      'AS8-armed-c2', 'AS8-armed-c2-unread-source', 'AS8-armed-c2-untracked', 'AS8-armed-echo', 'AS8-armed-mv-untracked', 'AS8-backup-after-cd',
+      'AS8-backup-cp', 'AS8-builtin-bound-env-echo', 'AS8-builtin-cd-after-backup', 'AS8-builtin-cd-same-name', 'AS8-builtin-cd-same-name-untracked',
+      'AS8-builtin-command-echo', 'AS8-builtin-dash-pctbuiltin-dash-c', 'AS8-builtin-dash-pctbuiltin-echo', 'AS8-builtin-dash-pctbuiltin-printf',
+      'AS8-builtin-dash-pctbuiltin-test', 'AS8-builtin-echo-backup-name', 'AS8-builtin-enable-script', 'AS8-builtin-env-echo-after-backup',
+      'AS8-builtin-exec-command', 'AS8-builtin-exec-echo', 'AS8-builtin-export-after-backup', 'AS8-builtin-gate-ansic-before-path',
+      'AS8-builtin-gate-ansic-loop', 'AS8-builtin-gate-before-path', 'AS8-builtin-gate-disable', 'AS8-builtin-gate-disable-for',
+      'AS8-builtin-gate-eval-ansic-loop', 'AS8-builtin-gate-eval-enable', 'AS8-builtin-gate-for', 'AS8-builtin-gate-func-loop',
+      'AS8-builtin-gate-mention-cost', 'AS8-builtin-gate-source-loop', 'AS8-builtin-gate-trap-debug', 'AS8-builtin-gate-trap-exit',
+      'AS8-builtin-gate-unread-head-loop', 'AS8-builtin-gate-unread-trap', 'AS8-builtin-gate-until', 'AS8-builtin-gate-var-enable',
+      'AS8-builtin-gate-while', 'AS8-builtin-gate-zmodload', 'AS8-builtin-noenable-script', 'AS8-builtin-nonbuiltin-after-backup',
+      'AS8-builtin-partquoted-for', 'AS8-builtin-quoted-echo-cost', 'AS8-builtin-quoted-if', 'AS8-builtin-quoted-while',
+      'AS8-builtin-shadow-bash-aliases', 'AS8-builtin-shadow-bash-printf-v', 'AS8-builtin-shadow-zsh-assign-expansion', 'AS8-builtin-shadow-zsh-cd',
+      'AS8-builtin-shadow-zsh-printf-v', 'AS8-builtin-shadow-zsh-read-r', 'AS8-builtin-slash-env-echo', 'AS8-builtin-slash-nohup-echo',
+      'AS8-cost-backup-none', 'AS8-cost-function-call', 'AS8-cost-unread-path-other-name', 'AS8-ctl-c2-unread-fullpath', 'AS8-ctl-function-definition',
+      'AS8-ctl-function-definition-path-body', 'AS8-ctl-mv-fullpath', 'AS8-drop-builtin-cd', 'AS8-drop-builtin-export', 'AS8-drop-builtin-ulimit',
+      'AS8-drop-command-cd', 'AS8-drop-command-export', 'AS8-drop-command-p-cd', 'AS8-drop-command-ulimit', 'AS8-drop-dash-cd', 'AS8-drop-exec-a-cd',
+      'AS8-drop-exec-cd', 'AS8-drop-exec-export', 'AS8-drop-exec-ulimit', 'AS8-drop-nocorrect-cd', 'AS8-drop-noglob-cd', 'AS8-drop-noremedy-env-cd',
+      'AS8-drop-noremedy-gate-cd', 'AS8-drop-time-cd', 'AS8-drop-time-export', 'AS8-drop-time-p-cd', 'AS8-drop-time-ulimit',
+      'AS8-residual-dash-pctbuiltin-echo-out', 'AS8-residual-partquoted-keyword', 'AS8-residual-shadow-zsh-nocopy', 'AS8-residual-shadow-zsh-out',
+      'AS8-root-global-alias', 'AS8-sourced-dot', 'AS8-sourced-dot-piped', 'AS8-sourced-source',
+    ]);
     const MADE = {
       'AS8-root-print-v': { c2: CP }, 'AS8-root-getln': { c2: CP }, 'AS8-root-unread-head': { c2: CP }, 'AS8-root-glob-head': { c2: CP },
       'AS8-root-func-later-loop': { c2: CP }, 'AS8-root-func-later-keyword': { c2: CP }, 'AS8-root-func-later-body': { c2: CP }, 'AS8-root-func-later-echo': { c2: CP },
@@ -1416,11 +1460,22 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       'AS8-residual-path-zsh-array': { c2: CP }, 'AS8-residual-path-zsh-array-keep': { c2: CP }, 'AS8-residual-path-zsh-array-append': { c2: CP },
       'AS8-residual-path-zsh-array-element': { c2: CP }, 'AS8-residual-path-zsh-read-A': { c2: CP }, 'AS8-residual-path-zsh-indirect': { c2: CP },
       'AS8-residual-assign-zsh-glob-qualifier': { 'e:p=0:': 'absent' },   // the reader takes zsh's glob qualifier for a command, which bash and dash never reach (a syntax error)
+      // fork PR 975's round 2 (tests-3): the made names of THE BOUND NAME's rows, R3's rows and the residuals beside them
+      ...Object.fromEntries(['AS8-into-dir-cp', 'AS8-into-dir-cp-made', 'AS8-into-dir-install', 'AS8-into-dir-ln', 'AS8-into-dir-ln-s', 'AS8-into-dir-mv',
+        'AS8-made-nonlit-into-dir', 'AS8-made-one-op-ln', 'AS8-made-one-op-ln-s', 'AS8-made-one-op-ln-s-alone', 'AS8-made-one-op-ln-s-nonlit'].map((id) => [id, { w2: W2 }])),
+      ...Object.fromEntries(['AS8-into-dir-readable-path', 'AS8-made-one-op-ln-readable-path', 'AS8-residual-path-func-call', 'AS8-residual-path-eval',
+        'AS8-ruleB-tests1-lns-two', 'AS8-ruleB-tests1-lns-relsrc', 'AS8-ruleB-tests1-lns-t', 'AS8-ruleB-corr4-lns-existdir', 'AS8-ruleB-corr4-empty-path'].map((id) => [id, { c2: CP }])),
+      ...Object.fromEntries(['AS8-ruleB-extra4-cp', 'AS8-ruleB-extra4-mv', 'AS8-ruleB-extra4-ln', 'AS8-ruleB-extra4-install', 'AS8-ruleB-extra4-catredir',
+        'AS8-ruleB-extra4-filedst', 'AS8-ruleB-extra4-out', 'AS8-residual-ruleB-cp-r-dir'].map((id) => [id, { zc: CP }])),
+      ...Object.fromEntries(['AS8-ruleB-tests2-cp', 'AS8-ruleB-tests2-mv', 'AS8-ruleB-tests2-install', 'AS8-ruleB-tests2-cpt'].map((id) => [id, { c2x: CP }])),
+      'AS8-alias-unread-operand-cp': { g: CP },   // the alias the file names, of cp
+      'AS8-residual-backup-explicit-path': { '{OUT}/scratch/xzz': CP },   // the backup of a copy of cp, run by its full path
     };
     const legTable = (id) => {
       if (!Object.hasOwn(MADE, id)) return NAMED_PROBE;
       const t = { ...NAMED_PROBE };
-      for (const [name, stand] of Object.entries(MADE[id])) {
+      for (const [key, stand] of Object.entries(MADE[id])) {
+        const name = w.fill(key);   // a made path is filled in, as the gate reads the program word
         t[name] = stand === 'bound' ? { ok: true, why: null }
           : stand === 'absent' ? (realPresence(name).ok ? { ok: false, why: "is on this runner, where the row's evidence was measured without a program of that name" } : { ok: true, why: null })
             : presenceOf(w.fill(stand));
@@ -1436,15 +1491,19 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       reasonAt[id] = { status: hAt.status, reason: hAt.reason };
       verdict(id, cmd, hAt, fillWant(expect), `from ${cwd}`);
       if (writers === null) { guardOnly.push(id); return; }
-      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, legTable(id), undefined, { cwd: at })) for (const shell of shellsFor(A, id)) {
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`, legTable(id), notRunReport(id), { cwd: at })) for (const shell of shellsFor(A, id)) {
         const r = w.run(cmd, at, shell);
         if (Object.hasOwn(MADE, id)) madeRan.add(id);
+        ranHere.add(id);
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
     };
     // every row is asked and every failure listed (each message opens with the row's id), so a run against an earlier guard names each row it reds
     const failures = [];
     const madeRan = new Set();   // THE MADE NAME's rows whose legs ran here
+    const ranHere = new Set();   // every row whose legs ran here
+    const notRun = {};   // each row's NOT RUN lines from the gate, printed as before and kept for the census of RESTS_ON_PROBES
+    const notRunReport = (id) => (line) => { (notRun[id] = notRun[id] || []).push(line); console.error(line); };
     for (const [id, cwd, raw, writers, expect, outside] of rows) { try { judge(id, cwd, raw, writers, expect, outside); } catch (e) { failures.push(String(e.message).split('\n')[0]); } }
     // item 4's second cause: a tracked folder holding more entries than the caps (GLOB_MATCH_CAP, 2000) makes the pattern one the guard
     // cannot expand from any directory; tee truncates every file the pattern names
@@ -1509,9 +1568,24 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     assert.deepEqual(Object.keys(MADE).filter((id) => !rowIds.has(id)), [], 'every row THE MADE NAME names is a row of this test');
     if (realPresence(CP).ok && HAS_SHELL.bash) assert.deepEqual(Object.keys(MADE).filter((id) => !madeRan.has(id)), [], 'every row THE MADE NAME names ran its legs here');
     console.log(`# THE MADE NAME: ${madeRan.size} of ${Object.keys(MADE).length} rows ran their legs here`);
+    // RESTS_ON_PROBES (fork PR 975's round 2, tests-3): the list names exactly the rows whose legs no runner runs because the gate cannot know a name their
+    // command rebinds, so a row that joins the class reds until it is named there, and a named row the gate reads reds until it leaves the list (the
+    // reason comes from the command's text alone, so the census holds on every runner); no such row stands in THE MADE NAME's map
+    const UNREAD = 'the command rebinds a name the reader cannot know';
+    const unreadRows = Object.keys(notRun).filter((id) => notRun[id].some((l) => l.includes(UNREAD))).sort();
+    assert.deepEqual(unreadRows.filter((id) => !RESTS_ON_PROBES.has(id)), [], 'every row whose rebinding the gate cannot know is named in RESTS_ON_PROBES');
+    assert.deepEqual([...RESTS_ON_PROBES].filter((id) => !unreadRows.includes(id)), [], 'every row RESTS_ON_PROBES names is one whose rebinding the gate cannot know');
+    assert.deepEqual(Object.keys(MADE).filter((id) => RESTS_ON_PROBES.has(id)), [], 'no row RESTS_ON_PROBES names stands in THE MADE NAME');
+    // THE LEAD AFTER `--` (fork PR 975's round 2, tests-3): the gate reads the command after a lead-bearing wrapper's lead where a `--` ends its options,
+    // the population every wrapper of the gate's table with operands before the command (zsh's repeat, a word of the shell's own, aside), the census
+    // failing on none; the rows that spell the lead there run their legs (asked at the hook's lead census below)
+    const gateLeadWrappers = Object.entries(WRAPPERS).filter(([, s]) => s.operands && !s.own).map(([n]) => n);
+    assert.ok(gateLeadWrappers.length >= 5 && ['timeout', 'chrt', 'taskset'].every((n) => gateLeadWrappers.includes(n)), `the census reads the gate's lead-bearing wrappers from its table (saw ${gateLeadWrappers.join(', ')})`);
+    for (const wr of gateLeadWrappers) assert.deepEqual(programsInvoked(`${wr} -- q975-lead q975-prog x`), [wr, 'q975-prog'], `the gate reads ${wr}'s lead after \`--\` as the lead and the word after it as the program`);
+    console.log(`# RESTS_ON_PROBES: ${RESTS_ON_PROBES.size} rows whose rebinding the gate cannot know; ${ranHere.size} of ${rows.length} rows ran their legs here; the rest ran none here: ${rows.map((r) => r[0]).filter((id) => !ranHere.has(id) && !RESTS_ON_PROBES.has(id) && !guardOnly.includes(id)).join(', ') || 'none'}`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 275 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 279 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
@@ -1550,6 +1624,10 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     const leadRows = all.map((r) => r[0]).filter((id) => /^AS3-residual-[a-z]+-dd-lead$/.test(id)).map((id) => id.slice('AS3-residual-'.length, -'-dd-lead'.length)).sort();
     assert.ok(leadWrappers.length > 0, 'the census reads the lead-bearing wrappers from the table');
     assert.deepEqual(leadRows, leadWrappers, 'each lead-bearing wrapper has its AS3-residual-<wrapper>-dd-lead witness row');
+    // and each such witness ran its legs where cp, bash and its wrapper are present (THE LEAD AFTER `--`, fork PR 975's round 2, tests-3: the gate read the
+    // lead as the program, so none ran on any runner)
+    assert.deepEqual(leadWrappers.filter((n) => !gateLeadWrappers.includes(n)), [], 'every lead-bearing wrapper of the hook\'s table is one the gate reads a lead for');
+    if (realPresence(CP).ok && HAS_SHELL.bash) assert.deepEqual(leadRows.filter((wr) => realPresence(wr).ok && !ranHere.has(`AS3-residual-${wr}-dd-lead`)), [], 'every lead-bearing wrapper\'s `--` witness ran its legs here');
     for (const sh of shellsFor(['bash', 'zsh', 'dash'], 'the wrapper census')) {
       for (const { name } of wrapperMarks.filter((m) => m.external)) {
         const argv = sh === 'bash' ? ['--norc', '--noprofile', '-c', 'type -t -- "$W"'] : sh === 'zsh' ? ['-f', '-c', 'whence -w -- "$W"'] : ['-c', 'type "$W"'];   // the name in the environment: a word, never a text the cleared-environment reader takes for a command
@@ -1827,14 +1905,29 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       }
       throw new Error(`its twin is still refused after four remedies: ${cmd}`);
     };
+    // M2_STANDS (fork PR 975's round 2, tests-5): the census's one stated exception, a cost whose refusal no kind classifies and whose remedy does not lift
+    // it, each row with the directory its refusal asks to make readable. The here-document placeholder (AS8-cost-old-arith-heredoc-placeholder-out,
+    // decision 47 beside the cost) names a path holding the blank that stood for the expansion and an error of the directory check's own, and the
+    // directory is readable already, so the remedy changes nothing; the check below asserts the refusal stands after it, so the follow-up that reads
+    // the placeholder turns this pin red and the row leaves the exception
+    const M2_STANDS = { 'AS8-cost-old-arith-heredoc-placeholder-out': '{OUT}/scratch' };
     const refusedKinds = {};
     for (const [id, r] of Object.entries(reasonAt)) {
-      if (r.status !== 2) continue;
+      if (r.status !== 2 || Object.hasOwn(M2_STANDS, id)) continue;
       const k = kindOf(r.reason);
       assert.ok(k !== 'unclassified', `${id}: the M2 census classifies every refused row, not: ${line1(r.reason)}`);
       (refusedKinds[k] = refusedKinds[k] || []).push(id);
     }
     const rowOf = Object.fromEntries(all.map((r) => [r[0], r]));
+    assert.deepEqual(Object.keys(M2_STANDS).filter((id) => !reasonAt[id] || reasonAt[id].status !== 2), [], 'every row M2_STANDS names is a refused row of this test');
+    for (const [id, dirKey] of Object.entries(M2_STANDS)) {
+      w.build();
+      const dir = w.fill(dirKey);
+      fs.accessSync(dir, fs.constants.R_OK | fs.constants.X_OK);
+      fs.readdirSync(dir);   // the remedy, the directory read in a command of its own: it is readable
+      const h = w.hook(w.fill(rowOf[id][2]), w.cwds[rowOf[id][1]]);
+      assert.ok(h.status === 2 && line1(h.reason) === line1(reasonAt[id].reason) && line1(h.reason).includes(`I could not check ${dir} on that path`) && kindOf(h.reason) === 'unclassified', `${id}: M2_STANDS holds a refusal no kind classifies that stands after its remedy (${dir} readable): ${line1(h.reason)}`);
+    }
     const capIds = new Set(capRows.map((r) => r[0]));
     const twinFailures = [];
     const tally = {};
