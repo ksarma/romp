@@ -42,7 +42,8 @@ test("the statusline ticker's in-place refresh still resolves the statusline bat
   // byte-for-byte the ticker lookup that shipped: same id, same setCtxBar refresh (the fill goes
   // through pickTone since the 2026-09-01 dual-palette fold, and the past-100% flag ctxOver rides as the
   // fifth argument since 2026-09-02 — the lookup contract is unchanged)
-  assert.match(RENDER, /const bar = document\.getElementById\("ctx-bar"\);\n\s*if \(bar\) setCtxBar\(bar, s\.status\.ctx, s\.status\.state === "compacting", pickTone\(s\.status\.ctxColor, s\.status\.ctxTone\), s\.status\.ctxOver\);/);
+  // (upstream 1864 passes the status as a sixth argument, so a Codex battery is drawn inert; the lookup contract is unchanged)
+  assert.match(RENDER, /const bar = document\.getElementById\("ctx-bar"\);\n\s*if \(bar\) setCtxBar\(bar, s\.status\.ctx, s\.status\.state === "compacting", pickTone\(s\.status\.ctxColor, s\.status\.ctxTone\), s\.status\.ctxOver, s\.status\);/);
 });
 
 test("the tab tip's battery comes from the bare builder: no id rides into the tip", () => {

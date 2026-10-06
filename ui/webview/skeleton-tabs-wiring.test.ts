@@ -202,18 +202,24 @@ test("run: render.ts's paneHidden() over window stand-ins says hidden when the p
 
 test("requestFullSession(id, why): every ask names its why, from the fixed vocabulary", () => {
   assert.match(RENDER, /type NeedFullWhy = "gap" \| "nobase" \| "skeleton-click" \| "prefetch" \| "skeleton-delta";/);   // reattach retired with the detached client (T386 stage 2)
-  // the three anchors in order; this fork's body keeps its provisional/closing-tab gate (standing since 2026-08-18) and its
-  // host gate between the first and the second, so the pin reads the anchors, not one contiguous regex
+  // the anchors in order; this fork's body keeps its provisional/closing-tab gate (standing since 2026-08-18) between the
+  // latched branch (upstream 2026-09-19) and the add, so the pin reads the anchors, not one contiguous regex; from the add on
+  // it is upstream's shape (PR 1912): the ask is built, carries the held tail's first key when the page holds one, and is posted
   const rfs = fn("requestFullSession");
-  assert.match(rfs, /^function requestFullSession\(id: string, why: NeedFullWhy\): void \{\s*\n\s*if \(!id \|\| awaitingFull\.has\(id\)\) return;/, "the guard first");
-  const addAt = rfs.indexOf("awaitingFull.add(id);"), postAt = rfs.indexOf('vscodeApi?.postMessage({ type: "needFull", id, why });');
-  assert.ok(addAt > 0 && postAt > addAt, "awaitingFull.add(id), then the needFull post carrying the why");
-  assert.equal((rfs.match(/postMessage\(/g) || []).length, 1, "one post, the wire's");
+  assert.match(rfs, /^function requestFullSession\(id: string, why: NeedFullWhy\): void \{\s*\n\s*if \(!id\) return;\s*\n\s*if \(awaitingFull\.has\(id\)\) \{[\s\S]*?\n\s*return;\s*\n\s*\}/,
+    "the guard first, then the latched branch (its delta-refused row is pinned in needfull-latch-hygiene.test.ts, 2026-09-19)");
+  const latchEnd = rfs.search(/\n\s*return;\s*\n\s*\}/), gateAt = rfs.indexOf("if (isProvisionalId(id) || closingTabs.has(id)) return;");
+  const addAt = rfs.indexOf("awaitingFull.add(id);");
+  assert.ok(latchEnd > 0 && gateAt > latchEnd && addAt > gateAt, "after the latched branch, this fork's provisional/closing-tab gate, then awaitingFull.add(id)");
+  assert.match(rfs.slice(addAt), /^awaitingFull\.add\(id\);\s*\n\s*const ask[^\n]*= \{ type: "needFull", id, why \};[\s\S]{0,500}?vscodeApi\?\.postMessage\(ask\);/,
+    "awaitingFull.add(id), then the needFull ask carrying the why, posted");
+  assert.equal((rfs.match(/postMessage\(/g) || []).length, 2, "two posts: the latched branch's delta-refused row and the wire's needFull");
   const calls = [...RENDER.matchAll(/requestFullSession\(([^()]*?)\)/g)].map((m) => m[1]).filter((a) => !a.startsWith("id: string"));
-  assert.ok(calls.length >= 10, "the gap ×3, no-base ×3, skeleton-delta ×2, skeleton-click and prefetch sites (the reattach site and a missing chatMore's gap retired with the detached client, T386 stage 2)");
+  assert.ok(calls.length >= 13, "the gap ×6 (three plus the round-two guards), no-base ×3, skeleton-delta ×2, skeleton-click and prefetch sites (the reattach site and a missing chatMore's gap retired with the detached client, T386 stage 2)");
   for (const c of calls) assert.match(c, /, "(gap|nobase|skeleton-click|prefetch|skeleton-delta)"$/, `call site without a why: requestFullSession(${c})`);
   const why = (w: string) => RENDER.split(`, "${w}")`).length - 1;
-  assert.equal(why("gap"), 3, "the index tail's, the uuid tail's and a missing chatHead's (an anchor gone from the transcript; chatMore is retired)");
+  assert.equal(why("gap"), 6, "the index tail's, the uuid tail's and a missing chatHead's (an anchor gone from the transcript; chatMore is retired), "
+    + "plus upstream's round two: upsert's full-frame-desync refusal, the numeric-from history-truncation refusal, and regionsAbsorbTail's short-store re-base");
   assert.equal(why("nobase"), 3, "upstream's two (chatTail and update; statusOnly holds a status for its strip instead, 2026-09-11) "
     + "plus this fork's tabOrder teardown-then-relist re-ask (2026-08-18); the endFailed arm's re-ask retired with the arm, which no kernel sends since the "
     + "kill path stopped corroborating an end (the pull-in ruling of 2026-09-15, item 16)");
@@ -233,7 +239,7 @@ test("every ACTIVE-tab display path reads through liveSession; only name reads a
   for (const r of raw) assert.match(r, /\?\.name|showForkPrompt\(activeId/);
   const live = RENDER.split("liveSession(activeId)").length - 1;
   assert.ok(live >= 17, `the sweep covers the display paths (${live} sites)`);
-  for (const f of ["updateStatusline", "renderBgTasks", "renderSubHead", "paintScrollMarks", "updateCommentRail", "landNearestMoment", "virtualizeToViewport", "updateJumpBtn", "updateReplyChips"]) {
+  for (const f of ["updateStatusline", "renderBgTasks", "renderNotices", "renderSubHead", "paintScrollMarks", "updateCommentRail", "landNearestMoment", "virtualizeToViewport", "updateJumpBtn", "updateReplyChips"]) {
     assert.match(fn(f), /liveSession\(activeId\)/, f + " reads the gated session");
   }
   assert.match(fn("renderLiveAsk"), /if \(!activeId \|\| skeletonTabs\.ids\.has\(activeId\) \|\| !liveAsks\.has\(activeId\) \|\| snapView\) \{/,
@@ -341,7 +347,7 @@ function chipWorld(opts: { clientHeight: number; innerHeight: number; transcript
   const prelude = `
     const { sessions, views, tabMeta, skeletonTabs, commentThreads, jumpBtn, replyChips, atBottomDist, isReplyReady, hostOf, isProvisionalId, el, rompLoaderInner, HOOKS } = W;
     let activeId = null, skeletonLoading = null, replyChipSig = "";
-    const placeReviveLoader = () => {}, notifyActive = () => {}, renderLedger = () => {}, renderLiveAsk = () => {}, renderBgTasks = () => {}, renderSubHead = () => {}, updateStatusline = () => {};
+    const placeReviveLoader = () => {}, notifyActive = () => {}, renderLedger = () => {}, renderLiveAsk = () => {}, renderBgTasks = () => {}, renderNotices = () => {}, renderSubHead = () => {}, updateStatusline = () => {};
     const renderPinnedNotes = () => {};   // this fork's pinned notes swap at the top of showActive (fork PR 379), inert here
     // the unfocused body's painter and the box's name overlay (T357): inert here, the strip test is about the chips
     const paintEmptyState = () => {}, syncComposerPh = () => {}, order = [];

@@ -45,7 +45,10 @@ const VIEW = W("file-view.ts");
 const ESBUILD = fs.readFileSync(path.resolve(process.cwd(), "esbuild.js"), "utf8");
 const PKG = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"));
 const CI = fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
-const INSTALL = fs.readFileSync(path.join(ROOT, "docs", "install.md"), "utf8");
+// the license statement: the fork's "## License" section, at the end of docs/reference.md since the front pages became the
+// project's (CLAUDE.md "The documentation front pages"; fold 4 moved it out of docs/install.md)
+const REF = fs.readFileSync(path.join(ROOT, "docs", "reference.md"), "utf8");
+const LICENSE = REF.slice(REF.indexOf("\n## License\n"));
 
 /** Code lines only: a comment may NAME the dependency (the header does); an import may not. */
 const code = (s: string) => s.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
@@ -283,11 +286,12 @@ test("pages draw lazily through an IntersectionObserver, eagerly without one, an
     "the loading task's destroy releases the document and its worker (pdf.js 6 has none on the document proxy)");
 });
 
-// ── the dependency's license and smoke test: named in the install doc, run where it is installed ─
+// ── the dependency's license and smoke test: named in the reference's License section, run where it is installed ─
 
 test("the license is named beside romp's own, and CI runs the smoke test in the job that installs the dependency", () => {
-  assert.match(INSTALL, /pdf\.js[^\n]*\n?[^\n]*Apache-2\.0/, "docs/install.md names pdf.js and its Apache-2.0 license");
-  assert.match(INSTALL, /Romp is \[Apache-2\.0\]/);
+  assert.ok(REF.includes("\n## License\n"), "docs/reference.md has the License section");
+  assert.match(LICENSE, /pdf\.js[^\n]*\n?[^\n]*Apache-2\.0/, "docs/reference.md's License section names pdf.js and its Apache-2.0 license");
+  assert.match(LICENSE, /Romp is \[Apache-2\.0\]/);
   assert.match(CI, /run: node --test tools\/pdf-smoke\.test\.mjs/);
   assert.ok(fs.existsSync(path.join(ROOT, "tools", "pdf-smoke.test.mjs")));
   // the smoke test skips by name where node_modules is absent (the shell job) rather than failing
