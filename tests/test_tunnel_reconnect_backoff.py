@@ -81,7 +81,7 @@ class ClearedOnPurpose(unittest.TestCase):
         state = km.jd.STATE
         state.mkdir(parents=True, exist_ok=True)
         km.REMOTES_FILE.write_text(json.dumps([{
-            "host": "TESTHOST", "kernel_port": 29855, "local_port": 51000, "token": "tok",
+            "host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "token": "tok",
             "fails": 99, "next_try": 9e12, "gave_up": True, "trust": "directed",
         }]))
         km._remotes.clear()

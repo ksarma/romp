@@ -2,7 +2,20 @@
 whose one tool turn holds eleven Bash commands with descriptions, two Writes, three Edits and four Reads; the real /chat page served
 from a copy of the built bundle, driven by Playwright. Roads: the collapsed group head speaks by action with the edits' totals; the
 group expands to rows labelled by the model's description or the derived phrase; a row expands to its command and output; the same
-in the light theme; screenshots of the collapsed head and one expanded row go to the drops folder for the reviewers. Synthetic only."""
+in the light theme. Synthetic only.
+
+Screenshots are off by default. T418_SHOTS=1 turns them on: the driver saves six PNGs (the collapsed group head, an Edit row and an
+expanded Bash row, each in the dark and the light theme) into drops/ under the run's own state root, which is ROMP_STATE_DIR, else
+<XDG_STATE_HOME>/romp (lab_ports.state_root; tests/conftest.py sets the second and clears the first), and _result prints that
+directory on stderr.
+Under pytest, and under unittest when it imports this module through the tests package (`python -m unittest
+tests.test_tool_rows_vocab_browser` from the checkout), that root is the run's temporary state floor, removed when the run ends.
+Any other run gets no floor and uses the root its shell names: a direct `python3 tests/test_tool_rows_vocab_browser.py`, or a
+unittest run that imports the module by its bare name (one started inside tests/, say). In a shell that exports ROMP_STATE_DIR at
+a live root, such a run with T418_SHOTS=1 saves into that live root's drops/. A run that asks for shots and names neither
+variable fails rather than build a path from the home directory. Until 2026-10-03 the shots were on by default and went to
+~/.local/state/romp/drops, so a full test run on a machine running romp wrote into that machine's live state root;
+tests/test_tool_rows_vocab_shots_root.py pins where they go now."""
 import json
 import os
 import re
@@ -30,7 +43,21 @@ DESCS = ["Verified the dashboard bundle and the venv exist", "Located the venv a
          "Checked the browser openers on PATH", "Appended the PATH line to the shell rc", "Launched the manager in the background", "Loaded the tools",
          "Waited for the dashboard port to answer", "Read the manager log", "Listed the state directory", "Printed the versions"]
 EDITS = [(12, 0), (20, 0), (5, 0)]   # (+added, -removed) per Edit: +37 -0 in all
-DROPS = os.path.join(os.path.expanduser("~"), ".local", "state", "romp", "drops")
+
+
+def _drops_dir():
+    """Where the screenshots go, or "" for none. Off unless T418_SHOTS is exactly "1"; on, drops/ under the run's own state root
+    (lab_ports.state_root: ROMP_STATE_DIR, else <XDG_STATE_HOME>/romp), read when the shots are taken, never at import. A run that
+    asks for shots and names neither variable is refused: the only other place would be built from the home directory, which on a
+    machine running romp is its live state root."""
+    if os.environ.get("T418_SHOTS") != "1":
+        return ""
+    root = lab_ports.state_root(os.environ)
+    if not root:
+        raise AssertionError("T418_SHOTS=1 asks for screenshots, but neither ROMP_STATE_DIR nor XDG_STATE_HOME names a state root "
+                             "to save them under; set one (the shots go to <root>/drops) or unset T418_SHOTS")
+    return os.path.join(root, "drops")
+
 
 DRIVER = r"""
 import { createRequire } from "node:module";
@@ -191,9 +218,10 @@ class ToolRowsVocab(unittest.TestCase):
 
     def _result(self):
         if self._r is None:
-            drops = DROPS if os.environ.get("T418_SHOTS", "1") == "1" and os.path.isdir(os.path.dirname(DROPS)) else ""
+            drops = _drops_dir()
             if drops:
                 os.makedirs(drops, exist_ok=True)
+                print("T418 shots:", drops, file=sys.stderr)
             cfg = os.path.join(self.lab, "rows.json")
             with open(cfg, "w") as f:
                 json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID, "drops": drops}, f)

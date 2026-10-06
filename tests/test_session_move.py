@@ -278,10 +278,10 @@ class MoveRefusals(MoveBase):
         self._unchanged(s)
 
     def test_a_text_queued_after_the_idle_reading_is_busy_before_any_request(self):
-        # review round 4 (2026-09-08): the busy reading and the arm are one step under the session lock
-        # (the feeder pops under that lock and holds the head while the arm stands), so a text queued
-        # between move()'s first idle reading and the arm is caught by the locked re-read: no request goes
-        # out, nothing is armed, and the claim is returned
+        # the busy reading and the arm are one step under the session lock (the feeder pops under that
+        # lock and holds the head while the arm stands), so a text queued between move()'s first idle
+        # reading and the arm is caught by the locked re-read: no request goes out, nothing is armed, and
+        # the claim is returned
         s = self._wire([_ok(self.new)])
         real = self.be._claim_cwd_pending
 
@@ -369,7 +369,7 @@ class LostReply(MoveBase):
         self.assertTrue(s._move_settle_expected, "the CLI's turn-less result is still coming — the arm stands")
         self.assertTrue(os.path.exists(sb.transcript_path(self.new, EPISODE_FSID)), "prior episodes follow")
         self.assertTrue(any("reply was lost" in m and p for m, p in self.logs),
-                        "on the problem ring: the arm outlives move() and holds the queue (review round 5)")
+                        "on the problem ring: the arm outlives move() and holds the queue")
 
     def test_a_lost_reply_with_the_transcript_nowhere_is_uncertain_and_keeps_the_flag(self):
         s = self._wire([RuntimeError("control request timed out")])
@@ -572,9 +572,8 @@ class SpuriousSettle(unittest.TestCase):
         self.assertFalse(s._move_settle_expected, "spent on the match")
 
     def test_the_guard_only_fires_on_an_armed_zero_turn_result(self):
-        # review round 4 (2026-09-08): rewritten to round 3's model. A real turn's result while the arm
-        # stands proves the arm stale (the move's result would have preceded it) and DROPS it, logged, so
-        # a zero-turn result after that goes to the ordinary settle; the earlier pin kept the arm.
+        # A real turn's result while the arm stands proves the arm stale (the move's result would have
+        # preceded it) and DROPS it, logged, so a zero-turn result after that goes to the ordinary settle.
         logs = []
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None, log=lambda m: logs.append(str(m)))
         s = self._session(be, armed=False)

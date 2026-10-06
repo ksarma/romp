@@ -330,6 +330,9 @@ class FoldInvariant(unittest.TestCase):
         self.assertEqual(pp.http_public_key("POST /remote/TESTHOST/send"), "POST /remote/*/send")
         self.assertEqual(pp.http_public_key("GET /remote/TESTHOST/" + SID), "other")
         self.assertEqual(pp.http_public_key("GET /media/logo.png"), "GET /media/*")
+        # a state-root pane's page and files (upstream PR 1919): the pane id is a definition's text, folded as the kernel does
+        self.assertEqual(pp.http_public_key("GET /pane/notes/index.html"), "GET /pane/*")
+        self.assertEqual(pp.http_public_key("GET /pane/*"), "GET /pane/*", "a current kernel's family key passes unchanged")
         self.assertEqual(pp.http_public_key("PUT /perf"), "other")
         self.assertEqual(pp.http_public_key("nonsense"), "other")
         self.assertEqual(pp.http_public_key("other"), "other")

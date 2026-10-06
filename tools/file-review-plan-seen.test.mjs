@@ -26,7 +26,9 @@ const kernel = read('kernel', 'kernel.py');
 const host = read('tools', 'file-comments-host.mjs');
 const skill = read('vendor', 'track-changents', 'skill', 'SKILL.md');
 const readme = read('vendor', 'track-changents', 'README.md');
-const guide = read('docs', 'guide.md');
+// the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front
+// pages are the project's, CLAUDE.md "The documentation front pages"), so `guide` reads the reference and the pins hold there
+const guide = read('docs', 'reference.md');
 const context = read('CONTEXT.md');
 
 function between(doc, from, to) {

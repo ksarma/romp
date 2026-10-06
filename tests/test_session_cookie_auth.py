@@ -181,9 +181,14 @@ class NoResponseSetsACookieEqualToTheToken(_Server):
 
 class CookieOpensPageAndStaticOnly(_Server):
     def test_the_route_table_is_the_page_class(self):
-        # page and static are DERIVED from the one route table the router dispatches from
+        # page and static are DERIVED from the one route table the router dispatches from.
+        # "/artifacts" is the Artifacts pane's page (upstream PR 1911). It is page class on the fork because the page
+        # is code with no session data: _artifacts_page interpolates the build token, the theme and the pane's own
+        # stylesheet and the shared shim, as /files does, plus the loader the chat and feed pages carry; the listing
+        # rides the socket (listArtifacts) and the thumbnails ride /file, which needs a cap on top of the cookie
         self.assertEqual(set(km._PAGE_RENDERERS),
-                         {"", "/", "/chat", "/feed", "/timeline", "/fleet", "/waiting", "/files", "/settings"},
+                         {"", "/", "/chat", "/feed", "/timeline", "/fleet", "/waiting", "/files", "/artifacts",
+                          "/settings"},
                          "the page route table (both the router and _need read this)")
         for p in km._PAGE_RENDERERS:
             self.assertEqual(km.Handler._need(p), ("page", ""), "%r classes as page" % p)

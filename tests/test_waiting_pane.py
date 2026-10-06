@@ -192,7 +192,8 @@ class Plumbing(unittest.TestCase):
         self.assertIn('if not (served and client.get("app") in ("feed", "waiting")):', SRC)
 
     def test_an_open_waiting_pane_counts_as_a_viewer_for_conserve_memory(self):
-        self.assertIn('c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting", "files")', SRC)
+        # the Artifacts pane (the project's PR 1911) joined the tuple after the Files pane
+        self.assertIn('c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting", "files", "artifacts")', SRC)
 
     def test_the_page_rides_the_feed_pane_caps_and_the_shared_dress(self):
         page = km._waiting_page()
@@ -226,7 +227,14 @@ class Shell(unittest.TestCase):
         self.html = km._landing()
 
     def test_the_pane_is_in_the_one_ordering_after_feed(self):
-        self.assertEqual(km._PANE_ORDER[-2], ("waiting", "Waiting"))   # the Files pane (2026-09-03) sits after it
+        # keyed on the neighbours, not an index: the Files pane (2026-09-03) and then the Artifacts pane sit after it
+        order = list(km._PANE_ORDER)
+        self.assertIn(("waiting", "Waiting"), order)
+        i = order.index(("waiting", "Waiting"))
+        self.assertGreater(i, 0, "the Waiting pane opens the ordering, so nothing precedes it: %r" % (order,))
+        self.assertEqual(order[i - 1], ("feed", "Feed"), "the Waiting pane directly follows the Feed: %r" % (order,))
+        self.assertLess(i + 1, len(order), "the Waiting pane closes the ordering, so nothing follows it: %r" % (order,))
+        self.assertEqual(order[i + 1], ("files", "Files"), "the Waiting pane directly precedes the Files pane: %r" % (order,))
         self.assertIn("<div class=rail-btn data-pane=waiting>Waiting</div>", self.html)
         self.assertIn("<button data-pane=waiting>Waiting</button>", self.html)
 
@@ -242,7 +250,8 @@ class Shell(unittest.TestCase):
         self.assertIn("body:not(.po-waiting) #gv-c,body:not(.po-chat):not(.po-fleet):not(.po-feed) #gv-c{display:none}", self.html)
 
     def test_off_by_default_and_toggled_by_the_controller(self):
-        self.assertIn("<body class='po-chat po-feed po-timeline'>", self.html)   # not po-waiting
+        # not po-waiting: the class list closes before the generic panes' attribute (the project's PR 1919)
+        self.assertIn("<body class='po-chat po-feed po-timeline' data-panes=", self.html)
         self.assertIn("po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false}", self.html)
         self.assertIn("po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false}", self.html)   # the ?panes= reset
         self.assertIn("document.body.classList.toggle('po-waiting',!!po.waiting)", self.html)
@@ -251,7 +260,13 @@ class Shell(unittest.TestCase):
     def test_every_pane_list_in_the_landing_js_names_it(self):
         self.assertIn("'f-waiting':'waiting-pane'", km._LANDING_FOCUS_JS)
         self.assertIn("var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files']", km._LANDING_FOCUS_JS)
-        self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].forEach", self.html)   # Esc wiring (the gear's page joins it, T400)
+        # Esc wiring (the gear's page joins it, T400); the generic panes' frames are concatenated after the hand list (the
+        # project's PR 1922), the spelling tests/test_files_pane.py pins. Read in the Esc script itself, which the landing
+        # carries whole: the mobile script holds the same list, so the landing's text alone could not tell the two apart
+        self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].concat((function(){try{return "
+                      "JSON.parse(document.body.getAttribute('data-panes')||'[]').map(function(p){return 'f-'+p.id;});}catch(e){return [];}})())"
+                      ".forEach", km._LANDING_ESC_JS)
+        self.assertIn("<script>" + km._LANDING_ESC_JS + "</script>", self.html)
         # the Log's connection-lost label: PN is json.dumps(dict(_PANE_ORDER)) since the 2026-09-07 fold (upstream's
         # one-list map, adopted whole), so the pin is the map plus the pane's row in _PANE_ORDER
         self.assertIn("var PN=" + json.dumps(dict(km._PANE_ORDER)) + ";", km._LANDING_ERRS_JS)

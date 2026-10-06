@@ -79,9 +79,9 @@ class FixedPortBelt(unittest.TestCase):
         self.assertIsNone(_refusal(_env(ROMP_STATE_DIR=MOVED_ROOT + "/romp")))
 
     def test_the_runs_own_port_is_allowed_under_a_test(self):
-        self.assertIsNone(_refusal(_env(PYTEST_CURRENT_TEST="tests/test_x.py::T::t (call)", ROMP_POSTAL_PORT="45678", ROMP_POSTAL_HERMETIC="1")),
+        self.assertIsNone(_refusal(_env(PYTEST_CURRENT_TEST="tests/test_x.py::T::t (call)", ROMP_POSTAL_PORT="7", ROMP_POSTAL_HERMETIC="1")),
                           "a hermetic bus that names its own port, marked as the run's own, is what the labs run")
-        self.assertIsNone(_refusal(_env(XDG_STATE_HOME=TEMP_ROOT + "/xdg", ROMP_POSTAL_PORT="45678", ROMP_POSTAL_HERMETIC="1")),
+        self.assertIsNone(_refusal(_env(XDG_STATE_HOME=TEMP_ROOT + "/xdg", ROMP_POSTAL_PORT="7", ROMP_POSTAL_HERMETIC="1")),
                           "…under a temporary root as well (the shell suite's shape: its setup marks its port)")
 
     def test_an_inherited_port_name_does_not_count_under_a_test(self):
@@ -101,11 +101,11 @@ class FixedPortBelt(unittest.TestCase):
     def test_the_named_port_must_be_the_one_this_process_bound(self):
         """a port named AFTER the module read its own (PORT is frozen at import) does not license the fixed one: the
         message says both numbers"""
-        probe = PROBE.replace("print(repr(p._fixed_port_refusal()))", "import os; os.environ['ROMP_POSTAL_PORT'] = '45678'; print(repr(p._fixed_port_refusal()))")
+        probe = PROBE.replace("print(repr(p._fixed_port_refusal()))", "import os; os.environ['ROMP_POSTAL_PORT'] = '7'; print(repr(p._fixed_port_refusal()))")
         p = subprocess.run([sys.executable, "-c", probe, BUS], env=_env(PYTEST_CURRENT_TEST="tests/test_x.py::T::t (call)"), capture_output=True, text=True, timeout=60)
         self.assertEqual(p.returncode, 0, p.stderr[-800:])
         why = eval(p.stdout.strip())
-        self.assertIsNotNone(why); self.assertIn("names 45678, but this process read 25302 at import", why)
+        self.assertIsNotNone(why); self.assertIn("names 7, but this process read 25302 at import", why)
 
     def test_the_message_names_the_whole_trio_not_client_only_alone(self):
         why = _refusal(_env(PYTEST_CURRENT_TEST="tests/test_x.py::T::t (call)"))

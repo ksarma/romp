@@ -70,14 +70,15 @@ test("source: the row is a textarea saved through load/save on change and painte
 
 test("source: the open paint line carries the fork's fill among upstream's (the one line both sides change at every fold)", () => {
   // openSettings' paint line is upstream's (T404 re-cut the card; the signature took `tab, section` with T379) with the
-  // fork's hosts fill spliced in right after upstream's Files-control fill. Nothing else pins the fill's place on that
-  // line, so a fold that replays the line THEIRS would paint the hosts textarea empty with every test green. The tmux
-  // backend offer that shared the line (paintBackendOffer, T288) left with the backend at the 2026-09-15 upstream pull-in
-  // (romp-on/romp#1401), and its pin with it; the backend select's value line is upstream's own again.
+  // fork's hosts fill spliced in after upstream's Files-control fill and PR 1884's Pane docking fill. Nothing else pins
+  // the fill's place on that line, so a fold that replays the line THEIRS would paint the hosts textarea empty with every
+  // test green. The tmux backend offer that shared the line (paintBackendOffer, T288) left with the backend at the
+  // 2026-09-15 upstream pull-in (romp-on/romp#1401), and its pin with it; the backend select's value line is upstream's
+  // own again.
   const open = slice(GEAR, "  function openSettings(tab, section) {", "\n  if (g) g.onclick");
   const paint = open.split("\n").filter((l) => l.includes("p.hidden = false; feedFull(true); setModalCls(true); var s = load();"));
   assert.equal(paint.length, 1, "one paint line on open");
-  assert.match(paint[0], /if \(fsc\) fsc\.checked = \(s\.showFilesControl === true\); if \(fh\) \{ var fhl = figureHostList\(s\.figureHosts\); fh\.value = fhl\.join\('\\n'\); figureHostsNote\(fhl\); \}/, "the fork's fill, painted on open right after upstream's Files-control fill");
+  assert.match(paint[0], /if \(fsc\) fsc\.checked = \(s\.showFilesControl === true\); (?:if \(pdk\) pdk\.checked = \(s\.paneDocking === true\); )?if \(fh\) \{ var fhl = figureHostList\(s\.figureHosts\); fh\.value = fhl\.join\('\\n'\); figureHostsNote\(fhl\); \}/, "the fork's fill, painted on open right after upstream's Files-control fill and its Pane docking fill (PR 1884) when present");
   assert.match(open, /romp: 'logUnseenQuery'/, "upstream's Open log count query (T290), the other line of the hunk, precedes the paint");
 });
 
