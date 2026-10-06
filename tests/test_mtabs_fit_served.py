@@ -38,8 +38,9 @@ wrap only where it still cannot.
   card is open at the drop: a closed card runs no animation, so the class a drop left on its copy is cleared when the card
   opens, where it would otherwise play the flash late. Usage explains rather than hides when it has nothing to show
   (romp-manager's call 6): the shell's usage panel opens only over a reading, so with none the card shows Usage disabled
-  with the line "No reading yet" under its name, and a tap on it leaves the card open (a disabled button takes no click,
-  so the row's handler tests no disabled state: the disabled state is the guard, romp-manager's call 3 at round 1); with a
+  with the line "No reading yet" under its name, and a tap on it leaves the card open (no engine dispatches a click for a
+  pointer on a disabled button, so the row's handler tests no disabled state: the disabled state is the guard,
+  romp-manager's call 3 at round 1, and a click a script dispatches on it goes past that guard); with a
   reading, Usage is enabled and
   opens the panel. The card reads the source the panel's opener reads: each opening asks the shell for a fresh pull
   (window.__rompUsagePull, the usage script's own fetch of its readings), Usage shows the romp loader and takes no tap until it ends, and
