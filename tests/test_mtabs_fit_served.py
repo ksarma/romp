@@ -52,9 +52,11 @@ wrap only where it still cannot.
   window.__rompUsageFailed telling the card), Usage shows the line "Couldn't load", never "No reading yet": disabled where
   the shell holds no reading, and enabled where it still holds one (a request with no answer leaves the readings as they
   were), its tap opening the panel over that reading (romp-manager's decision on round 1's builds). That tap opens the
-  panel at once, whose age lines say how old the reading is, while the refresh runs behind it, and the open panel follows
-  the refresh's answer (romp-manager's first rule at round 2: the tap had waited on its own pull, which carried no bound,
-  with nothing on screen). Every read of the readings goes through the usage script's one bounded helper: the card's pull,
+  panel at once, whose age lines say how old the reading is, while the refresh runs behind it; the open panel follows the
+  refresh's answer where it brings a reading (an error status empties the readings, which hides the panel's content and
+  leaves its backdrop up until a tap or Escape closes it), and the refresh never opens the panel itself, so a panel closed
+  before it ends stays closed (romp-manager's first rule at round 2: the tap had waited on its own pull, which carried no
+  bound, with nothing on screen). Every read of the readings goes through the usage script's one bounded helper: the card's pull,
   the panel opener's, and the readout's click and 60 s refresh.
   Usage is one line tall in every state, as the row's other buttons are, and holds the loader's width (romp-manager's
   decision on round 1's builds), so loading to a reading, the common path, moves neither the row nor the tabs under it,

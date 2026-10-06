@@ -71454,7 +71454,9 @@ if(slot){moveApiCell(cell,function(){slot.appendChild(cell);});}else if(cell.par
 // Re-anchor the top edge after the swap: new content can change the tip's height, and it hangs ABOVE
 // the rail. The phone's panel (the .ru-modal tip, __rompUsagePanel below) follows them too: a tap after a failed read opens it
 // at once over the reading this script still holds, while the refresh behind it is out, and that refresh's answer lands here
-// (PR 976's round 2); the refresh never opens the panel itself.
+// where it brings a reading; one that empties the readings (an error status) leaves by renderRows' first exit above, which
+// hides the tip and leaves the backdrop up (modalPaint's comment below). The refresh never opens the panel itself (PR 976's
+// round 2).
 if(tip.style.display==='block'&&!tip.classList.contains('ru-modal')){var th=tipHTML();
 if(th){tip.innerHTML=th;var rr=el.getBoundingClientRect();
 tip.style.top=Math.max(6,rr.top-tip.offsetHeight-8)+'px';}}
@@ -71642,11 +71644,13 @@ tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
 // this script still holds a reading, the tap opens the panel at once over that reading, whose age the panel shows, and the
 // refresh runs behind it: its answer reaches the open panel through renderRows, and it never opens the panel itself, so a
 // panel closed in the meantime stays closed and nothing opens over a settings card opened since (PR 976's round 2: the card
-// says Couldn't load beside an enabled Usage there, and its tap waited on a pull that could run the whole bound, 10 s with
-// nothing on screen). Every other tap pulls first and opens on the pull's end, as before. Both pulls are bounded (boundedPull).
+// says Couldn't load beside an enabled Usage there, and its tap waited on its own pull, which carried no bound, with nothing
+// on screen; even bounded, that wait could run the whole 10 s). Every other tap pulls first and opens on the pull's end, as before. Both pulls are bounded (boundedPull).
 // The panel's content, h being tipHTML over the readings: the windows and spend, and under them the deeper level, one tap away
 // here too (T247): the rail and its click do not exist on a phone, and a compact view must never dead-end (progressive
-// disclosure). openIt paints it, and renderRows repaints it on each write while the panel is open. A repaint replaces the
+// disclosure). openIt paints it, and renderRows repaints it while the panel is open, on each write that leaves a reading. A
+// write that empties the readings (an error status) repaints nothing: renderRows' first exit hides the tip and leaves the
+// backdrop up, with the close hook still set, until a tap on the backdrop or Escape closes it. A repaint replaces the
 // readings above the By session row and leaves the row in place: a button a re-render rebuilds loses the click pressed on
 // it (ui/CLAUDE.md, buttons stay click-safe across re-renders), and a refresh can land while that button is pressed.
 function modalPaint(h){var more=tip.querySelector('.ru-tip-more');
