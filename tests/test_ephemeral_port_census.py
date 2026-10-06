@@ -85,7 +85,7 @@ its names counted apart and a conditional expression's test not read: with the s
 assigned to port counts 40000, and so does 40000 if A1 + ... + A9 else 1. So interval(), anywhere but
 at a step, reads each int a binding the census records gives a name, and not a value a binding it does not
 record gives, nor a float, a string or a None a binding it records gives, unless the value bounds that name's
-every value as these do, except that int() of the name itself reads a float or a string, as CPython's int()
+every value as these do, except that int() of the name itself reads a float, a string or bytes, as CPython's int()
 of it, and a randrange's stop that is the name itself reads a None, as the stop left empty (both below;
 WHAT IT CANNOT SEE gives examples); the hop counts every value recorded, a string wherever a string counts.
 Inside a class Python reads a name written with two leading underscores and not two trailing ones as
@@ -399,10 +399,15 @@ these turns its plant red, and the example leaves this list.
   int for P), an f-string ("127.0.0.1:" + f"{N}"), an unbounded expression with no constant operand of a sum or
   difference in the range (base + i, N * k), and a run-time substitution into code text (a template's __VALUE__ replaced
   at run time); a rule of its own may still read such a value where it is written;
+  a sum or difference offset_base() would read, wrapped in a := whose target names no port (port = (W := 40000 + i),
+  {"port": (P := 40000 + i)}): offset_base() reads only through str(), int() and a unary plus, though interval() reads a
+  := as its value;
   int() of str() of a name bound to a string: interval() reads str() of a name as the name, by its ints, and a string
   gives none (P = "N", then int(str(P)), where CPython gives N; int(P) is read, THE RULE); and, as interval() reads
   str() of a value as that value's number, a string operator over str(), read as the arithmetic of the numbers
   (int(str(4) + str(5001)), where CPython gives 45001, reads 5005, and int(str(4) * 5), where it gives 44444, reads 20);
+  int() with a base, by position or by keyword: interval() and offset_base() read str() and int() with one argument and
+  no keyword alone (int("N", 10), int(P, base=10) with P bound to "N", and int(x or "N", 10), where CPython gives N);
   an unbound random method spelled on anything but a name or attribute called Random or SystemRandom, whose instance
   then fills start (type(rng).randrange(rng, N, M), MyRandom.randrange(rng, N, M));
   a name or attribute called Random or SystemRandom that holds an instance (Random = random.Random(), then
@@ -433,6 +438,9 @@ these turns its plant red, and the example leaves this list.
   (int(90002 / 2)), **, <<, >>, &, | or ^ over an operand that can be negative (-(-45001 | 0), and S | 0 with S
   bound to 45001 and by S = -2 if fast else f() or by S = -2 or f(), each of which gives S the value -2 beside its
   45001, so that S reads -2-45001), and a ** or a << whose value can pass 2**4096 ((2 ** 5000 + 45001) % 2 ** 5000);
+  a comparison (OPERATOR_LIMITS), not read though it gives a bool over ints: with x bound to 0 and by x = f(), 32767 +
+  (x == 0), 32767 + (x in (0, 1)) and random.randrange(40000 + (x > 3), 50000) are not read, though CPython gives 32768,
+  32768 and 40000-49999;
   a random call with an argument passed through a * sequence (random.randrange(*(N, M)), random.randint(*[N, M]));
   a randrange with its stop left empty and a step that is 1 only at run time, which Python takes (ONE = 1, then
   random.randrange(start=50000, step=ONE); random.randrange(50000, step=+1); E = None, then random.randrange(50000,
@@ -852,9 +860,9 @@ REFUSED_NAMES = ("it reads more than eight names that hold a value the census re
                  "trailing ones (__K) or a spelling the census joins to such a name (_C__K), bind each of them only to "
                  "ints the census records (an int, written with or without a sign, given by =)")
 REFUSED_CHOICES = ("its and, or and conditional expressions give it more ways to read than the census reads one by one "
-                   "(each and or or read as each of its operands in turn, and each conditional expression as each of "
-                   "its two branches, every way), which it refuses rather than leave a way out; write fewer of them in "
-                   "the expression")
+                   "(more than two hundred and fifty-six, each and or or read as each of its operands in turn, and "
+                   "each conditional expression as each of its two branches, every way), which it refuses rather than "
+                   "leave a way out; write fewer of them in the expression")
 
 
 def _cornered(f, left, right):
@@ -925,7 +933,9 @@ UNARY = {
     ast.Not: lambda _o: (0, 1, True)}   # a bool, whatever its operand: not takes any object, interval() reads ints
 OPERATOR_LIMITS = {
     ast.Div: "true division gives a float, which no port is, and int() of one is not read (int(90002 / 2))",
-    ast.MatMult: "Python raises for @ over ints"}
+    ast.MatMult: "Python raises for @ over ints",
+    **dict.fromkeys((ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE), "a rich comparison can return any object"),
+    **dict.fromkeys((ast.Is, ast.IsNot, ast.In, ast.NotIn), "gives a bool, not read: no test computes a port from one")}
 # The operators of BINARY that can give a reading over operands and none over wider ones: **, <<, >>, &, | and ^ are not
 # read over an operand that can be negative, nor ** and << past 2**BIG, and a wider operand can be either (A | 0 reads
 # 40000 with A at 40000 and nothing with A over -1 to 40000). offset_base() counts an operand that holds one where its
@@ -1091,7 +1101,7 @@ EACH = 256                                          # the most ways offset_base(
 
 def _values(each, k):
     """The values offset_base() reads the name `k` by, one at a time: its ints from the lowest, then its other values (a
-    float or a string, which int() reads) in the order the module binds them."""
+    float, a string or bytes, which int() reads) in the order the module binds them."""
     return sorted({v for v in each[k] if isinstance(v, int)}) + [v for v in dict.fromkeys(each[k]) if not isinstance(v, int)]
 
 
@@ -3070,6 +3080,7 @@ class Plants(unittest.TestCase):
         self.assertEqual((result["hits"], [r[:3] for r in result["refused"]]), ([], [(rel, line, "an assignment to port")]),
                          "a refused value reports no port, and is refused once")
         self.assertEqual(MIXES, 2 ** 8, "REFUSED_NAMES says eight names, 2 ** 8 mixes")
+        self.assertIn("more than two hundred and fifty-six,", REFUSED_CHOICES, "REFUSED_CHOICES says MIXES, 256")
         with self.assertRaises(AssertionError, msg="a plant the census refuses is not green"):
             self.assertGreen("test_plant.py", src)
 
@@ -3142,7 +3153,7 @@ class Plants(unittest.TestCase):
         or that is itself the position's value gives each operand as a value of its own, its names counted apart, as
         THE RULE states too: with the same names, A1 + ... + A8 + 40000 or A9 assigned to port counts 40000 (red),
         which a census reading such an or only through interval() refuses by its nine names. A conditional expression
-        joins both counts as an and or an or does (the owner's call of 2026-10-05 at 23:5xZ): with the same names, 100
+        joins both counts as an and or an or does (the same call of the owner's): with the same names, 100
         + (1 if A1 + ... + A9 else 2) % 20 is refused by the nine names in its test, which no expression it gives
         reads (they give 101 and 102, as Python does), and 100 + ((1 if c0 else 2) + ... + (1 if c8 else 2)) % 20 by
         its 512 expressions, each within 109-118; and 40000 if A1 + ... + A9 else 1, the position's value itself,
@@ -3417,7 +3428,7 @@ class Plants(unittest.TestCase):
     def test_a_name_a_binding_gives_a_value_other_than_an_int_reads_both_ways(self):
         """A name a binding the census records gives a value other than an int reads, wherever it is read, both by its
         ints and unbounded, every binding recorded or not, as a name with a binding the census does not record does
-        (BOUND): its ints do not bound its values. The owner's call of 2026-10-06 on fork PR 973 at 04:1xZ made it so,
+        (BOUND): its ints do not bound its values. The owner's first call of 2026-10-06 on fork PR 973 made it so,
         since both earlier censuses (_earlier_readings()) read each plant below, and a census that drops a reading both
         made is worse than the base. Each red plant adds 40000 to int() of an expression over a name bound to a float, a
         string or bytes and to an int, every binding recorded, and is a sum built on 40000 with the name unbounded:
@@ -3546,8 +3557,8 @@ class Plants(unittest.TestCase):
     def test_a_template_reads_the_string_a_binding_records_beside_one_it_does_not(self):
         """A template, and the text before a concatenated port, read a name by the one string the census records under
         the spelling written (self.bound), whatever the name's other bindings, as the hop and a host do (THE RULE: such
-        a binding takes no value away from the hop, a host, a template or offset_base(); the owner's call of 2026-10-05
-        at 09:5xZ, item 3, which kept this reading). Each red plant binds a name to an address's template, or to the
+        a binding takes no value away from the hop, a host, a template or offset_base(); the owner's ten calls of
+        2026-10-05, item 3, which kept this reading). Each red plant binds a name to an address's template, or to the
         text of an address up to its colon, and also by a call or beside a star import, and puts 45001 after it: a
         %-template's operand, a format template's, and a port concatenated onto the text. A census whose template
         reader took a name only when it records every binding of it reads none of them. (A host beside such a binding
@@ -3821,15 +3832,15 @@ class Plants(unittest.TestCase):
 
     def test_not_reads_0_to_1_whatever_its_operand(self):
         """not reads 0 to 1 whatever its operand, since it gives a bool for any object (THE RULE; the owner's call of
-        2026-10-05 at 18:4xZ, item 2 as written). interval() reads a name by its ints alone, passing over a None, a
-        float, a string or a display the name also holds, and str() of a value as the value, so not of a one-value
-        reading can be the wrong value. Each red plant read that one value, where the census read not as its one value
-        over an operand of one value: with V bound to "x" and to 0, every binding recorded, 45001 + (not V) * 30000 read
-        75001 and was not counted, where CPython gives 45001 for V = "x"; so did 45001 + (not str(0)) * 30000, where
-        str(0) is "0", which is true, and CPython gives 45001; with V bound to "" and to 1, 45001 + (not V) read 45001
-        alone, where CPython gives 45002 for V = ""; and with V bound by a loop to None and to 1, 32767 + (not V) read
-        32767 and was not counted, where CPython gives 32768 for V = None. The census that read no not at all read each
-        of the first three as a sum built on 45001, and the last as nothing."""
+        2026-10-05 that launched the light re-check, item 2 as written). interval() reads a name by its ints alone,
+        passing over a None, a float, a string or a display the name also holds, and str() of a value as the value, so
+        not of a one-value reading can be the wrong value. Each red plant read that one value, where the census read not
+        as its one value over an operand of one value: with V bound to "x" and to 0, every binding recorded, 45001 +
+        (not V) * 30000 read 75001 and was not counted, where CPython gives 45001 for V = "x"; so did 45001 + (not
+        str(0)) * 30000, where str(0) is "0", which is true, and CPython gives 45001; with V bound to "" and to 1, 45001
+        + (not V) read 45001 alone, where CPython gives 45002 for V = ""; and with V bound by a loop to None and to 1,
+        32767 + (not V) read 32767 and was not counted, where CPython gives 32768 for V = None. The census that read no
+        not at all read each of the first three as a sum built on 45001, and the last as nothing."""
         n = _n()                                                                   # 45001, built at run time
         for label, src, why, first in (
                 ("a name bound to a string and to 0", 'V = "x"\nV = 0\nport = %d + (not V) * %d\n' % (n, 30000),
@@ -3927,7 +3938,7 @@ class Plants(unittest.TestCase):
     def test_a_conditional_expression_reads_each_of_its_branches(self):
         """A conditional expression gives the value of one of its two branches, so wherever THE RULE reads a value it
         reads each branch in that place, exactly as it reads each operand of an and or an or, the union of their
-        readings; its test is no value (the owner's call of 2026-10-05 on fork PR 973 at 23:5xZ, which names 45001 if
+        readings; its test is no value (the owner's call of 2026-10-05 on fork PR 973, which names 45001 if
         fast else pick() and PORT = int(os.environ["P"]) if "P" in os.environ else 45001 as the env-default idiom).
         That replaces the reading of a conditional expression as the span holding its two branches, which read nothing
         where interval() bounded one branch alone. The first 45 red plants each read nothing in a census that read the
@@ -4122,6 +4133,9 @@ class Plants(unittest.TestCase):
                 ("an operator interval() does not read over the operands it is given", "test_x.py",
                  'row = {"port": int(%d / 2)}\nrow = {"port": -(-%d | 0)}\nrow = {"port": (2 ** 5000 + %d) %% 2 ** 5000}\n'
                  % (2 * n, n, n)),
+                ("a comparison", "test_x.py",
+                 'x = 0\nx = f()\nport = %d + (x == 0)\nport = %d + (x in (0, 1))\n'
+                 'port = random.randrange(%d + (x > 3), %d)\n' % (LOW - 1, LOW - 1, n, n + 9)),
                 ("| over a name a conditional expression or an or gives a negative int beside one in the range",
                  "test_x.py", 'S = %d\nS = -2 if fast else f()\nrow = {"port": S | 0}\nT = %d\nT = -2 or f()\n'
                  'row = {"port": T | 0}\n' % (n, n)),
@@ -4157,10 +4171,16 @@ class Plants(unittest.TestCase):
                  'E = None\nport = random.randrange(%d, E, **kw)\n' % _n()),
                 ("an unbounded computed port with no constant of a sum in the range", "test_x.py",
                  'port = base + i\nother_port = %d * k\n' % n),
+                ("a sum or difference offset_base() would read, wrapped in a := whose target names no port",
+                 "test_x.py", 'port = (W := %d + i)\nrow = {"port": (P := %d + i)}\n' % (n, n)),
                 ("a host that is no loopback or wildcard literal", "test_x.py",
                  's.connect(("TESTHOST", %d))\nconn = HTTPConnection(self.host, %d)\n' % (n, n)),
                 ("a name bound only to the empty string, in a tuple", "test_x.py", 'H = ""\ns.bind((H, %d))\n' % n),
                 ("int() of str() of a name bound to a string", "test_x.py", 'P = "%d"\nport = int(str(P))\n' % n),
+                ("int() with a base, by position or by keyword", "test_x.py",
+                 'row = {"port": int("%d", 10)}\nP = "%d"\nrow = {"port": int(P, base=10)}\n'
+                 'row = {"port": int(x or "%d", 10)}\nport = int("%d", 10) + i\n'
+                 'port = random.randint(int("%d", 10), %d)\n' % (n, n, n, n, n, n + 9)),
                 ("a string operator over str(), read as the arithmetic of the numbers", "test_x.py",
                  'row = {"port": int(str(4) + str(5001))}\nrow = {"port": int(str(4) * 5)}\nOTHER = %d                '
                  '# opens the file\n' % (n + 1)),
@@ -4333,8 +4353,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
     such names in a start or stop; and the owner's calls after that check with a start, a stop or a step written with an
     and or an or, and the check after those with a step and a % over a name a for loop binds over one; and the owner's
     call after that check with a start, a stop or a step written with a conditional expression; and the light re-check
-    of the next day at the pushed head with a start or a stop written with not over a name that holds a value other
-    than an int beside an int, or over str() of an int; and the owner's call later that day with a start, a stop or a
+    later that day at the pushed head with a start or a stop written with not over a name that holds a value other than
+    an int beside an int, or over str() of an int; and the owner's second call of the next day with a start, a stop or a
     step written with int() of an expression over a name bound to an int and to a float, a string or bytes)."""
 
     SEED = 973                                      # fixed: the same calls, samples and draws on every run
@@ -4605,18 +4625,19 @@ class RandrangeAgainstCPython(unittest.TestCase):
         too), and half the time by a call, taking CPython's quotient by each int but 0, or its remainder of seeded
         values by each; each such case also writes a dict whose port is a number // random.randint(1, 0), a reversed
         divisor across 0, which the census must read without raising. Then, per relation, a start and a stop written
-        with each operator the census reads beyond + - * // and % and the unary minus and plus (**, <<, >>, &, |, ^, ~,
-        not, a conditional expression and a :=), over an operand written as an interval's text, taking the value
-        Python's own operator gives at each end of that interval and at a seeded value between. Then, per relation, a
-        start and a stop written as int() of a constant (by turns a digit string, one with spaces, a float with a
-        fraction, bytes, and a digit string with a separator), taking CPython's int() of it; and, per relation, in a
-        call written as the right operand of 0 + random.randrange(...), in a form with no ** mapping, twice a step name
-        bound to an int (positive, then negative) and by a call, taking STEPS as _mixed()'s step names do, and once a
-        step name bound to an int and to it negated as a float, every binding recorded, taking both (CPython 3.10 and
-        3.11 take the float as a step; later ones raise TypeError). Last, per relation, a start and a stop written as B
-        + O % the interval's width, B bound to the interval's lowest value and O to an int, each by a call too, taking
-        B's int (THE RULE reads a start or stop by its recorded ints) plus O % the width for O's int, 0, the width less
-        one and a seeded value no binding gives, which THE RULE reads with B by its int and O unbounded."""
+        with each operator interval() reads beyond + - * // and % and the unary minus and plus (**, <<, >>, &, |, ^, ~,
+        not and a :=) and with a conditional expression, which the census reads by its branches through _choices(), over
+        an operand written as an interval's text, taking the value Python's own operator gives at each end of that
+        interval and at a seeded value between. Then, per relation, a start and a stop written as int() of a constant
+        (by turns a digit string, one with spaces, a float with a fraction, bytes, and a digit string with a separator),
+        taking CPython's int() of it; and, per relation, in a call written as the right operand of 0 +
+        random.randrange(...), in a form with no ** mapping, twice a step name bound to an int (positive, then negative)
+        and by a call, taking STEPS as _mixed()'s step names do, and once a step name bound to an int and to it negated
+        as a float, every binding recorded, taking both (CPython 3.10 and 3.11 take the float as a step; later ones
+        raise TypeError). Last, per relation, a start and a stop written as B + O % the interval's width, B bound to the
+        interval's lowest value and O to an int, each by a call too, taking B's int (THE RULE reads a start or stop by
+        its recorded ints) plus O % the width for O's int, 0, the width less one and a seeded value no binding gives,
+        which THE RULE reads with B by its int and O unbounded."""
         rng, out = random.Random(self.SEED + 4), []
 
         def near():
@@ -4841,7 +4862,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
         return out
 
     def _conditional(self):
-        """The calls the owner's call of 2026-10-05 at 23:5xZ added: a start, a stop or a step written with a
+        """The calls the owner's call of 2026-10-05 added: a start, a stop or a step written with a
         conditional expression, which THE RULE reads by each branch in its place, one branch an unknown or a value
         interval() does not bound, from a generator seeded apart from the grid's and the five above so their calls,
         samples and draws stay as they were. Each test is a name nothing binds (CT or CU and a number). Per relation,
@@ -4942,8 +4963,8 @@ class RandrangeAgainstCPython(unittest.TestCase):
         return out
 
     def _negation(self):
-        """The calls the light re-check of 2026-10-06 at the pushed head added (the owner's call of the day before at
-        18:4xZ, item 2 as written): a start or a stop written with not, which THE RULE reads as 0 to 1 whatever its
+        """The calls the light re-check of 2026-10-05 at the pushed head added (the owner's call that launched it,
+        item 2 as written): a start or a stop written with not, which THE RULE reads as 0 to 1 whatever its
         operand, over a name that holds a value other than an int beside an int, or over str() of an int, from a
         generator seeded apart from the grid's and the six above so their calls, samples and draws stay as they were.
         Per relation, for the start and for the stop, twice: the interval's lowest value plus not of a name, times the
@@ -4980,7 +5001,7 @@ class RandrangeAgainstCPython(unittest.TestCase):
         return out
 
     def _nonint(self):
-        """The calls added by the owner's call that followed the one of 2026-10-06 at 04:1xZ: a start, a stop or a step
+        """The calls added by the owner's second call of 2026-10-06: a start, a stop or a step
         written with int() of an expression over a name bound to an int and to a value other than an int, every binding
         recorded, which THE RULE reads both by the name's ints and with it unbounded (BOUND), from a generator seeded
         apart from the grid's and the seven above so their calls, samples and draws stay as they were. The other value
@@ -5219,11 +5240,12 @@ class Operators(unittest.TestCase):
 
     def test_every_operator_is_read_or_named_as_one_not_read(self):
         """Each operator class of the running interpreter's ast, binary (ast.operator's subclasses), unary
-        (ast.unaryop's) and boolean (ast.boolop's), is in exactly one of BINARY, UNARY or BOOLEAN, the operators the
-        census reads, and OPERATOR_LIMITS, the ones it names as not read, with the reason; so an operator a later Python
-        adds fails here until the census reads it or names it. Each key of the four is such a class, so none is
-        misspelled or stale."""
-        for base, read, least in ((ast.operator, BINARY, 4), (ast.unaryop, UNARY, 4), (ast.boolop, BOOLEAN, 2)):
+        (ast.unaryop's), boolean (ast.boolop's) and comparison (ast.cmpop's), is in exactly one of BINARY, UNARY or
+        BOOLEAN, the operators the census reads, and OPERATOR_LIMITS, the ones it names as not read, with the reason,
+        each comparison among them; so an operator a later Python adds fails here until the census reads it or names
+        it. Each key of the four is such a class, so none is misspelled or stale."""
+        for base, read, least in ((ast.operator, BINARY, 4), (ast.unaryop, UNARY, 4), (ast.boolop, BOOLEAN, 2),
+                                  (ast.cmpop, {}, 10)):            # the census reads no comparison
             ops = set(_subclasses(base))
             self.assertGreaterEqual(len(ops), least, "the grammar's %s classes were found" % base.__name__)
             for op in sorted(ops, key=lambda c: c.__name__):
@@ -5232,7 +5254,8 @@ class Operators(unittest.TestCase):
                                      "%s: read by the census and named as not read, or neither" % op.__name__)
             self.assertEqual(sorted(c.__name__ for c in set(read) - ops), [], "a key that is no %s" % base.__name__)
         self.assertEqual(sorted(c.__name__ for c in set(OPERATOR_LIMITS) - set(_subclasses(ast.operator))
-                                - set(_subclasses(ast.unaryop)) - set(_subclasses(ast.boolop))), [],
+                                - set(_subclasses(ast.unaryop)) - set(_subclasses(ast.boolop))
+                                - set(_subclasses(ast.cmpop))), [],
                          "an OPERATOR_LIMITS key that is no operator")
 
     def test_each_operator_read_holds_every_value_python_computes(self):
