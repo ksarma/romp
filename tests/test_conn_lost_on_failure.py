@@ -395,9 +395,10 @@ def _door_census(src):
     unseen. Each is (kind, offset, enclosing functions). prose holds the mentions in comments, strings, regex literals and
     longer names, none of them a reference. whole says the reading balanced: every bracket closed its own kind, and no
     template, quoted string or regex literal was left open (_js_lex). That catches a misread whose stray delimiter is left
-    open; a misread that a later delimiter on its line closes again can leave the reading balanced, and then is not caught
-    (the stated limit in NotLeavingCallSites). A census of a script read otherwise proves nothing, and the tests below
-    require it."""
+    open; a misread that a later delimiter closes again (on its line for a quote or a slash, which end at the line break; on
+    its line or any later line for a backtick, since a template may span lines, so the call it hides may sit on another
+    line) can leave the reading balanced, and then is not caught (the stated limit in NotLeavingCallSites). A census of a
+    script read otherwise proves nothing, and the tests below require it."""
     toks, comments, unclosed = _js_lex(src)
     pair, whole = _js_brackets(toks)
     starts = [t[2] for t in toks]
@@ -586,10 +587,13 @@ class NotLeavingCallSites(unittest.TestCase):
     fails the role check; and a script the lexer did not read whole (a bracket unbalanced, or a template, quoted string or
     regex literal left open) fails too. Stated limits. On the precondition that the sources are written in good faith, a
     name assembled at run time (`w["__romp" + "NotLeaving"]`), or a call held in a string and run as code, is not read. A
-    call hidden by a misread that a later delimiter on its line closes again is not read either, when the reading still
-    balances; its witnesses are pinned in test_the_census_reads_a_call_by_the_code: 'a quote closed again' (a regex read as
-    a division, whose quote an apostrophe in a later comment on its line closes) and 'a slash closed again' (a division
-    read as a regex, which a later division on its line closes)."""
+    call hidden by a misread that a later delimiter closes again (on its line for a quote or a slash, which end at the line
+    break; on its line or any later line for a backtick, since a template may span lines, so the call it hides may sit on
+    another line) is not read either, when the reading still balances; its witnesses are pinned in
+    test_the_census_reads_a_call_by_the_code: 'a quote closed again' (a regex read as a division, whose quote an apostrophe
+    in a later comment on its line closes), 'a slash closed again' (a division read as a regex, which a later division on
+    its line closes) and 'a backtick closed again, lines later' (a regex read as a division, whose backtick opens a
+    template that a backtick in a comment two lines down closes, the call on the line between)."""
 
     @classmethod
     def setUpClass(cls):
@@ -662,10 +666,13 @@ class NotLeavingCallSites(unittest.TestCase):
             misread = _door_census(js)
             self.assertEqual((misread[1], misread[3]), ([], False),
                              label + ": the call is hidden, and the script is reported as not read whole")
-        # the stated limit's witnesses (the class docstring): a misread that a later delimiter on its line closes again
-        # balances, so the call it hides goes unseen; a lexer that reads either script right turns its witness red
+        # the stated limit's witnesses (the class docstring): a misread that a later delimiter closes again (on its line for
+        # a quote or a slash, which end at the line break; on its line or any later line for a backtick, since a template
+        # may span lines, so the call it hides may sit on another line) balances, and that call goes unseen; a lexer that
+        # reads one of these scripts right turns its witness red
         for label, js in [("a quote closed again", "if(a)/'/.test(b);" + x + "();// it's"),
-                          ("a slash closed again", "i++/n;" + x + "();y=z/2;")]:
+                          ("a slash closed again", "i++/n;" + x + "();y=z/2;"),
+                          ("a backtick closed again, lines later", "if(a)/`/.test(b);\n" + x + "();\n// a ` mark\n")]:
             limit = _door_census(js)
             self.assertEqual((limit[1], limit[3]), ([], True),
                              label + ": the stated limit, a call hidden in a reading that balances")
