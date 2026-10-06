@@ -78,8 +78,10 @@ THE EXCEPTIONS, each with its structural reason (never a size), and each held to
 
 WHAT IT CANNOT SEE (stated, not closed; each planted in StatedBounds and shown to pass): a form split across two
 constants or built from strings at run time (process["std" + "out"]); fd 1 held in a name (const o = 1;
-fs.writeSync(o, s)); a destructuring of stdout split across lines that holds another destructuring (stdout: { write }
-on a line of its own); a second stdio entry after a first entry holding brackets or parens two deep, such as
+fs.writeSync(o, s)) or written as 0x1 (fs.writeSync(0x1, s), {fd: 0x1}); an fs writer called by a name of its own
+(const w = fs.writeSync; w(1, s), or const { writeSync: w } = fs); a destructuring of stdout split across lines that
+holds another destructuring (stdout: { write } on a line of its own); a second stdio entry after a first entry
+holding brackets or parens two deep, such as
 [fds[0], "inherit"]; a write in a module the driver imports from outside tests/ or from a module outside the served step
 (none at this tree: every driver text a served module runs is defined in a served module); a record handed through
 stderr (console.error), which carries the diagnostics every module prints in its failure text; a browser driver
@@ -1026,6 +1028,9 @@ class StatedBounds(unittest.TestCase):
             "a form split across two constants": 'A = "fs.write"\nB = "Sync(1, s);"\n',
             "a member built from strings": 'D = "process[\\"std\\" + \\"out\\"].write(s);"\n',
             "fd 1 held in a name": 'D = "const o = 1;\\nfs.writeSync(o, s);"\n',
+            "fd 1 written as 0x1": 'D = "fs.writeSync(0x1, s);\\nconst w = fs.createWriteStream(\\"\\", { fd: 0x1 });"\n',
+            "an fs writer called by a name of its own":
+                'D = "const w = fs.writeSync;\\nw(1, s);\\nconst { writeSync: v } = fs;\\nv(1, s);"\n',
             "a destructuring split across lines that holds another": 'D = "const {\\n  stdout: { write },\\n} = process;"\n',
             "a first stdio entry holding brackets or parens two deep":
                 'D = "spawn(c, a, { stdio: [fds[0], \\"inherit\\"] });\\n'
