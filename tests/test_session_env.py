@@ -414,7 +414,7 @@ COUNTS = {
     #                                df34f7f25, batch 2026-10-03a) as 3478, both sides' functions kept (the slice's 53 over 3409,
     #                                and the lock's 16 named above; kernel/kernel.py 2670 to 2686), the census's own derivation on
     #                                the merged tree; sdk_backend.py (764) and credentials.py did not move, and no other entry
-    #                                moved; then on the chat signature memos' branch as 3481, over fork main 0cfb961f0's 3478:
+    #                                moved; then on the chat signature memos' branch as 3481, over fork main's 3478:
     #                                the branch adds _names_scope_digest, _postal_card_deps_memo and its nested _caps to
     #                                kernel/kernel.py (2686 to 2689), the census's own derivation; no lambda and no other entry
     #                                moved

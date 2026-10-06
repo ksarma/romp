@@ -4905,7 +4905,15 @@ def _names_snapshot():
     re-read the same ~64 one-line files hundreds of times per 0.5s cycle — ~38% of the pusher's wall
     time (py-spy 2026-08-31: _cwd_of 22%, _name_color_by_name 16%). Same one-snapshot-per-cycle idiom
     as the liveness-snapshot hoist (2026-08-10); a mid-cycle rename/create lands next cycle, the exact
-    staleness the liveness snapshot already tolerates by construction."""
+    staleness the liveness snapshot already tolerates by construction.
+
+    Every call returns a NEW dict, even when the registry has not moved, and nothing edits a returned
+    snapshot or the entry lists it shares with _names_entry_memo (a rewritten entry gets a new list). Two
+    memos rely on this: _names_scope_digest caches its digest per snapshot object, matched by identity, and
+    the colour index (_name_color_by_name) and the chat signature's postal memo (_postal_card_deps_memo)
+    answer from that digest. A snapshot refilled in place would keep its old digest, so a stale name or
+    colour would stay in a chat signature's tail and in the outgoing cards a rebuilt chat view draws
+    (tests/test_chat_fixed_cost_memos.py, ProducerIdentity)."""
     snap = {}
     try:
         for f in NAMES.iterdir():
@@ -40374,9 +40382,13 @@ def _postal_card_deps_memo(deps, index, captions):
       moves and no reader edits one, so the object is the index's revision. The entry holds it by reference,
       so its id cannot be reused by a later dict;
     - the caption map, by identity, fetched as the walk fetches it: only when a card carries a mid, which is
-      fixed for the record and learned on its first walk. _msg_summaries publishes a new union dict when a
-      session's submap changes and no reader edits one. This is the fetch the memo cannot remove: the key
-      needs the map.
+      fixed for the record and learned on its first walk. _msg_summaries publishes a new union dict whenever it
+      rescans any discovered session, that is when the session's key moves (a transcript append, a pending
+      cut, or a write to that session's states file, captions file or goal store), and also when a session
+      leaves discovery. It does so whether or not a caption changed, and no reader edits one. So a record whose
+      cards carry a mid hits only in cycles where no discovered session's key moved; a record with no mid card
+      never fetches the map and hits on the names and the index alone. The entry holds the map by reference,
+      as it holds the index. This is the fetch the memo cannot remove: the key needs the map.
     The cards are constant for the record's life: _chat_build_deps builds the list once and nothing edits it,
     and nothing writes a card's kind, mid, direction or peer (the walk's four reads) after the build.
 
@@ -55011,7 +55023,13 @@ def _msg_summaries():
     per chat-open. Now each session's submap is cached against its OWN inputs (_msg_sum_key: the parse's
     key and the captions file and goal store the scan joins through): a build re-scans only the sessions
     whose inputs changed (usually just the one being viewed) and unions the rest from cache. The parses are
-    _parse-cached too, so an unchanged session costs nothing but the key's stats."""
+    _parse-cached too, so an unchanged session costs nothing but the key's stats.
+
+    The union is rebuilt as a NEW dict whenever a builder rescans any session or drops one that left
+    discovery, and nothing edits a published union. _postal_card_deps_memo keys its entry on the map object,
+    matched by identity, so a union refilled in place would pair an old entry's key with new content, and a
+    stale caption would stay in a chat signature's tail (tests/test_chat_fixed_cost_memos.py,
+    ProducerIdentity)."""
     now = time.time()
     try:
         sess = _sessions(now)

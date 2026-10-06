@@ -13,6 +13,7 @@ The tests drive the real code paths: _PerfStats, the real _push over two tabs, _
 recording backend, build_session over a synthetic session in a rebound state root, and _msg_summaries
 over stubbed discovery rows. Synthetic fixtures only: private placeholder sids (these tests mint goals,
 so never the shared placeholder), invented text, TESTHOST, the notes-api demo world."""
+import gc
 import inspect
 import json
 import os
@@ -36,6 +37,7 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_chat_memos", os.path.join(BIN, "romp-kernel"))
 jd = km.jd                                       # the kernel's own judge module
+_REAL_MSG_SUMMARIES = km._msg_summaries          # the real union, for the tests that stub it and the one that must not
 
 # PRIVATE synthetic sids: these tests mint goal stores, and the shared placeholder sid's override journal
 # is replayed onto every store minted under it (CLAUDE.md, goal-store fixtures).
@@ -741,10 +743,141 @@ class PostalSigMemo(unittest.TestCase):
         state([web, api], "a scope again")
         self.assertGreater(len({repr(t) for t in seen}), 6, "the states moved the tail (the pin compares something)")
 
-    def test_two_threads_with_different_snapshots_check_one_record_and_each_gets_its_own_answer(self):
+    def test_two_unscoped_checks_after_a_rename_each_read_the_registry(self):
+        """With no names scope (a thread outside a push) the walk reads the registry per card and nothing
+        digests it, so the memo stands aside (_postal_card_deps_memo, `nd is None`): a rename and recolour
+        between two unscoped checks reaches the second tail. The messages log and the caption map are the same
+        objects at both checks, so the index and the caption map alone would let a stored entry hit."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: asked for the schema"}
+        rec = self.record([self.card(direction="in", mid="m1", peer="api"), self.card(direction="out", peer="api")])
+        for sid, parts in ((SID_A, ["web", "/tmp/notes-api", "#1ea1eb"]), (PEER, ["api", "/tmp/notes-api", "#abcdef"])):
+            (km.NAMES / sid).write_text("\t".join(parts) + "\n")
+        self.cycle(None)
+        first = self.held(rec, "the first unscoped check")
+        (km.NAMES / PEER).write_text("api-v2\t/tmp/notes-api\t#000000\n")
+        self.cycle(None)
+        second = self.held(rec, "a second unscoped check after the sender's rename and recolour")
+        self.assertNotEqual(second, first, "the rename moved the tail")
+        incoming = second[2][1][0]
+        self.assertEqual((incoming[2], incoming[3]["bg"]), ("api-v2", "#000000"),
+                         "the incoming card's name and colour are the registry's current ones")
+
+    def test_each_unscoped_check_walks_every_card_and_stores_no_entry(self):
+        """The stand-aside itself, with nothing moving: every unscoped check walks the record's cards, counted
+        around the memoized check alone, and leaves no entry on the record."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: asked for the schema"}
+        rec = self.record([self.card(direction="in", mid="m1", peer="api"), self.card(direction="out", peer="api")])
+        (km.NAMES / PEER).write_text("api\t/tmp/notes-api\t#abcdef\n")
+        for n in (1, 2):
+            self.cycle(None)
+            before = self.reads[0]
+            km._chat_sig_deps(SID_A, rec)
+            self.assertEqual(self.reads[0] - before, 2, "unscoped check %d walks both cards" % n)
+        self.assertNotIn("postal_memo", rec, "no names digest, no entry")
+
+    # The memos hold the objects they key on (the snapshot in _names_scope_digest's cache, the index and the
+    # caption map in the record's entry), never their ids. CPython reuses a freed object's address, and the
+    # pusher drops each cycle's snapshot and slot before the next cycle takes new ones, so an id key would hand
+    # an entry made for one object to a later one at the same address.
+    def test_snapshots_dropped_before_the_next_is_taken_each_get_their_own_tail(self):
+        """Two registries that colour both cards differently alternate for 200 cycles, the scope cleared after
+        each (the pusher's finally), so a new snapshot can be placed at the address of the one just dropped.
+        Every tail equals the unmemoized check."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: asked for the schema"}
+        rec = self.record([self.card(direction="in", mid="m1", peer="api"), self.card(direction="out", peer="tests")])
+        regs = ([(PEER, ["api", "/tmp/notes-api", "#abcdef"]), (OTHER_A, ["tests", "/tmp/notes-api", "#123456"])],
+                [(PEER, ["api", "/tmp/notes-api", "#000000"]), (OTHER_A, ["tests", "/tmp/notes-api", "#654321"])])
+        tails = set()
+        for i in range(200):
+            self.cycle(regs[i % 2])
+            tails.add(repr(self.held(rec, "cycle %d" % i)))
+            self.cycle(None)
+        self.assertEqual(len(tails), 2, "the two registries give two tails (the pin compares something)")
+
+    def test_a_caption_map_replaced_twice_between_two_checks_gets_its_own_tail(self):
+        """The caption map is replaced twice before each check, with no collection in between: the first
+        replacement frees the map the record's entry saw, and the second can be placed at its address. Each
+        round's caption is new, and every tail equals the unmemoized check."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: caption 0"}
+        rec = self.record([self.card(direction="in", mid="m1", peer="api")])
+        names = [(PEER, ["api", "/tmp/notes-api", "#abcdef"])]
+        for i in range(200):
+            self.cycle(names)
+            self.cmap = {"m1": "api: caption %d a" % i}
+            self.cmap = {"m1": "api: caption %d b" % i}
+            self.held(rec, "round %d" % i)
+            self.cycle(None)
+
+    def _log_moves_twice_setup(self):
+        names = [(PEER, ["api", "/tmp/notes-api", "#abcdef"]), (OTHER_A, ["tests", "/tmp/notes-api", "#123456"])]
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: asked for the schema"}
+        rec = self.record([self.card(direction="in", mid="m1", peer="api")])
+        return names, rec, (PEER, OTHER_A)
+
+    def test_a_log_that_moves_twice_between_two_checks_gets_its_own_tail_scope_first(self):
+        """The index's case, first order: the scope is opened, the log moves (the incoming card's row now names
+        the other sender), another reader builds that index, the log moves again (an outcome row), and the
+        record is checked against a third index. Whether that index is placed at the address of the one the
+        entry saw depends on the allocator's free lists, so an id key goes red here only where the address is
+        reused (3.14t in this order; the next test's order covers 3.10 and 3.12).
+        test_the_memos_hold_the_objects_they_key_on is the check that holds on every interpreter."""
+        names, rec, senders = self._log_moves_twice_setup()
+        for i in range(200):
+            self.cycle(names)
+            self.row(ev="sent", id="m1", from_id=senders[(i + 1) % 2], to_id=SID_A, body="the schema?", t=2 + i)
+            km._postal_index()
+            self.row(ev="exec", id="m1", t=2 + i)
+            self.held(rec, "round %d" % i)
+            self.cycle(None)
+
+    def test_a_log_that_moves_twice_between_two_checks_gets_its_own_tail_collected(self):
+        """The index's case, second order: check, the scope closed, the log moves, another reader builds that
+        index, a collection, the log moves again. An id key goes red in this order only where the address is
+        reused (3.10 and 3.12); see the previous test."""
+        names, rec, senders = self._log_moves_twice_setup()
+        for i in range(200):
+            self.cycle(names)
+            self.held(rec, "round %d" % i)
+            self.cycle(None)
+            self.row(ev="sent", id="m1", from_id=senders[(i + 1) % 2], to_id=SID_A, body="the schema?", t=2 + i)
+            km._postal_index()
+            gc.collect()
+            self.row(ev="exec", id="m1", t=2 + i)
+
+    def test_the_memos_hold_the_objects_they_key_on(self):
+        """Where the keys are kept, not what a reused key would do: after one check under a scope, the digest
+        cache holds the snapshot itself and the record's entry holds the index and the caption map
+        themselves. The executed consequences are the tests above: the snapshot's and the caption map's on
+        every interpreter, the index's only where the allocator reuses the address."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: asked for the schema"}
+        rec = self.record([self.card(direction="in", mid="m1", peer="api")])
+        self.cycle([(PEER, ["api", "/tmp/notes-api", "#abcdef"])])
+        km._chat_sig_deps(SID_A, rec)
+        self.assertTrue(any(o is km._live_scope.names for o in getattr(km._live_scope, "names_digest", ())),
+                        "the digest cache holds the snapshot itself, so no later snapshot can take its address while"
+                        " the digest stands (consequence: test_snapshots_dropped_before_the_next_is_taken_each_get_"
+                        "their_own_tail)")
+        self.assertTrue(any(o is km._postal_index() for o in rec["postal_memo"]),
+                        "the record's entry holds the postal index itself, so no later index can take its address"
+                        " while the entry stands (consequence, only where the address is reused: the two"
+                        " test_a_log_that_moves_twice_between_two_checks tests)")
+        self.assertTrue(any(o is self.cmap for o in rec["postal_memo"]),
+                        "the record's entry holds the caption map itself, so no later map can take its address while"
+                        " the entry stands (consequence: test_a_caption_map_replaced_twice_between_two_checks_gets_"
+                        "its_own_tail)")
+
+    def test_threads_taking_turns_with_different_snapshots_check_one_record_and_each_gets_its_own_answer(self):
         """A connect push on a handler thread takes its own names snapshot while the pusher holds another; both
-        can check the same cached record. Run one after another on fresh threads, alternating, each answer
-        equals the unmemoized one for that thread's snapshot."""
+        can check the same cached record. Here the threads take turns: each is joined before the next starts,
+        so they never overlap. Alternating snapshots, each answer equals the unmemoized one for that thread's
+        snapshot, so an entry left from one thread's snapshot never answers for the other's. A reader that
+        arrives while another thread is building the colour index is NameColorIndex's staged test."""
         self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
         self.cmap = {"m1": "api: asked for the schema"}
         rec = self.record([self.card(direction="in", mid="m1", peer="api"), self.card(direction="out", peer="api")])
@@ -800,6 +933,21 @@ def _scan_color(snap, name):
         if parts and parts[0] == name and len(parts) > 2 and parts[2].startswith("#"):
             return {"bg": parts[2], "fg": "#ffffff"}
     return None
+
+
+class _StagedSnap(dict):
+    """A names snapshot whose walk over its values runs a hook once, right after the first entry has been handed
+    out: the point at which a colour index build has read one entry and not the rest."""
+
+    def __init__(self, entries, hook):
+        super().__init__(entries)
+        self.hook = hook
+
+    def values(self):
+        for i, v in enumerate(dict.values(self)):
+            yield v
+            if i == 0:
+                self.hook()
 
 
 class NameColorIndex(unittest.TestCase):
@@ -859,6 +1007,200 @@ class NameColorIndex(unittest.TestCase):
         out["bg"] = "#ffffff"
         self.assertEqual(km._name_color_by_name("tests"), {"bg": "#222222", "fg": "#ffffff"},
                          "each answer is a new dict: a caller's edit reaches no other card")
+
+    def test_a_reader_on_another_thread_mid_build_never_sees_a_part_filled_index(self):
+        """The index is filled first and published after, as one tuple (_name_color_by_name), so a thread that
+        asks while another is part way through a build finds no entry for the digest and builds its own, or
+        finds a whole index; it never answers from a part-filled one. Staged without timing: the building
+        thread's walk over its snapshot, right after the first entry, runs a reader thread to the end. The
+        reader holds an equal snapshot (the same entries in the same order, so the same digest) and asks for
+        the last entry's name. An index published before it was filled answered that reader None."""
+        name = self.ENTRIES[-1][1][0]
+        fired, answers, errors, alive = [], [], [], []
+
+        def reader():
+            try:
+                km._live_scope.names = dict(self.ENTRIES)
+                answers.append(km._name_color_by_name(name))
+            except Exception as e:              # surfaced on the test thread below
+                errors.append(e)
+            finally:
+                km._live_scope.names = None
+
+        def mid_build():
+            fired.append(1)
+            t = threading.Thread(target=reader)
+            t.start()
+            t.join(60)
+            alive.append(t.is_alive())
+        snap = _StagedSnap(self.ENTRIES, mid_build)
+        km._name_color_index[0] = None
+        km._live_scope.names = snap
+        got = km._name_color_by_name(name)
+        want = _scan_color(snap, name)
+        self.assertEqual(want, {"bg": "#000039", "fg": "#ffffff"})
+        self.assertEqual(fired, [1], "the build walked the snapshot once and the reader ran inside that walk")
+        self.assertEqual(alive, [False], "the reader finished inside the walk")
+        self.assertEqual(errors, [])
+        self.assertEqual(answers, [want], "the reader that arrived mid-build answers as the scan does")
+        self.assertEqual(got, want, "the building thread answers as the scan does")
+
+
+class ProducerIdentity(unittest.TestCase):
+    """The two producers whose objects the chat signature's memos key on by identity, pinned at the producer
+    and through the composition. _names_scope_digest caches its digest per names snapshot object, and
+    _postal_card_deps_memo keys its entry on the caption map object, so _names_snapshot must return a new dict on
+    every call and _msg_summaries a new union on every change, and neither may edit an object it has returned.
+    Every returned object is held across several changes: a producer that alternated two buffers would pass a
+    two-call check yet hand a record that skipped a cycle its old object back. The union is the real
+    _msg_summaries over stubbed discovery, keys and scans; the snapshot is the real _names_snapshot over a
+    temporary registry written as the kernel writes it (_atomic_write)."""
+
+    def setUp(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        root = Path(td.name)
+        saved_mod = (jd.STATE, km.NAMES, km._msg_summaries, km._sessions, km._msg_sum_key, km._msg_sum_scan_session)
+        saved_memos = (dict(km._msg_sum_cache), dict(km._names_entry_memo), km._name_color_index[0],
+                       km._postal_index_memo[0])
+        saved_scope = (getattr(km._live_scope, "names", None), getattr(km._live_scope, "msgsum", None),
+                       getattr(km._chat_dep_scope, "deps", None))
+
+        def restore():
+            jd._rebind_state(saved_mod[0])
+            km.NAMES, km._msg_summaries, km._sessions, km._msg_sum_key, km._msg_sum_scan_session = saved_mod[1:]
+            km._msg_sum_cache.clear()
+            km._msg_sum_cache.update(saved_memos[0])
+            km._names_entry_memo.clear()
+            km._names_entry_memo.update(saved_memos[1])
+            km._name_color_index[0], km._postal_index_memo[0] = saved_memos[2:]
+            km._live_scope.names, km._live_scope.msgsum = saved_scope[:2]
+            km._chat_dep_scope.deps = saved_scope[2]
+        self.addCleanup(restore)
+        jd._rebind_state(root / "state")
+        self.log = jd.STATE / "timeline" / "messages.jsonl"
+        self.log.parent.mkdir(parents=True)
+        km.NAMES = root / "names"
+        km.NAMES.mkdir()
+        km._msg_sum_cache.clear()
+        km._names_entry_memo.clear()
+        km._name_color_index[0] = None
+        km._postal_index_memo[0] = None
+        km._live_scope.names = km._live_scope.msgsum = None
+        km._msg_summaries = _REAL_MSG_SUMMARIES
+        self.subs, self.keys = {}, {}           # sid -> its submap, sid -> its key: what a scan and a stat would see
+        km._sessions = lambda now: [{"sid": sid, "path": "/nonexistent/" + sid} for sid in self.subs]
+        km._msg_sum_key = lambda s: self.keys[s["sid"]]
+        km._msg_sum_scan_session = lambda sid, path, now: dict(self.subs[sid])
+        self.reads = [0]
+
+    def name(self, sid, *fields):
+        km._atomic_write(km.NAMES / sid, "\t".join(fields) + "\n")
+
+    def captions(self, sid, sub):
+        """The session's submap moves (a new key, so the union rescans it), or it joins discovery."""
+        self.subs[sid] = dict(sub)
+        self.keys[sid] = self.keys.get(sid, 0) + 1
+
+    def row(self, **r):
+        with open(self.log, "a") as f:
+            f.write(json.dumps(r) + "\n")
+
+    def test_names_snapshot_returns_a_new_dict_per_call_and_never_edits_one_it_returned(self):
+        held = []
+
+        def take(why):
+            snap = km._names_snapshot()
+            for old, copy, old_why in held:
+                self.assertIsNot(snap, old, "%s: a new dict, not the one returned at %r" % (why, old_why))
+                self.assertEqual(old, copy, "%s: the snapshot returned at %r still holds what it held" % (why, old_why))
+            held.append((snap, {k: list(v) for k, v in snap.items()}, why))
+            return snap
+        self.name(PEER, "api", "/tmp/notes-api", "#abcdef")
+        self.name(OTHER_A, "tests", "/tmp/notes-api", "#123456")
+        self.assertEqual(take("the first call"), {PEER: ["api", "/tmp/notes-api", "#abcdef"],
+                                                  OTHER_A: ["tests", "/tmp/notes-api", "#123456"]})
+        take("the registry unchanged")
+        self.name(OTHER_A, "tests", "/tmp/notes-api", "#654321")
+        take("the recipient recoloured")
+        self.name(PEER, "api-v2", "/tmp/notes-api", "#abcdef")
+        take("the sender renamed")
+        (km.NAMES / OTHER_A).unlink()
+        self.assertEqual(take("an entry removed"), {PEER: ["api-v2", "/tmp/notes-api", "#abcdef"]})
+        take("the registry unchanged again")
+
+    def test_msg_summaries_publishes_a_new_union_per_change_and_never_edits_one_it_published(self):
+        held = []
+
+        def publish(why):
+            union = km._msg_summaries()
+            for old, copy, old_why in held:
+                self.assertIsNot(union, old, "%s: a new union, not the one published at %r" % (why, old_why))
+                self.assertEqual(old, copy, "%s: the union published at %r still holds what it held" % (why, old_why))
+            held.append((union, dict(union), why))
+            return union
+        self.captions(SID_A, {"m1": "api: asked for the schema"})
+        publish("the first call")
+        self.captions(SID_A, {"m1": "api: sent the schema"})
+        publish("a caption changed")
+        self.captions(PEER, {"m2": "web: asked for the tests"})
+        publish("a session joined discovery")
+        self.captions(SID_A, {"m1": "api: sent the schema and the tests"})
+        publish("a caption changed again")
+        del self.subs[PEER], self.keys[PEER]
+        last = publish("a session left discovery")
+        self.assertEqual(last, {"m1": "api: sent the schema and the tests"})
+        self.assertIs(km._msg_summaries(), last, "unchanged inputs return the published union itself (the memo's hit)")
+
+    def test_the_real_producers_feed_the_postal_memo_and_every_tail_equals_an_unmemoized_check(self):
+        """Pusher-shaped cycles over the real producers: each cycle takes a new snapshot (_names_snapshot) as its
+        names scope and opens an empty caption slot, which the real union fills, and drops both after (the
+        pusher's finally). Every tail equals, by repr, an unmemoized check (a copy of the record made of its
+        build-time fields, the by-name colour read by the linear scan), and the colour index answers as the scan
+        in every cycle."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.name(PEER, "api", "/tmp/notes-api", "#abcdef")
+        self.name(OTHER_A, "tests", "/tmp/notes-api", "#123456")
+        self.captions(SID_A, {"m1": "api: asked for the schema"})
+        cards = [_CountingCard(self.reads, kind="postal-service", direction="in", mid="m1", peer="api"),
+                 _CountingCard(self.reads, kind="postal-service", direction="out", peer="tests")]
+        km._chat_dep_scope.deps = None
+        km._live_scope.msgsum = [km._MSGSUM_UNSET]
+        rec = km._chat_build_deps(SID_A, {"events": list(cards)})
+        km._live_scope.msgsum = None
+
+        def cycle(why):
+            km._live_scope.names = km._names_snapshot()
+            km._live_scope.msgsum = [km._MSGSUM_UNSET]
+            try:
+                before = self.reads[0]
+                got = km._chat_sig_deps(SID_A, rec)
+                walked = self.reads[0] - before
+                by_name = km._name_color_by_name
+                km._name_color_by_name = lambda name: _scan_color(km._live_scope.names, name)
+                try:
+                    ref = km._chat_sig_deps(SID_A, {k: rec[k] for k in _RECORD_KEYS})
+                finally:
+                    km._name_color_by_name = by_name
+                self.assertEqual(repr(got), repr(ref), why)
+                for nm in ("api", "api-v2", "tests", "docs"):
+                    self.assertEqual(km._name_color_by_name(nm), _scan_color(km._live_scope.names, nm),
+                                     "%s: the colour of %r" % (why, nm))
+                return got, walked
+            finally:
+                km._live_scope.names = km._live_scope.msgsum = None
+        first, walked = cycle("the first check")
+        self.assertEqual(walked, 2, "the first check walks both cards")
+        seen = [first]
+        tail, walked = cycle("nothing moved")
+        self.assertEqual((tail, walked), (first, 0), "nothing moved: the memo hits on the real producers' objects")
+        self.captions(SID_A, {"m1": "api: sent the schema"})
+        seen.append(cycle("a caption changed in the union")[0])
+        self.name(OTHER_A, "tests", "/tmp/notes-api", "#654321")
+        seen.append(cycle("the recipient recoloured")[0])
+        self.name(PEER, "api-v2", "/tmp/notes-api", "#abcdef")
+        seen.append(cycle("the sender renamed")[0])
+        self.assertEqual(len({repr(t) for t in seen}), 4, "each move moved the tail (the pin compares something)")
 
 
 class MsgSummariesKey(unittest.TestCase):
