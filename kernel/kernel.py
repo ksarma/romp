@@ -71649,9 +71649,12 @@ window.__rompUsageReading=function(){return !!tipHTML();};
 // ...and the source behind that answer, read fresh as the panel's opener reads it (PR 976's round 1, correctness-1 and
 // extra6-1): the card calls this at each opening (gear.js usagePull) and shows the romp loader on Usage until the promise
 // settles, then asks __rompUsageReading. It runs the script's own fetch of the readings directly, the one the panel's opener
-// runs, never pull(), which returns at once while a pull it started is in flight and would leave the card on the answer before. A pull that lands writes LAST through renderRows, which tells the
-// card; one whose request fails leaves LAST as it was. Either way the card's answer is the one the panel's opener, which runs
-// the same fetch and then openIt whichever way it ends, would open over at that moment
+// runs, never pull(), which returns at once while a pull it started is in flight and would leave the card on the answer before. A pull
+// whose answer the fetch reads writes LAST through renderRows, which tells the card: the readings it carries, or none where the
+// kernel answers with an error status (the fetch reads a non-ok answer as no rows), so LAST empties and the card says No reading
+// yet. One that fails, with no answer or a body that does not parse, leaves LAST as it was. Either way the card's answer is the
+// one the panel's opener, which runs the same fetch and then openIt whichever way it ends, would open over at that moment
+// (nothing, after an error status)
 window.__rompUsagePull=function(){return pullFleet();};
 // the API-health dot sits inside this cell (T301): a pointer arriving on the DOT gets the dot's own tip, not this one
 el.addEventListener('mouseenter',function(ev){var c=document.getElementById('rail-api');
