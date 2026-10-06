@@ -538,8 +538,9 @@ def _opens_turn(obj: dict) -> bool:
     return False
 
 
-# The CLI's own recogniser of a local command's output (a /model switch's confirmation, a typed /cost's answer): either tag
-# anywhere in the text. The kernel's twin is sdk_backend.LOCAL_COMMAND_TAGS, for the same test on the parsed message.
+# The tags that open a local command's output (a /model switch's confirmation, a typed /cost's answer). The CLI writes every
+# such output with the tag first, and its own recognisers of that output test the start of the text. The kernel's twin is
+# sdk_backend.LOCAL_COMMAND_TAGS, for the same test on the parsed message.
 LOCAL_COMMAND_TAGS = ("<local-command-stdout>", "<local-command-stderr>")
 
 
@@ -549,13 +550,19 @@ def _cli_echo(obj: dict) -> bool:
 
     The population is what the CLI itself marks. Every user row the CLI echoes carries the `isReplay` key: its SDK schema
     calls that row SDKUserMessageReplay, and its own test for evidence that a turn is running skips a user row that has
-    the key, whatever the value, so this tests the key too (an `isReplay: false` compact summary included). Read in the
-    installed CLIs, 2.1.266 to 2.1.288. One member reaches a host outside any turn with no result after it: the
-    confirmation a /model switch makes the CLI write when the kernel asks for it over the control channel (client.set_model,
+    the key, whatever the value, so this tests the key too (an `isReplay: false` compact summary included). Read in CLI
+    versions 2.1.266 to 2.1.288: the schema and the echo are in every one, the turn-evidence test is in 2.1.276 and later
+    but not in 2.1.266. One member reaches a host outside any turn with no result after it: the confirmation a /model
+    switch makes the CLI write when the kernel asks for it over the control channel (client.set_model,
     `<local-command-stdout>Set model to ...`), written before the control_response. A typed local command's output is a
     member too, and its result follows at once. The others (replayed prompts, a shell command's output) come only from CLI
-    modes romp never turns on. The two local-command tags are read from the text as well, the CLI's own recogniser of that
-    output, so an echo that arrives without the key is still one.
+    modes romp never turns on. With romp's settings the key alone covers every member.
+
+    The text is a second test, for a local command's output that arrives without the key: a row whose text (the string
+    content, or its text blocks) STARTS with either tag, the way the CLI writes every such output and reads it back.
+    Anchored, because the first row of a turn the CLI opens itself (a task notification, a peer's message) is free text
+    that may quote a tag anywhere. And never for a row stamped with an `origin`: the stamp is the CLI's record of a turn it
+    opened itself, which it writes without the key, so its text decides nothing.
 
     Only user rows: an assistant row is always a turn's, or is followed by a result (a local command's own assistant row).
     A tool result's content is never read, and isSynthetic is not the mark, because the CLI's in-turn user rows carry it."""
@@ -571,7 +578,7 @@ def _cli_echo(obj: dict) -> bool:
         text = " ".join(str(c.get("text") or "") for c in content if isinstance(c, dict) and c.get("type") == "text")
     else:
         return False
-    return any(tag in text for tag in LOCAL_COMMAND_TAGS)
+    return not obj.get("origin") and text.lstrip().startswith(LOCAL_COMMAND_TAGS)
 
 
 # THE ORPHAN READER LIVES IN THE KERNEL'S MODULE (kernel/host_transport.py, read_journal_dir and journal_segments) since
@@ -1513,9 +1520,10 @@ class SessionHost:
                 asyncio.ensure_future(self._reexec_now(python, launcher))
         elif mt in ("assistant", "user") and self.inflight == 0 and not _cli_echo(msg):
             # Output arriving with no turn counted: a queued line running as its own turn. NEVER an echo (_cli_echo: a user
-            # row the CLI writes for input it is not running, flagged isReplay or carrying a local command's output). No
-            # result follows a model switch's echo, so counting it left the count at one for good (2026-10-06): every
-            # attach was told a turn was open, the unattached grace never ended the CLI, a re-exec waited on a result.
+            # row the CLI writes for input it is not running, flagged isReplay or opening with a local command's output
+            # tag). No result follows a model switch's echo, so counting it left the count at one until the next result
+            # (2026-10-06): every attach was told a turn was open, the unattached grace never ended the CLI, and a re-exec
+            # waited on that result.
             self.inflight = 1
             self.log("turn-reopened", offset=off)
         elif mt == "control_request":

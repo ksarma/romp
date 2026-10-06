@@ -17,6 +17,7 @@ import ast
 import asyncio
 import contextlib
 import errno
+import importlib.util
 import json
 import os
 import shutil
@@ -704,24 +705,25 @@ def _assistant_row(text):
 
 
 # The population (2026-10-06): the rows the CLI writes for input it is NOT running as a turn, derived from what the CLI
-# itself marks. Every user row it echoes carries the isReplay key (its SDK schema's SDKUserMessageReplay); its own test for
-# evidence that a turn is running skips a user row that has the key, whatever its value; and its own recogniser of a local
-# command's output is either tag anywhere in the text. On romp's road the one member that arrives outside a turn with no
-# result after it is the first: the confirmation a /model switch makes the CLI write when the kernel asks for it over the
-# control channel.
+# itself marks. Every user row it echoes carries the isReplay key (its SDK schema's SDKUserMessageReplay), and its own test
+# for evidence that a turn is running skips a user row that has the key, whatever its value. It writes every local
+# command's output with the tag first and recognises that output by the start of the text, so a key-less row whose text
+# opens with either tag is an echo too. On romp's road the one member that arrives outside a turn with no result after it
+# is the first: the confirmation a /model switch makes the CLI write when the kernel asks for it over the control channel.
 ECHO_ROWS = {
     "a model switch's echo (string content, isReplay true)":
-        _echo_row("<local-command-stdout>Set model to fake-model-2</local-command-stdout>", isReplay=True),
+        _echo_row("<local-command-stdout>Set model to `fake-model-2`</local-command-stdout>", isReplay=True),
     "the same echo as a text block":
-        _echo_row([{"type": "text", "text": "<local-command-stdout>Set model to fake-model-2</local-command-stdout>"}], isReplay=True),
+        _echo_row([{"type": "text", "text": "<local-command-stdout>Set model to `fake-model-2`</local-command-stdout>"}],
+                  isReplay=True),
     "a local command's error output (isReplay true)":
         _echo_row("<local-command-stderr>an invented failure</local-command-stderr>", isReplay=True),
     "local-command output without the key":
         _echo_row("<local-command-stdout>invented output</local-command-stdout>"),
     "local-command error output without the key, as a text block":
         _echo_row([{"type": "text", "text": "<local-command-stderr>invented</local-command-stderr>"}]),
-    "the tag past the start of the text (the CLI's own test is a substring)":
-        _echo_row("an invented preface <local-command-stdout>invented</local-command-stdout>"),
+    "local-command output after leading whitespace, without the key (read like the chat's own match)":
+        _echo_row("\n  <local-command-stdout>invented output</local-command-stdout>"),
     "a replayed prompt (isReplay true, plain text)":
         _echo_row("an invented prompt the CLI already ran", isReplay=True),
     "a replayed shell command's output (isReplay true)":
@@ -729,8 +731,9 @@ ECHO_ROWS = {
     "a compact summary (the key present, false)":
         _echo_row("an invented summary", isReplay=False, isSynthetic=True),
 }
-# Rows that still open a turn at zero: only user rows are ever echoes, a user row's tool-result content is never read, and
-# isSynthetic is not the mark (the CLI's in-turn user rows carry it).
+# Rows that still open a turn at zero: only user rows are ever echoes, a user row's tool-result content is never read,
+# isSynthetic is not the mark (the CLI's in-turn user rows carry it), a tag counts only at the start of the text, and a
+# row stamped with an origin (the CLI's record of a turn it opened itself) is never an echo by its text.
 TURN_ROWS = {
     "an assistant row (a queued line running as its own turn)": _assistant_row("working on it"),
     "an assistant row carrying the tag (a local command's own assistant row, which a result follows)":
@@ -739,6 +742,13 @@ TURN_ROWS = {
     "a user row flagged isSynthetic without the key": _echo_row([{"type": "text", "text": "an invented reminder"}], isSynthetic=True),
     "a tool result whose content mentions the tag":
         _echo_row([{"type": "tool_result", "tool_use_id": "toolu_invented", "content": "<local-command-stdout>x</local-command-stdout>"}]),
+    "the tag past the start of the text, without the key (the CLI writes local-command output with the tag first)":
+        _echo_row("an invented preface <local-command-stdout>invented</local-command-stdout>"),
+    "a task notification that opens a turn and quotes the tag (origin-stamped, no key)":
+        _echo_row([{"type": "text", "text": "<task-notification>an invented note quoting <local-command-stdout>x"
+                                            "</local-command-stdout></task-notification>"}], origin={"kind": "task-notification"}),
+    "an origin-stamped row whose text opens with the tag (the stamp decides, not the text)":
+        _echo_row("<local-command-stdout>an invented peer message</local-command-stdout>", origin={"kind": "peer"}),
 }
 
 
@@ -746,9 +756,9 @@ class ReplayedEchoes(unittest.TestCase):
     """A row the CLI writes for input it is not running opens no turn (2026-10-06). The host re-opened its turn count on ANY
     assistant or user row arriving at zero, so the echo a /model switch makes the CLI write (a user row flagged isReplay,
     carrying the local command's <local-command-stdout> confirmation, written outside any turn and followed by no result)
-    left the count at one for good: every attaching kernel was told a turn was open, the unattached grace never ended the
-    CLI, and a re-exec waited for a result that never came. In-process: the constructor and _track, no CLI and no socket.
-    HostProcess's two echo cases drive the same row through the fake CLI."""
+    left the count at one until the next real turn's result: every attaching kernel was told a turn was open, the
+    unattached grace never ended the CLI, and a re-exec waited for that result. In-process: the constructor and _track, no
+    CLI and no socket. HostProcess's two echo cases drive the same row through the fake CLI."""
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
@@ -817,7 +827,9 @@ class ReplayedEchoes(unittest.TestCase):
         parent_tool_use_id, tool_use_result and origin), so the kernel's test is the content half of the host's. For every
         user row here, the kernel counts a turn exactly when the host's test, run on the row with the key removed, says it
         is no echo. The rows that carry only the key (a replayed prompt, a shell command's output) reach romp only through
-        a CLI mode romp never turns on (replay-user-messages, a bash_command input); the host catches them by the key."""
+        a CLI mode romp never turns on (replay-user-messages, a bash_command input); the host catches them by the key.
+        The parse here is a hand-written double. The next case runs the same equality through the real SDK parser where
+        the SDK is importable."""
         fn = getattr(sh, "_cli_echo", None)
         self.assertIsNotNone(fn, "the host's predicate")
         self.assertEqual(getattr(sb, "LOCAL_COMMAND_TAGS", None), sh.LOCAL_COMMAND_TAGS, "the kernel reads the host's two tags")
@@ -836,11 +848,14 @@ class ReplayedEchoes(unittest.TestCase):
         class Other:
             pass
 
-        def parsed(rec):            # the SDK's parse of a user row: a list becomes blocks, a string stays one, the key is gone
-            c = rec["message"]["content"]
+        def parsed(rec):            # the SDK's parse of a user row: a list becomes blocks, a string stays one, the key is gone,
+            c = rec["message"]["content"]   # and a well-formed origin stamp is carried over as it is
             if isinstance(c, list):
                 c = [TextBlock(b["text"]) if b["type"] == "text" else ToolResultBlock(b["tool_use_id"], b.get("content")) for b in c]
-            return UserMessage(c, rec.get("uuid"), rec.get("parent_tool_use_id"))
+            m = UserMessage(c, rec.get("uuid"), rec.get("parent_tool_use_id"))
+            o = rec.get("origin")
+            m.origin = o if isinstance(o, dict) and isinstance(o.get("kind"), str) else None
+            return m
 
         for name, rec in list(ECHO_ROWS.items()) + list(TURN_ROWS.items()):
             if rec["type"] != "user":
@@ -848,6 +863,36 @@ class ReplayedEchoes(unittest.TestCase):
             with self.subTest(row=name):
                 keyless = {k: v for k, v in rec.items() if k != "isReplay"}
                 self.assertEqual(sb.SdkSession._turn_frame(parsed(rec), Other, Other, Other), not fn(keyless), name)
+
+    def test_the_real_sdk_parse_of_each_user_row_gets_the_kernel_the_hosts_verdict(self):
+        """The kernel half rests on what the SDK's parser does to a user row: it drops the isReplay key and keeps the content
+        and the origin stamp. The case above checks that through a hand-written double. This one parses every user row of
+        ECHO_ROWS and TURN_ROWS with the real parser (claude_agent_sdk._internal.message_parser.parse_message), asserts the
+        parsed message has no isReplay attribute, and asserts the kernel's verdict on it equals the host's verdict on the
+        row with the key removed. So a later SDK that parsed user content into another shape fails here instead of passing
+        through the double. Skipped where the SDK does not import (the box's test venvs), and a failure under
+        ROMP_SDK_REQUIRE=1, which CI's pytest step sets after it installs the pinned SDK."""
+        if importlib.util.find_spec("claude_agent_sdk") is None:
+            if os.environ.get("ROMP_SDK_REQUIRE") == "1":
+                self.fail("ROMP_SDK_REQUIRE=1: this run requires the SDK, and claude_agent_sdk does not import")
+            self.skipTest("claude_agent_sdk does not import in this interpreter (CI installs the pinned SDK)")
+        fn = getattr(sh, "_cli_echo", None)
+        self.assertIsNotNone(fn, "the host's predicate")
+        import claude_agent_sdk as sdk
+        from claude_agent_sdk._internal.message_parser import parse_message
+        verdicts = set()
+        for name, rec in list(ECHO_ROWS.items()) + list(TURN_ROWS.items()):
+            if rec["type"] != "user":
+                continue
+            with self.subTest(row=name):
+                msg = parse_message(rec)
+                self.assertEqual(type(msg).__name__, "UserMessage", name)
+                self.assertFalse(hasattr(msg, "isReplay") or hasattr(msg, "is_replay"), "the SDK drops the key: %s" % name)
+                keyless = {k: v for k, v in rec.items() if k != "isReplay"}
+                turn = sb.SdkSession._turn_frame(msg, sdk.AssistantMessage, sdk.ResultMessage, sdk.SystemMessage)
+                self.assertEqual(turn, not fn(keyless), name)
+                verdicts.add(turn)
+        self.assertEqual(verdicts, {True, False}, "the parsed rows include echoes the kernel refuses and turns it counts")
 
 
 # ── the host as a process, this test as the kernel ─────────────────────────────────────────────
@@ -5137,7 +5182,8 @@ class HostProcess(unittest.TestCase):
         echo, ans = self._switch_model(k)
         k.send({"t": "detach"}); k.close()
         k2, hello = self._attach(sock, ack=ans["offset"], pid=4343)
-        self.assertEqual(hello["inflight"], 0, "no open turn after the echo (the base reported one, for a turn nothing would end)")
+        self.assertEqual(hello["inflight"], 0, "no open turn after the echo (the base reported one, which only the next real "
+                                               "turn's result would end)")
         self.assertNotIn("turn-reopened", [r["kind"] for r in self._hostlog()], "the echo re-opened nothing")
         k2.send({"t": "in", "data": self._user("two sleep=0")})                   # and the idle CLI takes the next send at once
         k2.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result" and f["offset"] > ans["offset"], timeout=15)

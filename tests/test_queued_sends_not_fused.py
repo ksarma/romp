@@ -1036,23 +1036,32 @@ class OneFedTextAtATime(unittest.TestCase):
 
     def test_a_local_command_echo_counts_no_turn_and_releases_no_hold(self):
         """A model switch's echo arriving at idle was counted as a turn the CLI opened itself (_turn_frame took
-        every main-conversation UserMessage), and no result ever settled it: busy() read True for good, a typed
-        command or a model pick parked behind it and every send parked behind those, and a Stop pressed over it
-        latched a hold on every send. Arriving between a feed from idle and the fed turn's init, it released the
-        hold with the text still in the CLI's queue. An echo counts no turn and witnesses no take; the CLI's own
+        every main-conversation UserMessage), and nothing settled it until the next real turn's result: busy() read
+        True until then, a typed command or a model pick parked behind it and every send parked behind those, and a
+        Stop pressed over it latched a hold on every send. Arriving between a feed from idle and the fed turn's init,
+        it released the hold with the text still in the CLI's queue. An echo counts no turn and witnesses no take; the CLI's own
         user record of a turn it opened still does
         (test_a_turn_the_cli_opens_itself_is_stamped_injected_through_the_stream)."""
         S = sb.SdkSession._turn_frame
         for label, content in (("stdout, string", "<local-command-stdout>Set model to claude-y</local-command-stdout>"),
                                ("stderr, string", "<local-command-stderr>an invented failure</local-command-stderr>"),
-                               ("stdout, text block", [_TextBlock("<local-command-stdout>Set model to claude-y</local-command-stdout>")]),
-                               ("stderr past the start", "an invented preface <local-command-stderr>invented</local-command-stderr>")):
+                               ("stdout, text block", [_TextBlock("<local-command-stdout>Set model to claude-y</local-command-stdout>")])):
             with self.subTest(echo=label):
                 self.assertFalse(S(_UserMessage(content), _AssistantMessage, _ResultMessage, _SystemMessage))
-        for label, content in (("plain string", "an invented note"), ("plain text block", [_TextBlock("an invented note")]),
-                               ("a notification", [_TextBlock(NOTIF)])):
+        # a tag counts only at the start of the text, the way the CLI writes a local command's output, and never on a row
+        # with an origin stamp: the first row of a turn the CLI opens itself carries one, with free text that may quote a tag
+        for label, content, origin in (("plain string", "an invented note", None),
+                                       ("plain text block", [_TextBlock("an invented note")], None),
+                                       ("a notification", [_TextBlock(NOTIF)], None),
+                                       ("stderr past the start",
+                                        "an invented preface <local-command-stderr>invented</local-command-stderr>", None),
+                                       ("a stamped notification quoting the tag",
+                                        [_TextBlock(NOTIF + " <local-command-stdout>x</local-command-stdout>")],
+                                        {"kind": "task-notification"}),
+                                       ("a stamped row opening with the tag",
+                                        "<local-command-stdout>an invented peer message</local-command-stdout>", {"kind": "peer"})):
             with self.subTest(turn=label):
-                self.assertTrue(S(_UserMessage(content), _AssistantMessage, _ResultMessage, _SystemMessage))
+                self.assertTrue(S(_UserMessage(content, origin=origin), _AssistantMessage, _ResultMessage, _SystemMessage))
         # through the stream, the member that reaches romp outside a turn: a model switch's stdout confirmation (a stderr
         # row comes only from a typed local command, whose result follows at once; msg_to_atom renders it as a plain user
         # atom, whose working re-assert that result clears)
