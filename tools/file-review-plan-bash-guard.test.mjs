@@ -24,6 +24,10 @@ import { CENSUS, census } from './romp-track-bash-guard-census.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
 const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
+// the guard's test files and the module they share (fork PR 975 moved the after-source fixes' rows test and THE ASSIGNING HEAD's census
+// into a file of their own, and what both files need into the module): a pin that reads the guard's tests reads all of them
+const GUARD_TEST_FILES = ['tools/romp-track-bash-guard.test.mjs', 'tools/romp-track-bash-guard-rows.test.mjs'];
+const GUARD_TEST_LIB = 'tools/romp-track-bash-guard-testlib.mjs';
 
 const plan = read('plans', 'file-review.md');
 const hook = read('hooks', 'romp-track-bash-guard.mjs');
@@ -610,7 +614,7 @@ process.stdin.setEncoding('utf8').on('data', (d) => { input += d; }).on('end', (
   assert.ok(/(?<![\w.-])(?:6[0-4]|[1-5]?[0-9])(?![\w.])/.test(rest), 'hooks/README.md: the witness of the number boundary, a number a trap takes (0 to 64) standing in the row in another sense, so a pin on numbers would red the committed row; with none left, a signal given by its number can join the pin');
   const lowerGlued = (rest.match(/[A-Za-z0-9_]+/g) || []).filter((t) => !signalNamesIn(` ${t} `).length && SIGNAL_NAMES.some((n) => t.toLowerCase().includes(n.toLowerCase())));
   assert.ok(lowerGlued.length > 0, 'hooks/README.md: the witness of the glued boundary, a word in lower or mixed case holding a name glued to letters beyond an inflection (pipeline, into, error) standing in the row, so a pin reading a name in any case inside a word would red the committed row; with none left, that reading can join the pin');
-  const guardTestSrc = read('tools', 'romp-track-bash-guard.test.mjs');
+  const guardTestSrc = GUARD_TEST_FILES.map((rel) => read(...rel.split('/'))).join('\n');
   for (const id of ['EV-eval', 'EV-eval-var', ...TRAP_ROWS]) assert.ok(guardTestSrc.includes(`['${id}', 'nad', `), `the executed row ${id} the clause's message points at stands in the guard's test`);
   for (const id of ['RT-read-var-head', 'RT-xargs']) assert.ok(guardTestSrc.includes(`['${id}', '`), `the residual row ${id} the clause's message points at stands in THE RESIDUAL TABLE`);
   assert.ok(ledger.includes('a target whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path outside every project in play is allowed, and no other expansion is numeric'), 'the ledger entry: the exception (round 5: no other expansion is numeric; a name the guard resolves is allowed by the path it names, which the old "nothing else is" denied)');
@@ -895,8 +899,8 @@ test('decision 47 and the hook header record the seventh pass: the readability r
   const ITEM4 = 'through one probe that reports a shell that is missing or too old with a `NOT RUN` line per leg, never a silent pass';
   assert.ok(d47.includes(ITEM4), 'decision 47 carries the item-4 sentence');
   assert.ok(hook.replace(/\n\/\/ ?/g, ' ').includes(ITEM4), 'the hook header carries the item-4 sentence');
-  const guardTest = read('tools', 'romp-track-bash-guard.test.mjs');
-  assert.ok(guardTest.includes('`NOT RUN: real ${sh} ${probeWhy(present, sh)}, so its evidence leg did not run') && guardTest.includes("why: 'is not on this runner'"), 'the test file reports the line the two sentences describe');
+  const guardTest = [...GUARD_TEST_FILES, GUARD_TEST_LIB].map((rel) => read(...rel.split('/'))).join('\n');
+  assert.ok(guardTest.includes('`NOT RUN: real ${sh} ${probeWhy(present, sh)}, so its evidence leg did not run') && guardTest.includes("why: 'is not on this runner'"), 'the test files report the line the two sentences describe (shellsFor and the probe, in the module they share)');
   // round 5 (correctness-4, tests-5): the rule's canonical statement names the live predicate, five parts, and no function that is gone
   const statement = hook.slice(hook.indexOf('// THE READABILITY RULE (the sixth pass\'s attacker'), hook.indexOf('const RESOLVED_NAME = '));
   assert.ok(statement.length > 1000, 'the statement is where it was');
@@ -1230,7 +1234,7 @@ test("round 6, fifth commit: decision 47 and the hook header record the paramete
   for (const [name, text] of [['the hook header', hook], ['the vendored SKILL.md', read('vendor', 'track-changents', 'skill', 'SKILL.md')], ['hooks/README.md', hooksReadme], ['docs/install.md', installSection]]) assert.ok(text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes('is not a write it refuses: the contract is the write that lands on a tracked file'), `${name} says a deletion or a move away is not a write the guard refuses`);
   // (D) the round's rule for committed text: the reviewer is "the reviewer", never a session name, on the files the offer changes
   const sessionName = new RegExp(['romp', 'manager'].join('-') + "'s");   // the reviewer's session name, assembled so this file does not spell it either
-  for (const rel of ['hooks/romp-track-bash-guard.mjs', 'plans/file-review.md', 'tools/romp-track-bash-guard.test.mjs']) assert.ok(!sessionName.test(read(...rel.split('/'))), `${rel} names the reviewer, not a session`);
+  for (const rel of ['hooks/romp-track-bash-guard.mjs', 'plans/file-review.md', ...GUARD_TEST_FILES, GUARD_TEST_LIB]) assert.ok(!sessionName.test(read(...rel.split('/'))), `${rel} names the reviewer, not a session`);
   assert.ok(!/\u2014/.test(d47), 'no em dash in decision 47');
 });
 
@@ -1369,7 +1373,7 @@ test("round 6, thirteenth commit: decision 47 and the hook header record the emp
   const surfaces = { 'the hook header': hook, 'decision 47': d47, 'the vendored SKILL.md': read('vendor', 'track-changents', 'skill', 'SKILL.md'), 'hooks/README.md': hooksReadme, 'docs/install.md': installSection, 'docs/guide.md': read('docs', 'guide.md'), 'docs/reference.md outside the installer section': reference.replace(installSection, ''), 'the ledger entry': read('upstream', '2026-09-18-track-guard-non-literal-targets.md') };
   for (const [name, text] of Object.entries(surfaces)) assert.ok(!text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes(CLASS), `${name} no longer states the ninth class`);
   for (const [name, text] of [['decision 47', d47], ['the hook header', hook], ['the ledger entry', surfaces['the ledger entry']]]) assert.ok(text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase().includes("round 7's twenty-fifth commit") || text.replace(/\/\//g, ' ').replace(/\s+/g, ' ').includes('ROUND 7 OF FORK PR #780 REVIEW, TWENTY-FIFTH COMMIT (2026-09-23'), `${name} records the deletion`);
-  const guardTest = read('tools', 'romp-track-bash-guard.test.mjs');
+  const guardTest = GUARD_TEST_FILES.map((rel) => read(...rel.split('/'))).join('\n');
   assert.ok(!guardTest.includes("  'a positional the resolver reads at the word by a model the shell does not keep': '"), 'RESIDUAL_CLASSES carries no ninth class');
   const under = (guardTest.match(/^\s*\['RT-(ep|sp|sb|zs)-[^']+', /gm) || []);
   assert.equal(under.length, 0, `no residual row of the class stands in the table (${under.length})`);

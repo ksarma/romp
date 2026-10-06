@@ -3041,6 +3041,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   call over a directory copy and over five redirect targets, agreeing with store-io's `isTrackedFile` on every
   kind of path and pinning its three steps; and the hook process on a subshell cd, a chained heredoc and a
   heredoc-fed shell;
+  `tools/romp-track-bash-guard-rows.test.mjs` (fork PR 975) holds the after-source fixes' rows test, whose rows are
+  AS1 to AS8, and THE ASSIGNING HEAD's census, moved out of the first module so node runs them beside it, the two
+  importing the helpers they share from `tools/romp-track-bash-guard-testlib.mjs`;
   `tests/install-sh.bats` the Bash-side guard's registration on its own `Bash` group, once, with the
   vendored guard's group beside it and a user's own Bash group kept; `tests/romp-uninstall.bats` its removal;
   `tools/file-review-plan-bash-guard.test.mjs` holds decision 47, the Vendoring paragraph and this bullet to the
@@ -3961,6 +3964,9 @@ document stands on its own, each with the reasoning it was given.
     targets; none when a listed refusable entry settles it, and none when the list is empty (review round 2,
     2026-09-18; `tools/file-review-plan-bash-guard-review.test.mjs` counts the walks).
     `tools/romp-track-bash-guard.test.mjs` drives the grammar and the process;
+    `tools/romp-track-bash-guard-rows.test.mjs`, from fork PR 975, the after-source fixes' rows test and THE
+    ASSIGNING HEAD's census, moved out of that module so node runs them beside it, both importing the helpers they
+    share from `tools/romp-track-bash-guard-testlib.mjs`;
     `tools/romp-track-bash-guard-shapes.test.mjs`, from the review's first round (2026-09-10), the shapes that
     round found misread, each in both directions where it has two (a cd inside a subshell or a body, a heredoc
     followed by `&&`, a heredoc-fed shell, `bash -lc`, a prefix with options, pushd and popd, `[[ a > b ]]`, a
@@ -5425,7 +5431,7 @@ document stands on its own, each with the reasoning it was given.
     row) and three ordinary rows for the shapes these
     fixes unblock (a test and a case pattern after a `source`, a copy beside a mention of PATH; the `nohup` and `setsid`
     before a command named by a variable are refused again since item 3 was split out, the follow-up below). THE RESIDUALS, each pinned in the after-source rows test of
-    `tools/romp-track-bash-guard.test.mjs` with the verdict it has (allowed, with the shells that write, where a write
+    `tools/romp-track-bash-guard-rows.test.mjs` with the verdict it has (allowed, with the shells that write, where a write
     gets through; AS2-residual-paren refused, a false refusal) and each named here by id, which that test checks. The parenthesized case pattern `(a|b)`, bash's
     extglob and zsh's nested patterns are not read as patterns (the lexer ends a segment at `;;` as at `;`), so after
     such a construct an arm is refused when an alternative holds `*`, `?` or `[...]` (AS2-residual-paren, a false
