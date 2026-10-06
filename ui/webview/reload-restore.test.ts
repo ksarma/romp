@@ -155,6 +155,10 @@ test("every write of the keep offset writes the reader's line beside it, in the 
   const near = (a: ts.Statement, b: ts.Statement): boolean => a === b || (a.parent === b.parent && Math.abs((a.parent as ts.Block).statements.indexOf(a) - (b.parent as ts.Block).statements.indexOf(b)) === 1);
   const runHasFlag = (s: ts.ExpressionStatement): boolean => { const lines = lineStmts.filter((t) => near(t, s)); return flagStmts.some((f) => near(f, s) || lines.some((t) => near(f, t))); };
   assert.deepEqual(keepY.filter((w) => { const s = plain(w); return !s || !runHasFlag(s); }).map(shown), [], "a write of pendingAnchorKeepY with no plain `=` of pendingAnchorKeepReload in its run");
+  // …and the converse: every write of the flag sits in the run of a write of the offset, so no lone write re-marks a keep armed elsewhere
+  // (a lone clear before chatHead's re-land would drop the reload keep's re-base on the older wire)
+  const keepYStmts = keepY.map(plain).filter((s): s is ts.ExpressionStatement => s !== null);
+  assert.deepEqual(flagStmts.filter((f) => !keepYStmts.some((k) => near(f, k) || lineStmts.some((t) => near(t, k) && near(f, t)))).map(shown), [], "a write of pendingAnchorKeepReload outside the run of a write of pendingAnchorKeepY");
   const setTrue = flagWrites.filter((n) => flagValue(n) === true);
   assert.equal(setTrue.length, 1, "one write sets the flag true: " + setTrue.map(shown).join(" | "));
   const reloadArm = keepY.filter((w) => ts.isBinaryExpression(w) && w.right.getText(sf) === "rs.anchor.y").map(plain);

@@ -292,6 +292,25 @@ test("chatHead's re-arm of the older wire's landing carries the click's time and
   assert.deepEqual([seekBacked.hides, seekBacked.scope.landTrail, seekBacked.toasts, seekBacked.seekEnds], [[1], ["head-stale"], [], []], "a seek-backed landing's stale reply: the word, the notice down, no toast, the seek standing");
 });
 
+test("chatHead hands the reload restore's keep, left armed across the older wire, to the re-land as it stands: the row, its offset, the reader's line and the reload's mark reach showActive, so the keep-offset landing re-bases the boxes-above observer for it (land-active-keep.test.ts executes the arm, scroll-to-anchor-roads.test.ts the landing)", () => {
+  const at = { line: 3 };
+  const atShow: unknown[] = [];
+  const s: any = { id: "A", proto: 2, events: [evU("t250"), evU("t251")], firstUuid: "t250", headKnown: false, headTotal: null };
+  const scope: Record<string, unknown> = {
+    sessions: new Map([["A", s]]), loadingOlder: new Set(["A"]), pendingOlderAnchor: new Map([["A", "r1"]]), pendingOlderKeepY: new Map<string, number>(), pendingOlderMark: new Map<string, unknown>(),
+    landingNoticeSid: null, liveWindowAsk: () => null, seek: null, hideLandingNotice: () => {}, landToast: () => {}, clearSeek: () => {}, requestFullSession: () => {},
+    activeId: "A", views: new Map(), flashedAnchor: null, anchorPendingOlder: true, landTrail: [],
+    // the reload restore's arm as landActive leaves it when its row is older than the resident run and the older fetch is in flight
+    pendingAnchor: "r1", pendingAnchorIntent: null, pendingAnchorT: null, pendingAnchorKind: null, pendingAnchorKeepY: -50, pendingAnchorKeepAt: at, pendingAnchorKeepReload: true,
+    prependHead, keyOf, isOptimistic, isHeldGroup,
+  };
+  scope.showActive = () => atShow.push([scope.pendingAnchor, scope.pendingAnchorKeepY, scope.pendingAnchorKeepAt, scope.pendingAnchorKeepReload]);
+  const js = liftBetween("function chatHead(msg: any) {", "\n// Fetch the next older history chunk");
+  liftWith(js, scope, ["chatHead"]).chatHead({ type: "chatHead", id: "A", beforeUuid: "t250", events: [evU("r1"), evU("o2")], more: true });
+  assert.deepEqual(order(s), ["r1", "o2", "t250", "t251"], "the chunk is prepended");
+  assert.deepEqual(atShow, [["r1", -50, at, true]], "one re-land, with the reload's keep as its arm left it: the row, the offset, the line and the reload's mark");
+});
+
 test("the notice's click on the older wire's landing (no ask record) releases the fetch's claim through the real releaseSeekFetch, so the chunk arrives as a pure prepend re-anchored on the reader's own row and chatHead re-arms nothing but that row; the cancel row names the anchor, time and kind from the fetch's mark (the page's wait state holds them nowhere else); a window landing's cancel marks its record and releases no fetch", () => {
   const run = (rec: any) => {
     const posted: any[] = [], hides: number[] = [], seekEnds: number[] = [], shows: number[] = [];
