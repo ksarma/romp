@@ -12,7 +12,7 @@ way, and it covers pytest only: a plain unittest run, an upstream checkout witho
 characters prints in the clear. This census is the rule's enforcement, read by AST over the test tree.
 
 THE POPULATION is derived, never listed: every tests/*.py (conftest.py and the helper modules included), each parsed
-through tests/parse_cache.py. A test tree with no tests/*.py fails the run, and so does one in which the census finds
+by the census itself (THE PARSE). A test tree with no tests/*.py fails the run, and so does one in which the census finds
 none of the environment copies it claims to watch (each binding form below, counted in the real tree), no environment
 mapping read at an assertion site at all (the safe reads the fixed tree keeps: a .get(name) and a `name in mapping`),
 or no holder (THE HOLDERS) read at one (a field, a `name in holder`, its sorted names), so the census never passes on
@@ -202,9 +202,52 @@ object holding the environment as an attribute, a holder known only by a members
 element that only another test shows, the container of mappings stored under keys that are not string constants, and
 Python a test writes as a string, in both idioms the tree uses: a written constant and a textwrap.dedent module).
 
+THE PARSE (2026-10-06; the shape tests/test_obsidian_state_routes.py's census calls E, and this module's exception to
+tests/parse_cache.py's rule that the AST censuses under tests/ parse through its one process-wide cache). The census
+parses every file itself (_own_tree) and never through tests/parse_cache.py: not its shared parse, whose cache keeps
+every tree for the rest of the process, and not its derived(), which keeps the value for the process and freezes every
+object tracked when the build returns. Built that way (at 99c9ea824) the module left its trees in the process that ran
+it: in one cold process on Python 3.11.15 the resident set went from 52 to 1867 MiB over the module's tests and stayed
+there, with 8.16 million objects frozen. On a local copy of CI's Python 3.11 cell (two workers) that step put the run's
+peak about 1 GiB above main's, 18.2 against 17.2 GiB, and on CI that cell's 16 GB runner shut down near the end of the
+run in four attempts of five at that head (the other was cancelled), where the local copy, with no such ceiling, ran
+to the end. Now census() returns facts alone (strings, numbers and the lists, tuples and dicts around them), and its
+_Module records, their scopes and the Reader refer to their trees and never back to themselves, so every tree is
+freed by reference count when census() returns. The whole-tree build (_build_census) runs once per module run, in the
+first test that reads it, and EnvMappingAssertCensus.held keeps its facts until the class's tearDownClass. Measured in
+one cold process on Python 3.11.15, three runs per tree: the module's tests leave the resident set 493 to 503 MiB
+above where they found it (388 to 399 after a gc.collect()), against 1815 to 1827 MiB at 99c9ea824. The peak inside
+the build is unchanged, about 1.9 GiB, and what stays is the allocator's arenas that still hold a live block each,
+not trees.
+THE COLLECTOR is left as the process has it, as the obsidian census leaves it (the reviewer's ruling on round 1 of fork
+PR #909: no gc.freeze or gc.disable, which change the collector's state for the whole process, and no gc.collect, which
+walks every tracked object). The cost is time, since the automatic collections walk the trees while the build allocates
+them: the module's tests took 32.6 to 33.0 s in the same runs, against 12.1 to 12.6 s at 99c9ea824, where derived() held
+the collector off for the build, and 13.4 to 13.8 s with the collector held off for census() alone, which leaves the
+same memory behind (484 to 508 MiB). What the exception costs besides: tests/test_ephemeral_port_census.py and
+tests/test_lab_ports_census.py read some of the tests/ modules through tests/parse_cache.py by the same import road
+(`import parse_cache`), so in a process that runs them after this module they parse those files themselves, as they did
+before this census existed. tests/test_thread_stop_census.py imports the cache as tests.parse_cache under pytest, a
+module object of its own, so it never shared this census's trees there. In one process running this module, those two
+and the thread-stop census in collection order on Python 3.11.15, the two parsed 286 files themselves and added 273
+MiB, and the resident set after the last of the four was 2756 MiB, against 3642 at 99c9ea824.
+THE RULE FOR THE BUILD: it leaves no cycle behind, so that the trees go by reference count with no collection. Measured
+over the whole tree on Python 3.10, 3.11, 3.12 and 3.13, with the collector off from before census() to after the
+reads: no tree was alive once census() had returned, and a collection then found nothing unreachable.
+THE PINS: test_the_census_is_built_once_from_its_own_parse_and_holds_no_tree (nothing built or parsed before the
+module's first test, one build in the module's run, every tests/*.py and each file the build read parsed once by its own
+parse, and no tree alive once census() had returned, read through weak references that the build drops before it
+returns), and tearDownModule (no freeze in the module's run, and the facts gone after the class, a weak reference read
+with no collection). The singleton check that derived() ran around the build still runs around it (_build_census).
+What no pin sees, both measurements only: a record of the parse kept past the build, which holds no tree and costs the
+allocator's arenas (_build_census gives the figure), and the collector held off around the build and given back, which
+changes no count a pin reads (the 13.4 to 13.8 s runs above passed every test).
+
 Synthetic: reads the tree only; no environment value is read or printed.
 """
 import ast
+import collections
+import gc
 import glob
 import os
 import re
@@ -212,11 +255,12 @@ import shutil
 import sys
 import tempfile
 import unittest
+import weakref
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import parse_cache                                  # noqa: E402  one parse per file per process, shared with the other AST censuses
+import parse_cache                                  # noqa: E402  check_singletons alone; the census parses its own trees (THE PARSE)
 
 PRODUCT_DIRS = ("kernel", "postal", "cli")
 ENV_WORDS = ("env", "environ")
@@ -287,6 +331,31 @@ EXEMPT = {}
 _ENV_MARK = object()      # the value a name bound by `from os import environ` holds
 _LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z")   # a line with its ending, as the parser splits them (str.splitlines
 #                                                         also breaks at a form feed and other separators the parser does not)
+
+_PARSES = 0           # the files _own_tree has parsed in this process, the whole-tree build's and every plant's
+_RECORD = None        # while _build_census runs census(ROOT): (path, a weak reference to its tree) per parse; else None
+_CENSUS_BUILDS = 0    # the whole-tree censuses _build_census started in this process (one that raised is counted too)
+_CENSUS_REF = None    # a weak reference to the facts EnvMappingAssertCensus.held holds (_census_here), pin (2)'s subject
+_FROZEN_BEFORE = None  # gc.get_freeze_count() before the module's first test (setUpModule), pin (1)'s first read
+_BUILT_BEFORE = None  # (censuses built, files parsed) before the module's first test (setUpModule), which the mechanism
+#                       pin requires to be (0, 0)
+_BUILDS_AT_SETUP = None  # _CENSUS_BUILDS when setUpModule last ran
+
+
+def _own_tree(path, rel):
+    """(text, tree) of the file at `path`, parsed here with `rel` as the filename the tree carries (for a SyntaxError's
+    message): the census's OWN parse, never tests/parse_cache.py's (THE PARSE in the module docstring), counted in
+    _PARSES and, while the whole-tree build runs, recorded in _RECORD with a weak reference to the tree, which keeps
+    nothing alive. Read-only all the same: no attribute is written on a node (the parser shares its singleton nodes, a
+    Load or an operator, with every tree in the process); per-node data lives in the census's tables keyed by id(node)."""
+    global _PARSES
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    tree = ast.parse(text, filename=rel)
+    _PARSES += 1
+    if _RECORD is not None:
+        _RECORD.append((path, weakref.ref(tree)))
+    return text, tree
 
 
 def env_word(name):
@@ -604,7 +673,7 @@ class Reader:
         if self._product is None:
             self._product = {}
             for p in self.product_paths:
-                text, tree = parse_cache.source_and_tree(p, os.path.relpath(p, self.root))
+                text, tree = _own_tree(p, os.path.relpath(p, self.root))
                 m = self._product_modules[p] = _Module(os.path.relpath(p, self.root), text, tree)
                 for name, fns in m.functions.items():
                     if env_word(name):
@@ -1230,12 +1299,15 @@ def scan(module, reader):
 
 def census(root=ROOT):
     """(files, offences, stats) over tests/*.py under `root`, product callees resolved under root's kernel/, postal/ and
-    cli/. Raises when the tree holds no tests/*.py."""
+    cli/, each file parsed by _own_tree. Raises when the tree holds no tests/*.py. What it returns holds strings,
+    numbers and the lists, tuples and dicts around them, no tree and no node; the _Module records, their scopes and the
+    Reader refer to their trees and never back to themselves, so every tree parsed here is freed by reference count
+    when this returns (THE PARSE in the module docstring)."""
     paths = sorted(glob.glob(os.path.join(root, "tests", "*.py")))
     assert paths, "the census read no file: %s holds no tests/*.py" % root
     modules = {}
     for p in paths:
-        text, tree = parse_cache.source_and_tree(p, os.path.relpath(p, root))
+        text, tree = _own_tree(p, os.path.relpath(p, root))
         modules[os.path.basename(p)] = _Module(os.path.join("tests", os.path.basename(p)), text, tree)
     product = sorted(p for d in PRODUCT_DIRS for p in glob.glob(os.path.join(root, d, "*.py")))
     reader = Reader(root, modules, product)
@@ -1272,12 +1344,71 @@ def split_exempt(offences, exempt):
     return [o for o in offences if (o[0], o[5], o[6]) not in exempt], sorted(k for k in exempt if k not in keys)
 
 
-def _census_here():
-    def build():
-        files, offences, stats = census(ROOT)
+class _Census:
+    """The whole-tree census's facts, (files, offences, stats) as census() returned them, with no tree and no node, and
+    the build's own read of its parse (_build_census): `parsed`, {file relative to the root: times parsed}, and
+    `outlived`, the files whose tree was alive once census() had returned. One object that takes a weak reference (a
+    tuple cannot), so tearDownModule can read that the facts are gone once EnvMappingAssertCensus drops them (pin 2
+    there). It unpacks as the triple."""
+    __slots__ = ("files", "offences", "stats", "parsed", "outlived", "__weakref__")
+
+    def __init__(self, files, offences, stats, parsed, outlived):
+        self.files, self.offences, self.stats = files, offences, stats
+        self.parsed, self.outlived = parsed, outlived
+
+    def __iter__(self):
+        return iter((self.files, self.offences, self.stats))
+
+
+def _build_census():
+    """The whole-tree census over ROOT with require_population held, as a _Census, counted in _CENSUS_BUILDS. While
+    census() runs, _own_tree records each parse with a weak reference to its tree (_RECORD); right after census()
+    returns, the build reads from that record how often each file was parsed and which trees are still alive, keeps
+    only those plain facts and drops the record before it returns: a record kept past the build would hold, for each
+    file, a small object allocated beside that file's tree, and the allocator then keeps nearly every arena the trees
+    took (one cold process on Python 3.11.15, after the same 1.9 GiB peak: 1137 MiB resident after the module's tests
+    with such a record kept for the process, 533 to 543 MiB with it dropped here). THE SINGLETON CHECK
+    (tests/parse_cache.py's check_singletons, which parse_cache.derived ran around this build until THE PARSE took
+    derived() out of this module): before the build (a writer that ran earlier: the build neither runs nor counts) and
+    after it, on the returning road and on the raising road (the build itself wrote on a node the parser shares with
+    every tree: it is counted and nothing is held, so the next read builds again; a raising build's exception is the
+    AssertionError's __cause__ when the singletons carry attributes, else it propagates as it was). No collector state
+    is touched."""
+    global _CENSUS_BUILDS, _RECORD
+    where = "the whole-tree census build (tests/test_env_mapping_assert_census.py)"
+    parse_cache.check_singletons("before %s: an earlier writer" % where)
+    _CENSUS_BUILDS += 1
+    try:
+        _RECORD = record = []
+        try:
+            files, offences, stats = census(ROOT)
+        finally:
+            _RECORD = None
+        outlived = sorted({os.path.relpath(p, ROOT) for p, ref in record if ref() is not None})
+        parsed = dict(collections.Counter(os.path.relpath(p, ROOT) for p, _ref in record))
+        del record
         require_population(stats)
-        return files, offences, stats
-    return parse_cache.derived(("env_mapping_assert_census", ROOT), build)
+    except BaseException as exc:
+        found = parse_cache.singleton_attributes()
+        if found:
+            raise AssertionError(parse_cache.singleton_message(
+                "after %s raised %s: the build that just raised wrote them, or a thread beside it"
+                % (where, type(exc).__name__), found)) from exc
+        raise
+    parse_cache.check_singletons("after %s: the build itself wrote them, or a thread beside it" % where)
+    return _Census(files, offences, stats, parsed, outlived)
+
+
+def _census_here():
+    """The whole-tree census's facts for this module's run: built by the first test that reads them (_build_census) and
+    held by EnvMappingAssertCensus.held, the one reference, until the class's tearDownClass drops it. A build that
+    raised holds nothing, so the next read builds again. The weak reference is tearDownModule's pin (2)."""
+    global _CENSUS_REF
+    cls = EnvMappingAssertCensus
+    if cls.held is None:
+        cls.held = _build_census()
+        _CENSUS_REF = weakref.ref(cls.held)
+    return cls.held
 
 
 def _lines(offences, cap=60):
@@ -1557,8 +1688,101 @@ PLANTS = {
 }
 
 
+def setUpModule():
+    """The first reads, before the module's first test and not at import (pytest imports every module at collection,
+    before any test runs). Pin (1)'s: gc.get_freeze_count(), which tearDownModule reads again; two reads only, since
+    each walks the permanent generation. The mechanism pin's: how many whole-tree censuses _build_census has started
+    and how many files _own_tree has parsed so far in the process (_CENSUS_BUILDS, _PARSES), both counted per process,
+    which that pin requires to be 0 at the first read in the process, the only one taken: a census or a tree made at
+    import would be held, or counted as the module's one build, through every module that sorts before this one."""
+    global _FROZEN_BEFORE, _BUILT_BEFORE, _BUILDS_AT_SETUP
+    _FROZEN_BEFORE = gc.get_freeze_count()
+    if _BUILT_BEFORE is None:
+        _BUILT_BEFORE = (_CENSUS_BUILDS, _PARSES)
+    _BUILDS_AT_SETUP = _CENSUS_BUILDS
+
+
+def tearDownModule():
+    """The module's two pins on what it leaves behind, read after its last test, and so after EnvMappingAssertCensus's
+    tearDownClass dropped the facts, in the same process as setUpModule. That the build's trees died when census()
+    returned is the mechanism pin's (test_the_census_is_built_once_from_its_own_parse_and_holds_no_tree).
+    (1) The module froze nothing: gc.get_freeze_count() is not above what setUpModule read. The count is live and falls
+    when a frozen object dies, so an object an earlier module froze can lower it in between, while nothing but a freeze
+    inside the module raises it. Red under a build through tests/parse_cache.py's derived(), which freezes every object
+    tracked when its build returns (8.16 million in the module's own process on Python 3.11 at 99c9ea824, the last head
+    that built the census through derived()).
+    (2) The facts are gone: the weak reference _census_here took is dead, read with no gc.collect(), which walks every
+    tracked object; with no cycle, reference counting has already freed them. Red under a module-scope cache that keeps
+    them, under a test that keeps its own reference past the class, and under a fact that refers back to the held
+    object.
+    Neither pin skips without a word: a census built with no weak reference taken reds (2), and a missing first read
+    reds (1). The one silent case is (2) when no census was built at all (every test that reads it deselected), where
+    there is nothing to be gone."""
+    problems = []
+    if _CENSUS_REF is None:
+        if _CENSUS_BUILDS:
+            problems.append("pin (2): %d whole-tree census(es) started in this process but no weak reference was taken to "
+                            "the facts EnvMappingAssertCensus holds (_census_here takes it), so this pin cannot read that "
+                            "they are gone" % _CENSUS_BUILDS)
+    elif _CENSUS_REF() is not None:
+        problems.append("pin (2): the census's facts are alive after EnvMappingAssertCensus's tearDownClass dropped them: "
+                        "something else keeps them (a module-scope cache, a test's own reference) or they refer back to "
+                        "the held object, a cycle that only a collection frees, and this module runs none")
+    frozen = gc.get_freeze_count()
+    if _FROZEN_BEFORE is None:
+        problems.append("pin (1): setUpModule took no first read of gc.get_freeze_count(), so this pin cannot compare")
+    elif frozen > _FROZEN_BEFORE:
+        problems.append("pin (1): gc.get_freeze_count() rose from %d before the module's first test to %d after its last: "
+                        "something in the module froze the heap (tests/parse_cache.py's derived() freezes after a build), "
+                        "and every later read of the kernel's perf snapshot walks what is frozen" % (_FROZEN_BEFORE, frozen))
+    if problems:
+        raise AssertionError("; ".join(problems))
+
+
 class EnvMappingAssertCensus(unittest.TestCase):
     maxDiff = None
+    held = None   # the whole-tree census's facts (_Census), the ONE reference: set by _census_here, dropped by tearDownClass
+
+    @classmethod
+    def tearDownClass(cls):
+        """Drop the one reference to the facts before the next module's first test (pin (2) in tearDownModule)."""
+        cls.held = None
+        super().tearDownClass()
+
+    def test_the_census_is_built_once_from_its_own_parse_and_holds_no_tree(self):
+        """THE PARSE, read from counts and weak references. Nothing was built or parsed before the module's first test
+        (setUpModule's read, since both counts are the process's and a census made at import would pass as the module's
+        one build). Two reads of the facts are one object and one build in the module's run (_CENSUS_BUILDS; a build
+        per read or per test reds here). The build parsed every tests/*.py, and each file it read (the tests/ modules
+        and the product modules its callees reach) once, by its own parse (the build's record, _Census.parsed; a second
+        parse reds, and a file read through tests/parse_cache.py is missing from the record). And no tree the build
+        parsed was alive once census() had returned (_Census.outlived, read through weak references with no
+        gc.collect()): census() returns facts alone and builds no cycle, so the trees go when it returns, not at the
+        module's end. Red under a module-scope cache of the _Module records or the Reader, under a fact that holds a
+        node, and under a cycle that holds a tree, which only a collection frees. That the module froze nothing and
+        that the facts are gone after the class are read in tearDownModule (pins 1 and 2)."""
+        first = _census_here()
+        same = _census_here() is first
+        parsed, outlived = first.parsed, first.outlived
+        del first   # no local keeps the held object, so a red here leaves pin (2) reading the class's release, not this frame
+        self.assertTrue(same, "two reads in the module's run are the one held object")
+        self.assertEqual(_BUILT_BEFORE, (0, 0), "(censuses built, files parsed) before the module's first test, as "
+                         "setUpModule read them: none, since a census or a tree made at import is held through every "
+                         "module that sorts before this one")
+        self.assertEqual(_CENSUS_BUILDS - _BUILDS_AT_SETUP, 1, "the whole-tree census is built once in this module's "
+                         "run, however many tests read it")
+        population = sorted(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(ROOT, "tests", "*.py")))
+        product = sorted(os.path.relpath(p, ROOT) for d in PRODUCT_DIRS for p in glob.glob(os.path.join(ROOT, d, "*.py")))
+        self.assertTrue(population and product, "the tree holds tests/*.py and product modules")
+        self.assertEqual([f for f in population if f not in parsed], [],
+                         "every tests/*.py, parsed by the census's own parse")
+        self.assertEqual(sorted(f for f in parsed if f not in population and f not in product), [],
+                         "the build parsed tests/*.py and product modules alone")
+        self.assertEqual(sorted("%s parsed %d times" % (f, n) for f, n in parsed.items() if n != 1), [],
+                         "each file the build read, parsed once in this module's run")
+        self.assertEqual(len(outlived), 0, "%d trees the build parsed were alive once census() had returned, for "
+                         "example %s: a fact holds a node, something else keeps the trees, or a cycle holds them"
+                         % (len(outlived), outlived[:5]))
 
     def test_the_population_is_derived_and_watched(self):
         files, offences, stats = _census_here()
