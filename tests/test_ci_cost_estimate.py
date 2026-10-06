@@ -9,8 +9,9 @@ up to a whole minute. A review on 2026-10-05 found three gaps in the header's es
 runs and secret-scan.yml's copy on a batch push but none of the repository's other workflows (about 5,200 minutes a month
 at the pace of the week to 2026-10-04 by the rates taken then, about 4,200 by the rates measured since: item 6). It priced
 every minute at the list rate without saying how the plan's included minutes bear on the bill. And it called the other
-Linux jobs' public-runner times a floor on the private runner's 2 CPUs, where a local measurement found their longest
-steps barely slower, and named no job whose cap the first private run must confirm.
+Linux jobs' public-runner times a floor on the private runner's 2 CPUs, where a local measurement found a sample of the
+served-page tests and the bats suites barely slower (a sample that did not cover the vendored-tooling job, whose time
+here is its step's measured on 2 CPUs: item 4), and named no job whose cap the first private run must confirm.
 
 Pins over ci.yml's header comment (its comment lines before `on:`, joined into one line):
 1. EVERY WORKFLOW IS COUNTED (EveryWorkflowIsCounted): each file in .github/workflows, read from the directory, is named in
@@ -32,11 +33,12 @@ Pins over ci.yml's header comment (its comment lines before `on:`, joined into o
    at most about twice as long, so a job under half its cap does not reach it by the CPU count alone, and one over half
    can. That bound does not hold for node --test, which runs os.availableParallelism() - 1 test files at once: three on
    4 CPUs and one on 2, so a job of such files can take up to three times as long (three files that each wait 2 s took
-   2.94 times as long on 2 CPUs as on 4, in the review's first round of fork PR 986), and a pin keyed on half the cap
-   misses it. The vendored-tooling job is that job: its time in OTHER_JOB_S is its step's measured on 2 CPUs
-   (TWO_CPU_MEASURED; tests/test_ci_vendored_job.py's LINUX_2CPU_STEP_S), not a 4-CPU time, and the sentence names it on
-   that ground, since a development box's CPUQuota is not the private runner, whatever its share of its cap. Red at the
-   commit before it (2026-10-06): the sentence named the Served pages and Shell jobs alone.
+   2.95 times as long pinned by taskset to 2 CPUs as to 4, 6.28 s against 2.13 s, in the review's first round of fork
+   PR 986), and a pin keyed on half the cap misses it. The vendored-tooling job is that job: its time in OTHER_JOB_S is
+   its step's measured on 2 CPUs (TWO_CPU_MEASURED; tests/test_ci_vendored_job.py's LINUX_2CPU_STEP_S), not a 4-CPU
+   time, and the sentence names it on that ground, since a development box's CPUQuota is not the private runner,
+   whatever its share of its cap. Red at the commit before it (2026-10-06): the sentence named the Served pages and
+   Shell jobs alone.
 At the commit before these pins, all four are red: the header named secret-scan.yml alone of the other workflows, stated
 161 and 238 dollars as the total in all, said nothing of an allowance, and had no sentence on the first private batch run.
 5. THE TWO PREMISES (TheTwoPremises, 2026-10-05): the python job's shard caps take each unmeasured interpreter's

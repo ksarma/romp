@@ -2407,12 +2407,13 @@ HEAVY_MODULES = {
 # (_stash_run_shard), so a pytest a test runs in this process later is not sharded. That configure removes it from the
 # environment of a process that runs tests, so no process a test starts inherits it (a child pytest over a directory,
 # such as a census that collects the tree, would otherwise collect one shard of it). It leaves it in the environment of
-# an xdist controller, which runs no test and whose workers inherit its environment when it starts them; each worker
-# reads it at its own import and removes it in its own configure. A file named on the command line is not asked about:
-# pytest consults pytest_ignore_collect only for the paths it finds under the ones it was handed. Nor is a test file
-# outside tests/: pytest consults this file's hooks only for paths under tests/, so every shard collects such a file
-# (ci.yml's Run pytest step collects from the repository root), and tests/test_ci_shards.py's census goes red on it,
-# naming it among the files in two or more shards. git ls-files lists no test file outside tests/ (2026-10-06).
+# an xdist controller (by xdist's own test for one: a dist option other than "no" and a tx list that is not empty),
+# which runs no test and whose workers inherit its environment when it starts them; each worker reads it at its own
+# import and removes it in its own configure. A file named on the command line is not asked about: pytest consults
+# pytest_ignore_collect only for the paths it finds under the ones it was handed. Nor is a test file outside tests/:
+# pytest consults this file's hooks only for paths under tests/, so every shard collects such a file (ci.yml's Run
+# pytest step collects from the repository root), and tests/test_ci_shards.py's census goes red on it, naming it among
+# the files in two or more shards. git ls-files lists no test file outside tests/ (2026-10-06).
 # tests/test_ci_shards.py holds the shards to a partition of the collected test files, each in one shard, none in two,
 # none left out.
 # The rule lives in this file rather than a module of its own because this file imports no module of the repository
@@ -2491,15 +2492,17 @@ def is_test_file(path, patterns=TEST_FILE_PATTERNS):
 def _stash_run_shard(config):
     """Take the run's shard into the config, once a process (a later configure in the process, a pytest a test runs in
     it, gets none), refusing a value that names no shard as a usage error before collection starts; then remove the
-    variable from the environment unless this process is an xdist controller, whose workers inherit its environment
-    (xdist's dist option is "no" in a worker and in a run without workers)."""
+    variable from the environment unless this process is an xdist controller, whose workers inherit its environment.
+    The test is xdist's own for handing tests to workers (its _is_distribution_mode), which needs both a dist option
+    other than "no" and a tx list that is not empty. A worker has dist "no", and a run with neither -n nor --tx has no
+    tx, so --dist alone runs in process; xdist's tryfirst pytest_cmdline_main fills tx from -n before this configure."""
     global _RUN_SHARD_TEXT
     text, _RUN_SHARD_TEXT = _RUN_SHARD_TEXT, None
     try:
         config.stash[_RUN_SHARD] = parse_shard(text)
     except ValueError as e:
         raise pytest.UsageError(str(e))
-    if config.getoption("dist", "no") == "no":
+    if config.getoption("dist", "no") == "no" or not config.getoption("tx", None):
         os.environ.pop("ROMP_TESTS_SHARD", None)
 
 

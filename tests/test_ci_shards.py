@@ -19,11 +19,13 @@ Two kinds of pin:
    probe items, under -n 1 (an xdist controller and one worker, the Linux cells' form) and with no -n, and holds the
    files whose item passed to that shard's collected files; each item asserts the variable is absent from its
    process's environment. TheShardEnvironmentInCIsForm runs synthetic test files in a temporary directory outside the
-   checkout under -n 1 and -n 0, and holds that only the named shard's files run and that neither a test nor a process
-   it starts sees the variable. Both are red when the controller removes the variable before its worker starts (the
-   worker then runs every file) and when a process that runs tests keeps it. AValueThatNamesNoShard runs the census's
-   child with values that name no shard: each ends in pytest's usage error, naming the variable and the value, with no
-   file collected.
+   checkout under -n 1 and -n 0, and under two forms outside CI's that run in process, --dist load with no workers and
+   --tx popen with no dist mode, and holds that only the named shard's files run and that neither a test nor a process
+   it starts sees the variable. Both classes are red when the controller removes the variable before its worker starts
+   (the worker then runs every file) and when a process that runs tests keeps it; the two forms outside CI's are red
+   when the conftest tells a controller by xdist's dist option alone (--dist load) or by its tx list alone (--tx
+   popen), where xdist's own test needs both. AValueThatNamesNoShard runs the census's child with values that name no
+   shard: each ends in pytest's usage error, naming the variable and the value, with no file collected.
 2. Source pins over ci.yml, read by line shape with no YAML library, as tests/test_ci_workflow_concurrency.py reads it
    (ShardMatrix): the python job's shard axis lists 1 to SHARD_COUNT; a batch push runs each interpreter as
    SHARD_COUNT Linux jobs, one per shard, and a dispatch with its macos input on (tests/test_ci_macos_input.py) adds one
@@ -265,18 +267,22 @@ def test_records_the_shard_variable():
 class TheShardEnvironmentInCIsForm(unittest.TestCase):
     """tests/conftest.py's handling of SHARD_ENV, run in CI's forms (round 1 of fork PR 986, 2026-10-06): a child
     `pytest -n 1` (the Linux cells' form, an xdist controller and one worker) and a child `pytest -n 0` (the macOS
-    cells' form, in process), each with SHARD_ENV set to a shard k, over synthetic test files written to a temporary
-    directory outside the checkout, under the checkout's conftest loaded as a plugin (-p tests.conftest, from the
-    repository root: tests/test_sdk_singleton_ratchet.py's nested_run shape). Outside, because a test file written under
-    tests/ during a run would join tests/test_thread_stop_census.py's stray check and this module's census, which
-    collects from the root, on another worker at the same moment. Each file records the variable as its test sees it
-    and as a process the test starts sees it. Held: exactly the files the rule puts in shard k ran (shard_of over each
-    file's path, which depends on the temporary path, so k is the first file's shard and files are added until another
-    shard holds one), and every record reads None in both views. Red under -n 1 when the xdist controller removes the
-    variable (its worker then runs every file), and in both forms when the process that runs tests keeps it (both
-    views read k)."""
+    cells' form, in process). And in two forms outside CI's, each in process too, since xdist hands tests to workers
+    only when its dist option is not "no" and its tx list is not empty: `pytest --dist load` (a dist mode with neither
+    -n nor --tx, so no tx list) and `pytest --tx popen` (a tx list with no dist mode). Each runs with SHARD_ENV set to a
+    shard k, over synthetic test files written to a temporary directory outside the checkout, under the checkout's
+    conftest loaded as a plugin (-p tests.conftest, from the repository root: tests/test_sdk_singleton_ratchet.py's
+    nested_run shape). Outside, because a test file written under tests/ during a run would join
+    tests/test_thread_stop_census.py's stray check and this module's census, which collects from the root, on another
+    worker at the same moment. Each file records the variable as its test sees it and as a process the test starts sees
+    it. Held: exactly the files the rule puts in shard k ran (shard_of over each file's path, which depends on the
+    temporary path, so k is the first file's shard and files are added until another shard holds one), and every record
+    reads None in both views. Each form is red under its own defect: -n 1 under a controller that removes the variable
+    (its worker then runs every file); -n 0 under a process that runs tests and keeps it (both views read k); --dist
+    load under a test of the dist option alone, and --tx popen under a test of the tx list alone, each of which keeps
+    the variable in that run's one process (both views read k)."""
 
-    def run_ci_form(self, workers):
+    def run_ci_form(self, *opts):
         base = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, base, True)
         self.assertFalse(base == ROOT or base.startswith(ROOT + os.sep),
@@ -300,7 +306,7 @@ class TheShardEnvironmentInCIsForm(unittest.TestCase):
         env = probe_child_env(str(k))
         env["TMPDIR"] = tmp
         p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "tests.conftest", "-p", "no:cacheprovider",
-                            "-p", "no:anyio", "--rootdir", case, "-n", workers, case],
+                            "-p", "no:anyio", "--rootdir", case, *opts, case],
                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
         tail = (p.stdout + p.stderr)[-3000:]
         got = {}
@@ -318,15 +324,21 @@ class TheShardEnvironmentInCIsForm(unittest.TestCase):
                           "views (the test's own, a child's) that are not None": views},
                          {"ran beyond shard k's files": [], "short of them": [],
                           "views (the test's own, a child's) that are not None": {}},
-                         "pytest -n %s with %s=%d over %d synthetic files (%d of them in shard %d) exited %d: %s"
-                         % (workers, SHARD_ENV, k, len(shards), len(want), k, p.returncode, tail))
+                         "pytest %s with %s=%d over %d synthetic files (%d of them in shard %d) exited %d: %s"
+                         % (" ".join(opts), SHARD_ENV, k, len(shards), len(want), k, p.returncode, tail))
         self.assertEqual(p.returncode, 0, tail)
 
     def test_under_one_worker_only_the_shards_files_run_and_no_view_sees_the_variable(self):
-        self.run_ci_form("1")
+        self.run_ci_form("-n", "1")
 
     def test_in_process_only_the_shards_files_run_and_no_view_sees_the_variable(self):
-        self.run_ci_form("0")
+        self.run_ci_form("-n", "0")
+
+    def test_a_dist_mode_with_no_workers_runs_in_process_and_no_view_sees_the_variable(self):
+        self.run_ci_form("--dist", "load")
+
+    def test_a_tx_list_with_no_dist_mode_runs_in_process_and_no_view_sees_the_variable(self):
+        self.run_ci_form("--tx", "popen")
 
 
 class AValueThatNamesNoShard(unittest.TestCase):

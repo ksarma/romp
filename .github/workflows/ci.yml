@@ -964,7 +964,8 @@ jobs:
     # review's first round of fork PR 986: the step's command over this branch, with node 22, two
     # copies at once on a development box, took 1664.87 s under a CPUQuota of 200 percent and
     # 1326.29 s under 400 percent, 25.5 percent longer, with 1148 tests and no failure in each;
-    # three node:test files that each wait 2 s took 2.94 times as long with 2 CPUs as with 4.
+    # three node:test files that each wait 2 s took 2.95 times as long pinned to 2 CPUs as to 4
+    # (taskset; 6.28 s against 2.13 s).
     # 1664.87 s is 27 min 45 s, and half again is 41 min 37 s, so 45. The box has zsh, whose legs
     # the Linux runner skips (below), so that time counts legs CI does not run; the cap and the
     # header's cost estimate take it as measured. The header's sentence on the first private batch
