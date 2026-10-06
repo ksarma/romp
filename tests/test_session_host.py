@@ -856,18 +856,18 @@ class ReplayedEchoes(unittest.TestCase):
         count at 1 until the next result. They stay counted because excluding them would let the unattached grace (900 s by
         default, UNATTACHED_GRACE_DEFAULT_S) end a CLI whose background subagent is still streaming. A later change that
         excludes them gets its own ruling, with a grace check that knows about background work, and changes this test.
-        The last row is one _cli_echo names (the isReplay key, the tag first), which no CLI version writes with
-        parent_tool_use_id set: it is counted too, so the echo rule changes nothing for a subagent's rows."""
+        The last row has the shape of an echo (the isReplay key, the tag first), which no CLI version writes with
+        parent_tool_use_id set: it is counted too, so the echo rule changes nothing for a subagent's rows. The case reads
+        only the count and host.log, so it passes on the code before the echo rule as well, which is what it pins."""
         task = "toolu_invented_task"
-        rows = (("a subagent's assistant row", dict(_assistant_row("an invented subagent step"), parent_tool_use_id=task), False),
-                ("a subagent's kickoff prompt", _echo_row("an invented subagent prompt", parent_tool_use_id=task), False),
+        rows = (("a subagent's assistant row", dict(_assistant_row("an invented subagent step"), parent_tool_use_id=task)),
+                ("a subagent's kickoff prompt", _echo_row("an invented subagent prompt", parent_tool_use_id=task)),
                 ("a subagent's tool result", _echo_row([{"type": "tool_result", "tool_use_id": "toolu_invented_sub",
-                                                         "content": "an invented tool output"}], parent_tool_use_id=task), False),
+                                                         "content": "an invented tool output"}], parent_tool_use_id=task)),
                 ("a subagent's row shaped like an echo", _echo_row("<local-command-stdout>invented</local-command-stdout>",
-                                                                   parent_tool_use_id=task, isReplay=True), True))
-        for name, rec, echo_shaped in rows:
+                                                                   parent_tool_use_id=task, isReplay=True)))
+        for name, rec in rows:
             with self.subTest(row=name):
-                self.assertEqual(sh._cli_echo(rec), echo_shaped, "what the echo test says of it: %s" % name)
                 self._feed(self.RESULT)
                 before = len(self._reopened())
                 self._feed(rec)
