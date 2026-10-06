@@ -454,6 +454,21 @@ class HelperRun(_Settings):
         self.assertEqual(sorted(role for role, _pid in recs), ["script", "sleep"], "both were up before the bound")
         self.assertEqual(_left(recs), [], "the timeout leaves neither the script nor its sleep running")
 
+    def test_a_line_longer_than_the_pipe_buffer_is_read_while_it_is_written(self):
+        # A helper that prints more than a pipe holds (65536 bytes by default on Linux) blocks in its write until the
+        # reader drains the pipe. run_helper reads while it waits, so the over-long line comes back at once and is
+        # refused for what it is; a run that waited for the exit before it read would hang to the bound and then say
+        # "timed out" instead. The bound here is small, so such a regression fails in seconds.
+        n = 200000
+        cmd = " ".join(shlex.quote(a) for a in (sys.executable, "-c", "import sys; sys.stdout.write('x' * %d)" % n))
+        t0 = time.monotonic()
+        with self.assertRaises(cred.CredentialError) as cm:
+            cred.run_helper(cmd, timeout_s=5)
+        elapsed = time.monotonic() - t0
+        self.assertGreater(n, 65536)
+        self.assertEqual(str(cm.exception), "apiKeyHelper printed an empty or invalid key (one line on stdout, exit 0)")
+        self.assertLess(elapsed, 2.5, "read while it was written, well within the 5 s bound")
+
 
 @unittest.skipUnless(os.path.isdir("/proc/self"), "reads the helper's processes from /proc")
 class HelperTimeoutEndsTheGroup(_Settings):
