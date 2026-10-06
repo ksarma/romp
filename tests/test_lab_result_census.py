@@ -43,12 +43,17 @@ THE RULES.
        writeAll        the helper's raw writer, exported for the helper's own pins; a driver calls writeResult or
                        writeLine
   H  Every browser driver hands its record through the helper. A browser driver is a module-level text that launches a
-     browser (a code line holding `.launch(`) and is no other text's head (a text another text is built on with +:
-     DRIVER = DRIVER_HEAD + r"..."), the texts composed by + across the population (names from this module, names a
-     module imports from another served module, attributes of a served module imported by alias); it must call
-     writeResult. So must every driver file a served module names.
+     browser (a code line holding `.launch(`, comment lines blanked as for W) and is no other text's head (a text
+     another text is built on with +: DRIVER = DRIVER_HEAD + r"..."), the texts composed by + and by str.replace across
+     the population (names from this module, names a module imports from another served module, attributes of a served
+     module imported by alias; a replacement whose value is known only at run time, such as json.dumps(REPLY), is read
+     as a neutral 0, so it can neither supply a call nor hide one the text has); it must call writeResult in its code.
+     So must every driver file a served module names. "In its code": the text is read with its comments, string
+     literals, template literals' text and regex literals blanked by a small lexer (_js_code; a template's ${...} is
+     code), so writeResult named in a comment or a string does not count.
   F  Every module that runs node hands a record through the helper: a module that holds a node argv (the str constant
-     "node"), a browser driver or a driver file holds a text or names a file that calls writeResult.
+     "node"), a browser driver or a driver file holds a text or names a file that calls writeResult in its code, read
+     as for H.
   R  No module reads a record off a driver's stream itself, keyed on two spellings: no str constant beginning RESULT is
      the argument of a string search (startswith, split, partition, find, index, removeprefix and their kin) or the
      left side of an `in` test, and no json.loads or json.load is handed an expression that reads a stdout or stderr
@@ -66,10 +71,13 @@ WHAT IT CANNOT SEE (stated, not closed; each planted in StatedBounds and shown t
 constants or built from strings at run time (process["std" + "out"]); fd 1 held in a name (const o = 1;
 fs.writeSync(o, s)); a write in a module the driver imports from outside tests/ or from a module outside the served step
 (none at this tree: every driver text a served module runs is defined in a served module); a record handed through
-stderr (console.error), which carries the diagnostics every module prints in its failure text; and a browser driver
-written inside a function or composed by any operator but + (W still reads its constants; F still holds its module).
-Each W form is keyed on the spelling above, not on what a write does: a road to stdout that none of the spellings
-names is outside W, and tests/lab_result.cjs's header says why there is no other road a driver needs.
+stderr (console.error), which carries the diagnostics every module prints in its failure text; a browser driver
+written inside a function or a container (a tuple, a dict), or composed by any operator but + or any method but
+str.replace (str.format, an f-string, %, a join), or by a str.replace whose old string or count is known only at run
+time (W still reads its constants; F still holds its module); and, for H and F, a regex literal right after ), ] or },
+which the lexer reads as a division, so the regex's text is read as code. Each W form is keyed on the spelling above,
+not on what a write does: a road to stdout that none of the spellings names is outside W, and tests/lab_result.cjs's
+header says why there is no other road a driver needs.
 
 Synthetic: reads the tree only; no node, no browser. Planted texts are assembled in this file and in temporary trees.
 """
@@ -241,6 +249,118 @@ def _blank_comments(text):
     return "\n".join("" if COMMENT_LINE.match(ln) else ln for ln in text.split("\n"))
 
 
+_JS_TOKEN = re.compile(r"\s+|//|/\*|[\"'`]|/|[A-Za-z_$\u0080-\uffff][\w$\u0080-\uffff]*|\.?\d[\w.]*|.", re.S)
+# after these words a / opens a regex literal; after any other word, a number, a literal, ) ] or } it divides
+_REGEX_AFTER = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else",
+                "yield", "await"}
+
+
+def _js_code(text):
+    """`text` with every comment, string literal, template literal's text and regex literal blanked to spaces (line
+    feeds kept), so what is left is the code node runs; a template's ${...} is code and is read as code. A small
+    lexer, not a parser: a / right after ), ] or } is read as a division (a regex literal there is read as code), a /
+    whose regex would cross a line end is a division, and a string left open ends at its line's end."""
+    out = list(text)
+    n = len(text)
+
+    def blank(a, b):
+        for k in range(a, min(b, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    def template_text(start, j):
+        """Blank from `start` through the template text from j: to its closing backtick ((end, False)) or through the
+        next ${ ((end, True))."""
+        while j < n:
+            c = text[j]
+            if c == "\\":
+                j += 2
+            elif c == "`":
+                blank(start, j + 1)
+                return j + 1, False
+            elif text.startswith("${", j):
+                blank(start, j + 2)
+                return j + 2, True
+            else:
+                j += 1
+        blank(start, n)
+        return n, False
+
+    i, depth, subst, prev = 0, 0, [], ""
+    if text.startswith("#!"):
+        j = text.find("\n")
+        i = n if j < 0 else j
+        blank(0, i)
+    while i < n:
+        tok = _JS_TOKEN.match(text, i).group()
+        c = tok[0]
+        if c.isspace():
+            i += len(tok)
+        elif tok == "//":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            blank(i, j)
+            i = j
+        elif tok == "/*":
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            blank(i, j)
+            i = j
+        elif c in "'\"":
+            j = i + 1
+            while j < n and text[j] not in (c, "\n"):
+                j += 2 if text[j] == "\\" else 1
+            j = j + 1 if j < n and text[j] == c else min(j, n)
+            blank(i, j)
+            i, prev = j, "lit"
+        elif c == "`":
+            i, opened = template_text(i, i + 1)
+            if opened:
+                subst.append(depth)
+            prev = "{" if opened else "lit"
+        elif c == "}" and subst and subst[-1] == depth:
+            subst.pop()
+            i, opened = template_text(i, i + 1)
+            if opened:
+                subst.append(depth)
+            prev = "{" if opened else "lit"
+        elif c == "/":
+            word = prev[2:] if prev.startswith("w:") else None
+            regex = prev not in ("lit", "num", ")", "]", "}") and (word is None or word in _REGEX_AFTER)
+            j, cls = i + 1, False
+            while regex and j < n:
+                d = text[j]
+                if d == "\n":
+                    break
+                if d == "\\":
+                    j += 2
+                    continue
+                if cls:
+                    cls = d != "]"
+                elif d == "[":
+                    cls = True
+                elif d == "/":
+                    break
+                j += 1
+            if regex and j < n and text[j] == "/":
+                j += 1
+                while j < n and (text[j].isalnum() or text[j] in "_$"):
+                    j += 1
+                blank(i, j)
+                i, prev = j, "lit"
+            else:
+                i, prev = i + 1, "/"
+        else:
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+            prev = ("w:" + tok if (c.isalpha() or c in "_$" or ord(c) >= 0x80)
+                    else "num" if (c.isdigit() or (c == "." and len(tok) > 1)) else tok)
+            i += len(tok)
+    return "".join(out)
+
+
 def scan_text(text):
     """[(line offset, form, the line)] for every W form in `text`, its comment lines blanked."""
     code = _blank_comments(text)
@@ -254,7 +374,8 @@ def scan_text(text):
 
 
 def _calls_write_result(text):
-    return bool(WRITE_RESULT.search(_blank_comments(text)))
+    """True when `text` calls writeResult in its code: comments, strings, templates' text and regexes blanked."""
+    return bool(WRITE_RESULT.search(text)) and bool(WRITE_RESULT.search(_js_code(text)))
 
 
 def _launches(text):
@@ -293,9 +414,16 @@ def _ref(node, m, alias, frm):
     return None
 
 
+# what H reads in place of a str.replace value known only at run time: a number, so it opens no string or comment and
+# holds no call
+RUNTIME_VALUE = "0"
+
+
 def composed(modules):
-    """({(module, name): text} for every module-level text composed of str constants and refs by +, {(module, name)
-    used as an operand of + anywhere in the population}): the browser drivers and their heads."""
+    """({(module, name): text} for every module-level text composed of str constants and refs by + and by
+    str.replace, {(module, name) used as an operand of + anywhere in the population}): the browser drivers and their
+    heads. A replace whose old string is not a known text, or whose count is not a constant int, is not composed; a
+    replacement value that is not a known text is read as RUNTIME_VALUE."""
     imps = {m: _imports(tree, modules) for m, (_, tree) in modules.items()}
     env, busy = {}, set()
 
@@ -312,6 +440,16 @@ def composed(modules):
             if isinstance(e, ast.BinOp) and isinstance(e.op, ast.Add):
                 a, b = ev(e.left), ev(e.right)
                 return a + b if isinstance(a, str) and isinstance(b, str) else None
+            if (isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "replace"
+                    and len(e.args) in (2, 3) and not e.keywords):
+                s, old, count = ev(e.func.value), ev(e.args[0]), -1
+                if len(e.args) == 3:
+                    a = e.args[2]
+                    count = a.value if isinstance(a, ast.Constant) and type(a.value) is int else None
+                if not (isinstance(s, str) and isinstance(old, str) and count is not None):
+                    return None
+                new = ev(e.args[1])
+                return s.replace(old, new if isinstance(new, str) else RUNTIME_VALUE, count)
             r = _ref(e, m, alias, frm)
             if r is None:
                 return None
@@ -441,14 +579,20 @@ def _tree(test, files):
     return root
 
 
-# the three spellings of the class, each a whole-record write in the place a driver's lab.writeResult(cfg, out) stood
+# the three spellings of the class, each a whole-record write planted beside a real driver's lab.writeResult call
 WHOLE_RECORD = {
     "writeSync": 'fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\\n");',
     "stdout.write": 'process.stdout.write("RESULT:" + JSON.stringify(out) + "\\n", () => process.exit(0));',
     "console.log": 'console.log("RESULT:" + JSON.stringify(out));',
 }
 WHOLE_RECORD_FORM = {"writeSync": "fd-1", "stdout.write": "process.stdout", "console.log": "console"}
-ANCHOR = "lab.writeResult(cfg, out);"
+HELPER_CALL = re.compile(r"\blab\.writeResult\s*\(")
+
+
+def _beside_the_helper_call(text, line):
+    """`text` with `line` on a line of its own just before the line of its last lab.writeResult( call."""
+    k = text.rfind("\n", 0, list(HELPER_CALL.finditer(text))[-1].start()) + 1
+    return text[:k] + line + "\n" + text[k:]
 
 # one line per W form, each refused alone (the form named), beside lines that name a form only in a comment or a string
 # the reader never runs, which pass
@@ -501,9 +645,23 @@ class ServedDriverWrites(unittest.TestCase):
         self.assertNotIn(HELPER, got["files"], "the helper is the writer, not a driver")
         self.assertGreaterEqual(got["record_texts"], len({k[0] for k in got["drivers"]}),
                                 "every module with a browser driver holds a text that calls writeResult")
-        print("LABRESULT modules=%d browser drivers=%d (in %d modules) driver files=%d texts calling writeResult=%d"
-              % (len(got["modules"]), len(got["drivers"]), len({k[0] for k in got["drivers"]}), len(got["files"]),
-                 got["record_texts"]), file=sys.stderr)
+        # every module-level text built by str.replace on a str constant that launches a browser is one of H's drivers
+        replaced = set()
+        for m in got["modules"]:
+            for n in parse_cache.source_and_tree(os.path.join(HERE, m))[1].body:
+                if not (isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)):
+                    continue
+                v = n.value
+                while isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "replace":
+                    v = v.func.value
+                if v is not n.value and isinstance(v, ast.Constant) and isinstance(v.value, str) and _launches(v.value):
+                    replaced.add((m, n.targets[0].id))
+        self.assertTrue(replaced, "no served module builds a browser driver by str.replace any more: this check reads "
+                                  "nothing at this tree, so drop it (Plants holds the reading)")
+        self.assertEqual(sorted(replaced - set(got["drivers"])), [], "a driver built by str.replace that H does not read")
+        print("LABRESULT modules=%d browser drivers=%d (in %d modules, %d built by str.replace) driver files=%d texts "
+              "calling writeResult=%d" % (len(got["modules"]), len(got["drivers"]), len({k[0] for k in got["drivers"]}),
+                                         len(replaced), len(got["files"]), got["record_texts"]), file=sys.stderr)
 
     def _rule(self, rule, what):
         got = _census_here()
@@ -546,26 +704,98 @@ class Plants(unittest.TestCase):
     maxDiff = None
 
     def _real(self):
-        """Two real served drivers from the tree, as they are: an inline text (tests/test_chat_split_served.py's
-        DRIVER) and an ES module driver file (tests/keyboard_gap_browser.mjs), each holding the anchor once."""
+        """Three real served drivers from the tree, as they are: an inline text (tests/test_chat_split_served.py's
+        DRIVER), an ES module driver file (tests/keyboard_gap_browser.mjs) and a CommonJS one
+        (tests/spend_modal_headless.js), each clean as it stands and calling lab.writeResult in its code."""
         tree = parse_cache.source_and_tree(os.path.join(HERE, "test_chat_split_served.py"))[1]
         inline = [v for _, v, n in texts(tree) if n == "DRIVER"]
         self.assertEqual(len(inline), 1, "tests/test_chat_split_served.py holds its DRIVER as one module-level text")
-        with open(os.path.join(HERE, "keyboard_gap_browser.mjs"), encoding="utf-8") as f:
-            mjs = f.read()
-        subjects = {"inline": inline[0], "mjs": mjs}
+        subjects = {"inline": inline[0]}
+        for where, name in (("mjs", "keyboard_gap_browser.mjs"), ("cjs", "spend_modal_headless.js")):
+            with open(os.path.join(HERE, name), encoding="utf-8") as f:
+                subjects[where] = f.read()
         for where, text in subjects.items():
-            self.assertEqual(text.count(ANCHOR), 1, "%s holds %r once, where the plant goes" % (where, ANCHOR))
+            self.assertTrue(HELPER_CALL.search(text), "%s calls lab.writeResult, where the plants go" % where)
+            self.assertTrue(_calls_write_result(text), "%s calls writeResult in its code" % where)
             self.assertEqual(scan_text(text), [], "%s is clean as it stands, so a red below is the plant's" % where)
         return subjects
 
-    def test_a_whole_record_write_in_each_spelling_is_refused_in_an_inline_and_an_mjs_driver(self):
+    def _census_of(self, where, text):
+        """The census over a temporary tree whose one served module runs `text` as `where` runs it: an inline DRIVER
+        text, or the driver file the module names (by the real file's name), beside a stub helper."""
+        if where == "inline":
+            files = {"test_planted_served.py": "DRIVER = %r\nN = \"node\"\n" % text}
+        else:
+            name = {"mjs": "keyboard_gap_browser.mjs", "cjs": "spend_modal_headless.js"}[where]
+            files = {"test_planted_served.py": "ARGV = [\"node\", %r]\n" % name, name: text,
+                     "lab_result.cjs": "module.exports = {};\n"}
+        return census(_tree(self, files), ["tests/test_*_served.py"], [])
+
+    def test_a_whole_record_write_in_each_spelling_is_refused_in_three_real_drivers(self):
         for where, text in self._real().items():
             for spelling, line in WHOLE_RECORD.items():
                 with self.subTest(driver=where, spelling=spelling):
-                    hits = scan_text(text.replace(ANCHOR, line))
+                    hits = scan_text(_beside_the_helper_call(text, line))
                     self.assertEqual([h[1] for h in hits], [WHOLE_RECORD_FORM[spelling]], hits)
                     self.assertIn(line.strip()[:40], hits[0][2])
+
+    def test_a_driver_off_the_helper_that_names_write_result_only_where_node_never_runs_it_is_refused(self):
+        # each real driver taken off the helper: its lab.writeResult calls become a writer of its own (the record to
+        # the file with no nonce), and writeResult( stays only in a comment, a string, a template's text or a regex
+        for where, text in self._real().items():
+            with self.subTest(driver=where, shape="the driver as it is"):
+                got = self._census_of(where, text)
+                self.assertEqual((got["W"], got["H"], got["F"]), ([], [], []),
+                                 "the real driver passes, so a red below is the plant's")
+                self.assertTrue(got["drivers"] or got["files"], "the census read the driver")
+            off = OWN_WRITER + "\n" + HELPER_CALL.sub("writeOwnFile(", text)
+            for shape, line in NAMED_NOT_CALLED.items():
+                with self.subTest(driver=where, shape=shape):
+                    planted = off + "\n" + line + "\n"
+                    if line:
+                        self.assertTrue(WRITE_RESULT.search(planted),
+                                        "the plant spells writeResult(, so the red is the lexer's reading, not a missing name")
+                    got = self._census_of(where, planted)
+                    self.assertEqual(got["W"], [], got["W"])
+                    want_h = ["test_planted_served.py"] if where == "inline" else ["tests/" + self._file(where)]
+                    self.assertEqual([o[0] for o in got["H"]], want_h, got["H"])
+                    self.assertEqual([o[0] for o in got["F"]], ["test_planted_served.py"], got["F"])
+
+    @staticmethod
+    def _file(where):
+        return {"mjs": "keyboard_gap_browser.mjs", "cjs": "spend_modal_headless.js"}[where]
+
+    def test_the_lexer_reads_a_call_in_code_and_not_in_a_comment_a_string_a_template_or_a_regex(self):
+        for src in LEXER_CALLS:
+            with self.subTest(called=src):
+                code = _js_code(src)
+                self.assertEqual((len(code), code.count("\n")), (len(src), src.count("\n")), "positions and lines kept")
+                self.assertTrue(_calls_write_result(src), code)
+        for src in LEXER_NOT_CALLS:
+            with self.subTest(not_called=src):
+                self.assertTrue(WRITE_RESULT.search(src), "the sample spells writeResult(")
+                self.assertFalse(_calls_write_result(src), _js_code(src))
+
+    def test_a_driver_composed_by_str_replace_is_read_by_h(self):
+        launch = "const browser = await chromium.launch();\\n"
+        mod = ("import json\nimport os\nREPLY = {\"a\": 1}\nSID = \"s-1\"\n"
+               "GOOD = \"" + launch + "const reply = REPLY_PLACEHOLDER;\\nlab.writeResult(cfg, out);\\n\"" +
+               ".replace(\"REPLY_PLACEHOLDER\", json.dumps(REPLY)).replace(\"SID_PLACEHOLDER\", SID)\n"
+               "ONCE = \"" + launch + "lab.writeResult(cfg, out);\\nlab.writeResult(cfg, out);\\n\"" +
+               ".replace(\"lab.writeResult(cfg, out);\", \"\", 1)\n"
+               "BAD = \"" + launch + "const reply = REPLY_PLACEHOLDER;\\n\".replace(\"REPLY_PLACEHOLDER\", json.dumps(REPLY))\n"
+               "CUT = \"" + launch + "lab.writeResult(cfg, out);\\n\".replace(\"lab.writeResult(cfg, out);\", \"\")\n"
+               "HID = \"" + launch + "CALL\\n\".replace(\"CALL\", json.dumps(\"lab.writeResult(cfg, out);\"))\n"
+               "SWAP = \"" + launch + "lab.writeResult(cfg, out);\\n\".replace(\"lab.writeResult(cfg, out);\", json.dumps(REPLY))\n"
+               "N = \"node\"\n")
+        got = census(_tree(self, {"test_replace_served.py": mod}), ["tests/test_*_served.py"], [])
+        self.assertEqual([k[1] for k in got["drivers"]], ["BAD", "CUT", "GOOD", "HID", "ONCE", "SWAP"],
+                         "each text composed by str.replace is a driver")
+        self.assertEqual(sorted(o[2].split()[0] for o in got["H"]), ["BAD", "CUT", "HID", "SWAP"],
+                         "the replaced text is what H reads: a call the replace removes is gone, a count of 1 leaves the "
+                         "second call, and a value known only at run time neither supplies a call nor leaves the one it "
+                         "replaced")
+        self.assertEqual(got["F"], [])
 
     def test_the_census_names_a_planted_write_in_a_served_module_and_in_a_driver_file_it_names(self):
         for spelling, line in WHOLE_RECORD.items():
@@ -665,6 +895,52 @@ class Plants(unittest.TestCase):
         self.assertEqual([(o[0], o[1]) for o in got["W"]], [("tests/" + os.path.join("util", "dump.mjs"), 1)])
 
 
+# a driver taken off the helper names writeResult( only where node never runs it
+OWN_WRITER = 'const writeOwnFile = (t, r) => require("fs").writeFileSync(t.resultPath, JSON.stringify(r));'
+NAMED_NOT_CALLED = {
+    "nowhere": "",
+    "a comment line": "// lab.writeResult(cfg, out);",
+    "a trailing comment": "writeOwnFile(cfg, out); // was lab.writeResult(cfg, out)",
+    "a block comment": "writeOwnFile(cfg, out); /* writeResult( */",
+    "a string": 'console.error("skipping lab.writeResult(cfg, out)");',
+    "a template literal": "console.error(`skipping lab.writeResult(${cfg.resultPath}, out)`);",
+    "a regex literal": "const was = /lab.writeResult(cfg, out)/;",
+}
+# the lexer's reading, each sample spelling writeResult(: called in code, and named where node never runs it
+LEXER_CALLS = [
+    "lab.writeResult(cfg, out);",
+    "x = a / b / c; lab.writeResult(cfg, out); // c / d",
+    "x = 1 / 2; lab.writeResult(cfg, out); y = 3 / 4;",
+    "x = f(a) / 2; lab.writeResult(cfg, out); y = 3 / 4;",
+    "y = g[0] / 3; lab.writeResult(cfg, out); z = a / b;",
+    'const u = "http://127.0.0.1/"; lab.writeResult(cfg, out);',
+    "s = s.replace(/\"/g, ''); lab.writeResult(cfg, out);",
+    "const t = `${lab.writeResult(cfg, out)}`;",
+    "const t = `a ${`b ${c}`} d`; lab.writeResult(cfg, out);",
+    "const t = `${ ({a: 1}, lab.writeResult(cfg, out)) }`;",
+    "const o = { a: { b: 1 } }; if (x) { y(); } lab.writeResult(cfg, out);",
+    'const q = "a \\" b"; lab.writeResult(cfg, out);',
+    "#!/usr/bin/env node `\nlab.writeResult(cfg, out);",
+    'const s = "a string left open\nlab.writeResult(cfg, out);',
+    "return /'/.test(s) && lab.writeResult(cfg, out);",
+    "/* a */ lab.writeResult(cfg, out); /* b */",
+]
+LEXER_NOT_CALLS = [
+    "// lab.writeResult(cfg, out);",
+    "x(); // lab.writeResult(cfg, out)",
+    "/* lab.writeResult(cfg, out) */",
+    "/*\n lab.writeResult(cfg, out)\n*/",
+    'console.error("lab.writeResult(cfg, out)");',
+    "console.error('lab.writeResult(cfg, out)');",
+    "console.error(`lab.writeResult(cfg, out)`);",
+    "console.error(`${x} lab.writeResult(cfg, out)`);",
+    'const q = "a \\" lab.writeResult(cfg, out)";',
+    "const re = /lab.writeResult(cfg)/g;",
+    "const re = /[/]lab.writeResult(cfg)/;",
+    'const s = "a string left open lab.writeResult(cfg, out)\nnext();',
+]
+
+
 class StatedBounds(unittest.TestCase):
     """The roads the docstring says W does not read, each planted and shown to pass, so the disclosure is held to the
     census's behaviour: widening a form moves one of these, and then the docstring with it."""
@@ -688,6 +964,31 @@ class StatedBounds(unittest.TestCase):
         got = census(root, ["tests/test_*_served.py"], [])
         self.assertEqual(got["modules"], ["test_uses_served.py"])
         self.assertEqual(got["W"], [], "the helper module's write is outside the read, as stated")
+
+    def test_a_browser_driver_composed_another_way_is_outside_h_but_its_module_is_held_by_f(self):
+        shapes = {
+            "str.format": 'DRIVER = "const b = await chromium.launch();\\n{}\\n".format("await b.close();")\n',
+            "an f-string": 'X = "await b.close();"\nDRIVER = f"const b = await chromium.launch();\\n{X}\\n"\n',
+            "%": 'DRIVER = "const b = await chromium.launch();\\n%s\\n" % "await b.close();"\n',
+            "a join": 'DRIVER = "\\n".join(["const b = await chromium.launch();", "await b.close();"])\n',
+            "a tuple": 'DRIVERS = ("const b = await chromium.launch();\\nawait b.close();\\n",)\n',
+            "a dict": 'DRIVERS = {"one": "const b = await chromium.launch();\\nawait b.close();\\n"}\n',
+            "a replace whose old string is known at run time":
+                'import os\nDRIVER = "const b = await chromium.launch();\\nX\\n".replace(os.sep, "/")\n',
+            "a replace whose count is known at run time":
+                'import os\nDRIVER = "const b = await chromium.launch();\\nX\\n".replace("X", "", len(os.sep))\n',
+        }
+        for what, mod in shapes.items():
+            with self.subTest(bound=what):
+                got = census(_tree(self, {"test_bound_served.py": mod + 'N = "node"\n'}), ["tests/test_*_served.py"], [])
+                self.assertEqual((got["drivers"], got["H"]), ([], []), what)
+                self.assertEqual([o[0] for o in got["F"]], ["test_bound_served.py"], what)
+
+    def test_a_regex_literal_right_after_a_paren_is_read_as_code_by_h_and_f(self):
+        mod = 'DRIVER = "const b = await chromium.launch();\\nif (ok) /lab.writeResult(cfg)/.test(s);\\n"\nN = "node"\n'
+        got = census(_tree(self, {"test_bound_served.py": mod}), ["tests/test_*_served.py"], [])
+        self.assertEqual(got["drivers"], [("test_bound_served.py", "DRIVER")])
+        self.assertEqual((got["H"], got["F"]), ([], []), "the regex after ) is read as a division, as stated")
 
     def test_a_browser_driver_built_in_a_function_is_outside_h_but_its_module_is_held_by_f(self):
         mod = ('def drive():\n    text = "const b = await chromium.launch();\\nawait b.close();\\n"\n    return text\n'
