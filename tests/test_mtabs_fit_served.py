@@ -44,8 +44,10 @@ wrap only where it still cannot.
   then the card asks the usage script's own test over its readings (window.__rompUsageReading, the check the panel's opener
   makes); the shell's renderRows, the one writer of those readings, tells an open card on every change, so a reading that
   lands while the card is open shows at once; a shell that cannot be asked leaves Usage enabled with no line, as its bar button was. The Remote kernels glyph wears the accent while a host is connected or attaching, on the glyph
-  alone as on the rail, and the button's label keeps the card's text colour (PR 976's round 1, ui-3). The glyph sits on its button's own fill, and every colour it wears reads at 3:1 or more (a
-  graphic, romp-manager's call 7) on the card and on that fill in both themes: in the light theme its dialing grey and
+  alone as on the rail, and the button's label keeps the card's text colour (PR 976's round 1, ui-3). The glyph sits on its
+  button's own fill, which the button keeps on hover, its border and label still turning accent (round 1, extra6-2), and
+  every colour it wears reads at 3:1 or more (a graphic, romp-manager's call 7) on the card and on that fill, at rest and
+  hovered, in both themes: in the light theme its dialing grey and
   needs-you red are darker than the shell's (feed.css's --rn-wait and --rn-warn, #777777 and #dc3f46 where the shell has
   #8a8a8a and #e5484d, which read 2.59 and 2.94:1 on that theme's button fill, #e7ded2).
 - The fallback. The action cluster is one element (.mtabs-acts) and the bar may wrap: where the tabs and the three actions
@@ -114,7 +116,8 @@ and Usage enabled with no line once the ask the row's return makes has ended. Th
 Remote kernels glyph's colours in the dark and the light theme (THEMES), each on a page of its own at 390px: in the card
 opened from the bar's Settings, every colour the glyph can wear (GLYPH: the glyph lit and attaching, read on its svg, a node connected,
 dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
-colour read with its class set and the element's transitions off. Then a desktop window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell,
+colour read with its class set and the element's transitions off; and again with the pointer moved onto the button (its
+transitions off), against the fill it wears hovered, :hover read as the premise. Then a desktop window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell,
 the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
 clicked at its centre, shows no row of moved actions (not displayed, its buttons boxless: the rail has its own).
 MTABS_FIT_DUMP, a directory, keeps each engine's raw readings there.
@@ -138,7 +141,8 @@ publishes no marker, where the card reads the layout alone (its row shown with n
 asked reads as one with no reading (Usage disabled with its line). The layout leg is red where the card reads the layout
 only when it opens (the row still shown in the widened window), and its glyph line red without the clear of the drop's class
 when the row shows again (the flash then plays at the narrowing). The contrast pin is red at the shell's literals in the light theme, in
-all three engines: the dialing grey #8a8a8a reads 2.59:1 and the needs-you red #e5484d 2.94:1 on the button's fill. Runs in the "Browser-backed served-page tests (pytest)" step of the
+all three engines: the dialing grey #8a8a8a reads 2.59:1 and the needs-you red #e5484d 2.94:1 on the button's fill; its
+hovered half is red where the button takes the row's accent wash on hover, on which the dark needs-you red reads 2.95:1. Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
 ROMP_SERVED_TESTS_ENGINES (CI declares chromium; a developer's box runs all three).
@@ -617,7 +621,8 @@ def _hex(c):
 
 def _contrast_problems(engine, contrast):
     """Each colour the Remote kernels glyph wears reads at GLYPH_FLOOR or more against the card's background and against the
-    button's own fill (the glyph sits on the button), in the dark and the light theme."""
+    button's own fill (the glyph sits on the button), at rest and with the pointer on the button (PR 976's round 1,
+    extra6-2: the hovered fill is a fill the glyph sits on too), in the dark and the light theme."""
     out = []
     for name, theme in THEMES:
         where = "%s Remote kernels glyph, %s theme (%s)" % (engine, name, theme)
@@ -641,6 +646,17 @@ def _contrast_problems(engine, contrast):
                 if on_card < GLYPH_FLOOR or on_fill < GLYPH_FLOOR:
                     out.append("%s: %s, %s, reads %.2f:1 on the card (%s) and %.2f:1 on the button's fill (%s), under %g:1" % (
                         where, k, _hex(_over(col, fill)), on_card, _hex(card), on_fill, _hex(fill), GLYPH_FLOOR))
+            hv = t.get("hover") or {}
+            if hv.get("hovered") is not True:
+                out.append("%s: the pointer on the Remote kernels button does not hover it (the hovered fill's premise): %r" % (where, hv))
+            else:
+                hfill = _over(_rgba(hv.get("fill")), card)
+                for k in GLYPH:
+                    col = _rgba((hv.get("colours") or {}).get(k))
+                    on_hover = _contrast(_over(col, hfill), hfill)
+                    if on_hover < GLYPH_FLOOR:
+                        out.append("%s: %s, %s, reads %.2f:1 on the hovered button's fill (%s), under %g:1" % (
+                            where, k, _hex(_over(col, hfill)), on_hover, _hex(hfill), GLYPH_FLOOR))
         except AssertionError as e:
             out.append("%s: unreadable: %s" % (where, e))
     return out

@@ -85,11 +85,16 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    through tokens, each with the shell's literal as its fallback: the accent, and feed.css's --rn-wait and --rn-warn, the
    dialing grey and the needs-you red, the shell's literals in the dark theme and darker in the light one, where the
    shell's two read under 3:1 on the button's fill. Every colour the glyph wears reads at 3:1 or more (a graphic) on the
-   card and on that fill in both themes, measured in the served card by tests/test_mtabs_fit_served.py.
+   card and on that fill, at rest and hovered, in both themes, measured in the served card by tests/test_mtabs_fit_served.py.
    The accent goes on the glyph alone, as on the rail, where the icon is a glyph and nothing else (PR 976's round 1, ui-3):
    the button's label keeps the card's text colour, since the accent here marks a state, and in the light theme the accent
    on that fill reads 3.89:1, under the 4.5:1 that text needs */
 #rs-pact-net.on svg, #rs-pact-net.busy svg { color: var(--accent, #9cd2ff); }
+/* ...and the button keeps its resting fill on hover (PR 976's round 1, extra6-2), where the row's other buttons take the
+   accent wash (Customize shortcuts' hover, copied above): a status glyph's colours must read at 3:1 on every fill its
+   button wears, and in the dark theme the wash under the needs-you red read 2.95:1. The border and the label still turn
+   accent, so the hover reads as the others' do */
+#rsettings #rs-pact-net:hover:not(:disabled) { background: var(--btn-bg, #2a2a2a); }
 #rs-pact-net.busy svg path { stroke-dasharray: 3 3; animation: rs-pact-march 0.9s linear infinite; }
 @keyframes rs-pact-march { to { stroke-dashoffset: -6; } }
 #rs-pact-net .rn-ok { fill: var(--accent, #9cd2ff); }

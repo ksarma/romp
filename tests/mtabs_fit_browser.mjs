@@ -48,7 +48,8 @@
 // the page parses, as the gear writes it) at cfg.actsViewport: the card opened from the bar's Settings, and in it the card's
 // background, the button's own fill (the glyph sits on it) and each colour the glyph can wear, as computed values: the
 // glyph lit and attaching (its svg's colour, the strokes' currentColor) and each node's fill as connected, dialing and needs you,
-// each read with that class set on the element and the element's transitions off, then put back.
+// each read with that class set on the element and the element's transitions off, then put back; then the same with the
+// pointer moved onto the button's centre (its transitions off first): its hovered fill, its colours, and whether :hover holds.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -614,7 +615,8 @@ try {
     await context.close();
   }
   // the Remote kernels glyph's colours in each theme, against the card's background and the button's fill (the Python side
-  // composites and measures): the card opened from the bar's Settings, each colour read with its class set and put back
+  // composites and measures): the card opened from the bar's Settings, each colour read with its class set and put back, at
+  // rest and with the pointer on the button
   out.contrast = {};
   for (const [name, theme] of cfg.themes || []) {
     const { context, page } = await boot(false, null, theme);
@@ -631,11 +633,14 @@ try {
     if (!sf) throw new Error("no settings frame after the click (the contrast leg, " + name + ")");
     await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
     await frames(page);
-    out.contrast[name] = await sf.evaluate(() => {
+    // one reading: the card's background, the button's fill and every colour the glyph can wear; with `hover`, taken while
+    // the pointer rests on the button, and whether :hover holds there is reported with it
+    const colours = (hover) => sf.evaluate((hv) => {
       const row = document.getElementById("rs-pacts"), card = document.querySelector("#rsettings .rs-card");
       const net = document.getElementById("rs-pact-net"), me = net && net.querySelector(".rn-me"), svg = net && net.querySelector("svg");
       const res = { light: document.body.classList.contains("theme-light"), rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none",
                     card: card ? getComputedStyle(card).backgroundColor : null, fill: null, colours: {} };
+      if (hv) res.hovered = !!net && net.matches(":hover");
       if (!net || !me || !svg) return res;
       // one colour: the element's transitions off (the button's colour and fill fade over 0.12s), the class set, the computed
       // value read, and everything put back. The value is read on `from` where the colour lands on another element: the
@@ -651,7 +656,19 @@ try {
       res.colours.dialing = readAs(me, () => me.setAttribute("class", "rn-me rn-wait"), "fill");
       res.colours["needs you"] = readAs(me, () => me.setAttribute("class", "rn-me rn-warn"), "fill");
       return res;
-    });
+    }, hover);
+    out.contrast[name] = await colours(false);
+    // ...and the button hovered (PR 976's round 1, extra6-2): a real pointer move onto its centre, since :hover cannot be set
+    // by a class, with the button's transitions off first, so the hovered fill is read as it lands, not part way through
+    const at = await sf.evaluate(() => { const n = document.getElementById("rs-pact-net"); if (!n) return null;
+      n.style.transition = "none"; const c = n.getBoundingClientRect(); return { x: c.left + c.width / 2, y: c.top + c.height / 2 }; });
+    const lift = await page.evaluate(() => { const r = document.getElementById("f-settings").getBoundingClientRect(); return { left: r.left, top: r.top }; });
+    if (at) {
+      await page.mouse.move(lift.left + at.x, lift.top + at.y);
+      await frames(page);
+      const hv = await colours(true);
+      out.contrast[name].hover = { hovered: hv.hovered, fill: hv.fill, colours: hv.colours };
+    }
     await context.close();
   }
   // the desktop rail at each width: the actions pinned at its right end, shown ones only (the bell once the push script reveals it)
