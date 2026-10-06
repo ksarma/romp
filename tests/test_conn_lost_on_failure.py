@@ -692,7 +692,9 @@ class NotLeavingCallSites(unittest.TestCase):
         # JavaScript does, and the call in it goes unseen in a reading that balances. A misread that a later delimiter closes
         # again reaches as far as the lexer's rule for what it opened (a quoted string or regex literal to the first line
         # feed no backslash escapes, a template or block comment to its closing delimiter, on its line or any later one), and
-        # a line comment runs on past a carriage return; a lexer that reads one of these scripts right turns its witness red
+        # a line comment runs on past a carriage return; once what the stray delimiter opened closes, the lexer can read what
+        # follows out of step, where a backtick or `/*` opens a template or block comment that can carry the misread to later
+        # lines; a lexer that reads one of these scripts right turns its witness red
         for label, js in [("a quote closed again", "if(a)/'/.test(b);" + x + "();// it's"),
                           ("a slash closed again", "i++/n;" + x + "();y=z/2;"),
                           ("a quote closed again past an escaped line feed", "if(a)/'/.test(b);//\\\n" + x + "();// it's"),
