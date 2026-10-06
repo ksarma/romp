@@ -47,8 +47,10 @@
 // opened over an opening's pull answered with an error status (cfg.errorStatus), one failed in transit (the route aborts it),
 // and one never answered (held) under a shorter bound set on the shell (window.__rompUsagePullMs = cfg.hangMs), Usage read
 // once each ask has ended (the hung one also while it is held, with the time from the click to the loader's end), and after
-// each of the three over a pull answered ok with no rows, Usage read again; then over a pull that reaches the lab, Usage read
-// again.
+// each of the three over a pull answered ok with no rows, Usage read again; then three times the card opened over a held
+// pull, closed, and opened again over a later pull (answered with no rows, failed in transit, reaching the lab), Usage read
+// before and after the held pull ends (failed in transit, answered ok with no rows, answered with cfg.errorStatus); then over a
+// pull that reaches the lab, Usage read again.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -687,8 +689,9 @@ try {
   // with Usage read while it is held, the time from the click to the loader's end, and Usage after it. After each of the three,
   // an opening whose pull the kernel answers ok with no rows, Usage read there: No reading yet alone shows that an ok answer
   // clears the failure (a flag an ok answer left set would say Couldn't load there), and the next failure starts from a read
-  // that did not fail, so its own line shows that it set the flag itself, not a failure before it. Then an opening whose pull
-  // reaches the lab (a reading), where Usage is read once more: enabled, with neither line
+  // that did not fail, so its own line shows that it set the flag itself, not a failure before it. Then the reopen race, twice
+  // (its comment below). Then an opening whose pull reaches the lab (a reading), where Usage is read once more: enabled, with
+  // neither line
   {
     let mode = "boot", boots = 0;
     const held = [];
@@ -745,6 +748,52 @@ try {
       fr.hang = hg;
     }
     fr.okAfterHang = await turn("empty");
+    // the reopen race (the check of PR 976's decisions after round 1): the card's pull A held, the card closed and opened
+    // again over pull B, B ended and Usage read; then A ends, and Usage is read again. Three turns: B answered no rows and A
+    // failing in transit (its route aborted); B failing in transit and A answered ok with no rows; B reaching the lab (a
+    // reading) and A answered with an error status. B started after A and has ended, so A changes neither the flag nor, with
+    // an error status, the readings: Usage keeps B's answer (No reading yet, Couldn't load, enabled with neither line). A
+    // wrapper over the shell's pull (the card calls whatever window.__rompUsagePull holds at each opening) records the order
+    // the two pulls end in, and when A's end has run in the shell, the event Usage is read after; A's bound is set long here
+    // (window.__rompUsagePullMs = cfg.raceMs), so that A ends when its route ends it and not on its own
+    {
+      await page.evaluate((ms) => {
+        window.__rompUsagePullMs = ms;
+        const ask = window.__rompUsagePull; window.__mtabsAsk = ask; window.__mtabsEnds = 0;
+        window.__rompUsagePull = function () {
+          const rec = { end: null, at: 0 }; window.__mtabsPulls.push(rec);
+          const p = ask.apply(this, arguments);
+          Promise.resolve(p).then(() => { rec.end = "answered"; rec.at = ++window.__mtabsEnds; }, () => { rec.end = "failed"; rec.at = ++window.__mtabsEnds; });
+          return p;
+        };
+      }, cfg.raceMs);
+      const race = async (bMode, endA) => {
+        const rc = {};
+        await page.evaluate(() => { window.__mtabsPulls = []; });
+        mode = "hang";
+        await kit.openCard();
+        for (let i = 0; i < 50 && !held.length; i++) await sleep(100);
+        rc.held = held.length;
+        await kit.closeCard();
+        mode = bMode;
+        const sf = await kit.openCard();
+        rc.bAsked = await kit.askEnded(sf);
+        await frames(page);
+        rc.afterB = await kit.usageNow(sf);
+        for (const route of held.splice(0)) { try { await endA(route); } catch (e) { /* the page ended it first */ } }
+        rc.aEnded = await page.waitForFunction(() => window.__mtabsPulls.length >= 2 && window.__mtabsPulls[0].end !== null, null, { timeout: 10000 }).then(() => true, () => false);
+        rc.pulls = await page.evaluate(() => window.__mtabsPulls.map((r) => ({ end: r.end, at: r.at })));
+        await frames(page);
+        rc.afterA = await kit.usageNow(sf);
+        rc.shell = await kit.shellNow(sf);
+        await kit.closeCard();
+        return rc;
+      };
+      fr.raceTransit = await race("empty", (route) => route.abort("failed"));
+      fr.raceOk = await race("transit", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) }));
+      fr.raceStatus = await race("lab", (route) => route.fulfill({ status: cfg.errorStatus, contentType: "application/json", body: JSON.stringify({ error: "synthetic failure" }) }));
+      await page.evaluate(() => { window.__rompUsagePull = window.__mtabsAsk; delete window.__mtabsAsk; delete window.__rompUsagePullMs; });
+    }
     fr.lab = await turn("lab");
     out.failedReads = fr;
     await context.close();

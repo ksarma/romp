@@ -132,7 +132,13 @@ and over one it holds unanswered under a bound of HANG_MS set on the shell (wind
 while it is held, and its end read at least HANG_MS and at most HANG_WAIT_MS after the click), shows Usage disabled with
 the line USAGE_ERR and not USAGE_NONE once each ask has ended, the card open and nothing posted; after each of the
 three, an opening whose pull the driver answers ok with no rows shows Usage disabled with USAGE_NONE and not USAGE_ERR (an
-ok answer clears the failure, and the next failure starts from a read that did not fail); and an opening whose
+ok answer clears the failure, and the next failure starts from a read that did not fail). Then the reopen race, three
+times: the card opened over a pull the driver holds, closed, and opened again over a later pull, and the held pull ended
+after that one. The later pull answered with no rows and the held one failed in transit; the later one failed in transit
+and the held one answered ok with no rows; the later one reached the lab and the held one answered with ERROR_STATUS. In
+each, once the held pull's end has run in the shell, Usage keeps the later pull's answer: USAGE_NONE alone, USAGE_ERR
+alone, enabled with neither line (a wrapper over window.__rompUsagePull records the order the two end in, and RACE_MS set
+on the shell keeps the held pull from ending on its own bound). And an opening whose
 pull reaches the lab then shows Usage enabled with neither line. Then the deploy skew, on a page of its own at 390px:
 the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
@@ -182,8 +188,12 @@ are red where an error status reads as no reading and a failure leaves the line 
 error status and after the abort in transit), and the hung pull where the card's pull carries no bound (the loader still
 up). With the ok answers between the failures, the abort in transit and the hung pull are red under a mutant whose failed
 path leaves the flag as it was (No reading yet after each), and the three ok answers under a mutant where an ok answer
-leaves a flag a failure set (Couldn't load after each); the row's heights are red where the loader is a line the reading's state does not have (the row taller while
-loading than with a reading, in both themes). The layout word's source is red under a mutant of the card's link listener
+leaves a flag a failure set (Couldn't load after each). The reopen race is red where every read's end writes the flag,
+and an error status empties the readings, whichever later read has ended: Usage turns from No reading yet to Couldn't
+load, from Couldn't load to No reading yet, and from enabled to Couldn't load; and each turn is red under a mutant that
+drops one of the three checks, the failed path's (the first turn), the answer's flag write (the second) and the error
+status's return (the third, No reading yet: the readings emptied); the row's heights are red where the loader is a line
+the reading's state does not have (the row taller while loading than with a reading, in both themes). The layout word's source is red under a mutant of the card's link listener
 that does not check the word's source (the row hidden by the settings frame's own word and by the chat pane's). The
 fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
@@ -263,6 +273,8 @@ ERROR_STATUS = 500   # the kernel's answer to the opening's pull where a leg nee
 # loader before it reads the wait as hung
 HANG_MS = 1500
 HANG_WAIT_MS = 15000
+# ...and the bound it sets for the reopen race, in ms: long enough that the held pull ends only when the driver ends it
+RACE_MS = 60000
 SAME = 0.01   # px: the row's heights in Usage's states are equal by construction (the same layout), so they are compared exactly
 # the themes the Remote kernels glyph's colours are measured in, by the gear's theme ids: the dark default and the light theme
 # (no rule in feed.css or gear.css reads the Yatharth dark theme's class, so the default stands for both dark themes)
@@ -683,7 +695,10 @@ def _failed_problems(engine, fr):
     answered with an error status, one that fails in transit, and one the kernel never answers (ended by the pull's bound,
     set to HANG_MS on the shell here) each end with Usage disabled and the line USAGE_ERR, never USAGE_NONE, and the card
     open; after each of them, an opening whose pull the kernel answers ok with no rows shows Usage disabled with USAGE_NONE
-    alone; a later opening whose pull reads the lab's reading shows Usage enabled with neither line."""
+    alone; in the reopen race, the card's earlier pull ending after the reopened card's pull (failed in transit, answered ok
+    with no rows, or answered with ERROR_STATUS) leaves Usage on the later pull's answer; a later opening whose pull reads
+    the lab's reading shows
+    Usage enabled with neither line."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -730,6 +745,35 @@ def _failed_problems(engine, fr):
         if not t.get("asked") or not_none(t.get("usage")):
             out.append("%s: after %s, an opening whose pull the kernel answered ok with no rows does not show Usage disabled with "
                        "the line %r alone (%r hidden): asked %r, %r" % (where, after, USAGE_NONE, USAGE_ERR, t.get("asked"), t.get("usage")))
+
+    def not_enabled(u):
+        return (not u or u.get("disabled") is not False or not u.get("line") or u["line"].get("shown") is not False
+                or not u.get("err") or u["err"].get("shown") is not False)
+    # the reopen race: the card's pull A held, the card reopened over pull B, B ended; then A ended after B (the order the
+    # driver's wrapper over the shell's pull recorded). A read that ends after a later one has ended changes neither the flag
+    # nor, with an error status, the readings, so Usage keeps B's answer: A failing in transit after B answered no rows; A
+    # answered ok with no rows after B failed in transit (each of the two flag writes, the failed path's and the answer's); A
+    # answered with ERROR_STATUS after B reached the lab (the error status's emptying of the readings)
+    for key, a_end, b_end, what, b_wrong, b_state in (
+            ("raceTransit", "failed", "answered", "failed in transit", not_none, "disabled with the line %r alone" % USAGE_NONE),
+            ("raceOk", "answered", "failed", "was answered ok with no rows", not_failed,
+             "disabled with the line %r alone" % USAGE_ERR),
+            ("raceStatus", "answered", "answered", "was answered with an error status (%d)" % ERROR_STATUS, not_enabled,
+             "enabled with neither line")):
+        rc = fr.get(key) or {}
+        p = rc.get("pulls") or []
+        order = (len(p) >= 2 and p[0].get("end") == a_end and p[1].get("end") == b_end
+                 and 0 < (p[1].get("at") or 0) < (p[0].get("at") or 0))
+        if not rc.get("held") or not rc.get("bAsked") or not rc.get("aEnded") or not order or b_wrong(rc.get("afterB")):
+            out.append("%s: the reopen race's premise (the card's pull held, the card reopened over a later pull whose answer "
+                       "shows Usage %s, the held pull ending after it): held %r, the later ask ended %r, the held pull's end "
+                       "run %r, the pulls' ends %r, Usage %r" % (where, b_state, rc.get("held"), rc.get("bAsked"), rc.get("aEnded"),
+                                                                 p, rc.get("afterB")))
+        if b_wrong(rc.get("afterA")):
+            out.append("%s: the card's earlier pull %s after the reopened card's pull had ended, and Usage is no longer %s: %r"
+                       % (where, what, b_state, rc.get("afterA")))
+        if card_closed(rc.get("shell") or {}):
+            out.append("%s: the reopen race's card closed or reached the shell: %r" % (where, rc.get("shell")))
     lab = fr.get("lab") or {}
     u = lab.get("usage")
     if not lab.get("asked") or not u or u.get("disabled") is not False or (u.get("line") or {}).get("shown") is not False \
@@ -1035,7 +1079,7 @@ class MtabsFit(unittest.TestCase):
                "tunnels": TUNNELS, "tunnels2": TUNNELS2, "tunnelsDrop": TUNNELS_DROP,
                "tunnelsAttach": TUNNELS_ATTACH, "tunnelsNone": TUNNELS_NONE, "themes": [list(t) for t in THEMES],
                "desktopViewport": list(DESKTOP), "railViewports": [list(v) for v in RAIL], "wideViewport": list(WIDE),
-               "errorStatus": ERROR_STATUS, "hangMs": HANG_MS, "hangWaitMs": HANG_WAIT_MS,
+               "errorStatus": ERROR_STATUS, "hangMs": HANG_MS, "hangWaitMs": HANG_WAIT_MS, "raceMs": RACE_MS,
                "result": os.path.join(self.lab, "result-%s.json" % engine)}
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)
         Path(cfg_path).write_text(json.dumps(cfg))

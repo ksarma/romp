@@ -71245,7 +71245,8 @@ var WINS=[['fiveHour',5*3600,'5 hours'],
 // tooltip detail for the ones drawn into the aggregate; SELF names this machine for its hover heading
 // when there is more than one host.
 var ROWS=[],LAST=[],SELF='';
-var READ_FAILED=false;   // whether the latest read of the readings failed (pullFleet sets it; the settings card reads it, __rompUsageFailed)
+var READ_FAILED=false;   // whether the newest read of the readings that has ended failed (pullFleet sets it; the settings card reads it, __rompUsageFailed)
+var PULLS=0,PULL_ENDED=0;   // pullFleet's reads: how many have started, and the number of the newest one that has ended
 // Limit / judge-degraded SIGNATURES (the user 2026-07-03; reshaped 2026-07-27): these used to gate fixed
 // top banners with a ✕ dismissal; the banners are gone — the same situations now log ONE entry each in
 // the shell's notification center (the bell, _LANDING_ERRS_JS). The stored signature means "this exact
@@ -71647,13 +71648,15 @@ pullFleet().then(openIt,openIt);};
 // out of this script's reach, so the card asks this: Usage enabled where a tap opens the panel, disabled with a line saying
 // there is no reading yet where it would open nothing
 window.__rompUsageReading=function(){return !!tipHTML();};
-// ...and whether the latest read of the readings failed (romp-manager's ruling after PR 976's round 1: a read that failed is not
-// a read that found no reading, so the card says it could not load where it would otherwise say No reading yet). READ_FAILED is
-// set by every pull, pullFleet below: true where the kernel answered with an error status (the fetch reads that answer as no
-// rows, so LAST empties and the panel's opener opens nothing), where the request got no answer, was aborted, or had a body
-// that does not parse (LAST left as it was); false where an ok answer parsed. The timeline's forward (render) is a reading
-// that arrived, so it clears it too. The card asks this only where __rompUsageReading says there is nothing to open: with a
-// reading, Usage opens the panel over it, whose age lines keep climbing while the reads fail (pull's failed path)
+// ...and whether the newest read of the readings that has ended failed (romp-manager's ruling after PR 976's round 1: a read
+// that failed is not a read that found no reading, so the card says it could not load where it would otherwise say No reading
+// yet). READ_FAILED is set by each pull, pullFleet below, that ends before any pull started after it has ended: true where the
+// kernel answered with an error status (the fetch reads that answer as no rows, so LAST empties and the panel's opener opens
+// nothing), where the request got no answer, was aborted, or had a body that does not parse (LAST left as it was); false where
+// an ok answer parsed. A pull that ends after a later one has ended leaves it as it was (pullFleet says why). The timeline's
+// forward (render) is a reading that arrived, so it clears it too. The card asks this only where __rompUsageReading says there
+// is nothing to open: with a reading, Usage opens the panel over it, whose age lines keep climbing while the reads fail (pull's
+// failed path)
 window.__rompUsageFailed=function(){return READ_FAILED;};
 // ...and the source behind those answers, read fresh as the panel's opener reads it (PR 976's round 1, correctness-1 and
 // extra6-1): the card calls this at each opening (gear.js usagePull) and shows the romp loader on Usage until the promise
@@ -71692,12 +71695,18 @@ var _ruBusy=false;
 // today's exact rendering \u2014 whenever every machine is signed into the same login.
 // sig, where given, is the abort signal the fetch carries (__rompUsagePull's bound); READ_FAILED (__rompUsageFailed above) says
 // how the read ended, set before renderRows tells the settings card, and on a failure the card is told here, since no renderRows
-// runs; the failure still rejects, so pull() and the panel's opener take their failed paths as before
-function pullFleet(sig){var ok=false;
+// runs; the failure still rejects, so pull() and the panel's opener take their failed paths as before. Each read is numbered as
+// it starts (PULLS), and the newest to end so far is marked (PULL_ENDED). A read that fails after a later read has ended changes
+// nothing: not the flag, not the readings (an error status would empty them), not the card. The card's reopen starts a pull
+// while the one before may still be out, and that older pull failing late would otherwise turn the answer the newer one had
+// shown into Couldn't load (the check of PR 976's decisions after round 1). An ok answer such a read gets still writes the
+// readings, as every ok answer does, and leaves the flag as the later read set it
+function pullFleet(sig){var ok=false,n=++PULLS;
+var newest=function(){if(n<PULL_ENDED)return false;PULL_ENDED=n;return true;};   // whether no later read has ended; marks this one
 return fetch('/usage/fleet',sig?{cache:'no-store',signal:sig}:{cache:'no-store'}).then(function(r){ok=r.ok;return r.ok?r.json():null;})
-.then(function(d){READ_FAILED=!ok;var rows=(d&&d.rows)||[];SELF=(d&&d.host)||SELF;
+.then(function(d){if(newest())READ_FAILED=!ok;else if(!ok)return;var rows=(d&&d.rows)||[];SELF=(d&&d.host)||SELF;
 var local=rows.length?rows[0].usage:null;
-notices(local);renderRows(rows,SELF);},function(e){READ_FAILED=true;cardTell();throw e;});}
+notices(local);renderRows(rows,SELF);},function(e){if(newest()){READ_FAILED=true;cardTell();}throw e;});}
 function pull(ack){if(_ruBusy)return;_ruBusy=true;
 if(ack){el.style.opacity='0.45';tip.style.display='none';}   // instant ack only on a real click
 var done=function(){_ruBusy=false;el.style.opacity='';};
