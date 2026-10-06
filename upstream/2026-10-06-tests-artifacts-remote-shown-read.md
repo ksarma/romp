@@ -1,0 +1,15 @@
+---
+title: The remote Artifacts lab's remote-first run also reads the picker's mark with the remote session shown, so a picker that marks the strip's first tab no longer passes
+status: candidate
+where: tests/test_artifacts_remote_served.py (DRIVER: the remote-shown read in the remote-first run's cfg.pickerOnly branch; ArtifactsRemoteServed.test_on_a_remote_first_boot_the_pre_switch_confirms_and_the_wait_still_certifies_the_switch_to_the_hubs_own: its four holds and the mark with the remote shown; ArtifactsRemoteServed._result_remote_first: its docstring); upstream/2026-10-06-tests-artifacts-remote-shown-read.md (this entry)
+added: 2026-10-06
+pr:
+tier: docs
+offered:
+closed:
+---
+The remote Artifacts lab checks the picker's mark (the row of the session the chat shows) only while the hub's own session is shown. On most boots that session is also the first tab in the strip, so a picker that marked the strip's first tab, or always marked the hub's own session, passes every read the test makes. This change adds one leg to the test's remote-first run: after the existing read, the driver switches the chat to the remote tab, waits for the kernel's echo of that switch, waits for the pane's button to read TESTHOST:api, opens the picker again and waits for the remote row to be marked. The test then asserts that those four waits succeeded, that the remote row is marked and that the hub's row is not. Tests only, so docs tier.
+
+The leg catches a picker that marks the strip's first tab, and the test without it does not. The runs were on the fork's main at 95290af84, which carries upstream's fix for the picker race as shipped. With the picker mutated to mark the first tab (in ui/webview/artifacts.ts, `t.id === sel.sid` became `t.id === (tabs.length ? tabs[0].id : null)`), the module with the leg failed 3 of 3 runs, each on the new mark wait: the switch, its echo and the button wait had succeeded, and the card marked the hub's row. Without the leg the module passed 2 of 2 runs under the same mutant, both on boots that opened on the hub's tab, first in the strip. On the unmutated product the module with the leg passed 2 of 2 quiet runs and 10 of 10 runs under CPU contention (busy-loop workers on all but four idle cores; 5 of those runs booted on the hub's tab and 5 on the remote's).
+
+upstream/main (f4a572008) has the same gap: its remote-first run ends after the read with the hub's session shown. The diff applies to upstream/main's copy with line offsets only (not run against that tree). Until the leg is offered and taken, the next fold meets a small conflict in this file. The fork's merge base with upstream (cbc1de1e3) predates upstream's fix for the picker race, so the fold that brings that fix adds upstream's remote-first block where the fork's copy, with the leg, holds a longer one. A trial three-way merge of this file against upstream/main (f4a572008) gives three conflict hunks with the leg (the driver's remote-first exit, `_result_remote_first`'s docstring and the remote-first test's assertions) and none without it.
