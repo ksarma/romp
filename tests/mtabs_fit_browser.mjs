@@ -76,18 +76,19 @@
 // stands over the card, the row read after each close (and Usage after the second).
 // Then the Remote kernels glyph's colours, on a page of its own per theme (cfg.themes: the theme written to the store before
 // the page parses, as the gear writes it) at cfg.actsViewport: the card opened from the bar's Settings, and in it the card's
-// background, the button's own fill (the glyph sits on it) and each colour the glyph can wear, as computed values: the
-// glyph lit and attaching (its svg's colour, the strokes' currentColor) and each node's fill as connected, dialing and needs you,
-// each read with that class set on the element and the element's transitions off, then put back, and the glyph unlit (its
-// svg's colour with neither class); then the same with the pointer moved onto the button's centre (its transitions off
-// first): its hovered fill, its colours, and whether :hover holds; then, the pointer moved off, the card opened again over
+// background, the button's own fill (the glyph sits on it), its label's colour and each colour the glyph can wear, as
+// computed values: the glyph lit and attaching (its svg's colour, the strokes' currentColor) and each node's fill as
+// connected, dialing and needs you, each read with that class set on the element and the element's transitions off, then put
+// back, and the glyph unlit (its svg's colour with neither class); then the same with the pointer moved onto the button's
+// centre (its transitions off first): its hovered fill, its label's colour, its colours, and whether :hover holds; then, the
+// pointer moved off, the card opened again over
 // each answer to the opening's pull (held, the lab's reading, no rows, an error status), the window taken through
 // cfg.heightWidths in each, and at each width the row's height, Usage's box beside Restart kernel's top and height, Usage's
 // words' box, the loader's laid-out box and the button's parts, the tabs' offset in the card and their top in the window, the
 // line Usage shows with its left edge beside the name's right edge, the loader's computed display, and whether the name is
 // seen; then the card opened over the lab's reading and again over a pull failed in transit (Usage enabled beside Couldn't
-// load), the pointer moved onto Usage's centre (its transitions off first), and its hovered fill, the line's colour and
-// whether :hover holds read.
+// load), Usage's name read with the pointer off the row, then the pointer moved onto Usage's centre (its transitions off
+// first), and its hovered fill, the line's and the name's colours and whether :hover holds read.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -487,15 +488,17 @@ try {
         const er = document.getElementById("rs-pact-usage-err"), row = document.getElementById("rs-pacts");
         if (!b) return null;
         const c = b.getBoundingClientRect();
-        // the name, seen or not: its computed visibility and display, and a box to be seen in (the loader shows in its place)
+        // the name, seen or not: its computed visibility and display, and a box to be seen in (the loader shows in its place);
+        // and its colour beside the button's own (a disabled Usage's name wears the button's faint colour)
         const nm = b.querySelector(".rs-pact-name"), ns = nm && getComputedStyle(nm), nb = nm && nm.getBoundingClientRect();
         // each line's box (its left edge, which sits past the name's right edge, beside it), and the loader's computed display
         const lineOf = (el) => (el ? { shown: !el.hidden && getComputedStyle(el).display !== "none", text: el.textContent.trim(),
                                        left: r(el.getBoundingClientRect().left), w: r(el.getBoundingClientRect().width) } : null);
         return { disabled: b.disabled, busy: b.getAttribute("aria-busy"), left: r(c.left + ctx.left), top: r(c.top + ctx.top), w: r(c.width), h: r(c.height),
-                 rowH: row ? r(row.getBoundingClientRect().height) : null,
+                 rowH: row ? r(row.getBoundingClientRect().height) : null, color: getComputedStyle(b).color,
                  name: nm ? { shown: ns.visibility === "visible" && ns.display !== "none" && nb.width > 0 && nb.height > 0,
-                              visibility: ns.visibility, display: ns.display, w: r(nb.width), left: r(nb.left), right: r(nb.right) } : null,
+                              visibility: ns.visibility, display: ns.display, w: r(nb.width), left: r(nb.left), right: r(nb.right),
+                              color: ns.color } : null,
                  line: lineOf(un), err: lineOf(er),
                  wait: wt ? { shown: !wt.hidden && getComputedStyle(wt).display !== "none", text: wt.textContent.trim(), display: getComputedStyle(wt).display,
                               anims: wt.getAnimations ? wt.getAnimations({ subtree: true }).map((a) => a.animationName || "?") : null } : null };
@@ -1270,6 +1273,9 @@ try {
         if (was === null) el.removeAttribute("class"); else el.setAttribute("class", was);
         el.style.transition = tr; return v; };
       res.fill = readAs(net, () => {}, "backgroundColor");
+      // the button's label, its text (romp-manager's ruling on PR 976's round 2 pass: hovered, it keeps its colour at rest)
+      const lab = Array.from(net.children).find((c) => c.tagName === "SPAN");
+      res.label = lab ? readAs(net, () => {}, "color", lab) : null;
       res.colours.lit = readAs(net, () => net.classList.add("on"), "color", svg);
       res.colours.attaching = readAs(net, () => net.classList.add("busy"), "color", svg);
       res.colours.connected = readAs(me, () => me.setAttribute("class", "rn-me rn-ok"), "fill");
@@ -1290,7 +1296,7 @@ try {
       await page.mouse.move(lift.left + at.x, lift.top + at.y);
       await frames(page);
       const hv = await colours(true);
-      out.contrast[name].hover = { hovered: hv.hovered, fill: hv.fill, colours: hv.colours };
+      out.contrast[name].hover = { hovered: hv.hovered, fill: hv.fill, colours: hv.colours, label: hv.label };
     }
     // ...then the row and the tabs in Usage's states at each phone width (romp-manager's decision on PR 976's round 1 builds:
     // hold the loader's width, so loading to a reading never moves the tabs), the pointer moved off the card first: the card
@@ -1386,8 +1392,9 @@ try {
       // ...then Usage hovered beside its Couldn't load line (romp-manager's first decision before PR 976's round 2: Usage keeps
       // its resting fill on hover, where the accent wash put the muted line under the 4.5:1 text needs): the card closed and
       // opened over the lab's reading, then again over a pull failed in transit (the reading kept and the read failed, so
-      // Usage is enabled beside the line), the pointer moved onto Usage's centre with its transitions off, and the card's
-      // background, Usage's hovered fill, the line's colour and whether :hover holds read; the pointer moved off
+      // Usage is enabled beside the line), the pointer moved off the card's row and Usage's name read at rest, then the pointer
+      // moved onto Usage's centre with its transitions off, and the card's background, Usage's hovered fill, the line's and the
+      // name's colours and whether :hover holds read; the pointer moved off
       {
         const uh = {};
         await closeC();
@@ -1398,17 +1405,24 @@ try {
         usageMode = "transit";
         await openC();
         uh.failedEnded = await ended();
+        await page.mouse.move(1, 1);
         await frames(page);
+        // Usage's name, its label, at rest first (romp-manager's ruling on PR 976's round 2 pass: hovered, it keeps this colour),
+        // with whether the pointer hovers Usage there (it must not)
         const spot = await sf.evaluate(() => { const b = document.getElementById("rs-pact-usage"); if (!b) return null;
-          b.style.transition = "none"; const c = b.getBoundingClientRect(); return { x: c.left + c.width / 2, y: c.top + c.height / 2 }; });
+          b.style.transition = "none"; const c = b.getBoundingClientRect(), nm = b.querySelector(".rs-pact-name");
+          return { x: c.left + c.width / 2, y: c.top + c.height / 2, nameRest: nm ? getComputedStyle(nm).color : null, restHovered: b.matches(":hover") }; });
         if (spot) {
+          uh.nameRest = spot.nameRest;
+          uh.restHovered = spot.restHovered;
           await page.mouse.move(lift.left + spot.x, lift.top + spot.y);
           await frames(page);
           Object.assign(uh, await sf.evaluate(() => {
             const b = document.getElementById("rs-pact-usage"), er = document.getElementById("rs-pact-usage-err"), card = document.querySelector("#rsettings .rs-card");
+            const nm = b.querySelector(".rs-pact-name");
             return { hovered: b.matches(":hover"), disabled: b.disabled, errShown: !!er && !er.hidden && getComputedStyle(er).display !== "none",
                      card: card ? getComputedStyle(card).backgroundColor : null, fill: getComputedStyle(b).backgroundColor,
-                     line: er ? getComputedStyle(er).color : null };
+                     line: er ? getComputedStyle(er).color : null, name: nm ? getComputedStyle(nm).color : null };
           }));
           await page.mouse.move(1, 1);
         }

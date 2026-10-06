@@ -109,11 +109,18 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rs-pact-net.on svg, #rs-pact-net.busy svg { color: var(--accent, #9cd2ff); }
 /* ...and the button keeps its resting fill on hover (PR 976's round 1, extra6-2), where the row's other buttons take the
    accent wash (Customize shortcuts' hover, copied above): a status glyph's colours must read at 3:1 on every fill its
-   button wears, and in the dark theme the wash under the needs-you red read 2.95:1. The border and the label still turn
-   accent, so the hover reads as the others' do. Usage keeps its resting fill on hover too (romp-manager's first decision
-   before PR 976's round 2): its line in the muted text, Couldn't load, read 4.38:1 on the dark theme's wash, under the
-   4.5:1 that text needs (tests/test_mtabs_fit_served.py reads it hovered in both themes) */
+   button wears, and in the dark theme the wash under the needs-you red read 2.95:1. The border still turns accent, so the
+   hover reads as the others' do. Usage keeps its resting fill on hover too (romp-manager's first decision before PR 976's
+   round 2): its line in the muted text, Couldn't load, read 4.38:1 on the dark theme's wash, under the 4.5:1 that text
+   needs (tests/test_mtabs_fit_served.py reads it hovered in both themes) */
 #rsettings #rs-pact-net:hover:not(:disabled), #rsettings #rs-pact-usage:hover:not(:disabled) { background: var(--btn-bg, #2a2a2a); }
+/* ...and the two buttons' labels, Usage's name and the Remote kernels label, keep their resting colour on hover, the card's
+   text colour set on the label itself, as the unlit glyph's is above, so the row's hover colour (the accent) never reaches
+   them (romp-manager's ruling on PR 976's round 2 pass): on the button's fill the accent read 3.89:1 in the light theme,
+   under the 4.5:1 that text needs, and round 1's ui-3 had the Remote kernels label keep the card's text colour. A disabled
+   button's label keeps the faint colour the button gives it (the rule skips a disabled button). tests/test_mtabs_fit_served.py
+   reads each label hovered in both themes */
+#rs-pact-net:not(:disabled) > span, #rs-pact-usage:not(:disabled) .rs-pact-name { color: var(--fg, #ccc); }
 #rs-pact-net.busy svg path { stroke-dasharray: 3 3; animation: rs-pact-march 0.9s linear infinite; }
 @keyframes rs-pact-march { to { stroke-dashoffset: -6; } }
 #rs-pact-net .rn-ok { fill: var(--accent, #9cd2ff); }

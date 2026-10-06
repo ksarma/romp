@@ -69,7 +69,7 @@ wrap only where it still cannot.
   Remote kernels glyph wears the accent while a host is connected or
   attaching, on the glyph
   alone as on the rail, and the button's label keeps the card's text colour (PR 976's round 1, ui-3). The glyph sits on its
-  button's own fill, which the button keeps on hover, its border and label still turning accent (round 1, extra6-2), and
+  button's own fill, which the button keeps on hover, its border still turning accent (round 1, extra6-2), and
   keeps its own colour there, so hover never turns an unlit glyph the lit one's accent (round 2, ui-1), and every colour it
   wears reads at 3:1 or more (a graphic, romp-manager's call 7) on the card and on that fill, at rest and
   hovered, in both themes: in the light theme its dialing grey and
@@ -78,7 +78,10 @@ wrap only where it still cannot.
   from the shell's 23 degrees to 15 in OKLCH, so it stays as far from the connected node's clay (#c2410c) as the shell's
   red is: 9.04 in OKLab distance x100, where the shell's has 8.94 (romp-manager's call 1 at round 1). Usage keeps its
   resting fill on hover too, as the Remote kernels button does, where the row's accent wash put its muted line at 4.38:1 in
-  the dark theme, under the 4.5:1 text needs (romp-manager's first decision before round 2).
+  the dark theme, under the 4.5:1 text needs (romp-manager's first decision before round 2). And both buttons' labels, the
+  Remote kernels label and Usage's name, keep their resting colour on hover, the card's text colour set on the label
+  itself, where the row's hover colour, the accent, read 3.89:1 on the light theme's button fill, under the 4.5:1 text
+  needs (romp-manager's ruling on round 2's pass).
 - The fallback. The action cluster is one element (.mtabs-acts) and the bar may wrap: where the tabs and the three actions
   left do not fit one row (below 322px in Chromium and 318px in WebKit and Firefox, so at 320px in Chromium and not in the
   other two; below 358px in Chromium and 353px in WebKit and Firefox with the Files tab on, so at 320px in all three), the
@@ -126,8 +129,8 @@ march off; a poll with no host (TUNNELS_NONE) leaves the glyph unlit with the ca
 card closed, the same poll leaves the glyph unlit at the card's next opening. Then
 Usage with no reading, on a page whose shell's usage pull (its GET under /usage/) answers no rows (the rail's readout, which
 renders over the readings, read empty as the leg's premise): the card opened from the bar's Settings shows Usage disabled
-with the line USAGE_NONE once the opening's ask for a fresh reading has ended; a click at its centre leaves the card open,
-opens no Usage modal and posts no phoneAct (read after a settle: an absence has no event to wait on), and the line still
+with the line USAGE_NONE once the opening's ask for a fresh reading has ended, its name in the disabled button's own
+colour; a click at its centre leaves the card open, opens no Usage modal and posts no phoneAct (read after a settle: an absence has no event to wait on), and the line still
 shows; a script's clicks on it, click() on its label and a click event dispatched on the button and on its glyph, each
 leave the card open, open no Usage modal and post no phoneAct; then, the card still open, a reading arrives (the lab's
 own GET /usage payload posted to the shell as the timeline
@@ -204,7 +207,8 @@ opened from the bar's Settings, every colour the glyph can wear (GLYPH: the glyp
 dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
 colour read with its class set and the element's transitions off; and again with the pointer moved onto the button (its
 transitions off), against the fill it wears hovered, :hover read as the premise, and the unlit glyph (its svg's colour with
-neither class) wears the same colour hovered as at rest; and the needs-you red stays
+neither class) wears the same colour hovered as at rest, and so does the button's label, which reads TEXT_FLOOR or more on
+that fill; and the needs-you red stays
 SEPARATION_FLOOR or more from the connected node's colour in OKLab; then, on the same page, the card opened again over
 the opening's pull held (the loader up, the shell's bound set to RACE_MS meanwhile) with the window taken through the
 portrait widths (HEIGHT_WIDTHS), then the pull let through to the lab's reading and the widths taken again: at each, the
@@ -215,9 +219,10 @@ glyph and those words with the gap between them, its side padding and its border
 than it is over no rows and over ERROR_STATUS (those two states read at the same widths, and compared only for that); and
 Usage's name is unseen while loading and seen with the reading and beside either line, each line's left edge at or past the name's right edge and the loader
 out of the layout (its computed display none) while a line shows. Then the card opened over the lab's
-reading and again over a pull the driver aborts in transit (Usage enabled beside USAGE_ERR), and the pointer moved onto
-Usage with its transitions off: the line reads TEXT_FLOOR or more on the fill Usage wears hovered, :hover read as the
-premise. Then a desktop
+reading and again over a pull the driver aborts in transit (Usage enabled beside USAGE_ERR), Usage's name read with the
+pointer off the row, and the pointer moved onto Usage with its transitions off: the line reads TEXT_FLOOR or more on the
+fill Usage wears hovered, :hover read as the premise, and the name wears its colour at rest and reads TEXT_FLOOR or more
+on that fill. Then a desktop
 window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the
 bell,
 the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
@@ -305,7 +310,14 @@ and the separation's pin is red at the darker red the light theme had at the she
 the head round 2 reviewed, in Chromium, WebKit and Firefox, the unlit glyph's hovered colour is red, the button's hover
 colour reaching it (rgb(156, 210, 255) hovered where it is rgb(204, 204, 204) at rest in the dark theme, rgb(194, 65, 12)
 where it is rgb(31, 30, 29) in the light one), and the hovered Usage's line is red where Usage takes the row's accent wash
-on hover (4.38:1 in the dark theme; 5.44 on the resting fill, and 5.37 in the light theme). Runs in the "Browser-backed served-page tests (pytest)" step of the
+on hover (4.38:1 in the dark theme; 5.44 on the resting fill, and 5.37 in the light theme). At the head round 2's pass
+built, in Chromium, WebKit and Firefox, both labels' hovered colour is red, the row's hover colour reaching them
+(rgb(156, 210, 255) hovered where they are rgb(204, 204, 204) at rest in the dark theme, rgb(194, 65, 12) where they are
+rgb(31, 30, 29) in the light one, which reads 3.89:1 on the hovered fill #e7ded2, under TEXT_FLOOR). In Chromium, a
+mutant of gear.css's label rule that drops either label turns that label's reads red and the other's not, and one whose
+rule does not skip a disabled Usage turns the no-reading leg's name red (rgb(204, 204, 204), the card's text colour,
+where the disabled button wears rgb(110, 118, 129)).
+Runs in the "Browser-backed served-page tests (pytest)" step of the
 served-pages job, "Served pages (pytest, ubuntu-latest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), in
 Chromium; the WebKit and Firefox legs are `optional:` skips where that engine is absent or not declared in
 ROMP_SERVED_TESTS_ENGINES (CI declares chromium; a developer's box runs all three).
@@ -675,7 +687,8 @@ def _states_problems(engine, acts):
 
 
 def _no_reading_problems(engine, nr):
-    """Usage with no reading: disabled with its line once the opening's ask has ended, a tap leaving the card open and posting
+    """Usage with no reading: disabled with its line once the opening's ask has ended, its name in the disabled button's own
+    colour (the faint one, not the text colour gear.css sets on an enabled Usage's name), a tap leaving the card open and posting
     nothing; then a reading landing while the card is still open enables Usage there with no line (the shell tells the open
     card), the readings emptying disable it with its line again and filling enable it again; the readings emptying, and
     filling, while the Token usage panel stands over the card show in the card its close shows; and one click opens the Usage
@@ -691,6 +704,11 @@ def _no_reading_problems(engine, nr):
     if not first or first.get("disabled") is not True or not first.get("line") or first["line"].get("shown") is not True \
             or first["line"].get("text") != USAGE_NONE:
         out.append("%s: Usage is not disabled with the line %r: %r" % (where, USAGE_NONE, first))
+    # ...and its name wears the disabled button's own colour, the faint one: the card's text colour that gear.css sets on the
+    # label skips a disabled Usage (romp-manager's ruling on PR 976's round 2 pass keeps the labels at their resting colour)
+    elif not (first.get("name") or {}).get("color") or (first.get("name") or {}).get("color") != first.get("color"):
+        out.append("%s: the disabled Usage's name wears %r, not the disabled button's own colour %r" % (
+            where, (first.get("name") or {}).get("color"), first.get("color")))
     tap = nr.get("tapped") or {}
     if not tap.get("settingsOpen") or tap.get("cardHidden") is not False:
         out.append("%s: a tap on Usage closed the card: %r" % (where, tap))
@@ -1331,8 +1349,25 @@ def _contrast_problems(engine, contrast):
     extra6-2: the hovered fill is a fill the glyph sits on too), in the dark and the light theme; and the needs-you red stays
     SEPARATION_FLOOR or more from the connected node's colour in OKLab. The unlit glyph wears the same colour hovered as at
     rest (PR 976's round 2, ui-1), and Usage's Couldn't load line reads TEXT_FLOOR or more on the fill Usage wears hovered
-    (romp-manager's first decision before round 2)."""
+    (romp-manager's first decision before round 2). Each of the two buttons' labels, the Remote kernels label and Usage's
+    name, wears the same colour hovered as at rest and reads TEXT_FLOOR or more on the fill its button wears hovered
+    (romp-manager's ruling on round 2's pass), in both themes."""
     out = []
+
+    def label_problems(lwhere, rest, hov, hfill):
+        # one label hovered: its colour as at rest, and TEXT_FLOOR or more on the hovered fill (both read, so a red names each)
+        got = []
+        if not rest or hov != rest:
+            got.append("%s: its colour hovered, %r, is not its colour at rest, %r" % (lwhere, hov, rest))
+        if hov:
+            col = _over(_rgba(hov), hfill)
+            ratio = _contrast(col, hfill)
+            if ratio < TEXT_FLOOR:
+                got.append("%s: hovered, it reads %.2f:1 (%s) on the hovered fill (%s), under %g:1" % (
+                    lwhere, ratio, _hex(col), _hex(hfill), TEXT_FLOOR))
+        else:
+            got.append("%s: its colour hovered is unread" % lwhere)
+        return got
     for name, theme in THEMES:
         where = "%s Remote kernels glyph, %s theme (%s)" % (engine, name, theme)
         t = contrast.get(name)
@@ -1376,13 +1411,17 @@ def _contrast_problems(engine, contrast):
                 rest_u, hov_u = (t.get("colours") or {}).get("unlit"), (hv.get("colours") or {}).get("unlit")
                 if not rest_u or hov_u != rest_u:
                     out.append("%s: the unlit glyph's colour hovered, %r, is not its colour at rest, %r" % (where, hov_u, rest_u))
+                # ...and the button's label keeps its resting colour on hover too, the card's text colour, which reads TEXT_FLOOR or
+                # more on the hovered fill (romp-manager's ruling on PR 976's round 2 pass: the row's hover colour, the accent, read
+                # under it there in the light theme)
+                out += label_problems("%s Remote kernels label, %s theme (%s)" % (engine, name, theme), t.get("label"), hv.get("label"), hfill)
             # Usage hovered beside its Couldn't load line (romp-manager's first decision before PR 976's round 2): the line reads
             # TEXT_FLOOR or more on the fill Usage wears hovered, which is its resting fill
             uh, uwhere = t.get("usageHover") or {}, "%s Usage hovered, %s theme (%s)" % (engine, name, theme)
             if not uh.get("labEnded") or not uh.get("failedEnded") or uh.get("disabled") is not False or uh.get("errShown") is not True \
-                    or uh.get("hovered") is not True:
+                    or uh.get("hovered") is not True or uh.get("restHovered") is not False:
                 out.append("%s: the premise (an opening over the lab's reading, then one over a pull failed in transit showing Usage "
-                           "enabled beside %r, the pointer on it holding :hover): %r" % (uwhere, USAGE_ERR, uh))
+                           "enabled beside %r, the pointer off it for the resting read and on it holding :hover): %r" % (uwhere, USAGE_ERR, uh))
             else:
                 ucard = _rgba(uh.get("card"))
                 ufill = _over(_rgba(uh.get("fill")), ucard)
@@ -1391,6 +1430,9 @@ def _contrast_problems(engine, contrast):
                 if ratio < TEXT_FLOOR:
                     out.append("%s: its line %r (%s) reads %.2f:1 on Usage's hovered fill (%s), under %g:1" % (
                         uwhere, USAGE_ERR, _hex(uline), ratio, _hex(ufill), TEXT_FLOOR))
+                # ...and its name, its label, keeps its resting colour on hover, TEXT_FLOOR or more on that fill (romp-manager's
+                # ruling on PR 976's round 2 pass)
+                out += label_problems("%s Usage's name, %s theme (%s)" % (engine, name, theme), uh.get("nameRest"), uh.get("name"), ufill)
         except AssertionError as e:
             out.append("%s: unreadable: %s" % (where, e))
     return out
