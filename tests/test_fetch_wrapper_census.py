@@ -26,7 +26,10 @@ this module mints). Every population is DERIVED from the source and the served b
   5. Every other text/html document the kernel sends (derived from the _send calls whose content type is text/html) is
      listed below with a way to render it, and makes no fetch and loads no bundle, because nothing puts the wrapper in it.
      A computed content type never says html: the static trees' map is read here, and the /file route and its relay are
-     held to their own types in tests/test_file_view.py and tests/test_kernel_remote_file_relay.py.
+     held to their own types in tests/test_file_view.py and tests/test_kernel_remote_file_relay.py. One map says html: the
+     state-root pane route's (upstream PR 1919), for a pane's own index.html, a document the kernel stamps and puts no
+     wrapper in. It is left out only while the fork holds that route in the full class (PANE_ROUTE_CLASS_APPROVED), so the
+     session cookie alone cannot open it; StateRootPaneDocument runs the route and reads both facts.
 
 What the wrapper does to each request form is executed in a browser by tests/test_page_key_dashboard_browser.py. Synthetic
 only: an invented serve token assembled at run time, invented session ids. No token, session id or page key VALUE is printed.
@@ -36,12 +39,14 @@ import json
 import os
 import re
 import secrets
+import shutil
 import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 
 from romp_load import load_source
 
@@ -55,6 +60,7 @@ KERNEL_PY = os.path.join(ROOT, "kernel", "kernel.py")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"), exist_ok=True)
+STATE_ROOT = os.path.join(os.environ["XDG_STATE_HOME"], "romp")   # kept by name: a later module's import moves XDG_STATE_HOME
 with open(os.path.join(os.environ["XDG_STATE_HOME"], "romp", "session-hosts"), "w") as _fh:
     _fh.write("off\n")
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
@@ -150,6 +156,40 @@ def _call_args(text, open_paren):
                 return text[open_paren + 1:i]
         i += 1
     return text[open_paren + 1:]
+
+
+# The state-root pane route (upstream PR 1919): GET /pane/<id>/<file> serves a file under STATE/panes/<id>/ with a content
+# type computed from its suffix, and that map says html, so a pane's own index.html is a text/html document. Handler._send
+# puts the wrapper only into a page-class document whose body is text; this route sends the file's bytes, so the document
+# carries the kernel's stamp and no wrapper (StateRootPaneDocument below runs the route and reads both). The fork holds the
+# route in the full class until the owner rules (PANE_ROUTE_CLASS_APPROVED in tests/test_pane_registry_served.py, the one
+# place the hold is written, read here by ast): the shell's frame, which carries only the session cookie, is refused, so no
+# page of the dashboard opens that document. While the hold stands, and only then, the census leaves that one map out.
+# Restoring the class turns the census red until the pane's document carries the wrapper and the map is classified by its
+# site, with a proof that runs the route and finds the wrapper.
+PANE_SERVED = os.path.join(HERE, "test_pane_registry_served.py")
+
+
+def _pane_route_class_approved():
+    """PANE_ROUTE_CLASS_APPROVED as tests/test_pane_registry_served.py assigns it, read by ast without importing that module
+    (its imports pull in a served lab's helpers). One module-level assignment of a literal, or an error."""
+    with open(PANE_SERVED, encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    vals = [n.value for n in tree.body if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "PANE_ROUTE_CLASS_APPROVED" for t in n.targets)]
+    assert len(vals) == 1, "tests/test_pane_registry_served.py assigns PANE_ROUTE_CLASS_APPROVED once: %d found" % len(vals)
+    return ast.literal_eval(vals[0])
+
+
+def _pane_route_maps(tree):
+    """[(line, dict)] for every content-type map (a dict holding "text/javascript") in the body of the state-root pane
+    route's branch, the handler's `if p.startswith("/pane/"):` arm."""
+    out = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.If) and ast.unparse(n.test) == "p.startswith('/pane/')":
+            out += [(m.lineno, m) for stmt in n.body for m in ast.walk(stmt) if isinstance(m, ast.Dict)
+                    and any(isinstance(v, ast.Constant) and v.value == "text/javascript" for v in m.values)]
+    return out
 
 
 class _Served(unittest.TestCase):
@@ -300,12 +340,72 @@ class NonPageDocumentsMakeNoFetch(unittest.TestCase):
             self.assertNotRegex(body, r"<script[^>]*\bsrc=", key + " loads no bundle, which would run without the wrapper")
 
     def test_the_static_trees_never_serve_html(self):
-        maps = [n for n in ast.walk(_kernel_tree()) if isinstance(n, ast.Dict)
+        tree = _kernel_tree()
+        maps = [n for n in ast.walk(tree) if isinstance(n, ast.Dict)
                 and any(isinstance(v, ast.Constant) and v.value == "text/javascript" for v in n.values)]
         self.assertTrue(maps, "the static trees' content-type map was found")
+        pane = _pane_route_maps(tree)
+        self.assertEqual(len(pane), 1, "the state-root pane route has one content-type map, the one the hold names: lines %r"
+                                       % [ln for ln, _ in pane])
+        line, pane_map = pane[0]
+        if _pane_route_class_approved() is None:
+            # the hold (PANE_SERVED above), read off the kernel's own classifier too: the map is left out only while the
+            # session cookie alone cannot open the route
+            need = km.Handler._need("/pane/notes/")[0]
+            self.assertNotIn(need, ("page", "static"),
+                             "the /pane/<id>/ route opens on the session cookie alone (Handler._need says %r) while "
+                             "PANE_ROUTE_CLASS_APPROVED is None: the census leaves the pane route's map out only while "
+                             "the fork holds the class, so record the owner's ruling there and this census reads the map "
+                             "again" % need)
+            maps = [d for d in maps if d is not pane_map]
+            self.assertTrue(maps, "the static trees' own map is still read")
         for d in maps:
             self.assertFalse([v.value for v in d.values if isinstance(v, ast.Constant) and "html" in str(v.value)],
-                             "a bundle or an asset served as html would be a document with no wrapper")
+                             "a bundle or an asset served as html would be a document with no wrapper" + (
+                                 "; this is the state-root pane route's map (kernel.py:%d), read again since "
+                                 "PANE_ROUTE_CLASS_APPROVED was set: with the class restored a pane's index.html opens on "
+                                 "the session cookie, and Handler._send puts the wrapper only into a text body while the "
+                                 "route sends the file's bytes, so the document's fetches, its shim's among them, carry no "
+                                 "page key. Put the wrapper in the pane's document, then classify this map by its site with "
+                                 "a proof that runs the route and finds the wrapper" % line if d is pane_map else ""))
+
+
+class StateRootPaneDocument(_Served):
+    """The state-root pane route's document as the kernel serves it, the reason the census leaves that route's content-type
+    map out while the fork holds its class: a pane's index.html is refused to the session cookie alone, and a request that
+    also carries the page key gets the document with the kernel's stamp and no wrapper. A synthetic pane (the notes-api
+    demo's `notes`) in this module's own state root, removed by its exact paths."""
+
+    def setUp(self):
+        # the kernel's judge module is one object across the run (romp_load re-executes a loaded name into it), so its
+        # STATE is the root of the last module that loaded it: point it at this module's root for the test, and back after
+        self.addCleanup(km.jd._rebind_state, km.jd.STATE)
+        km.jd._rebind_state(Path(STATE_ROOT))
+        d = km._pane_dir()
+        if not d.exists():
+            os.makedirs(d)
+            self.addCleanup(os.rmdir, str(d))
+        os.makedirs(d / "notes")
+        self.addCleanup(shutil.rmtree, str(d / "notes"))
+        (d / "notes" / "index.html").write_text("<!DOCTYPE html><html><head><title>Notes</title><script src=shim.js>"
+                                                "</script></head><body>The notes-api notes.</body></html>")
+        (d / "notes.json").write_text(json.dumps({"id": "notes", "title": "Notes", "source": "pane:notes"}))
+        self.addCleanup(os.unlink, str(d / "notes.json"))
+
+    def test_a_panes_document_is_refused_to_the_cookie_alone_and_carries_no_wrapper(self):
+        nav = {"Cookie": self.cookie, "Accept": "text/html", "Sec-Fetch-Dest": "document"}
+        st, body, headers = self._get("/pane/notes/", nav)
+        if _pane_route_class_approved() is None:
+            self.assertEqual((st, headers.get("X-Romp-Reauth")), (403, "1"),
+                             "held: the shell's frame, which carries only the session cookie, is refused the pane's document")
+        st, body, headers = self._get("/pane/notes/", {"Cookie": self.cookie, "X-Romp-Key": km._page_key(self.sess)})
+        self.assertEqual((st, (headers.get("Content-Type") or "").split(";")[0]), (200, "text/html"),
+                         "with the page key the route serves the pane's index.html as a document")
+        self.assertIn("The notes-api notes.", body, "the pane's own page")
+        self.assertIn("data-romp-served=200", body, "the kernel stamps it")
+        self.assertFalse(WRAPPER in body, "and puts no wrapper in it. If the pane's document now carries the wrapper, the "
+                                          "census classifies the pane route's map by its site with this proof turned round, "
+                                          "in place of leaving it out under the hold")
 
 
 class CensusShapes(unittest.TestCase):

@@ -27,6 +27,24 @@ def _read(*parts):
         return f.read()
 
 
+def _ref_section(md, heading):
+    """The body of the `## ` or `### ` heading `heading` in docs/reference.md, up to the next `## ` or `### ` heading."""
+    m = re.search(r"^#{2,3} " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} |\Z)", md, re.S | re.M)
+    assert m, "docs/reference.md has no section %r" % heading
+    return m.group(1)
+
+
+def _files_section():
+    """The guide's Files section as docs/reference.md holds it since fold 4 moved the fork's paragraphs out of docs/guide.md
+    (the front pages are the project's, CLAUDE.md "The documentation front pages"): the body of "## The Files pane", then the
+    paragraphs of the three viewer sections the reference keeps with the chat pane ("Links inside a file", "Text size and
+    width", "A file's own HTML"), which sat in the guide's Files section on this fork."""
+    ref = _read("docs", "reference.md")
+    parts = [_ref_section(ref, "The Files pane").strip("\n")]
+    parts += [_ref_section(ref, h).strip("\n") for h in ("Links inside a file", "Text size and width", "A file's own HTML")]
+    return "\n\n".join(parts) + "\n"
+
+
 def _section(md, heading):
     """The body of one `### heading` up to the next heading of any level."""
     m = re.search(r"^### " + re.escape(heading) + r"\n(.*?)(?=^#{2,3} )", md, re.S | re.M)
@@ -68,7 +86,7 @@ class LogSentenceCoversEveryEntryKind(unittest.TestCase):
     """The sentence after 'The **Log** at the foot of the panel' names each kind the host script writes."""
 
     def setUp(self):
-        self.section = _flat(_section(_read("docs", "guide.md"), "Files"))
+        self.section = _flat(_files_section())
         self.kinds = _log_kinds(_read("tools", "file-comments-host.mjs"))
 
     def test_the_host_script_writes_the_kinds_this_test_knows(self):
@@ -104,7 +122,7 @@ class LogSentenceMatchesThePanel(unittest.TestCase):
     """Each thing the guide says the Log shows is rendered by the panel source it describes."""
 
     def setUp(self):
-        self.section = _flat(_section(_read("docs", "guide.md"), "Files"))
+        self.section = _flat(_files_section())
         self.model = _read("ui", "webview", "file-comments-model.ts")
         self.panel = _read("ui", "webview", "file-comments.ts")
         self.host = _read("tools", "file-comments-host.mjs")
@@ -132,7 +150,7 @@ class LogVocabulary(unittest.TestCase):
     """The section uses CONTEXT.md's term for the log and none of the words it says to avoid."""
 
     def setUp(self):
-        self.section = _flat(_section(_read("docs", "guide.md"), "Files"))
+        self.section = _flat(_files_section())
         self.context = _read("CONTEXT.md")
         self.avoid = _avoid_words(self.context, "Comments log")
 

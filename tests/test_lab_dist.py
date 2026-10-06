@@ -2256,6 +2256,10 @@ _ESBUILD_TEXT_READERS = {
     # test_settings_page.py (upstream's, the same pull-in) reads esbuild.js's TEXT to pin the settings page's bundle entry
     # beside the kernel's served script tag: a source pin, no build and no copy
     "test_settings_page.py",
+    # test_sweep_runner.py holds synthetic pytest skip reasons that name esbuild.js, copied from the SkipTest text
+    # lab_dist.py raises when node cannot load the config, so the runner's deps-skip rule is held to the real wording:
+    # strings in a test, never a read, a build or a copy of the file
+    "test_sweep_runner.py",
 }
 _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_github_repo copies a repo, never dist
                  "test_perf_bench.py",                                  # upstream's copies kernel/ into a scratch checkout, never dist
@@ -2269,7 +2273,14 @@ _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_g
                  # checkout; the copy is removed after its run. It builds no dist and names none as a source: a shell job's
                  # checkout holds no dist, and a built one on a developer's box is left out of the copy (the ratchet named the
                  # module in CI's Python cells, 2026-09-20)
-                 "test_bats_bare_negation.py"}
+                 "test_bats_bare_negation.py",
+                 # test_batch_tool.py (fork PR 959) copies git clones it built itself, never dist: a stale clone once per case
+                 # of the fetch-threads pin, so each case starts from the same staleness, and the gc pin's fixture clone for its
+                 # premise run, so the gc git decides to start there leaves the clone under test untouched. Both copytree
+                 # calls came with round 2's pass of PR 959, whose module runs left this file out (the ratchet already names
+                 # the module at that pass's commit); the ratchet named it in the first full sweep after PR 959 merged
+                 # local-sweep-gate (fork PR 926's branch), 2026-10-04
+                 "test_batch_tool.py"}
 _KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
                 "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves
 # the only files that may import upstream's dist_copy or call copy_dist without the lab_dist. prefix (the header above,

@@ -7345,8 +7345,48 @@ class ServeSecurity(unittest.TestCase):
         """The web Restart button (↻) POSTs /restart; the kernel must ACK {ok,restarting} (and, with a
         manager, relay /restart-all so the kernel process relaunches). Regression guard: the Python
         rewrite dropped do_POST entirely, so the button silently no-op'd and the user had to pkill.
-        No ROMP_MANAGER_PORT here → it acks without restarting anything."""
+        No ROMP_MANAGER_PORT and no remotes attached here → it acks without restarting anything."""
         import urllib.request, json as _json
+        # The empty remotes registry is this test's premise, so the test sets it rather than assuming it
+        # (2026-10-03). With a row in km._remotes a bodiless POST takes the broad leg: the handler starts a
+        # real `_fleet_restart_run` thread, which can run ssh against a row's host, writes its report and
+        # then calls whatever `km._restart_this_kernel` is by that time, after this test has returned.
+        # Every module that loads the kernel as `romp_kernel` shares this module object, and some leave rows
+        # behind (tests/test_kernel_trust.py's pair routes leave an 'up' one), so in a run that put a row
+        # here the thread's last call landed in the faked local leg of a later test in this class
+        # (test_restart_refuses_a_malformed_body_instead_of_restarting_everything, or the short-body test
+        # before it) and failed it. test_the_ack_test_owns_its_empty_remotes_premise runs this test under
+        # such a row.
+        with km._remotes_lock:
+            rows = dict(km._remotes)
+            km._remotes.clear()
+
+        def _restore_rows():
+            with km._remotes_lock:
+                km._remotes.clear()
+                km._remotes.update(rows)
+        self.addCleanup(_restore_rows)
+        # The rows go back only after the handler has asked the local leg, which is after it has read the
+        # registry. This kernel's handler reads the registry and runs the local leg before it acks, so the
+        # wait below returns at once here. A handler that acks first and reads the registry after would
+        # otherwise race the restore above: when the restore won, it read the restored rows and took the
+        # broad leg after all. The pass-through keeps the real local leg (no manager here, so it restarts
+        # nothing), records the reason of each call and marks that it was asked. The broad leg's
+        # `_fleet_restart_run` also ends with a call to `_restart_this_kernel`, under a reason of its own,
+        # so the event alone cannot tell the two legs apart; the recorded reasons can (review round 1).
+        import threading
+        asked = threading.Event()
+        reasons = []
+        real_local = km._restart_this_kernel
+
+        def _local_seen(*a, **k):
+            reasons.append(a[0] if a else k.get("reason", ""))
+            try:
+                return real_local(*a, **k)
+            finally:
+                asked.set()
+        km._restart_this_kernel = _local_seen
+        self.addCleanup(setattr, km, "_restart_this_kernel", real_local)
         saved = os.environ.pop("ROMP_MANAGER_PORT", None)   # never trigger a real restart-all in a test
         try:
             req = urllib.request.Request("http://127.0.0.1:%d/restart?token=testtok" % self.port,
@@ -7358,9 +7398,51 @@ class ServeSecurity(unittest.TestCase):
                 # this covers the whole fleet, so the ack names it rather than leaving the caller guessing
                 self.assertEqual(_json.loads(r.read().decode()),
                                  {"ok": True, "restarting": True, "boot": km._BOOT_ID, "fleet": True})
+            self.assertTrue(asked.wait(5), "the standalone ack asked the local leg before the rows go back")
+            self.assertEqual(reasons, ["http /restart (local-only)"],
+                             "the one restart this ack started was the local-only leg, not the broad leg's last call")
         finally:
             if saved is not None:
                 os.environ["ROMP_MANAGER_PORT"] = saved
+
+    def test_the_ack_test_owns_its_empty_remotes_premise(self):
+        """test_restart_endpoint_acks_post means a standalone kernel, no manager and no remotes, so it must
+        take the local leg even when another module left a row in the shared kernel module. Run here under
+        the kind of row tests/test_kernel_trust.py's pair routes leave (an 'up' peer), it asks the local
+        leg and starts no `_fleet_restart_run`. Before 2026-10-03 it took the broad leg instead: a real
+        thread that outlived it and called a later test's faked local leg. Both legs are recorders
+        here, so nothing restarts and nothing runs ssh."""
+        import threading
+        legs = {"local": [], "broad": [], "localDone": threading.Event()}
+        saved = (km._restart_this_kernel, km._fleet_restart_run, dict(km._remotes))
+
+        def _restore():
+            km._restart_this_kernel, km._fleet_restart_run = saved[0], saved[1]
+            km._remotes.clear()
+            km._remotes.update(saved[2])
+        self.addCleanup(_restore)
+
+        def _local(reason="", manager_port=None):
+            legs["local"].append(reason)
+            legs["localDone"].set()
+            return ""
+
+        def _broad(manager_port=None):
+            legs["broad"].append(manager_port)
+        km._restart_this_kernel, km._fleet_restart_run = _local, _broad
+        row = {"host": "TESTHOST", "status": "up", "kernel_port": 29855}
+        km._remotes.clear()
+        km._remotes["TESTHOST"] = row
+        result = unittest.TestResult()
+        ServeSecurity("test_restart_endpoint_acks_post").run(result)
+        self.assertEqual((result.testsRun, result.errors, result.failures), (1, [], []),
+                         "the ack test passes under the leftover row")
+        # The two legs are exclusive branches of one request, so once the local leg has run the broad
+        # one cannot follow from it: the wait is on that event, and the empty broad list is then final.
+        self.assertTrue(legs["localDone"].wait(5), "a standalone ack asks the local leg, got %r" % legs)
+        self.assertEqual(legs["local"], ["http /restart (local-only)"])
+        self.assertEqual(legs["broad"], [], "no broad restart started under the leftover row")
+        self.assertEqual(km._remotes, {"TESTHOST": row}, "the ack test puts back the row it found")
 
     def _post_restart(self, data):
         """POST /restart with `data` as the body → (status, decoded JSON). Content-Type says JSON the
@@ -8543,7 +8625,7 @@ class PostalPeerTunnels(unittest.TestCase):
     ExitOnForwardFailure would kill the whole tunnel) for a second ephemeral -L that dials the
     remote's bus — stage 2's peering protocol is duplex over that one connection."""
 
-    R = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001, "bus_port": 50002}
+    R = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "bus_port": 2}
 
     def tearDown(self):
         # The flag-off case below sets ROMP_POSTAL_PEERS and never restores it, and _postal_peers_on() reads the
@@ -8564,8 +8646,8 @@ class PostalPeerTunnels(unittest.TestCase):
         finally:
             os.environ.pop("ROMP_POSTAL_PEERS", None)
         self.assertNotIn("-R", argv, "no fixed-port reverse forward in peer mode")
-        self.assertIn("50002:127.0.0.1:%d" % km.BUS_PORT, argv, "the ephemeral -L dials the remote's bus")
-        self.assertIn("50001:127.0.0.1:29855", argv, "the kernel forward is unchanged")
+        self.assertIn("2:127.0.0.1:%d" % km.BUS_PORT, argv, "the ephemeral -L dials the remote's bus")
+        self.assertIn("1:127.0.0.1:29855", argv, "the kernel forward is unchanged")
 
     def test_notify_bus_peer_is_guarded(self):
         saved = km.BUS_PORT
@@ -8619,7 +8701,7 @@ class PostalPeerTunnels(unittest.TestCase):
         env_saved = {k: os.environ.get(k) for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT")}
         os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1")
         try:
-            self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, True),
+            self.assertFalse(km._notify_bus_peer("TESTHOST", 2, True),
                              "postal down → False, never an exception (the supervisor must survive)")
         finally:
             km.BUS_PORT = saved
@@ -8651,35 +8733,35 @@ class CheckinMechanics(unittest.TestCase):
 
     def test_checkin_argv_adds_the_reverse_forwards(self):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
-        r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001, "bus_port": 50002,
-             "checkin": True, "rk_port": 50003, "rb_port": 50004}
+        r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "bus_port": 2,
+             "checkin": True, "rk_port": 3, "rb_port": 4}
         argv = km._tunnel_argv(r)
-        self.assertIn("50003:127.0.0.1:%d" % km.PORT, argv, "-R publishes our kernel on the hub")
-        self.assertIn("50004:127.0.0.1:%d" % km.BUS_PORT, argv, "-R publishes our bus on the hub")
+        self.assertIn("3:127.0.0.1:%d" % km.PORT, argv, "-R publishes our kernel on the hub")
+        self.assertIn("4:127.0.0.1:%d" % km.BUS_PORT, argv, "-R publishes our bus on the hub")
         self.assertEqual(argv.count("-R"), 2)
 
     def test_plain_peer_attach_argv_has_no_reverse_forwards(self):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
-        r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001, "bus_port": 50002}
+        r = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "bus_port": 2}
         self.assertNotIn("-R", km._tunnel_argv(r))
 
     def test_checkin_payload_pushes_ports_and_token(self):
         os.environ["ROMP_HOST_NAME"] = "TESTHOST"
-        p = km._checkin_payload({"rk_port": 50003, "rb_port": 50004, "local_port": 50001})
-        self.assertEqual((p["host"], p["kernelPort"], p["busPort"]), ("TESTHOST", 50003, 50004))
+        p = km._checkin_payload({"rk_port": 3, "rb_port": 4, "local_port": 1})
+        self.assertEqual((p["host"], p["kernelPort"], p["busPort"]), ("TESTHOST", 3, 4))
         self.assertEqual(p["token"], km.TOKEN,
                          "the token is HANDED to the hub, which never fetches credentials, and it is the one "
                          "this kernel SERVES: a re-read of the file at runtime could mint one the gate "
                          "rejects (review find, 2026-09-08)")
 
     def test_checkin_apply_records_a_sshless_row(self):
-        payload, status = km.checkin_apply({"host": "TESTHOST", "kernelPort": 50003,
-                                            "busPort": 50004, "token": "tok"})
+        payload, status = km.checkin_apply({"host": "TESTHOST", "kernelPort": 3,
+                                            "busPort": 4, "token": "tok"})
         self.assertEqual(status, 200)
         r = km._remotes["TESTHOST"]
         self.assertTrue(r["checkin_peer"])
         self.assertIsNone(r["proc"], "the hub owns no ssh for a checked-in host")
-        self.assertEqual((r["local_port"], r["bus_port"], r["token"]), (50003, 50004, "tok"))
+        self.assertEqual((r["local_port"], r["bus_port"], r["token"]), (3, 4, "tok"))
 
     def test_checkin_apply_validates_and_refuses_hijack(self):
         for bad in ({}, {"host": "x"}, {"host": "x", "kernelPort": 1},
@@ -8688,12 +8770,12 @@ class CheckinMechanics(unittest.TestCase):
             payload, status = km.checkin_apply(bad)
             self.assertEqual(status, 400, repr(bad))
         km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1, "proc": None}
-        payload, status = km.checkin_apply({"host": "TESTHOST", "kernelPort": 50003, "busPort": 50004})
+        payload, status = km.checkin_apply({"host": "TESTHOST", "kernelPort": 3, "busPort": 4})
         self.assertEqual(status, 409, "an ssh-attached row is never silently converted")
 
     def test_checkin_set_flags_ports_and_checkout_clears(self):
-        km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 50001,
-                                   "bus_port": 50002, "proc": None, "status": "up", "detail": "", "sids": []}
+        km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1,
+                                   "bus_port": 2, "proc": None, "status": "up", "detail": "", "sids": []}
         saved = km._checkin_stop_hub
         km._checkin_stop_hub = lambda r: None
         try:

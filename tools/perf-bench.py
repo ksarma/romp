@@ -39,11 +39,14 @@ below): the repo-root marker an older kernel writes when it is imported (a kerne
 lock writes it after its bind, so an import writes none), the session order the push appends new sids
 to, the order audit log. The end-of-run census fingerprints the copy before the
 kernel is imported and after the last row, on the error path too, and prints what changed; a run
-that reports anything but 0 changed, 0 new, 0 removed found a writer the shadow does not take. One
-such writer is known: a state file the kernel cannot parse is quarantined by an os.replace to a
+that reports anything but 0 changed, 0 new, 0 removed found a writer the shadow does not take. Two
+such writers are known. A state file the kernel cannot parse is quarantined by an os.replace to a
 .corrupt-<stamp> sibling in the same directory, which goes through none of the shadowed doors, so
-on a copy holding such a file the census lists that file removed and its sibling new; anything
-else is a writer this tool does not know about. The census records mtimes, sizes, directories and
+on a copy holding such a file the census lists that file removed and its sibling new. The boot pass
+over the checkpoints directory (em.checkpoint_sweep) runs at kernel import through the kernel's own
+provider, before any guard installs, and removes a document whose recorded file is gone or that
+does not parse, so on a copy holding such a document the census lists it removed. Anything else is
+a writer this tool does not know about. The census records mtimes, sizes, directories and
 link targets, not modes: the kernel import sets the state root it is pointed at to 0700, a change
 only on a copy whose root was not already 0700 (a live directory is, and rsync -a keeps it).
 
@@ -164,17 +167,21 @@ error, never a silent skip):
     glibc consult the name service — AF_UNIX connects to nscd and systemd-userdb, local, not network.
   * The state shadow: every kernel _atomic_write (the ONE write door for the small JSON state files
     among them), every Path.write_text the kernel import performs against the state directory (the
-    repo-root marker of a kernel older than the instance lock), the order audit log's append and the event model's fold checkpoints (its
+    repo-root marker of a kernel older than the instance lock), the order audit log's append and the event model's checkpoint documents (its
     directory provider is pointed at the shadow) are redirected to <private dir>/shadow/<same
     relative path>, and the kernel's ONE strict reader of the small JSON state files
     (_read_state_json) reads a shadowed file from the shadow, so a read-modify-write such as the
     session order's append of new sids lands once, as it does live, instead of re-firing on every
-    build against a file that never changed. A write aimed anywhere else is recorded and refused
+    build against a file that never changed. The provider redirect installs after the import, so the
+    boot pass over the checkpoints directory (em.checkpoint_sweep, run at kernel import) still reads
+    the copy's directory and removes a document whose recorded file is gone or that does not parse;
+    the census lists those removed. A write aimed anywhere else is recorded and refused
     (refused_writes in the output). The copy's files, directories and symlink targets are
     fingerprinted before the kernel is imported and again at the end, on EVERY exit path (a guard's
     error, an exception out of the candidate kernel at import or inside a builder, Ctrl-C), and the
-    output lists what changed (nothing; the quarantine move of an unparseable state file, the one
-    known writer the shadow does not take; or a writer this tool does not know about) beside the
+    output lists what changed (nothing; the quarantine move of an unparseable state file or the
+    boot pass's removal of a checkpoint document, the two known writers the shadow does not take; or
+    a writer this tool does not know about) beside the
     relative paths that were shadowed; the JSON, when asked for, is written on those paths too, with
     the error beside the census.
   * A guard that trips inside a call the kernel CATCHES is still an error: _push wraps its whole build in
@@ -568,25 +575,29 @@ def install_guards(km, sbmod, shadow, rec, no_git=False):
     names[-1] = "km._read_state_json (shadow overlay)"
     stub("_order_audit_path", lambda: shadow.target(Path(km.jd.STATE) / "order-audit.jsonl"))
     names[-1] = "km._order_audit_path (shadowed)"
-    # The fold checkpoints (kernel/event_model.py, 2026-09-11): one JSON document per folded JSONL file, written at run
-    # time with Path.write_text and os.replace into the directory a provider names at call time (kernel/judge.py
-    # installs `lambda: STATE / "checkpoints"` at import). Neither door above takes that write: the write_text
-    # diversion in load_kernel covers the import only, and the document is not an _atomic_write. So a run wrote one
-    # document per transcript into the copy (91 files after one bounded run against a 39-session copy, 2026-09-18;
-    # the census reported them as new) and warmed the next run's cold rows, since a fresh process folds only the tail
-    # past a document it finds. The provider is replaced with one that names the shadow's checkpoints directory,
-    # computed once (the bench never rebinds the state root) and recorded as a diverted path when the guard installs,
-    # so the report names the directory whether or not a document lands in the run. An event model without the
-    # setter but with the directory provider is a renamed door and an error, as the notification stubs are; one with
-    # neither predates the checkpoints and has nothing to divert.
+    # The event model's checkpoints: one JSON document per JSONL file it reads resumably (fold_records with a ckpt name),
+    # plus the assembly's documents in the same directory, written at run time with Path.write_text and os.replace into
+    # the directory its provider names at call time; kernel/judge.py installs `lambda: STATE / "checkpoints"` at import, a
+    # directory INSIDE the copy. Neither door above takes that write: the write_text diversion in load_kernel covers the
+    # import only, and the document is not an _atomic_write. So a run wrote one document per transcript into the copy
+    # (the census reported them as new) and warmed the next run's cold rows, since a fresh process that finds a document
+    # restores from it and reads only the tail past it. The provider is replaced with one naming the shadow's checkpoints
+    # directory, computed once (the bench never rebinds the state root; a call-time shadow.target would pay a resolve
+    # and a mkdir inside timed rows and record an entry per document) and recorded as a redirected path when the guard
+    # installs, so the report names the directory whether or not a document lands in the run. The setter also resets
+    # the event model's pending restores and document memos, which are empty here, before the first build. An event
+    # model with the directory provider but no setter is a renamed door and an error, as the notification stubs are;
+    # one with neither predates the checkpoints and has nothing to divert. One reader of the copy's directory stays: the
+    # boot pass over it (em.checkpoint_sweep) runs at kernel import through the kernel's own provider, before this guard
+    # installs, and removes a document whose recorded file is gone or that does not parse; the census lists those removed.
     em = getattr(km, "em", None)
     if callable(getattr(em, "set_checkpoint_dir", None)):
         ckpt_dir = shadow.target(Path(km.jd.STATE) / "checkpoints")
         em.set_checkpoint_dir(lambda: ckpt_dir)
         names.append("em.set_checkpoint_dir (shadowed)")
     elif hasattr(em, "_CKPT_DIR_FN"):
-        raise BenchError("this kernel's event model has a fold-checkpoint directory but no set_checkpoint_dir; the "
-                         "harness's guard list needs adjusting for this revision")
+        raise BenchError("this kernel's event model has a checkpoint directory provider (_CKPT_DIR_FN) but no "
+                         "set_checkpoint_dir; the harness's guard list needs adjusting for this revision")
     for fn in ("getpwnam", "getpwuid"):            # os.path.expanduser's name-service lookups, counted
         real = getattr(pwd, fn)
 

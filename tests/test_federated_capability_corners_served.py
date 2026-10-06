@@ -31,7 +31,9 @@ patch is the changed cards plus the whole remainder, and this lab board meets th
 and scalars about 79 percent of an 18.5 KB frame in the round-1 drive's record, where the kernel's recorded live board, 660
 cards with a 17 percent remainder in 5.76 MB, does not, so there the same flip is a patch: tests/test_view_deltas.py
 CatchUpRoadsOfAWholeFrameClient), and that frame would catch an old bundle up and hide the freeze this lab is meant to show. The visible observable is the card on the hub's
-feed page ([data-key="a:notice:..."]) or, for a transcript append, two: the appended pair's bar on the remote lane of
+feed page ([data-key="a:TESTHOST:notice:..."]: the hub's bundle wears a remote notice card's id with its host, since the
+project's PR 1831, taken in fold 4; a hub bundle from before it shows the bare [data-key="a:notice:..."], and the
+driver matches either form) or, for a transcript append, two: the appended pair's bar on the remote lane of
 the hub's TIMELINE page (those corners open the timeline too and read the drawn bars off its SVG), and the text of api's
 provisional row on the hub's Outline, which swaps from the seed's last prompt to the appended one. The Outline lists a
 session through its goal tree or a provisional card, and a lab session with no judge has the card PERMANENTLY, not
@@ -278,7 +280,11 @@ try {
                                            body: JSON.stringify({ id: cfg.sid, key: cfg.noticeKey, title: cfg.noticeTitle, needsYou: false, producer: "lab" }) });
     out.changePosted = await r.json();
     const rev = ((out.changePosted || {}).notice || {}).rev;
-    const sel = '[data-key="a:notice:' + cfg.sid + ':' + cfg.noticeKey + ':' + rev + '"]';
+    // the card's id on the hub's feed page: a remote NOTICE card's id wears its host (federation.ts prefixNoticeId, the project's
+    // PR 1831, taken in fold 4), and a hub bundle from before it shows the bare id; either form is the card, so the old-hub
+    // corners that assert it never shows still read the form their bundle mints
+    const bare = 'notice:' + cfg.sid + ':' + cfg.noticeKey + ':' + rev;
+    const sel = '[data-key="a:' + cfg.host + ':' + bare + '"], [data-key="a:' + bare + '"]';
     try { await pages.feed.locator(sel).first().waitFor({ state: "attached", timeout: cfg.waitMs }); out.cardSeen = true; out.cardSeenMs = Date.now() - t0; } catch (e) {}
   } else if (cfg.change === "todo") {
     const r = await fetch(cfg.todoUrl, { method: "POST", headers: { "Content-Type": "application/json" },
@@ -431,7 +437,7 @@ class _Corner(unittest.TestCase):
         conf = {"urls": {app: "http://127.0.0.1:%d/%s?wid=%s&token=%s" % (cls.hport, app, WID, cls.htoken) for app in cls.apps},
                 "noticeUrl": "http://127.0.0.1:%d/notice?token=%s" % (cls.rport, cls.rtoken),
                 "todoUrl": "http://127.0.0.1:%d/usertodo?token=%s" % (cls.rport, cls.rtoken),
-                "sid": SID_R0, "noticeKey": NOTICE_KEY, "noticeTitle": NOTICE_TITLE, "todoText": TODO_TEXT,
+                "sid": SID_R0, "host": HOST, "noticeKey": NOTICE_KEY, "noticeTitle": NOTICE_TITLE, "todoText": TODO_TEXT,
                 "change": cls.change, "stripCaps": cls.strip_caps, "waitMs": cls.wait_ms, "waitDeltaMs": cls.wait_delta_ms, "apps": list(cls.apps),
                 "lane": LANE, "laneLabel": LANE_LABEL, "seedBars": _dial.SEED_PAIRS, "provSel": PROV_SEL, "appendPrompt": APPEND_PROMPT}
         if cls.change == "transcript":

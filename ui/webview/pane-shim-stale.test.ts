@@ -32,8 +32,8 @@ import { hideEdges } from "../test-dom-shim";
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
 function shimJs(app: string, caps = "", noStale = false, core = ""): string {
-  const def = KERNEL.indexOf("def _shim(app, v=0, caps=\"\", no_stale=False):");
-  assert.ok(def > 0, "the shim renderer exists with its caps parameter (this fork's) and its stale opt-out");
+  const def = KERNEL.indexOf("def _shim(app, v=0, caps=\"\", no_stale=False, pv=None, data=None):");
+  assert.ok(def > 0, "the shim renderer exists with its caps parameter (this fork's), its stale opt-out and the pane-set revision slots");
   const start = KERNEL.indexOf('return """', def) + 'return """'.length;
   // the tuple's first slot is the reload core (T265, its own executed test in tests/test_dashboard_auto_reload.py);
   // an empty core here leaves window.__rompReload undefined, so the shim's raise takes its fallback path; a `core` string
@@ -41,18 +41,21 @@ function shimJs(app: string, caps = "", noStale = false, core = ""): string {
   // slots that follow it: the chat pane's restart-diet read (PR 1661 round two: emitted for the chat app alone; the
   // harness's apps are not chat, so it substitutes the false the other panes carry, and the dial line compiles against
   // it), the app, the pane's label (_pane_label, T415), the version, this fork's caps slot (the page's caps: the Files pane
-  // announces readyGate alone) and the stale opt-out the Files page renders with (no_stale=True): a JS boolean literal, no
-  // longer a cap. The tuple's head is pinned; its tail may or may not carry the label slot (a copy-aside run at an older
-  // base lacks it), so the arguments follow the slots the slice actually has
-  const end = KERNEL.indexOf('""" % (_reload_core(v), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", app,', start);
+  // announces readyGate alone), the stale opt-out the Files page renders with (no_stale=True): a JS boolean literal, no
+  // longer a cap, and the pane-set revision (LOADEDPV, plans/panes-as-data.md). The tuple's head is pinned; its tail may or
+  // may not carry the label slot (a copy-aside run at an older base lacks it), so the arguments follow the slots the slice
+  // actually has
+  const end = KERNEL.indexOf('""" % (_reload_core(v, pvv), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", app,', start);
   assert.ok(end > start, "the template's format tuple is the one the test substitutes");
   const slice = KERNEL.slice(start, end);
   // the label slot: _pane_label's word for the key (kernel.py _PANE_ORDER), the capitalised key outside that list
   const LABELS: Record<string, string> = { chat: "Chat", timeline: "Sessions", fleet: "Outline", feed: "Feed", files: "Files" };
   const label = LABELS[app] || app.charAt(0).toUpperCase() + app.slice(1);
+  // the pane-set revision slot (plans/panes-as-data.md): a JSON string the shim compares against the keepalive's pv
+  const pv = slice.includes("var LOADEDPV=%s;") ? ['"0"'] : [];
   const args = slice.includes('var LABEL="%s"')
-    ? [core, "var RESTART_DIET=false;", app, label, "5", caps, noStale ? "true" : "false", app, app]
-    : [core, "var RESTART_DIET=false;", app, "5", caps, noStale ? "true" : "false", app, app];
+    ? [core, "var RESTART_DIET=false;", app, label, "5", caps, noStale ? "true" : "false", ...pv, app, app]
+    : [core, "var RESTART_DIET=false;", app, "5", caps, noStale ? "true" : "false", ...pv, app, app];
   let i = 0;
   return slice.replace(/%[sd]/g, () => args[i++]).replace(/%%/g, "%");
 }
@@ -150,8 +153,9 @@ class Harness {
   fresh() { return this.posted.filter((m) => m.romp === "wsFresh").length; }
   builds() { return this.reloads.filter((r) => r.reason === "build"); }   // the dv raises the shim handed the fake core (every entry, since noteDv is the one road)
   diags(what: string) { return this.sent.filter((m) => m.type === "clientDiag" && m.what === what); }
-  kaReachedBundle() { return this.toBundle.some((m) => m && m.type === "ka"); }
+  /** the bundle's ready frames that went up a socket, first send and any re-post */
   readys() { return this.sent.filter((m) => m.type === "ready").length; }
+  kaReachedBundle() { return this.toBundle.some((m) => m && m.type === "ka"); }
   /** the bundle has loaded and installed its listener: its own connect handshake goes through the shim's send() */
   bundleReady() { this.win.__rompLocalSend({ type: "ready" }); }
   /** connect, the bundle loads, deliver the first frame, then drop the socket and let the redial run: a RECONNECTED socket */
@@ -498,55 +502,67 @@ test("every close the browser reports for a socket that OPENED leaves a wsclose 
   const rows = h.diags("wsclose");
   assert.equal(rows.length, 1, "…and delivered on the reconnect");
   assert.equal(rows[0].surface, "pane-shim");
-  // bundleReady false: the bundle never said ready on this page, so the redial dialed as a fresh page (below)
-  assert.deepEqual(rows[0].data, { app: "feed", code: 1006, reason: "", wasClean: false, sinceOpenMs: 6_500, quietMs: 2_500, everConnected: true, bundleReady: false });
+  // bundleReady, readyAcked, readyQueued all false: the bundle never said ready on this page, so the redial dialed as a fresh page (the four shapes below)
+  assert.deepEqual(rows[0].data, { app: "feed", code: 1006, reason: "", wasClean: false, sinceOpenMs: 6_500, quietMs: 2_500, everConnected: true, bundleReady: false, readyAcked: false, readyQueued: false });
   assert.equal(h.diags("wsconnfail").length, 0, "no handshake failed");
 });
 
-// The wsclose row's bundleReady is the shim's state at the CLOSE; the kernel stamps every row with whether the
-// socket that carried it declared the redial (?reconnect=1&proto=N). The queued row rides the redial, so the pair tells
-// the three shapes apart in client-diag.jsonl (2026-09-10; the kernel half is tests/test_client_diag_reconnect_stamp.py).
-// Since upstream's readyAcked rule (the shim-redial follow-ups coming home, 2026-09-14) a redial declares itself only
-// once the kernel's caps frame has ACKED the bundle's ready; until then the redial dials fresh and re-posts the
-// bundle's own ready message, and an acked ready is never re-sent (the term is the kernel's cue).
-test("the wsclose row says whether the bundle had said ready at the close, beside the redial's own term", () => {
-  // declared: the bundle said ready on the socket that died, the kernel acked it (caps), and the redial carries the term
-  let h = FEED();
+// The wsclose row carries the dial term's inputs at the CLOSE (bundleReady, readyAcked, readyQueued; everConnected was already
+// there and is true on every such row), and the kernel stamps every row with whether the socket that carried it declared the
+// redial (?reconnect=1&proto=N). The queued row rides the redial, so the two together name the redial's kind in
+// client-diag.jsonl (2026-09-10; the kernel half and the joined read-back are tests/test_client_diag_reconnect_stamp.py).
+// A redial declares itself only once the kernel's caps frame has answered the bundle's ready; until then it dials fresh and
+// re-posts the bundle's own ready message behind the flushed rows, and an acked ready is never re-sent.
+const bits = (h: Harness) => { const d = h.diags("wsclose")[0].data; return [d.bundleReady, d.readyAcked, d.readyQueued]; };
+/** the frames the redial socket carried from `from` on: a clientDiag row as its what, any other frame as its type */
+const carried = (h: Harness, from: number) => h.sent.slice(from).map((m) => (m.type === "clientDiag" ? m.what : m.type));
+
+test("wsclose bits, declared: the bundle said ready, the kernel answered, and the redial carries the term", () => {
+  const h = FEED();
   h.ws.open(); h.bundleReady(); h.ws.msg({ type: "caps", caps: [] }); h.ws.msg({ type: "feed", asks: [] });
   h.ws.close(); h.runTimers();
   assert.match(h.ws.url, /&reconnect=1&proto=1$/, "the redial declares itself, with the wire protocol its ready named");
-  h.ws.open();
-  assert.equal(h.diags("wsclose")[0].data.bundleReady, true, "the bundle had said ready when the socket closed");
-  // gated off: the socket died before the bundle said ready, and the redial dials as a fresh page
-  h = FEED();
+  const n = h.sent.length; h.ws.open();
+  assert.deepEqual(bits(h), [true, true, false], "ready sent and answered, none waiting");
+  assert.deepEqual(carried(h, n), ["wsclose"], "the queued row flushes and nothing follows it");
+  assert.equal(h.readys(), 1, "the acked ready is not re-sent on a declared redial");
+  h.settles(0);
+});
+
+test("wsclose bits, gated off: the socket died before the bundle said ready, and the redial dials as a fresh page", () => {
+  const h = FEED();
   h.ws.open(); h.ws.close(); h.runTimers();
   assert.doesNotMatch(h.ws.url, /reconnect=1/, "no term: the page held nothing");
-  h.ws.open();
-  assert.equal(h.diags("wsclose")[0].data.bundleReady, false, "the bundle had not said ready at the close");
-  // the ready reached the shim while the socket was CLOSING (the browser holds a closing handshake open): it
-  // queued, the row says the bundle was ready, and the redial still carries no term (the queued ready is the
-  // bundle's own, flushed onto the redial); the kernel reads the pair as reconnect false, bundleReady true
-  h = FEED();
+  const n = h.sent.length; h.ws.open();
+  assert.deepEqual(bits(h), [false, false, false], "the bundle had not said ready at the close");
+  assert.deepEqual(carried(h, n), ["wsclose"]);
+  assert.equal(h.readys(), 0, "no ready to re-post: the bundle has not sent its own");
+  h.settles(0);
+});
+
+test("wsclose bits, a ready during the close: it queued, the row says so, and it rides the redial ahead of the row", () => {
+  // the browser holds a closing handshake open; the queued ready is the bundle's own, so the redial carries no term
+  const h = FEED();
   h.ws.open(); h.ws.readyState = 2; h.bundleReady();
   h.ws.close(); h.runTimers();
   assert.doesNotMatch(h.ws.url, /reconnect=1/, "the ready is still queued for this open, so no term");
-  h.ws.open();
-  const kinds = h.sent.map((m) => (m.type === "clientDiag" ? m.what : m.type));
-  assert.deepEqual(kinds, ["ready", "wsclose"], "the ready queued first, during the close; this socket declared no term, so the order does not touch the stamp");
-  assert.equal(h.diags("wsclose")[0].data.bundleReady, true);
-  assert.equal(h.readys(), 1, "the queued ready went out once; nothing re-sent it");
-  // on the declared shape the queued row is flushed and no ready follows it: the kernel acked the bundle's ready
-  // before the drop, so the redial's term carries the reconnect and nothing re-sends the handshake
-  h = FEED();
-  h.ws.open(); h.bundleReady(); h.ws.msg({ type: "caps", caps: [] }); h.ws.msg({ type: "feed", asks: [] }); h.ws.close(); h.runTimers(); h.ws.open();
-  assert.deepEqual(h.sent.slice(-1).map((m) => (m.type === "clientDiag" ? m.what : m.type)), ["wsclose"]);
-  assert.equal(h.readys(), 1, "the acked ready is not re-sent on a declared redial");
-  // an UNACKED ready (no caps frame reached the shim before the drop) is re-posted on the redial, after the flushed row
-  h = FEED();
+  const n = h.sent.length; h.ws.open();
+  assert.deepEqual(bits(h), [true, false, true], "ready sent into the queue, unanswered, waiting");
+  assert.deepEqual(carried(h, n), ["ready", "wsclose"], "the ready queued first, during the close, then the row");
+  assert.equal(h.readys(), 1, "the queued ready went out once; nothing re-posted it");
+  h.settles(0);
+});
+
+test("wsclose bits, an unacked ready: it left on the socket that died, and the redial dials fresh and re-posts it", () => {
+  // no caps frame came back; without readyAcked and readyQueued on the row this shape read like the one above
+  const h = FEED();
   h.ws.open(); h.bundleReady(); h.ws.msg({ type: "feed", asks: [] }); h.ws.close(); h.runTimers();
-  assert.doesNotMatch(h.ws.url, /reconnect=1/, "no ack, no term: the redial dials fresh");
-  h.ws.open();
-  assert.deepEqual(h.sent.slice(-2).map((m) => (m.type === "clientDiag" ? m.what : m.type)), ["wsclose", "ready"]);
+  assert.doesNotMatch(h.ws.url, /reconnect=1/, "no answer, no term: the redial dials fresh");
+  const n = h.sent.length; h.ws.open();
+  assert.deepEqual(bits(h), [true, false, false], "ready sent and gone, unanswered, none waiting");
+  assert.deepEqual(carried(h, n), ["wsclose", "ready"], "the flushed row, then the re-posted ready");
+  assert.equal(h.readys(), 2, "the ready went out on each socket: once before the drop, once re-posted");
+  h.settles(0);
 });
 
 test("the redials an outage refuses leave ONE coalesced row on the next open, never a wsclose each", () => {
@@ -594,7 +610,9 @@ test("queued breadcrumbs are capped while the socket is down; other queued messa
 test("a page served with the stale opt-out never arms the prompt after a reconnect, and never retires one", () => {
   assert.match(KERNEL, /_shim\("files", v, caps=READY_GATE_CAP, no_stale=True\)/, "the Files page is the one served with the opt-out, beside its ready-hold cap (this fork's caps slot; upstream's page passes no caps)");
   assert.match(KERNEL, /_shim\("settings", v, no_stale=True\)/, "upstream's settings page (T400, a pane of the shell whose bundle posts no ready and takes no pushed view) opts out too, with no caps");
-  assert.equal(KERNEL.match(/no_stale=True/g)!.length, 2, "no other page opts out");
+  assert.match(KERNEL, /_shim\("artifacts", v, no_stale=True\)/, "upstream's Artifacts page (PR 1911, request/response like the Files viewer) opts out too, with no caps");
+  assert.match(KERNEL, /_shim\(pid, _dist_ver\(\), no_stale=True, pv=snap\["rev"\], data=snap\["data"\]\)/, "and upstream's state-root data pane's shim (PR 1952, GET /pane/<id>/shim.js: no pushed view reaches such a page)");
+  assert.equal(KERNEL.match(/no_stale=True/g)!.length, 4, "no other page opts out");
   const h = new Harness(shimJs("files", "readyGate", true));
   assert.match(h.ws.url, /^ws:\/\/TESTHOST:29855\/ws\?app=files&delta=1&iid=/, "the same dial as every pane");
   assert.match(h.ws.url, /&caps=readyGate(&|$)/, "the ready-hold cap rides the URL as on every pane (this fork's); the opt-out does not: it is the kernel's keyword, baked into the shim");

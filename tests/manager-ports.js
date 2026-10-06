@@ -31,8 +31,8 @@
 // outgoing connection is never handed one of these as its SOURCE port between the probe and the bind.
 // It also sits under every band another suite on the same machine draws from: the bats helper's
 // 20000-24999, the postal bus's 25302, the postal tests' 27200-28300 and the kernel's 29855 (all in
-// tests/free-port.bash's header), and the postal port pytest derives from its pid in 20000-39999
-// (tests/test_chat_pages.py, tests/test_judge_serve.py).
+// tests/free-port.bash's header). tests/test_ephemeral_port_census.py's HeaderBands pins that each
+// range in that list lies below the ephemeral range and holds a band a test draws from.
 //
 // The table is EXPLICIT so it is collision-free by construction: a file not in it is refused with the
 // line to add, and tests/manager-ports.test.js pins that the blocks are pairwise disjoint, sit in the

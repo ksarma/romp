@@ -1266,7 +1266,7 @@ out["schemeAtPeerPhases"] = pm2.peers_on()         # switch of its own); pm2's h
 exchange(pm2, host_a, [carried])                   # host A's exchange names its sid in the running bus
 out["peerHeard"] = peer_phase()
 def notify(bus, host, up):                         # the kernel's /peer notify, through the real handler, which writes the mirror itself
-    return list(bus.peer_update({"host": host, "port": 50002, "up": up}))
+    return list(bus.peer_update({"host": host, "port": 2, "up": up}))
 def restarted(name, previous):                     # a further bus process over the same root: a fresh module object, memory empty,
     bus = load_source(name, os.path.join(bin_dir, "romp-postal-service"))   # PEERS empty (no notify has landed yet)
     bus._peer_threads_reconcile = lambda host: None   # the notify's dialer bookkeeping is not under test (an up notify would dial a loopback port nothing listens on)
@@ -1709,7 +1709,7 @@ out["bomWritten"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remo
 # (nothing answers), B and A notified one at a time and heard. A nineteenth restart whose seed reads the list; B heard; A heard,
 # the last linked host heard since the mark: the event that clears it
 def seed(bus, links):                              # the kernel's tunnel list read at the bus's start, every link up, and one
-    body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": "up"} for h in links],   # remembered unattached
+    body = json.dumps({"tunnels": [{"host": h, "busPort": 2, "status": "up"} for h in links],       # remembered unattached
                        "known": [{"host": remembered, "trust": "trusted"}]}).encode()               # host: an origin-only row, no link
     class Answer:
         def read(self):
@@ -2019,7 +2019,7 @@ def hear(src, src_name, hub, hub_name, strip_answered=False):
     return got
 def notify(bus, host, up):                         # the kernel's /peer notify, through the real handler, which writes the mirror
     with As(bus):
-        return list(bus.peer_update({"host": host, "port": 50002, "up": up}))
+        return list(bus.peer_update({"host": host, "port": 2, "up": up}))
 def rows(bus):                                     # our mirror's rows: [heard, linkDown, linkUp, answered, reachable, vouchesAbsence, sids]
     p = bus.STATE / "remote-sids"
     if not p.exists():
@@ -2094,7 +2094,7 @@ us = fresh_us(); b, hub = other(road, "b"), other(road, "hub")
 LISTINGS["b"], LISTINGS["hub"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["web"]]
 notify(us, HUB, True)
 with As(hub):
-    hub.peer_update({"host": US, "port": 50001, "up": True})
+    hub.peer_update({"host": US, "port": 1, "up": True})
 hear(b, B, hub, HUB)                               # the hub hears B, answered
 dial(us, US, hub, HUB)                             # we dial the hub: it learns our roster, we fold the hub
 LISTINGS["hub"] = None                             # the hub's kernel listing stops answering; the new session starts there
@@ -2225,12 +2225,12 @@ us = fresh_us(); f, hub = other(road, "f"), other(road, "hub")
 LISTINGS["f"], LISTINGS["hub"] = [S["other"]], [S["hubsid"]]
 notify(us, HUB, True)
 with As(hub):
-    hub.peer_update({"host": F, "port": 50003, "up": True})
+    hub.peer_update({"host": F, "port": 3, "up": True})
 hear(f, F, hub, HUB)
 LISTINGS["f"] = None
 dial(f, F, hub, HUB)
 with As(hub):
-    hub.peer_update({"host": F, "port": 50003, "up": False})
+    hub.peer_update({"host": F, "port": 3, "up": False})
 dial(hub, HUB, us, US); dial(us, US, hub, HUB)
 step(road, "farGoneAtHub", us, nobody=S["nobody"], other=S["other"])
 dial(hub, HUB, us, US); dial(us, US, hub, HUB)
@@ -2325,7 +2325,7 @@ def b_and_c_answered(road):                        # B and C linked up and answe
     LISTINGS["b"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["csid"]], [S["web"]]
     notify(us, B, True); notify(us, C, True)
     with As(b):
-        b.peer_update({"host": US, "port": 50001, "up": True})
+        b.peer_update({"host": US, "port": 1, "up": True})
     dial(b, B, us, US); dial(c, C, us, US); dial(us, US, b, B); dial(us, US, c, C)  # our dial: the answer releases
     return us, b, c
 # V5: B's kernel restarts, a session starts on B and mails our session; B's request carries the mail beside its cached
@@ -2386,7 +2386,7 @@ us = fresh_us(); b, hub = other(road, "b"), other(road, "hub")
 LISTINGS["b"], LISTINGS["hub"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["web"]]
 notify(us, B, True); notify(us, HUB, True)
 with As(b):
-    b.peer_update({"host": US, "port": 50001, "up": True})
+    b.peer_update({"host": US, "port": 1, "up": True})
 dial(b, B, us, US); hear(b, B, hub, HUB); dial(hub, HUB, us, US); dial(us, US, b, B); dial(us, US, hub, HUB)  # our dial: the answer releases
 LISTINGS["b"] = None
 out["roads"][road] = {"park": park(b, S["new"], "px-held4")}
@@ -2440,10 +2440,10 @@ def far_behind_hub(road, hub_name):                # F behind the hub, the hub r
     LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
     notify(us, HUB, True); notify(us, C, True)
     with As(hub):
-        hub.peer_update({"host": US, "port": 50001, "up": True})
-        hub.peer_update({"host": F, "port": 50003, "up": True})
+        hub.peer_update({"host": US, "port": 1, "up": True})
+        hub.peer_update({"host": F, "port": 3, "up": True})
     with As(f):
-        f.peer_update({"host": HUB, "port": 50002, "up": True})
+        f.peer_update({"host": HUB, "port": 2, "up": True})
     dial(c, C, us, US); dial(us, US, c, C)         # our dial: the answer releases
     dial(hub, hub_name, us, US)                    # the hub learns our roster from our response
     hear(f, F, hub, HUB)                           # F learns it through the hub's gossip; the hub hears F answered
@@ -2455,8 +2455,8 @@ def restart_hub(road, hub_name):                   # the hub's bus restarts over
     hub = load_bus("hub", Path(others_root) / road / "hub")
     LISTINGS["hub"] = [S["hubsid"]]
     with As(hub):
-        hub.peer_update({"host": US, "port": 50001, "up": True})
-        hub.peer_update({"host": F, "port": 50003, "up": True})
+        hub.peer_update({"host": US, "port": 1, "up": True})
+        hub.peer_update({"host": F, "port": 3, "up": True})
     return hub, dial(hub, hub_name, us, US)
 road = "farCachedHubRestarts"
 us, f, hub, c = far_behind_hub(road, HUB)
@@ -2489,7 +2489,7 @@ hub2 = other(road, "hub2")
 LISTINGS["hub2"] = []
 notify(us, HUB2, True)
 with As(f):
-    f.peer_update({"host": HUB2, "port": 50004, "up": True})
+    f.peer_update({"host": HUB2, "port": 4, "up": True})
 hear(f, F, hub2, HUB2); dial(hub2, HUB2, us, US)  # F answered, through the second hub too
 dial(us, US, hub2, HUB2)                          # our dial: the second hub's answer releases its row and its word about F
 LISTINGS["f"] = None
@@ -2671,7 +2671,7 @@ out["roads"][road]["twinBefore"] = f._PRESENCE_GOOD_FILE.exists()
 f._PRESENCE_GOOD_FILE.unlink()                     # F's disk twin of its last answered listing is gone
 f = load_bus("f", Path(others_root) / road / "f")  # F's bus restarts over its own root, its kernel still not answering
 with As(f):
-    f.peer_update({"host": HUB, "port": 50002, "up": True})
+    f.peer_update({"host": HUB, "port": 2, "up": True})
 restart_req, restart_resp, restart_status = taken(hub, HUB, f, F)  # the hub's dial to F: F's restarted process answers over an
 with As(hub):                                                      # empty cache, which the hub (this build) places after F's last roster, so F's
     fold(hub, F, restart_req, restart_resp)                        # names there go (round 6 of fork PR #897: F's own dial it cannot place, merges)
@@ -2693,15 +2693,15 @@ us, f, hub, c = held_after_relay(road, HUB, "px-hub9")
 g = other(road, "g")
 LISTINGS["g"] = [S["gsid"]]
 with As(g):
-    g.peer_update({"host": HUB, "port": 50002, "up": True})
+    g.peer_update({"host": HUB, "port": 2, "up": True})
 with As(hub):
-    hub.peer_update({"host": G, "port": 50005, "up": True})
+    hub.peer_update({"host": G, "port": 5, "up": True})
 hear(g, G, hub, HUB); dial(hub, HUB, us, US)  # G answered through the hub, beside F's cached word
 dial(us, US, hub, HUB)                        # our dial: the hub's answer releases G's word here (F's stays held)
 step(road, "gAnswered", us, newOnFar=S["new"], gsid=S["gsid"])
 hub, out["roads"][road]["restartDial"] = restart_hub(road, HUB)
 with As(hub):
-    hub.peer_update({"host": G, "port": 50005, "up": True})
+    hub.peer_update({"host": G, "port": 5, "up": True})
 hear(g, G, hub, HUB)                               # G answers the restarted hub; F has not exchanged with it
 dial(hub, HUB, us, US)                             # the restarted hub's roster names G and omits F
 out["roads"][road]["rosterVia"], out["roads"][road]["heldAfter"] = roster_via(us, HUB), held_words(us, HUB)
@@ -2713,7 +2713,7 @@ step(road, "hubRestarted", us, newOnFar=S["new"], nobody=S["nobody"])
 LISTINGS["f"] = [S["other"], S["new"]]             # F's listing answers, naming the session
 notify(us, F, True)                                # our kernel links F directly
 with As(f):
-    f.peer_update({"host": US, "port": 50001, "up": True})
+    f.peer_update({"host": US, "port": 1, "up": True})
 out["roads"][road]["farDial"] = dial(f, F, us, US)  # F's own answering dial here: F's first roster here, which holds its row
 step(road, "farDialsHere", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
 dial(us, US, f, F)  # our dial to F: F's answer releases its row, which then speaks for F
@@ -2731,8 +2731,8 @@ f.BUS_ID = ""                                      # F's exchanges carry no bus 
 LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
 notify(us, HUB, True); notify(us, C, True)
 with As(hub):
-    hub.peer_update({"host": US, "port": 50001, "up": True})
-    hub.peer_update({"host": F, "port": 50003, "up": True})
+    hub.peer_update({"host": US, "port": 1, "up": True})
+    hub.peer_update({"host": F, "port": 3, "up": True})
 dial(c, C, us, US); dial(us, US, c, C)             # our dial: the answer releases
 hear(f, F, hub, HUB, strip_answered=True)          # F's exchange with the hub: its listing answers, the bit absent (an older bus)
 dial(hub, HUB, us, US)                             # the hub gossips F's word here: no viaBus, viaAnswered False
@@ -2841,7 +2841,7 @@ def face_1_over_empty_cache(road, mid, relay):
     f._PRESENCE_GOOD_FILE.unlink()
     f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts over its own root, its kernel not answering
     with As(f):
-        f.peer_update({"host": HUB, "port": 50002, "up": True})
+        f.peer_update({"host": HUB, "port": 2, "up": True})
     ec_req, ec_resp, ec_status = taken(hub, HUB, f, F)  # the hub's dial to F: F's answer serves an empty cache, which a hub
     with As(hub):                                       # on this build places after F's last roster, so F's names there go (round 6
         fold(hub, F, ec_req, ec_resp)                   # of fork PR #897: F's own dial it cannot place, and merges)
@@ -2894,10 +2894,10 @@ def older_far_behind_hub(road, honest):            # F on a release before this 
     LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
     notify(us, HUB, True); notify(us, C, True)
     with As(hub):
-        hub.peer_update({"host": US, "port": 50001, "up": True})
-        hub.peer_update({"host": F, "port": 50003, "up": True})
+        hub.peer_update({"host": US, "port": 1, "up": True})
+        hub.peer_update({"host": F, "port": 3, "up": True})
     with As(f):
-        f.peer_update({"host": HUB, "port": 50002, "up": True})
+        f.peer_update({"host": HUB, "port": 2, "up": True})
     dial(c, C, us, US); dial(us, US, c, C)         # our dial: the answer releases
     dial(hub, HUB, us, US)                         # the hub learns our roster from our response
     hear(f, F, hub, HUB, strip_answered=True)      # F learns it through the hub's gossip; the hub hears F, its bit absent
@@ -2969,8 +2969,8 @@ hub2 = other(road, "hub2")
 LISTINGS["hub2"] = []
 notify(us, HUB2, True)
 with As(hub2):
-    hub2.peer_update({"host": US, "port": 50001, "up": True})
-    hub2.peer_update({"host": F, "port": 50003, "up": True})
+    hub2.peer_update({"host": US, "port": 1, "up": True})
+    hub2.peer_update({"host": F, "port": 3, "up": True})
 dial(hub2, HUB2, us, US); dial(us, US, hub2, HUB2)  # the second hub learns our roster, our dial releases its row; not heard F
 LISTINGS["f"] = []                                 # every session on F ends: F answers the hub empty, and the hub's dial omits F
 hear(f, F, hub, HUB, strip_answered=True); dial(hub, HUB, us, US)
@@ -2979,9 +2979,9 @@ step(road, "hubOmitsF", us, nobody=S["nobody"])
 f2 = other(road, "f2")                             # F runs this head: a new process with a new bus id, F's listing, no session
 f2.road_label = "f"
 with As(f2):
-    f2.peer_update({"host": HUB, "port": 50002, "up": True})
-    f2.peer_update({"host": HUB2, "port": 50004, "up": True})
-    f2.peer_update({"host": US, "port": 50001, "up": True})
+    f2.peer_update({"host": HUB, "port": 2, "up": True})
+    f2.peer_update({"host": HUB2, "port": 4, "up": True})
+    f2.peer_update({"host": US, "port": 1, "up": True})
 hear(f2, F, hub, HUB)                              # its first exchange with the hub, answered and empty
 LISTINGS["f"] = [S["goss"]]                        # a session briefly on F, seen by the second hub alone, which gossips it here
 hear(f2, F, hub2, HUB2); dial(hub2, HUB2, us, US)
@@ -3021,10 +3021,10 @@ us = fresh_us(); f, hub, c = other(road, "f"), other(road, "hub"), other(road, "
 LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
 notify(us, HUB, True); notify(us, C, True)
 with As(hub):
-    hub.peer_update({"host": US, "port": 50001, "up": True})
-    hub.peer_update({"host": F, "port": 50003, "up": True})
+    hub.peer_update({"host": US, "port": 1, "up": True})
+    hub.peer_update({"host": F, "port": 3, "up": True})
 with As(f):
-    f.peer_update({"host": HUB, "port": 50002, "up": True})
+    f.peer_update({"host": HUB, "port": 2, "up": True})
 dial(c, C, us, US); dial(us, US, c, C)          # our dial: the answer releases
 dial(hub, HUB, us, US); dial(us, US, hub, HUB)  # the hub learns our roster; our dial releases its row
 hear(f, F, hub, HUB)                            # F answers the hub; the hub relays nothing here yet
@@ -3059,11 +3059,11 @@ LISTINGS["hub2"] = []
 notify(us, HUB, True); notify(us, C, True); notify(us, HUB2, True)
 for h in (hub, hub2):
     with As(h):
-        h.peer_update({"host": US, "port": 50001, "up": True})
-        h.peer_update({"host": F, "port": 50003, "up": True})
+        h.peer_update({"host": US, "port": 1, "up": True})
+        h.peer_update({"host": F, "port": 3, "up": True})
 with As(f):
-    f.peer_update({"host": HUB, "port": 50002, "up": True})
-    f.peer_update({"host": HUB2, "port": 50004, "up": True})
+    f.peer_update({"host": HUB, "port": 2, "up": True})
+    f.peer_update({"host": HUB2, "port": 4, "up": True})
 dial(c, C, us, US); dial(us, US, c, C)             # our dial: the answer releases
 dial(hub, HUB, us, US); dial(hub2, HUB2, us, US)   # both hubs learn our roster
 dial(us, US, hub, HUB); dial(us, US, hub2, HUB2)   # our dials release both hubs' rows
@@ -3154,7 +3154,7 @@ def f2_behind_hub(road, sids):                     # F2, its kernel listing answ
     f2 = other(road, "f2")
     LISTINGS["f2"] = sids
     with As(f2):
-        f2.peer_update({"host": HUB, "port": 50002, "up": True})
+        f2.peer_update({"host": HUB, "port": 2, "up": True})
     return f2
 def hub_row_for_f(hub, f, f2):                     # the hub's row for F's name: [whose bus id, its bit, its sessions]
     row = hub.PEER_STATE.get(F) or {}
@@ -3313,7 +3313,7 @@ us = fresh_us(); hub, c = other(road, "hub"), other(road, "c")
 LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["hubsid"]], [S["csid"]], [S["web"]]
 notify(us, HUB, True); notify(us, C, True)
 with As(hub):
-    hub.peer_update({"host": US, "port": 50001, "up": True})
+    hub.peer_update({"host": US, "port": 1, "up": True})
 dial(c, C, us, US); dial(us, US, c, C)
 out["roads"][road] = {"declaredDial": dial(hub, HUB_DECL, us, US)}   # filed under the declared name: no alias row yet
 out["roads"][road]["olderAnswerVia"], fold_older = split_dial(us, US, hub, HUB)   # our dial to the alias, answered now
@@ -3641,7 +3641,7 @@ step(road, "written", us, goss=S["goss"], nobody=S["nobody"])
 # its start names B and C, and C is heard since the mark; B's first dial is stored while the write is held at the clear's
 # read, after its copy, which does not have B
 def seed(bus, links):                              # the kernel's tunnel list read at the bus's start, every link up
-    body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": "up"} for h in links], "known": []}).encode()
+    body = json.dumps({"tunnels": [{"host": h, "busPort": 2, "status": "up"} for h in links], "known": []}).encode()
     class Answer:
         def read(self):
             return body
@@ -3795,7 +3795,7 @@ us, breq = b_heard_while_down(road)
 def handle_r3(bus=us, req=breq, road=road):
     out["roads"][road]["handled"] = [bus.peer_exchange_handle(req)[1]]
 def notify_up(bus=us, road=road):
-    out["roads"][road]["notified"] = list(bus.peer_update({"host": B, "port": 50002, "up": True}))
+    out["roads"][road]["notified"] = list(bus.peer_update({"host": B, "port": 2, "up": True}))
 def at_gate_link(bus=us):                          # B's row and B's link state, live, while the held write waits at its gate
     st = bus.PEER_STATE.get(B) or {}
     return [bool(st.get("seenAt")), bool(st.get("linkDown")),
@@ -3816,7 +3816,7 @@ for road, order in (("oneHoldLinkStateWriteFirst", ("write", "dial", "up")), ("o
             elif act == "dial":
                 out["roads"][road]["handled"] = [us.peer_exchange_handle(breq)[1]]
             else:
-                out["roads"][road]["notified"] = list(us.peer_update({"host": B, "port": 50002, "up": True}))
+                out["roads"][road]["notified"] = list(us.peer_update({"host": B, "port": 2, "up": True}))
     step(road, "afterAll", us, goss=S["goss"], nobody=S["nobody"])
 print(json.dumps(out))
 """, HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F, R_HUB2, R_HUB_DECL, R_G, R_HUB_DECL2],
@@ -3884,8 +3884,8 @@ us, f, hub, c = far_behind_hub(road, HUB)
 hub = load_bus("hub", Path(others_root) / road / "hub")   # the hub's bus restarts over its own root: a new bus id
 LISTINGS["hub"] = [S["hubsid"]]
 with As(hub):
-    hub.peer_update({"host": US, "port": 50001, "up": True})
-    hub.peer_update({"host": F, "port": 50003, "up": True})
+    hub.peer_update({"host": US, "port": 1, "up": True})
+    hub.peer_update({"host": F, "port": 3, "up": True})
 hear(f, F, hub, HUB)
 out["roads"][road] = {}
 out["roads"][road]["olderAnswerVia"], fold_older = split_dial(us, US, hub, HUB)   # answered now: the hub's own listing
@@ -3983,7 +3983,7 @@ dial(c, C, us, US); dial(us, US, c, C)             # C heard in the new process,
 out["roads"][road]["viaRowsAfterRestart"] = carried_via(us)
 step(road, "afterOurRestart", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
 with As(f):
-    f.peer_update({"host": US, "port": 50001, "up": True})   # F links us; the hub is not heard again
+    f.peer_update({"host": US, "port": 1, "up": True})   # F links us; the hub is not heard again
 LISTINGS["f"] = [S["other"], S["new"]]             # F's kernel answers, naming the new session
 out["roads"][road]["farDial"] = dial(f, F, us, US)   # F's answered dial, its first roster here: a dial releases nothing
 out["roads"][road]["viaRowsAfterFarDial"] = carried_via(us)
@@ -4016,7 +4016,7 @@ dial(c, C, us, US); dial(us, US, c, C)             # C heard in the new process,
 step(road, "afterOurRestart", us, newOnFar=S["new"], nobody=S["nobody"])
 f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts too, over its own root: a new bus id
 with As(f):
-    f.peer_update({"host": US, "port": 50001, "up": True})   # F links us; the hub is not heard
+    f.peer_update({"host": US, "port": 1, "up": True})   # F links us; the hub is not heard
 LISTINGS["f"] = [S["other"], S["new"]]             # F's kernel answers, naming the new session
 out["roads"][road]["farDial"] = dial(f, F, us, US)
 dial(us, US, f, F)                                 # F's answer to our dial releases F's row, under F's new bus id
@@ -4032,7 +4032,7 @@ dial(c, C, us, US); dial(us, US, c, C); dial(f, F, us, US); dial(us, US, f, F)
 out["roads"][road]["viaRowsAfterSecondRestart"] = carried_via(us)
 step(road, "afterOurSecondRestart", us, newOnFar=S["new"], nobody=S["nobody"])
 with As(f):
-    f.peer_update({"host": HUB, "port": 50002, "up": True})
+    f.peer_update({"host": HUB, "port": 2, "up": True})
 hear(f, F, hub, HUB)                               # F answers the hub: the hub hears F's new process
 out["roads"][road]["hubDial"] = dial(hub, HUB, us, US)   # the hub's word names F's new bus: it folds into F's row
 out["roads"][road]["viaRowsAfterHubDial"] = carried_via(us)
@@ -4062,7 +4062,7 @@ dial(c, C, us, US); dial(us, US, c, C)             # C heard in the new process,
 step(road, "afterOurRestart", us, newOnFar=S["new"], nobody=S["nobody"])
 f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts too, over its own root: a new bus id
 with As(f):
-    f.peer_update({"host": US, "port": 50001, "up": True})   # F links us; F no longer exchanges with the hub
+    f.peer_update({"host": US, "port": 1, "up": True})   # F links us; F no longer exchanges with the hub
 LISTINGS["f"] = [S["other"], S["new"]]             # F's kernel answers, naming the new session
 dial(f, F, us, US); dial(us, US, f, F)             # F's answer to our dial releases F's row, under F's new bus id
 out["roads"][road]["busIds"] = [old_bus != str(f.BUS_ID), via_bus_of(us, "via:%s/%s" % (HUB, F)) == old_bus,
@@ -4085,7 +4085,7 @@ out["roads"][road]["hubWordsAfterSecondRestart"] = hub_words_of_f(us, old_bus)
 out["roads"][road]["viaRowsAfterSecondRestart"] = [carried_via(us), via_bus_of(us, "via:%s/%s" % (HUB, F)) == old_bus]
 step(road, "afterOurSecondRestartHubHeard", us, newOnFar=S["new"], nobody=S["nobody"])
 with As(f):
-    f.peer_update({"host": HUB, "port": 50002, "up": True})
+    f.peer_update({"host": HUB, "port": 2, "up": True})
 hear(f, F, hub, HUB)                               # F answers the hub: the hub hears F's new process
 out["roads"][road]["hubDialAfterFar"] = dial(hub, HUB, us, US)   # the hub's word names F's new bus: it folds into F's row
 out["roads"][road]["viaRowsAfterFarAnswersHub"] = carried_via(us)
@@ -4114,7 +4114,7 @@ for road, restarted, drops in (("residual3bFarBusRestartedSinceItsWordHoldsThrou
     if restarted:
         f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts over its own root: a new bus id
     with As(f):
-        f.peer_update({"host": US, "port": 50001, "up": True})   # F links us; it no longer exchanges with the hub
+        f.peer_update({"host": US, "port": 1, "up": True})   # F links us; it no longer exchanges with the hub
     LISTINGS["f"] = [S["new"]] if drops else [S["other"], S["new"]]
     out["roads"][road]["farDial"] = dial(f, F, us, US)
     dial(us, US, f, F)                             # F's answer to our dial releases F's row
@@ -4124,7 +4124,7 @@ for road, restarted, drops in (("residual3bFarBusRestartedSinceItsWordHoldsThrou
     dial(hub, HUB, us, US); dial(us, US, hub, HUB)   # the hub gossips F's last word again, by both roads
     step(road, "hubAgain", us, newOnFar=S["new"], nobody=S["nobody"])
     with As(f):
-        f.peer_update({"host": HUB, "port": 50002, "up": True})
+        f.peer_update({"host": HUB, "port": 2, "up": True})
     hear(f, F, hub, HUB)                           # F answers the hub again
     dial(hub, HUB, us, US)                         # the hub's word names F's current bus: it folds into F's row
     step(road, "hubDialsAfterFarAnswersIt", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
@@ -4151,8 +4151,8 @@ LISTINGS["hub"] = [S["hubsid"], S["x3revived"]]    # a session on the hub, named
 dial(hub, HUB, us, US); dial(us, US, hub, HUB)     # the alias's row names it
 hub = load_bus("hub", Path(others_root) / road / "hub")   # the hub's bus restarts (a new bus id); the session lives on
 with As(hub):
-    hub.peer_update({"host": US, "port": 50001, "up": True})
-    hub.peer_update({"host": F, "port": 50003, "up": True})
+    hub.peer_update({"host": US, "port": 1, "up": True})
+    hub.peer_update({"host": F, "port": 3, "up": True})
 out["roads"][road]["restartDial"] = dial(hub, HUB_DECL, us, US)   # filed under the declared name, naming it
 LISTINGS["hub"] = [S["hubsid"]]                    # the session ends on the hub
 with As(us):
@@ -4193,10 +4193,10 @@ def renamed_world(road, hub_name=HUB):             # F on its release behind the
     LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
     notify(us, HUB, True); notify(us, C, True)
     with As(hub):
-        hub.peer_update({"host": US, "port": 50001, "up": True})
-        hub.peer_update({"host": F, "port": 50003, "up": True})
+        hub.peer_update({"host": US, "port": 1, "up": True})
+        hub.peer_update({"host": F, "port": 3, "up": True})
     with As(f):
-        f.peer_update({"host": HUB, "port": 50002, "up": True})
+        f.peer_update({"host": HUB, "port": 2, "up": True})
     dial(c, C, us, US); dial(us, US, c, C)
     dial(hub, hub_name, us, US)
     out["roads"][road] = {}
@@ -4206,7 +4206,7 @@ def renamed_new_f(road, label, buses):             # F runs this head: a new pro
     fx.road_label = "f"
     buses[fx.BUS_ID] = label
     with As(fx):
-        fx.peer_update({"host": HUB, "port": 50002, "up": True})
+        fx.peer_update({"host": HUB, "port": 2, "up": True})
     return fx
 def renamed_view(road, name, us, hub, buses):      # the hub's row here and the hub's own rows for F, each bus by its process
     st = us.PEER_STATE.get(HUB) or {}
@@ -4256,8 +4256,8 @@ step(road, "ourBusRestarted", us, nobody=S["nobody"], goss=S["goss"])
 hub = load_bus("hub", Path(others_root) / road / "hub")   # the hub's bus restarts over its own root: a new bus id
 LISTINGS["hub"] = [S["hubsid"]]
 with As(hub):
-    hub.peer_update({"host": US, "port": 50001, "up": True})
-    hub.peer_update({"host": F, "port": 50003, "up": True})
+    hub.peer_update({"host": US, "port": 1, "up": True})
+    hub.peer_update({"host": F, "port": 3, "up": True})
 dial(f2, F_DECL, hub, HUB)
 dial(hub, HUB, us, US); dial(us, US, hub, HUB)
 renamed_view(road, "filedUnderTheHeldName", us, hub, buses)
@@ -4332,8 +4332,8 @@ for road, ours_first in (("declHubRestartsFoldsFFirst", False), ("declHubRestart
     hub = load_bus("hub", Path(others_root) / road / "hub")   # the hub's bus restarts over its own root: a new bus id
     LISTINGS["hub"] = [S["hubsid"]]
     with As(hub):
-        hub.peer_update({"host": US, "port": 50001, "up": True})
-        hub.peer_update({"host": F, "port": 50003, "up": True})
+        hub.peer_update({"host": US, "port": 1, "up": True})
+        hub.peer_update({"host": F, "port": 3, "up": True})
     dial(f2, F_DECL, hub, HUB)                     # F's own dial reaches it first: filed under F_DECL, naming F's session
     dial(hub, HUB_DECL, us, US)                    # the restarted hub's dial reaches us first, filed here under HUB_DECL
     decl_view(road, "namedUnderTheHeldName", us, hub, buses)
@@ -4369,8 +4369,8 @@ def origin_trust(bus, host, port):                 # the kernel's up notify for 
 def origin_world(road):                            # F behind the hub, C vouching, our session web; every link trusted
     us = fresh_us(); f, hub, c = other(road, "f"), other(road, "hub"), other(road, "c")
     LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
-    origin_trust(us, HUB, 50002); notify(us, C, True)
-    origin_trust(hub, US, 50001); origin_trust(hub, F, 50003); origin_trust(f, HUB, 50002)
+    origin_trust(us, HUB, 2); notify(us, C, True)
+    origin_trust(hub, US, 1); origin_trust(hub, F, 3); origin_trust(f, HUB, 2)
     dial(c, C, us, US); dial(us, US, c, C)
     out["roads"][road] = {}
     return us, f, hub, c
@@ -4401,7 +4401,7 @@ def origin_exch(src, src_name, dst, dst_name):     # src dials dst (real builder
 def origin_restart(road):                          # the hub's bus restarts over its own root: a new bus id, the outbox on disk
     hub = load_bus("hub", Path(others_root) / road / "hub")
     LISTINGS["hub"] = [S["hubsid"]]
-    origin_trust(hub, US, 50001); origin_trust(hub, F, 50003)
+    origin_trust(hub, US, 1); origin_trust(hub, F, 3)
     return hub
 def origin_land(road, us, hub, first):             # the restarted hub's first exchange with us carries the relay
     r = out["roads"][road]
@@ -4437,12 +4437,12 @@ def origin_restart_road(road, first, blink, heard_before):   # R1 to R4 (heard_b
     return us, f, hub, c
 def origin_direct_road(road, first, ours=F):       # D1, D2: F also a peer this bus dials, answered from F's previous process;
     us, f, hub, c = origin_world(road)             # `ours` is the name this bus's kernel dials F by (the hub's, F, unless given)
-    origin_trust(us, ours, 50003)
+    origin_trust(us, ours, 3)
     origin_exch(f, F, hub, HUB); origin_exch(hub, HUB, f, F)
     origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
     origin_exch(us, US, f, ours)                   # our dial to F: F's own row here, answered
     f2 = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts: a new bus id, its only route to us the hub's gossip
-    origin_trust(f2, HUB, 50002)
+    origin_trust(f2, HUB, 2)
     origin_exch(f2, F, hub, HUB); origin_exch(hub, HUB, f2, F)
     LISTINGS["f"] = [S["other"], S["new"]]
     out["roads"][road]["park"] = park(f2, S["new"], "px-" + road)
@@ -4465,9 +4465,9 @@ for road, first, blink, heard_before in (("originHoldR1", "dial", True, True), (
 # holds until the hub's word about F, naming F's new bus, folds into F's row
 us, f2, hub, c = origin_direct_road("originHoldD1", "dial")
 us = load_bus("us2")                               # our bus restarts over the same root
-origin_trust(us, HUB, 50002); notify(us, C, True); origin_trust(us, F, 50003)
+origin_trust(us, HUB, 2); notify(us, C, True); origin_trust(us, F, 3)
 origin_exch(c, C, us, US); origin_exch(us, US, c, C)
-origin_trust(f2, US, 50001)
+origin_trust(f2, US, 1)
 origin_exch(f2, F, us, US); origin_exch(us, US, f2, F)   # F's answer to our dial releases F's row, under F's new bus id
 out["roads"]["originHoldD1"]["viaRowsAfterFarAnswers"] = carried_via(us)
 step("originHoldD1", "farAnswersOurDialAfterOurRestart", us, new=S["new"], nobody=S["nobody"])
@@ -4481,11 +4481,11 @@ step("originHoldD1", "hubNamesFAfterOurRestart", us, new=S["new"], nobody=S["nob
 # old process's word of F left the union on our answer, released), so its carried row names no bus of F
 us, f2, hub, c = origin_direct_road("originHoldD2", "answer")
 us = load_bus("us2")                               # our bus restarts over the same root
-origin_trust(us, HUB, 50002); notify(us, C, True); origin_trust(us, F, 50003)
+origin_trust(us, HUB, 2); notify(us, C, True); origin_trust(us, F, 3)
 origin_exch(c, C, us, US); origin_exch(us, US, c, C)
 out["roads"]["originHoldD2"]["viaRowsAfterOurRestart"] = carried_via(us)
 step("originHoldD2", "ourBusRestarted", us, new=S["new"], nobody=S["nobody"])
-origin_trust(f2, US, 50001)
+origin_trust(f2, US, 1)
 origin_exch(f2, F, us, US)                         # F's dial, its first roster in this process: held
 step("originHoldD2", "farDialsAfterOurRestart", us, new=S["new"], nobody=S["nobody"])
 origin_exch(us, US, f2, F)                         # F's answer to our dial releases F's row, which speaks for F
@@ -4571,7 +4571,7 @@ for road, heard_before in (("originHoldR1AcrossOurRestart", True), ("originHoldN
     origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
     step(road, "afterTwoMore", us, new=S["new"], nobody=S["nobody"])
     us = load_bus("us2")                           # our bus restarts over the same root
-    origin_trust(us, HUB, 50002); notify(us, C, True)
+    origin_trust(us, HUB, 2); notify(us, C, True)
     origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB); origin_exch(c, C, us, US); origin_exch(us, US, c, C)
     step(road, "ourRestartThenHubAndCPairs", us, new=S["new"], nobody=S["nobody"])
     for _ in range(3):
@@ -4626,7 +4626,7 @@ us, f, hub, c = origin_world(road)
 origin_exch(hub, HUB, f, F); origin_exch(f, F_DECL, hub, HUB)   # F filed under the alias; its own dial joins it by bus id
 origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)    # we hear F's answered word under the alias
 f2 = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts: a new bus id
-origin_trust(f2, HUB, 50002)
+origin_trust(f2, HUB, 2)
 LISTINGS["f"] = [S["other"], S["new"]]             # S starts on F
 origin_exch(f2, F_DECL, hub, HUB)                  # F's first dial: no row at the hub carries its bus id, filed under F_DECL
 out["roads"][road]["hubRowsAfterFirstDial"] = sorted(k for k in hub.PEER_STATE if k in (F, F_DECL))
@@ -4647,14 +4647,14 @@ LISTINGS["f"] = [S["other"]]                       # S ends; F answers the hub w
 origin_exch(hub, HUB, f2, F); origin_exch(us, US, hub, HUB)
 step(road, "afterSEnds", us, new=S["new"], nobody=S["nobody"])
 us = load_bus("us")                                # our bus restarts over the same root
-origin_trust(us, HUB, 50002); notify(us, C, True)
+origin_trust(us, HUB, 2); notify(us, C, True)
 origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB); origin_exch(c, C, us, US); origin_exch(us, US, c, C)
 step(road, "ourRestartPairs", us, new=S["new"], nobody=S["nobody"])
 for _ in range(3):
     origin_exch(f2, F_DECL, hub, HUB); origin_exch(hub, HUB, f2, F); origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
 step(road, "ourRestartThreeRounds", us, new=S["new"], nobody=S["nobody"])
 f3 = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts again: its first dial filed under F_DECL at the hub
-origin_trust(f3, HUB, 50002)
+origin_trust(f3, HUB, 2)
 origin_exch(f3, F_DECL, hub, HUB); origin_exch(hub, HUB, us, US)   # ...and the hub's dial here names F_DECL again
 step(road, "hubNamesTheDeclaredName", us, new=S["new"], nobody=S["nobody"])
 # ...AND ACROSS THE HUB'S RESTART (the verifier's road V7renamedAtHubStart): F's session S mails ours while the hub is
@@ -4703,7 +4703,7 @@ out["roads"][road]["atHub"] = origin_exch(f, F, hub, HUB)["atDst"]   # parked fo
 LISTINGS["f"] = []                                 # S and every other session on F end
 origin_exch(hub, HUB, f, F)
 us = load_bus("us")                                # our bus restarts over the same root
-origin_trust(us, HUB, 50002); notify(us, C, True)
+origin_trust(us, HUB, 2); notify(us, C, True)
 origin_exch(c, C, us, US); origin_exch(us, US, c, C)
 out["roads"][road]["landing"] = origin_exch(hub, HUB, us, US)["atDst"]   # the hub's first exchange with our new process
 out["roads"][road]["heldAtLanding"] = held_words(us, HUB)
@@ -4726,7 +4726,7 @@ F_HERE = F + "-here"                               # this bus's kernel's name fo
 road = "originHoldD2UnderOurOwnNameForF"
 us, f2, hub, c = origin_direct_road(road, "answer", ours=F_HERE)
 us = load_bus("us")                                # our bus restarts over the same root
-origin_trust(us, HUB, 50002); notify(us, C, True); origin_trust(us, F_HERE, 50003)
+origin_trust(us, HUB, 2); notify(us, C, True); origin_trust(us, F_HERE, 3)
 origin_exch(c, C, us, US); origin_exch(us, US, c, C)
 step(road, "ourBusRestarted", us, new=S["new"], nobody=S["nobody"])
 origin_exch(us, US, f2, F_HERE)                    # F's answer to our dial in the new process, under our name for it
@@ -4751,12 +4751,12 @@ def via_bus_named(bus, key, buses):                # which bus a via row's viaBu
     return buses.get(at, "another bus") if at else ""
 road = "originHoldD2UnderOurOwnNameForFNamedNewBus"
 us, f, hub, c = origin_world(road)
-origin_trust(us, F_HERE, 50003)
+origin_trust(us, F_HERE, 3)
 origin_exch(f, F, hub, HUB); origin_exch(hub, HUB, f, F)
 origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
 origin_exch(us, US, f, F_HERE)                     # our dial to F: F's own row here, under F_HERE, F's first bus
 f2 = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts: a new bus id
-origin_trust(f2, HUB, 50002)
+origin_trust(f2, HUB, 2)
 buses = {f.BUS_ID: "F's first bus", f2.BUS_ID: "F's new bus"}
 LISTINGS["f"] = [S["other"], S["new"]]             # S starts on F
 origin_exch(f2, F, hub, HUB); origin_exch(hub, HUB, f2, F)   # the hub's old process hears F's new process, naming S
@@ -4770,7 +4770,7 @@ out["roads"][road]["heldAtLanding"] = held_words(us, HUB)
 out["roads"][road]["viaBusAtLanding"] = via_bus_named(us, "via:" + HUB + "/" + F, buses)
 step(road, "atLanding", us, new=S["new"], nobody=S["nobody"])
 us = load_bus("us")                                # our bus restarts over the same root, before our dial reaches F's new process
-origin_trust(us, HUB, 50002); notify(us, C, True); origin_trust(us, F_HERE, 50003)
+origin_trust(us, HUB, 2); notify(us, C, True); origin_trust(us, F_HERE, 3)
 origin_exch(c, C, us, US); origin_exch(us, US, c, C)
 out["roads"][road]["viaBusAfterOurRestart"] = via_bus_named(us, "via:" + HUB + "/" + F, buses)
 step(road, "ourBusRestarted", us, new=S["new"], nobody=S["nobody"])
@@ -4793,7 +4793,7 @@ for road, named_before in (("residual3aRelayedHubNamedFBefore", True), ("residua
         LISTINGS["f"] = []                         # F's session ends: F answers empty, and the hub's word omits F
         origin_exch(hub, HUB, f, F); origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
         f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts during its kernel's blink: no twin
-        origin_trust(f, HUB, 50002)
+        origin_trust(f, HUB, 2)
     else:
         origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
     LISTINGS["f"] = None                           # F's kernel does not answer: its exchanges carry an empty cache

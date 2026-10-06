@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The guide's two link-navigation sentences (docs/guide.md, Files, "Links in a file") state their exceptions, and the code has them.
+"""The guide's two link-navigation sentences (docs/reference.md, "Links inside a file") state their exceptions, and the code has them.
 
 The link-navigation follow-on (plans/markdown-viewer.md, "Follow-on: Link navigation (2026-09-19)") gave the viewer a
 trail with Back and Forward, chords, and an "Open the picture" button on the figures of a rendered file. Its review
@@ -46,6 +46,12 @@ round 4 (extra8-3) found the guide's clause and its pin missing from that list, 
 guide false with nothing catching it. Rather than a longer list, the line and the two clauses are asserted together
 here, and the tools pins that quote the two sentences (FIRST, POINTER) are read for the clauses too, so a revert of the
 hide fails one test naming the two sentences it makes false.
+
+Where the sentences live. They were written into the guide's Files section ("**Links in a file.**", docs/guide.md). Fold 4
+made the guide and install.md the project's front pages and moved every fork paragraph to docs/reference.md beside its
+topic (CLAUDE.md "The documentation front pages"): that paragraph is the reference's "### Links inside a file", one
+paragraph with no bold lead, and the re-stack of fold 4's second slice on its first moved these two sentences there with
+it. The pins read that paragraph; the old wording's absence is read off both the reference and the guide.
 
 Each guide sentence is pinned flattened, so a rewrap survives. Synthetic: only the repo's own text.
 """
@@ -159,15 +165,18 @@ OLD_PICTURE = "Every picture in a rendered file"
 class GuideSentences(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.guide = _read("docs", "guide.md")
-        cls.links = _paragraph(_section(cls.guide, "Files"), "**Links in a file.**")
+        # the paragraph's home since fold 4 moved it out of the front page (the module docstring, "Where the sentences live")
+        cls.guide = _read("docs", "reference.md")
+        cls.links = _paragraph(_section(cls.guide, "Links inside a file"), "Wherever the viewer shows a file's text")
+        cls.front = _read("docs", "guide.md")
         cls.kernel = _read("kernel", "kernel.py")
         cls.viewer = _read("ui", "webview", "file-view.ts")
         cls.trail = _read("ui", "webview", "file-trail.ts")
 
     def test_the_trail_sentence_names_the_dashboard_exception_and_the_old_wording_is_gone(self):
         self.assertIn(TRAIL, self.links)
-        self.assertNotIn(OLD_TRAIL, _flat(self.guide))
+        for doc in (self.guide, self.front):
+            self.assertNotIn(OLD_TRAIL, _flat(doc))
         self.assertEqual(self.links.count("Alt+Left"), 1, "the arrow chords are described once")
 
     def test_the_picture_sentence_names_the_five_pictures_without_the_button_and_the_old_wording_is_gone(self):
@@ -202,7 +211,8 @@ class GuideSentences(unittest.TestCase):
         m = re.search(r"^const FIRST = '((?:[^'\\]|\\.)*)';$", pin, re.M)
         assert m, "the tools pin's FIRST literal"
         self.assertTrue(re.sub(r"\\(.)", r"\1", m.group(1)).endswith(TRAIL), "the trail sentence pinned here is the tail of the tools pin's FIRST")
-        self.assertNotIn(OLD_PICTURE, _flat(self.guide))
+        for doc in (self.guide, self.front):
+            self.assertNotIn(OLD_PICTURE, _flat(doc))
         for word in ("—", "fleet"):
             self.assertNotIn(word, self.links)
 
@@ -217,7 +227,7 @@ class TheHiddenPairIsOneLineWithTwoClaims(GuideSentences):
         # the haystack before them (the author's closing pass after the file review's round 4, attribution-and-gates-9)
         self.assertTrue(HIDE_LINE in self.viewer,
                       "openFileView's hide of the Back and Forward pair is gone. Two sentences claim it and go false with it: the guide's "
-                      "(docs/guide.md, Links in a file) %r and the browser plan's (plans/file-browser.md, the navigation-stack pointer) %r; "
+                      "(docs/reference.md, Links inside a file) %r and the browser plan's (plans/file-browser.md, the navigation-stack pointer) %r; "
                       "a revert of the hide rewrites both, and the tools pins FIRST and POINTER that quote them, beside the pins and legs "
                       "open point 13 lists" % (HIDDEN_UNTIL, BROWSER_PLAN_HIDDEN))
         self.assertIn(HIDDEN_UNTIL, self.links, "the guide's condition clause, which the hide line makes true")

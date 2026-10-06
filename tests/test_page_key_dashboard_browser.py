@@ -11,10 +11,10 @@ fails, never skips, when that engine is missing):
 
   1. The dashboard boots from `/?token=` and every pane loads its data: the chat's session tab, the Outline's session, the
      Feed's session, the Waiting pane's open request, the timeline's lane, a note opened into the Files pane (its figure
-     too), and the settings page's model lists. Every fetch any frame makes to the kernel carries X-Romp-Key equal to the
-     stored key, every socket carries k= equal to it and hears from the kernel, no request is refused, and no page makes an
-     XMLHttpRequest or an EventSource. The notification switch's POST, clicked in the bell's menu, is answered 200, and the
-     kernel holds the new state.
+     too), the Artifacts pane's listing of the note the chat's reply named, and the settings page's model lists. Every
+     fetch any frame makes to the kernel carries X-Romp-Key equal to the stored key, every socket carries k= equal to it
+     and hears from the kernel, no request is refused, and no page makes an XMLHttpRequest or an EventSource. The
+     notification switch's POST, clicked in the bell's menu, is answered 200, and the kernel holds the new state.
   2. The wrapper keys every request form the Fetch API takes (a string, a URL, a Request with its own headers, a Request
      with init headers, init headers as an object, as pairs and as a Headers, a body), keeps the site's own headers the way
      the browser's fetch would, and leaves a request to another origin as it was: that origin sees no page key and no
@@ -191,8 +191,11 @@ const onKernel = (u) => { try { return new URL(u).origin === cfg.origin; } catch
 const sessionCookies = async (ctx) => (await ctx.cookies(cfg.origin)).filter((c) => c.name.startsWith("romp_s_"));
 const slotOf = async (ctx) => { const s = await sessionCookies(ctx); return s.length === 1 ? "romp.pageKey." + s[0].name : ""; };
 const keyIn = (page, slot) => page.evaluate((s) => localStorage.getItem(s), slot);
-// the Files control on, as the gear's setting would have it, so a file link routes into the Files pane
-const filesControl = (ctx) => ctx.addInitScript(() => { try { if (!localStorage.getItem("romp:settings")) localStorage.setItem("romp:settings", JSON.stringify({ showFilesControl: true })); } catch (e) {} });
+// the gear's settings as the lab needs them, written before any page of the origin runs: the Files control on, so a file
+// link routes into the Files pane, and the Artifacts pane (upstream PR 1911) asked for in the gear's Panes row, the store
+// the gear writes for it (settings.ts paneSet): an experimental pane is off there until asked for, its rail button
+// hidden and its toggle refused, so its frame never loads
+const gearSettings = (ctx) => ctx.addInitScript(() => { try { if (!localStorage.getItem("romp:settings")) localStorage.setItem("romp:settings", JSON.stringify({ showFilesControl: true, panes: { artifacts: true } })); } catch (e) {} });
 /** Every request a context makes to the kernel: its path, kind, method and frame; its X-Romp-Key (held here, in memory
  *  only: a report names it through `label`, never by value); its status and whether a refusal carried the re-sign-in
  *  marker. */
@@ -233,7 +236,9 @@ async function paneTable(page) {
 }
 /** Each pane's proof that it loaded its data, by the word the rail gives it. Chat, Outline, Feed and Waiting name the
  *  session; Sessions (the timeline) draws its lane; Files shows the note a chat link opened into it, figure and all;
- *  Settings fills its model lists from /models. */
+ *  Artifacts (upstream PR 1911) follows the chat's active tab, the lab's one session, and lists the note the reply named,
+ *  a row for a file that exists: the listArtifacts answer, which rides the socket; Settings fills its model lists from
+ *  /models. */
 const LOADED = {
   Chat: (sid) => !!document.querySelector('#tabs .tab[data-id="' + sid + '"]'),
   Outline: (sid) => !!document.querySelector('.fl-head[data-sid="' + sid + '"]'),
@@ -242,6 +247,8 @@ const LOADED = {
   Sessions: () => Array.from(document.querySelectorAll("svg text")).some((t) => t.textContent === "web"),
   Files: () => { const v = document.getElementById("romp-fileview"); const i = v && v.querySelector('img[alt="note figure"]');
     return !!v && /notes-api latency plot/.test(v.textContent || "") && !!i && i.complete && i.naturalWidth > 0; },
+  Artifacts: () => { const r = document.querySelector('#artifacts-root .art-row[data-path$="/docs/note.md"]');
+    return !!r && !r.classList.contains("missing"); },
   Settings: () => { const s = document.getElementById("rs-judgemodel"); return !!s && s.options.length > 1; },
 };
 /** Close the settings modal the way the shell's Escape chain does (the settings frame's own __rompSettingsClose), until
@@ -302,7 +309,7 @@ function summary(log, from, table) {
 
 DASHBOARD = HEAD + r"""
 const ctx = await browser.newContext(VIEW);
-await filesControl(ctx);
+await gearSettings(ctx);
 let mine = "";
 const label = (k) => k === undefined || k === null ? "none" : (mine && k === mine ? "mine" : "other");
 const rec = recorder(ctx, label);
@@ -371,7 +378,7 @@ process.exit(0);
 STALE = HEAD + r"""
 // browser A holds the dashboard; browser B signs in on its own, and B's key is what A's storage ends up holding
 const a = await browser.newContext(VIEW), b = await browser.newContext(VIEW);
-await filesControl(a);
+await gearSettings(a);
 let keyA = "", keyB = "";
 const label = (k) => k === undefined || k === null ? "none" : (k === keyA ? "mine" : (k === keyB ? "theirs" : "other"));
 const rec = recorder(a, label);
@@ -646,7 +653,7 @@ process.exit(0);
 """
 
 # Every pane the rail lists, by the word it wears, and the settings page: each has a data check in the driver's LOADED.
-PANES = ("Chat", "Sessions", "Outline", "Feed", "Waiting", "Files", "Settings")
+PANES = ("Chat", "Sessions", "Outline", "Feed", "Waiting", "Files", "Artifacts", "Settings")
 
 
 class ServedDashboardOverThePageKey(unittest.TestCase):
