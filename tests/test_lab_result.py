@@ -8,19 +8,22 @@ carrying another nonce (a stale file an earlier drive left), a missing file, a w
 naming another file, no line, two lines, a line or a file that is not JSON, and a file with no record. Each refusal is
 a ResultError, which is an AssertionError, and its message names the cause and carries both streams' tails. The happy
 path returns the record whatever its JSON type (four drivers hand back arrays), from text or bytes streams.
-The JS half writing what this reader reads is pinned by execution in tests/test_lab_result_pipe_served.py.
+The JS half writing what this reader reads is pinned by execution in tests/test_lab_result_pipe_served.py. And
+tests/__init__.py registers the bare name lab_result, so a served module imports it at its top (a child interpreter).
 
 Synthetic: no kernel, no browser, no node; the files live in a temp dir.
 """
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import types
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import lab_result                                   # noqa: E402
 
@@ -160,6 +163,26 @@ class Target(unittest.TestCase):
     def test_env_carries_the_target_as_json(self):
         tgt = lab_result.target("/nonexistent-lab", "argv")
         self.assertEqual(json.loads(lab_result.env(tgt)["LAB_RESULT"]), tgt)
+
+
+class BareName(unittest.TestCase):
+    def test_the_tests_package_registers_the_bare_name(self):
+        """A served module imports lab_result at its top, beside lab_dist and lab_ports, before it puts tests/ on sys.path;
+        under pytest and under `python -m unittest tests.test_x` the modules are members of the tests package, so the bare
+        name resolves only because tests/__init__.py registers it (the shape of lab_ports' registration there, pinned the
+        same way in tests/test_lab_ports.py). Without it a run that collected a served module before any module that puts
+        tests/ on sys.path failed at that module's import. A child interpreter with tests/ off its path imports the package
+        and then the bare name."""
+        child = ("import os, sys\n"
+                 "here = os.path.realpath(sys.argv[1])\n"
+                 "sys.path[:] = [p for p in sys.path if os.path.realpath(p or '.') != here]\n"
+                 "import tests\n"
+                 "import lab_result\n"
+                 "print(os.path.realpath(lab_result.__file__))\n"
+                 "print(lab_result is sys.modules['tests.lab_result'])\n")
+        p = subprocess.run([sys.executable, "-c", child, HERE], cwd=ROOT, capture_output=True, text=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr[-1500:])
+        self.assertEqual(p.stdout.split(), [os.path.join(HERE, "lab_result.py"), "True"])
 
 
 if __name__ == "__main__":

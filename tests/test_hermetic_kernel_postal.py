@@ -6652,12 +6652,12 @@ _ANYIO_DIRECT_WHOLESALE = {**_ANYIO_INTROSPECTION, **_ANYIO_REACHERS, **_ANYIO_W
 _ANYIO_DIRECT_ALLOWED = frozenset({'AttributeError', 'Exception', 'IndexError', 'KeyError', 'LINEAGE', 'OSError',
     'PARENT_ROOT', 'ProcessLookupError', 'STATE_DIR', 'SYSTEM_TMPDIR', 'TEST_ROOT_CHILDREN', 'TEST_ROOT_OWNER_MARKER',
     'TEST_ROOT_PREFIX', 'TMP_ROOT', 'TypeError', 'ValueError', '_HANDED', '_MADE_DIRS', '_REAL_MKDTEMP', '_above',
-    '_env_ring_census', '_fs_clock', '_git_fixture', '_lab_dist', '_lab_dist_stub', '_lab_ports', '_pid_alive',
+    '_env_ring_census', '_fs_clock', '_git_fixture', '_lab_dist', '_lab_dist_stub', '_lab_ports', '_lab_result', '_pid_alive',
     '_romp_load', '_sdk_blocker', '_tracked_mkdtemp', 'a', 'above', 'abspath', 'all', 'append', 'argv', 'atexit',
     'basename', 'child', 'clear', 'd', 'depth', 'dict', 'dir', 'dirname', 'dumps', 'encoding', 'env_ring_census',
     'environ', 'fh', 'fromkeys', 'fs_clock', 'get', 'getattr', 'getpid', 'gettempdir', 'git_fixture', 'handed',
     'ignore_errors', 'int', 'isdir', 'isinstance', 'islink', 'join', 'json', 'k', 'kill', 'lab_dist',
-    'lab_dist_stub', 'lab_ports', 'line', 'lineage', 'lines', 'list', 'load', 'loads', 'mint_root', 'mkdtemp',
+    'lab_dist_stub', 'lab_ports', 'lab_result', 'line', 'lineage', 'lines', 'list', 'load', 'loads', 'mint_root', 'mkdtemp',
     'modules', 'open', 'os', 'out', 'p', 'parent', 'parent_root', 'path', 'pid', 'pop', 'prefix', 'r', 'read',
     'realpath', 'rec', 'record_child_root', 'register', 'remove_dead_children', 'remove_made_dirs', 'remove_tmp_root',
     'reversed', 'rindex', 'rmtree', 'romp_load', 'romp_tracked', 'root', 'root_lineage', 'rp', 'sdk_blocker', 'sep',
@@ -7424,10 +7424,11 @@ def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     module it imports directly naming only what THE POSITIVE ALLOWLIST holds (an import of an import: a name the
     imported module itself imports from another module, a package's name bound to another of its submodules, from .
     import lab_dist as _lab_dist say, or a def of it whose read is a call of another module's def); live site:
-    tests/__init__.py imports seven modules of the repository (from . import romp_load, lab_dist, lab_dist_stub,
-    fs_clock, git_fixture, sdk_blocker and env_ring_census), which the conftest reaches only through it, so a refusal of
-    an import of an import would refuse the live conftest (THE LIVE WITNESS). And, through a module the conftest imports
-    directly whose whole text names nothing outside THE POSITIVE ALLOWLIST, a road of neither shape the ruling names
+    tests/__init__.py imports nine modules of the repository (from . import romp_load, lab_dist, lab_ports,
+    lab_dist_stub, fs_clock, git_fixture, sdk_blocker, env_ring_census and lab_result), which the conftest reaches only
+    through it, so a refusal of an import of an import would refuse the live conftest (THE LIVE WITNESS). And, through
+    a module the conftest imports directly whose whole text names nothing outside THE POSITIVE ALLOWLIST, a road of
+    neither shape the ruling names
     that names only allowlisted identifiers: (i) what a def of it that returns nothing leaves where the conftest reads
     it (an item or an attribute of an object, the module's, one the conftest hands it or one another def of the module
     fills, or a file); live site: tests/__init__.py's write_owner_marker, which reads sys.argv, returns nothing and
