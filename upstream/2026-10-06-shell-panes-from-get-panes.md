@@ -3,7 +3,7 @@ title: The dashboard shell builds custom panes from GET /panes, one source for t
 status: approved
 where: kernel/kernel.py (_landing, the GET /panes handler, the shell's head script, _LANDING_PANE_RECORDS_JS (new), _PANES_ADOPT_JS (new), _LANDING_ERRS_JS, _LANDING_JS, _LANDING_FOCUS_JS, _LANDING_MOBILE_JS, _LANDING_COLLAPSE_JS, _LANDING_BOOT_JS, _RELOAD_CORE_JS, _reload_core, _stale_block, _shim, _panes_snapshot, _panes_rev, _panes_attr, _data_pane_markup); ui/webview/gear.js; ui/webview/palette-main.ts; ui/webview/panedock-main.ts; ui/webview/gear-pane-records.test.ts (new); ui/webview/palette-main-pane-records.test.ts (new); ui/webview/panedock-main-pane-records.test.ts (new); tests/__init__.py; tests/pane_records_stub.py (new); tests/test_error_center.py; tests/test_hermetic_kernel_postal.py; tests/test_kernel_auth_hardening.py; tests/test_kernel_boot_splash.py; tests/test_kernel_mobile.py; tests/test_kernel_update.py; tests/test_pane_records_one_source.py (new); tests/test_pane_registry.py; tests/test_pane_registry_served.py; tests/test_pane_set_revision_read.py (new); tests/test_pane_state_broadcast.py; tests/test_shell_reads_check_status.py; upstream/2026-10-06-shell-panes-from-get-panes.md (this entry)
 added: 2026-10-06
-pr:
+pr: 989
 tier: fix
 offered:
 closed:
