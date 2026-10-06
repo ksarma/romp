@@ -185,11 +185,14 @@ _JS_BLOCK_WORDS = {"if", "for", "while", "switch", "catch", "with"}
 def _js_lex(src):
     """A script's tokens as [kind, text, start, end], kind word, num, str (a quoted string's or a template's text, between its
     delimiters), regex or punct; its comments as (start, end); and the number of delimiters left open (0 for a script read
-    whole): the templates and substitutions still open at the end, plus each quoted string or regex literal that met an
-    unescaped line break, or the script's end, before its closing delimiter, which valid JavaScript never does. It keeps the
-    comment, string, template and substitution states (a substitution's own braces counted; its closing brace is the punct
-    `}$`) and tells a regex literal from a division by the token before the `/`. A quoted string or regex literal left open
-    ends at its line's end, so a stray quote or slash misreads one line at most, and is counted."""
+    whole): the templates, substitutions and block comments still open at the end, plus each quoted string or regex literal
+    that met an unescaped line feed, or the script's end, before its closing delimiter, which valid JavaScript never does.
+    It keeps the comment, string, template and substitution states (a substitution's own braces counted; its closing brace
+    is the punct `}$`) and tells a regex literal from a division by the token before the `/`. The only line break it reads
+    is a line feed: a line comment runs to the next one, and a quoted string or regex literal left open ends at the first
+    one no backslash escapes, and is counted. So a stray quote or slash misreads one line at most, unless a backslash ends
+    that line, or a line break this lexer does not read (a carriage return, U+2028 or U+2029) breaks it, which carries it
+    on to the next."""
     toks, comments, stack, loose = [], [], [], 0   # stack: "t" inside a template's text, or a substitution's brace depth
     i, n = 0, len(src)
     while i < n:
@@ -214,6 +217,7 @@ def _js_lex(src):
             continue
         if src.startswith("//", i) or src.startswith("/*", i):
             j = src.find("\n", i) if src[i + 1] == "/" else src.find("*/", i + 2)
+            loose += j < 0 and src[i + 1] == "*"   # a block comment the script's end left open
             j = n if j < 0 else j if src[i + 1] == "/" else j + 2
             comments.append((i, j))
             i = j
@@ -394,11 +398,12 @@ def _door_census(src):
     string, an alias the census cannot follow) is a site of its own, so it fails the role check loudly instead of passing
     unseen. Each is (kind, offset, enclosing functions). prose holds the mentions in comments, strings, regex literals and
     longer names, none of them a reference. whole says the reading balanced: every bracket closed its own kind, and no
-    template, quoted string or regex literal was left open (_js_lex). That catches a misread whose stray delimiter is left
-    open; a misread that a later delimiter closes again (on its line for a quote or a slash, which end at the line break; on
-    its line or any later line for a backtick, since a template may span lines, so the call it hides may sit on another
-    line) can leave the reading balanced, and then is not caught (the stated limit in NotLeavingCallSites). A census of a
-    script read otherwise proves nothing, and the tests below require it."""
+    template, quoted string, regex literal or block comment was left open (_js_lex). That catches a misread whose stray
+    delimiter is left open. A misread the reading still balances around is not caught, as when a later delimiter closes the
+    stray one again, and it reaches as far as _js_lex's rule for what the stray delimiter opened: a quoted string or regex
+    literal to the first line feed no backslash escapes (the lexer reads no other line break, a carriage return included), a
+    line comment to the next line feed, a template or block comment to its closing delimiter, on its line or any later one,
+    so the call it hides may sit on another line (the stated limit in NotLeavingCallSites). A census of a script read otherwise proves nothing, and the tests below require it."""
     toks, comments, unclosed = _js_lex(src)
     pair, whole = _js_brackets(toks)
     starts = [t[2] for t in toks]
@@ -584,16 +589,25 @@ class NotLeavingCallSites(unittest.TestCase):
     counted here, by the code: kernel.py's script literals, and every script under ui/ and vscode-extension/src but the
     tests (`*.test.*`). A call spelled with optional chaining, through a bracket's string key, or through a local alias
     counts; the definition, comments and strings that name the door do not; any other reference is a site of its own and
-    fails the role check; and a script the lexer did not read whole (a bracket unbalanced, or a template, quoted string or
-    regex literal left open) fails too. Stated limits. On the precondition that the sources are written in good faith, a
-    name assembled at run time (`w["__romp" + "NotLeaving"]`), or a call held in a string and run as code, is not read. A
-    call hidden by a misread that a later delimiter closes again (on its line for a quote or a slash, which end at the line
-    break; on its line or any later line for a backtick, since a template may span lines, so the call it hides may sit on
-    another line) is not read either, when the reading still balances; its witnesses are pinned in
-    test_the_census_reads_a_call_by_the_code: 'a quote closed again' (a regex read as a division, whose quote an apostrophe
-    in a later comment on its line closes), 'a slash closed again' (a division read as a regex, which a later division on
-    its line closes) and 'a backtick closed again, lines later' (a regex read as a division, whose backtick opens a
-    template that a backtick in a comment two lines down closes, the call on the line between)."""
+    fails the role check; and a script the lexer did not read whole (a bracket unbalanced, or a template, quoted string,
+    regex literal or block comment left open) fails too. Stated limits. On the precondition that the sources are written in
+    good faith, a name assembled at run time (`w["__romp" + "NotLeaving"]`), or a call held in a string and run as code, is
+    not read. And the census reads a script as _js_lex reads it, which is not always as JavaScript does: a call in text the
+    lexer reads otherwise is not read either, when the reading still balances. The cases pinned in
+    test_the_census_reads_a_call_by_the_code come from two of the lexer's rules. It reads no line break but a line feed, so
+    a line comment runs on past a carriage return ('a line comment past a carriage return'). And it tells a regex literal
+    from a division by the token before the slash, so it can take either for the other: the stray delimiter opens a quoted
+    string, a regex literal, a template or a comment, and the reading can balance again when a later delimiter closes it.
+    How far that reaches follows the lexer's rule for what it opened: a quoted string or regex literal runs to the first
+    line feed no backslash escapes, a line comment to the next line feed, a template or block comment to its closing
+    delimiter, on its line or any later one. The witnesses: 'a quote closed again' (a regex read as a division, whose quote
+    an apostrophe in a later comment on its line closes), 'a slash closed again' (a division read as a regex, which a later
+    division on its line closes), 'a quote closed again past an escaped line feed' and 'a quote closed again past a carriage
+    return' (the same quote, the call on the next line, after a line that ends in a backslash or after a carriage return),
+    'a slash closed again past an escaped line feed' (the same slash, a string's line continuation before the call), 'a
+    backtick closed again, lines later' (a regex read as a division, whose backtick opens a template that a backtick in a
+    comment two lines down closes, the call on the line between) and 'a block comment closed again, lines later' (the same
+    with a regex holding `/*`, which a `*/` in a comment two lines down closes)."""
 
     @classmethod
     def setUpClass(cls):
@@ -606,8 +620,8 @@ class NotLeavingCallSites(unittest.TestCase):
                          "every mention of the door in kernel.py is in a string literal the census read, a docstring or a "
                          "Python comment: a mention outside them is one the census cannot classify")
         self.assertEqual(self.kernel["misread"], [], "each script naming the door was read whole (every bracket closed its own "
-                         "kind; no template, quoted string or regex literal left open): a script read otherwise may hide a "
-                         "call behind a misread delimiter")
+                         "kind; no template, quoted string, regex literal or block comment left open): a script read "
+                         "otherwise may hide a call behind a misread delimiter")
 
     def test_the_door_has_one_definition_the_logs(self):
         self.assertEqual([(o, kind) for o, _, kind, _ in self.kernel["defs"]], [("_LANDING_ERRS_JS", "definition")],
@@ -655,24 +669,32 @@ class NotLeavingCallSites(unittest.TestCase):
             d, s, _, whole = _door_census(js)
             self.assertEqual(([kind for kind, _, _ in d], [kind for kind, _, _ in s], whole), (want_defs, want_sites, True), label)
         # a reading that does not balance is reported, never trusted. The lexer reads a regex literal after `if(a)` as a
-        # division, so the regex's backtick opens a template, or its quote a string, that swallows the call after it; and it
-        # reads the division after `i++` as a regex literal that swallows the call. A quoted string or regex literal still
-        # open at its line's end, or the script's, is never valid JavaScript, so each is counted as left open.
+        # division, so the regex's backtick opens a template, its quote a string, or its `/*` a block comment, that swallows
+        # the call after it; and it reads the division after `i++` as a regex literal that swallows the call. A quoted string
+        # or regex literal still open at an unescaped line feed or at the script's end, and a template or block comment still
+        # open at the script's end, are never valid JavaScript, so each is counted as left open.
         for label, js in [("a backtick left open", "if(a)/`/.test(b);" + x + "();"),
                           ("a quote left open at the script's end", "if(a)/'/.test(b)&&" + x + "();"),
                           ("a quote left open at its line's end", "if(a)/'/.test(b)&&" + x + "();\nvar k=1;"),
                           ("a slash left open at the script's end", "i++/n;" + x + "();"),
-                          ("a slash left open at its line's end", "i++/n;" + x + "();\nvar k=1;")]:
+                          ("a slash left open at its line's end", "i++/n;" + x + "();\nvar k=1;"),
+                          ("a block comment left open", "if(a)/\\/*/.test(b);" + x + "();")]:
             misread = _door_census(js)
             self.assertEqual((misread[1], misread[3]), ([], False),
                              label + ": the call is hidden, and the script is reported as not read whole")
-        # the stated limit's witnesses (the class docstring): a misread that a later delimiter closes again (on its line for
-        # a quote or a slash, which end at the line break; on its line or any later line for a backtick, since a template
-        # may span lines, so the call it hides may sit on another line) balances, and that call goes unseen; a lexer that
-        # reads one of these scripts right turns its witness red
+        # the stated limit's witnesses (the class docstring): each script holds text the lexer reads otherwise than
+        # JavaScript does, and the call in it goes unseen in a reading that balances. A misread that a later delimiter closes
+        # again reaches as far as the lexer's rule for what it opened (a quoted string or regex literal to the first line
+        # feed no backslash escapes, a template or block comment to its closing delimiter, on its line or any later one), and
+        # a line comment runs on past a carriage return; a lexer that reads one of these scripts right turns its witness red
         for label, js in [("a quote closed again", "if(a)/'/.test(b);" + x + "();// it's"),
                           ("a slash closed again", "i++/n;" + x + "();y=z/2;"),
-                          ("a backtick closed again, lines later", "if(a)/`/.test(b);\n" + x + "();\n// a ` mark\n")]:
+                          ("a quote closed again past an escaped line feed", "if(a)/'/.test(b);//\\\n" + x + "();// it's"),
+                          ("a quote closed again past a carriage return", "if(a)/'/.test(b);\r" + x + "();// it's"),
+                          ("a slash closed again past an escaped line feed", "i++/n;s='a\\\nb';" + x + "();y=z/2;"),
+                          ("a line comment past a carriage return", "// a note\r" + x + "();"),
+                          ("a backtick closed again, lines later", "if(a)/`/.test(b);\n" + x + "();\n// a ` mark\n"),
+                          ("a block comment closed again, lines later", "if(a)/\\/*/.test(b);\n" + x + "();\n// a */ mark\n")]:
             limit = _door_census(js)
             self.assertEqual((limit[1], limit[3]), ([], True),
                              label + ": the stated limit, a call hidden in a reading that balances")
