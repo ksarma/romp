@@ -53,10 +53,11 @@ wrap only where it still cannot.
   the shell holds no reading, and enabled where it still holds one (a request with no answer leaves the readings as they
   were), its tap opening the panel over that reading (romp-manager's decision on round 1's builds). That tap opens the
   panel at once, whose age lines say how old the reading is, while the refresh runs behind it; the open panel follows the
-  refresh's answer where it brings a reading (an error status empties the readings, which hides the panel's content and
-  leaves its backdrop up until a tap or Escape closes it), and the refresh never opens the panel itself, so a panel closed
-  before it ends stays closed (romp-manager's first rule at round 2: the tap had waited on its own pull, which carried no
-  bound, with nothing on screen). Every read of the readings goes through the usage script's one bounded helper: the card's pull,
+  refresh's answer where it brings a reading; an answer that empties the readings (an error status) closes the open panel,
+  its backdrop with it (romp-manager's ruling on round 2's pass: until then the content hid and the dimmed backdrop stayed
+  up until a tap or Escape); and the refresh never opens the panel itself, so a panel closed before it ends stays closed
+  (romp-manager's first rule at round 2: the tap had waited on its own pull, which carried no bound, with nothing on
+  screen). Every read of the readings goes through the usage script's one bounded helper: the card's pull,
   the panel opener's, and the readout's click and 60 s refresh.
   Usage is one line tall in every state, as the row's other buttons are, and holds the loader's width (romp-manager's
   decision on round 1's builds), so loading to a reading, the common path, moves neither the row nor the tabs under it,
@@ -175,7 +176,11 @@ age line (updated 10m ago), and once the held pull is answered with a fresher re
 the open modal follows it (updated just now), its By session button the node it was before. And the refresh behind that
 panel never opens it: the card's pull held past HANG_MS again (Usage enabled beside USAGE_ERR), Usage clicked with the
 tap's own pull held, the modal up within 1 s and then closed while that pull is held, and once the pull's fresher answer
-has run in the shell (its flag cleared) the modal is still closed, the backdrop off. Then the deploy
+has run in the shell (its flag cleared) the modal is still closed, the backdrop off. And a refresh that empties the
+readings closes that panel: the card's pull held past HANG_MS again, Usage clicked with the tap's own pull held, the modal
+up within 1 s and left open, and that pull answered with ERROR_STATUS; once the shell's readings have emptied, the modal is
+closed, the backdrop off (its class, and its computed display none), the close hook cleared, and the element at the
+window's centre not the backdrop. Then the deploy
 skew, on a page of its own at 390px:
 the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
@@ -255,6 +260,9 @@ says updated 10m ago); and its button where the repaint rebuilds the whole panel
 Chromium. The closed panel is red under a mutant whose refresh behind the panel opens it on its end (the modal up again
 once the held pull's answer has run, in Chromium), and where the tap's own pull ran before the panel opened, with no
 bound (nothing open 1 s after the click, then the modal opened by that pull's answer, in Chromium, WebKit and Firefox).
+The emptied panel is red at the head round 2's pass built, where renderRows' empty exit hid the panel's content alone
+(the backdrop still on, its computed display block, the close hook set and the backdrop the element at the window's
+centre, in Chromium, WebKit and Firefox).
 The row and the tabs are red where Usage keeps two
 lines' height in every state (Usage 43.64px tall, 43.65 in Firefox, where Restart kernel is 28.8, at every width in both
 themes); under a
@@ -807,7 +815,9 @@ def _failed_problems(engine, fr):
     click opening the Usage modal; and, the shell holding a window reading of its own and the card's pull ended by its bound,
     a tap whose own pull is held opens the Usage modal within 1 s over that reading with its age, and the open modal follows
     the held pull's fresher answer with its By session button left in place (PR 976's round 2); and, the panel opened that way
-    again and closed while the tap's pull is held, that pull's answer leaves it closed (PR 976's round 2)."""
+    again and closed while the tap's pull is held, that pull's answer leaves it closed (PR 976's round 2); and, the panel
+    opened that way again and left open, that pull answered with ERROR_STATUS, which empties the readings, closes it, the
+    backdrop and the close hook with it (romp-manager's ruling on PR 976's round 2 pass)."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -1008,6 +1018,31 @@ def _failed_problems(engine, fr):
     elif ca.get("up") is not False or ca.get("backOn") is not False or ca.get("closeSet") is not False:
         out.append("%s: the Usage modal was closed while the tap's pull was held, and that pull's answer opened it again: %r" % (
             where, ca))
+    # ...and a refresh behind that panel that empties the readings closes it (romp-manager's ruling on PR 976's round 2 pass):
+    # the card's pull again ended by its bound over the reading, a tap whose own pull is held opens the modal within 1 s, that
+    # pull is answered with ERROR_STATUS while the modal is open, and once the answer has emptied the shell's readings the modal
+    # is closed: the tip neither shown nor a modal, the backdrop off (its class, and its computed display none), the close hook
+    # cleared, and the backdrop not the element at the window's centre, so nothing is left dimmed
+    em = fr.get("emptiedOpen") or {}
+    if not em.get("cardHeld") or not em.get("cardEnded") or em.get("reading") is not True or not_enabled_failed(em.get("usage")):
+        out.append("%s: the emptying refresh's premise (the card's pull held and ended by its bound, the reading kept, Usage "
+                   "enabled beside %r): %r" % (where, USAGE_ERR, {k: em.get(k) for k in ("cardHeld", "cardEnded", "reading", "usage")}))
+    ek, eb = em.get("clicked") or {}, em.get("before") or {}
+    if not em.get("opened") or not em.get("tapHeld") or ek.get("settingsOpen") or ek.get("cardHidden") is not True \
+            or ek.get("acts") != ["usage"] or eb.get("up") is not True or eb.get("closeSet") is not True:
+        out.append("%s: the emptying refresh's premise (a tap whose own pull is held, closing the card, posting phoneAct usage and "
+                   "opening the Usage modal within 1 s, its close hook set): opened %r, held %r, %r, %r" % (
+                       where, em.get("opened"), em.get("tapHeld"), ek, eb))
+    ea = em.get("after") or {}
+    if not em.get("emptied"):
+        out.append("%s: the tap's held pull was answered with %d and the shell's readings never emptied (the answer never ran in "
+                   "the shell, the emptying refresh's premise): %r" % (where, ERROR_STATUS, ea))
+    elif ea.get("up") is not False or ea.get("tipShown") is not False or ea.get("tipModal") is not False \
+            or ea.get("backOn") is not False or ea.get("backDisplay") != "none" or ea.get("closeSet") is not False \
+            or ea.get("centre") in (None, "ru-back") or ea.get("settingsOpen") is not False:
+        out.append("%s: the tap's held pull was answered with %d while the Usage modal was open, emptying the readings, and the "
+                   "modal was not closed (the backdrop off, the close hook cleared, nothing left dimmed): %r" % (
+                       where, ERROR_STATUS, ea))
     return out
 
 

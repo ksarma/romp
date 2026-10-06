@@ -61,7 +61,9 @@
 // with a fresher synthetic reading and the open modal read once its age line follows, its By session button the node it was
 // before; then the card opened again over a pull held past cfg.hangMs, Usage clicked with the tap's own pull held, the modal
 // awaited for 1 s and closed, the held pull answered with a fresher synthetic reading, and the modal read once that answer
-// has run in the shell.
+// has run in the shell; then the card opened again over a pull held past cfg.hangMs, Usage clicked with the tap's own pull
+// held, the modal awaited for 1 s and left open, the held pull answered with cfg.errorStatus, and the modal, its backdrop, the
+// close hook and the element at the window's centre read once that answer has emptied the shell's readings.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -980,6 +982,52 @@ try {
       }
       await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } delete window.__rompUsagePullMs; });
       fr.closedFirst = cf;
+    }
+    // ...and a refresh behind that panel that empties the readings closes the open panel (romp-manager's ruling on PR 976's
+    // round 2 pass): the shell holds the reading the last turn's answer brought, the card opened over a pull held past
+    // cfg.hangMs, which the bound ends (the newest read failed, the reading kept), the bound raised to cfg.raceMs, Usage clicked
+    // with the tap's own pull held and the modal awaited for 1 s, then that pull answered with cfg.errorStatus while the modal
+    // is open. Once the answer has emptied the shell's readings (__rompUsageReading false, which renderRows makes in the task
+    // that runs its empty exit): the modal, the backdrop's class and computed display, the close hook, and the element at the
+    // window's centre (the backdrop there while it is up)
+    {
+      const em = {};
+      const panelState = () => page.evaluate(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip");
+        const hit = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+        return { up: !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block",
+                 backOn: !!b && b.classList.contains("on"), backDisplay: b ? getComputedStyle(b).display : null,
+                 tipShown: !!t && t.style.display === "block", tipModal: !!t && t.classList.contains("ru-modal"),
+                 closeSet: typeof window.__rompUsageClose === "function", centre: hit ? (hit.id || hit.tagName.toLowerCase()) : null,
+                 settingsOpen: document.body.classList.contains("settings-open") }; });
+      await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } window.__mtabsActs.length = 0; });
+      mode = "hang";
+      await page.evaluate((ms) => { window.__rompUsagePullMs = ms; }, cfg.hangMs);
+      const sf = await kit.openCard();
+      for (let i = 0; i < 50 && !held.length; i++) await sleep(100);
+      em.cardHeld = held.length;
+      em.cardEnded = await sf.waitForFunction(() => { const x = document.getElementById("rs-pact-usage-wait"); return !!x && x.hidden; }, null, { timeout: cfg.hangWaitMs }).then(() => true, () => false);
+      await frames(page);
+      for (const route of held.splice(0)) { try { await route.abort(); } catch (e) { /* the page aborted it first */ } }
+      em.usage = await kit.usageNow(sf);
+      em.reading = await page.evaluate(() => typeof window.__rompUsageReading === "function" && window.__rompUsageReading());
+      await page.evaluate((ms) => { window.__rompUsagePullMs = ms; }, cfg.raceMs);
+      if (em.usage) {
+        await page.mouse.click(em.usage.left + em.usage.w / 2, em.usage.top + em.usage.h / 2);
+        em.opened = await page.waitForFunction(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip");
+          return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }, null, { timeout: 1000 }).then(() => true, () => false);
+        for (let i = 0; i < 20 && !held.length; i++) await sleep(50);
+        em.tapHeld = held.length;
+        em.clicked = await kit.shellNow(sf);
+        em.before = await panelState();
+        for (const route of held.splice(0)) {
+          try { await route.fulfill({ status: cfg.errorStatus, contentType: "application/json", body: JSON.stringify({ error: "synthetic failure" }) }); } catch (e) { /* the page ended it first */ }
+        }
+        em.emptied = await page.waitForFunction(() => typeof window.__rompUsageReading === "function" && window.__rompUsageReading() === false, null, { timeout: 10000 }).then(() => true, () => false);
+        await frames(page);
+        em.after = await panelState();
+      }
+      await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } delete window.__rompUsagePullMs; });
+      fr.emptiedOpen = em;
     }
     out.failedReads = fr;
     await context.close();

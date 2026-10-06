@@ -71439,7 +71439,11 @@ function parkApiCell(){var c=document.getElementById('rail-api');if(c&&el.contai
 function cardTell(){try{var f=document.getElementById('f-settings'),w=f&&f.contentWindow;if(w&&typeof w.__rompUsageAct==='function')w.__rompUsageAct();}catch(e){}}
 function renderRows(rows,selfHost){ROWS=rows||[];LAST=[];parkApiCell();
 var live=ROWS.filter(function(r){return hasBars(r.usage)||hasSpend(r.usage);});
-if(!live.length){el.innerHTML='';tip.style.display='none';cardTell();return;}
+// no reading left: the phone's panel, where it is open, closes through its own close hook, the backdrop with the content (a
+// dimmed backdrop over a hidden panel is a broken screen, and the tap that opens the panel at once reaches it; romp-manager's
+// ruling on PR 976's round 2 pass). The hook is set exactly while the panel is open (openIt sets it, its close clears it, and
+// the API detail's opening runs it first); with no panel open, the hover tip is hidden as before
+if(!live.length){el.innerHTML='';var shut=window.__rompUsageClose;if(shut)shut();else tip.style.display='none';cardTell();return;}
 shareFreshest(live);
 LAST=live.map(function(r){var det={};det._t=(typeof r.usage.t==='number')?r.usage.t:null;
 winDet(r.usage,det);spendDet(r.usage,det);
@@ -71455,7 +71459,7 @@ if(slot){moveApiCell(cell,function(){slot.appendChild(cell);});}else if(cell.par
 // the rail. The phone's panel (the .ru-modal tip, __rompUsagePanel below) follows them too: a tap after a failed read opens it
 // at once over the reading this script still holds, while the refresh behind it is out, and that refresh's answer lands here
 // where it brings a reading; one that empties the readings (an error status) leaves by renderRows' first exit above, which
-// hides the tip and leaves the backdrop up (modalPaint's comment below). The refresh never opens the panel itself (PR 976's
+// closes the open panel, backdrop and all (modalPaint's comment below). The refresh never opens the panel itself (PR 976's
 // round 2).
 if(tip.style.display==='block'&&!tip.classList.contains('ru-modal')){var th=tipHTML();
 if(th){tip.innerHTML=th;var rr=el.getBoundingClientRect();
@@ -71649,8 +71653,9 @@ tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
 // The panel's content, h being tipHTML over the readings: the windows and spend, and under them the deeper level, one tap away
 // here too (T247): the rail and its click do not exist on a phone, and a compact view must never dead-end (progressive
 // disclosure). openIt paints it, and renderRows repaints it while the panel is open, on each write that leaves a reading. A
-// write that empties the readings (an error status) repaints nothing: renderRows' first exit hides the tip and leaves the
-// backdrop up, with the close hook still set, until a tap on the backdrop or Escape closes it. A repaint replaces the
+// write that empties the readings (an error status) closes the panel instead: renderRows' first exit runs the close hook, as
+// a tap on the backdrop or Escape does, so the backdrop goes with the content (romp-manager's ruling on PR 976's round 2
+// pass; until then that exit hid the content and left the dimmed backdrop up). A repaint replaces the
 // readings above the By session row and leaves the row in place: a button a re-render rebuilds loses the click pressed on
 // it (ui/CLAUDE.md, buttons stay click-safe across re-renders), and a refresh can land while that button is pressed.
 function modalPaint(h){var more=tip.querySelector('.ru-tip-more');
