@@ -8,7 +8,11 @@ ffab236bd (run 36308512751) the step took 67 s. The growth is fork PR #780's tra
 a file's tests one after another, and the tests of one file, tools/romp-track-bash-guard.test.mjs, add up to about 1100 s
 in that run's log (the slowest single test 222 s). With the step inside the Shell job, a PR that added more than about three
 minutes of bats time (the job's margin at 1d591384e was 190 s) ran the job past its cap. Raising the Shell cap was declined,
-since it would hide the growth; the step moved to its own job instead.
+since it would hide the growth; the step moved to its own job instead. The Shell cap was raised later, for the bats suite's
+own growth (Run bats alone took 1850 s on Linux in run 36716348831): main had a flat 35 until fork PR 940 landed on
+2026-10-04 with 60 on macOS and 50 on Linux, and fork PR 926, merging main after it, set the Linux figure to 55 by the rule
+(the slowest finished job plus 10 minutes, rounded up to a multiple of 5); check 4 holds that line, and ci.yml's comment
+above it carries the current figure.
 
 THE PIN IS EXACT EQUALITY, read as text: CI's Python cells install no YAML library, as the other tests/test_ci_*.py modules
 note. This module first held the job through a closed line reader that enumerated the shapes a line could take and the
@@ -38,18 +42,23 @@ literal, and any change to it is red until the literal changes with it, on purpo
    make node skip every test, and a defaults: run: working-directory moves where the command runs. The ruling allowed either
    a check that those two keys are absent or an equality; the list is compared, so a quoted or spaced spelling of either, a
    merge key, a second YAML document (`---`) and any key added later are red with no spelling listed here. The on: block
-   (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES too, since a paths,
-   paths-ignore, branches or types filter there starts no run for the PRs it filters, and a PR with no CI run reads green
-   to scripts/batch.py when its only checks are the label workflows' (ci_of reads success and skipped as success). The
-   value of name and the concurrency block stay free (tests/test_ci_workflow_concurrency.py reads concurrency).
+   (its top-level line to the next top-level line, comment-only lines removed) EQUALS ON_LINES too. CI runs on a push to
+   a batch branch, by hand and on the schedule, and on nothing else (the workflow's header): a paths or paths-ignore
+   filter added to push, or its branch pattern narrowed, starts no run for the batch pushes it filters, and
+   scripts/batch.py land then finds no CI run of the batch head and refuses the batch; an added trigger (a pull_request,
+   a tags pattern on push, or main back on push) runs the whole matrix where no landing reads it. The value of name and
+   the concurrency block stay free (tests/test_ci_workflow_concurrency.py reads concurrency, and its CiTriggers reads the
+   triggers and the push filter).
    tests/test_ci_macos_schedule.py still reads the schedule and the dispatch: this equality refuses any change to the block,
    and that module says what the values held must mean (one weekly cron at a quiet hour Pacific, the manual dispatch kept)
    and ties them to every matrix expression's events, so a change made on purpose updates ON_LINES here and must still
    pass that module.
-4. The Shell job's cap line EQUALS SHELL_CAP_LINE (60 minutes on macOS, 50 on Linux, in the python job's per-OS form, set
-   from fork PR 940's measurements: 60 on macOS since 2026-10-02, on its measured run at b5939b77a, 55 from 2026-09-30, on
-   its projection; 50 on Linux since 2026-10-02, on its measured runs at ce073c374, 45 from 2026-09-30; a flat 35 until
-   then): it is the only line at four spaces in that job holding
+4. The Shell job's cap line EQUALS SHELL_CAP_LINE (60 minutes on macOS, 55 on Linux, in the python job's per-OS form;
+   ci.yml's comment above the line sizes each, the slowest finished job of its OS plus 10 minutes rounded up to a multiple
+   of 5. Main had a flat 35 until fork PR 940 landed on 2026-10-04 with 60 on macOS and 50 on Linux, the figures its
+   branch had held since 2026-10-02, on measured runs, after 55 on macOS, on a projection, and 45 on Linux from
+   2026-09-30. Fork PR 926, merging main after 940 landed, set the Linux figure to 55 by the rule): it is the only line at
+   four spaces in that job holding
    "timeout", so a second copy, bare, quoted or as an explicit key, is red too (one whose quoted key spells the word through
    an escape is not read here; actionlint and tests/test_ci_sdk_pin.py refuse it). And the Shell job's lines that name
    node as a word or hold --test EQUAL SHELL_NODE_LINES, the manager handshake step's name line and run line. The ruling
@@ -180,8 +189,7 @@ TOP_KEYS = ["name", "on", "concurrency", "jobs"]
 ON_LINES = (
     "on:",
     "  push:",
-    "    branches: [main]",
-    "  pull_request:",
+    "    branches: ['batch/**']",
     "  workflow_dispatch:   # the manual on-switch for the macOS cells (see above)",
     "  schedule:",
     '    - cron: "0 10 * * 1"   # weekly macOS cells: the scheduled run selects the same matrix a manual dispatch does',
@@ -189,17 +197,12 @@ ON_LINES = (
 )
 # The Shell job's cap: the only line at four spaces in that job that holds "timeout". One per OS, in the python job's form:
 # the slowest measured or projected job plus 10 minutes, rounded up to a multiple of 5 (ci.yml's comment above the line
-# carries the measurement: fork PR 940 at be4c8e0ab, Linux 32 min 1 s, macOS projected at about 41 min 19 s; at its head
-# d2091c2c1, Linux 32 min 50 s and 33 min 8 s, 45 by the rule, and macOS 38 min 56 s, 50 by the rule; at b5939b77a, macOS
-# 47 min 39 s in its dispatch (run 36998141959), 60 by the rule, the rise being the PR's own added cost, and Linux 34 min
-# 20 s, with 33 min 55 s at b13aae122, 45 by the rule; at ce073c374, Linux 38 min 53 s in its PR run (run 37045962275)
-# and 39 min 20 s in its dispatch (run 37045964763), 50 by the rule, the rise being the PR's own added cost). The macOS
-# cap was 55 from 2026-09-30, on be4c8e0ab's projection and the coordinator's ruling of 20:48Z, and is 60 from 2026-10-02,
-# on b5939b77a's measured run and the coordinator's ruling of 12:51Z. The Linux cap was 45 from 2026-09-30 and is 50 from
-# 2026-10-02, on ce073c374's measured runs and the coordinator's ruling of 19:58Z. Both caps were a flat 35 before
-# 2026-09-30. The d2091c2c1 macOS bats step's last 272 s followed its last case, the orphaned sleep 300 of a fake head in
-# tests/shell-portability.bats, most likely.
-SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 50 }}"
+# carries the measurement: Linux 40 min 43 s in run 37128151383, job 111217616222, the slowest among the finished runs on
+# main, the batch branches and the branches of the open and merged PRs, read at 03:32 UTC on 2026-10-04, its Run bats
+# step 2365 s, so 55; macOS 48 min 1 s in run 37045964763, job 110967357963, the slowest macOS job among those runs, its
+# Run bats step 2856 s, so 60). Fork PR 940, since merged, set this line, at 60 on macOS and 50 on Linux; fork PR 926,
+# merging main after 940 landed, set the Linux figure to 55 by the rule.
+SHELL_CAP_LINE = "    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 55 }}"
 # The Shell job's lines that name node as a word or hold --test: the manager handshake step's name and run lines (T224).
 SHELL_NODE_LINES = (
     "      - name: Manager handshake tests (node --test)",
@@ -573,20 +576,23 @@ class VendoredToolingJob(unittest.TestCase):
     def test_3_the_workflow_triggers_equal_the_expected_literal(self):
         self.assertNoFaults(check_on_block(raw()), (
             "The workflow's on: block, comment-only lines aside, is not ON_LINES (above: the diff and the block as ci.yml has "
-            "it, or the reason it could not be read). A paths, paths-ignore, branches or types filter there starts no CI run "
-            "for the PRs it filters, and scripts/batch.py reads a PR whose only checks are the label workflows' as green, so "
-            "the whole block is held. If the change is meant, replace ON_LINES in tests/test_ci_vendored_job.py with the lines "
-            "printed above, check that tests/test_ci_macos_schedule.py still passes, and say in the commit why the triggers "
-            "changed."))
+            "it, or the reason it could not be read). A paths or paths-ignore filter added to push, or its branch pattern "
+            "narrowed, starts no CI run for the batch pushes it filters (scripts/batch.py land then finds no CI run of the "
+            "batch head and refuses the batch), and an added trigger runs the whole matrix where no landing reads it, so the "
+            "whole block is held. If the change is meant, replace ON_LINES in tests/test_ci_vendored_job.py with the lines "
+            "printed above, check that tests/test_ci_macos_schedule.py and tests/test_ci_workflow_concurrency.py still pass, "
+            "and say in the commit why the triggers changed."))
 
-    def test_4_the_shell_cap_is_60_on_macos_and_50_on_linux(self):
+    def test_4_the_shell_cap_is_60_on_macos_and_55_on_linux(self):
         self.assertNoFaults(check_shell_cap(raw()), (
             "The Shell job's cap changed (above). It is set per OS from a measurement, the slowest measured or projected "
-            "job plus 10 minutes rounded up to a multiple of 5 (ci.yml's comment above the line: fork PR 940 at "
-            "b5939b77a, macOS 47 min 39 s in its dispatch, and at ce073c374, Linux 39 min 20 s in its dispatch and 38 min "
-            "53 s in its PR run). A higher cap hides growth the vendored tooling move was meant to show, and a lower one "
-            "cuts a passing cell. If the change is meant, measure the job again, update SHELL_CAP_LINE in "
-            "tests/test_ci_vendored_job.py and ci.yml's comment, and say why in the commit."))
+            "job plus 10 minutes rounded up to a multiple of 5 (ci.yml's comment above the line: Linux 40 min 43 s in run "
+            "37128151383, the slowest among the finished runs on main, the batch branches and the branches of the open "
+            "and merged PRs, read at 03:32 UTC on 2026-10-04, so 55; macOS 48 min 1 s in run 37045964763, so 60; fork PR "
+            "940, since merged, set the line at 60 and 50, and fork PR 926, merging main after it, set the Linux figure "
+            "to 55 by the rule). A higher cap hides growth the vendored "
+            "tooling move was meant to show, and a lower one cuts a passing cell. If the change is meant, measure the job "
+            "again, update SHELL_CAP_LINE in tests/test_ci_vendored_job.py and ci.yml's comment, and say why in the commit."))
 
     def test_4_the_shell_job_runs_no_node_test_but_the_handshake(self):
         self.assertNoFaults(check_shell_node(raw()), (
@@ -734,25 +740,26 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
              ["defaults:", "  run:", "    working-directory: tools", "concurrency:"]),
             (check_top_keys, "a quoted workflow env:", "top", "concurrency:", ["\"env\": {NODE_OPTIONS: x}", "concurrency:"]),
             (check_top_keys, "a second YAML document", None, None, ["---", "env:", "  NODE_OPTIONS: x"]),
-            (check_on_block, "a paths-ignore filter on pull_request", "top", "  pull_request:",
-             ["  pull_request:", "    paths-ignore: [tools/**, vendor/**, hooks/**]"]),
-            (check_on_block, "a paths filter on pull_request", "top", "  pull_request:", ["  pull_request:", "    paths: [kernel/**]"]),
-            (check_on_block, "a branches filter on pull_request", "top", "  pull_request:",
-             ["  pull_request:", "    branches: [release]"]),
-            (check_on_block, "a types filter on pull_request", "top", "  pull_request:", ["  pull_request:", "    types: [closed]"]),
-            (check_on_block, "pull_request dropped", "top", "  pull_request:", []),
-            (check_on_block, "a branches filter on push widened", "top", "    branches: [main]", ["    branches: [main, 'x/**']"]),
+            (check_on_block, "a paths-ignore filter on push", "top", "  push:",
+             ["  push:", "    paths-ignore: [tools/**, vendor/**, hooks/**]"]),
+            (check_on_block, "a paths filter on push", "top", "  push:", ["  push:", "    paths: [kernel/**]"]),
+            (check_on_block, "a tags filter on push", "top", "  push:", ["  push:", "    tags: ['v*']"]),
+            (check_on_block, "the push branch pattern narrowed", "top", "    branches: ['batch/**']", ["    branches: ['batch/x']"]),
+            (check_on_block, "a pull_request trigger added", "top", "  push:", ["  pull_request:", "  push:"]),
+            (check_on_block, "push replaced by pull_request", "top", "  push:", ["  pull_request:"]),
+            (check_on_block, "the push branch filter widened to main", "top", "    branches: ['batch/**']",
+             ["    branches: ['batch/**', main]"]),
             (check_top_keys, "a second, quoted on key", "top", "concurrency:", ["\"on\": [workflow_dispatch]", "concurrency:"]),
             (check_shell_cap, "the Shell cap back to the flat 35", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 35"]),
-            (check_shell_cap, "the Shell cap a flat 50", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 50"]),
+            (check_shell_cap, "the Shell cap a flat 55", "shell", SHELL_CAP_LINE, ["    timeout-minutes: 55"]),
             (check_shell_cap, "the macOS Shell cap 60 to 65", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 60", "&& 65")]),
             (check_shell_cap, "the macOS Shell cap 60 to 55", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("&& 60", "&& 55")]),
-            (check_shell_cap, "the Linux Shell cap 50 to 45", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 50", "|| 45")]),
-            (check_shell_cap, "the Linux Shell cap 50 to 55", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 50", "|| 55")]),
+            (check_shell_cap, "the Linux Shell cap 55 to 50", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 55", "|| 50")]),
+            (check_shell_cap, "the Linux Shell cap 55 to 60", "shell", SHELL_CAP_LINE, [SHELL_CAP_LINE.replace("|| 55", "|| 60")]),
             (check_shell_cap, "the two Shell caps swapped", "shell", SHELL_CAP_LINE,
-             ["    timeout-minutes: ${{ matrix.os == 'macos-latest' && 50 || 60 }}"]),
+             ["    timeout-minutes: ${{ matrix.os == 'macos-latest' && 55 || 60 }}"]),
             (check_shell_cap, "the Shell caps keyed on the other OS", "shell", SHELL_CAP_LINE,
-             ["    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 60 || 50 }}"]),
+             ["    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 60 || 55 }}"]),
             (check_shell_cap, "a second Shell cap after the steps", "shell", SHELL_NODE_LINES[1],
              [SHELL_NODE_LINES[1], "    \"timeout-minutes\": 90"]),
             (check_shell_node, "the step put back in the Shell job", "shell", SHELL_NODE_LINES[1],
