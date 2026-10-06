@@ -45,7 +45,7 @@ function shimJs(app: string, caps = "", noStale = false, core = ""): string {
   // longer a cap, and the pane-set revision (LOADEDPV, plans/panes-as-data.md). The tuple's head is pinned; its tail may or
   // may not carry the label slot (a copy-aside run at an older base lacks it), so the arguments follow the slots the slice
   // actually has
-  const end = KERNEL.indexOf('""" % (_reload_core(v, pvv), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", app,', start);
+  const end = KERNEL.indexOf('""" % (_reload_core(v, pvv), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", ', start);
   assert.ok(end > start, "the template's format tuple is the one the test substitutes");
   const slice = KERNEL.slice(start, end);
   // the label slot: _pane_label's word for the key (kernel.py _PANE_ORDER), the capitalised key outside that list
@@ -53,9 +53,18 @@ function shimJs(app: string, caps = "", noStale = false, core = ""): string {
   const label = LABELS[app] || app.charAt(0).toUpperCase() + app.slice(1);
   // the pane-set revision slot (plans/panes-as-data.md): a JSON string the shim compares against the keepalive's pv
   const pv = slice.includes("var LOADEDPV=%s;") ? ['"0"'] : [];
-  const args = slice.includes('var LABEL="%s"')
-    ? [core, "var RESTART_DIET=false;", app, label, "5", caps, noStale ? "true" : "false", ...pv, app, app]
-    : [core, "var RESTART_DIET=false;", app, "5", caps, noStale ? "true" : "false", ...pv, app, app];
+  // The APP (the id) and LABEL (the title) slots are JavaScript string literals the shim bakes with json.dumps (which
+  // emits the surrounding quotes), so a title with a quote, a backslash or a newline is escaped for the JS-string
+  // context: the template slots are bare (var APP=%s;var LABEL=%s) and the arguments are JSON-encoded. The /ws?app=
+  // and romp-vscode-state- slots keep the id as given (it is regex-confined). A copy-aside run at an older base quotes
+  // APP and LABEL in the template (var APP="%s";var LABEL="%s") and takes the raw strings there.
+  const baked = slice.includes("var APP=%s;");
+  const appSlot = baked ? JSON.stringify(app) : app;
+  const hasLabel = slice.includes("var LABEL=%s;") || slice.includes('var LABEL="%s"');
+  const labelSlot = baked ? JSON.stringify(label) : label;
+  const args = hasLabel
+    ? [core, "var RESTART_DIET=false;", appSlot, labelSlot, "5", caps, noStale ? "true" : "false", ...pv, app, app]
+    : [core, "var RESTART_DIET=false;", appSlot, "5", caps, noStale ? "true" : "false", ...pv, app, app];
   let i = 0;
   return slice.replace(/%[sd]/g, () => args[i++]).replace(/%%/g, "%");
 }

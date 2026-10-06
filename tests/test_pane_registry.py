@@ -131,6 +131,68 @@ def _run(js):
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
+# the pane-title-and-id sink census
+# A pane title is free text (only length and non-empty are checked, _pane_check), so it may hold a quote, a backslash
+# or a newline. Every served output that carries a title must escape it for that output's context, or the title breaks
+# the output (a shim that does not parse, a LABEL that is not the title). A pane id is regex-confined to [a-z][a-z0-9_-]
+# by the whole-string rule (_PANE_ID_RE, \Z), so once that rule holds the id is inert in every sink it reaches. These
+# helpers derive the title-reader population from the live source and run the served shim through node.
+def _title_sites(src):
+    """Every place a pane title flows into code, derived from the live kernel source with ast (so string escapes and
+    docstrings are decoded, never grepped), by the enclosing top-level function (<module> for a module-level read):
+    the _pane_label CALL sites and the ["title"] SUBSCRIPT reads. The census asserts this is the classified set, so a
+    NEW title reader (a new sink) fails it. A title read spelled .get("title") is a form this census does not read
+    (a stated limit); the live tree carries every pane-title sink as a subscript or through _pane_label."""
+    tree = ast.parse(src)
+    label_calls, title_reads = set(), set()
+
+    def walk(node, fn):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_pane_label":
+            label_calls.add(fn)
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == "title":
+            title_reads.add(fn)
+        cur = node.name if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else fn
+        for child in ast.iter_child_nodes(node):
+            walk(child, cur)
+
+    walk(tree, "<module>")
+    return label_calls, title_reads
+
+
+_SHIM_PROBE_NODE = r"""
+const fs = require('fs'), vm = require('vm');
+const shim = fs.readFileSync(process.argv[2], 'utf8');
+const out = {};
+try { new vm.Script(shim, { filename: 'shim.js' }); out.parses = true; }   // a SyntaxError (a title's newline or trailing backslash) is caught here
+catch (e) { out.parses = false; out.parseErr = String(e); }
+if (out.parses) {
+  const i = shim.indexOf('var APP='), j = shim.indexOf('var lastRecv=0;', i);
+  if (i < 0 || j < 0) { out.declErr = 'markers missing'; }
+  else {
+    const decls = shim.slice(i, j);   // the baked var declarations: all literals, self-contained
+    try { const ctx = {}; vm.runInNewContext(decls + '\nthis.__L = LABEL; this.__A = APP;', ctx); out.label = ctx.__L; out.app = ctx.__A; }
+    catch (e) { out.declErr = String(e); }   // a title's quote closes the string and runs code: the throw lands here
+  }
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _shim_probe(shim):
+    """Run the served shim through node and read back whether it PARSES (no SyntaxError) and the APP and LABEL it
+    evaluates to. {"parses": bool, optional "parseErr"/"declErr", "label", "app"}."""
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as rf:
+        rf.write(_SHIM_PROBE_NODE); runner = rf.name
+    with tempfile.NamedTemporaryFile("w", suffix=".shim.js", delete=False) as sf:
+        sf.write(shim); shimf = sf.name
+    try:
+        r = subprocess.run(["node", runner, shimf], capture_output=True, text=True, timeout=30)
+    finally:
+        os.unlink(runner); os.unlink(shimf)
+    assert r.returncode == 0, "the shim probe threw: " + r.stderr[:1500]
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
 def _has(tc, needle, page, msg=""):
     # assertTrue, not assertIn: a failure must never print the landing
     tc.assertTrue(needle in page, "missing from the page: %r %s" % (needle, msg))
@@ -301,6 +363,31 @@ class TheDoors(unittest.TestCase):
         st, r = self._call("/pane", {}); self.assertEqual(st, 400); self.assertIn("pane definition", r["error"])
         self.assertNotEqual(self._call("/pane", NOTES, token=False)[0], 200, "no token: refused")
         self.assertNotEqual(self._call("/panes", token=False)[0], 200)
+
+    def test_an_id_with_a_trailing_newline_is_refused_at_every_install_road(self):
+        # _PANE_ID_RE is applied with re.match; the whole-string rule (\Z, not $) refuses an id whose only extra
+        # character is a terminal newline, which $ matched before it (re.match with $ stops before a terminal \n). An
+        # id ending in a newline otherwise reached the landing's unquoted attributes and CSS selectors raw (data-pane=,
+        # id=gv-, #<id>-pane). All three install roads funnel through _pane_check: POST /pane and the CLI door both
+        # reach define_pane -> _pane_check, and a direct file write is governed by the re-check _panes_snapshot runs on
+        # every file it reads.
+        self.assertIn("_pane_check(defn)", inspect.getsource(km.define_pane), "the POST and CLI door validate through _pane_check")
+        self.assertIn("_pane_check(defn)", inspect.getsource(km._panes_snapshot), "the disk re-check runs _pane_check on every file read")
+        self.assertIsNone(km._pane_check({"id": "ab", "source": "/feed"})[1], "a normal id passes")
+        for road, (defn, err) in (("_pane_check", km._pane_check({"id": "ab\n", "source": "/feed"})),
+                                  ("define_pane", km.define_pane({"id": "ab\n", "source": "/feed"}))):
+            self.assertIsNone(defn, road); self.assertIn("id must", err or "", road)
+        st, r = self._call("/pane", {"id": "ab\n", "source": "/feed"})
+        self.assertEqual((st, r.get("ok")), (200, False), r); self.assertIn("id must", r.get("error", ""))
+        # the direct-file road: a file whose id and name both end in a newline is read back and re-checked; refused, so
+        # it never joins the pane set (at the base _pane_check accepted it and the matching name let it render)
+        self.w.seed(NOTES)
+        (self.w.pdir / "dnl\n.json").write_text(json.dumps(_full({"id": "dnl\n", "source": "/feed", "on": True})) + "\n")
+        self.w.reset_memos()
+        with contextlib.redirect_stderr(io.StringIO()):
+            data = km._panes_data()
+        self.assertNotIn("dnl\n", data, "the disk re-check refuses the newline id"); self.assertNotIn("dnl", data)
+        self.assertIn("notes", data, "a valid pane beside it still renders")
 
     def test_define_replaces_a_pane_whole_remove_deletes_it_and_a_shipped_or_unknown_id_is_refused(self):
         st, r = self._call("/pane", NOTES); self.assertEqual((st, r.get("ok")), (200, True), r); self.assertEqual(r["pane"], _full(NOTES))
@@ -852,6 +939,64 @@ R.dismiss(); R.notePanes('B'); out.declined = R.offered();  // declined, the sam
 R.notePanes('C'); out.moved = R.offered();                  // another revision offers again
 console.log(JSON.stringify(out));
 """
+
+
+class ThePaneTitleAndIdSinkCensus(unittest.TestCase):
+    """Every served sink a pane title or id reaches is escaped for its context, or inert by the whole-string id rule.
+      - the shim's LABEL (the title) and APP (the id) slots are JavaScript string literals, baked with json.dumps so
+        the shim parses and LABEL equals the title (the behavioural pin, red at the base on the LABEL slot);
+      - the rail, the phone tab and the body attribute wrap the title in _html_esc (the attribute in _html_esc of its
+        json.dumps);
+      - the WS-drop bell row carries the raw title in a plain sentence, shipped as a JSON string field (json.dumps
+        escapes the quote) and rendered client-side through textContent, so it is inert for its context;
+      - every id sink (the shim's /ws?app= and romp-vscode-state- slots, and the landing's unquoted attributes and CSS
+        selectors) is inert once the id is regex-confined by _PANE_ID_RE (\\Z).
+    The title-reader population is derived from the live source and fails closed: a NEW title reader fails the census."""
+    def setUp(self): self.w = World()
+    def tearDown(self): self.w.close()
+
+    def test_the_title_reader_population_over_the_live_tree_is_the_classified_set(self):
+        label_calls, title_reads = _title_sites(KSRC)
+        self.assertEqual(label_calls, {"_shim", "_note_ws_drop"},
+                         "_pane_label is called only where the title is a JS-string literal (the shim's LABEL slot, "
+                         "json.dumps'd) and the bell row (textContent): %r" % sorted(label_calls))
+        self.assertEqual(title_reads, {"_panes_attr", "_rail_buttons_html", "_mtab_buttons_html", "_pane_label", "<module>"},
+                         "a pane record's title is read only by the escaped landing builders (_panes_attr, the rail and "
+                         "tab buttons), _pane_label's own id->title map, and the _PANE_ORDER code-pane constant: %r"
+                         % sorted(title_reads))
+
+    def test_the_shim_bakes_a_title_with_a_quote_a_backslash_or_a_newline_so_it_parses_and_label_equals_the_title(self):
+        for i, title in enumerate(('a"b', "a\\b", "a\nb")):   # a quote, a backslash, an inner newline
+            pid = "cp%d" % i
+            self.w.seed({"id": pid, "title": title, "source": "/feed", "on": True})
+            out = _shim_probe(km._shim(pid))
+            self.assertTrue(out.get("parses"), "the shim parses for %r: %s" % (title, out.get("parseErr")))
+            self.assertNotIn("declErr", out, "the APP/LABEL declarations run for %r: %s" % (title, out.get("declErr")))
+            self.assertEqual(out.get("label"), title, "LABEL equals the title for %r" % title)
+            self.assertEqual(out.get("app"), pid, "APP equals the id for %r" % title)
+
+    def test_each_served_title_sink_escapes_or_is_inert_for_its_context(self):
+        probe = 'A"<b>&'   # a quote (JS and the attribute), angle brackets and an ampersand (HTML text), within the 24-char bound
+        self.w.seed({"id": "sink", "title": probe, "source": "/feed", "on": True})
+        # the shim's LABEL slot (red at the base): the shim parses and LABEL equals the title
+        out = _shim_probe(km._shim("sink"))
+        self.assertTrue(out.get("parses") and "declErr" not in out and out.get("label") == probe and out.get("app") == "sink", out)
+        # the rail, the phone tab, the body attribute: the title only in its escaped form, never raw
+        page = km._landing()
+        esc = km._html_esc(probe)
+        _has(self, "<div class=rail-btn data-pane=sink>%s</div>" % esc, page, "the rail escapes the title")
+        _has(self, "<button data-pane=sink>%s</button>" % esc, page, "the phone tab escapes the title")
+        attr = re.search(r'data-panes="([^"]*)"', page).group(1)
+        self.assertNotIn("<", attr); self.assertNotIn('"', attr)
+        self.assertEqual(next(r["title"] for r in _attr_rows(page) if r["id"] == "sink"), probe, "the attribute round-trips the title")
+        self.assertNotIn(probe, page, "the raw title reaches no sink in the landing page")
+        # the WS-drop bell row: the raw title in a plain sentence, escaped on the JSON wire, rendered through textContent
+        km._WS_DROPS.clear()
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._note_ws_drop({"app": "sink", "qbytes": 2_000_000, "dropLogged": False}, "bytes behind", 0)
+        text = km._WS_DROPS[-1]["text"]
+        self.assertIn(probe, text, "the bell row carries the title as text, not interpolated into markup or a script")
+        self.assertIn('\\"', json.dumps(text), "the quote is escaped on the JSON wire the feed ships the bell row over")
 
 
 if __name__ == "__main__":

@@ -68558,7 +68558,7 @@ def _boards():
 # (tests/test_pane_registry.py pins it against a fixture; the inline scripts gained the registry's reads). A URL source is a plain sandboxed iframe with no
 # token and no protocol; a state-root source (pane:<id>) is a static page under STATE/panes/<id>/ served at /pane/<id>/
 # with shim.js and theme.css beside it; a route source is a page the kernel already serves.
-_PANE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_PANE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}\Z")   # \Z, not $: $ matches before a terminal newline, so an id ending in a newline would pass and then reach the landing's unquoted markup and CSS; \Z matches the whole string
 _PANE_ROUTE_RE = re.compile(r"^/[A-Za-z0-9_./-]*$")
 _PANE_RESERVED = ("chat", "timeline", "fleet", "feed", "waiting", "files", "artifacts", "settings")   # "waiting": the fork's shipped Waiting pane
 # ids whose DERIVED element names (<id>-pane, gv-<id>, f-<id>) the shell already mints for something else: the band (tl-pane), the
@@ -72466,6 +72466,11 @@ def _shim(app, v=0, caps="", no_stale=False, pv=None, data=None):
     snap = _panes_snapshot() if (pv is None or data is None) else None
     pvv = snap["rev"] if pv is None else pv
     label = _pane_label(app, _pane_order(snap["data"] if data is None else data))
+    # APP (the id) and LABEL (the title) are baked as JavaScript string literals with json.dumps(ensure_ascii=True),
+    # which emits the surrounding quotes, the way LOADEDPV bakes pvv: a title holding a quote, a backslash or a newline
+    # is escaped for the JS-string context, so the shim parses and LABEL equals the title. The template drops its own
+    # quotes for those two slots (var APP=%s;var LABEL=%s). The /ws?app= and romp-vscode-state- slots keep the id as
+    # given: it is regex-confined to [a-z][a-z0-9_-] (the whole-string rule, _PANE_ID_RE), so it is inert there.
     # `v` = the dist build token this page was served with (its ?v= urls). The shim compares it against the
     # `dv` riding every keepalive and, on drift, hands it to the reload core it embeds as the template's first slot
     # (window.__rompReload, _RELOAD_CORE_JS), which OFFERS a reload (the user 2026-09-16, superseding the 2026-09-08
@@ -72525,7 +72530,7 @@ var SKEL=new URLSearchParams(location.search).get("skeleton")==="1";
 // kernel retires this page's previous socket on a reconnect, and never another page's (a duplicated tab copies
 // sessionStorage, and with it wid; it must not copy this).
 var IID="";try{IID=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():"";}catch(e){}if(!IID)IID=String(Math.random()).slice(2)+"-"+Date.now();
-var APP="%s";var LABEL="%s";var LOADEDV=%d;var CAPS="%s";var NOSTALE=%s;var LOADEDPV=%s;var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
+var APP=%s;var LABEL=%s;var LOADEDV=%d;var CAPS="%s";var NOSTALE=%s;var LOADEDPV=%s;var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
 // The beacon extension's hooks (the user 2026-09-18, who wanted the phone's load and return timing shared only by choice): the marks the
 // page's collector (perf-telemetry.ts) reads at its flush, whole ms from the time origin, each stamped once: the first socket open, the
 // bundle's ready, the first frame delivered to the bundle; a running count of the text-frame characters received on every socket of this
@@ -73037,7 +73042,7 @@ if(_L!==undefined){abandon();if(_L.up){row.awaitLink=false;linkUpMs=Date.now()-f
 if(ws&&ws.readyState===1)abandon();else{try{if(ws&&ws.readyState===0)ws.close();}catch(e){}}   // OPEN-but-quiet → abandoned + redialed below, now; stuck-CONNECTING → aborted, onclose retries
 if(!ws||ws.readyState===3)connect();
 returnDiag("return",row);});/*end-shim-core*/})();   // filed AFTER the redial so it queues for the new socket instead of vanishing into the dead one
-""" % (_reload_core(v, pvv), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", app, label, int(v), caps, "true" if no_stale else "false", json.dumps(pvv), app, app)
+""" % (_reload_core(v, pvv), _RESTART_DIET_JS if app == "chat" else "var RESTART_DIET=false;", json.dumps(app, ensure_ascii=True), json.dumps(label, ensure_ascii=True), int(v), caps, "true" if no_stale else "false", json.dumps(pvv), app, app)
 
 
 # The chat shim's restart-diet read (the user 2026-09-14; round two of PR 1661): the main chat pane reads the reload core's durable record
