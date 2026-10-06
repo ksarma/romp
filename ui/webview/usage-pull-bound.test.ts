@@ -15,7 +15,8 @@
 // the script's code finds the read's name in its declaration and in the helper alone, so no caller reaches the read unbounded,
 // and the card's name and the panel's opener reach the helper. The timeline's forward (render) is a read in the same order: a
 // pull started before a forward and failing after it, in transit or with an error status, leaves the flag clear and the
-// readings as the forward wrote them.
+// readings as the forward wrote them. And the card's own outdated-ask check (gear.js usagePull's done): with two openings, the
+// earlier pull ending first, by a failure or by an ok answer, leaves Usage on the loader until the later pull ends.
 import { test, mock } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -286,5 +287,39 @@ for (const [end, what] of [["fail", "a failure in transit"], [{ ok: false, rows:
     assert.equal(w.renders, 1, "and writes nothing: the readings stay the forward's");
     assert.ok(w.reading(), "the forward's reading is still there");
     assert.equal(w.tells, 1, "and the card is told nothing more");
+  });
+}
+
+// The card's outdated-ask check (gear.js usagePull's done; PR 976's round 2, fresh-1): the card's usagePull and usageAct,
+// lifted from gear.js, over the shell's helper, read, __rompUsageFailed and __rompUsageReading from kernel.py, the shell's tell
+// running the card's usageAct (as __rompUsageAct does while the card is open with its row). Two openings, each a pull the case
+// holds; the earlier ends first, then the later. Usage keeps the loader (disabled, busy, neither line) until the later ends
+const CARD_PULL = between(GEAR, "  var usageWait = 0, usageSeq = 0;", "  // whether the settings are open:");
+const READING_ROWS = [{ host: "", usage: { fiveHour: { pct: 12 } } }];
+for (const [early, what] of [["fail", "a failure in transit"], [{ ok: true, rows: READING_ROWS }, "an ok answer"]] as [Answer, string][]) {
+  test("two openings, the earlier pull ending first in " + what + ": Usage keeps the loader until the later pull ends", async () => {
+    const els: Record<string, El> = { "rs-pact-usage": new El(), "rs-pact-usage-none": new El(), "rs-pact-usage-err": new El(), "rs-pact-usage-wait": new El() };
+    let act: () => void = () => undefined;
+    const shell = world("held", { helper: true }, () => act());
+    const parent = { __rompUsagePull: shell.pull, __rompUsageReading: shell.reading, __rompUsageFailed: shell.failed };
+    const card = new Function("document", "window", CARD_PULL + "\nreturn { usageAct: usageAct, usagePull: usagePull };")(
+      { getElementById: (id: string) => els[id] || null }, { parent });
+    act = card.usageAct;
+    const now = () => ({ loader: !els["rs-pact-usage-wait"].hidden, disabled: els["rs-pact-usage"].disabled,
+      busy: els["rs-pact-usage"].attrs["aria-busy"] === "true", none: !els["rs-pact-usage-none"].hidden, err: !els["rs-pact-usage-err"].hidden });
+    const LOADER = { loader: true, disabled: true, busy: true, none: false, err: false };
+    card.usagePull();
+    await flush();
+    card.usagePull();
+    await flush();
+    assert.equal(shell.fetches.length, 2, "two pulls out, one per opening");
+    assert.deepEqual(now(), LOADER, "the loader while both are out");
+    shell.fetches[0].end(early);
+    await flush();
+    assert.deepEqual(now(), LOADER, "the earlier pull ended first: the loader stays, the answer is the later pull's to give");
+    shell.fetches[1].end({ ok: true, rows: [] });
+    await flush();
+    assert.deepEqual(now(), { loader: false, disabled: true, busy: false, none: true, err: false },
+      "the later pull ended, answered ok with no rows: No reading yet");
   });
 }
