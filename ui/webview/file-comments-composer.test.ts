@@ -23,7 +23,10 @@ const SRC = web("file-comments.ts");
 const CHAT_CSS = web("styles.css");
 const FEED_CSS = web("feed.css");
 const TRACK = web("track-decorations.ts");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
+// The fork's Files section lives in docs/reference.md ("## The Files pane", up to the Artifacts pane) since the front pages
+// became the project's (CLAUDE.md "The documentation front pages"; fold 4 moved every fork paragraph there).
+const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+const REF_FILES = ((at: number) => REF.slice(at, REF.indexOf("\n## The Artifacts pane", at)))(REF.indexOf("\n## The Files pane\n"));
 const PLAN = fs.readFileSync(path.resolve(process.cwd(), "..", "plans", "file-review.md"), "utf8");
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
@@ -687,7 +690,7 @@ test("the sheets: the box rule says textarea — resize, a floor of COMPOSER_ROW
 
 test("docs: the guide says Enter adds a line and names the chord and Save; the plan's bullet is multi-line and the follow-on note is there", () => {
   const flat = (t: string) => t.replace(/\s+/g, " ");
-  const files = flat(GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")));
+  const files = flat(REF_FILES);
   assert.ok(files.includes("Enter adds a line"), "the guide: Enter adds a line");
   assert.ok(files.includes("**Cmd+Enter**") && files.includes("**Ctrl+Enter**") && files.includes("**Save**"), "the guide names both chords and the button");
   assert.ok(!files.includes("type the note and press Enter"), "the one-line sentence is gone");

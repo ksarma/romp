@@ -151,10 +151,10 @@ class BusTokenGate(_Seam):
 
 class PeerTokenPlumbing(_Seam):
     def test_peer_update_stores_token_and_down_notify_keeps_it(self):
-        ps.peer_update({"host": "TESTHOST", "port": 45001, "up": True, "token": "peer-tok"})
+        ps.peer_update({"host": "TESTHOST", "port": 1, "up": True, "token": "peer-tok"})
         self.addCleanup(_end_dialer, "TESTHOST")
         self.assertEqual(ps.PEERS["TESTHOST"]["token"], "peer-tok")
-        ps.peer_update({"host": "TESTHOST", "port": 45001, "up": False})   # down carries no token
+        ps.peer_update({"host": "TESTHOST", "port": 1, "up": False})   # down carries no token
         self.assertEqual(ps.PEERS["TESTHOST"]["token"], "peer-tok",
                          "a token-less transition must keep the last known peer token")
         ps.PEERS.pop("TESTHOST", None)

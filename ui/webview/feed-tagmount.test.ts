@@ -38,8 +38,8 @@ test("arbitrary combinations union-filter; All is exclusive and the default boar
 test("the lens is its own slot in the view family; needs-you passes (the family's interrupt rule)", () => {
   assert.match(FEED, /function viewScope\(list: AskItem\[\]\): AskItem\[\]/,
     "the combobox/search scoping kept its own layer");
-  assert.match(FEED, /return s\.filter\(\(a\) => lensVisible\(feedLens, u, a\.sid\) \|\| isNeedsYou\(FEED_BOARD, a\.category \?\? a\.column\)\);/,
-    "the same breakthrough the satellite and internals lens wear: the board's badge category (board-def.ts, phase two), needs_input for the feed");
+  assert.match(FEED, /return s\.filter\(\(a\) => lensVisible\(feedLens, u, a\.sid\) \|\| isNeedsYou\(boardOf\(a\), a\.category \?\? a\.column\)\);/,
+    "the same breakthrough the satellite and internals lens wear: the card's OWN board's badge category (board-def.ts, phase two; the 1861 read), needs_input for the feed");
   // hover-freeze counts through viewFiltered = viewBase — the badges stay honest for free (the
   // team-internals slot retired 2026-08-25 on the user's verdict; the slot family stands)
   assert.match(FEED, /return viewBase\(list\);/);
@@ -86,6 +86,7 @@ test("what the lens hides stays one glance away: whisper, promoted banner, click
   assert.match(FEED, /const lensOutN = outsideLensCount\(asks\);/);
   assert.match(FEED, /lmore\.classList\.toggle\("prominent", lensOutN > lensShownN\);/,
     "the exact promotion rule: the lens hides more than the board shows");
+  assert.match(FEED, /const lensShownN = plan\.allBoards\.length;/, "the lens line compares every board's view with lensOutN's every-board count (upstream's viewFiltered(asks).length, read from the plan)");
   assert.match(FEED, /"Showing \\u201c" \+ lensLabel\(feedLens\) \+ "\\u201d \\u2014 " \+ lensOutN/,
     "the promoted line NAMES the lens");
   assert.match(FEED, /lmore\.onclick = \(\) => \{ setFeedLens\(\{ all: true \}\); render\(\); \};/,

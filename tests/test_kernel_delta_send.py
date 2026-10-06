@@ -239,7 +239,7 @@ class RenderHandlesTheTail(unittest.TestCase):
         r = self._render()
         # upsert records the wire offset → s.events is the tail [headFrom, headTotal); an empty frame for a held
         # transcript keeps the resident window instead (T249b, frame-merge.ts)
-        self.assertIn("headFrom: kept && prev ? prev.headFrom : (msg.headFrom ?? 0),", r)
+        self.assertIn("headFrom: keepResident && prev ? prev.headFrom : (msg.headFrom ?? 0),", r)
         # scroll to the top of the resident tail with older on the server → request the previous chunk
         self.assertIn('vscodeApi?.postMessage({ type: "loadOlder", id: sid, before: s.proto === 2 ? s.firstUuid : s.headFrom });', r)
         # …only on an upward or unchanged move of the view (T366: a downward flick inside the estimate's top band never asks)
@@ -740,7 +740,10 @@ class ByteIdenticalFrames(unittest.TestCase):
                         km._push_session_now(self.SID)
                 with mock.patch.object(km, "_clients", [c]):
                     d, b0, b1, calls = self._window(between=between)
-                self.assertEqual(calls, [False, True, False, True, False, True], "the targeted push caches nothing: the loop's cycles are unchanged")
+                self.assertEqual(calls, [False, True, False, True, False, True, True],
+                                 "the loop's six cycles are unchanged, with one entry more at index 5: the targeted push diffs "
+                                 "its build once against the shared baseline before cycle 5 (the project's PR 1870 serves each "
+                                 "client from the base it holds) and caches nothing")
                 cached, built = self._identities(d, b0, b1)
                 self.assertEqual((cached, built), (3, 4), "three loop rebuilds and the targeted push's build")
                 self.assertEqual((d["targetedBuilds"], d["failedBuilds"], d["nosig"]), (1, 0, 0))

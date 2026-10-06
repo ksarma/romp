@@ -883,12 +883,12 @@ function displayName(sid: string): string {
 
 function showSessionMenu(x: number, y: number, sid: string, viaKeyboard: boolean): void {
   if (!sid) return;
+  // on close the focus returns to the row's head by sid (a push may have rebuilt the list under the open menu, and the builder's
+  // own return refocuses only a still-connected opener), unless the close followed the focus out of this document: the window's
+  // blur fires when a click lands in another pane, and a refocus then pulled the focus back to the head (Firefox lost the composer)
   openContextMenu(x, y, [
     { label: "Rename", sub: RENAME_SUBLINE, pick: () => startRowRename(sid) },
     { label: "Delete", sub: "ends the session; its history stays on disk", danger: true, pick: () => confirmEndSession(sid) },
-  // focus returns to the row, by sid (a push may have rebuilt the list under the open menu: the builder's own return refocuses only a
-  // still-connected opener), unless the close followed the focus out of this document: the window's blur fires when a click lands in
-  // another pane, and a refocus then pulled the keyboard back to the head (Firefox lost the composer's focus; the fold review's ui-1)
   ], { className: "fl-sess-menu", viaKeyboard, onClose: () => { if (!document.hasFocus()) return; const h = headOf(sid); if (h) h.focus({ preventScroll: true }); } });
 }
 

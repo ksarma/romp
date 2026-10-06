@@ -15,8 +15,8 @@
 # reported); unreachable is printed as `#N` with distinct wording, "unknown: check by hand", and
 # exits 1 like a stranded PR, since a clone that never fetched the head reads the same way.
 #
-# Runs locally (scripts/land.sh and `batch.py finish` call it) and as a small job on every push to
-# main (.github/workflows/pr-orphans.yml), so the class is reported within minutes.
+# Runs locally (`batch.py finish` calls it, after `batch.py land`, which scripts/land.sh runs) and as a small
+# job on every push to main (.github/workflows/pr-orphans.yml), so the class is reported within minutes.
 #
 # The check is against main as this clone knows it: origin/main when the remote-tracking ref
 # exists (a clone, or CI's full-depth checkout), else the local main. A merge commit this clone has
@@ -32,7 +32,7 @@ GH="${ROMP_GH:-gh}"
 MAIN="${ROMP_MAIN_BRANCH:-main}"
 LIMIT="${ROMP_ORPHANS_LIMIT:-200}"
 
-# Check against the remote's main, not a stale local copy: land.sh runs this right after a merge
+# Check against the remote's main, not a stale local copy: finish runs this right after a merge
 # the clone has not seen yet, and a clone that never fetched would report every recent merge.
 # ROMP_ORPHANS_NO_FETCH=1 skips the fetch (CI's fresh checkout does not need one).
 if [ -z "${ROMP_ORPHANS_NO_FETCH:-}" ] && git remote get-url origin >/dev/null 2>&1; then

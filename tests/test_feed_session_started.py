@@ -13,7 +13,9 @@ import contextlib
 import io
 import json
 import os
+import sys
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,6 +96,16 @@ class _Feed(unittest.TestCase):
             {"rompUuid": SID, "seq": len(nodes), "lastNode": last, "nodes": nodes, "placements": {}, "status": status or {}}))
 
     def _feed(self):
+        """One build_feed, with err holding everything the build wrote to stderr. The kernel's SdkBackend singleton
+        is built first, outside the capture: build_feed reaches _sdk() through _alive_sessions, and the first _sdk()
+        call in a process constructs the backend, which logs its one-time boot lines to stderr (the SDK import
+        verdict, the credential-shaped names it finds, and the cli-scope verdict that conftest's ROMP_CLI_SCOPE=0
+        forces). Inside the capture those lines landed in err for whichever test of this module built the feed first
+        in its process, so a test asserting err == "" failed alone, and under xdist whenever a worker's first test
+        here was one of those. The construction is not the feed path. Built here, it leaves the capture holding
+        build_feed alone, and every stderr write build_feed makes, a later _sdk() call's included, still reaches err
+        (pinned by FeedCaptureHoldsTheBuildAlone below)."""
+        km._sdk()
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             f = km.build_feed(NOW)
@@ -443,6 +455,59 @@ class HostsCurrentAtTheMint(_Feed):
         self.assertEqual(rows[h4]["kind"], "handoff")
         self.assertTrue(all(rows[c].get("reviewedEarlier") for c in (h1, h2, h4)), "every done kid predates the boundary")
         self.assertEqual(err, "", "nothing nested: nothing counted")
+
+
+class FeedCaptureHoldsTheBuildAlone(_Feed):
+    """_feed's err holds every stderr write build_feed makes and nothing else: the backend's one-time construction
+    stays out of it (the first _sdk() call, made before the capture opens), and a write from inside the build still
+    reaches it. A test here cannot rely on being the process's first to build the real backend, so each test replaces
+    one function build_feed calls with a stand-in that wraps the real one and writes a line of its own, then reads
+    where each line went. Calls from other threads go straight to the real function: the backend's threads may call _sdk()
+    while a test runs, and their lines are not this test's."""
+
+    def _ask_only(self):
+        ask = SID + ":g1"
+        self._store({ask: self._node(ask, "Add retries to the notes-api client", promptUuid="u1", askAnchor="human")})
+
+    def test_the_first_sdk_call_logs_outside_the_capture_and_every_later_one_inside(self):
+        self._ask_only()
+        outer, calls, me, real = io.StringIO(), [], threading.get_ident(), km._sdk   # calls: (index, outside the capture)
+
+        def recorder():
+            if threading.get_ident() == me:
+                i = len(calls)
+                calls.append((i, sys.stderr is outer))
+                sys.stderr.write("sdk-backend: %s (synthetic)\n" % ("construction" if i == 0 else "call %d" % i))
+            return real()
+
+        km._sdk = recorder
+        self.addCleanup(setattr, km, "_sdk", real)
+        with contextlib.redirect_stderr(outer):
+            feed, err = self._feed()
+        inside = [i for i, out in calls if not out]
+        self.assertTrue(calls and calls[0][1], "the first _sdk() call, the one that builds the singleton, runs outside the capture")
+        self.assertTrue(inside, "build_feed calls _sdk() inside the capture, so this test tells the two apart")
+        self.assertEqual(err, "".join("sdk-backend: call %d (synthetic)\n" % i for i in inside),
+                         "err holds the line of every _sdk() call build_feed made, and not the construction call's")
+        self.assertIn("sdk-backend: construction (synthetic)\n", outer.getvalue())
+
+    def test_a_stderr_write_from_inside_build_feed_reaches_err(self):
+        self._ask_only()
+        line, n, me, real = "feed: a line the feed path wrote (synthetic)\n", [0], threading.get_ident(), km._alive_sessions
+
+        def writes_then_reads(now, live_map):
+            if threading.get_ident() != me:
+                return real(now, live_map)
+            n[0] += 1
+            sys.stderr.write(line)
+            return real(now, live_map)
+
+        km._alive_sessions = writes_then_reads
+        self.addCleanup(setattr, km, "_alive_sessions", real)
+        feed, err = self._feed()
+        self.assertGreaterEqual(n[0], 1, "build_feed reads the living sessions")
+        self.assertEqual(err, line * n[0], "every write from inside build_feed reaches err, and nothing else does")
+        self.assertEqual([a["text"] for a in feed["asks"] if a["sid"] == SID], ["Add retries to the notes-api client"])
 
 
 class AwaitingPanel(unittest.TestCase):

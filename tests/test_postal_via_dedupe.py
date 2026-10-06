@@ -61,6 +61,7 @@ class _Seeded(unittest.TestCase):
         self.addCleanup(restore_env, "ROMP_POSTAL_PEERS", self._peers_env)
         pm.PEERS.clear()
         pm.PEER_STATE.clear()
+        pm._inbound_links.clear()
         now = int(time.time())
         # hub FIRST in insertion order, so consumers meet the gossiped duplicate before the
         # direct row — the ordering that would have hidden a keep-the-first bug

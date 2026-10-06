@@ -76,6 +76,7 @@ class InboundTrustGate(_Seam):
         super().setUp()                              # OUR sessions seam, read live; a later-collected postal test would clobber it
         # fresh peer table + empty stores each test
         ps.PEERS.clear()
+        ps._inbound_links.clear()
         ps._REFUSAL_SAID.clear()                     # no refusal episode left open by an earlier test
         for d in (ps.QUARANTINE, ps.MAILROOT / "sess-web" / "new"):
             try:
@@ -85,7 +86,7 @@ class InboundTrustGate(_Seam):
                 pass
 
     def _set_trust(self, host, level, up=True):
-        ps.peer_update({"host": host, "port": 47101, "up": up, "trust": level})
+        ps.peer_update({"host": host, "port": 1, "up": up, "trust": level})
         self.addCleanup(_end_dialer, host)
 
     def test_trusted_delivers(self):
@@ -302,6 +303,7 @@ class ExchangeHandleIsTokenProven(_Seam):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
         ps.PEERS.clear()
         ps.PEER_STATE.clear()
+        ps._inbound_links.clear()
         ps._seen_ids = None
         for d in (ps.QUARANTINE, ps.MAILROOT / "sess-web" / "new"):
             try:
@@ -340,7 +342,7 @@ class ExchangeHandleIsTokenProven(_Seam):
                           {"mid": "q-hx-3", "to": "web", "frm": "api", "frm_id": "id-api",
                            "body": "forwarded along", "kind": "coordinate", "origin": "FARHOST"}],
                "acks": [], "bounces": [], "wait": False}
-        ps.peer_update({"host": "FARHOST", "port": 47102, "up": True, "trust": "trusted"})
+        ps.peer_update({"host": "FARHOST", "port": 1, "up": True, "trust": "trusted"})
         self.addCleanup(_end_dialer, "FARHOST")
         resp, status = ps.peer_exchange_handle(req)
         self.assertEqual(status, 200)
@@ -357,7 +359,8 @@ class QuarantineDecide(_Seam):
     def setUp(self):
         super().setUp()                              # OUR sessions seam (see InboundTrustGate.setUp)
         ps.PEERS.clear()
-        ps.peer_update({"host": "TESTHOST", "port": 47101, "up": True, "trust": "directed"})
+        ps._inbound_links.clear()
+        ps.peer_update({"host": "TESTHOST", "port": 1, "up": True, "trust": "directed"})
         self.addCleanup(_end_dialer, "TESTHOST")
         for d in (ps.QUARANTINE, ps.MAILROOT / "sess-web" / "new"):
             try:

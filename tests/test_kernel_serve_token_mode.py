@@ -545,7 +545,7 @@ class CheckinCarriesServedToken(_TokenFile):
     kernel refused; and a read fault there raised into `_checkin_handshake`'s broad except and became
     a silent 15 s retry (review find, 2026-09-08). Expected first error on that shape: the file exists
     after the call, holding a token that is not km.TOKEN."""
-    ROW = {"rk_port": 50003, "rb_port": 50004, "local_port": 50001}
+    ROW = {"rk_port": 3, "rb_port": 4, "local_port": 1}
 
     def setUp(self):
         super().setUp()

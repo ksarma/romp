@@ -9,7 +9,8 @@ residual reads under hosts/ take descriptors the way the spawn road does). The p
 data model to publish a road and a provenance for every member; it holds that a CONSTRUCT DOES NOT EXIST: no code in
 the three files makes a by-path syscall on a hosts path except the sites `RESIDUAL` lists, each with its role and its
 reason. The roles (the fourth addendum, 2026-09-20, split the second and third addenda's UNCONVERTED into the first
-two, on the reviewer's ruling of 19:12Z): PERMANENT, the connect to the published socket (HostTransport.connect): a
+two, on the reviewer's ruling of 19:12Z): PERMANENT, the connect to the published socket (HostTransport.connect's,
+in connect_host_socket since fold 4 took PR 1849, whose re-exec request and listener probe connect through it too): a
 Unix socket is connected by the path in its address and connect(2) has no dir_fd form, so the site stays by path for
 as long as the transport is a Unix socket, closed as an open item; FOLLOW-UP, a site of a queued change, EMPTY since the
 fork PR that follows #814 (2026-09-21) landed the one item the role held, "the journal reads descend by descriptor"
@@ -23,8 +24,9 @@ side the lstat of hosts/ before the bind; UNREACHABLE, a by-path arm a guard mak
 the two dir_fd=None arms of the spawn road's host.log readers, held so by the forwarding pin through the sixth addendum,
 went with the readers' conversion at the seventh, 2026-09-20, when they took the held HostDirs; the role stays in the
 vocabulary);
-HANDOFF, the spec path in the host's argv; HOST, the host process's own road under its constructor's and prelude's
-guards, and its open of the spec before them (the host-side item the queue keeps). A by-path terminal outside the list
+HANDOFF, the spec path in the host's argv (and, on PR 1849's re-exec road, the spec and handoff paths in the exec's
+argv); HOST, the host process's own road under its constructor's and prelude's guards, and its open of the spec (and of
+the re-exec handoff) before them (the host-side item the queue keeps). A by-path terminal outside the list
 reds; a listed one that is gone or changed class reds; the converted reads are held by-descriptor (`CONVERTED`,
 which since the fourth addendum includes the owner check's fstat of the descriptor read_host_file opened); the
 permanent set is asserted to be exactly the connect; and the follow-up set is asserted to be exactly the item's five
@@ -39,16 +41,18 @@ THE METHOD, in the order it runs.
   `hosts` in any position but a dict key, a subscript, a comparison or a membership test (kind `path`: `root / "hosts"`,
   `os.path.join(root, "hosts")`, `Path(root, "hosts", sid)`, a tuple splatted into either, a `%` operand), and any
   constant CONTAINING `hosts/` or `/hosts` (kind `text`: an f-string part, a `%` or `+` operand, and a message string,
-  which the walk tells from a path only at its use, below). One seed is declared rather than read: the `spec_path`
-  parameter of SessionHost.__init__ (kernel/session_host.py), the path under hosts/ the kernel hands the host in argv;
-  the census does not follow a value across exec (the argv list ends at subprocess.Popen on the kernel side, an
-  `exec-arg` terminal), so the host's entry re-seeds it by declaration. The seed scan also runs over every product module
+  which the walk tells from a path only at its use, below). Two seeds are declared rather than read: the `spec_path`
+  parameter of SessionHost.__init__ (kernel/session_host.py), the path under hosts/ the kernel hands the host in argv,
+  and its `reexec_path` (PR 1849), the handoff under hosts/<sid>/ the host hands its re-executed self in os.execv's argv;
+  the census does not follow a value across exec (the argv list ends at subprocess.Popen on the kernel side and at
+  os.execv on the host's re-exec road, `exec-arg` terminals), so the host's entry re-seeds both by declaration. The seed scan also runs over every product module
   (kernel/, bin/, cli/, postal/), and a pin holds that no module outside the three builds such a path.
   GROW, to a fixpoint, through every form Python binds or reads a name or an attribute by. The taint (a set of origin
   tags, each the seed's file, line and text) flows through assignment, annotated and augmented assignment to a name, a
   tuple or list target (element-wise when the value's shape is known, else the union), a starred target, an attribute
   target on `self`, on a typed receiver, on a class or on a receiver the walk cannot type (stored by attribute NAME and
-  read back by every read of that name, the safe direction), a subscript target on any of those, a walrus, the
+  read back by every read of that name, the safe direction; an instance made by `C.__new__(D)`, as `cls.__new__(cls)`
+  in PR 1849's Journal.reopen, is typed as D), a subscript target on any of those, a walrus, the
   with-target, the for-target, a comprehension's target, a match statement's capture names, a `global` or `nonlocal`
   name (bound in the scope it names), a class-body assignment (readable as `self.<name>`, `<Class>.<name>`,
   `type(self).<name>`, `self.__class__.<name>` and, in the class body, by the bare name; a base class's through the
@@ -101,8 +105,8 @@ form is a silence, not an escape. The addendum's sentence that what the census c
 at the commit that made it (HISTORY, below), and this module makes no such promise: the follow rules above are what the
 walk follows, the six forms are what it prints, and everything else it does not follow it does not report. Two kinds
 lie outside the census by construction as well: a path that reaches a syscall as an argument STRING of a subprocess is
-followed to the exec boundary and no further (the `exec-arg` terminal; the host's side re-seeds its `spec_path` by
-declaration), and a syscall made inside a C extension or by code outside the three files given a value this census did
+followed to the exec boundary and no further (the `exec-arg` terminal; the host's side re-seeds its `spec_path` and
+`reexec_path` by declaration), and a syscall made inside a C extension or by code outside the three files given a value this census did
 class (the wide pin holds that no other product module builds such a path itself). The walk is flow-insensitive within
 a function, so it reports a use on a road a guard makes unreachable as it reports a live one (the two dir_fd=None arms
 the spawn road's host.log readers kept through the sixth addendum were that shape, listed UNREACHABLE and held so by the
@@ -139,6 +143,13 @@ its second call and the plant harness, which diffs a base census that had been v
 the view's own drift as a change the plants made (two plant cases red at this addendum's first cut). A name typed as a
 holder now makes its scope live like a tainted local, the fixpoint types the whole chain whatever the order, and a pin
 holds the view idempotent and the chain's last reader typed.
+Fold 4 of the project's changes (2026-10-02, PR 1849's host re-exec taken whole) met a third typing gap and closed it:
+Journal.reopen builds its journal as `j = cls.__new__(cls)` and stores the host directory as `j.dir`, a store on a
+receiver the walk could not type, so it went to the attribute-name bucket and every `.dir` read in the three files went
+tainted with it (HostDirs' descriptor read in journal_segments turned `mixed`, five dynamic reads on untyped
+receivers printed as escapes, and so did `j._open_segment(j._seg)`, a call on that untyped receiver). A `C.__new__(D)` call is now typed as D, which is what it returns; the plant case
+`test_an_instance_made_by_dunder_new_is_typed_and_its_store_stays_on_its_class` shows the old reading red. The same fold
+declared the host's second argv seed (`reexec_path`) and routed the re-exec's two connects through the one connect.
 
 THE PARSER'S SHARED NODES (2026-09-22, read back by CI's diagnostic run 35740276523 on PR 891's branch). The walk marks
 every node of its own trees with `_fn` (the scope that owns it) and `_parent` (its parent node). The parser hands out ONE
@@ -170,7 +181,10 @@ ROOT = HERE.parent
 FILES = ("kernel/host_transport.py", "kernel/session_host.py", "kernel/sdk_backend.py")
 SCAN_GLOBS = ("kernel/*.py", "bin/*", "cli/*.py", "postal/*.py")
 DECLARED_SEEDS = (("kernel/session_host.py", "SessionHost.__init__", "spec_path",
-                   "spec_path: the path under hosts/ the kernel hands the host in argv (declared: the exec boundary)"),)
+                   "spec_path: the path under hosts/ the kernel hands the host in argv (declared: the exec boundary)"),
+                  ("kernel/session_host.py", "SessionHost.__init__", "reexec_path",
+                   "reexec_path: hosts/<sid>/reexec.json, the handoff the host hands its re-executed self in argv (PR 1849; "
+                   "declared: the exec boundary)"))
 _HOSTS_RE = re.compile(r"(^|/)hosts/|/hosts($|/)")
 SHARED_NODE_TYPES = (ast.expr_context, ast.operator, ast.boolop, ast.unaryop, ast.cmpop)   # one instance each per process, on every tree
 _SHARED_PROBE = "x = y\ndel z\na + b\na and b\n-a\na < b\n"    # a parse holding one of each family of them
@@ -809,6 +823,12 @@ class Census:
                     out += (callee.cls,) if callee.cls not in out else ()
                 else:
                     out += tuple(x for x in self.ret_type.get((callee.file, callee.qual), ()) if x not in out)
+            if isinstance(e.func, ast.Attribute) and e.func.attr == "__new__" and e.args:
+                # `C.__new__(D)` makes an instance of D without running __init__ (`cls.__new__(cls)` in a classmethod, PR
+                # 1849's Journal.reopen): typed as D, so a store on it lands on D's attributes, not in the `*` bucket
+                made = self._class_named(e.args[0], fn)
+                if made and made not in out:
+                    out += (made,)
             return out
         if isinstance(e, ast.Await):
             return self.types_of(e.value, fn)
@@ -1764,8 +1784,8 @@ RESIDUAL = {
         ('mixed', GUARD, "the descent's own open: hosts/ by PATH with O_DIRECTORY|O_NOFOLLOW off the state root, <sid> by NAME under the first descriptor; the spawn, read and removal roads all enter here"),
     ('kernel/host_transport.py', '_open_dir_nofollow', 'os.lstat', 'name', 1):
         ('mixed', GUARD, "the wording of a refused open (a link or a non-directory), by path for hosts/, by name under the descriptor for <sid>; it decides nothing"),
-    ('kernel/host_transport.py', 'HostTransport.connect', 'asyncio.open_unix_connection', 'self.sock_path', 1):
-        ('by-path', PERMANENT, "a Unix socket is connected by the path in its address and connect(2) has no dir_fd form (a connect through /proc/self/fd or a chdir on the descriptor is a different mechanism); reached from the attach by lease, the first connect after the spawn wait and the end by lease; its precondition is a state root a peer can write, since the spawn road's helpers tighten hosts/ before the poll"),
+    ('kernel/host_transport.py', 'connect_host_socket', 'asyncio.open_unix_connection', 'sock_path', 1):
+        ('by-path', PERMANENT, "a Unix socket is connected by the path in its address and connect(2) has no dir_fd form (a connect through /proc/self/fd or a chdir on the descriptor is a different mechanism); reached from HostTransport.connect (the attach by lease, the first connect after the spawn wait and the end by lease) and, since PR 1849, from request_reexec and SdkBackend._host_socket_accepts, all through this one function; its precondition is a state root a peer can write, since the spawn road's helpers tighten hosts/ before the poll"),
     ('kernel/session_host.py', 'Journal._open_segment', 'open', 'self._path(first)', 1):
         ('by-path', HOST, "a journal segment opened by path under hosts/<sid>/, after the constructor's guard"),
     ('kernel/session_host.py', 'Journal._persist_gaps', 'open', 'tmp', 1):
@@ -1778,6 +1798,20 @@ RESIDUAL = {
         ('by-path', HOST, "an acknowledged segment deleted by path"),
     ('kernel/session_host.py', 'Journal.read_from', 'open', 'self._path(seg)', 1):
         ('by-path', HOST, "a segment read by path"),
+    ('kernel/session_host.py', 'Journal.reopen', 'read_text', 'j.dir / "gaps.json"', 1):
+        ('by-path', HOST, "the re-exec road (PR 1849): the re-executed host's gaps.json read by path, after reopen's own owner_only_dir guard, the same as the constructor's"),
+    ('kernel/session_host.py', 'Journal.reopen', 'glob', 'j.dir', 1):
+        ('by-path', HOST, "the re-exec road: the listing of hosts/<sid>/ that rebuilds the index, under the same guard (the one listing tests/test_session_host.py JournalRules admits)"),
+    ('kernel/session_host.py', 'Journal.reopen', 'open', 'p', 1):
+        ('by-path', HOST, "the re-exec road: each segment the listing yielded read by path, the segments _open_segment wrote by path under the same guard"),
+    ('kernel/session_host.py', 'SessionHost.__init__', 'open', 'reexec_path', 1):
+        ('by-path', HOST, "the re-exec road: the handoff opened by path from argv before any guard, the spec's shape (the host-side item the queue keeps)"),
+    ('kernel/session_host.py', 'SessionHost._adopt', 'os.unlink', 'str(self.dir / "reexec.json")', 1):
+        ('by-path', HOST, "the re-exec road: the handoff unlinked by path once the CLI is adopted"),
+    ('kernel/session_host.py', 'SessionHost._reexec_now', 'os.open', 'str(hpath)', 1):
+        ('by-path', HOST, "the re-exec road: the handoff written by path, O_CREAT|O_TRUNC at 0600, under the constructor's guard"),
+    ('kernel/session_host.py', 'SessionHost._reexec_now', 'os.unlink', 'str(self.dir / "reexec.json")', 1):
+        ('by-path', HOST, "the re-exec road: the handoff unlinked by path when the exec did not happen"),
     ('kernel/session_host.py', 'owner_only_dir', 'mkdir', 'd', 1):
         ('by-path', HELPER, "the mkdir by path; hosts/ for hosts_dir's callers, hosts/<sid>/ for write_spawn_spec and the host's Journal (condition 1's window)"),
     ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 1):
@@ -1812,6 +1846,8 @@ RESIDUAL = {
         ('by-path', HOST, "the exit's unlink of the published socket"),
     ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'subprocess.Popen', 'argv', 1):
         ('exec-arg', HANDOFF, "the spec path leaves the process in argv (host.stderr's descriptor as the child's stderr beside it); the host re-opens it by path in its constructor, the host-side item"),
+    ('kernel/session_host.py', 'SessionHost._reexec_now', 'os.execv', 'python', 1):
+        ('exec-arg', HANDOFF, "the re-exec road (PR 1849): the spec path and the handoff path leave the process in the exec's argv; the re-executed host re-opens both by path in its constructor (both declared seeds there)"),
 }
 # The read roads' terminals since the second addendum, each held by-descriptor: the owner question's stat of the name
 # under the <sid> descriptor (_stat_name, shared by host_file_exists and read_host_file since the fifth addendum, and by
@@ -2080,7 +2116,8 @@ class HostsPathCensus(unittest.TestCase):
         outside the list is a new road or a read moved back onto a path; a listed one that is gone or now takes a
         descriptor is removed from the list. The read roads' terminals are by-descriptor (CONVERTED). Every entry has a
         role of the seven and a reason; the permanent set is exactly the connect (the fourth addendum: closed as an open
-        item, by-path for as long as the transport is a Unix socket); the follow-up set is EMPTY (the fork PR that
+        item, by-path for as long as the transport is a Unix socket; one site, connect_host_socket, since PR 1849's two
+        new roads to the socket were routed through it); the follow-up set is EMPTY (the fork PR that
         follows #814, 2026-09-21: the one queued item landed, its five sites converted, and the assertion that held the
         set at those five became `assertEqual(follow_up, [])`, so a by-path journal read written back under hosts/ is
         an unlisted site here and a listed one under this role is a refill of a landed item, both red)."""
@@ -2108,7 +2145,9 @@ class HostsPathCensus(unittest.TestCase):
             if role == HANDOFF:
                 self.assertEqual(mech, "exec-arg")
         permanent = sorted(k for k, v in RESIDUAL.items() if v[1] == PERMANENT)
-        self.assertEqual([k[1] for k in permanent], ["HostTransport.connect"],
+        # one site: HostTransport.connect's syscall moved into connect_host_socket when PR 1849 added two more roads to the
+        # published socket (the re-exec request, the listener probe), which take the same function, not a connect each
+        self.assertEqual([k[1] for k in permanent], ["connect_host_socket"],
                          "the permanent residual is the connect and nothing else: connect(2) has no dir_fd form")
         follow_up = sorted(k for k, v in RESIDUAL.items() if v[1] == FOLLOW_UP)
         self.assertEqual(follow_up, [], "the follow-up role is empty since its one item landed (the journal reads descend by "
@@ -2251,6 +2290,41 @@ class HostsPathCensus(unittest.TestCase):
         missing = ["m%02d" % i for i in range(1, 4) if not any(mech == "by-path" for _, mech in found.get("m%02d" % i, []))]
         self.assertEqual(missing, [], "the builder's shapes the census did not find: %r (found %r)" % (missing, found))
         self.assertEqual(sum(1 for _, mech in found.get("m02", []) if mech == "by-path"), 2, "both reads of the class constant: %r" % (found.get("m02"),))
+
+    def test_an_instance_made_by_dunder_new_is_typed_and_its_store_stays_on_its_class(self):
+        """Fold 4 (2026-10-02; the module docstring's HISTORY): PR 1849's Journal.reopen builds its instance as
+        `j = cls.__new__(cls)`, skipping __init__, and stores a hosts path on it. The walk types `C.__new__(D)` as D, so
+        the store is an attribute of the planted class and is read back by that class's reads: both by-path reads below
+        are found (the one through a method called on the instance, the one through the attribute), and nothing changes
+        outside the planted class. Red with the typing rule removed from types_of, two ways (both run on a scratch copy):
+        the method called on the instance is a call the walk cannot resolve, an escape inside the plant; and the store
+        goes to the attribute-name bucket of untyped receivers, so every dynamic attribute read on such a receiver in the
+        tree is printed as an escape outside the plant (the shape q09 plants on purpose), which shows over a tree whose
+        own Journal.reopen does not already hold such a store, as it would without the rule."""
+        src = '''
+
+
+class _Q814Plants:
+    """An instance made by __new__, as Journal.reopen makes one; never called."""
+    @classmethod
+    def n01_made_by_dunder_new(cls, state_dir, sid):
+        j = cls.__new__(cls)
+        j._n01_home = Path(state_dir) / "hosts" / sid
+        j.n01_open_under(j._n01_home)
+        return j
+
+    def n01_open_under(self, home):
+        return open(home / "host.log").read()
+
+    def n01_read_through_the_attribute(self):
+        return (self._n01_home / "identity.json").read_text()
+'''
+        found, elsewhere, escapes, outside = plant(self.census, {"kernel/sdk_backend.py": src})
+        self.assertEqual((elsewhere, outside), ([], []), "the plant changed the census outside its own class: the instance "
+                                                         "__new__ made was not typed, so its store went to the untyped bucket")
+        self.assertEqual(escapes, [], "an escape inside the plant: %r" % (escapes,))
+        self.assertEqual(sum(1 for _, mech in found.get("n01", []) if mech == "by-path"), 2,
+                         "both by-path reads of the path stored on the __new__-made instance: %r" % (found.get("n01"),))
 
     def test_each_of_the_six_escape_forms_is_printed_as_an_escape(self):
         """The escape rule, one shape per form it covers (five of the six here; the sixth, a dynamic read on an untyped
