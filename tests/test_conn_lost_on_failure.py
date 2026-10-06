@@ -190,9 +190,10 @@ def _js_lex(src):
     It keeps the comment, string, template and substitution states (a substitution's own braces counted; its closing brace
     is the punct `}$`) and tells a regex literal from a division by the token before the `/`. The only line break it reads
     is a line feed: a line comment runs to the next one, and a quoted string or regex literal left open ends at the first
-    one no backslash escapes, and is counted. So a stray quote or slash misreads one line at most, unless a backslash ends
-    that line, or a line break this lexer does not read (a carriage return, U+2028 or U+2029) breaks it, which carries it
-    on to the next."""
+    one no backslash escapes, and is counted. So the string or regex a stray quote or slash opens runs one line at most,
+    unless a backslash ends that line, or a line break this lexer does not read (a carriage return, U+2028 or U+2029) breaks
+    it, which carries it on to the next. Once it closes, the lexer can read what follows out of step, and a backtick or `/*`
+    there opens a template or block comment that can carry the misread to later lines."""
     toks, comments, stack, loose = [], [], [], 0   # stack: "t" inside a template's text, or a substitution's brace depth
     i, n = 0, len(src)
     while i < n:
@@ -402,8 +403,11 @@ def _door_census(src):
     delimiter is left open. A misread the reading still balances around is not caught, as when a later delimiter closes the
     stray one again, and it reaches as far as _js_lex's rule for what the stray delimiter opened: a quoted string or regex
     literal to the first line feed no backslash escapes (the lexer reads no other line break, a carriage return included), a
-    line comment to the next line feed, a template or block comment to its closing delimiter, on its line or any later one,
-    so the call it hides may sit on another line (the stated limit in NotLeavingCallSites). A census of a script read otherwise proves nothing, and the tests below require it."""
+    line comment to the next line feed, a template or block comment to its closing delimiter, on its line or any later one;
+    and once what the stray delimiter opened closes, the lexer can read what follows out of step, where a backtick or `/*`
+    opens a template or block comment that can carry the misread to later lines; so the call it hides may sit on another line
+    (the stated limit in NotLeavingCallSites). A census of a script read otherwise proves nothing, and the tests below
+    require it."""
     toks, comments, unclosed = _js_lex(src)
     pair, whole = _js_brackets(toks)
     starts = [t[2] for t in toks]
@@ -600,14 +604,16 @@ class NotLeavingCallSites(unittest.TestCase):
     string, a regex literal, a template or a comment, and the reading can balance again when a later delimiter closes it.
     How far that reaches follows the lexer's rule for what it opened: a quoted string or regex literal runs to the first
     line feed no backslash escapes, a line comment to the next line feed, a template or block comment to its closing
-    delimiter, on its line or any later one. The witnesses: 'a quote closed again' (a regex read as a division, whose quote
-    an apostrophe in a later comment on its line closes), 'a slash closed again' (a division read as a regex, which a later
-    division on its line closes), 'a quote closed again past an escaped line feed' and 'a quote closed again past a carriage
-    return' (the same quote, the call on the next line, after a line that ends in a backslash or after a carriage return),
-    'a slash closed again past an escaped line feed' (the same slash, a string's line continuation before the call), 'a
-    backtick closed again, lines later' (a regex read as a division, whose backtick opens a template that a backtick in a
-    comment two lines down closes, the call on the line between) and 'a block comment closed again, lines later' (the same
-    with a regex holding `/*`, which a `*/` in a comment two lines down closes)."""
+    delimiter, on its line or any later one; and once what it opened closes, the lexer can read what follows out of step,
+    where a backtick or `/*` opens a template or block comment that can carry the misread to later lines. The witnesses: 'a
+    quote closed again' (a regex read as a division, whose quote an apostrophe in a later comment on its line closes), 'a
+    slash closed again' (a division read as a regex, which a later division on its line closes), 'a quote closed again past
+    an escaped line feed' and 'a quote closed again past a carriage return' (the same quote, the call on the next line, after
+    a line that ends in a backslash or after a carriage return), 'a slash closed again past an escaped line feed' (the same
+    slash, a string's line continuation before the call), 'a backtick closed again, lines later' (a regex read as a division,
+    whose backtick opens a template that a backtick in a comment two lines down closes, the call on the line between) and 'a
+    block comment closed again, lines later' (the same with a regex holding `/*`, which a `*/` in a comment two lines down
+    closes)."""
 
     @classmethod
     def setUpClass(cls):
