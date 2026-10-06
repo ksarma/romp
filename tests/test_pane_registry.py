@@ -7,9 +7,10 @@ the body tag, the rail, the phone tabs, the pane row, the column and gutter rule
 (tests/fixtures/landing-code-panes.json, tests/landing_slices.py). The panes defined at the kernel are built by the shell in
 the browser from GET /panes, the records `romp pane list` reads (one source for the pane records): each gets a rail button, a
 phone tab (none when experimental), a lazy iframe (data-src), its column and gutter rules, and joins every inline consumer and
-bundle; a URL source is a plain sandboxed iframe with no token, no ?v= and no protocol, and every shell listener, inline and
-bundled, drops a message that is not a protocol pane's own (the source check, fail-closed). The pane set's revision rides every
-keepalive beside the build token, and a page whose revision (the one it read from GET /panes) differs is offered a reload.
+bundle; a URL source is a plain sandboxed iframe whose address is the URL as given (nothing appended) and which names no
+protocol, and every shell listener, inline and bundled, drops a message that is not a protocol pane's own (the source
+check, fail-closed). The pane set's revision rides every keepalive beside the build token, and a page whose revision
+(the one it read from GET /panes) differs is offered a reload.
 
 Every test here reds at the base on BEHAVIOUR (the 1919 read): a pane's file is written by hand the way the door writes it,
 and what is asserted is the landing, the routes, the keepalive frame and the executed scripts, never a name.
@@ -200,7 +201,8 @@ class TheCodePanesRender(unittest.TestCase):
         self.assertEqual(_attr_rows(h0), [ARTIFACTS_ROW], "the attribute: the Artifacts record alone")
         _lacks(self, " data-protocol=none sandbox=", h0); _lacks(self, "id=gv-notes", h0); _lacks(self, 'data-src="/pane/', h0)
         # a pane file changes NO byte of the landing: the shell builds the panes defined at the kernel from GET /panes (the
-        # client build is executed in TheLanding; every page and static route is held to this by tests/test_pane_records_one_source.py)
+        # client build is executed in TheLanding; every page the route table renders and every static file is held to
+        # this by tests/test_pane_records_one_source.py)
         self.w.seed(NOTES)
         h1 = km._landing()
         self.assertTrue(h1 == h0, "a pane file changes no byte of the landing (%d vs %d chars)" % (len(h1), len(h0)))
@@ -436,7 +438,8 @@ class TheStore(unittest.TestCase):
         # hands the reload core the empty baseline through _stale_block(v), which adopts the GET /panes read's revision
         # (_PANES_ADOPT_JS). The executed proofs: test_00 above (a pane file changes no byte of the landing),
         # test_no_listing_per_page_build_executed... below (no listing, the empty baseline on the page) and TheRevisionBaseline (the core
-        # takes the read's revision); every page and static route is held byte for byte by tests/test_pane_records_one_source.py.
+        # takes the read's revision); every page the route table renders and every static file is held byte for byte by
+        # tests/test_pane_records_one_source.py.
         self.assertIn('PANES0="abc"', km._reload_core(3, pv="abc"), "the reload core bakes the revision it is handed")
         self.assertIn('PANES0="%s"' % km._panes_rev(), km._reload_core(3), "and this kernel's when handed none")
         src = inspect.getsource(km._landing)
@@ -571,7 +574,7 @@ class TheStore(unittest.TestCase):
 
 # ── the landing renders the shipped panes; the shell builds the defined ones from GET /panes ──────────────────────────
 def _get_panes(port):
-    """GET /panes from the real handler, with the token this module's kernel bound (TheDoors._req says why km.TOKEN)."""
+    """GET /panes from the real handler, with the headers TheDoors._req sends."""
     req = urllib.request.Request("http://127.0.0.1:%d/panes" % port, headers={"X-Romp-Token": km.TOKEN})
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read().decode())
@@ -659,7 +662,7 @@ class TheLanding(unittest.TestCase):
         fr = {f["id"]: f for f in r["frames"]}
         self.assertEqual(fr["f-notes"]["attrs"], {"id": "f-notes", "data-src": "/pane/notes/", "data-protocol": "romp"}, "a state-root pane loads /pane/<id>/ when shown, never its pane: source")
         self.assertEqual(fr["f-docs"]["attrs"], {"id": "f-docs", "data-src": "http://TESTHOST:9/docs/", "data-protocol": "none", "sandbox": "allow-scripts allow-forms allow-popups"},
-                         "a URL pane: the URL as given (no ?v=, no token), sandboxed, protocol none")
+                         "a URL pane: the URL as given (nothing appended), sandboxed, protocol none")
         self.assertEqual(fr["f-lab"]["attrs"], {"id": "f-lab", "data-src": "/feed", "data-protocol": "romp"}, "a kernel route as given")
         self.assertEqual(fr["f-docs"]["parent"], "docs-pane")
         # ruling B and the sandbox: data-src and never src or the lazy panes' attribute; every attribute set before the frame is in the document
@@ -754,7 +757,8 @@ class TheLanding(unittest.TestCase):
         self.assertEqual((r["frames"], r["rail"][:-1], r["tabs"], r["styles"]), ([], [], [], []), "no defined pane's DOM")
         self.assertEqual([c[0] for c in r["calls"]], [], "no join and no revision adopted")
         self.assertEqual(r["events"], [{"state": "failed", "rows": [], "error": "/panes answered HTTP 500", "frames": []}], "the bundles hear the failure too")
-        # a 403 asking for a new sign-in: the page-key script is taking the top frame to /login, so the Log stays quiet
+        # a 403 carrying X-Romp-Reauth: another script on the page is already navigating the top frame away, so the Log
+        # stays quiet
         r = _run(_build_js(pane_records_stub.records_state(state="failed", status=403, reauth=True, error="/panes answered HTTP 403")))
         self.assertEqual(r["notes"], []); self.assertEqual(r["events"][0]["state"], "failed")
         # an answer that is not a pane list

@@ -540,15 +540,15 @@ class TokenLeavesTheUrl(unittest.TestCase):
         self.assertLess(scrub, html.index("<link rel=manifest"))
         self.assertLess(scrub, html.index("<iframe"))
         # ...and ahead of the shell's own first request, its GET /panes read (the panes defined at the kernel, which the shell builds),
-        # which starts at the end of the same head script: its Referer carries no token
+        # which starts at the end of the same head script: its Referer carries the address as scrubbed
         self.assertTrue("fetch('/panes',{cache:'no-store'})" in html, "the shell reads GET /panes for the panes defined at the kernel")
         self.assertLess(scrub, html.index("fetch('/panes',{cache:'no-store'})"))
         self.assertLess(html.index("fetch('/panes',{cache:'no-store'})"), html.index("</script>"), "the read is a statement of the head script")
 
-    def test_the_head_scripts_pane_list_read_keeps_its_outcome_and_marks_a_refusal_that_asks_for_a_new_sign_in(self):
+    def test_the_head_scripts_pane_list_read_keeps_its_outcome_and_marks_a_refusal_by_its_header(self):
         # executed: the shell's head script against a fetch stub. The outcome lands in window.__rompPaneRecords and its subscribers
-        # run once; a 403 carrying X-Romp-Reauth is marked (the page-key script is taking the top frame to /login, so the builder
-        # logs nothing for it), and no other failure is
+        # run once; a 403 carrying X-Romp-Reauth is marked (another script on the page is already navigating the top
+        # frame away, so the builder logs nothing for it), and no other failure is
         import subprocess
         stub = r"""
 const FETCHED = [];
@@ -581,7 +581,7 @@ setTimeout(() => { console.log(JSON.stringify({ fetched: FETCHED, state: RR.stat
                          ([["/panes", "no-store"]], "ok", 200, False, body, 1, 0), "an answer: kept, its subscribers run once: %r" % o)
         o = run({"status": 403, "reauth": True, "body": {}})
         self.assertEqual((o["state"], o["status"], o["reauth"], o["error"], o["ran"]), ("failed", 403, True, "/panes answered HTTP 403", 1),
-                         "a refusal that asks for a new sign-in is marked: %r" % o)
+                         "a 403 carrying X-Romp-Reauth is marked: %r" % o)
         for answer in ({"status": 403, "body": {}}, {"status": 500, "body": {}}):
             o = run(answer)
             self.assertEqual((o["state"], o["reauth"], o["error"]), ("failed", False, "/panes answered HTTP %d" % answer["status"]),

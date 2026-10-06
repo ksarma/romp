@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """A pane page standing alone (opened by itself, outside the dashboard shell) takes the pane set's revision from GET /panes, the
 records `romp pane list` reads and the read the shell builds its custom panes from: the pages the route table renders bake no
-revision (tests/test_pane_records_one_source.py reads every one byte for byte), so the shim reads the revision once, with a bare
-same-origin fetch the page-key script keys, and hands it to the reload core (adoptPanes) and to its keepalive gate (LOADEDPV). A
-keepalive carrying that revision offers nothing; one carrying another offers the reload. A failed read is said on the page's one
-bar, never taken for no change; a refusal that asks for a new sign-in says nothing more, since the page-key script is taking the
-top frame to /login. Inside the dashboard the shell's own read decides and the page reads nothing, and a state-root page keeps the
-revision its route baked.
+revision (tests/test_pane_records_one_source.py reads every one byte for byte), so the shim reads the revision once
+and hands it to the reload core (adoptPanes) and to its keepalive gate (LOADEDPV). A
+keepalive carrying that revision offers nothing; one carrying another offers the reload. A failed read is said on the
+page's one bar, never taken for no change; a 403 carrying X-Romp-Reauth says nothing more, since another script on the
+page is already navigating the top frame away. Inside the dashboard the shell's own read decides and the page reads
+nothing, and a state-root page keeps the revision its route baked.
 
 The page's REAL code runs here: the reload core the page carries and the shim's decision code (km._shim_core_js's anchors), at
 module scope under node with fakes for the clock, the socket, fetch and the bar's elements (the harness tests/test_pane_shim_return.py
@@ -130,7 +130,8 @@ _FAILED = "Couldn't read the panes defined at the kernel (%s), so this page can'
 class APageStandingAloneReadsItsRevision(unittest.TestCase):
     def test_a_page_standing_alone_reads_the_revision_from_get_panes_and_offers_a_reload_only_when_it_moves(self):
         r = _run(_KEEPALIVES, before='answer(200,{panes:[],rev:"P1"});')
-        self.assertEqual(r["fetches"], _READ, "the page reads GET /panes once, a bare same-origin read the page-key script keys: %r" % r["fetches"])
+        self.assertEqual(r["fetches"], _READ, "the page reads GET /panes once, with cache no-store: %r"
+                         % r["fetches"])
         self.assertEqual((r["loaded"], r["afterRead"]), ("P1", []), "the read's revision is the page's, and nothing is said")
         self.assertEqual((r["same"], r["sameOffer"]), ([], None), "a keepalive carrying the revision the page read offers nothing")
         self.assertEqual([b["kind"] for b in r["moved"]], ["offer"], "another revision offers the reload: %r" % r["moved"])
@@ -148,10 +149,10 @@ class APageStandingAloneReadsItsRevision(unittest.TestCase):
         self.assertEqual(r["fetches"], _READ)
         self.assertEqual(r["afterRead"], [{"kind": "warn", "text": _FAILED % "the answer carried no pane-set revision"}], r["afterRead"])
 
-    def test_a_refusal_that_asks_for_a_new_sign_in_says_nothing_more(self):
+    def test_a_refusal_its_header_marks_says_nothing_more(self):
         r = _run(_KEEPALIVES, before="answer(403,{},true);")
         self.assertEqual(r["fetches"], _READ)
-        self.assertEqual((r["afterRead"], r["loaded"]), ([], ""), "the page-key script is taking the top frame to /login: no bar")
+        self.assertEqual((r["afterRead"], r["loaded"]), ([], ""), "a 403 carrying X-Romp-Reauth: no bar, no revision")
 
     def test_a_page_inside_the_dashboard_reads_nothing_itself(self):
         # the shell's head read (its state object) exists before any pane frame does: the shell's read and its own socket decide

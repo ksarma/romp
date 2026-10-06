@@ -4,24 +4,24 @@
 every GET route in the kernel's route register reads byte for byte the same whatever panes are defined, and carries none of a
 defined pane's fields (id, title, source, flags).
 
-Each route is requested over the real handler on a loopback server, the way a signed-in browser's page navigation requests it:
+Each route is requested over the real handler on a loopback server, the way the browser's page navigation requests it:
 first with no pane defined (twice, so a value that moves between two identical requests is told apart from one that moves with
 the panes), then with five synthetic panes defined through the door's own check (kernel.py define_pane), one per record shape:
 a URL source with a query and a fragment, a kernel route, a state-root page (`pane:<id>`, served at /pane/<id>/), an
 experimental pane, and a pane off by default with its protocol named. Each field carries its own marker, built at run time from
-lowercase letters, so no HTML, JSON or URL escaping can hide it and no credential scanner reads one. The byte comparison is the
-census: it sees a flag, a count, an order or a digest as well as a field. The marker scan is its readable failure (which field,
-on which route), and it reads the headers too.
+lowercase letters, so no HTML, JSON or URL escaping can hide it and no scanner of the repository flags one. The byte
+comparison is the census: it sees a flag, a count, an order or a digest as well as a field. The marker scan is its
+readable failure (which field, on which route), and it reads the headers too.
 
 The population is derived from the kernel's own tables, never listed here, and an empty one fails:
-- the pages: every key of _PAGE_RENDERERS (the router and the request classifier, Handler._need, read that one table, so a page
-  added later joins by construction), every renderer reached;
+- the pages: every key of _PAGE_RENDERERS (the router and Handler._need read that one table, so a page added later joins
+  by construction), every renderer reached;
 - the static files: _STATIC_EXACT, every file under the asset tree (MEDIA), and every file under the built-bundle tree (DIST)
   when it has been built, read from a private copy taken under the served labs' build lock so a rebuild on another worker
   cannot move a bundle between passes. The bundles are built from ui/ at build time and cannot hold a record written at run
   time; a run with no build reads every other file, and the served legs, which build the tree, read it too;
 - the GET route register (_PERF_HTTP_ROUTES["GET"], held equal to do_GET's dispatches by tests/test_perf_stats.py) and one
-  instance of each collapsed family (_PERF_HTTP_FAMILIES), whatever each answers, the routes served before the gate included.
+  instance of each collapsed family (_PERF_HTTP_FAMILIES), whatever each answers.
 
 The comparison leaves out exactly two values, each named in EXCLUSIONS with its reason: both move between two identical requests
 whatever the registry holds. They are the Date header of every response (every other header is compared in full) and the
@@ -29,9 +29,9 @@ uptime_s member of /version's body, taken out of the body and so out of the body
 (the rest of that body is compared byte for byte, so a value derived from the panes added to /version later is still caught). A
 test holds that the comparison leaves out these two and nothing else.
 
-Synthetic data only (TESTHOST; invented ids and titles). No credential value is printed, and a failure names the route and the
-field, never a whole body (a difference no marker explains is located by its first differing byte, with a short window of each
-side)."""
+Synthetic data only (TESTHOST; invented ids and titles). No request header is printed, and a failure names the route
+and the field, never a whole body (a difference no marker explains is located by its first differing byte, with a short
+window of each side)."""
 import hashlib
 import json
 import os
@@ -60,9 +60,10 @@ load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 # loaded the kernel under a shared name with another serve token would rebind this one's
 km = load_source("romp_kernel_panerecords", os.path.join(BIN, "romp-kernel"))
 
-CN = km._SESSION_COOKIE        # this kernel's session-cookie name
-SESS = km._mint_session()      # one signed-in browser's session (never printed)
-KEY = km._page_key(SESS)       # its page key (never printed)
+# what the requests below carry in their headers, as the browser's requests do (the values never printed)
+CN = km._SESSION_COOKIE
+SESS = km._mint_session()
+KEY = km._page_key(SESS)
 
 _PREFIX = "zq"                 # every marker starts here; each is lowercase letters only
 
@@ -156,7 +157,7 @@ class PaneRecordsReachTheBrowserFromTheirRoute(unittest.TestCase):
         (km.jd.STATE / "session-hosts").write_text("off\n")
         cls._reset_memos()
         cls.addClassCleanup(cls._reset_memos)
-        # /busy, served before the gate, would build the session backend (with its boot reconcile) in this process: the census
+        # /busy would build the session backend (with its boot reconcile) in this process: the census
         # reads what the route answers with no backend, both times alike
         sdk0 = km._sdk
         km._sdk = lambda: None
@@ -208,7 +209,8 @@ class PaneRecordsReachTheBrowserFromTheirRoute(unittest.TestCase):
 
     @classmethod
     def _get(cls, path, key=False):
-        """(status, body, headers) for a GET carrying this browser's session cookie, and its page key when `key`."""
+        """(status, body, headers) for a GET as the browser makes it: as a page navigation does, or, when `key`, as the
+        shell's read of GET /panes does."""
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (cls.port, path))
         req.add_header("Cookie", "%s=%s" % (CN, SESS))
         if key:
@@ -256,10 +258,10 @@ class PaneRecordsReachTheBrowserFromTheirRoute(unittest.TestCase):
         self.assertTrue(set(km._PERF_HTTP_ROUTES["GET"]) <= set(self.wide), "every GET route in the register is requested")
         self.assertTrue(set(self.wide) <= set(self.empty) and set(self.wide) <= set(self.planted), "every route was read in both passes")
 
-    def test_a_keyed_get_panes_lists_every_planted_pane(self):
-        # the plant took: GET /panes, read with the page key, answers every field of every planted pane
+    def test_get_panes_lists_every_planted_pane(self):
+        # the plant took: GET /panes, read as the shell reads it, answers every field of every planted pane
         status, body, _ = self.keyed
-        self.assertEqual(status, 200, "GET /panes with the page key")
+        self.assertEqual(status, 200, "GET /panes, read as the shell reads it")
         low = body.lower()
         missing = [what for what, marker in FIELDS if marker.encode() not in low]
         self.assertEqual(missing, [], "GET /panes lists every planted field")
@@ -269,7 +271,7 @@ class PaneRecordsReachTheBrowserFromTheirRoute(unittest.TestCase):
         self.assertGreaterEqual(len(self.pages), 2, "the route table renders pages: %r" % self.pages)
         self.assertIn("/", self.pages)
         for p in self.pages:
-            self.assertEqual(km.Handler._need(p), ("page", ""), "%s classes as a page" % p)
+            self.assertEqual(km.Handler._need(p), ("page", ""), "Handler._need(%r)" % p)
         reached = {km._PAGE_RENDERERS[p] for p in self.pages}
         self.assertEqual(reached, set(km._PAGE_RENDERERS.values()), "every renderer the table maps is requested")
         self.assertIn(km._landing, reached, "the dashboard shell among them")
@@ -278,17 +280,18 @@ class PaneRecordsReachTheBrowserFromTheirRoute(unittest.TestCase):
         if km.DIST.is_dir():
             self.assertTrue(any(p.startswith("/dist/") for p in self.static), "a built bundle tree is read whole")
         for p in self.static:
-            self.assertEqual(km.Handler._need(p), ("static", ""), "%s classes as static" % p)
+            self.assertEqual(km.Handler._need(p), ("static", ""), "Handler._need(%r)" % p)
         register = set(km._PERF_HTTP_ROUTES["GET"])
         self.assertTrue(register and register <= set(self.wide), "every GET route in the register is requested")
         self.assertTrue(set(self.pages) <= register, "every page is a registered GET route")
         for fam in km._PERF_HTTP_FAMILIES:
             self.assertTrue(any(p.startswith(fam[:-1]) for p in self.wide), "%s has an instance" % fam)
         for p in self.pages + self.static:
-            self.assertEqual(self.empty[p]["status"], 200, "%s answers the signed-in browser" % p)
+            self.assertEqual(self.empty[p]["status"], 200, "%s answers the browser's request" % p)
         answered = {p for p in self.wide if self.empty[p]["status"] != 403}
         self.assertTrue((set(self.pages) | set(km._STATIC_EXACT)) <= answered)
-        self.assertTrue(answered - set(self.pages) - set(self.static), "the routes served before the gate answer too: %r" % sorted(answered))
+        self.assertTrue(answered - set(self.pages) - set(self.static),
+                        "a route beyond the pages and the static files answers other than 403: %r" % sorted(answered))
 
     def test_every_route_reads_the_same_twice_with_no_pane_defined(self):
         # the premise of the comparison below: two identical requests read the same bytes, but for the two named values
@@ -337,14 +340,15 @@ class PaneRecordsReachTheBrowserFromTheirRoute(unittest.TestCase):
         self.assertEqual((a["taken"], b["taken"]), (1, 1), "%s: its %s member taken out of each body" % (_UPTIME_ROUTE, _UPTIME_KEY))
         self.assertTrue(a["body"] == b["body"], "%s changes when panes are defined: %s" % (_UPTIME_ROUTE, self._where(a["body"], b["body"])))
 
-    def test_no_page_or_static_response_carries_a_defined_panes_fields(self):
+    def test_no_rendered_page_or_file_carries_a_defined_panes_fields(self):
         self._population_read()
         for p in self.pages + self.static:
             self.assertEqual([], self.empty[p]["hits"], "%s carries a marker with nothing defined: the marker collides with code" % p)
         found = ["%s: %s" % (p, ", ".join(self.planted[p]["hits"])) for p in self.pages + self.static if self.planted[p]["hits"]]
-        self.assertEqual(found, [], "a page or static response carries a defined pane's fields:\n" + "\n".join(found))
+        self.assertEqual(found, [], "a rendered page or a static file carries a defined pane's fields:\n"
+                         + "\n".join(found))
         for p in self.pages + self.static:
-            self.assertEqual(self.planted[p]["status"], 200, "%s answers the signed-in browser with panes defined" % p)
+            self.assertEqual(self.planted[p]["status"], 200, "%s answers the browser's request with panes defined" % p)
 
     def test_every_route_reads_byte_for_byte_the_same_whatever_panes_are_defined(self):
         self._population_read()

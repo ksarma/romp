@@ -72768,12 +72768,14 @@ try{if(window.__rompReload&&!window.__rompReload.inShell()){window.__rompReload.
 // null takes it down (accepted, or declined); a wording change (o.text moved: an unknownOp refusal arrived) is written into the standing bar
 try{if(window.__rompReload&&!window.__rompReload.inShell()){window.__rompReload.offer=function(o){var have=document.getElementById("romp-stale-self");var mine=have&&have.dataset.kind==="offer";
 if(!o){if(mine)have.remove();return;}if(mine){have.firstChild.textContent=o.text;return;}selfBar(o.text,"offer");};}}catch(e){}
-// [fork] the pane set's revision on a page standing ALONE (outside the dashboard shell: a pane page opened by itself, the VS Code panel). The page bakes
-// none, so it reads GET /panes with the page key, the read the shell builds its custom panes from, and hands the answer's revision to the reload
-// core (adoptPanes) and to the keepalive gate below (LOADEDPV), which offer a reload when a keepalive carries another. A failed read is said on the
-// page's one bar (kind warn), never taken for no change; a 403 asking for a new sign-in says nothing, since the page-key script is taking the top
-// frame to /login. Inside the shell (its head read, window.parent.__rompPaneRecords, exists before any pane frame does) the shell's read and its own
-// keepalive decide, and this page reads nothing; a state-root page carries the route's baked revision (LOADEDPV) and reads nothing either.
+// [fork] the pane set's revision on a page standing ALONE (outside the dashboard shell: a pane page opened by itself,
+// the VS Code panel). The page bakes none, so it reads GET /panes, the read the shell builds its custom panes from,
+// and hands the answer's revision to the reload core (adoptPanes) and to the keepalive gate below (LOADEDPV), which
+// offer a reload when a keepalive carries another. A failed read is said on the page's one bar (kind warn), never
+// taken for no change; a refusal its header marks (pvReauth) says nothing, since another script on the page is
+// already navigating the top frame away. Inside the shell (its head read, window.parent.__rompPaneRecords, exists
+// before any pane frame does) the shell's read and its own keepalive decide, and this page reads nothing; a
+// state-root page carries the route's baked revision (LOADEDPV) and reads nothing either.
 try{var RPV=window.__rompReload,inDash=false;try{inDash=window.parent!==window&&!!window.parent.__rompPaneRecords;}catch(e){}
 if(RPV&&RPV.adoptPanes&&!RPV.inShell()&&!inDash&&!LOADEDPV&&typeof fetch==="function"){var pvReauth=false;
 fetch("/panes",{cache:"no-store"}).then(function(r){if(!r.ok){pvReauth=r.status===403&&!!(r.headers&&r.headers.get&&r.headers.get("X-Romp-Reauth"));throw new Error("/panes answered HTTP "+r.status);}return r.json();})
@@ -76791,9 +76793,10 @@ _MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 #   the phone's restore of a remembered tab. Then the reload core takes the read's revision (adoptPanes; the core is made after the
 #   bundles, so the stale block adopts it there when the core did not exist yet) and the bundles hear romp-pane-records (the palette,
 #   the docking kit, the gear, which also read the state object when they boot or open).
-# - A failed read is shown, never silently empty: an entry of the Log's `panes` kind naming the reason, the gear's Panes section, the
-#   event. A 403 asking for a new sign-in logs nothing (the page-key script is taking the top frame to /login). The read's backstop is
-#   armed here (LOAD_MS, the lazy panes' bound): no answer within it is said as such, and a late answer still builds.
+# - A failed read is shown, never silently empty: an entry of the Log's `panes` kind naming the reason, the gear's Panes
+#   section, the event. A refusal its header marks (RR.reauth) logs nothing, since another script on the page is already
+#   navigating the top frame away. The read's backstop is armed here (LOAD_MS, the lazy panes' bound): no answer within
+#   it is said as such, and a late answer still builds.
 _LANDING_PANE_RECORDS_JS = """
 (function(){var RR=window.__rompPaneRecords;if(!RR||RR.go)return;RR.go=true;   // no head read (a harness, a page without it): nothing to build; once per page
 function note(t){try{if(window.__rompNotify)window.__rompNotify('panes',t);}catch(e){}}
@@ -79355,14 +79358,15 @@ def _landing():
             "try{var _u=new URL(location.href);if(_u.searchParams.has('token')){_u.searchParams['delete']('token');"
             "history.replaceState(null,'',_u.pathname+(_u.searchParams.toString()?'?'+_u.searchParams.toString():'')+_u.hash);}}"
             "catch(e){}"
-            # The panes defined at the kernel (`romp pane define`) are not in this page: the shell builds them from GET /panes, the
-            # records `romp pane list` reads, one source for the pane records. The read starts HERE, as early as it can (it overlaps
-            # the body's parse), and after the token scrub above, so its Referer carries no token. It is a bare same-origin fetch,
-            # which the page-key script _send puts first in the head keys like every read of the shell's. Its outcome is kept in one
-            # state object, window.__rompPaneRecords: the builder (_LANDING_PANE_RECORDS_JS, after the last inline consumer has parsed)
-            # and the boot splash subscribe through its done list, and the bundles read it or hear the builder's romp-pane-records
-            # event. No timer here: the builder arms the read's backstop. A 403 asking for a new sign-in is marked (reauth), since the
-            # page-key script is already taking the top frame to /login and the builder logs nothing for it.
+            # The panes defined at the kernel (`romp pane define`) are not in this page: the shell builds them from
+            # GET /panes, the records `romp pane list` reads, one source for the pane records. The read starts HERE, as
+            # early as it can (it overlaps the body's parse), and after the scrub above, so its Referer carries the
+            # address as scrubbed. It is made the way the shell's other reads are made. Its outcome is kept
+            # in one state object, window.__rompPaneRecords: the builder (_LANDING_PANE_RECORDS_JS, after the last
+            # inline consumer has parsed) and the boot splash subscribe through its done list, and the bundles read it
+            # or hear the builder's romp-pane-records event. No timer here: the builder arms the read's backstop. A
+            # refusal its header marks is kept as such (reauth), since another script on the page is already
+            # navigating the top frame away, and the builder logs nothing for it.
             "try{var _rr=window.__rompPaneRecords={state:'loading',body:null,rev:'',rows:null,frames:null,error:'',status:0,reauth:false,done:[]};"
             "var _rd=function(){var d=_rr.done;_rr.done=[];for(var i=0;i<d.length;i++){try{d[i]();}catch(e){}}};"
             "fetch('/panes',{cache:'no-store'}).then(function(r){_rr.status=r.status;if(!r.ok){_rr.reauth=r.status===403&&!!(r.headers&&r.headers.get('X-Romp-Reauth'));"
