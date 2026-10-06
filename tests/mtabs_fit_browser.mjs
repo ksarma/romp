@@ -47,7 +47,7 @@
 // Then the Remote kernels glyph's colours, on a page of its own per theme (cfg.themes: the theme written to the store before
 // the page parses, as the gear writes it) at cfg.actsViewport: the card opened from the bar's Settings, and in it the card's
 // background, the button's own fill (the glyph sits on it) and each colour the glyph can wear, as computed values: the
-// button lit and attaching (its colour, the strokes' currentColor) and each node's fill as connected, dialing and needs you,
+// glyph lit and attaching (its svg's colour, the strokes' currentColor) and each node's fill as connected, dialing and needs you,
 // each read with that class set on the element and the element's transitions off, then put back.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
@@ -230,8 +230,8 @@ try {
       const lift = await page.evaluate(() => { const r = document.getElementById("f-settings").getBoundingClientRect(); return { left: r.left, top: r.top }; });
       // the opening's ask for a fresh reading (Usage wears the romp loader, disabled, until it ends): read the row after it
       await sf.waitForFunction(() => { const w = document.getElementById("rs-pact-usage-wait"); return !w || w.hidden; }, null, { timeout: 10000 }).catch(() => null);
-      // the glyph's colour fades over the dress's transition when the opening paints it, and Usage's when its ask ends (from the
-      // disabled grey): read the row once those transitions end
+      // Usage's colour fades over the dress's transition when its ask ends (from the disabled grey): read the row once every
+      // transition on its buttons ends (the glyph's accent is on its svg, which has none)
       await sf.evaluate(() => { const fades = [];
         document.querySelectorAll("#rs-pacts .rs-pact").forEach((n) => { if (n.getAnimations) n.getAnimations().forEach((a) => { if (typeof CSSTransition !== "undefined" && a instanceof CSSTransition) fades.push(a); }); });
         return Promise.all(fades.map((a) => a.finished.catch(() => null))).then(() => fades.length); });
@@ -255,16 +255,18 @@ try {
         const dress = { ref: ref ? dressOf(ref) : null, acts: row ? Array.from(row.querySelectorAll("button")).map((b) => ({ act: b.getAttribute("data-pact"), cls: b.getAttribute("class"), dress: dressOf(b) })) : [] };
         const ub = document.getElementById("rs-pact-usage"), un = document.getElementById("rs-pact-usage-none");
         const usage = ub ? { disabled: ub.disabled, line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none", text: un.textContent.trim() } : null } : null;
-        const net = document.getElementById("rs-pact-net");
-        const glyph = net ? { cls: net.getAttribute("class"), color: getComputedStyle(net).color,
+        // the glyph's colour is its svg's (the accent goes on the glyph alone; the button's label keeps the card's text colour)
+        const net = document.getElementById("rs-pact-net"), netSvg = net && net.querySelector("svg");
+        const glyph = net ? { cls: net.getAttribute("class"), color: netSvg ? getComputedStyle(netSvg).color : null,
           nodes: ["rn-me", "rn-a", "rn-b"].map((k) => { const e = net.querySelector("." + k); return e ? { cls: e.getAttribute("class"), fill: getComputedStyle(e).fill } : null; }) } : null;
         return { rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none", buttons, glyph, dress, usage,
                  card: cr ? { left: r(cr.left + ctx.left), right: r(cr.right + ctx.left), top: r(cr.top + ctx.top), bottom: r(cr.bottom + ctx.top) } : null,
                  tab: (document.querySelector("#rs-tabs .rs-tab.on") || {}).textContent || "" };
       }, lift);
-      // the rail's own glyph, painted by the same poll (display:none on the phone, its computed colours still resolve)
-      run.rail = await page.evaluate(() => { const n = document.getElementById("rail-net");
-        return { cls: n.getAttribute("class"), color: getComputedStyle(n).color,
+      // the rail's own glyph, painted by the same poll (display:none on the phone, its computed colours still resolve), its
+      // colour read on its svg as the card's is
+      run.rail = await page.evaluate(() => { const n = document.getElementById("rail-net"), s = n.querySelector("svg");
+        return { cls: n.getAttribute("class"), color: s ? getComputedStyle(s).color : null,
                  nodes: ["rn-me", "rn-a", "rn-b"].map((k) => { const e = n.querySelector("." + k); return { cls: e.getAttribute("class"), fill: getComputedStyle(e).fill }; }) }; });
       const btn = run.card.buttons.find((b) => b.act === act);
       if (!btn) {
@@ -631,19 +633,20 @@ try {
     await frames(page);
     out.contrast[name] = await sf.evaluate(() => {
       const row = document.getElementById("rs-pacts"), card = document.querySelector("#rsettings .rs-card");
-      const net = document.getElementById("rs-pact-net"), me = net && net.querySelector(".rn-me");
+      const net = document.getElementById("rs-pact-net"), me = net && net.querySelector(".rn-me"), svg = net && net.querySelector("svg");
       const res = { light: document.body.classList.contains("theme-light"), rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none",
                     card: card ? getComputedStyle(card).backgroundColor : null, fill: null, colours: {} };
-      if (!net || !me) return res;
+      if (!net || !me || !svg) return res;
       // one colour: the element's transitions off (the button's colour and fill fade over 0.12s), the class set, the computed
-      // value read, and everything put back
-      const readAs = (el, set, prop) => { const was = el.getAttribute("class"), tr = el.style.transition;
-        el.style.transition = "none"; set(); const v = getComputedStyle(el)[prop];
+      // value read, and everything put back. The value is read on `from` where the colour lands on another element: the
+      // glyph's svg for the button's lit and attaching states, since the accent goes on the glyph alone
+      const readAs = (el, set, prop, from) => { const was = el.getAttribute("class"), tr = el.style.transition;
+        el.style.transition = "none"; set(); const v = getComputedStyle(from || el)[prop];
         if (was === null) el.removeAttribute("class"); else el.setAttribute("class", was);
         el.style.transition = tr; return v; };
       res.fill = readAs(net, () => {}, "backgroundColor");
-      res.colours.lit = readAs(net, () => net.classList.add("on"), "color");
-      res.colours.attaching = readAs(net, () => net.classList.add("busy"), "color");
+      res.colours.lit = readAs(net, () => net.classList.add("on"), "color", svg);
+      res.colours.attaching = readAs(net, () => net.classList.add("busy"), "color", svg);
       res.colours.connected = readAs(me, () => me.setAttribute("class", "rn-me rn-ok"), "fill");
       res.colours.dialing = readAs(me, () => me.setAttribute("class", "rn-me rn-wait"), "fill");
       res.colours["needs you"] = readAs(me, () => me.setAttribute("class", "rn-me rn-warn"), "fill");

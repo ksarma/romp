@@ -43,7 +43,8 @@ wrap only where it still cannot.
   (window.__rompUsagePull, the usage script's own fetch of its readings), Usage shows the romp loader and takes no tap until it ends, and
   then the card asks the usage script's own test over its readings (window.__rompUsageReading, the check the panel's opener
   makes); the shell's renderRows, the one writer of those readings, tells an open card on every change, so a reading that
-  lands while the card is open shows at once; a shell that cannot be asked leaves Usage enabled with no line, as its bar button was. The Remote kernels glyph sits on its button's own fill, and every colour it wears reads at 3:1 or more (a
+  lands while the card is open shows at once; a shell that cannot be asked leaves Usage enabled with no line, as its bar button was. The Remote kernels glyph wears the accent while a host is connected or attaching, on the glyph
+  alone as on the rail, and the button's label keeps the card's text colour (PR 976's round 1, ui-3). The glyph sits on its button's own fill, and every colour it wears reads at 3:1 or more (a
   graphic, romp-manager's call 7) on the card and on that fill in both themes: in the light theme its dialing grey and
   needs-you red are darker than the shell's (feed.css's --rn-wait and --rn-warn, #777777 and #dc3f46 where the shell has
   #8a8a8a and #e5484d, which read 2.59 and 2.94:1 on that theme's button fill, #e7ded2).
@@ -72,8 +73,8 @@ wrapping) fits. Then the Files tab turned on with no resize, at 340px where the 
 does not: the bar wraps and the strip follows it. Then the moved actions, at 390px: the bar's Settings clicked at its centre
 opens the card; its row of three buttons shows, each wholly in the window and the card and hit at its centre, and each
 wearing Customize shortcuts' dress at rest (its computed fill, hairline, radius, text colour, padding, font and press
-transition equal #rs-keys-btn's, the colour aside on the Remote kernels button while the poll lights it, read once the
-glyph's colour transitions end), Usage enabled with its line hidden (the lab's reading); the Remote kernels glyph wears the
+transition equal #rs-keys-btn's, the Remote kernels button's text colour too while the poll lights its glyph, read once
+Usage's colour transition ends), Usage enabled with its line hidden (the lab's reading); the Remote kernels glyph wears the
 state the shell's poll painted on the rail's glyph (the shell's own GET /tunnels answers two synthetic hosts, one connected
 and one with no kernel: the glyph on, its nodes needs you and connected, the same classes, colours and fills as the rail's);
 the shell's next poll is held until after the first opening, so the card's paint is the opening's own, and when it is
@@ -111,7 +112,7 @@ widened to WIDE with the card open hides it (not displayed, its buttons boxless)
 hidden glyph, the premise), and the window narrowed to 390px again shows the row, its glyph carrying no flash two frames on,
 and Usage enabled with no line once the ask the row's return makes has ended. Then the
 Remote kernels glyph's colours in the dark and the light theme (THEMES), each on a page of its own at 390px: in the card
-opened from the bar's Settings, every colour the glyph can wear (GLYPH: the button lit and attaching, a node connected,
+opened from the bar's Settings, every colour the glyph can wear (GLYPH: the glyph lit and attaching, read on its svg, a node connected,
 dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
 colour read with its class set and the element's transitions off. Then a desktop window, where the bar is hidden, and the desktop rail at 821 and 1100px, whose actions (restart, Remote kernels, the bell,
 the gear) and their boxes equal af7d18250's (RAIL_AF7 below), and where the settings card, opened from the rail's gear
@@ -124,7 +125,8 @@ moved actions. Red at the two-action move (Usage and Remote kernels moved, Resta
 its bar shows Restart, its Files set wraps at 375px, and its card has no Restart kernel button. The phoneAct pin is red
 under the listener's old accepted set (net and usage alone): the card's Restart kernel closes the card and no POST /restart
 follows. The button dress's pin is red at the menu dress the row wore before (the menu card's fill, a 6px radius, 5px 10px
-of padding, 12px text). The no-reading pins are red at the card without that state (Usage enabled with no reading, and its
+of padding, 12px text), and where the accent lights the whole Remote kernels button, its label too (the rule before round
+1's ui-3). The no-reading pins are red at the card without that state (Usage enabled with no reading, and its
 tap closing the card to open nothing); the reading landing in the open card is red where the card reads the state only when
 it opens, and the emptying where the shell's renderRows tells the card only as it fills its readings; the unpulled reading is red where the card answers from the shell's cached readings without a pull (Usage
 disabled with its line, no loader, the tap opening nothing). The fallback's pin is red under the old rule restored (no wrap), and the
@@ -348,8 +350,9 @@ def _acts_problems(engine, acts):
         if act != "usage" and after.get("usage"):
             out.append("%s: the click opened the Usage modal" % w)
     # the card's button vocabulary: each moved action wears Customize shortcuts' dress (#rs-keys-btn, the card's word button
-    # the row's rules copy) at rest, its fill, hairline, radius, text, padding and press transition; the colour aside on the
-    # Remote kernels button while the shell's poll lights it (the accent, the rail glyph's state)
+    # the row's rules copy) at rest, its fill, hairline, radius, text, padding and press transition. The Remote kernels button
+    # is read while the shell's poll lights it, and its text colour is the card's too: the accent goes on its glyph alone (PR
+    # 976's round 1, ui-3; the glyph's colour is read on its svg below)
     dress = ((acts["runs"].get("usage") or {}).get("card") or {}).get("dress") or {}
     ref = dress.get("ref")
     if not ref:
@@ -360,8 +363,7 @@ def _acts_problems(engine, acts):
             b = got.get(act)
             if not b:
                 continue   # its absence is listed above
-            lit = act == "net" and ({"on", "busy"} & set((b["cls"] or "").split()))
-            off = sorted(k for k in ref if b["dress"].get(k) != ref[k] and not (lit and k == "color"))
+            off = sorted(k for k in ref if b["dress"].get(k) != ref[k])
             if off:
                 out.append("%s: the %s button does not wear the card's button dress: %s" % (
                     where, act, ", ".join("%s %r, not %r" % (k, b["dress"].get(k), ref[k]) for k in off)))
