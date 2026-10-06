@@ -43,6 +43,9 @@
 // opened, its ask for a fresh pull held while Usage is read (the romp loader in the sub-line's place, its animations, the
 // button disabled and busy) and tapped at its centre, the shell's side read after a settle, then let through, Usage read once
 // the ask has ended, and one click on it, its effect read.
+// Then the reads that fail, on a page of its own at cfg.actsViewport: the shell's boot pull answers no rows, and the card is
+// opened over an opening's pull answered with an error status (cfg.errorStatus) and one failed in transit (the route aborts
+// it), Usage read once each ask has ended, then over a pull that reaches the lab, Usage read again.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -454,10 +457,13 @@ try {
       return sf.evaluate((ctx) => {
         const r = (x) => Math.round(x * 100) / 100;
         const b = document.querySelector("#rs-pacts [data-pact=usage]"), un = document.getElementById("rs-pact-usage-none"), wt = document.getElementById("rs-pact-usage-wait");
+        const er = document.getElementById("rs-pact-usage-err"), row = document.getElementById("rs-pacts");
         if (!b) return null;
         const c = b.getBoundingClientRect();
         return { disabled: b.disabled, busy: b.getAttribute("aria-busy"), left: r(c.left + ctx.left), top: r(c.top + ctx.top), w: r(c.width), h: r(c.height),
+                 rowH: row ? r(row.getBoundingClientRect().height) : null,
                  line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none", text: un.textContent.trim() } : null,
+                 err: er ? { shown: !er.hidden && getComputedStyle(er).display !== "none", text: er.textContent.trim() } : null,
                  wait: wt ? { shown: !wt.hidden && getComputedStyle(wt).display !== "none", text: wt.textContent.trim(),
                               anims: wt.getAnimations ? wt.getAnimations({ subtree: true }).map((a) => a.animationName || "?") : null } : null };
       }, lift);
@@ -467,8 +473,13 @@ try {
       usage: await page.evaluate(() => { const b = document.getElementById("ru-back"); return !!b && b.classList.contains("on"); }),
       acts: await page.evaluate(() => window.__mtabsActs.slice()) });
     const askEnded = (sf) => sf.waitForFunction(() => { const w = document.getElementById("rs-pact-usage-wait"); return !w || w.hidden; }, null, { timeout: 10000 }).then(() => true, () => false);
+    const closeCard = async () => {
+      await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+      await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+      await frames(page);
+    };
     const modalUp = () => page.waitForFunction(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip"); return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }, null, { timeout: 10000 }).then(() => true, () => false);
-    return { openCard, usageNow, shellNow, askEnded, modalUp };
+    return { openCard, usageNow, shellNow, askEnded, modalUp, closeCard };
   };
   // Usage with no reading, then a reading landing while the card is open: the shell tells the open card
   {
@@ -660,6 +671,46 @@ try {
       up.clicked = await kit.shellNow(sf);
     }
     out.unpulled = up;
+    await context.close();
+  }
+  // the reads that fail (romp-manager's rulings after PR 976's round 1), on a page of its own at cfg.actsViewport: the shell's
+  // boot pull answers no rows, so it holds no reading (the rail's readout read empty as the premise). Then the card opened from
+  // the bar's Settings over each way the opening's pull can fail, Usage read once its ask has ended and the card closed: the
+  // kernel answering with an error status (cfg.errorStatus), and the request failing in transit (aborted by the route). Then
+  // an opening whose pull reaches the lab (a reading), where Usage is read once more: the failure's line does not outlive the
+  // failure
+  {
+    let mode = "boot", boots = 0;
+    const { context, page } = await boot(false, (pg) => pg.route((url) => url.pathname.startsWith("/usage/"), (route) => {
+      if (route.request().frame() !== pg.mainFrame()) return route.continue();
+      if (mode === "boot") { boots++; return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) }); }
+      if (mode === "status") return route.fulfill({ status: cfg.errorStatus, contentType: "application/json", body: JSON.stringify({ error: "synthetic failure" }) });
+      if (mode === "transit") return route.abort("failed");
+      return route.continue();
+    }));
+    const [w, h] = cfg.actsViewport;
+    await page.setViewportSize({ width: w, height: h });
+    await frames(page);
+    await sleep(cfg.settleMs || 100);
+    await frames(page);
+    const fr = { vp: [w, h] };
+    for (let i = 0; i < 150 && boots < 1; i++) await sleep(100);
+    await frames(page);
+    fr.premise = { boots, readout: await page.evaluate(() => { const r = document.getElementById("rail-usage"); return r ? r.innerHTML : null; }) };
+    const kit = await usageKit(page, "the failed-read leg");
+    const turn = async (m) => {
+      mode = m;
+      const sf = await kit.openCard();
+      const asked = await kit.askEnded(sf);
+      await frames(page);
+      const got = { asked, usage: await kit.usageNow(sf), shell: await kit.shellNow(sf) };
+      await kit.closeCard();
+      return got;
+    };
+    fr.status = await turn("status");
+    fr.transit = await turn("transit");
+    fr.lab = await turn("lab");
+    out.failedReads = fr;
     await context.close();
   }
   // the deploy skew (PR 976's round 1, kernel-1): the card shows its row only where the shell publishes the marker beside the

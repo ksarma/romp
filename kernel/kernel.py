@@ -71245,6 +71245,7 @@ var WINS=[['fiveHour',5*3600,'5 hours'],
 // tooltip detail for the ones drawn into the aggregate; SELF names this machine for its hover heading
 // when there is more than one host.
 var ROWS=[],LAST=[],SELF='';
+var READ_FAILED=false;   // whether the latest read of the readings failed (pullFleet sets it; the settings card reads it, __rompUsageFailed)
 // Limit / judge-degraded SIGNATURES (the user 2026-07-03; reshaped 2026-07-27): these used to gate fixed
 // top banners with a ✕ dismissal; the banners are gone — the same situations now log ONE entry each in
 // the shell's notification center (the bell, _LANDING_ERRS_JS). The stored signature means "this exact
@@ -71451,7 +71452,7 @@ if(typeof SP!=='undefined'&&SP.open&&SP.data){var ts=document.getElementById('rs
 cardTell();}
 // The single-payload path the timeline still posts (and the mobile panel's own fetch): treat it as this
 // machine's row, leaving any other account's bars alone.
-function render(u){notices(u);
+function render(u){notices(u);READ_FAILED=false;
 var rest=ROWS.filter(function(r){return r.host;});
 renderRows([{host:'',acct:(u&&u.acct)||'',usage:u}].concat(rest),SELF);}
 // ONE shared tooltip for BOTH windows: per window, the used bar (colormap) over the elapsed bar (slate) +
@@ -71646,15 +71647,19 @@ pullFleet().then(openIt,openIt);};
 // out of this script's reach, so the card asks this: Usage enabled where a tap opens the panel, disabled with a line saying
 // there is no reading yet where it would open nothing
 window.__rompUsageReading=function(){return !!tipHTML();};
-// ...and the source behind that answer, read fresh as the panel's opener reads it (PR 976's round 1, correctness-1 and
+// ...and whether the latest read of the readings failed (romp-manager's ruling after PR 976's round 1: a read that failed is not
+// a read that found no reading, so the card says it could not load where it would otherwise say No reading yet). READ_FAILED is
+// set by every pull, pullFleet below: true where the kernel answered with an error status (the fetch reads that answer as no
+// rows, so LAST empties and the panel's opener opens nothing), where the request got no answer, was aborted, or had a body
+// that does not parse (LAST left as it was); false where an ok answer parsed. The timeline's forward (render) is a reading
+// that arrived, so it clears it too. The card asks this only where __rompUsageReading says there is nothing to open: with a
+// reading, Usage opens the panel over it, whose age lines keep climbing while the reads fail (pull's failed path)
+window.__rompUsageFailed=function(){return READ_FAILED;};
+// ...and the source behind those answers, read fresh as the panel's opener reads it (PR 976's round 1, correctness-1 and
 // extra6-1): the card calls this at each opening (gear.js usagePull) and shows the romp loader on Usage until the promise
-// settles, then asks __rompUsageReading. It runs the script's own fetch of the readings directly, the one the panel's opener
-// runs, never pull(), which returns at once while a pull it started is in flight and would leave the card on the answer before. A pull
-// whose answer the fetch reads writes LAST through renderRows, which tells the card: the readings it carries, or none where the
-// kernel answers with an error status (the fetch reads a non-ok answer as no rows), so LAST empties and the card says No reading
-// yet. One that fails, with no answer or a body that does not parse, leaves LAST as it was. Either way the card's answer is the
-// one the panel's opener, which runs the same fetch and then openIt whichever way it ends, would open over at that moment
-// (nothing, after an error status)
+// settles, then asks __rompUsageReading and __rompUsageFailed. It runs the script's own fetch of the readings directly, the
+// one the panel's opener runs, never pull(), which returns at once while a pull it started is in flight and would leave the
+// card on the answer before. A pull whose answer the fetch reads writes LAST through renderRows, which tells the card
 window.__rompUsagePull=function(){return pullFleet();};
 // the API-health dot sits inside this cell (T301): a pointer arriving on the DOT gets the dot's own tip, not this one
 el.addEventListener('mouseenter',function(ev){var c=document.getElementById('rail-api');
@@ -71676,10 +71681,14 @@ var _ruBusy=false;
 // /usage/fleet is /usage plus one row per OTHER Claude account in the fleet (the remote readings come from
 // the tunnel supervisor's own cached poll, so this never dials anything). It collapses to a single row \u2014
 // today's exact rendering \u2014 whenever every machine is signed into the same login.
-function pullFleet(){return fetch('/usage/fleet',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})
-.then(function(d){var rows=(d&&d.rows)||[];SELF=(d&&d.host)||SELF;
+// READ_FAILED (__rompUsageFailed above) says how the read ended, set before renderRows tells the settings card, and on a failure
+// the card is told here, since no renderRows runs; the failure still rejects, so pull() and the panel's opener take their failed
+// paths as before
+function pullFleet(){var ok=false;
+return fetch('/usage/fleet',{cache:'no-store'}).then(function(r){ok=r.ok;return r.ok?r.json():null;})
+.then(function(d){READ_FAILED=!ok;var rows=(d&&d.rows)||[];SELF=(d&&d.host)||SELF;
 var local=rows.length?rows[0].usage:null;
-notices(local);renderRows(rows,SELF);});}
+notices(local);renderRows(rows,SELF);},function(e){READ_FAILED=true;cardTell();throw e;});}
 function pull(ack){if(_ruBusy)return;_ruBusy=true;
 if(ack){el.style.opacity='0.45';tip.style.display='none';}   // instant ack only on a real click
 var done=function(){_ruBusy=false;el.style.opacity='';};

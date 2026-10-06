@@ -133,10 +133,13 @@ var GEAR_HTML =
   // layout and its marker at each open, and the card follows the layout while open; the desktop has all three on its rail,
   // an older shell on its bottom bar). A tap closes this card and asks the shell to run the bar button's own handler ({romp:'phoneAct', act}).
   '<div class=rs-pacts id=rs-pacts hidden>' +
-  // Usage carries its sub-line for the state with no reading yet (usageAct below shows it and disables the button)
+  // Usage carries its sub-line for the state with no reading yet (usageAct below shows it and disables the button), and in
+  // the same place the one for a read that failed (Couldn't load: the shell's last read of the readings got an error status
+  // or no answer; usageAct)
   '<button type=button class=rs-pact id=rs-pact-usage data-pact=usage title=Usage>' + PACT_USAGE_SVG +
-  // and, in the same place, the romp loader while the card's opening asks the shell for a fresh reading (usagePull below)
   '<span class=rs-pact-txt><span>Usage</span><span class=rs-pact-none id=rs-pact-usage-none hidden>No reading yet</span>' +
+  '<span class=rs-pact-none id=rs-pact-usage-err hidden>Couldn\'t load</span>' +
+  // and, in the same place again, the romp loader while the card's opening asks the shell for a fresh reading (usagePull below)
   '<span class=rs-pact-wait id=rs-pact-usage-wait hidden aria-hidden=true><span class=rs-pact-swirl></span><span>romp</span>' +
   '<i class=rs-pact-dot></i><i class=rs-pact-dot></i><i class=rs-pact-dot></i></span></span></button>' +
   '<button type=button class=rs-pact id=rs-pact-net data-pact=net title="Remote kernels">' + PACT_NET_SVG + '<span>Remote kernels</span></button>' +
@@ -2167,22 +2170,36 @@ function initGear(post, opts) {
   // asks the shell for a fresh pull first (usagePull), and until it settles Usage shows the romp loader in its sub-line's place
   // and takes no tap (the waiting rule, ui/CLAUDE.md: never a guess); and the shell tells an open card whenever its readings
   // change (its renderRows calls window.__rompUsageAct below), so the line never outlives the readings it describes.
+  // A read that failed is not a read that found nothing (romp-manager's ruling after PR 976's round 1, as for the shell that
+  // cannot be asked above): where the shell holds no reading and its last read of them failed (__rompUsageFailed: an error
+  // status or no answer), Usage is disabled with its other line, Couldn't load, and never says No reading yet. With a reading,
+  // Usage opens the panel over it whatever the last read did, so neither line shows.
   var usageWait = 0, usageSeq = 0;   // the opening's pull in flight: its number, 0 when none is
   function usageAct() {
     var b = document.getElementById('rs-pact-usage'), none = document.getElementById('rs-pact-usage-none'),
-      wait = document.getElementById('rs-pact-usage-wait'), asked = false, has = false;
+      err = document.getElementById('rs-pact-usage-err'), wait = document.getElementById('rs-pact-usage-wait'),
+      asked = false, has = false, failed = false;
     if (usageWait) {   // asking: the loader, the button inert, no claim either way
       if (b) { b.disabled = true; b.setAttribute('aria-busy', 'true'); }
       if (none) none.hidden = true;
+      if (err) err.hidden = true;
       if (wait) wait.hidden = false;
       return;
     }
     if (b) b.removeAttribute('aria-busy');
     if (wait) wait.hidden = true;
-    try { var w = window.parent; if (w !== window && typeof w.__rompUsageReading === 'function') { has = !!w.__rompUsageReading(); asked = true; } } catch (e) { asked = false; }
+    try {
+      var w = window.parent;
+      if (w !== window && typeof w.__rompUsageReading === 'function') {
+        has = !!w.__rompUsageReading();
+        failed = !has && typeof w.__rompUsageFailed === 'function' && !!w.__rompUsageFailed();
+        asked = true;
+      }
+    } catch (e) { asked = false; }
     var no = asked && !has;   // the shell answered, and it holds no reading
     if (b) b.disabled = no;
-    if (none) none.hidden = !no;
+    if (none) none.hidden = !no || failed;
+    if (err) err.hidden = !(no && failed);
   }
   // the opening's ask: the shell's pull (__rompUsagePull, kernel _LANDING_USAGE_JS, the fetch the panel's opener runs), the
   // loader up until its promise settles either way, then the answer; a later ask (the card closed and opened again) outdates an

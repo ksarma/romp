@@ -46,7 +46,11 @@ wrap only where it still cannot.
   (window.__rompUsagePull, the usage script's own fetch of its readings), Usage shows the romp loader and takes no tap until it ends, and
   then the card asks the usage script's own test over its readings (window.__rompUsageReading, the check the panel's opener
   makes); the shell's renderRows, the one writer of those readings, tells an open card on every change, so a reading that
-  lands while the card is open shows at once; a shell that cannot be asked leaves Usage enabled with no line, as its bar button was. The Remote kernels glyph wears the accent while a host is connected or attaching, on the glyph
+  lands while the card is open shows at once; a shell that cannot be asked leaves Usage enabled with no line, as its bar
+  button was. A read that failed is not a read that found no reading (romp-manager's ruling after round 1): where the
+  shell's last read got an error status or no answer (window.__rompUsageFailed telling the card), Usage is disabled with
+  the line "Couldn't load", never "No reading yet". The Remote kernels glyph wears the accent while a host is connected
+  or attaching, on the glyph
   alone as on the rail, and the button's label keeps the card's text colour (PR 976's round 1, ui-3). The glyph sits on its
   button's own fill, which the button keeps on hover, its border and label still turning accent (round 1, extra6-2), and
   every colour it wears reads at 3:1 or more (a graphic, romp-manager's call 7) on the card and on that fill, at rest and
@@ -120,7 +124,11 @@ under /usage/ after the opening), and while that request is held Usage shows the
 swirl spinning, the wordmark, the dots pulsing), disabled and busy, with no line, and a tap at its centre leaves the card
 open and posts no phoneAct; let through, the ask ends with Usage
 enabled, no line and no loader, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then the
-deploy skew, on a page of its own at 390px: the shell publishes its marker (window.__rompPhoneActs) and the card opened
+reads that fail, on a page of its own at 390px, the shell's boot pull answering no rows (the readout read empty as the
+premise): the card opened over an opening's pull the driver answers with ERROR_STATUS and over one it aborts in transit
+shows Usage disabled with the line USAGE_ERR and not USAGE_NONE once each ask has ended, the card open and nothing
+posted; and an opening whose pull reaches the lab then shows Usage enabled with neither line. Then the deploy skew, on a
+page of its own at 390px: the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
 move has) the card opened shows no row (not displayed, its buttons boxless); and with the marker back and the usage script's
 two names deleted (__rompUsageReading and __rompUsagePull, a shell that cannot be asked) the card's Usage is enabled with no
@@ -155,8 +163,9 @@ tap closing the card to open nothing); the reading landing in the open card is r
 it opens, and the emptying where the shell's renderRows tells the card only as it fills its readings; the unpulled reading is red where the card answers from the shell's cached readings without a pull (Usage
 disabled with its line, no loader, the tap opening nothing). Both taps on a disabled Usage, with no reading and while the
 opening's pull is out, are red under a mutant that never disables it; a script's clicks on a disabled Usage are red
-without the row handler's check of the disabled state (each closes the card and posts phoneAct usage). The fallback's
-pin is red under the old rule restored (no wrap), and the
+without the row handler's check of the disabled state (each closes the card and posts phoneAct usage). The failed reads
+are red where an error status reads as no reading and a failure leaves the line as it was (No reading yet after the
+error status and after the abort in transit). The fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
 closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
@@ -227,6 +236,8 @@ BAR_ACTS = ("merr", "mbell", "settings")   # the three left on it, in their orde
 # manager's refusal shape, so the shell's restart handler runs to its end (splash down, these words on the rail's button)
 RESTART_REFUSAL = "synthetic refusal: the lab kernel stays up"
 USAGE_NONE = "No reading yet"   # the card's line under a disabled Usage (gear.js), the words a person reads
+USAGE_ERR = "Couldn't load"     # ...and its line there where the shell's last read of the readings failed
+ERROR_STATUS = 500   # the kernel's answer to the opening's pull where a leg needs an error status (the driver answers it)
 # the themes the Remote kernels glyph's colours are measured in, by the gear's theme ids: the dark default and the light theme
 # (no rule in feed.css or gear.css reads the Yatharth dark theme's class, so the default stands for both dark themes)
 THEMES = (("dark", "classic"), ("light", "yatharth-light"))
@@ -634,6 +645,40 @@ def _unpulled_problems(engine, up):
     return out
 
 
+def _failed_problems(engine, fr):
+    """The reads that fail (romp-manager's rulings after PR 976's round 1): with no reading in the shell, an opening's pull
+    answered with an error status and one that fails in transit each end with Usage disabled and the line USAGE_ERR, never
+    USAGE_NONE, and the card open; a later opening whose pull reads the lab's reading shows Usage enabled with neither line."""
+    out = []
+    where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
+    pre = fr.get("premise") or {}
+    if pre.get("boots", 0) < 1 or pre.get("readout") != "":
+        out.append("%s: the shell holds a reading before the card opens (the leg's premise): %r" % (where, pre))
+
+    def not_failed(u):
+        return (not u or u.get("disabled") is not True or not u.get("err") or u["err"].get("shown") is not True
+                or u["err"].get("text") != USAGE_ERR or not u.get("line") or u["line"].get("shown") is not False)
+
+    def card_closed(sh):
+        return not sh.get("settingsOpen") or sh.get("cardHidden") is not False or sh.get("usage") or sh.get("acts") != []
+    for key, what in (("status", "the kernel answered the opening's pull with an error status (%d)" % ERROR_STATUS),
+                      ("transit", "the opening's pull failed in transit")):
+        t = fr.get(key) or {}
+        if not t.get("asked"):
+            out.append("%s: %s, and the opening's ask never ended (the loader still up): %r" % (where, what, t.get("usage")))
+        if not_failed(t.get("usage")):
+            out.append("%s: %s, and Usage is not disabled with the line %r (and without %r): %r" % (where, what, USAGE_ERR, USAGE_NONE, t.get("usage")))
+        if card_closed(t.get("shell") or {}):
+            out.append("%s: %s, and the card closed or reached the shell: %r" % (where, what, t.get("shell")))
+    lab = fr.get("lab") or {}
+    u = lab.get("usage")
+    if not lab.get("asked") or not u or u.get("disabled") is not False or (u.get("line") or {}).get("shown") is not False \
+            or (u.get("err") or {"shown": False}).get("shown") is not False:
+        out.append("%s: after the failures, an opening whose pull read the lab's reading does not show Usage enabled with "
+                   "neither line: %r" % (where, lab))
+    return out
+
+
 def _skew_problems(engine, sk):
     """The deploy skew (PR 976's round 1, kernel-1): the shell publishes its marker beside the phoneAct listener, the card shows
     its row where the marker is and not where it is missing (a shell from before the move, with the phone layout and the three
@@ -888,6 +933,7 @@ class MtabsFit(unittest.TestCase):
                "tunnels": TUNNELS, "tunnels2": TUNNELS2, "tunnelsDrop": TUNNELS_DROP,
                "tunnelsAttach": TUNNELS_ATTACH, "tunnelsNone": TUNNELS_NONE, "themes": [list(t) for t in THEMES],
                "desktopViewport": list(DESKTOP), "railViewports": [list(v) for v in RAIL], "wideViewport": list(WIDE),
+               "errorStatus": ERROR_STATUS,
                "result": os.path.join(self.lab, "result-%s.json" % engine)}
         cfg_path = os.path.join(self.lab, "cfg-%s.json" % engine)
         Path(cfg_path).write_text(json.dumps(cfg))
@@ -954,6 +1000,7 @@ class MtabsFit(unittest.TestCase):
         problems += _states_problems(engine, r["acts"])
         problems += _no_reading_problems(engine, r.get("noReading") or {"vp": list(ACTS)})
         problems += _unpulled_problems(engine, r.get("unpulled") or {"vp": list(ACTS)})
+        problems += _failed_problems(engine, r.get("failedReads") or {"vp": list(ACTS)})
         problems += _skew_problems(engine, r.get("skew") or {"vp": list(ACTS)})
         problems += _follow_problems(engine, r.get("follow") or {"vp": list(ACTS), "wide": list(WIDE)})
         problems += _contrast_problems(engine, r.get("contrast") or {})
