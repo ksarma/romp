@@ -51,7 +51,8 @@
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
-// cannot be asked for a reading).
+// cannot be asked for a reading); then, the card open and the marker deleted, the shell's layout word ({romp:'link'}) posted to
+// the card from the settings frame's own window, from the chat pane's window and from the shell's, the row read after each.
 // Then the row following the layout while the card is open, on a page of its own in a plain context (a fine pointer): the card
 // opened at cfg.actsViewport, the window widened to cfg.wideViewport and narrowed back with the card open, a host dropping
 // while it is wide (the shell's GET /tunnels answering cfg.tunnels2, then cfg.tunnelsDrop), and the row, the glyph and Usage
@@ -779,6 +780,48 @@ try {
     sk.older = await openRead();
     await page.evaluate(() => { window.__rompPhoneActs = true; delete window.__rompUsageReading; delete window.__rompUsagePull; });
     sk.cannotAsk = await openRead();
+    // ...then the layout word's source (romp-manager's ruling after PR 976's round 1): the card's {romp:'link'} listener acts on
+    // the word from the shell's own window alone. The card opened with its row shown (the marker is back) and the marker then
+    // deleted, so a word the listener acts on hides the row (the predicate it re-reads turns false). The word posted from the
+    // settings frame's own window, then from the chat pane's window, each followed from that same window by a probe word the
+    // card records as it arrives (posted after the word, so delivered after it), and the row read once the probe is in; then
+    // the word from the shell's window, which hides the row (the control: the listener is live), and with the marker restored
+    // the same word shows it again; the card closed
+    {
+      const ln = {};
+      await page.mouse.click(gear.left + gear.w / 2, gear.top + gear.h / 2);
+      await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+      const sf = settingsFrameOf(page);
+      if (!sf) throw new Error("no settings frame after the click (the skew leg's layout word)");
+      await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+      await frames(page);
+      const rowShown = () => sf.evaluate(() => { const row = document.getElementById("rs-pacts"); return !!row && !row.hidden && getComputedStyle(row).display !== "none"; });
+      const rowIs = (want) => sf.waitForFunction((w) => { const row = document.getElementById("rs-pacts"); return !!row && (!row.hidden && getComputedStyle(row).display !== "none") === w; }, want, { timeout: 5000 }).then(() => true, () => false);
+      const probeIn = (n) => sf.waitForFunction((k) => (window.__mtabsProbes || []).includes(k), n, { timeout: 5000 }).then(() => true, () => false);
+      ln.start = await rowShown();
+      await sf.evaluate(() => { window.__mtabsProbes = []; window.addEventListener("message", (e) => { if (e.data && e.data.romp === "mtabs-probe") window.__mtabsProbes.push(e.data.n); }); });
+      await page.evaluate(() => { delete window.__rompPhoneActs; });
+      await sf.evaluate(() => { window.postMessage({ romp: "link", link: "", mob: false }, "*"); window.postMessage({ romp: "mtabs-probe", n: 1 }, "*"); });
+      ln.selfArrived = await probeIn(1);
+      await frames(page);
+      ln.self = await rowShown();
+      const chat = page.frames().find((f) => f !== page.mainFrame() && /\/chat/.test(f.url()));
+      ln.chatFrame = !!chat;
+      if (chat) {
+        await chat.evaluate(() => { const t = window.parent.document.getElementById("f-settings").contentWindow;
+          t.postMessage({ romp: "link", link: "", mob: false }, "*"); t.postMessage({ romp: "mtabs-probe", n: 2 }, "*"); });
+        ln.paneArrived = await probeIn(2);
+        await frames(page);
+        ln.pane = await rowShown();
+      }
+      await page.evaluate(() => { document.getElementById("f-settings").contentWindow.postMessage({ romp: "link", link: "", mob: false }, "*"); });
+      ln.parentHid = await rowIs(false);
+      await page.evaluate(() => { window.__rompPhoneActs = true; document.getElementById("f-settings").contentWindow.postMessage({ romp: "link", link: "", mob: false }, "*"); });
+      ln.parentShowed = await rowIs(true);
+      await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
+      await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
+      sk.link = ln;
+    }
     out.skew = sk;
     await context.close();
   }

@@ -136,8 +136,11 @@ the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
 move has) the card opened shows no row (not displayed, its buttons boxless); and with the marker back and the usage script's
 two names deleted (__rompUsageReading and __rompUsagePull, a shell that cannot be asked) the card's Usage is enabled with no
-line. Then the row following the layout while the card is open, on a page of its own in a plain context (a fine pointer,
-so
+line; then, the card open with its row and the marker deleted (so a layout word the card acts on hides the row), the
+shell's layout word ({romp:'link'}) posted from the settings frame's own window and from the chat pane's window leaves
+the row shown, each read once a probe word posted after it from the same window has arrived, and the same word from the
+shell's window hides it (the control), and with the marker back shows it again. Then the row following the layout while
+the card is open, on a page of its own in a plain context (a fine pointer, so
 the layout turns at 820px), the shell's poll answering both hosts up: the card opened at 390px shows its row; the window
 widened to WIDE with the card open hides it (not displayed, its buttons boxless), a host drops there (the class left on the
 hidden glyph, the premise), and the window narrowed to 390px again shows the row, its glyph carrying no flash two frames on,
@@ -176,7 +179,9 @@ without the row handler's check of the disabled state (each closes the card and 
 are red where an error status reads as no reading and a failure leaves the line as it was (No reading yet after the
 error status and after the abort in transit), and the hung pull where the card's pull carries no bound (the loader still
 up); the row's heights are red where the loader is a line the reading's state does not have (the row taller while
-loading than with a reading, in both themes). The fallback's pin is red under the old rule restored (no wrap), and the
+loading than with a reading, in both themes). The layout word's source is red under a mutant of the card's link listener
+that does not check the word's source (the row hidden by the settings frame's own word and by the chat pane's). The
+fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
 closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
@@ -756,6 +761,19 @@ def _skew_problems(engine, sk):
     u = ca.get("usage")
     if not ca.get("rowShown") or not u or u.get("disabled") is not False or not u.get("line") or u["line"].get("shown") is not False:
         out.append("%s: where the shell cannot be asked for a reading, Usage is not enabled with no line, as its bar button was: %r" % (where, ca))
+    # the layout word's source (romp-manager's ruling after PR 976's round 1): the card's link listener acts on the word from the
+    # shell's own window alone. With the marker deleted, a word it acts on hides the row
+    ln = sk.get("link") or {}
+    if not ln.get("start") or not ln.get("selfArrived") or not ln.get("chatFrame") or not ln.get("paneArrived"):
+        out.append("%s: the layout word leg's premise (the card open with its row, both probe words delivered, a chat pane to post "
+                   "from): %r" % (where, ln))
+    if ln.get("self") is not True:
+        out.append("%s: a layout word posted from the settings frame's own window moved the card's row: %r" % (where, ln))
+    if ln.get("pane") is not True:
+        out.append("%s: a layout word posted from the chat pane's window moved the card's row: %r" % (where, ln))
+    if not ln.get("parentHid") or not ln.get("parentShowed"):
+        out.append("%s: the layout word from the shell's own window did not move the card's row (the control): hid %r, showed %r" % (
+            where, ln.get("parentHid"), ln.get("parentShowed")))
     return out
 
 
