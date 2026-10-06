@@ -68558,13 +68558,20 @@ def _boards():
 # (tests/test_pane_registry.py pins it against a fixture; the inline scripts gained the registry's reads). A URL source is a plain sandboxed iframe with no
 # token and no protocol; a state-root source (pane:<id>) is a static page under STATE/panes/<id>/ served at /pane/<id>/
 # with shim.js and theme.css beside it; a route source is a page the kernel already serves.
-_PANE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}\Z")   # \Z, not $: $ matches before a terminal newline, so an id ending in a newline would pass and then reach the landing's unquoted markup and CSS; \Z matches the whole string
+_PANE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")   # matched with fullmatch (not match): fullmatch requires the whole string, so an id ending in a newline is refused the way \Z was (plain $ matched before a terminal newline and let it through, and it then reached the landing's unquoted markup and CSS). $ keeps the pattern portable to a JavaScript RegExp (which has no \Z), so a client-side check built from _PANE_ID_RE.pattern reads the same rule
 _PANE_ROUTE_RE = re.compile(r"^/[A-Za-z0-9_./-]*$")
 _PANE_RESERVED = ("chat", "timeline", "fleet", "feed", "waiting", "files", "artifacts", "settings")   # "waiting": the fork's shipped Waiting pane
 # ids whose DERIVED element names (<id>-pane, gv-<id>, f-<id>) the shell already mints for something else: the band (tl-pane), the
 # hand-written gutters (gv-a to gv-d), the tab drag's rectangle (col-ghost, once gv-ghost); a `chat-` prefix is a chat column's
 # frame shape (f-chat-<n>) and is refused by prefix (the 1920 read: a data pane `tl` rendered id=tl-pane twice)
 _PANE_DERIVED_TAKEN = ("tl", "a", "b", "c", "d", "ghost", "col")
+# ids that are own-property names of JavaScript's Object.prototype AND match the id rule (today only "constructor": the
+# others, hasOwnProperty, toString, valueOf and the rest, carry capitals and fail [a-z][a-z0-9_-]). The landing's inline
+# scripts read a pane id as a plain-object key (`id in OBJ`, `OBJ[id]`), and the prototype answers for such a name even
+# when no pane was stored under it, so the id is not inert there. The census pin (tests/test_pane_registry.py) DERIVES
+# this set by running node (Object.getOwnPropertyNames(Object.prototype) filtered by the pattern) rather than trusting
+# this hand copy, and asserts _pane_check refuses each at every install road.
+_PANE_PROTO_NAMES = ("constructor",)
 _PANE_MEMBERS = ("id", "title", "source", "on", "experimental", "protocol")
 _PANE_TITLE_MAX = 24
 
@@ -68575,11 +68582,22 @@ def _pane_source_kind(src):
     if not isinstance(src, str) or not src:
         return None
     if src.startswith("pane:"):
-        return "state" if _PANE_ID_RE.match(src[5:] or "") else None
+        return "state" if _PANE_ID_RE.fullmatch(src[5:] or "") else None
     if re.match(r"^https?://[^\s]+$", src):
         return "url"
     if src.startswith("/") and not src.startswith("//") and _PANE_ROUTE_RE.match(src):
         return "route"
+    return None
+
+
+def _one_line_offense(s):
+    """The index of the first character that keeps a string from being one line of text, or None when it is clean:
+    a control character (Unicode category Cc, newline and the rest), a line or paragraph separator (U+2028, U+2029),
+    or an unpaired surrogate (category Cs, a code point that does not encode to UTF-8). Ordinary letters, accents,
+    emoji and punctuation are one line of text and return None."""
+    for i, c in enumerate(s):
+        if unicodedata.category(c) in ("Cc", "Cs") or c in ("\u2028", "\u2029"):
+            return i
     return None
 
 
@@ -68592,7 +68610,7 @@ def _pane_check(defn, allow_reserved=False):
     if unknown:
         return None, "unknown member%s %s (the members are %s)" % ("s" if len(unknown) > 1 else "", ", ".join(unknown), ", ".join(_PANE_MEMBERS))
     pid = defn.get("id")
-    if not isinstance(pid, str) or not _PANE_ID_RE.match(pid):
+    if not isinstance(pid, str) or not _PANE_ID_RE.fullmatch(pid):
         return None, "id must be a lowercase word, [a-z][a-z0-9_-]{0,31}"
     if pid in _PANE_RESERVED and not allow_reserved:
         return None, "id %r is a shipped pane's and is reserved" % pid
@@ -68600,9 +68618,22 @@ def _pane_check(defn, allow_reserved=False):
         return None, "id %r would collide with an element the shell derives (%s-pane, gv-%s, f-%s)" % (pid, pid, pid, pid)
     if pid.startswith("chat-") and not allow_reserved:
         return None, "an id beginning chat- is a chat column's shape (f-chat-<n>) and is refused"
+    if pid in _PANE_PROTO_NAMES and not allow_reserved:
+        return None, "id %r is a name present on every JavaScript object through Object.prototype and is refused (it is not inert where a pane id is read as an object key)" % pid
     title = defn.get("title", pid[:1].upper() + pid[1:])
     if not isinstance(title, str) or not title.strip() or len(title) > _PANE_TITLE_MAX:
         return None, "title must be 1 to %d characters" % _PANE_TITLE_MAX
+    # A title, the id and a source are each one line of text: refuse a control character, a line or paragraph
+    # separator (U+2028/U+2029), or an unpaired surrogate, naming the field and the first offending index. Such a
+    # title otherwise rode the shim's LABEL and the landing's title sinks, and a surrogate there broke _send's strict
+    # body.encode('utf-8') so the whole landing served a 500; a newline in a title folded the bell row; a control
+    # character or surrogate in a URL source rode the iframe's data-src the same way. The id is already confined to
+    # [a-z][a-z0-9_-] above, so this never fires for it; it is held to the one rule in one place for defence in depth.
+    for _field, _val in (("id", pid), ("title", title), ("source", defn.get("source"))):
+        if isinstance(_val, str):
+            _bad = _one_line_offense(_val)
+            if _bad is not None:
+                return None, "%s must be one line of text (a control character or unpaired surrogate at position %d)" % (_field, _bad)
     src = defn.get("source")
     kind = _pane_source_kind(src)
     if kind is None:
@@ -68690,7 +68721,7 @@ def _panes_snapshot():
         if err:
             if (str(fp), err) not in _PANES_BAD:
                 _PANES_BAD.add((str(fp), err))
-                sys.stderr.write("[panes] %s skipped: %s\n" % (fp, err))
+                sys.stderr.write("[panes] %s skipped: %s\n" % (repr(str(fp)), err))
             continue
         out[defn["id"]] = defn
     # the revision is a digest of the CHECKED records (the 1919 read, still standing at 1922): a re-define of an identical record,
