@@ -36,12 +36,14 @@
 // reviewer's round 7 (regression-1) dropped both rows with their keys, so the served test asserts none. The shell's own boot rows
 // (deeplink, tap-pending) are main's and stay out of the read; a row re-added under another what or surface is the fake-DOM
 // harness's to catch (tests/test_pane_state_broadcast.py LazyPanes reads every clientDiag message the shell sends).
-// Prints one RESULT: JSON line (cfg.resultPath gets the same object). cfg.healthz names the LAB port and is asserted before any request;
+// Hands its record to the Python side through tests/lab_result.cjs (the record to the drive's result file, one short RESULT: line
+// naming it). cfg.healthz names the LAB port and is asserted before any request;
 // a live kernel is never touched. Chromium alone: WebKit's failure detector is the 30 s backstop (no load event), which would cost 30 s a
 // case for the same shell lines. Synthetic sessions only.
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import http from "node:http";
+import lab from "./lab_result.cjs";
 
 const require = createRequire(process.env.EXT_PKG);
 const playwright = require("playwright");
@@ -51,8 +53,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = { case: cfg.case, t: {}, errors: [], requests: [] };
 const result = async (extra) => {
   Object.assign(out, extra || {});
-  if (cfg.resultPath) { try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { out.resultWriteError = String(e).slice(0, 200); } }
-  fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+  lab.writeResult(cfg, out);
   try { await browser.close(); } catch (e) { /* closing */ }
   process.exit(0);
 };

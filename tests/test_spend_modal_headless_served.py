@@ -30,6 +30,7 @@ km = load_source("romp_kernel_spendmodal", os.path.join(BIN, "romp-kernel"))
 
 import sys
 sys.path.insert(0, HERE)
+import lab_result   # noqa: E402
 import test_spend_detail as _sd   # noqa: E402  the same synthetic world (the module, not its classes:
 #                                   an imported TestCase would be collected here a second time)
 write_ledger, WEB, API, TESTS = _sd.write_ledger, _sd.WEB, _sd.API, _sd.TESTS
@@ -146,11 +147,14 @@ class SpendModalServed(unittest.TestCase):
 
     def test_click_opens_the_modal_with_table_and_stacked_histogram_and_escape_closes_it(self):
         shots = os.environ.get("ROMP_SHOTS", "")
-        env = dict(os.environ, NODE_PATH=self.node_path)
+        lab = os.path.join(self.td.name, "driver-result")   # the drive's result file and nonce (tests/lab_result.py), in a directory of its own
+        os.makedirs(lab, exist_ok=True)
+        tgt = lab_result.target(lab)
+        env = dict(os.environ, NODE_PATH=self.node_path, **lab_result.env(tgt))
         r = subprocess.run(["node", os.path.join(HERE, "spend_modal_headless.js"), "http://127.0.0.1:%d/" % self.port, shots],
                            capture_output=True, text=True, timeout=180, env=env)
         self.assertEqual(r.returncode, 0, "the driver failed:\n" + r.stderr[-3000:])
-        o = json.loads(r.stdout.strip().splitlines()[-1])
+        o = lab_result.read(r, tgt)
         self.assertTrue(o["hiddenBefore"], "closed until the click")
         # T247d: the desktop hover ends in the affordance line, in the footnote style; the phone panel does not carry it
         self.assertEqual(o["hoverHint"]["text"], "Click for the full breakdown by session.", o["hoverHint"])

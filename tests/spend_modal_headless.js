@@ -1,8 +1,10 @@
 // Drives the served landing page (tests/test_spend_modal_headless_served.py serves it) with playwright:
 // click the usage readout → the spend modal opens over the dimmed dashboard, renders the per-session
 // table + the stacked histogram with its unattributed stack, the toggles re-render, a segment hover
-// shows the tooltip, Escape closes it. Prints one JSON line of observations; screenshots when asked.
+// shows the tooltip, Escape closes it. Hands its observations to the Python side through tests/lab_result.cjs (the drive's
+// target rides the LAB_RESULT environment variable); screenshots when asked.
 const { chromium } = require('playwright');
+const lab = require('./lab_result.cjs');
 (async () => {
   const url = process.argv[2], shots = process.argv[3] || '';
   const b = await chromium.launch();
@@ -252,6 +254,6 @@ const { chromium } = require('playwright');
     first: (document.querySelector('#rsp-panel .rsp-tbl tbody tr') || {}).textContent || '' }));
   await pg.click('#rsp-panel [data-act="order:spend"]');   // restore the default for whoever runs next
   const mobile = { railHidden, panelOpened: true, modalOpened: true, btn, panelHint , persisted };
-  console.log(JSON.stringify({ merge, yourOrder, hoverHint, hiddenBefore, loaderSeen, out, days, tip, tipOn, xh, xhAfter, xhDay, xhDays, xhShort, afterResize, week, hBefore, hiddenAfter, hiddenAfterTap, hiddenAfterDrag, lightErr, lightBtn, dim, timeout, mobile, errs }));
+  lab.writeResult(lab.targetFromEnv(), { merge, yourOrder, hoverHint, hiddenBefore, loaderSeen, out, days, tip, tipOn, xh, xhAfter, xhDay, xhDays, xhShort, afterResize, week, hBefore, hiddenAfter, hiddenAfterTap, hiddenAfterDrag, lightErr, lightBtn, dim, timeout, mobile, errs });
   await b.close();
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -25,6 +25,7 @@ sessions only; no real data; the lab kernel uses its own port, asserted on /heal
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import shutil
 import signal
@@ -96,7 +97,9 @@ class LazyPaneLayoutFlip(unittest.TestCase):
 
     def _drive(self, case, recover=None):
         cfg = {"case": case, "recover": recover or "", "url": "http://127.0.0.1:%d/?token=%s" % (self.port, self.token), "healthz": "http://127.0.0.1:%d/healthz" % self.port,
-               "diag": self.diag, "settleMs": 1200, "holdMs": 1500, "slowMs": 34000, "resultPath": os.path.join(self.lab, "result-%s%s.json" % (case, "-" + recover if recover else ""))}
+               "diag": self.diag, "settleMs": 1200, "holdMs": 1500, "slowMs": 34000}
+        tgt = lab_result.target(self.lab, case + ("-" + recover if recover else ""))   # this drive's result file and nonce (tests/lab_result.py)
+        cfg.update(tgt)
         cfg_path = os.path.join(self.lab, "cfg-%s%s.json" % (case, "-" + recover if recover else ""))
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
@@ -107,9 +110,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         if p.returncode == 3:
             self.skipTest("no playwright chromium on this box: the served leg needs one (CI installs it)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         self.assertNotIn("died", r, "driver aborted early: %r (kernel log tail: %s)" % (r.get("died"), Path(self.klog).read_text()[-800:]))
         self.assertEqual(sorted(r.get("bootUp") or []), ["chat", "feed"], "the phone's two eager panes came up before the tap: %r" % (r.get("bootUp"),))
         b = r.get("boot") or {}
