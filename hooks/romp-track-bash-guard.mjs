@@ -685,14 +685,12 @@
 // defines) is one the hook cannot read while a path is bound, and so is every bare name through a PATH the resolver does not read (fork
 // main's rule, again since fork PR 975's item 8 as ruled: a mention of PATH makes it unreadable only under a head that may assign it in
 // this shell, THE ASSIGNING HEAD, so a `grep -c PATH f` no longer does, and no narrowing to a made path's name is kept, since one rests
-// on knowing every file the command makes, which a list of programs cannot show), and never a name the three shells run as their own
-// builtin where the shell itself looks it up (unquoted, and while THE SHELL'S GATE
-// is not seen: no `enable`, `disable` or `zmodload` in the command, nor one met by a spelling the scan does not read, nor a text or a
-// command name the guard does not read run in this shell); behind a wrapper some shell runs itself (DROP_WRAPPERS, derived from
-// WRAPPER_OPT: `command`, `builtin`, `exec`, `time`, zsh's `noglob`, `nocorrect` and `-`, with the options the table parses for them)
-// such a name is refused and the refusal asks for those words dropped, and where no wrapper can be dropped and the name is a builtin or
-// a reserved word of one of the three shells with no program of that name on the guard's PATH (cd, export, enable, source), or a
-// function the command defines, the refusal names no remedy, as THE SOURCED NAME's refusal of a name `.` or `source` reads does. THE
+// on knowing every file the command makes, which a list of programs cannot show), a builtin's or a keyword's name among them (fork
+// main's reading, again since fork PR 975's round 2, R2: the exemption for a name the three shells run as their own came out, since a
+// function or an alias the guard does not read, or dash's `%builtin` PATH entry, makes the shell look the name up after all); where the
+// name is a builtin or a reserved word of one of the three shells with no program of that name on the guard's PATH (cd, export, enable,
+// source), or a function the command defines, or another bare name of the command is refused so (`exec echo`), the refusal names no
+// remedy, as THE SOURCED NAME's refusal of a name `.` or `source` reads does. THE
 // COMPOUND PRODUCER: a keyword compound before the pipe (`for i in 1; do echo 'cp a b'; done | bash`; while, until, if and case
 // alike) prints what the list from its head to its closer prints, and the head runs the body a number of times the model does not
 // count, so a printer inside it makes the list UNRESOLVABLE (placed on the closer segment that carries the pipe, listOutput naming
@@ -1292,18 +1290,11 @@ const PREFIXES = new Set(['sudo', 'command', 'builtin', 'exec', 'nice', 'nohup',
 // sed, tee, python, the shells) keep their basename: `/usr/bin/cp a b` is the copy it is, and the wrappers (PREFIXES) their peeling: `/usr/bin/env`
 // and `/usr/bin/time` are the programs on disk.
 const SHELL_OWN = new Set(['set', 'shift', 'eval', 'trap', 'source', '.', 'emulate', 'mapfile', 'readarray', 'alias', 'unalias', 'hash', 'cd', 'chdir', 'pushd', 'popd', 'export', 'declare', 'typeset', 'local', 'readonly', 'unset', 'read', 'getopts', 'let', 'shopt', 'setopt', 'unsetopt']);
-// THE SHELL'S OWN NAME (the sixth verify round's tg-t6-3, 2026-10-04): the names that are a builtin or a keyword in bash, zsh AND dash alike (`type -t`
-// in bash, `whence -w` in zsh, `type` in dash, asked of every name bash's `compgen -b` and `compgen -k` list: bash 5.2, zsh 5.9, dash 0.5.12), exactly
-// their intersection (the seventh verify round's tg-t7-1: `builtin` is no command of dash, which looks the name up through PATH, so after a backup
-// stashed a shell as `builtin`, `echo 'cp ..' | builtin` ran it in dash). The rows test reds on a name one of the three does not run as its own: it
-// asks each shell present on its runner, and checks a shell absent there against the per-shell lists derived on this box and committed beside it
-// (SHELL_OWN_DERIVED). Each shell runs such a name before any lookup through PATH, so a bare command name in this set names no file a copy, a move or a
-// link made (THE BOUND NAME, boundRoad). A name that is a builtin in some of the three only is not here, and a name added later is not either until it
-// is asked so: the restricted side
-const ALL_SHELL_BUILTINS = new Set(['!', '.', ':', '[', 'alias', 'bg', 'break', 'case', 'cd', 'command', 'continue', 'do', 'done', 'echo', 'elif', 'else', 'esac', 'eval', 'exec', 'exit', 'export', 'false', 'fg', 'fi', 'for', 'getopts', 'hash', 'if', 'jobs', 'kill', 'local', 'printf', 'pwd', 'read', 'readonly', 'return', 'set', 'shift', 'test', 'then', 'times', 'trap', 'true', 'type', 'ulimit', 'umask', 'unalias', 'unset', 'until', 'wait', 'while', '{', '}']);
-// THE SHELL'S GATE (the seventh verify round's tg-m7-1): the commands that may turn a builtin off, so its name is looked up through PATH: bash's `enable`
-// (`enable -n echo`), zsh's `disable` and `zmodload` (`zmodload -F zsh/rlimits -b:ulimit` takes ulimit out); the command that may run one holds THE SHELL'S
-// OWN NAME for none of its names (gateBuiltins, mentionsBuiltinGate)
+// THE SHELL'S GATE (the seventh verify round's tg-m7-1): the commands that may turn a builtin on or off: bash's `enable` (`enable -f FILE NAME` loads
+// one, `enable -n echo` takes one out), zsh's `disable` and `zmodload` (a module's builtins, `zmodload -F zsh/rlimits -b:ulimit`). THE ASSIGNING HEAD
+// reads it (mentionMayAssign): under a command that may run one, a builtin may stand under any name and assign a name it is given, so every mention
+// taints (gateBuiltins, mentionsBuiltinGate). Since fork PR 975's round 2 (R2) no exemption for a builtin's name rests on it: every bare name under a
+// PATH the guard does not read is refused once a path is bound, the builtins included, as at fork main
 const BUILTIN_GATES = new Set(['enable', 'disable', 'zmodload']);
 // whether a text mentions a name of BUILTIN_GATES as a word anywhere, quotes and backslashes taken out (the shell's quote removal: `en''able`, `\enable`),
 // in a loop body, a trap action, an eval's or a function's text alike: the scan before the walk (THE SHELL'S GATE); a word only partly the name
@@ -3062,13 +3053,6 @@ const WRAPPER_OPT = {
   nocorrect: { argShort: '', flagShort: '', argLong: [], flagLong: [] },
   '-': { argShort: '', flagShort: '', argLong: [], flagLong: [] },
 };
-// THE WRAPPER DROPPED's words (boundRoad; the reviewer's t8-4 on fork PR 975's round 1 pass, 2026-10-05): the wrappers WRAPPER_OPT leaves without its
-// `external` mark, the words some shell runs itself (`command`, `builtin`, `exec`, `time`, zsh's `noglob`, `nocorrect` and `-`), derived from the
-// table so a wrapper added there takes its place here. Behind each, some shell looks the name after it up through PATH (zsh's `command`, bash's
-// `exec`, dash's `time`) or looks the wrapper word itself up through PATH (dash has no `builtin`, and bash and dash have no `noglob`, `nocorrect`
-// or `-`), so a name the three shells run as their own is refused behind them after a copy or a backup, and the words dropped, with the options
-// and values the table parses for them (`command -p`, `time -p`, `exec -a NAME`, `exec -cl`), leave the shell's own lookup
-const DROP_WRAPPERS = new Set(Object.keys(WRAPPER_OPT).filter((n) => WRAPPER_OPT[n].external !== true));
 
 // Words of a segment after the command's prefixes (sudo and its options, env with its options and
 // K=V arguments, nice, the round-4 wrappers, ...), leading assignments and reserved words. Returns
@@ -4609,7 +4593,7 @@ function literalOutput(inner, shell, depth = 0) {
 // (`( (exit); echo ..)` prints). `return`, `break` and `continue` stay silent: misused in a subshell they end nothing in every shell (bash ran
 // the printer after each, dash after `break` and `continue`, measured), so a printer after one prints and is read as before.
 const SILENT_COMMANDS = new Set(['true', ':', 'false', 'test', '[', 'sleep', 'shift', 'break', 'continue', 'return', 'wait']);
-// whether the guard's own PATH holds an executable file of that name (THE WRAPPER DROPPED's no-remedy form: a builtin no program stands for, such as
+// whether the guard's own PATH holds an executable file of that name (M2's no-remedy form for a bare name: a builtin no program stands for, such as
 // cd, export or ulimit on most systems, has no full path to name), each name asked once
 const programOnPathMemo = new Map();
 function programOnPath(name) {
@@ -5570,10 +5554,8 @@ export function extractWriteTargets(command, cwd, shell = null, headPoison = nul
   // `headPoison` (THE TWO WALKS, judge): `off`, walk with THE UNREAD HEAD's poison set aside, every name read as fork main read it; `seen`, set where the walk
   // met a head whose poison it took or set aside, so judge walks a second time only then
   const walk = (headGate) => {
-    const builtinsOff = { seen: mentionsBuiltinGate(command), given: [], withdrawn: [] };   // THE SHELL'S GATE, set before the walk where the text mentions a gate
-    const r = extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0, builtinsOff, headPoison: headPoison || { off: false, seen: false }, headGate });
-    r.unresolved.push(...builtinsOff.withdrawn);   // the exemptions the walk withdrew where it met the gate after them (gateBuiltins)
-    return r;
+    const builtinsOff = { seen: mentionsBuiltinGate(command) };   // THE SHELL'S GATE, set before the walk where the text mentions a gate
+    return extract(command, { dir: cwd || null, unknownDir: !cwd, unknownWhy: cwd ? null : 'no working directory is known for it', shell, depth: 0, builtinsOff, headPoison: headPoison || { off: false, seen: false }, headGate });
   };
   // THE ASSIGNING HEAD's function clause (mentionMayAssign): whether a head may be a function when it runs is a property of the WHOLE command, as THE
   // SHELL'S GATE is, since a definition later in the text may run first (a loop's next pass, a function body called after it). The walk that let a mention
@@ -5708,16 +5690,16 @@ function extractIn(command, ctx) {
     const saved = activeLinks; let spelled = null; activeLinks = null; try { spelled = literalPath(destText, cwdAt); } finally { activeLinks = saved; }
     for (const k of [literalPath(destText, cwdAt), spelled]) if (k) { let set = bound.get(k); if (!set) bound.set(k, (set = new Set())); set.add(value); }
   };
-  const builtinsOff = ctx.builtinsOff || { seen: false, given: [], withdrawn: [] };   // THE SHELL'S GATE (gateBuiltins, below): `seen`, the command may run an `enable` (bash) or a `disable` or `zmodload` (zsh), which may turn a builtin off so its name is looked up through PATH (THE SHELL'S OWN NAME holds no more); `given`, the refusals an exemption withheld; `withdrawn`, those recorded since
+  const builtinsOff = ctx.builtinsOff || { seen: false };   // THE SHELL'S GATE (gateBuiltins, below): `seen`, the command may run an `enable` (bash) or a `disable` or `zmodload` (zsh), which may turn a builtin on or off, so a builtin may stand under any name (THE ASSIGNING HEAD then taints every mention: mentionMayAssign)
   const headPoison = ctx.headPoison || { off: false, seen: false };   // THE TWO WALKS (judge): the switch, carried into every text the command hands over
   const headGate = ctx.headGate || { off: false, exempted: new Set(), defined: new Set(), anyDefined: false };   // THE ASSIGNING HEAD's function clause (extractWriteTargets), shared by every text
-  // THE SHELL'S GATE (the seventh verify round's tg-m7-1, 2026-10-05): whether the command may turn a builtin off is a property of the WHOLE command,
-  // not of the walk's order, since a name read before the gate may run after it (a loop's next pass, a trap action, a function called later: `for i in
-  // 1 2; do echo; enable -n echo; done` ran a script written into place as echo on the second pass in bash while allowed). It is set before the walk
-  // where the text mentions `enable`, `disable` or `zmodload` as a word anywhere (extractWriteTargets, mentionsBuiltinGate), and here where the walk
-  // meets one by a spelling that scan does not read (an ANSI-C quote, a brace expansion) or a text or a command name it does not read run in this shell
-  // (THE UNHELD ROAD), which may run one; each exemption THE SHELL'S OWN NAME gave before that point is withdrawn, its refusal recorded (the restricted side)
-  const gateBuiltins = () => { builtinsOff.seen = true; builtinsOff.withdrawn.push(...builtinsOff.given.splice(0)); };
+  // THE SHELL'S GATE (the seventh verify round's tg-m7-1, 2026-10-05): whether the command may turn a builtin on or off is a property of the WHOLE
+  // command, not of the walk's order, since a name read before the gate may run after it (a loop's next pass, a trap action, a function called later).
+  // It is set before the walk where the text mentions `enable`, `disable` or `zmodload` as a word anywhere (extractWriteTargets, mentionsBuiltinGate),
+  // and here where the walk meets one by a spelling that scan does not read (an ANSI-C quote, a brace expansion) or a text or a command name it does
+  // not read run in this shell (THE UNHELD ROAD), which may run one. THE ASSIGNING HEAD reads it; the exemption it also withdrew (THE SHELL'S OWN NAME)
+  // came out in fork PR 975's round 2 (R2), so nothing is kept aside to withdraw
+  const gateBuiltins = () => { builtinsOff.seen = true; };
   const aliasChain = ctx.aliasChain || new Set();
   // THE HEAD CANDIDATES (round 6's fourth commit, 2026-09-21; the residuals lens found `c=cp; export c; $c a b`, `(c=mv); c=cp; $c a b`,
   // `c=cp; echo '$c'; $c a b`, `declare c=cp; $c a b`, `eval c=cp` then `$c a b`, `c=cp bash -c '$c a b'` and `f() { local c=cp; $c a b; }; f`
@@ -6416,7 +6398,7 @@ function extractIn(command, ctx) {
     if (positionals !== null && positionals !== UNKNOWN_POSITIONALS) rebind(UNKNOWN_POSITIONALS, `${subject} may rebind the positional parameters`);   // THE POSITIONAL VALUE: the text runs in this shell and may set or shift them; a list already values not read keeps its earlier reason (a spliced reading's own, THE CONDITIONAL TEXT's)
     const s = walkIdx >= 0 ? segments[walkIdx] : null;
     if (s && (s.op === '|' || s.op === '&')) return;   // a member that pipes into another command, or a backgrounded one, runs in a subshell in every shell (zsh keeps a pipeline's LAST member in this shell, whose op is not `|`; the bind above took the frame's reason), so its text moves nothing here: `$c echo 'cp a b' | bash` keeps the consumer's by-name refusal
-    gateBuiltins();   // THE SHELL'S GATE: a text not read, run here, may turn a builtin off
+    gateBuiltins();   // THE SHELL'S GATE: a text not read, run here, may turn a builtin on or off
     moveUnknown(`${subject} may move the shell, so where the shell is when a later command runs is not known`);   // THE MOVED SHELL: and may cd
     movedHere(); markFunctionBody();   // in a function body, the body moves the shell when the function is called (cdFunctions), as a literal cd there does
   };
@@ -6906,17 +6888,14 @@ function extractIn(command, ctx) {
   const pieceVia = (p) => ` as a further command dash reads after the \`${p.op}\` inside a \`${p.construct}\` (bash and zsh compare there and run nothing)`;
   // A write target the hook cannot read (the header). A process substitution (`>(cmd)`) is a pipe and
   // never a file, so it is dropped, not recorded.
-  const unreadEntry = (w, how, why = null) => {   // the record cannotRead makes, built where the walk stands (THE SHELL'S OWN NAME keeps one aside: boundRoad)
-    const here = unknownDir ? null : dir;
-    const held = unknownDir && heldDir && heldDir.real ? heldDir.dir : null;   // THE HELD DIRECTORY: the shell's own directory, which a program behind an external wrapper did not move, puts its project in play (inPlayFor; fork PR 975's round 1, A)
-    return {
-      raw: w.raw, how: how + viaOf(), dir: here, held, at: w.at ? literalPath(w.at, here) : null, numeric: w.numeric ? w.text : null,
-      text: w.text, marks: w.marks, why,
-    };
-  };
   const cannotRead = (w, how, why = null) => {
     if (/^[<>]\(/.test(w.text) && !(why && why.kind === 'unresolvableReading')) return;   // one whose reading the resolver could not establish, or whose command may read a text this command feeds, IS recorded (round 6's fourth commit: `echo 'cp a b' | bash <(cat)` ran the piped text in bash while the mark was dropped with the word)
-    unresolved.push(unreadEntry(w, how, why));
+    const here = unknownDir ? null : dir;
+    const held = unknownDir && heldDir && heldDir.real ? heldDir.dir : null;   // THE HELD DIRECTORY: the shell's own directory, which a program behind an external wrapper did not move, puts its project in play (inPlayFor; fork PR 975's round 1, A)
+    unresolved.push({
+      raw: w.raw, how: how + viaOf(), dir: here, held, at: w.at ? literalPath(w.at, here) : null, numeric: w.numeric ? w.text : null,
+      text: w.text, marks: w.marks, why,
+    });
   };
   const add = (w, how) => {
     try { addInner(w, how); }
@@ -8089,7 +8068,7 @@ function extractIn(command, ctx) {
       const prefix = s.words.slice(0, hIdx).find((w) => /^PATH=/.test(w.raw));
       return prefix ? (prefix.literal && !prefix.text.includes('\0') ? prefix.text.slice(5) : null) : (vars.has('PATH') ? vars.get('PATH') : (process.env.PATH || ''));
     };
-    const boundRoad = (hw, hIdx, own = false) => {   // `own`: the head is the word the shell itself looks up (no wrapper before it); the segment's first wrapper is one too (shellRuns, below), and a name a wrapper runs is not
+    const boundRoad = (hw, hIdx) => {
       if (!hw || !bound.size) return;
       const rootMark = [...aliasChain].find((m) => m.startsWith('\0broot:')) || ('\0broot:' + (++boundRootSeq));
       if (!boundRoots.has(rootMark)) boundRoots.set(rootMark, new Set());
@@ -8134,17 +8113,10 @@ function extractIn(command, ctx) {
         // b.service; echo done` was refused naming echo); the narrowing let a file made under a name the binding does not hold pass (a directory copied, a
         // program outside the model, and the reviewer's uniq, gunzip, split, shuf -o, tee and dd), and each repair of it was a list. A mention now makes a
         // name unreadable only under a head that can assign it in this shell (THE ASSIGNING HEAD, recordSegment), so PATH is unreadable only where this
-        // shell may change it, and fork main's refusal of every bare name holds there with no list
-        // THE SHELL'S OWN NAME (the sixth verify round's tg-t6-3, 2026-10-04): a bare name the shell itself runs as a builtin or a keyword in bash, zsh and
-        // dash alike (ALL_SHELL_BUILTINS) is looked up through no PATH, so neither refusal below applies to it (`cp -b ..; PATH=$X:$PATH; cd <dir>` and
-        // `.. export X=1` were refused although no made file can be what the shell runs). Only the shell's own lookup (`own`: the segment's first command
-        // word) and only a name spelled with no quoting (a quoted keyword is no keyword: the shells looked `'if'` and `"while"` up through PATH and ran a
-        // backup's stash; a quoted builtin takes the restricted side with it). A name a wrapper runs is the wrapper's lookup, whatever spells the wrapper
-        // (`env cd` searches PATH, and `exec echo` in bash and `command echo` in zsh do too: the seventh verify round's tg-m7-4; `/usr/bin/env echo` and a
-        // copy of env the command made ran the stash while allowed before this round, a wrapper spelled by a path naming no lookup). And none once the
-        // command may turn a builtin off (THE SHELL'S GATE: `builtinsOff.seen`, set for the whole command, an exemption given before it withdrawn,
-        // gateBuiltins). The splice below still reads a made file of that name (the refuse side)
-        const shellRuns = (own || hIdx === rawHeadIndexOf(seg.words)) && (!hw.marks || /^u+$/.test(hw.marks)) && ALL_SHELL_BUILTINS.has(bareName) && !builtinsOff.seen;   // the first wrapper is the shell's own lookup too (`exec` or `command` there is the builtin)
+        // shell may change it, and fork main's refusal of every bare name holds there with no list. A builtin's or a keyword's name is refused as any
+        // other is (fork PR 975's round 2, R2): the exemption for a name the three shells run as their own came out, since the shell runs a function or
+        // an alias of that name first, which a table write the guard does not read defines (zsh's `printf -v 'functions[echo]' ..`, bash's
+        // `BASH_ALIASES[echo]=..`: fresh-2), and dash looks echo, printf and test up through PATH before a `%builtin` entry (correctness-3)
         // THE BOUND NAME survives an unknown directory (an audit of fork PR 975's body, 2026-10-05, its backup-after-cd case and its gate behind a command
         // named by a variable): the refusal is about a name looked up through a PATH the guard does not read, a lookup that may find a file the command
         // made under that name; whether the cwd is
@@ -8153,29 +8125,13 @@ function extractIn(command, ctx) {
         // enable; $e -n echo; echo`, whose unread head leaves the directory unknown, ran the script written into place as echo in bash). The refusal
         // holds only while a project is in play (judgeUnresolved's inPlayFor, which a cwd in no project fails), as before
         const boundWhy = pathValue != null ? null : { kind: 'boundName', text: `\`${hw.raw}\` is looked up through a PATH I do not read here, and this command made a path by copying, moving or linking, or by writing it, so which file it names is not known` };
-        // THE WRAPPER DROPPED (fork PR 975's round 1 pass, the reviewer's M2 gap, 2026-10-05, and its t8-4): a name the three shells run as their own, refused only
-        // because wrappers some shell runs itself run it (DROP_WRAPPERS, derived from WRAPPER_OPT: behind each, some shell looks the name or the wrapper word
-        // up through PATH), names the one remedy that always lifts it, those wrappers' words dropped as spelled, with the options and values the table parses
-        // for them (`command -p`, `time -p`, `exec -a NAME`), which leaves the shell's own lookup; the program's full path named no program for cd, export or
-        // ulimit. Only while the exemption would hold without them (spelled with no quoting, no gate seen), and only for the head, every wrapper before it one
-        // of those. Where no wrapper can be dropped (an external one, a quoted name, a gate seen) and the name is a builtin or a reserved word of any of the
-        // three shells with no program of that name on the guard's PATH, no remedy names a spelling that lifts the refusal, so none is offered (M2's
-        // no-remedy form; the reviewer's t8-10: a bare cd after a backup and a gate's mention was told to spell cd by a program's full path; since item 8
-        // as ruled refuses every bare name again, `enable`, `source` and `zmodload`, builtins of some of the shells only, meet it too, and so does a call of
-        // a function the command defines, which no program stands for)
-        // the wrappers peeled before this word (commandOf's wrapperIdx), and whether every one is a word some shell runs itself (DROP_WRAPPERS): then the
-        // words from the segment's head to this one, as spelled (the wrapper names and the options the table parses for them, `command -p`, `exec -a NAME`),
-        // are the span to drop, which leaves the shell's own lookup; the head bare name and a peeled-wrapper one (`exec command`, where `command` is a
-        // bound name) both reach it
-        const dropEligible = boundWhy && !shellRuns && ALL_SHELL_BUILTINS.has(bareName) && (!hw.marks || /^u+$/.test(hw.marks)) && !builtinsOff.seen;
-        const wc = dropEligible ? commandOf(seg.words) : null;
-        const wrapsBefore = wc && wc.wrapperIdx ? wc.wrapperIdx.filter((j) => j < hIdx) : [];
-        const headIdxOf = rawHeadIndexOf(seg.words);
-        const dropWords = seg.words.slice(headIdxOf, hIdx).map((w) => w.raw);   // the wrapper words to drop, as spelled (THE WRAPPER DROPPED's remedy); not a renderer's spelling, so no raw-join of a command's own words
-        const drop = dropEligible && wrapsBefore.length && headIdxOf >= 0 && wc.wrapperIdx[0] === headIdxOf && wrapsBefore.every((j, i) => DROP_WRAPPERS.has(wc.wrappers[i])) ? { name: bareName, wrappers: dropWords.join(' ') } : null;
-        const noRemedy = !!boundWhy && !drop && ((Object.hasOwn(SHELL_WORD_ASSIGNS, bareName) && !programOnPath(bareName)) || definedFunctions.has(bareName));   // a builtin or a reserved word of any of the three shells (the census's population) with no program of its name, or a function the command defines: no full path to name
-        if (boundWhy && !shellRuns) cannotRead(hw, 'command name', drop ? { ...boundWhy, drop } : noRemedy ? { ...boundWhy, noRemedy } : boundWhy);
-        else if (boundWhy) builtinsOff.given.push(unreadEntry(hw, 'command name', noRemedy ? { ...boundWhy, noRemedy } : boundWhy));   // the exemption, kept aside: withdrawn, its refusal recorded, if the walk meets the gate later (gateBuiltins), a gate that leaves no wrapper to drop
+        // M2's no-remedy form (the reviewer's t8-10 on fork PR 975's round 1 pass): where the name is a builtin or a reserved word of any of the three
+        // shells with no program of that name on the guard's PATH (cd, export, enable, source, `:`, a keyword), or a function the command defines, no full
+        // path names a program that stands for it, so no remedy is offered. The remedy that asked for precommand words dropped (THE WRAPPER DROPPED) came
+        // out with the exemption it led back to (R2): the name with its wrappers dropped is refused too. A name whose refusal would offer the full path
+        // offers none either where another bare name of the command is refused with none (judgeUnresolved: the full path for this one leaves that one)
+        const noRemedy = !!boundWhy && ((Object.hasOwn(SHELL_WORD_ASSIGNS, bareName) && !programOnPath(bareName)) || definedFunctions.has(bareName));   // a builtin or a reserved word of any of the three shells (the census's population) with no program of its name, or a function the command defines: no full path to name
+        if (boundWhy) cannotRead(hw, 'command name', noRemedy ? { ...boundWhy, noRemedy } : boundWhy);
         if (pathValue == null || unknownDir) { for (const abs of bound.keys()) if (path.basename(abs) === bareName) bindHead(abs); }
         else for (const d of pathValue.split(':')) { const abs = literalPath(path.join(d || '.', bareName), dir); if (abs && bound.has(abs)) bindHead(abs); }
       }
@@ -8530,7 +8486,7 @@ function extractIn(command, ctx) {
     // a function definition's name (`f() { .. }`, the words before an empty pair of parentheses, recordSegment's test) runs no command and is looked up
     // through no PATH, so THE BOUND NAME does not refuse it (since item 8 as ruled refuses every bare name again; fork main refused the definition itself)
     const definesName = seg.op === '(' && segments[idx + 1] && segments[idx + 1].paren === '(' && segments[idx + 2] && segments[idx + 2].paren === ')' && !(compoundHeadOf(seg.words) != null && Object.hasOwn(BODY_CLOSER, compoundHeadOf(seg.words)));
-    if (!definesName) boundRoad(headWord, headIdx, !cmd.wrapped);   // THE SHELL'S OWN NAME: the head is the shell's own lookup only where no wrapper runs it (`/usr/bin/env echo ..` after a backup stashed as echo ran the stash in bash and zsh while allowed before the seventh round, the wrapper spelled by a path naming no lookup)
+    if (!definesName) boundRoad(headWord, headIdx);
     for (const j of peeledIdx) if (j !== headIdx) boundRoad(seg.words[j], j);   // THE PEELED NAME: an external wrapper searches PATH for the name after it, and the shell for the first
     // THE VANISHING HEAD (round 6's tenth commit, 2026-09-22; the round's verifiers: `$c cp ../base/report.md report.md` ran the copy in every
     // shell while `$c` was read as the command name and allowed): a command name that is an expansion the command never gives a value may be
@@ -8547,7 +8503,7 @@ function extractIn(command, ctx) {
     if (unreadHead) unreadHead();   // THE UNREAD HEAD: the road after the readings (the comment at the head site says why)
     const asSpelled = cmd.args;
     let { name } = cmd;
-    if (BUILTIN_GATES.has(name)) gateBuiltins();   // THE SHELL'S GATE: THE SHELL'S OWN NAME holds for no name of a command that may run one, wherever it stands (boundRoad, gateBuiltins)
+    if (BUILTIN_GATES.has(name)) gateBuiltins();   // THE SHELL'S GATE: a command that may run one may put a builtin under any name, so THE ASSIGNING HEAD taints every later mention (mentionMayAssign)
     if (/^(python[0-9.]*|pypy[0-9]*)$/.test(name)) name = 'python';
     else if (name === 'nodejs') name = 'node';
     else if (/^zf_(mv|ln|rm|rmdir)$/.test(name)) name = name.slice(3);   // zsh/files' builtins are the coreutils commands by another name (round 6's third commit: `zmodload zsh/files; zf_mv a b` moved onto the tracked file in zsh)
@@ -9053,10 +9009,10 @@ function extractIn(command, ctx) {
         // THE SOURCED NAME (fork PR 975's round 1 pass, the reviewer's (b), S1, 2026-10-05): `.` and `source` look a name with no slash up through PATH, so
         // under a PATH the guard does not read, once this command has bound a path, the text that runs here may be a file the command made under that name,
         // as for a bare command name (THE BOUND NAME, every name since item 8 as ruled; `.` is the shell's own builtin, whose exemption made `. echo` pass
-        // while bash and zsh sourced a script the command wrote as echo, where fork main refused every bare name once a path was bound). Where `.` runs in
-        // this shell its file, never read, also withdraws `.`'s own exemption (THE SHELL'S GATE, unheldRoad), so `.` is refused as fork main refused it;
-        // piped or backgrounded no gate is taken, and this refusal is the one that holds (`. echo | cat` ran the script in bash and zsh). No remedy is
-        // offered: a full path for the file lifts the piped form alone (M2's no-remedy form)
+        // while bash and zsh sourced a script the command wrote as echo, where fork main refused every bare name once a path was bound). Since fork PR
+        // 975's round 2 (R2) took that exemption out, `.` and `source` are refused themselves at the head first, piped or not, as fork main refused
+        // them, and this refusal of the operand stands behind it. No remedy is offered: a full path for the file does not lift the head's refusal (M2's
+        // no-remedy form)
         const op0 = ops[0];
         if (op0 && op0.literal && op0.text && !op0.text.includes('/') && bound.size && pathValueAt(seg, seg.words.length - args.length) == null) cannotRead(op0, `\`${name}\` operand`, { kind: 'boundName', noRemedy: true, text: `\`${op0.raw}\` is looked up through a PATH I do not read here, and this command made a path by copying, moving or linking, or by writing it, so which file it names is not known` });
         if (fedName != null) { const fed = producerAt(idx) != null || (seg.stdin || []).some((x) => x.herestring || procsubOf(x) != null); const r = readInPlace(() => stdinBodies(idx, fdOfName(fedName)), frameDoor, `a text read from \`${fedName}\` that is not in the command`, (body) => recurse(body, shell, false, ` through \`${name} ${fedName}\``, [], aliasChain, false, sourceDoor()), { emptyIsUnheld: !inDefinition, road: !feedResidual }); sourceQ1(fed && !r.held, `\`${fedName}\``); }   // the texts this command feeds the descriptor named; a sourced text runs in this shell and moves it (THE MOVED SHELL) by the door's reading; none held (a `<` of a file or of /dev/null, a descriptor opened on a file, a pipe from a cat of one, no feed at all): THE UNHELD TEXT
@@ -10008,16 +9964,22 @@ function judgeWalk(command, cwd, headPoison) {
       // did not do, and asked for an alias spelled out, which there was none of. ONE remedy (M2): the program's full path, never a path this command
       // made (a made file whose source the guard does not read is refused by its full path too: THE BOUND PATH's unread source), so the lookup
       // through PATH is gone and the program named is the one judged
-      // THE WRAPPER DROPPED's remedy (`drop`: the shell's own name behind precommand words); none where the name is a builtin no program of the guard's PATH
-      // stands for and no wrapper can be dropped, or THE SOURCED NAME's operand (`noRemedy`, M2's no-remedy form: the reviewer's t8-10)
-      if (u.why.noRemedy) return `This command is blocked here: its ${u.how} names ${u.raw}, and ${u.why.text}, so I cannot tell what would run or which file it `
+      // None where the name is a builtin or a keyword no program of the guard's PATH stands for, a function the command defines, or THE SOURCED NAME's
+      // operand (`noRemedy`, M2's no-remedy form: the reviewer's t8-10); and, since fork PR 975's round 2 (R2) refuses a builtin's name too, none where
+      // another bare name of the command is refused with none while a project is in play for it (`exec echo ..`, `echo .. | builtin`, a loop's `done`):
+      // the full path for this name leaves that refusal standing, so it would not lift the command (a refusal whose project the guard cannot place
+      // withholds the remedy too, the restricted side of a message)
+      const besideNoRemedy = !u.why.noRemedy && list.some((v) => {
+        if (v === u || !v.why || v.why.kind !== 'boundName' || !v.why.noRemedy) return false;
+        try { return !!inPlayFor(v, cwd, memo); } catch (e) { if (isUnknownPath(e)) return true; throw e; }   // a stat the guard cannot make withholds the remedy; any other throw: the catch-all refuses
+      });
+      if (u.why.noRemedy || besideNoRemedy) return `This command is blocked here: its ${u.how} names ${u.raw}, and ${u.why.text}, so I cannot tell what would run or which file it `
         + `would write, and ${where} tracks files whose changes are recorded for me to accept or reject. Make the change with track-edit instead, which records `
         + `it for me to accept or reject:\n${TRACK_EDIT}`;
-      const remedy = u.why.drop ? `Run \`${u.why.drop.name}\` without \`${u.why.drop.wrappers}\` before it, so the shell runs its own \`${u.why.drop.name}\``
-        : 'Spell the command by the full path of the program it should run, not a path this command made';
       return `This command is blocked here: its ${u.how} names ${u.raw}, and ${u.why.text}, so I cannot tell what would run or which file it `
-        + `would write, and ${where} tracks files whose changes are recorded for me to accept or reject. ${remedy}: outside that project the command `
-        + `then runs as usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
+        + `would write, and ${where} tracks files whose changes are recorded for me to accept or reject. Spell the command by the full path of the program it `
+        + `should run, not a path this command made: outside that project the command then runs as usual, and a tracked file takes its change through `
+        + `track-edit instead:\n${TRACK_EDIT}`;
     }
     if (u.why && u.why.kind === 'patternHead') {
       // a command name that is a pattern the guard cannot expand (the after-source fixes, 2026-10-03; this shared the alias road's text, whose

@@ -4530,15 +4530,13 @@ document stands on its own, each with the reasoning it was given.
     main's rule, again since fork PR 975's item 8 as ruled: a mention of PATH makes it unreadable only under a head that
     may assign it in this shell, THE ASSIGNING HEAD, so a `grep -c PATH f` no longer does, and no narrowing to a made
     path's name is kept, since one rests on knowing every file the command makes, which a list of programs cannot show),
-    and never a name the three shells run as their own builtin where the shell itself looks it up (unquoted,
-    and while THE SHELL'S GATE is not seen: no `enable`, `disable` or `zmodload` in the command, nor one met by a
-    spelling the scan does not read, nor a text or a command name the guard does not read run in this shell); behind a
-    wrapper some shell runs itself (DROP_WRAPPERS, derived from WRAPPER_OPT: `command`, `builtin`, `exec`, `time`,
-    zsh's `noglob`, `nocorrect` and `-`, with the options the table parses for them) such a name is refused and the
-    refusal asks for those words dropped, and where no wrapper can be dropped and the name is a builtin or a reserved
-    word of one of the three shells with no program of that name on the guard's PATH (cd, export, enable, source), or a
-    function the command defines, the refusal names no remedy, as THE SOURCED NAME's refusal of a name `.` or `source`
-    reads does. THE COMPOUND PRODUCER: a keyword compound before the pipe (`for i in 1; do echo 'cp a b'; done |
+    a builtin's or a keyword's name among them (fork main's reading, again since fork PR 975's round 2, R2: the
+    exemption for a name the three shells run as their own came out, since a function or an alias the guard does not
+    read, or dash's `%builtin` PATH entry, makes the shell look the name up after all); where the name is a builtin or a
+    reserved word of one of the three shells with no program of that name on the guard's PATH (cd, export, enable,
+    source), or a function the command defines, or another bare name of the command is refused so (`exec echo`), the
+    refusal names no remedy, as THE SOURCED NAME's refusal of a name `.` or `source` reads does. THE COMPOUND
+    PRODUCER: a keyword compound before the pipe (`for i in 1; do echo 'cp a b'; done |
     bash`; while, until, if and case alike) prints what the list from its head to its closer prints, and the head runs
     the body a number of times the model does not count, so a printer inside it makes the list UNRESOLVABLE (placed on
     the closer segment that carries the pipe, listOutput naming the head) and a body with no printer stays outside the
@@ -5150,8 +5148,9 @@ document stands on its own, each with the reasoning it was given.
     only under a head that may assign a variable it is given in this shell (THE ASSIGNING HEAD), since a child process
     cannot set this shell's variables, so a grep, a sed or an echo leaves PATH readable and a later program's name
     passes (AS8-unit-*, AS8-cp-sed-path-ls, and AS8-cp-grep-path-collision, a copy named like that program; the
-    session's rows, whose later name is echo or printf, pass as THE SHELL'S OWN NAME's builtins either way:
-    AS8-cp-grep-path-echo, AS8-cp-echo-path-word, AS8-mv-grep-path-printf). Assignments, `${name=..}`, eval, source,
+    session's rows, whose later name is echo or printf, pass through ROOT alone since round 2's R2 took out the builtin
+    exemption that had let them pass either way: AS8-cp-grep-path-echo, AS8-cp-echo-path-word, AS8-mv-grep-path-printf,
+    each red where every mention taints). Assignments, `${name=..}`, eval, source,
     `.`, a call of a function the command defines, a wrapped head, a head the guard does not read (an expansion, or a
     pattern, which a file named `read` in the cwd turns into the builtin), an alias or a function the command defines,
     and any head once the command may turn a builtin on keep tainting (AS8-root-print-v, AS8-root-getln,
@@ -5280,20 +5279,17 @@ document stands on its own, each with the reasoning it was given.
     directories are searched for a bound path of the name (AS8-into-dir-readable-path, AS8-made-one-op-ln-readable-path,
     each allowed at fork main while every shell wrote), and a cwd in no project, where a bound path of the name is
     spliced and its operands judged; and `.` and `source` look a name with no slash up the same way, so such a name as
-    their operand is refused, every name, with no remedy (THE SOURCED NAME): a `.` this shell runs whose file is not
-    read is refused itself, its exemption withdrawn by THE SHELL'S GATE, so a full path for the file lifts only a piped
-    or backgrounded `.`, where this refusal is the one that holds (AS8-sourced-dot-piped, AS8-sourced-dot; `source`, no
-    builtin of dash, is refused as a bare name first, as at fork main: AS8-sourced-source). Once the command may turn a
-    builtin off every builtin and keyword of it is refused, as at fork main, and a gate word spelled out after the PATH
-    is set is refused itself (`enable`, `disable` and `zmodload` are no builtins of dash), so THE SHELL'S GATE's rows
-    are refused first at the gate word or the loop's keyword, and the gate is pinned where its own word is not refused:
-    before the PATH is set (AS8-builtin-gate-before-path, and the ANSI-C spelling the scan does not read,
-    AS8-builtin-gate-ansic-before-path) and through a command name read from a file with `$(< file)`, which runs no
-    program (AS8-builtin-gate-while, AS8-builtin-gate-until, AS8-builtin-gate-unread-head-loop,
-    AS8-builtin-gate-unread-trap). M2's no-remedy form now covers a builtin or a reserved word of any of the three
-    shells with no program of its name on the guard's PATH, not only of all three, and a call of a function the command
-    defines, since the blanket refusal meets `enable`, `source`, keywords and functions; a function definition's own
-    name is no lookup and passes (AS8-ctl-function-definition), where fork main refused it. The stated costs, each a
+    their operand is refused, every name, with no remedy (THE SOURCED NAME); since round 2's R2 the head `.` or `source`
+    is itself a bare name refused under that PATH first, piped or not, as at fork main, so the operand's refusal stands
+    behind it (AS8-sourced-dot, AS8-sourced-dot-piped and AS8-sourced-source each name the head). THE SHELL'S GATE's rows
+    (AS8-builtin-gate-*: a script written into place as echo, run from PATH by bash or zsh once a gate turned the builtin
+    off) are refused as every bare name is, gate or no gate, and stay as refused writes. M2's no-remedy form covers a
+    builtin or a reserved word of any of the three shells with no program of its name on the guard's PATH, not only of
+    all three, a call of a function the command defines, and since R2 a bare name whose command holds another bare name
+    refused with none (`exec echo`, `echo .. | builtin`, where the full path for echo leaves the other refused); a
+    function definition's own name is no lookup and
+    passes (AS8-ctl-function-definition-path-body), where fork main refused it, while a bare name in its body is refused
+    (AS8-ctl-function-definition, a cost since R2). The stated costs, each a
     cost row on which no shell writes: four are fork main's own refusals the narrowing had lifted, a bare name no made
     file carries after a copy onto a file, after a `-T` copy, after a copy with no backup option, and under a PATH set
     to a value the guard does not read (AS8-cost-into-file, AS8-cost-into-dir-T, AS8-cost-backup-none,
@@ -5330,38 +5326,52 @@ document stands on its own, each with the reasoning it was given.
     copied with `cp -a`, whose text re-resolves against the new directory while rule B resolves it at the move through the
     old location, is a residual follow-up, not a committed row: its write-through shape depends on the new directory
     holding a writer of the link's relative name, which the synthetic world does not stage.
-    THE SHELL'S OWN NAME: a bare name that is a
-    builtin or a keyword in bash, zsh and dash alike (ALL_SHELL_BUILTINS) runs before any lookup through PATH, so neither
-    refusal applies to it as the name the shell itself looks up (the sixth verify round's tg-t6-3: `cd` and `export`
-    after a backup were refused, and the full-path remedy names no program for them). The set is exactly the
-    intersection of the three shells' answers; `builtin` is not in it, since dash looks it up through PATH and ran a shell
-    a backup had stashed under that name (the seventh verify round's tg-t7-1, AS8-builtin-dash-builtin-*). The rows test
-    asks each shell present on its runner, and checks a shell absent there against the per-shell lists derived on the box
-    and committed beside the test (SHELL_OWN_DERIVED). The shell's own lookup is the segment's first command word,
-    spelled with no quoting: its head when no wrapper precedes it, or its first wrapper (`exec` and `command` there are
-    builtins). A name a wrapper runs is the wrapper's lookup, however the wrapper is spelled (`exec echo`, `command
-    echo`, `/usr/bin/env echo`, a copy of env the command made: the seventh verify round's tg-m7-4, AS8-builtin-exec-*,
-    AS8-builtin-command-echo, AS8-builtin-slash-*, AS8-builtin-bound-env-echo). A keyword with any character quoted is no
-    keyword, so the shells look `'if'`, `"while"` and `f'or'` up through PATH (AS8-builtin-quoted-*,
-    AS8-builtin-partquoted-for). THE SHELL'S GATE: whether the command may
-    turn a builtin off (bash's `enable`, zsh's `disable` and `zmodload`, BUILTIN_GATES) is a property of the whole
-    command, because a name read before the gate may run after it, on a loop's next pass, in a trap action or in a
-    function called later (the seventh verify round's tg-m7-1 and tg-m7-5, AS8-builtin-gate-*). The gate is set before
-    the walk when the text mentions one of the three as a word anywhere (mentionsBuiltinGate). The walk also sets it when
-    it meets one in a spelling that scan does not read, such as an ANSI-C quote, or meets a text or a command name it
-    does not read run in this shell; each exemption given before that point is then withdrawn and its refusal recorded
-    (gateBuiltins). Stated costs, on the restricted side: a mention no shell runs turns the exemption off too
-    (AS8-builtin-gate-mention-cost); and a quoted builtin's name stays refused after a backup (AS8-builtin-quoted-echo-cost).
-    A builtin's name behind a wrapper some shell runs itself stays refused after a backup: zsh's `command`, dash's
-    `time` and bash's `exec` look the name up through PATH, and dash looks `builtin` itself up there, as bash and dash
-    do zsh's `noglob`, `nocorrect` and `-`. Its one remedy is those words dropped, with the options the table parses
-    for them named whole (`command -p`, `time -p`, `exec -a NAME`), which leaves the shell's own lookup (THE WRAPPER
-    DROPPED, fork PR 975's round 1 pass and the reviewer's t8-4: the full path the refusal had named is no program for
-    cd, export or ulimit; the words are DROP_WRAPPERS, derived from WRAPPER_OPT's entries without the `external` mark;
-    AS8-drop-*, AS8-builtin-exec-echo, AS8-builtin-command-echo). Where no wrapper can be dropped and no program of
-    that name is on the guard's PATH, a bare `cd` after a backup behind an external `env` or after a gate the scan
-    sees, the refusal names no remedy, M2's no-remedy form (the reviewer's t8-10: AS8-drop-noremedy-env-cd,
-    AS8-drop-noremedy-gate-cd). THE REMEDIES each name ONE that always lifts the refusal (M2,
+    THE BUILTIN EXEMPTION TAKEN OUT (fork PR 975's round 2, R2): the sixth verify round's tg-t6-3 had exempted a bare
+    name that is a builtin or a keyword in bash, zsh and dash alike (ALL_SHELL_BUILTINS, checked against the shells and
+    against per-shell lists committed beside the rows test, SHELL_OWN_DERIVED) from the bound-name refusal, as the name
+    the shell itself looks up; round 1 added a remedy for such a name behind a precommand word, those words dropped
+    (THE WRAPPER DROPPED, DROP_WRAPPERS). Both came out, with their census and the census module's entries, restoring
+    fork main's reading: every bare name under a PATH the guard does not read is refused once a path is bound, the
+    builtins included. The exemption's premise did not hold: the shell runs a function or an alias of a builtin's name
+    first, and a table write the guard does not read defines one (zsh's `printf -v`, `read -r` and `${..::=..}` into
+    `functions`, bash's `BASH_ALIASES` under POSIX mode, on a line of its own: fresh-2; zsh's `autoload` and `typeset
+    -fu` forms too), and dash looks echo, printf and test up through PATH before a `%builtin` entry (correctness-3),
+    so each of those was allowed at the change's head while the shell wrote the tracked report, where fork main refused
+    it, and each is refused again (AS8-builtin-shadow-zsh-printf-v, -zsh-read-r, -zsh-assign-expansion, -zsh-cd,
+    -bash-aliases, -bash-printf-v; AS8-builtin-dash-pctbuiltin-echo, -printf, -test, and -dash-c, reached from bash and
+    zsh through `dash -c`). The rows the removal changes, each with why: six allowed rows are refused again, each a
+    cost on which no shell writes and fork main's own refusal, since the bare name now refuses as every bare name does:
+    AS8-ctl-function-definition (the `:` in the body, with no remedy; the definition's own name still passes, pinned by
+    AS8-ctl-function-definition-path-body), AS8-builtin-cd-after-backup and AS8-builtin-cd-same-name-untracked (`cd`,
+    no remedy, no program stands for it), AS8-builtin-export-after-backup (`export`, no remedy),
+    AS8-builtin-echo-backup-name and AS8-builtin-noenable-script (`echo`, the program's full path its remedy; with no
+    `%builtin` on that PATH dash runs its builtin too). Three refused rows name an earlier word: AS8-sourced-dot and
+    AS8-sourced-dot-piped name `.` itself where they named its operand, and AS8-builtin-exec-command names `exec`,
+    the first word, where it named `command` while `exec` passed as the shell's own. And the rows that pinned THE
+    WRAPPER DROPPED's remedy stay refused with it gone, each now with no remedy and holding that no refusal names
+    wrapper words dropped: AS8-drop-* (`cd`, `export` and `ulimit` behind `command`, `builtin`, `time` and `exec`, and
+    `cd` behind `command -p`, `time -p`, `exec -a NAME`, `noglob`, `nocorrect` and `-`), where no program stands for
+    the name, and AS8-builtin-exec-echo and AS8-builtin-command-echo, where the full path for echo would leave `exec`
+    or `command` refused, so M2's no-remedy form now also covers a bare name whose command holds another bare name
+    refused with none (AS8-builtin-dash-builtin-stdin and AS8-builtin-gate-while and -until meet it too);
+    AS8-drop-noremedy-env-cd and AS8-drop-noremedy-gate-cd hold as they did. THE SHELL'S GATE (BUILTIN_GATES, set by
+    the scan before the walk, mentionsBuiltinGate, by the walk's gate name and by a text not read run here) stays,
+    read by THE ASSIGNING HEAD alone: under a command that may turn a builtin on or off a builtin may stand under any
+    name, so every mention taints (AS8-root-gate-scan, AS8-root-gate-walk-ansic, AS8-root-gate-unheld-callback, one per
+    setter, costs on which no shell writes beside AS8-cp-sed-path-ls; the third, whose callback leaves the directory
+    unknown, fork main allowed, since it skipped the bound-name refusal there); its
+    rows AS8-builtin-gate-* are refused as every bare name is, gate or no gate (a mention no shell runs among them,
+    AS8-builtin-gate-mention-cost). Pre-existing, disclosed with a witness row each (allowed at fork main and here while
+    the shell writes): the same table writes where no copy and no unread PATH put the bound-name refusal in play, or
+    from a cwd in no project, since the guard reads `echo` as the builtin the write shadowed
+    (AS8-residual-shadow-zsh-nopath, AS8-residual-shadow-zsh-nocopy, AS8-residual-shadow-bash-nopath,
+    AS8-residual-shadow-zsh-out; the follow-up reads a write to a function or alias table as a definition the guard
+    does not read and refuses every later use of the name); and dash's `%builtin` road from a cwd in no project, where
+    the refusal is not in play and the script run is no text the guard reads (AS8-residual-dash-pctbuiltin-echo-out).
+    A follow-up from a design note (held follow-ups): the exemption may return only under rule S's clause (b), no word
+    naming a command table, and clause (c), the option-insensitive second census axis, which closes zsh's `autoload`
+    and `typeset -fu` forms, and never where dash may run the line with PATH set or unreadable, since echo, printf,
+    test and `[` resolve through PATH there. THE REMEDIES each name ONE that always lifts the refusal (M2,
     replacing the context-specific remedies of the rounds before, which did not lift where another construct stood around
     the command): a command name that is a pattern in a directory not known asks for the name without a pattern after a
     cd to a literal absolute directory that exists, as a command of its own (not after `&&`), after the last command that

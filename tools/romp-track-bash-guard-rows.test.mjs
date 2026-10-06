@@ -39,7 +39,11 @@ import {
 // invocation read as a nested one (AS3-*-rpt-*), and a backup option's side-file a later bare name ran (AS8-backup-*); and, from the seventh verify
 // round, a bare name a backup's stash or a written file carries, run from PATH after a builtin was turned off later in the text (AS8-builtin-gate-*,
 // THE SHELL'S GATE), behind a wrapper (AS8-builtin-exec-*, -command-echo, -slash-*, -bound-env-echo), as a quoted keyword (AS8-builtin-quoted-*) and
-// as dash's `builtin` (AS8-builtin-dash-builtin-*), and an abbreviation of a refused wrapper option given the long form (AS3-option-refuse-abbrev-*).
+// as dash's `builtin` (AS8-builtin-dash-builtin-*), and an abbreviation of a refused wrapper option given the long form (AS3-option-refuse-abbrev-*);
+// and, from fork PR 975's round 2, a builtin's name the command shadowed with a function or an alias through a table write the guard does not read
+// (AS8-builtin-shadow-*, fresh-2) or that dash looked up through PATH before `%builtin` (AS8-builtin-dash-pctbuiltin-*, correctness-3), both let
+// pass by the builtin exemption that round took out (R2), with the disclosed allows fork main makes too (AS8-residual-shadow-*,
+// AS8-residual-dash-pctbuiltin-echo-out).
 // The false refusals: a `[` test (AS1-*), a case pattern read as a command name (AS2-*), the poison after a command named by a variable behind a
 // chain holding an external program wrapper (AS3-*-no-poison; the mechanism ruling's M1 keeps the poison behind a wrapper the shell runs itself,
 // AS3-kept-*, and the directory judged unknown after it behind any wrapper, AS3-road-*, AS3-chain-*-road and AS3-*-moves), and a bare command name
@@ -50,8 +54,8 @@ import {
 // and the cost AS8-cost-old-arith-dq-target, the `$[` read as text too, any refusal of that reading standing, AS8-root-old-arith-text-*; and the
 // assignments fork main does not read either, disclosed: AS8-residual-assign-*, AS8-residual-jobs-x-cp, AS8-residual-zsh-always-*, and PATH
 // through zsh's `path` array, AS8-residual-path-zsh-*; and a `$[` whose bracket holds a parenthesis or opens with a space, which neither reading
-// refuses, disclosed: AS8-residual-old-arith-*), a builtin or keyword of every shell among them
-// (AS8-builtin-*, the sixth verify round's tg-t6-3); after a command named by
+// refuses, disclosed: AS8-residual-old-arith-*; a builtin's or a keyword's bare name, which the sixth verify round's tg-t6-3 had let pass, is
+// refused again under that PATH since R2, its rows the costs AS8-builtin-cd-after-backup and the like); after a command named by
 // a variable, a command its poison let pass is judged again with that poison set aside (THE TWO WALKS: AS5-read-through-*, AS5-dual-*, and the
 // disclosed allows fork main makes too, AS5-residual-hidden-cd-*, AS5-residual-f3-*, AS5-residual-oldpwd-*, AS5-residual-fresh-oldpwd-out); and
 // the remedies that told the person something that would not work (AS6-*, AS7-*, AS8-*, and the third verify round's AS3-nice-filled-group-pipe,
@@ -66,14 +70,6 @@ import {
 // pinned with the verdict it has, allowed with the shells that write where a write gets through, refused for the parenthesized case
 // pattern's false refusal (AS2-residual-paren), and named by id in decision 47: the after-source fixes' verify rounds (2026-10-03) ruled
 // each a residual to state, not a road to close in this change.
-// THE SHELL'S OWN NAME's per-shell lists (the seventh verify round's tg-t7-1, derived 2026-10-05 on bash 5.2.21, zsh 5.9 and dash 0.5.12): of the names
-// bash's `compgen -b` and `compgen -k` list, those each shell runs as its own, asked as the census below asks (bash `type -t`, zsh `whence -w`, dash
-// `type`), so the census checks ALL_SHELL_BUILTINS against a shell the runner lacks (CI has no zsh) and against the derivation (their intersection)
-const SHELL_OWN_DERIVED = {
-  bash: ['!', '.', ':', '[', '[[', ']]', 'alias', 'bg', 'bind', 'break', 'builtin', 'caller', 'case', 'cd', 'command', 'compgen', 'complete', 'compopt', 'continue', 'coproc', 'declare', 'dirs', 'disown', 'do', 'done', 'echo', 'elif', 'else', 'enable', 'esac', 'eval', 'exec', 'exit', 'export', 'false', 'fc', 'fg', 'fi', 'for', 'function', 'getopts', 'hash', 'help', 'history', 'if', 'in', 'jobs', 'kill', 'let', 'local', 'logout', 'mapfile', 'popd', 'printf', 'pushd', 'pwd', 'read', 'readarray', 'readonly', 'return', 'select', 'set', 'shift', 'shopt', 'source', 'suspend', 'test', 'then', 'time', 'times', 'trap', 'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unset', 'until', 'wait', 'while', '{', '}'],
-  zsh: ['!', '.', ':', '[', '[[', 'alias', 'bg', 'break', 'builtin', 'case', 'cd', 'command', 'continue', 'coproc', 'declare', 'dirs', 'disown', 'do', 'done', 'echo', 'elif', 'else', 'enable', 'esac', 'eval', 'exec', 'exit', 'export', 'false', 'fc', 'fg', 'fi', 'for', 'function', 'getopts', 'hash', 'history', 'if', 'jobs', 'kill', 'let', 'local', 'logout', 'popd', 'printf', 'pushd', 'pwd', 'read', 'readonly', 'return', 'select', 'set', 'shift', 'source', 'suspend', 'test', 'then', 'time', 'times', 'trap', 'true', 'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unset', 'until', 'wait', 'while', '{', '}'],
-  dash: ['!', '.', ':', '[', 'alias', 'bg', 'break', 'case', 'cd', 'command', 'continue', 'do', 'done', 'echo', 'elif', 'else', 'esac', 'eval', 'exec', 'exit', 'export', 'false', 'fg', 'fi', 'for', 'getopts', 'hash', 'if', 'in', 'jobs', 'kill', 'local', 'printf', 'pwd', 'read', 'readonly', 'return', 'set', 'shift', 'test', 'then', 'times', 'trap', 'true', 'type', 'ulimit', 'umask', 'unalias', 'unset', 'until', 'wait', 'while', '{', '}'],
-};
 // THE ASSIGNING HEAD's census (fork PR 975's round 1, item 8 as ruled, ROOT, 2026-10-05): every builtin and reserved word of bash, zsh and dash as
 // installed is classified in SHELL_WORD_ASSIGNS, as a word that may assign a variable it is given (the taint set MENTION_TAINT_HEADS, derived from the
 // table, which the mention rule reads) or one that assigns none, each with its reason. The populations, asked live of each shell present: bash's
@@ -897,22 +893,26 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // under the unreadable PATH is (item 8 as ruled), so the backup's own rows, one per option, form and verb, went with the narrowing they pinned;
       // the twin with no backup option is refused too, fork main's own refusal (a cost row)
       ['AS8-backup-cp', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b -S zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', BZ, ['text', ANY_NAME]],
-      ['AS8-ctl-function-definition', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; PATH=$X:$PATH; f() { :; }', N, 'allow'],   // a definition's name runs no command
+      // a definition's name runs no command, so it is no lookup (definesName); since fork PR 975's round 2 (R2) the bare `:` in the body is refused as
+      // every bare name is, as at fork main, a stated cost (AS8-ctl-function-definition), so the definition is pinned with a body spelled by path
+      ['AS8-ctl-function-definition', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; PATH=$X:$PATH; f() { :; }', N, ['text', [ANY_NAME, 'its command name names :', 'Make the change with track-edit instead']]],
+      ['AS8-ctl-function-definition-path-body', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; PATH=$X:$PATH; f() { /usr/bin/true; }', N, 'allow'],
       ['AS8-cost-function-call', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; PATH=$X:$PATH; f() { :; }; f', N, ['text', [ANY_NAME, 'Make the change with track-edit instead']]],   // a call of it: fork main's own refusal, with no full path to name
       ['AS8-cost-backup-none', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; xzz base/report.md docs/report.md', N, ['text', ANY_NAME]],
-      // THE SHELL'S OWN NAME (the sixth verify round's tg-t6-3): a bare name that is a builtin or a keyword in bash, zsh and dash alike runs before any
-      // lookup through PATH, so it passes after a backup or beside a made file of its name (a cd, an export, an echo whose name the backup took), and a
-      // cd there still moves the walk; a name behind a wrapper (env searches PATH), one that is no builtin in all three (ls), and any once the command
-      // runs `enable` (bash then ran the script copied into place as echo) stay refused
-      ['AS8-builtin-cd-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; cd {OUT}', N, 'allow'],
-      ['AS8-builtin-export-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; export Y=1', N, 'allow'],
-      ['AS8-builtin-echo-backup-name', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/ec; cp -b -S ho /usr/bin/true {OUT}/scratch/ec; PATH=$X:$PATH; echo base/report.md docs/report.md', N, 'allow'],
-      ['AS8-builtin-cd-same-name-untracked', 'na', 'read X <<< {OUT}/scratch; cp {OUT}/scratch/keep.md {OUT}/scratch/cd; PATH=$X:$PATH; cd docs; echo y > other.md', N, 'allow'],
+      // a builtin's or a keyword's bare name after a backup or beside a made file of its name (a cd, an export, an echo whose name the backup took): the
+      // sixth verify round's tg-t6-3 had let it pass as a name the three shells run as their own (THE SHELL'S OWN NAME); fork PR 975's round 2 (R2) took
+      // that exemption out, since a function or an alias the guard does not read, or dash's `%builtin` PATH entry, makes the shell look such a name up
+      // after all (fresh-2, correctness-3: AS8-builtin-shadow-*, AS8-builtin-dash-pctbuiltin-*), so each is refused again as at fork main, a stated cost
+      // on which no shell writes, with no remedy where no program stands for the name (cd, export) and the program's full path where one does (echo)
+      ['AS8-builtin-cd-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; cd {OUT}', N, ['text', [ANY_NAME, 'its command name names cd', 'Make the change with track-edit instead']]],
+      ['AS8-builtin-export-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; export Y=1', N, ['text', [ANY_NAME, 'its command name names export', 'Make the change with track-edit instead']]],
+      ['AS8-builtin-echo-backup-name', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/ec; cp -b -S ho /usr/bin/true {OUT}/scratch/ec; PATH=$X:$PATH; echo base/report.md docs/report.md', N, ['text', [ANY_NAME, 'its command name names echo', 'Spell the command by the full path of the program it should run']]],
+      ['AS8-builtin-cd-same-name-untracked', 'na', 'read X <<< {OUT}/scratch; cp {OUT}/scratch/keep.md {OUT}/scratch/cd; PATH=$X:$PATH; cd docs; echo y > other.md', N, ['text', [ANY_NAME, 'its command name names cd', 'Make the change with track-edit instead']]],
       ['AS8-builtin-cd-same-name', 'na', 'read X <<< {OUT}/scratch; cp {OUT}/scratch/keep.md {OUT}/scratch/cd; PATH=$X:$PATH; cd docs; echo y > report.md', BZ, 'name'],
       ['AS8-builtin-nonbuiltin-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; ls docs', N, ['text', ANY_NAME]],
       ['AS8-builtin-env-echo-after-backup', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/ec; cp -b -S ho /usr/bin/true {OUT}/scratch/ec; PATH=$X:$PATH; env echo base/report.md docs/report.md', BZ, ['text', ANY_NAME]],
       ['AS8-builtin-enable-script', 'na', "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; enable -n echo; echo", ['bash'], ['text', ANY_NAME]],
-      ['AS8-builtin-noenable-script', 'na', "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; echo", N, 'allow'],
+      ['AS8-builtin-noenable-script', 'na', "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; echo", N, ['text', [ANY_NAME, 'its command name names echo']]],   // refused again since R2, a stated cost (no `%builtin` on this PATH, so dash runs its builtin too)
       // M3's stopping rule (the fifth verify round): two false allows fork main also allows, disclosed with a witness row each and left as follow-ups.
       // A backup reached by its explicit path (S5-1): the guard binds no backup path, so neither the bound name nor the bound path catches it; and a
       // file the command made from a source the guard does not read, run by its absolute path after a construct that leaves the directory unknown
@@ -965,15 +965,12 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-unread-source-mv-head', 'na', 'mv "$S" {NA}/scratch/c2; {NA}/scratch/c2 base/report.md docs/other.md', N, ['text', 'is a path this command made by copying, moving or linking, or by writing it, from a source I do not read', 'by copying or linking a source'], ['text', 'is a path this command made by copying, moving or linking, or by writing it, from a source I do not read']],
       ['AS8-unread-source-cat-head', 'na', 'cat "$S" > {NA}/scratch/c2; {NA}/scratch/c2 base/report.md docs/other.md', N, ['text', 'is a path this command made by copying, moving or linking, or by writing it, from a source I do not read', 'by copying or linking a source'], ['text', 'is a path this command made by copying, moving or linking, or by writing it, from a source I do not read']],
     );
-    // THE SHELL'S GATE (the seventh verify round's tg-m7-1): a name read before an `enable`, a `disable` or a `zmodload` may run after it (a loop's next
-    // pass, a trap action, a function called in the loop), so the exemption is off for the whole command: set before the walk where the text mentions
-    // one, and by the walk where it meets one by a spelling that scan does not read or a text or a command name it does not read run in this shell, each
-    // exemption given before that withdrawn. A script written into place as echo, run from PATH once the builtin is off (bash, or zsh for `disable`), and
-    // the copied cp stashed as echo by a backup (WROTE_ECHO, STASHED_ECHO). Since item 8 as ruled refuses every bare name under the unreadable PATH again,
-    // a gate word spelled out after the PATH is set is refused itself (`enable` is no builtin of dash, which looks it up), and once a gate is seen so is
-    // every builtin and keyword of the command, as at fork main; the rows that pin the gate itself reach it where its own word is not refused: before
-    // the PATH is set (the pre-scan's and the walk's names, the ANSI-C spelling the scan does not read) and through a command name read from a file with
-    // `$(< file)`, which runs no program (the loops, the trap), each run from PATH by bash on a later pass or at exit
+    // THE SHELL'S GATE's rows (the seventh verify round's tg-m7-1): a name read before an `enable`, a `disable` or a `zmodload` may run after it (a loop's
+    // next pass, a trap action, a function called in the loop), so a script written into place as echo runs from PATH once the builtin is off (bash, or
+    // zsh for `disable`), as does the copied cp stashed as echo by a backup (WROTE_ECHO, STASHED_ECHO). The gate had withdrawn THE SHELL'S OWN NAME's
+    // exemption for the whole command; since fork PR 975's round 2 (R2) took that exemption out, every builtin and keyword of these commands is refused
+    // under the unreadable PATH as at fork main, gate or no gate, so each row stays a refused write (the shells write) and pins the bound-name refusal,
+    // not the gate. The gate's own reading now is THE ASSIGNING HEAD's (AS8-root-gate-*)
     const WROTE_ECHO = "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; ";
     const STASHED_ECHO = 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/ec; cp -b -S ho /usr/bin/true {OUT}/scratch/ec; PATH=$X:$PATH; ';
     const BACKED_X = 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; ';
@@ -997,6 +994,16 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-builtin-gate-disable', 'na', `${WROTE_ECHO}disable echo; echo`, ['zsh'], ['text', BOUND]],
       ['AS8-builtin-gate-zmodload', 'na', `${WROTE_ECHO}zmodload zsh/rlimits; echo`, N, ['text', BOUND]],
       ['AS8-builtin-gate-eval-enable', 'na', `${WROTE_ECHO}eval 'enable -n echo'; echo`, ['bash'], ['text', BOUND]],
+      // the gate's reading since R2 is THE ASSIGNING HEAD's: a command that may turn a builtin on or off may put a builtin under any name, so a mention under
+      // a program taints there (mentionMayAssign), a cost on the restricted side on which no shell writes (beside AS8-cp-sed-path-ls, which passes with no
+      // gate); by the scan before the walk, which reaches a gate after the mention (refused at the gate word itself, which has no program), by the walk's
+      // own name where the scan does not read the spelling, and by a text not read run here that poisons no name (a `mapfile -C` callback); each row red
+      // where its setter is off. The first two are fork main's own refusals; the callback leaves the directory unknown, where fork main skipped the
+      // bound-name refusal and allowed the third (THE BOUND NAME survives an unknown directory since an audit of this change), as the change's head before
+      // round 2 refused it too
+      ['AS8-root-gate-scan', 'na', 'cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; grep -c PATH {OUT}/scratch/b.service; enable -n echo; ls docs', N, ['text', [ANY_NAME, 'its command name names enable,', 'Make the change with track-edit instead']]],
+      ['AS8-root-gate-unheld-callback', 'na', 'cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; mapfile -C "$(cat {OUT}/scratch/keep.md)" -c 1 a < {OUT}/scratch/keep.md; grep -c PATH {OUT}/scratch/b.service; ls docs', N, ['text', [ANY_NAME, 'its command name names ls,']]],
+      ['AS8-root-gate-walk-ansic', 'na', "cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; $'\\x65nable' -n echo; grep -c PATH {OUT}/scratch/b.service; ls docs", N, ['text', [ANY_NAME, 'its command name names ls,']]],
       // D1 (an audit of fork PR 975's body, its gate behind a command named by a variable, a false allow this change introduced, 2026-10-05): a
       // command named by a variable that holds
       // `enable` turns bash's echo builtin off, and its unread head leaves the directory unknown, where the change had cleared THE BOUND NAME; the
@@ -1004,7 +1011,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-builtin-gate-var-enable', 'na', `${WROTE_ECHO}read e <<< enable; $e -n echo; echo`, ['bash'], ['text', BOUND]],
       // the backup side file after a `cd "$d"` (the same audit, its backup-after-cd case, a false allow this change introduced): once the directory
       // was unknown the change cleared
-      // both the backup refusal and THE SHELL'S OWN NAME's exemption, so the stash made under a name not followed ran; THE BOUND NAME now holds under an
+      // both the backup refusal and the builtin exemption (since removed, R2), so the stash made under a name not followed ran; THE BOUND NAME now holds under an
       // unknown directory (bash and zsh stash a backup, dash does not)
       ['AS8-backup-after-cd', 'na', 'read d <<< .; read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/x; cp -b -S zz /usr/bin/true {OUT}/scratch/x; PATH=$X:$PATH; cd "$d"; xzz {NA}/base/report.md {NA}/docs/report.md', BZ, ['text', ANY_NAME]],
       // THE BOUND NAME binds the file the writer makes (fork PR 975's round 1, C, 2026-10-05; the round's fresh-1): a cp, mv, install, ln or ln -s of a
@@ -1087,33 +1094,31 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ['AS8-made-tee', 'na', "cp /usr/bin/cp {OUT}/scratch/c2; printf 'cp base/report.md docs/report.md\\n' | tee {OUT}/scratch/w4 > /dev/null; chmod +x {OUT}/scratch/w4; PATH={OUT}/scratch:$PATH; w4", A, ['text', ANY_NAME]],
       // THE SOURCED NAME (the reviewer's (b), S1): `.` and `source` look a name with no slash up through PATH, so a file this command wrote under that name
       // may be what they read, and the builtin `.` had passed it while bash and zsh sourced the script (dash parses no `<<<`); refused for every name, as a
-      // bare command name is, its one remedy the file by its full path, not a path this command made
-      ['AS8-sourced-dot', 'na', `${WROTE_ECHO}. echo`, BZ, ['text', [ANY_NAME, 'its `.` operand names echo', 'Make the change with track-edit instead']]],
-      ['AS8-sourced-dot-piped', 'na', `${WROTE_ECHO}. echo | cat`, BZ, ['text', [ANY_NAME, 'its `.` operand names echo', 'Make the change with track-edit instead']]],   // piped, `.` takes no gate, so this refusal is the one that holds
+      // bare command name is, with no remedy. Since fork PR 975's round 2 (R2) `.` is itself a bare name refused under that PATH, as at fork main, so the
+      // refusal names `.` first, piped or not (the operand's refusal stands behind it)
+      ['AS8-sourced-dot', 'na', `${WROTE_ECHO}. echo`, BZ, ['text', [ANY_NAME, 'its command name names .', 'Make the change with track-edit instead']]],
+      ['AS8-sourced-dot-piped', 'na', `${WROTE_ECHO}. echo | cat`, BZ, ['text', [ANY_NAME, 'its command name names .', 'Make the change with track-edit instead']]],
       ['AS8-sourced-source', 'na', `${WROTE_ECHO}source echo`, BZ, ['text', [ANY_NAME, 'its command name names source']]],   // `source` is no builtin of dash, which looks it up through PATH, so the head itself refuses first, as at fork main
-      // THE WRAPPER DROPPED (the reviewer's M2 gap): after a copy and a backup, the shell's own name behind `command`, `builtin`, `time` or `exec` is refused
-      // (behind each, some shell looks the name, or the wrapper word itself, up through PATH: dash has no `builtin`), and its one remedy is those
-      // words dropped, which leaves the shell's own lookup; the full path the refusal had named is no program for cd, export or ulimit
-      ...['cd {OUT}', 'export Y=1', 'ulimit -n'].flatMap((c) => ['command', 'builtin', 'time', 'exec'].map((wr) => [`AS8-drop-${wr}-${c.split(' ')[0]}`, 'na', `${BACKED_X}${wr} ${c}`, N, ['text', [ANY_NAME, `Run \`${c.split(' ')[0]}\` without \`${wr}\` before it, so the shell runs its own \`${c.split(' ')[0]}\`: `]]])),
-      // THE WRAPPER DROPPED's option forms (the reviewer's t8-4): a precommand word that takes an option (`command -p`, `time -p`, `exec -a NAME`) and the
-      // zsh modifiers `noglob`, `nocorrect` and `-`, each named whole in the drop remedy; and the no-remedy form (M2, the reviewer's t8-10) where no wrapper
-      // can be dropped and no program of that name is on PATH: a bare `cd` after a backup behind an external `env`, or after a gate the scan sees
-      ['AS8-drop-command-p-cd', 'na', `${BACKED_X}command -p cd {OUT}`, N, ['text', [ANY_NAME, 'Run `cd` without `command -p` before it, so the shell runs its own `cd`: ']]],
-      ['AS8-drop-time-p-cd', 'na', `${BACKED_X}time -p cd {OUT}`, N, ['text', [ANY_NAME, 'Run `cd` without `time -p` before it, so the shell runs its own `cd`: ']]],
-      ['AS8-drop-exec-a-cd', 'na', `${BACKED_X}exec -a q cd {OUT}`, N, ['text', [ANY_NAME, 'Run `cd` without `exec -a q` before it, so the shell runs its own `cd`: ']]],
-      ['AS8-drop-noglob-cd', 'na', `${BACKED_X}noglob cd {OUT}`, N, ['text', [ANY_NAME, 'Run `cd` without `noglob` before it, so the shell runs its own `cd`: ']]],
-      ['AS8-drop-nocorrect-cd', 'na', `${BACKED_X}nocorrect cd {OUT}`, N, ['text', [ANY_NAME, 'Run `cd` without `nocorrect` before it, so the shell runs its own `cd`: ']]],
-      ['AS8-drop-dash-cd', 'na', `${BACKED_X}- cd {OUT}`, N, ['text', [ANY_NAME, 'Run `cd` without `-` before it, so the shell runs its own `cd`: ']]],
+      // after a copy and a backup, a builtin's name behind `command`, `builtin`, `time` or `exec`, behind a precommand word that takes an option (`command
+      // -p`, `time -p`, `exec -a NAME`) and behind zsh's modifiers `noglob`, `nocorrect` and `-`: refused, with no remedy, since no program stands for
+      // cd, export or ulimit. These rows pinned THE WRAPPER DROPPED's remedy (the reviewer's M2 gap and t8-4), which asked for the wrapper words dropped
+      // so the shell would run its own name; since fork PR 975's round 2 (R2) that name is refused too, so the remedy is gone and each row holds that no
+      // refusal names it (the third element). The no-remedy form (M2, the reviewer's t8-10) behind an external `env` or after a gate the scan sees, as before
+      ...['cd {OUT}', 'export Y=1', 'ulimit -n'].flatMap((c) => ['command', 'builtin', 'time', 'exec'].map((wr) => [`AS8-drop-${wr}-${c.split(' ')[0]}`, 'na', `${BACKED_X}${wr} ${c}`, N, ['text', [ANY_NAME, `its command name names ${c.split(' ')[0]},`, 'Make the change with track-edit instead'], ['Run `', 'Spell the command by the full path']]])),
+      ...[['command-p', 'command -p'], ['time-p', 'time -p'], ['exec-a', 'exec -a q'], ['noglob', 'noglob'], ['nocorrect', 'nocorrect'], ['dash', '-']].map(([id, wr]) => [`AS8-drop-${id}-cd`, 'na', `${BACKED_X}${wr} cd {OUT}`, N, ['text', [ANY_NAME, 'its command name names cd,', 'Make the change with track-edit instead'], ['Run `', 'Spell the command by the full path']]]),
       ['AS8-drop-noremedy-env-cd', 'na', `${BACKED_X}env cd {OUT}`, N, ['text', [ANY_NAME, 'Make the change with track-edit instead'], ['Run `', 'Spell the command by the full path', 'full-path']]],
       ['AS8-drop-noremedy-gate-cd', 'na', `${BACKED_X}/usr/bin/true enable; cd {OUT}`, N, ['text', [ANY_NAME, 'Make the change with track-edit instead'], ['Run `', 'Spell the command by the full path']]],
-      // the scan's reach, a stated cost: a mention no shell runs turns the exemption off too (the restricted side)
+      // a mention of a gate no shell runs: the exemption it turned off is gone (R2), so the bare echo is refused as every bare name is, a stated cost
       ['AS8-builtin-gate-mention-cost', 'na', `${BACKED_X}echo enable`, N, ['text', ANY_NAME]],
       // a name a wrapper runs is the wrapper's lookup, never the shell's own (the seventh verify round's tg-m7-4: `exec echo` ran the stash in bash,
       // `command echo` in zsh), whatever spells the wrapper: by a path, which names no lookup (`/usr/bin/env echo` and `/usr/bin/nohup echo` ran it in
       // bash and zsh while allowed before this round), or a copy of it the command made
-      ['AS8-builtin-exec-echo', 'na', `${STASHED_ECHO}exec echo base/report.md docs/report.md`, ['bash'], ['text', [ANY_NAME, 'Run `echo` without `exec` before it, so the shell runs its own `echo`: ']]],
-      ['AS8-builtin-command-echo', 'na', `${STASHED_ECHO}command echo base/report.md docs/report.md`, ['zsh'], ['text', [ANY_NAME, 'Run `echo` without `command` before it, so the shell runs its own `echo`: ']]],
-      ['AS8-builtin-exec-command', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/comm; cp -b -S and /usr/bin/true {OUT}/scratch/comm; PATH=$X:$PATH; exec command base/report.md docs/report.md', ['bash'], ['text', [ANY_NAME, 'Run `command` without `exec` before it, so the shell runs its own `command`: ']]],   // the first wrapper the shell's own (the builtin exec), the second exec's lookup through PATH (the stash)
+      // (since fork PR 975's round 2, R2, the wrapper itself is refused as a bare name too: `exec` and `command` have no program, so the refusal of echo
+      // names no remedy, the full path for echo leaving them refused; and in `exec command ..` the refusal names `exec`, the first word, where it had named
+      // `command` while `exec` passed as the shell's own)
+      ['AS8-builtin-exec-echo', 'na', `${STASHED_ECHO}exec echo base/report.md docs/report.md`, ['bash'], ['text', [ANY_NAME, 'its command name names echo,', 'Make the change with track-edit instead'], ['Run `', 'Spell the command by the full path']]],
+      ['AS8-builtin-command-echo', 'na', `${STASHED_ECHO}command echo base/report.md docs/report.md`, ['zsh'], ['text', [ANY_NAME, 'its command name names echo,', 'Make the change with track-edit instead'], ['Run `', 'Spell the command by the full path']]],
+      ['AS8-builtin-exec-command', 'na', 'read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/comm; cp -b -S and /usr/bin/true {OUT}/scratch/comm; PATH=$X:$PATH; exec command base/report.md docs/report.md', ['bash'], ['text', [ANY_NAME, 'its command name names exec,', 'Make the change with track-edit instead'], ['Run `', 'Spell the command by the full path']]],   // bash's exec looks `command` up through PATH and runs the stash
       ['AS8-builtin-slash-env-echo', 'na', `${STASHED_ECHO}/usr/bin/env echo base/report.md docs/report.md`, BZ, ['text', ANY_NAME]],
       ['AS8-builtin-slash-nohup-echo', 'na', `${STASHED_ECHO}/usr/bin/nohup echo base/report.md docs/report.md`, BZ, ['text', ANY_NAME]],
       ['AS8-builtin-bound-env-echo', 'na', `cp /usr/bin/env {OUT}/scratch/e2; ${STASHED_ECHO}{OUT}/scratch/e2 echo base/report.md docs/report.md`, BZ, ['text', ANY_NAME]],
@@ -1130,6 +1135,32 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // the piped and the redirected script through it while allowed before this round)
       ['AS8-builtin-dash-builtin-stdin', 'nad', "cp /bin/sh {OUT}/scratch/built; cp -b -S in /usr/bin/true {OUT}/scratch/built; PATH={OUT}/scratch:$PATH; echo 'cp ../base/report.md report.md' | builtin", ['dash'], ['text', ANY_NAME]],
       ['AS8-builtin-dash-builtin-file', 'nad', "printf 'cp ../base/report.md report.md\\n' > {OUT}/scratch/cmds; cp /bin/sh {OUT}/scratch/built; cp -b -S in /usr/bin/true {OUT}/scratch/built; PATH={OUT}/scratch:$PATH; builtin < {OUT}/scratch/cmds", ['dash'], ['text', ANY_NAME]],
+      // fork PR 975's round 2, R2 (fresh-2): a builtin's name the command shadows with a function or an alias through a table write the guard does not
+      // read (zsh's `printf -v`, `read -r` and `${..::=..}` into `functions`, bash's `BASH_ALIASES` under POSIX mode, which expands aliases in `-c`, on
+      // a line of its own since bash expands an alias only on a later line) runs the shadow, here a copy onto the tracked report; THE SHELL'S OWN NAME
+      // let the name pass after a copy and an unread PATH, where fork main refused every bare name, so each was allowed at the change's head while the
+      // shell wrote, and each is refused again now, the name itself the refusal
+      ['AS8-builtin-shadow-zsh-printf-v', 'na', `printf -v 'functions[echo]' '/usr/bin/cp "$@"'; read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/c2; PATH=$PATH:$X; echo base/report.md docs/report.md`, ['zsh'], ['text', [ANY_NAME, 'its command name names echo,']]],
+      ['AS8-builtin-shadow-zsh-read-r', 'na', `read -r 'functions[echo]' <<< '/usr/bin/cp "$@"'; read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/c2; PATH=$PATH:$X; echo base/report.md docs/report.md`, ['zsh'], ['text', [ANY_NAME, 'its command name names echo,']]],
+      ['AS8-builtin-shadow-zsh-assign-expansion', 'na', `: \${functions[echo]::='/usr/bin/cp "$@"'}; read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/c2; PATH=$PATH:$X; echo base/report.md docs/report.md`, ['zsh'], ['text', [ANY_NAME, 'its command name names echo,']]],
+      ['AS8-builtin-shadow-zsh-cd', 'na', `printf -v 'functions[cd]' '/usr/bin/cp "$@"'; read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/c2; PATH=$PATH:$X; cd base/report.md docs/report.md`, ['zsh'], ['text', [ANY_NAME, 'its command name names cd,', 'Make the change with track-edit instead']]],
+      ['AS8-builtin-shadow-bash-aliases', 'na', 'POSIXLY_CORRECT=1\nBASH_ALIASES[echo]=/usr/bin/cp\nread X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/c2; PATH=$PATH:$X\necho base/report.md docs/report.md', ['bash'], ['text', [ANY_NAME, 'its command name names echo,']]],
+      ['AS8-builtin-shadow-bash-printf-v', 'na', "POSIXLY_CORRECT=1\nprintf -v 'BASH_ALIASES[echo]' /usr/bin/cp\nread X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/c2; PATH=$PATH:$X\necho base/report.md docs/report.md", ['bash'], ['text', [ANY_NAME, 'its command name names echo,']]],
+      // M3, pre-existing (fork main allows each, as this change does, while the shell writes; named in decision 47): the same table writes where no copy
+      // and no unread PATH put the bound-name refusal in play, or from a cwd in no project; the guard reads `echo` as the builtin it shadowed, and the
+      // follow-up reads a write to a function or alias table as a definition it does not read, refusing every later use of the name
+      ['AS8-residual-shadow-zsh-nopath', 'na', `printf -v 'functions[echo]' '/usr/bin/cp "$@"'; echo base/report.md docs/report.md`, ['zsh'], 'allow'],
+      ['AS8-residual-shadow-zsh-nocopy', 'na', `printf -v 'functions[echo]' '/usr/bin/cp "$@"'; read X <<< {OUT}/scratch; PATH=$PATH:$X; echo base/report.md docs/report.md`, ['zsh'], 'allow'],
+      ['AS8-residual-shadow-bash-nopath', 'na', 'POSIXLY_CORRECT=1\nBASH_ALIASES[echo]=/usr/bin/cp\necho base/report.md docs/report.md', ['bash'], 'allow'],
+      ['AS8-residual-shadow-zsh-out', 'out', `printf -v 'functions[echo]' '/usr/bin/cp "$@"'; read X <<< {OUT}/scratch; cp /usr/bin/cp {OUT}/scratch/c2; PATH=$PATH:$X; echo {NA}/base/report.md {NA}/docs/report.md`, ['zsh'], 'allow', null],
+      // fork PR 975's round 2, R2 (correctness-3): dash looks echo, printf and test up through PATH before a `%builtin` entry, so under an unread PATH that
+      // holds a directory and then `%builtin` a script written into place under the name runs (the script names cp by its full path, since a script that
+      // ran echo or printf under that PATH would run itself); THE SHELL'S OWN NAME let the name pass, where fork main refused it, and each is refused
+      // again now; reachable from bash and zsh through `dash -c` (every outer shell writes). From a cwd in no project the bound-name refusal is not in play
+      // and the script run is no text the guard reads, so it passes at fork main as here (a witness, named in decision 47)
+      ...[['echo', 'echo x'], ['printf', 'printf x'], ['test', 'test -n x']].map(([n, call]) => [`AS8-builtin-dash-pctbuiltin-${n}`, 'na', `printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/${n}; chmod +x {OUT}/scratch/${n}; printf '%s\\n' {OUT}/scratch > {OUT}/p; read X < {OUT}/p; PATH=$X:%builtin:$PATH; ${call}`, ['dash'], ['text', [ANY_NAME, `its command name names ${n},`]], null]),
+      ['AS8-builtin-dash-pctbuiltin-dash-c', 'na', "printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; printf '%s\\n' {OUT}/scratch > {OUT}/p; dash -c 'read X < {OUT}/p; PATH=$X:%builtin:$PATH; echo x'", A, ['text', [ANY_NAME, 'its command name names echo,']], null],
+      ['AS8-residual-dash-pctbuiltin-echo-out', 'out', "printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; printf '%s\\n' {OUT}/scratch > {OUT}/p; read X < {OUT}/p; PATH=$X:%builtin:$PATH; echo x", ['dash'], 'allow', null],
     );
     // item 8, the session's second case: a target holding a variable the guard cannot read (a substitution's value) is refused, naming the ONE
     // remedy that always lifts it, the path spelled out as an absolute path (M2: the literal-value clause the rounds before offered, which did not
@@ -1384,7 +1415,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# THE MADE NAME: ${madeRan.size} of ${Object.keys(MADE).length} rows ran their legs here`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 67, AS6: 19, AS7: 17, AS8: 244 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 67, AS6: 19, AS7: 17, AS8: 263 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
@@ -1431,33 +1462,6 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
         assert.ok(!/\b(builtin|keyword|reserved)\b/.test(said), `${name} is marked external, but ${sh} says: ${said}`);
       }
     }
-    // THE SHELL'S OWN NAME's set (the sixth verify round's tg-t6-3; the seventh's tg-t7-1), asked of the shells as the external marks are: every name in
-    // ALL_SHELL_BUILTINS is a builtin, a keyword or a reserved word in each of bash, zsh and dash (a name one of them looks up through PATH would be a write
-    // the skip lets pass), asked of each shell present on this runner by its own positive answer (bash `type -t` prints the kind, zsh `whence -w` NAME: KIND,
-    // dash `type` NAME is a [special ]shell builtin or keyword; the detector before read dash's "builtin: not found" as a builtin), and of a shell absent
-    // here through SHELL_OWN_DERIVED, the lists derived on the box the set was derived on; and the set is exactly the intersection of those lists
-    const abAt = hookText.indexOf('const ALL_SHELL_BUILTINS = new Set([');
-    const allBuiltins = abAt < 0 ? [] : [...hookText.slice(abAt, hookText.indexOf(']);', abAt)).matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    assert.ok(allBuiltins.length > 0, 'the census reads ALL_SHELL_BUILTINS from the hook');
-    const OWN_ANSWER = { bash: (s) => /^(?:builtin|keyword)$/.test(s), zsh: (s) => /: (?:builtin|reserved)$/.test(s), dash: (s) => / is a (?:special )?shell (?:builtin|keyword)$/.test(s) };
-    const ownWord = new Map();
-    const runsOwn = (sh, name) => {
-      const key = `${sh} ${name}`;
-      if (!ownWord.has(key)) {
-        const argv = sh === 'bash' ? ['--norc', '--noprofile', '-c', 'type -t -- "$W"'] : sh === 'zsh' ? ['-f', '-c', 'whence -w -- "$W"'] : ['-c', 'type "$W"'];   // the name in the environment, never a text the shell parses
-        const r = spawnSync(sh, argv, { encoding: 'utf8', env: { PATH: process.env.PATH, W: name } });
-        ownWord.set(key, OWN_ANSWER[sh](String(r.stdout || '').trim()));
-      }
-      return ownWord.get(key);
-    };
-    const ownShells = shellsFor(['bash', 'zsh', 'dash'], 'the shell-own census');
-    const ownCensus = (names, live) => ['bash', 'zsh', 'dash'].flatMap((sh) => names.filter((n) => !(live.includes(sh) ? runsOwn(sh, n) : SHELL_OWN_DERIVED[sh].includes(n))).map((n) => `${sh} ${n}`));
-    assert.deepEqual(ownCensus(allBuiltins, ownShells), [], 'every name in ALL_SHELL_BUILTINS is one bash, zsh and dash run as their own, asked live where the shell is here and from SHELL_OWN_DERIVED where it is not');
-    const derivedAll = SHELL_OWN_DERIVED.bash.filter((n) => SHELL_OWN_DERIVED.zsh.includes(n) && SHELL_OWN_DERIVED.dash.includes(n));
-    assert.ok(derivedAll.length > 0 && SHELL_OWN_DERIVED.bash.length > derivedAll.length, 'the committed lists hold the intersection and more');
-    assert.deepEqual([...allBuiltins].sort(), [...derivedAll].sort(), 'ALL_SHELL_BUILTINS is exactly the names bash, zsh and dash all run as their own (SHELL_OWN_DERIVED)');
-    for (const live of [ownShells, []]) assert.deepEqual(ownCensus(['builtin'], live), ['dash builtin'], `the census reds on \`builtin\`, which dash looks up through PATH, asked ${live.length ? `live of ${live.join(', ')} and from the lists for the rest` : 'from the lists alone'}`);
-    console.log(`# THE SHELL'S OWN NAME's census: asked live of ${ownShells.join(', ') || 'no shell'}; from SHELL_OWN_DERIVED for ${['bash', 'zsh', 'dash'].filter((s) => !ownShells.includes(s)).join(', ') || 'no shell'}`);
     console.log(`# the after-source fixes: ${all.length} rows, by item ${Object.entries(byItem).map(([k, v]) => `${k} ${v}`).join(', ')}; ${all.filter((r) => /-residual-/.test(r[0])).length} disclosed residual rows; asked of the guard alone: ${guardOnly.join(', ')}`);
     // M2's proof over every row (the mechanism ruling, 2026-10-03, option (b), and the fifth verify round's rulings): each refusal names the ONE
     // remedy that always lifts it, and "always" is proved over this population row by row, not once per kind. Every refused row is classified by
@@ -1490,7 +1494,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       if (l.includes('a word the shell fills in when the command runs: it may be an option of the wrapper or the command the wrapper runs')) return l.includes('it is followed by `|`') ? 'filled-piped' : 'filled';
       if (l.includes('which I do not read in that spelling')) return 'option';
       if (/ wrapper carries the option .*, which I do not know, so I cannot tell what the command behind it would write or where/.test(l)) return l.includes('it is followed by `|`') ? 'option-unheld-piped' : 'option-unheld';   // an option the table does not hold, split by whether the output reaches `|` (the sixth verify round's tg-t6-2)
-      if (l.includes('is looked up through a PATH I do not read here')) return l.includes(' before it, so the shell runs its own `') ? 'boundName-drop' : l.endsWith(TRACK_EDIT_SENTENCE) ? 'boundName-noremedy' : 'boundName';   // the shell's own name behind precommand words (THE WRAPPER DROPPED) and a sourced name (THE SOURCED NAME), each by its one remedy (fork PR 975's round 1 pass); and the no-remedy form where no wrapper can be dropped and no program of that name is on PATH (M2's no-remedy, the reviewer's t8-10)
+      if (l.includes('is looked up through a PATH I do not read here')) return l.endsWith(TRACK_EDIT_SENTENCE) ? 'boundName-noremedy' : 'boundName';   // a bare name and a sourced name (THE SOURCED NAME), by the program's full path; and the no-remedy form where no program stands for the name or for another name the segment looks up (M2's no-remedy, the reviewer's t8-10; THE WRAPPER DROPPED's remedy came out in fork PR 975's round 2, R2)
       if (l.includes('is a pattern, matched in a directory that is not known')) return 'patternHead-dir';
       if (l.includes('is a pattern matching more names than I read')) return 'patternHead-cap';
       if (l.includes('so I cannot tell what would run or which file it would write')) return 'aliasUnread';
@@ -1523,7 +1527,6 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       option: 'Spell the option in the long form I know',
       'option-unheld': (l) => `Run the command without the \`${(l.match(/ its `([^`]+)` wrapper carries the option /) || [])[1]}\` wrapper`,
       boundName: 'Spell the command by the full path of the program it should run, not a path this command made',
-      'boundName-drop': (l) => { const m = l.match(/ Run `([^`]+)` without `([^`]+)` before it, so the shell runs its own `/); return m ? `Run \`${m[1]}\` without \`${m[2]}\` before it, so the shell runs its own \`${m[1]}\`` : 'no wrapper named'; },
       aliasUnread: 'Spell the command the alias or the binding stands for, with its paths as absolute paths',
       producer: 'Spell the text out (the path, or the script, as literal words)',
       opaque: (l) => `Spell the command without \`${(l.match(/ its `([^`]+)` hands the rest of the command /) || [])[1]}\``,
@@ -1629,8 +1632,6 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
         return out.slice(0, from) + out.slice(from, end).replace(/(^|\s)([^\s'"$~/-][^\s]*\/[^\s]*)/g, (all, sp, p) => `${sp}${path.resolve(cwd, p)}`) + out.slice(end);
       },
       boundName: (cmd, l) => { const raw = refusedWord(l); const m = cmd.match(/(?:^|[;\s])cp\s+(\/[^\s;]+)\s/); if (!m || !onPath(m[1])) throw new Error('no literal program copied into place'); return splice(cmd, lastAt(cmd, raw), raw, m[1]); },
-      // THE WRAPPER DROPPED's twin: the wrapper words before the name removed, as the remedy says
-      'boundName-drop': (cmd, l) => { const m = l.match(/ Run `([^`]+)` without `([^`]+)` before it/); if (!m) throw new Error('no wrapper named'); const raw = `${m[2]} ${m[1]}`; const at = cmd.lastIndexOf(raw); if (at < 0) throw new Error(`${raw} is not in the command`); return cmd.slice(0, at) + m[1] + cmd.slice(at + raw.length); },
       piped: (cmd) => { const m = cmd.match(/\b(nohup|setsid|nice) \$e ('[^']*')/); const v = valueRead(cmd, 'e'); const c = [...cmd.matchAll(/\|\s*(bash|cat)\b/g)].pop(); if (!m || !v || !c) throw new Error('no `$e` the row reads, or no consumer'); return `${m[1]} ${v} ${m[2]} | ${c[1]}`; },
     };
     BUILD['filled-piped'] = BUILD.piped;
@@ -1670,8 +1671,13 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       'AS8-builtin-gate-before-path': "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; enable -n echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; /usr/bin/echo",
       'AS8-builtin-gate-ansic-before-path': "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; $'\\x65nable' -n echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; /usr/bin/echo",
       'AS8-builtin-gate-mention-cost': `${BACKED_X}/usr/bin/echo enable`,
-      // (AS8-builtin-exec-echo and AS8-builtin-command-echo take THE WRAPPER DROPPED's remedy since fork PR 975's round 1 pass: their twins are
-      // built, the wrapper dropped)
+      'AS8-root-gate-unheld-callback': 'cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; mapfile -C "$(cat {OUT}/scratch/keep.md)" -c 1 a < {OUT}/scratch/keep.md; grep -c PATH {OUT}/scratch/b.service; /usr/bin/ls docs',
+      // dash's `%builtin` road (R2's correctness-3 closures): the written script's name spelled by the program's full path, which runs no lookup
+      ...Object.fromEntries([['echo', 'echo x'], ['printf', 'printf x'], ['test', 'test -n x']].map(([n, call]) => [`AS8-builtin-dash-pctbuiltin-${n}`, `printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/${n}; chmod +x {OUT}/scratch/${n}; printf '%s\\n' {OUT}/scratch > {OUT}/p; read X < {OUT}/p; PATH=$X:%builtin:$PATH; /usr/bin/${call}`])),
+      'AS8-builtin-dash-pctbuiltin-dash-c': "printf '/usr/bin/cp {NA}/base/report.md {NA}/docs/report.md\\n' > {OUT}/s.sh; cat {OUT}/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; printf '%s\\n' {OUT}/scratch > {OUT}/p; dash -c 'read X < {OUT}/p; PATH=$X:%builtin:$PATH; /usr/bin/echo x'",
+      'AS8-root-gate-walk-ansic': "cp {OUT}/scratch/keep.md {OUT}/scratch/b.service; $'\\x65nable' -n echo; grep -c PATH {OUT}/scratch/b.service; /usr/bin/ls docs",
+      // a script written into place as echo and run by its bare name, refused since fork PR 975's round 2 (R2): the program's full path in place of the name
+      'AS8-builtin-noenable-script': "printf 'cp base/report.md docs/report.md\\n' > {OUT}/scratch/s.sh; cat {OUT}/scratch/s.sh > {OUT}/scratch/echo; chmod +x {OUT}/scratch/echo; read X <<< {OUT}/scratch; PATH=$X:$PATH; /usr/bin/echo",
       'AS8-builtin-slash-env-echo': `${STASHED_ECHO}/usr/bin/env /usr/bin/echo base/report.md docs/report.md`,
       'AS8-builtin-slash-nohup-echo': `${STASHED_ECHO}/usr/bin/nohup /usr/bin/echo base/report.md docs/report.md`,
       'AS8-builtin-bound-env-echo': `cp /usr/bin/env {OUT}/scratch/e2; ${STASHED_ECHO}{OUT}/scratch/e2 /usr/bin/echo base/report.md docs/report.md`,
@@ -1803,14 +1809,14 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     assert.ok(hook.includes('wrapperWrites(cmd.unknown);') && hook.includes('wrapperWrites(cmd.opaque);') && hook.includes("if ('script' in cmd) {   // `flock … -c 'string'` runs the string through `$SHELL -c`, read like `sh -c` (round 4)\n      wrapperWrites(cmd);"), 'a `time -o FILE` before a wrapper option the guard does not read, an opaque option or a flock string is still a write (behaviour: AS3-time-o-nice-out, AS3-time-o-nice-command-out, AS3-time-o-envS-out, AS3-time-o-flock-na, AS3-time-o-rel-later-envC-out)');
     assert.ok(hook.includes("      fromDir(dirNow(), () => {\n        enterChdirs(cmd);\n        for (const t of scriptTexts(cmd.script, "), "flock's string is read behind the wrappers' chdirs (behaviour: AS3-envC-flock-script, AS3-envchdir-flock-script, AS3-sudoD-flock-script, AS3-envC-var-flock-script-dir)");
     assert.ok(hook.includes('if (c.again) { setUnknown(') && hook.includes('again: chdirs.some((c) => c.inv === wrappers.length) })'), 'a second chdir option in one env or sudo invocation leaves the directory not known (S4-1; behaviour: AS3-envC-rpt-*; the nested rows, the allowed controls AS3-ctl-envC-nested-chain and AS3-ctl-envC-nested-flock-untracked and the row refused by name AS3-envC-nested-flock, each red when `again` counts a chdir of an earlier invocation; and AS3-envC-flock-script, a single-chdir row refused by name, red when `again` is always set)');
-    assert.ok(hook.includes("const boundWhy = pathValue != null ? null : { kind: 'boundName', text: `\\`${hw.raw}\\` is looked up through a PATH I do not read here, and this command made a path by copying, moving or linking, or by writing it, so which file it names is not known` };") && hook.includes("if (boundWhy && !shellRuns) cannotRead(hw, 'command name', drop ? { ...boundWhy, drop } : noRemedy ? { ...boundWhy, noRemedy } : boundWhy);") && !/sameName|madePaths|boundBackup|madeOff|UNMODELED_FILE_WRITERS|noteDirSource/.test(hook), "every bare name under a PATH not read refuses once a path is bound, fork main's rule again (item 8 as ruled), the directory known or not, and names the wrapper words dropped or no remedy where none lifts it; no narrowing to a made name and no list of programs survives (behaviour: AS8-armed-*, AS8-made-*, AS8-into-dir-*, AS8-backup-cp, AS8-backup-after-cd, AS8-builtin-gate-var-enable, the cost rows AS8-cost-*, AS8-drop-*)");
+    assert.ok(hook.includes("const boundWhy = pathValue != null ? null : { kind: 'boundName', text: `\\`${hw.raw}\\` is looked up through a PATH I do not read here, and this command made a path by copying, moving or linking, or by writing it, so which file it names is not known` };") && hook.includes("if (boundWhy) cannotRead(hw, 'command name', noRemedy ? { ...boundWhy, noRemedy } : boundWhy);") && !/ALL_SHELL_BUILTINS|shellRuns|DROP_WRAPPERS|builtinsOff\.given/.test(hook) && !/sameName|madePaths|boundBackup|madeOff|UNMODELED_FILE_WRITERS|noteDirSource/.test(hook), "every bare name under a PATH not read refuses once a path is bound, fork main's rule again (item 8 as ruled), the directory known or not, a builtin's or a keyword's name among them (R2: no exemption for a name the three shells run as their own, and no remedy that drops wrapper words), with no remedy where none lifts it; no narrowing to a made name and no list of programs survives (behaviour: AS8-armed-*, AS8-made-*, AS8-into-dir-*, AS8-backup-cp, AS8-backup-after-cd, AS8-builtin-gate-var-enable, the cost rows AS8-cost-*; R2's closures AS8-builtin-shadow-* and AS8-builtin-dash-pctbuiltin-*, red where a builtin's name is exempt; AS8-drop-*, red where a remedy names wrapper words dropped)");
     assert.ok(hook.includes('if (kind !== true) bind(ops[1].text, srcText(ops[0]));') && hook.includes('if (kind !== false && ops[0].text) bind(path.join(ops[1].text, path.basename(ops[0].text)), srcText(ops[0]));'), 'a writer of two operands binds the file it makes in a directory, both readings where the destination\'s kind is not known, the spelling alone under `-T` or onto a file, which a PATH the guard reads finds (behaviour: AS8-into-dir-readable-path, red where DIR/basename(SRC) is not bound)');
-    assert.ok(hook.includes("bound.size && pathValueAt(seg, seg.words.length - args.length) == null) cannotRead(op0, `\\`${name}\\` operand`, { kind: 'boundName', noRemedy: true,"), "a name `.` or `source` looks up through a PATH not read refuses once a path is bound, as a bare command name does, with no remedy (behaviour: AS8-sourced-dot-piped, red without it, where `.` takes no gate; AS8-sourced-dot)");
-    assert.ok(hook.includes('const noRemedy = !!boundWhy && !drop && ((Object.hasOwn(SHELL_WORD_ASSIGNS, bareName) && !programOnPath(bareName)) || definedFunctions.has(bareName));'), "M2's no-remedy form for a builtin or a reserved word of any of the three shells with no program of its name (behaviour: AS8-sourced-source, AS8-drop-noremedy-*, the gate rows refused at the gate's own word)");
+    assert.ok(hook.includes("bound.size && pathValueAt(seg, seg.words.length - args.length) == null) cannotRead(op0, `\\`${name}\\` operand`, { kind: 'boundName', noRemedy: true,"), "a name `.` or `source` looks up through a PATH not read refuses once a path is bound, as a bare command name does, with no remedy; since R2 the head `.` or `source` is refused first under the same PATH, so no row reds without this line (AS8-sourced-dot and AS8-sourced-dot-piped name `.` now), which stands behind the head's refusal");
+    assert.ok(hook.includes('const noRemedy = !!boundWhy && ((Object.hasOwn(SHELL_WORD_ASSIGNS, bareName) && !programOnPath(bareName)) || definedFunctions.has(bareName));') && hook.includes('const besideNoRemedy = !u.why.noRemedy && list.some((v) => {') && hook.includes('if (u.why.noRemedy || besideNoRemedy) return '), "M2's no-remedy form for a builtin or a reserved word of any of the three shells with no program of its name, and since R2 for a bare name whose command holds another bare name refused with none (behaviour: AS8-sourced-source, AS8-drop-*, the gate rows refused at the gate's own word; AS8-builtin-exec-echo, AS8-builtin-command-echo, AS8-builtin-dash-builtin-stdin, AS8-builtin-gate-while and AS8-builtin-gate-until, red where echo's full-path remedy is not withheld)");
     // THE ASSIGNING HEAD (item 8 as ruled, ROOT): a mention taints only where the head may assign a name it is given, the set derived from the table the
     // census below checks against the shells (behaviour: the rows whose later name is a program, AS8-unit-*, AS8-cp-sed-path-ls and
-    // AS8-cp-grep-path-collision, red where every mention taints; the session's rows whose later name is echo or printf pass either way, THE SHELL'S OWN
-    // NAME; AS8-root-print-v and AS8-root-getln, red where the table drops the word; AS8-root-glob-head, red where a head the guard does not read, a
+    // AS8-cp-grep-path-collision, red where every mention taints, and since R2 the session's rows whose later name is echo or printf too, which THE SHELL'S
+    // OWN NAME had let pass either way (AS8-cp-grep-path-echo, AS8-cp-echo-path-word, AS8-mv-grep-path-printf); AS8-root-print-v and AS8-root-getln, red where the table drops the word; AS8-root-glob-head, red where a head the guard does not read, a
     // pattern that matches a file named `read`, is taken for a program; AS8-root-unread-head, refused by THE UNREAD HEAD's own road either way)
     assert.ok(hook.includes('const mentions = mentionMayAssign(seg, cmd);') && hook.includes('        if (mentions) taint(t, wroteThrough(t, ') && hook.includes('    return MENTION_TAINT_HEADS.has(cmd.name);') && hook.includes("export const MENTION_TAINT_HEADS = new Set(Object.keys(SHELL_WORD_ASSIGNS).filter((n) => SHELL_WORD_ASSIGNS[n][0] === true));") && hook.includes("if (!hw || !hw.literal || !hw.text || hw.text.includes('\\0')) return true;") && hook.includes('if (builtinsOff.seen || aliasState.unread || aliases.has(cmd.name) || [...aliases.values()].some((a) => a.global || a.suffix)) return true;'), 'THE ASSIGNING HEAD: a mention of a name in a word taints it only under a head that may assign a name it is given (the table, the census below), a wrapped head, a head not read, an alias the command binds (AS8-root-alias-head), a global alias (AS8-root-global-alias), or wherever the command may turn a builtin on');
     // THE ASSIGNING HEAD's function clause: a command that let a mention pass under a head and may define a function of its name, or any function, is
@@ -1823,9 +1829,11 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     assert.ok(hook.includes("if (eq < 0) { if ((w.marks && w.marks.includes('x')) || w.text.includes('\\0')) { if (!aliasState.unread) aliasState.unread = w.raw; } continue; }"), 'an alias operand whose `=` an expansion may hold binds a name the guard does not read (AS8-root-alias-unread-operand, AS8-alias-unread-operand-cp, AS8-cost-alias-unread-operand)');
     // the accepted rulings on what survives the item-3 split (fork PR 975 round 1 verify findings, 2026-10-05)
     assert.ok(hook.includes("else if (ops.length === 1 && name === 'ln' && ops[0].text) {") && hook.includes('if (cwd) bind(path.basename(ops[0].text), srcText(ops[0]));'), 'a one-operand ln binds ./basename(SRC), closing shell F2 (the reviewer\'s t8-3; behaviour: AS8-made-one-op-ln-readable-path, red where it binds nothing; AS8-made-one-op-ln-s, AS8-made-one-op-ln, and its cost AS8-cost-one-op-ln-s-other-name)');
-    assert.ok(hook.includes('const DROP_WRAPPERS = new Set(Object.keys(WRAPPER_OPT).filter((n) => WRAPPER_OPT[n].external !== true));') && hook.includes('wrappers: dropWords.join(\' \') }') && hook.includes('const noRemedy = !!boundWhy && !drop && ((Object.hasOwn(SHELL_WORD_ASSIGNS, bareName) && !programOnPath(bareName)) || definedFunctions.has(bareName));'), 'THE WRAPPER DROPPED derives its set from WRAPPER_OPT and names the option words to drop, with M2\'s no-remedy form where none can be (the reviewer\'s t8-4 and t8-10; behaviour: AS8-drop-command-p-cd, AS8-drop-time-p-cd, AS8-drop-exec-a-cd, AS8-drop-noglob-cd, AS8-drop-nocorrect-cd, AS8-drop-dash-cd, AS8-drop-noremedy-env-cd, AS8-drop-noremedy-gate-cd)');
-    assert.ok(hook.includes('const shellRuns = (own || hIdx === rawHeadIndexOf(seg.words)) && (!hw.marks || /^u+$/.test(hw.marks)) && ALL_SHELL_BUILTINS.has(bareName) && !builtinsOff.seen;') && hook.includes('boundRoad(headWord, headIdx, !cmd.wrapped);'), "THE SHELL'S OWN NAME: a bare name the three shells run as their own skips both refusals only as the shell's own lookup (the head where no wrapper runs it, or the first wrapper: AS8-builtin-exec-command and the hand twins of the exec and command rows) and spelled with no quoting (behaviour: AS8-builtin-cd-after-backup and the other allowed AS8-builtin-* rows; refused behind a wrapper: AS8-builtin-exec-echo, AS8-builtin-command-echo, AS8-builtin-slash-env-echo, AS8-builtin-slash-nohup-echo, AS8-builtin-bound-env-echo, AS8-builtin-env-echo-after-backup; quoted: AS8-builtin-quoted-if, AS8-builtin-quoted-while, AS8-builtin-partquoted-for, AS8-builtin-quoted-echo-cost; the census above asks the shells for the set)");
-    assert.ok(hook.includes('const builtinsOff = { seen: mentionsBuiltinGate(command), given: [], withdrawn: [] };') && hook.includes('if (BUILTIN_GATES.has(name)) gateBuiltins();') && hook.includes("    gateBuiltins();   // THE SHELL'S GATE: a text not read, run here, may turn a builtin off") && hook.includes('else if (boundWhy) builtinsOff.given.push(unreadEntry(hw, ') && hook.includes('r.unresolved.push(...builtinsOff.withdrawn);'), "THE SHELL'S GATE: set for the whole command by the scan before the walk, by the walk's gate name and by a text not read run here, each exemption given before it withdrawn (behaviour: AS8-builtin-gate-* by the scan, AS8-builtin-gate-ansic-loop and AS8-builtin-gate-eval-ansic-loop by the walk's name, AS8-builtin-gate-unread-head-loop, AS8-builtin-gate-unread-trap and AS8-builtin-gate-source-loop by the text not read; the scan's cost: AS8-builtin-gate-mention-cost)");
+    // THE SHELL'S GATE, kept for THE ASSIGNING HEAD (R2 took out THE SHELL'S OWN NAME, THE WRAPPER DROPPED and the exemptions kept aside to withdraw):
+    // set by the scan before the walk, by the walk's gate name and by a text not read run here, and read by mentionMayAssign (behaviour: AS8-root-gate-scan,
+    // red where the scan is off; AS8-root-gate-walk-ansic, red where the walk's name does not set it; AS8-root-gate-unheld-callback, red where a text not
+    // read run here does not)
+    assert.ok(hook.includes('const builtinsOff = { seen: mentionsBuiltinGate(command) };') && hook.includes('if (BUILTIN_GATES.has(name)) gateBuiltins();') && hook.includes("    gateBuiltins();   // THE SHELL'S GATE: a text not read, run here, may turn a builtin on or off") && hook.includes('const gateBuiltins = () => { builtinsOff.seen = true; };'), "THE SHELL'S GATE: set for the whole command by the scan before the walk, by the walk's gate name and by a text not read run here, and read by THE ASSIGNING HEAD (behaviour: AS8-root-gate-scan, AS8-root-gate-walk-ansic, AS8-root-gate-unheld-callback)");
     assert.ok(hook.includes('r.unknown.held = held;') && hook.includes('if (nm.length > 0 && spec.refuse && spec.refuse.long.some((x) => x.startsWith(nm))) return opaque(`${name} --${nm}`, value);') && hook.includes('if (u.why.held) return ') && hook.includes('if (u.why.piped) return `This command is blocked here: its \\`${u.why.wrapper}\\` wrapper carries the option ${u.why.option}, which I do not know, `'), 'a literal wrapper option is split by what the table holds and by whether the output reaches `|` (behaviour: AS3-option-abbrev, AS3-option-held-*, AS3-option-unheld-*; an abbreviation of a refused option takes the refusal of the option it abbreviates: AS3-option-refuse-abbrev-*, and the census over the table above)');
     assert.ok(hook.includes("const compare = u.how.includes(CONSTRUCT_HEADS['[['].via) ? 'Write the comparison with `expr`") && hook.includes('const inText = moved;'), 'the comparison names its one remedy, and the text\'s own move names the text remedy whatever an earlier construct did (behaviour: AS7-compare-notlit, AS6-script-eval-in-text-*)');
   } finally { process.env.HOME = savedHome; w.rm(); }
