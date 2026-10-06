@@ -3,7 +3,7 @@ title: test_login_records' hung token command case ends the sleep its shell fork
 status: candidate
 where: tests/test_login_records.py (TheTokenCommand.test_a_hung_command_is_cut_by_the_bound: the token command records the pid of the sleep it forks, and the test ends that pid in cleanup); upstream/2026-10-06-tests-login-hung-command-child.md (this entry)
 added: 2026-10-06
-pr:
+pr: 984
 tier: docs
 offered:
 closed:
