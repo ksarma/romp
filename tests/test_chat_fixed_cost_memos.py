@@ -569,6 +569,298 @@ class PostalCardDeps(unittest.TestCase):
                          ((None, None, None), None))
 
 
+# -- the chat signature's postal check: the record's memo and the by-name colour index (2026-10-06) --------------
+class _CountingCard(dict):
+    """A recorded postal card that counts reads of its kind: _postal_card_deps reads it once per card per walk,
+    so the count over a record's cards is the number of walks times the number of cards."""
+
+    def __init__(self, reads, **fields):
+        super().__init__(**fields)
+        self.reads = reads
+
+    def get(self, key, default=None):
+        if key == "kind":
+            self.reads[0] += 1
+        return super().get(key, default)
+
+
+_RECORD_KEYS = ("task_outs", "pl_pending", "pl_at", "pl_check", "postal_any", "postal_cards", "at_build")
+
+
+class PostalSigMemo(unittest.TestCase):
+    """The chat signature's postal component (_chat_sig_deps) over a cached build's record: the card values are
+    memoized on the record, keyed on the names digest, the postal index and the caption map, so a cycle whose
+    inputs held does not walk the cards again, while the caption map is still fetched every cycle. The record is
+    the real one (_chat_build_deps over a payload of cards), the index the real one over a messages log in a
+    rebound state root, the caption map a dict the test replaces when its content changes and keeps otherwise
+    (the union's own rule), and each cycle opens the pusher's scopes: a new names snapshot and an empty caption
+    slot. Every value is held against an evaluation with no memo: the same function over a copy of the record
+    made of its build-time fields, and the walk itself over the same cards."""
+
+    def setUp(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        self.root = Path(td.name)
+        saved_state, saved_names, saved_sum = jd.STATE, km.NAMES, km._msg_summaries
+        jd._rebind_state(self.root / "state")
+        self.log = jd.STATE / "timeline" / "messages.jsonl"
+        self.log.parent.mkdir(parents=True)
+        km.NAMES = self.root / "names"
+        km.NAMES.mkdir()
+        km._postal_index_memo[0] = None
+        self.fetches = [0]
+        self.cmap = {}
+
+        def fetch():
+            self.fetches[0] += 1
+            return self.cmap
+        km._msg_summaries = fetch
+
+        def restore():
+            jd._rebind_state(saved_state)
+            km.NAMES, km._msg_summaries = saved_names, saved_sum
+            km._postal_index_memo[0] = None
+            km._live_scope.names = None
+            km._live_scope.msgsum = None
+            km._chat_dep_scope.deps = None
+        self.addCleanup(restore)
+        self.reads = [0]
+
+    def row(self, **r):
+        with open(self.log, "a") as f:
+            f.write(json.dumps(r) + "\n")
+
+    def card(self, **fields):
+        return _CountingCard(self.reads, kind="postal-service", **fields)
+
+    def record(self, cards):
+        """The record a build of these cards leaves (_chat_build_deps), its build-time reads uncounted."""
+        km._chat_dep_scope.deps = None
+        km._live_scope.msgsum = [km._MSGSUM_UNSET]
+        rec = km._chat_build_deps(SID_A, {"events": list(cards)})
+        self.reads[0] = 0
+        return rec
+
+    def cycle(self, names):
+        """A pusher cycle's opening: a new names snapshot (a new dict and new lists, in the given order) and an
+        empty caption slot. None opens neither, as on a handler thread outside a push."""
+        if names is None:
+            km._live_scope.names = None
+            km._live_scope.msgsum = None
+        else:
+            km._live_scope.names = {k: list(v) for k, v in names}
+            km._live_scope.msgsum = [km._MSGSUM_UNSET]
+
+    def held(self, rec, why):
+        """The memoized tail equals, byte for byte, the tail of a copy of the record with no memo state, and its
+        postal component equals the walk itself over the same cards. Both references read a by-name colour by
+        the linear scan (_scan_color) while a scope is set, so neither leans on the colour index either."""
+        got = km._chat_sig_deps(SID_A, rec)
+        by_name = km._name_color_by_name
+        km._name_color_by_name = lambda name: (_scan_color(km._live_scope.names, name)
+                                               if km._live_scope.names is not None else by_name(name))
+        try:
+            ref = km._chat_sig_deps(SID_A, {k: rec[k] for k in _RECORD_KEYS})
+            idx = km._postal_index()
+            walk = (km._chat_postal_rev(SID_A, idx),
+                    km._postal_card_deps(rec["postal_cards"], idx, km._msg_summaries_scoped))
+        finally:
+            km._name_color_by_name = by_name
+        self.assertEqual(got, ref, why)
+        self.assertEqual(repr(got), repr(ref), why + ": the same bytes")
+        self.assertEqual(got[2], walk, why + ": the walk's own value")
+        return got
+
+    def test_two_cycles_with_unchanged_inputs_walk_the_cards_once_and_a_names_change_walks_them_again(self):
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: asked for the schema"}
+        names = [(SID_A, ["web", "/tmp/notes-api", "#1ea1eb"]), (PEER, ["api", "/tmp/notes-api", "#abcdef"])]
+        rec = self.record([self.card(direction="in", mid="m1", peer="api"),
+                           self.card(direction="out", mid="m2", peer="api"),
+                           self.card(direction="out", peer="tests")])
+        self.cycle(names)
+        first = km._chat_sig_deps(SID_A, rec)
+        self.assertEqual(self.reads[0], 3, "the first check walks the three cards once")
+        self.cycle(names)
+        second = km._chat_sig_deps(SID_A, rec)
+        self.assertEqual(self.reads[0], 3, "a second cycle with the same names, index and caption map walks no card")
+        self.assertEqual(second, first)
+        self.assertEqual(self.fetches[0], 3, "the caption map is still fetched every cycle (and once by the build)")
+        self.cycle([names[0], (PEER, ["api", "/tmp/notes-api", "#000000"])])
+        third = km._chat_sig_deps(SID_A, rec)
+        self.assertEqual(self.reads[0], 6, "a names digest that moved walks the cards again")
+        self.assertNotEqual(third, second, "the sender's colour moved")
+
+    def test_the_tail_equals_an_unmemoized_check_in_every_state(self):
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.row(ev="sent", id="m2", from_id=SID_A, to_id=PEER, body="here it is", t=2)
+        self.cmap = {"m1": "api: asked for the schema"}
+        web = (SID_A, ["web", "/tmp/notes-api", "#1ea1eb"])
+        api = (PEER, ["api", "/tmp/notes-api", "#abcdef"])
+        cards = [self.card(direction="in", mid="m1", peer="api"), self.card(direction="out", mid="m2", peer="api"),
+                 self.card(direction="out", peer="tests")]
+        recs = [self.record(cards)]
+        seen = []
+
+        def state(names, why):
+            before = self.fetches[0]
+            self.cycle(names)
+            for rec in recs:
+                seen.append(self.held(rec, why))
+            if names is not None:
+                self.assertEqual(self.fetches[0], before + 1, why + ": the caption map is fetched once this cycle")
+
+        state([web, api], "the first check")
+        state([web, api], "unchanged, a new snapshot of the same registry")
+        state([web, api, (OTHER_A, ["tests", "/tmp/notes-api", "#123456"])], "a name added: the recipient's colour appears")
+        tests = (OTHER_A, ["tests", "/tmp/notes-api", "#123456"])
+        state([web, (PEER, ["api-v2", "/tmp/notes-api", "#abcdef"]), tests], "the sender renamed")
+        state([web, (PEER, ["api-v2", "/tmp/notes-api", "#abcdef"]), (OTHER_A, ["tests", "/tmp/notes-api", "#654321"])],
+              "the recipient recoloured")
+        tests = (OTHER_A, ["tests", "/tmp/notes-api", "#654321"])
+        names = [web, (PEER, ["api-v2", "/tmp/notes-api", "#abcdef"]), tests]
+        recs.append(self.record(cards + [self.card(direction="out", mid="m3", peer="tests")]))
+        state(names, "a card added (the tab rebuilt)")
+        recs.append(self.record(cards[1:]))
+        state(names, "a card removed (the tab rebuilt)")
+        self.cmap = {"m1": "api: sent the schema"}
+        state(names, "a caption changed")
+        self.cmap = dict(self.cmap)
+        state(names, "the caption map replaced by an equal one")
+        self.row(ev="exec", id="m2", t=3)
+        state(names, "the log moved: an outcome")
+        self.row(ev="sent", id="m1", from_id=OTHER_B, to_id=SID_A, body="the schema?", t=4)
+        state(names, "the log moved: the incoming card's row now names another sender")
+        twin = (OTHER_B, ["tests", "/tmp/notes-api", "#222222"])
+        state([web, tests, twin], "two entries share the recipient's name")
+        state([web, twin, tests], "the same entries in the other order: the first one carrying the name answers")
+        state([], "an empty registry")
+        for sid, parts in (web, api):
+            (km.NAMES / sid).write_text("\t".join(parts) + "\n")
+        state(None, "no names scope: the registry is read per card")
+        state([web, api], "a scope again")
+        self.assertGreater(len({repr(t) for t in seen}), 6, "the states moved the tail (the pin compares something)")
+
+    def test_two_threads_with_different_snapshots_check_one_record_and_each_gets_its_own_answer(self):
+        """A connect push on a handler thread takes its own names snapshot while the pusher holds another; both
+        can check the same cached record. Run one after another on fresh threads, alternating, each answer
+        equals the unmemoized one for that thread's snapshot."""
+        self.row(ev="sent", id="m1", from_id=PEER, to_id=SID_A, body="the schema?", t=1)
+        self.cmap = {"m1": "api: asked for the schema"}
+        rec = self.record([self.card(direction="in", mid="m1", peer="api"), self.card(direction="out", peer="api")])
+        snaps = ([(PEER, ["api", "/tmp/notes-api", "#abcdef"])], [(PEER, ["api", "/tmp/notes-api", "#000000"])])
+        got, errors = [], []
+
+        def check(names):
+            try:
+                self.cycle(names)
+                got.append(self.held(rec, "a thread with its own snapshot"))
+            except Exception as e:              # surfaced on the test thread below
+                errors.append(e)
+            finally:
+                km._live_scope.names = km._live_scope.msgsum = None
+        for names in (snaps[0], snaps[1], snaps[0], snaps[1]):
+            t = threading.Thread(target=check, args=(names,))
+            t.start()
+            t.join()
+        self.assertEqual(errors, [])
+        self.assertEqual((got[0], got[1]), (got[2], got[3]))
+        self.assertNotEqual(got[0], got[1], "the two snapshots colour the cards differently")
+
+
+class _WalkCountingSnap(dict):
+    """A names snapshot that records each walk over its entries (values, items, keys, iteration); a lookup by
+    key is not a walk."""
+
+    def __init__(self, entries, walks):
+        super().__init__(entries)
+        self.walks = walks
+
+    def values(self):
+        self.walks.append("values")
+        return super().values()
+
+    def items(self):
+        self.walks.append("items")
+        return super().items()
+
+    def keys(self):
+        self.walks.append("keys")
+        return super().keys()
+
+    def __iter__(self):
+        self.walks.append("iter")
+        return super().__iter__()
+
+
+def _scan_color(snap, name):
+    """The by-name colour as the linear scan answered it before the index: the first entry in the snapshot's
+    order carrying the name and a colour starting with '#'."""
+    for parts in dict.values(snap):
+        if parts and parts[0] == name and len(parts) > 2 and parts[2].startswith("#"):
+            return {"bg": parts[2], "fg": "#ffffff"}
+    return None
+
+
+class NameColorIndex(unittest.TestCase):
+    """_name_color_by_name with a names scope answers from an index of name to colour built once per names
+    digest, where it scanned the snapshot once per card, and gives the scan's answer in every state."""
+
+    ENTRIES = [("66666666-7777-8888-9999-%012d" % i, ["s%02d" % i, "/tmp/notes-api", "#0000%02d" % i]) for i in range(40)]
+
+    def setUp(self):
+        idx = getattr(km, "_name_color_index", None)
+        if idx is not None:                      # a tree without the index has no slot: the walk counts decide there
+            idx[0] = None
+        self.addCleanup(lambda: setattr(km._live_scope, "names", None))
+
+    def test_the_snapshot_is_walked_once_per_digest_not_once_per_card(self):
+        walks = []
+        km._live_scope.names = _WalkCountingSnap(self.ENTRIES, walks)
+        self.assertEqual(km._name_color_by_name("s05"), {"bg": "#000005", "fg": "#ffffff"})
+        after_first = len(walks)
+        for i in range(40):
+            self.assertEqual(km._name_color_by_name("s%02d" % i), {"bg": "#0000%02d" % i, "fg": "#ffffff"})
+        self.assertIsNone(km._name_color_by_name("docs"))
+        self.assertEqual(len(walks), after_first, "41 more cards walked the snapshot %d more times" % (len(walks) - after_first))
+        again = []
+        km._live_scope.names = _WalkCountingSnap(self.ENTRIES, again)     # the next cycle: a new snapshot, the same registry
+        for i in range(40):
+            self.assertEqual(km._name_color_by_name("s%02d" % i), {"bg": "#0000%02d" % i, "fg": "#ffffff"})
+        self.assertEqual(again.count("values"), 0, "the same digest reuses the index: no colour walk")
+        self.assertLessEqual(len(again), 1, "one walk at most, the digest's")
+        moved = []
+        entries = list(self.ENTRIES)
+        entries[7] = (entries[7][0], ["s07", "/tmp/notes-api", "#abcdef"])
+        km._live_scope.names = _WalkCountingSnap(entries, moved)
+        self.assertEqual(km._name_color_by_name("s07"), {"bg": "#abcdef", "fg": "#ffffff"}, "a recolour is seen")
+        self.assertEqual(km._name_color_by_name("s08"), {"bg": "#000008", "fg": "#ffffff"})
+        self.assertEqual(moved.count("values"), 1, "a digest that moved builds the index once")
+
+    def test_the_index_answers_as_the_scan_in_every_state_and_order(self):
+        a, b, c, d = ("66666666-7777-8888-9999-%012d" % i for i in range(4))
+        shared_plain = (a, ["tests", "/tmp/notes-api", "white"])        # the name with no '#' colour: the scan reads on
+        shared_one = (b, ["tests", "/tmp/notes-api", "#111111"])
+        shared_two = (c, ["tests", "/tmp/notes-api", "#222222"])
+        short = (d, ["docs"])
+        names = ("tests", "docs", "api", "", None, 7, "TESTS")
+        for entries in ([shared_plain, shared_one, shared_two, short], [shared_two, shared_one, shared_plain, short],
+                        [shared_one, shared_two], [shared_two, shared_one], [short], [], [(a, [""])]):
+            snap = dict(entries)
+            km._live_scope.names = snap
+            for name in names:
+                self.assertEqual(km._name_color_by_name(name), _scan_color(snap, name),
+                                 "%r over %r" % (name, [e[1] for e in entries]))
+        km._live_scope.names = dict([shared_one, shared_two])
+        first = km._name_color_by_name("tests")
+        km._live_scope.names = dict([shared_two, shared_one])           # the same entries, the other order
+        self.assertNotEqual(km._name_color_by_name("tests"), first, "the order decides between two entries sharing a name")
+        out = km._name_color_by_name("tests")
+        out["bg"] = "#ffffff"
+        self.assertEqual(km._name_color_by_name("tests"), {"bg": "#222222", "fg": "#ffffff"},
+                         "each answer is a new dict: a caller's edit reaches no other card")
+
+
 class MsgSummariesKey(unittest.TestCase):
     """_msg_summaries' per-session submap is keyed on every input its scan reads: the parse's key (the
     transcript's stat, the pending cut, the states file), the captions file and the goal store (the

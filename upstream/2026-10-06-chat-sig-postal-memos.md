@@ -1,0 +1,13 @@
+---
+title: Chat signature: the postal check's card values are memoized on the cached build's record, keyed on the names digest, the postal index and the caption map, and `_name_color_by_name` answers from a name-to-colour index built once per names digest
+status: candidate
+where: kernel/kernel.py (_names_scope_digest, new; _name_color_by_name and _name_color_index; _postal_card_deps_memo, new; _chat_sig_deps' postal component); tests/test_chat_fixed_cost_memos.py (PostalSigMemo and NameColorIndex, new); upstream/2026-10-06-chat-sig-postal-memos.md (this entry)
+added: 2026-10-06
+pr:
+tier: fix
+offered:
+closed:
+---
+While a dashboard is connected, every cycle checks each cached chat tab's signature, and the postal part of that check walked every postal card of the tab again (_postal_card_deps), reading each card's caption, its peer's name and colour, and for an outgoing card the colour by name through a linear scan of the names snapshot. The walk's answer moves only when one of its inputs does, so it is now memoized on the tab's dependency record, keyed on a digest of the thread's names snapshot taken in the snapshot's order (a by-name colour is the first entry carrying the name, so order matters when two entries share one), the postal index object (rebuilt exactly when the log moves) and the caption map object; the caption map is still fetched every cycle. The by-name colour reads an index built once per names digest. The re-profile's offline A/B of a sketch of these two memos (30 tabs, 25 interleaved rounds) measured a no-change push at 266 ms before and 197 ms after, with identical signature tails on every tab. Tests: a second cycle with unchanged inputs walks no card (red before: two walks), the snapshot is walked once per digest rather than once per card (red before: one walk per card, 41 for 41 cards), and the signature tail equals an unmemoized check byte for byte across names added, renamed and recoloured, cards added and removed, captions changed, the log moved, two entries sharing a name in both orders, an empty registry and no names scope.
+
+The project's public tree (upstream/main, last updated 2026-09-24) carries the same `_postal_card_deps`, `_name_color_by_name` and `_chat_sig_deps`, identical to the fork's before this change (compared by AST, docstrings included), and its `_names_snapshot` builds a new snapshot dict on every call as the fork's does, so the per-cycle walk and the per-card scan run there too. Its `_msg_summaries` publishes a new union dict when a submap changes and `_postal_index` a new dict when the log's key moves, the identities this key relies on. Not run against that tree.

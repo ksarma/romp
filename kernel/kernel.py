@@ -4950,6 +4950,38 @@ def _names_parts(sid):
         return None
 
 
+def _names_scope_digest():
+    """The digest of the names snapshot this thread holds as its names scope (_live_scope.names), or None when no
+    scope is set or the snapshot cannot be serialized (a caller then reads the snapshot itself, as it did before
+    this digest existed). The key of the two memos that answer from names: the colour index (_name_color_by_name)
+    and the postal values a cached chat build's cards embed (_postal_card_deps_memo).
+
+    A digest of the entries in the SNAPSHOT'S ORDER, not the signature's sorted one (_names_digest): a by-name colour
+    is the first entry in that order that carries the name, so two snapshots holding the same entries in another
+    order (a directory listing's order moves when an entry is rewritten on some file systems) answer differently
+    once two entries share a name, and the sorted digest calls them equal. It is also the digest of exactly the
+    snapshot this thread's readers see: the signature's shared component digests a fresh registry read when the
+    snapshot is empty.
+
+    Computed once per snapshot object and held on the thread beside it (`names_digest`, matched by identity; the
+    held reference keeps the snapshot's id from being reused). A snapshot is never edited after _names_snapshot
+    returns it (its readers only read), and the pusher cycle, a jobs pass and a connect push each take a new one, so
+    this costs one serialization per snapshot and gives equal digests across cycles while the registry holds."""
+    snap = getattr(_live_scope, "names", None)
+    if snap is None:
+        return None
+    hit = getattr(_live_scope, "names_digest", None)
+    if hit is not None and hit[0] is snap:
+        return hit[1]
+    try:
+        d = hashlib.sha1(json.dumps([[k, list(v)] for k, v in snap.items()],
+                                    ensure_ascii=False).encode("utf-8")).hexdigest()
+    except Exception:
+        return None
+    _live_scope.names_digest = (snap, d)
+    return d
+
+
 def _name_color(sid):
     """Session display color {bg,fg} from the names registry (3rd tab field), or null."""
     parts = _names_parts(sid)
@@ -40004,17 +40036,37 @@ def _postal_sid_revs_of(index):
     return _postal_sid_revs(index)
 
 
+_name_color_index = [None]   # (names scope digest, {name: bg}): the by-name colour index, see _name_color_by_name
+
+
 def _name_color_by_name(name):
     """Identity color {bg,fg} for a session by NAME (outgoing postal carries the recipient name, not a
-    sid). Reads the cycle's names scope when one is set — build_session hydrates every outgoing postal
-    card through here, and the full-registry rescans were ~16% of the pusher's wall time (py-spy
-    2026-08-31) — else scans the registry. None if not found."""
+    sid). Reads the cycle's names scope when one is set (build_session hydrates every outgoing postal
+    card through here, and the full-registry rescans were about 16% of the pusher's wall time, py-spy
+    2026-08-31), else scans the registry. None if not found.
+
+    With a scope it answers from an index of name to colour built once per names digest
+    (_names_scope_digest) and kept in _name_color_index, one entry, replaced when the digest moves. The scan
+    over the snapshot it replaces ran once per card: the chat signature's postal check reads one colour per
+    outgoing card of every tab every cycle (the 2026-10-06 re-profile: about 40 of the check's 62 ms per push
+    on a 30-tab bench). The index gives the scan's answer:
+    the first entry in the snapshot's order that carries the name and a colour starting with '#'
+    (setdefault in that order), so a name two entries share answers as before, and the ordered digest keeps
+    an index built from one order from answering for another."""
     snap = getattr(_live_scope, "names", None)
     if snap is not None:
-        for parts in snap.values():
-            if parts and parts[0] == name and len(parts) > 2 and parts[2].startswith("#"):
-                return {"bg": parts[2], "fg": "#ffffff"}
-        return None
+        d = _names_scope_digest()
+        hit = _name_color_index[0]
+        if d is None or hit is None or hit[0] != d:
+            idx = {}
+            for parts in snap.values():
+                if parts and len(parts) > 2 and parts[2].startswith("#"):
+                    idx.setdefault(parts[0], parts[2])
+            hit = (d, idx)
+            if d is not None:
+                _name_color_index[0] = hit           # one tuple, stored whole: a reader on another thread sees a whole entry
+        bg = hit[1].get(name) if isinstance(name, str) else None   # an entry's name is a str, so no other name matches
+        return {"bg": bg, "fg": "#ffffff"} if bg is not None else None
     try:
         for f in NAMES.iterdir():
             parts = f.read_text().rstrip("\n").split("\t")
@@ -40305,6 +40357,54 @@ def _postal_card_deps(cards, index, captions):
         else:
             deps.append((mid, cap, _name_color_by_name(c.get("peer") or "")))
     return tuple(deps)
+
+
+def _postal_card_deps_memo(deps, index, captions):
+    """_postal_card_deps over a cached chat build's recorded cards (the record's `postal_cards`,
+    _chat_build_deps), memoized on the record for the chat signature's dependency check (_chat_sig_deps). That
+    check re-walked every postal card of every tab on every cycle a dashboard was connected, for a tuple that
+    moves only when one of the walk's inputs does (the 2026-10-06 re-profile: 62 ms of a 266 ms no-change push
+    on a 30-tab bench).
+
+    The key is every input the walk reads besides the record's cards:
+    - the names, as _names_scope_digest: the walk's name and colour reads (_name_of, _name_color,
+      _name_color_by_name) answer from the thread's names snapshot when one is set. Without one they read the
+      registry per card, nothing digests that, and the memo stands aside;
+    - the postal index, by identity: _postal_index builds a new dict exactly when the log's (mtime_ns, size)
+      moves and no reader edits one, so the object is the index's revision. The entry holds it by reference,
+      so its id cannot be reused by a later dict;
+    - the caption map, by identity, fetched as the walk fetches it: only when a card carries a mid, which is
+      fixed for the record and learned on its first walk. _msg_summaries publishes a new union dict when a
+      session's submap changes and no reader edits one. This is the fetch the memo cannot remove: the key
+      needs the map.
+    The cards are constant for the record's life: _chat_build_deps builds the list once and nothing edits it,
+    and nothing writes a card's kind, mid, direction or peer (the walk's four reads) after the build.
+
+    Bounded: one entry per record, stored on the record (`postal_memo`), replaced when the key moves and gone
+    with the record when the tab rebuilds or closes. Thread-safe for its callers: the pusher and a handler
+    thread's connect push can check one record at once, each with its own names snapshot and caption map. The
+    entry is one tuple stored by one assignment, so a reader sees a whole entry, and it hits only when every
+    member of the key equals its own."""
+    cards = deps["postal_cards"]
+    nd = _names_scope_digest()
+    if nd is None:
+        return _postal_card_deps(cards, index, captions)
+    hit = deps.get("postal_memo")
+    held = []
+    if hit is not None:
+        if hit[3]:
+            held.append(captions())                  # the walk's own fetch: this record's cards carry a mid
+        cmap = held[0] if held else None
+        if hit[0] == nd and hit[1] is index and hit[2] is cmap:
+            return hit[4]
+
+    def _caps():
+        if not held:
+            held.append(captions())
+        return held[0]
+    val = _postal_card_deps(cards, index, _caps)
+    deps["postal_memo"] = (nd, index, held[0] if held else None, bool(held), val)
+    return val
 
 
 def _tasks_base():
@@ -42367,8 +42467,9 @@ def _chat_sig_deps(sid, deps):
     directories moved since the record's answers were verified (_chat_pl_precheck) keeps those answers,
     and only the messages a moved directory could have resolved are re-resolved (pathlink); and the
     postal cards' embedded values re-read from the current index and caption map beside this session's
-    postal revision (postal). No record (a cold tab) → the empty components, which a first build's record
-    then replaces. The pre-check is taken BEFORE the re-resolve and stored on the record only when every
+    postal revision (postal), through the record's memo of them (_postal_card_deps_memo: the walk reruns
+    when the names digest, the index or the caption map moved). No record (a cold tab) gives the empty
+    components, which a first build's record then replaces. The pre-check is taken BEFORE the re-resolve and stored on the record only when every
     answer held (stat-then-read): a file landing between the two is seen by the resolve, one landing
     after moves the next pre-check."""
     if not deps:
@@ -42400,7 +42501,9 @@ def _chat_sig_deps(sid, deps):
         # revision is read from the one index resolved here (2026-09-18): one stat of the log per tab per
         # cycle, where the log-identity key stat'd it once and _postal_index again
         idx = _postal_index()
-        postal = (_chat_postal_rev(sid, idx), _postal_card_deps(deps["postal_cards"], idx, _msg_summaries_scoped))
+        # the card values through the record's memo (_postal_card_deps_memo, 2026-10-06): the walk runs again only
+        # when the names digest, the index or the caption map moved, and the caption map is still fetched every cycle
+        postal = (_chat_postal_rev(sid, idx), _postal_card_deps_memo(deps, idx, _msg_summaries_scoped))
     return (touts, tuple(pl), postal)
 
 
