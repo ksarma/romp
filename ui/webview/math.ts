@@ -410,7 +410,7 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
  *  failed load (the review of iOS item 6, round 2, extra5-1: the dying page logged a false failure line and turned every waiting
  *  formula into its source for the whole provisional load). The latch is set by a reload through the reload core: its fire step
  *  (kernel.py _RELOAD_CORE_JS fire) runs persist, which calls each window's __rompShimPersist, then location.reload, and the pane shim
- *  defines that hook on every kernel page that loads this module (the chat, the feed, the Files pane, Waiting); this chains onto it.
+ *  defines that hook on every kernel page that loads this module (the chat, the feed, the Files pane, Waiting and Artifacts); this chains onto it.
  *  That hook is the one sign of a reload romp started. A beforeunload sets nothing (the review's round 3, extra5-1): iOS Safari does not
  *  fire it, and one that no unload follows (a navigation started from the browser's own controls that never commits: a download or a
  *  204, in Chromium and in WebKit on the desktop alike, or a cancelled one) left the latch set for the rest of the page life, so a real

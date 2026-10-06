@@ -7,6 +7,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as ts from "typescript";
 import { reloadScrollRecord, takeReloadScroll, reloadLandTarget } from "./reload-restore";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -76,20 +77,55 @@ test("landActive's landing consumes the record for the active tab first, then fa
   assert.match(body, /else if \(!v\.shown \|\| v\.stick\) writeScroll\(content, content\.scrollHeight, "land-bottom", true\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*else if \(!\(held && restoreScrollAnchor\(content, v, held\)\) && !\(moved && \(restoreReadingLine\(content, v, moved\) \|\| restoreScrollAnchor\(content, v, moved\)\)\)\) \{ untakeMeasure\(v, figures\); writeScroll\(content, v\.scrollTop, "land-saved"\); \}/);
 });
 
-test("every write of the keep offset writes the reader's line beside it, in the same statement line (pendingAnchorKeepAt's declaration: set with pendingAnchorKeepY, cleared wherever it is cleared)", () => {
-  // the census reads every assignment to pendingAnchorKeepY in render.ts (an `=` that is not `==`; the declaration's typed `let` and the
-  // `!= null` reads are no writes) and asks the same line's code, its trailing comment cut, for an assignment to pendingAnchorKeepAt, so a
-  // site added anywhere later is named here or reds. What it guards is the declaration's rule: a line left from an earlier keep is never
-  // READ while the offset is null (scrollToAnchor reads it only under a non-null offset, and every write of a non-null offset writes the
-  // line too, which this census also holds), so a miss is a broken invariant, not a misplaced reader; the line's landing itself executes
-  // in scroll-to-anchor-roads.test.ts and land-active-keep.test.ts
-  const lines = RENDER.split("\n");
-  const writes: { at: number; code: string }[] = [];
-  lines.forEach((line, i) => {
-    const code = line.replace(/\s\/\/.*$/, "");
-    for (const _ of code.matchAll(/\bpendingAnchorKeepY\s*=(?!=)/g)) writes.push({ at: i + 1, code });
-  });
-  assert.ok(writes.length >= 10, `the census finds the writes it is about (found ${writes.length}): the reload restore's arm and its release, keepPlaceAcrossWindow's arm and its release, chatHead's re-arm, scrollToAnchor's consume, the pass's clear, cancelLanding's reset and chatWindow's two re-arms`);
-  const unpaired = writes.filter((w) => !/\bpendingAnchorKeepAt\s*=(?!=)/.test(w.code)).map((w) => `render.ts:${w.at}: ${w.code.trim().slice(0, 160)}`);
-  assert.deepEqual(unpaired, [], "a write of pendingAnchorKeepY with no write of pendingAnchorKeepAt on its line");
+test("every write of the keep offset writes the reader's line beside it, in the statement next to it (pendingAnchorKeepAt's declaration: set with pendingAnchorKeepY, cleared wherever it is cleared)", () => {
+  // the census reads render.ts with the TypeScript compiler's parser (writer-census.ts's precedent), so every assignment operator
+  // (`=`, `??=`, `||=`, `&&=`, the arithmetic ones), `++`/`--`, a destructuring target and a for-of/for-in target count as writes of
+  // pendingAnchorKeepY wherever they sit, and a comment or a string spelling the line's assignment counts as nothing. Each write must
+  // be a plain statement of a statement list (a block, a case, the module), not one arm of an if or a branch of an expression, and the
+  // statement beside it in that list (or the same statement, through a comma) must write pendingAnchorKeepAt, so the two always run
+  // together. What it guards is the declaration's rule: a line left from an earlier keep is never READ while the offset is null
+  // (scrollToAnchor reads it only under a non-null offset, and every write of a non-null offset writes the line too, which this census
+  // also holds), so a miss is a broken invariant, not a misplaced reader; the line's landing itself executes in
+  // scroll-to-anchor-roads.test.ts and land-active-keep.test.ts
+  const sf = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const bare = (e: ts.Node): ts.Node => { let x = e; while (ts.isParenthesizedExpression(x) || ts.isAsExpression(x) || ts.isNonNullExpression(x) || ts.isTypeAssertionExpression(x) || ts.isSatisfiesExpression(x)) x = x.expression; return x; };
+  /** Whether an assignment target writes `name`: the name itself, or a destructuring pattern naming it anywhere (a key or a default
+   *  named so counts too: the safe side). */
+  const holds = (e: ts.Node, name: string): boolean => {
+    const x = bare(e);
+    if (ts.isIdentifier(x)) return x.text === name;
+    if (!ts.isObjectLiteralExpression(x) && !ts.isArrayLiteralExpression(x)) return false;
+    let hit = false;
+    const walk = (n: ts.Node): void => { if (ts.isIdentifier(n) && n.text === name) hit = true; ts.forEachChild(n, walk); };
+    walk(x);
+    return hit;
+  };
+  const writes = (n: ts.Node, name: string): boolean =>
+    (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && holds(n.left, name))
+    || ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && holds(n.operand, name))
+    || ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer) && holds(n.initializer, name));
+  /** The plain statement a write runs as: up through parentheses and commas to an expression statement whose parent is a statement
+   *  list; null for a write under anything else (an if's arm, a ternary, a short circuit, a call's argument, a loop head). */
+  const LIST = (p: ts.Node): boolean => ts.isBlock(p) || ts.isSourceFile(p) || ts.isCaseClause(p) || ts.isDefaultClause(p) || ts.isModuleBlock(p);
+  const plain = (n: ts.Node): ts.ExpressionStatement | null => {
+    let x: ts.Node = n;
+    while (x.parent && (ts.isParenthesizedExpression(x.parent) || (ts.isBinaryExpression(x.parent) && x.parent.operatorToken.kind === ts.SyntaxKind.CommaToken))) x = x.parent;
+    return x.parent && ts.isExpressionStatement(x.parent) && LIST(x.parent.parent) ? x.parent : null;
+  };
+  const keepY: ts.Node[] = [];
+  const keepAt: ts.Node[] = [];
+  const visit = (n: ts.Node): void => { if (writes(n, "pendingAnchorKeepY")) keepY.push(n); if (writes(n, "pendingAnchorKeepAt")) keepAt.push(n); ts.forEachChild(n, visit); };
+  visit(sf);
+  const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+  const shown = (n: ts.Node): string => `render.ts:${lineOf(n)}: ${n.getText(sf).replace(/\s+/g, " ").slice(0, 160)}`;
+  assert.ok(keepY.length >= 10, `the census finds the writes it is about (found ${keepY.length}): the reload restore's arm and its release, keepPlaceAcrossWindow's arm and its release, chatHead's re-arm, scrollToAnchor's consume, the pass's clear, cancelLanding's reset and chatWindow's two re-arms`);
+  const lineStmts = keepAt.map(plain).filter((s): s is ts.ExpressionStatement => s !== null);
+  const unpaired = keepY.filter((w) => {
+    const s = plain(w);
+    if (!s) return true;
+    const list = (s.parent as ts.Block).statements;
+    const i = list.indexOf(s);
+    return !lineStmts.some((t) => t === s || (t.parent === s.parent && Math.abs(list.indexOf(t) - i) === 1));
+  }).map(shown);
+  assert.deepEqual(unpaired, [], "a write of pendingAnchorKeepY that is not a plain statement with a write of pendingAnchorKeepAt beside it");
 });
