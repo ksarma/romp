@@ -6,7 +6,7 @@ server (the auth-hardening doctrine: a source-position assertion cannot catch a 
 side of the gate). The model:
 
   * The session cookie ALONE opens the PAGE class (a page document) and the STATIC class (/dist,
-    /media, /sw.js): code, no session data. Both classes are read off the shared route table
+    /media, /sw.js). Both classes are read off the shared route table
     (kernel.py _PAGE_RENDERERS / _static_route) that the router itself dispatches from, so the
     router and the classifier (_need) never disagree.
   * Every other route needs a second value the cookie never carries: the PAGE KEY K (the X-Romp-Key
@@ -221,7 +221,7 @@ class CookieOpensPageAndStaticOnly(_Server):
         # the cookie still passes the Origin gate: a request that names a foreign Origin is refused, even on a
         # page. A request that names none passes it with the cookie (a browser names none on a navigation or on a
         # load made without CORS, whichever page made it; test_the_cookie_alone_opens_the_page_and_static_classes
-        # sends none), which is why the page and static classes hold no session data
+        # sends none), which is why the cookie alone opens only the page and static classes
         self.assertEqual(self._status("/chat", cookie=SESS, origin="http://evil.example"), 403)
 
     def test_a_session_cookie_whose_tag_does_not_match_opens_no_page_and_no_static_read(self):
@@ -999,14 +999,13 @@ class LegacyCookieClearedBesideASession(_Server):
 
 
 class NoPageDataInlined(_Server):
-    """What a request on the session cookie alone can read holds code and no session data, and the page key
-    reaches the browser only in the sign-in response. A census over every page route in the route table, on
-    both response paths (the cookie alone, and a ?token= sign-in navigation), over /sw.js, and over every file
-    under /media/. A synthetic session is planted in the kernel's session registry and names store, and a
-    keyed /sessions read shows it, so the plant took; no cookie-only response carries its name, id or folder,
-    nor the page key, the session id or the serve token. The built bundles under /dist/ are not assumed here
-    (this module runs without a build); tests/test_file_caps_browser.py runs the same census over them on a
-    lab kernel serving its dist."""
+    """The page key reaches the browser only in the sign-in response. A census over every page route in the
+    route table, on both response paths (the cookie alone, and a ?token= sign-in navigation), over /sw.js, and
+    over every file under /media/. A synthetic session is planted in the kernel's session registry and names
+    store, and a keyed /sessions read shows it, so the plant took; no cookie-only response carries its name, id
+    or folder, nor the page key, the session id or the serve token. The built bundles under /dist/ are not
+    assumed here (this module runs without a build); tests/test_file_caps_browser.py runs the same census over
+    them on a lab kernel serving its dist."""
 
     PLANT_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
     PLANT_NAME = "zqx-planted-web"
