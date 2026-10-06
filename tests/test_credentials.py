@@ -555,14 +555,32 @@ class HelperTimeoutEndsTheGroup(_Settings):
         # does) is outside the group the kill reaches, so it runs on; it still holds stdout, so the drain waits its
         # whole bound (HELPER_DRAIN_S) for an end of the pipe that does not come, and the call raises that much later.
         # Unbounded, the drain would wait for this process to exit, 30 s here.
+        # Two more clauses of this road are pinned here. When the drain runs out, the p.kill() fallback is what reaps
+        # the shell: the group's SIGKILL has already ended it, and Popen.send_signal polls before it signals, so the
+        # poll reaps the shell and nothing is sent; without the fallback the shell is left a zombie and the run's
+        # Popen has no returncode. And the run closes its end of the pipe, so the escaped process's next write to
+        # stdout, made after the call returned (on a SIGUSR1 from the test), fails with EPIPE; with that end left
+        # open, the write would land in the pipe's buffer and succeed.
         pids = self._pids()
-        code = ("import os, sys, time; os.setsid(); open(sys.argv[1], 'a').write('escaped %d\\n' % os.getpid()); "
-                "time.sleep(30)")
-        cmd = "%s & echo shell $$ >> %s; wait" % (" ".join(shlex.quote(a) for a in (sys.executable, "-c", code, pids)),
-                                                  shlex.quote(pids))
+        wrote = os.path.join(os.path.dirname(pids), "wrote")
+        code = ("import errno, os, signal, sys\n"
+                "signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})\n"
+                "os.setsid()\n"
+                "open(sys.argv[1], 'a').write('escaped %d\\n' % os.getpid())\n"
+                "if signal.sigtimedwait({signal.SIGUSR1}, 30) is not None:\n"
+                "    try:\n"
+                "        os.write(1, b'late\\n')\n"
+                "        r = 'wrote'\n"
+                "    except OSError as e:\n"
+                "        r = errno.errorcode.get(e.errno, str(e.errno))\n"
+                "    open(sys.argv[2], 'w').write(r)\n")
+        cmd = "%s & echo shell $$ >> %s; wait" % (
+            " ".join(shlex.quote(a) for a in (sys.executable, "-c", code, pids, wrote)), shlex.quote(pids))
+        SeenPopen, seen = _seen_popen()
         t0 = time.monotonic()
-        with self.assertRaises(cred.CredentialError) as cm:
-            cred.run_helper(cmd, timeout_s=2)
+        with patch.object(subprocess, "Popen", SeenPopen):
+            with self.assertRaises(cred.CredentialError) as cm:
+                cred.run_helper(cmd, timeout_s=2)
         elapsed = time.monotonic() - t0
         recs = dict((role, pid) for role, pid in _recorded(self, pids))
         self.assertEqual(str(cm.exception), "apiKeyHelper timed out after 2 s")
@@ -570,9 +588,18 @@ class HelperTimeoutEndsTheGroup(_Settings):
         self.assertGreaterEqual(elapsed, 2 + cred.HELPER_DRAIN_S - 0.1, "the drain waited its bound")
         self.assertLess(elapsed, 2 + cred.HELPER_DRAIN_S + 1.0, "and no longer: the drain is bounded")
         self.assertFalse(_still_running(recs["shell"], 0), "the shell was in the group")
+        mine = [p for p in seen if p.args == cmd]
+        self.assertEqual(len(mine), 1, "one Popen for the run")
+        self.assertEqual(mine[0].pid, recs["shell"])
+        self.assertEqual(mine[0].returncode, -signal.SIGKILL,
+                         "the fallback reaped the shell the group's SIGKILL ended (send_signal polls first)")
+        self.assertIsNone(_proc(recs["shell"]), "no zombie of the shell is left")
         st = _proc(recs["escaped"])
         self.assertTrue(_runs_now(st), "the process that left the group runs on: %r" % (st,))
         self.assertEqual((st[2], st[3]), (recs["escaped"], recs["escaped"]), "in a session and a group of its own")
+        os.kill(recs["escaped"], signal.SIGUSR1)
+        self.assertFalse(_still_running(recs["escaped"], 10), "the escaped process made its write and exited")
+        self.assertEqual(Path(wrote).read_text(), "EPIPE", "its write fails: the run closed its end of the pipe")
 
     def test_an_exception_that_cuts_the_wait_ends_the_group_too_and_goes_on_unchanged(self):
         # KeyboardInterrupt, or any exception raised while communicate waits, takes the same road as the bound: the
