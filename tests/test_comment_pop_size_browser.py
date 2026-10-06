@@ -33,6 +33,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -58,6 +59,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -185,7 +187,7 @@ await page.waitForTimeout(80);
 out.createRestored = await geom();
 await closePop();
 
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """.replace("REPLY_PLACEHOLDER", json.dumps(REPLY))
@@ -256,9 +258,12 @@ class ServedCommentPopSize(unittest.TestCase):
 
     def _drive(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+                "W": W, "H": H, "TINY_W": TINY_W, "TINY_H": TINY_H}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
-                       "W": W, "H": H, "TINY_W": TINY_W, "TINY_H": TINY_H}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -268,9 +273,7 @@ class ServedCommentPopSize(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box — the served dialog needs one (CI installs none)")
         klog = open(os.path.join(self.lab, "kernel.log")).read()[-2000:]
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + klog)
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        return json.loads(line[len("RESULT:"):])
+        return lab_result.read(p, tgt)
 
     @staticmethod
     def _frac(g):

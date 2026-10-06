@@ -20,6 +20,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -64,6 +65,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -73,7 +75,7 @@ await page.waitForSelector("#tabs .tab, #tabs [data-sid]", { timeout: 20000 });
 await page.waitForFunction(() => document.querySelectorAll(".turn").length >= 1, null, { timeout: 30000 });
 await page.waitForTimeout(1500);
 await browser.close();
-console.log("RESULT:ok");
+lab.writeResult(cfg, { ok: true });
 """
 
 
@@ -191,14 +193,18 @@ class ServedBootParses(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         before = self._parses()["kernel"]
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token)}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token)}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
         p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, CFG=cfg, EXT_PKG=os.path.join(EXT, "package.json")))
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-2000:] + p.stderr[-2000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
+        self.assertEqual(lab_result.read(p, tgt), {"ok": True}, "the driver reached the end of its drive")
         after = self._parses()
         asked = after["kernel"] + after["hits"]     # stage 2: the judges may have parsed a tab first, then the kernel's ask is a hit
         self.assertGreaterEqual(asked, 1, "a connected chat client's own tabs are parsed or served on demand: %r" % after)

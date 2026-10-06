@@ -64,6 +64,7 @@ import base64
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -254,13 +255,14 @@ import { spawn } from "node:child_process";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
 const out = { wedge: {}, regression: {} };
 const die = async (why) => {
-  fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n");
+  lab.writeResult(cfg, { ...out, died: why });
   await browser.close();
   process.exit(0);
 };
@@ -319,7 +321,7 @@ if (freed !== true) await die("the killed kernel's instance lock never freed: " 
 const k2 = spawn(cfg.relaunch.cmd, [], { env: cfg.relaunch.env, detached: true,
   stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] });
 k2.unref();   // the kernel outlives this driver — an un-unref'd child held node open past RESULT
-fs.writeSync(1, "KPID:" + k2.pid + "\n");
+lab.writeLine("KPID", k2.pid);
 // T272: a reload owed while the ship is pending and the send held must WAIT for them. Since 2026-09-16 a restart owes the page
 // no reload of its own (a same-build restart is invisible, a newer build is offered), so the reload this lab holds is the
 // core's forced path (require: the safety valve a kernel may send as reloadRequired; nothing sends it today), raised HERE,
@@ -409,7 +411,7 @@ const sent = await page.waitForFunction((msg) => {
 out.regression.sentClean = sent;
 if (cfg.shots) await page.screenshot({ path: cfg.shots + "-regression.png" });
 
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");   // sync: exit must not truncate it
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -492,6 +494,8 @@ class _ShipLab(unittest.TestCase):
 
     def _run_driver(self, driver_src, cfg_obj, timeout=300):
         cfg = os.path.join(self.lab, "cfg.json")
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        cfg_obj.update(tgt)
         with open(cfg, "w") as f:
             json.dump(cfg_obj, f)
         # the file carries only what the driver and the relaunched kernel need: the probe the lab planted in its
@@ -523,9 +527,7 @@ class _ShipLab(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served leg needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         self.assertNotIn("died", r, "driver aborted early: %r" % r)
         return r
 
@@ -754,13 +756,14 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
 const out = {};
 const die = async (why) => {
-  fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n");
+  lab.writeResult(cfg, { ...out, died: why });
   await browser.close();
   process.exit(0);
 };
@@ -789,7 +792,7 @@ await page.waitForSelector("#composer-input", { timeout: 20000 });
 await page.waitForTimeout(800);
 out.toastOnSecondLoad = await page.evaluate(
   () => (document.getElementById("warn-toasts")?.textContent || "").includes("still uploading"));
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -830,13 +833,14 @@ import { spawn } from "node:child_process";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
 const out = {};
 const die = async (why) => {
-  fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n");
+  lab.writeResult(cfg, { ...out, died: why });
   await browser.close();
   process.exit(0);
 };
@@ -915,7 +919,7 @@ if (freed !== true) await die("the killed kernel's instance lock never freed: " 
 const k2 = spawn(cfg.relaunch.cmd, [], { env: { ...cfg.relaunch.env, ROMP_CODE_IDENT: "changed-build" }, detached: true,
   stdio: ["ignore", fs.openSync(cfg.relaunch.log, "a"), fs.openSync(cfg.relaunch.log, "a")] });
 k2.unref();
-fs.writeSync(1, "KPID:" + k2.pid + "\n");
+lab.writeLine("KPID", k2.pid);
 out.offered = await until(() => { const R = window.__rompReload; const o = R && R.offered(); return o ? JSON.stringify(o) : false; }, null, 45000) || null;
 await page.evaluate(() => { const R = window.__rompReload; if (R && R.offered()) R.accept(); }).catch(() => {});   // the user's Reload
 // the OLD page saw the nack (the re-shipped file could not be saved); then the reload core's turn
@@ -943,7 +947,7 @@ await page.waitForTimeout(800);
 out.secondLoadToasts = await page.evaluate(() => document.getElementById("warn-toasts")?.textContent || "");
 // the draft comes back one time after a load, once the tab has landed (restoreActiveDraftOnce): a wait, not a read
 out.inputAfterNav = await until(() => document.getElementById("composer-input")?.value || false, null, 15000);
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """

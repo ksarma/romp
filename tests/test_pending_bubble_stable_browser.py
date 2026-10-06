@@ -17,6 +17,7 @@ skips loudly without the extension deps or a Playwright browser.
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -52,6 +53,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -168,7 +170,7 @@ const tgOpen = await page.evaluate(() => ({ groups: document.querySelectorAll("#
 await page.evaluate((sel) => { const b = document.querySelector(sel); if (b) b.click(); }, tgSel);   // collapse under a bottom reader
 await painted();
 const tgClosed = await page.evaluate((n) => { const c = document.getElementById("content"); return { children: document.querySelectorAll("#content .tg-child").length, gestures: window.__rows.filter((r) => r.what === "scrollgesture").length, sh: c.scrollHeight, top: c.scrollTop, dist: c.scrollHeight - c.scrollTop - c.clientHeight, newRows: window.__rows.slice(n) }; }, tgOpen.rows);
-fs.writeSync(1, "RESULT:" + JSON.stringify({ one, two, twoPushes, afterX, tgBefore, tgOpen, tgClosed, rows: rows.slice(-40) }) + "\n");
+lab.writeResult(cfg, { one, two, twoPushes, afterX, tgBefore, tgOpen, tgClosed, rows: rows.slice(-40) });
 await browser.close();
 process.exit(0);
 """
@@ -259,9 +261,12 @@ class ServedPendingBubbleStable(unittest.TestCase):
 
     def test_the_pending_bubble_keeps_its_node_and_the_bottom_reader_stays_at_the_bottom(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "text": TEXT, "text2": TEXT2,
+                "transcript": self.transcript, "sid": SID, "t0": self.t0, "parent": "tr1", "seconds": SECONDS}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "text": TEXT, "text2": TEXT2,
-                       "transcript": self.transcript, "sid": SID, "t0": self.t0, "parent": "tr1", "seconds": SECONDS}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -270,9 +275,7 @@ class ServedPendingBubbleStable(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         one, pushes = r["one"], r["one"]["pushes"]
         print("T262H:", json.dumps({"pressed": one["pressed"], "dists": [p.get("dist") for p in pushes], "marked": [p.get("marked") for p in pushes],
                                      "removals": pushes[-1].get("removals") if pushes else None, "gestures": pushes[-1].get("gestures") if pushes else None,

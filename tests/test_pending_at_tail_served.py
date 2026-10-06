@@ -23,6 +23,7 @@ Skips LOUDLY without the extension deps or a Playwright browser (CI installs non
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -57,6 +58,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -135,7 +137,7 @@ await page.waitForFunction((text) => Array.from(document.querySelectorAll(".turn
 await page.waitForTimeout(500);
 const landed = await measure();
 await shot("-landed.png");
-fs.writeSync(1, "RESULT:" + JSON.stringify({ pressed, scrolled, streamed, second, landed }) + "\n");
+lab.writeResult(cfg, { pressed, scrolled, streamed, second, landed });
 await browser.close();
 process.exit(0);
 """
@@ -225,10 +227,13 @@ class ServedPendingAtTail(unittest.TestCase):
 
     def test_the_pending_bubble_sits_at_the_tail_and_the_landing_replaces_it_there(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "text": TEXT, "text2": TEXT2,
+                "transcript": self.transcript, "steps": self.steps, "landing": self.landing,
+                "shots": os.environ.get("PENDING_AT_TAIL_SHOTS", "")}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "text": TEXT, "text2": TEXT2,
-                       "transcript": self.transcript, "steps": self.steps, "landing": self.landing,
-                       "shots": os.environ.get("PENDING_AT_TAIL_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -237,9 +242,7 @@ class ServedPendingAtTail(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         pr, sc, st, sd, ld = r["pressed"], r["scrolled"], r["streamed"], r["second"], r["landed"]
         self.assertEqual(pr["dropped"], 1, "the send was dropped at the socket: the client's bubble is the only copy (%r)" % pr)
         self.assertIsNotNone(pr["pending"], "the press drew the pending bubble: %r" % pr)

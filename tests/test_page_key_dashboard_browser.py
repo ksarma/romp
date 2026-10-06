@@ -43,6 +43,7 @@ counts. The lab token is minted at run time. Skips LOUDLY without the extension 
 installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a failure there.
 SYNTHETIC fixtures only (session web, the notes-api demo world, placeholder uuids)."""
 import ast
+import itertools
 import json
 import os
 import re
@@ -61,6 +62,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -73,6 +75,7 @@ SID = "bbbbbbbb-1111-2222-3333-444444444444"
 U_UUID = "11111111-2222-3333-4444-555555555555"
 A_UUID = "22222222-3333-4444-5555-666666666666"
 ENGINE = os.environ.get("PAGE_KEY_DASHBOARD_ENGINE") or "chromium"
+DRIVE_SEQ = itertools.count(1)   # a distinct result file for each drive in the one lab (tests/lab_result.py target)
 
 
 def _png(w=2, h=2, rgb=(60, 120, 200)):
@@ -171,14 +174,16 @@ class _OtherOrigin(BaseHTTPRequestHandler):
     do_GET = do_POST = do_OPTIONS = _answer
 
 
-# The shared head of every driver: the browser, the config, and the helpers each scene uses. A driver reports one RESULT
-# line of booleans, statuses and counts; no credential value leaves the browser or this process.
+# The shared head of every driver: the browser, the config, the result helper, and the helpers each scene uses. A driver
+# reports one record of booleans, statuses and counts (through tests/lab_result.cjs); no credential value leaves the
+# browser or this process.
 HEAD = r"""
 import { createRequire } from "node:module";
 import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const pw = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await pw[cfg.engine].launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -331,7 +336,7 @@ await rec.settle();
 out.requests = summary(rec.log, 0, table);
 const appWord = (a) => a === "shell" ? "shell" : ((table.find((p) => p.key === a) || {}).label || a);
 out.sockets = socks.map((s) => ({ pane: appWord(s.app), path: s.path, key: s.key, heard: s.frames > 0 }));
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -370,7 +375,7 @@ out.status = await page.evaluate(async (other) => {
 }, cfg.other);
 await page.waitForTimeout(500);
 out.seen = seen;
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -424,7 +429,7 @@ await pa.waitForTimeout(1500);
 await rec.settle();
 out.afterRequests = summary(rec.log, backT, table);
 out.afterSockets = socks.filter((s) => s.path === "/ws" && s.t >= backT).map((s) => ({ app: s.app, key: s.key, heard: s.frames > 0 }));
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -481,7 +486,7 @@ if (out.at === "/login") {
   out.back = { at, key: await held(page, slot), answered: await page.evaluate(async () => (await fetch("/sessions")).status).catch(() => "navigated"),
                says: await says(page), fillKept: await fillKept(page, out.fill.items) };
 }
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -546,7 +551,7 @@ out.cookies = (await sessionCookies(ctx)).length;
 out.navs = navs;
 out.at = pathOf(page.url());
 out.look = await sentenceLook(page, cfg.shots + "/after-sign-in.png");
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -581,7 +586,7 @@ out.paneRefusals = rec.log.filter((r) => r.path === "/sessions" && r.frame === c
 out.navs = navs;
 out.at = pathOf(page.url());
 out.topSays = await bounded(page.evaluate(() => (document.body.innerText || "").includes("which this browser refuses")).catch(() => false), 10000);
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -618,7 +623,7 @@ for (const p of cfg.pages) {
   out.pages[p] = { refused, at: pathOf(page.url()), look: await sentenceLook(page, cfg.shots + "/sentence" + p.replace(/\W/g, "-") + ".png") };
   await ctx.close();
 }
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -647,7 +652,7 @@ for (const [w, h] of cfg.sizes) {
   out.sizes[w + "x" + h] = m;
   await ctx.close();
 }
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -742,10 +747,13 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         cfg = os.path.join(self.lab, "cfg.json")
         self.shots = os.path.join(self.lab, "shots-" + self._testMethodName)
         os.makedirs(self.shots, exist_ok=True)
+        conf = dict({"origin": "http://127.0.0.1:%d" % self.port, "token": self.token, "sid": SID, "deadline": 30000,
+                     "engine": ENGINE, "other": "http://127.0.0.1:%d" % self.other.server_address[1],
+                     "shots": self.shots}, **extra)
+        tgt = lab_result.target(self.lab, "drive%d" % next(DRIVE_SEQ))   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump(dict({"origin": "http://127.0.0.1:%d" % self.port, "token": self.token, "sid": SID, "deadline": 30000,
-                            "engine": ENGINE, "other": "http://127.0.0.1:%d" % self.other.server_address[1],
-                            "shots": self.shots}, **extra), f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(src)
@@ -758,16 +766,22 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         mask = lambda s: s.replace(self.token, "<token>")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + mask(p.stdout[-3000:] + p.stderr[-3000:]) + "\nkernel:\n" + self._klog_tail())
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + mask(p.stdout[-3000:]))
-        self.assertNotIn(self.token, line, "the driver's report carries no credential")
+        why = None
+        try:
+            r = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:   # failed outside the handler, so the unmasked text rides no chained traceback
+            why = mask(str(e))
+        if why is not None:
+            self.fail(why)
+        report = Path(tgt["resultPath"]).read_text(encoding="utf-8")   # the record as the driver wrote it (its died reason too)
+        self.assertNotIn(self.token, report, "the driver's report carries no credential")
         if os.environ.get("PAGE_KEY_DASHBOARD_REPORT"):   # a directory: each scene's report (booleans, statuses, counts) for the record
             with open(os.path.join(os.environ["PAGE_KEY_DASHBOARD_REPORT"], ENGINE + "-" + self._testMethodName + ".json"), "w") as f:
-                f.write(line[len("RESULT:"):] + "\n")
+                f.write(json.dumps(r) + "\n")
             for name in os.listdir(self.shots):      # and the scene's screenshots, which the pixel checks read
                 shutil.copy(os.path.join(self.shots, name),
                             os.path.join(os.environ["PAGE_KEY_DASHBOARD_REPORT"], ENGINE + "-" + self._testMethodName + "-" + name))
-        return json.loads(line[len("RESULT:"):])
+        return r
 
     def _assert_panes(self, panes, when):
         self.assertEqual(panes, {k: True for k in PANES}, when + ": every pane the rail lists, and settings, loaded its data "

@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -61,6 +62,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -250,7 +252,7 @@ await page.evaluate(() => { sessionStorage.setItem("romp:reloadReason", "{not js
 await page.reload();
 await page.waitForSelector("#tabs .tab, #tabs [data-sid]", { timeout: 20000 });
 const malformed = { dial: (await page.evaluate(() => window.__dials[0] || null)), recordLeft: await page.evaluate(() => sessionStorage.getItem("romp:reloadReason")) };
-process.stdout.write("RESULT:" + JSON.stringify({ fresh, restart, spread, hidden, revealed, build, webIds, restart2, plain, beforeReveal, afterReveal, revealFilled, paneDials, feedRecord, malformed, scalars, foldedBefore, folded, unfolded, unfoldedFilled, siblingBefore, siblingAfter, siblingFilled }) + "\n");
+lab.writeResult(cfg, { fresh, restart, spread, hidden, revealed, build, webIds, restart2, plain, beforeReveal, afterReveal, revealFilled, paneDials, feedRecord, malformed, scalars, foldedBefore, folded, unfolded, unfoldedFilled, siblingBefore, siblingAfter, siblingFilled });
 await browser.close();
 """
 
@@ -265,6 +267,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -349,7 +352,7 @@ await outline.waitForFunction(() => { const f = window.__feeds; const last = f.l
 const unflagged = { fullsDistinct: new Set(await chatFulls()).size, feed: await outline.evaluate(() => window.__feeds[window.__feeds.length - 1] || null), perf: await perf(),
   rawDial: await outline.evaluate(() => window.__dials[window.__dials.length - 1] || null), heldStill: await chat.evaluate(() => window.__held.length) };
 await outline.evaluate(() => { try { window.__raw.close(); } catch (e) { /* closed */ } });
-process.stdout.write("RESULT:" + JSON.stringify({ chatStart, first, afterClick, unflagged, errors }) + "\n");
+lab.writeResult(cfg, { chatStart, first, afterClick, unflagged, errors });
 await browser.close();
 """
 
@@ -444,20 +447,23 @@ class ColdBootDiet(unittest.TestCase):
             self.fail(type(self)._fail)
         if self._r is None:
             cfg = os.path.join(self.lab, "diet.json")
+            conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": self.sids[0], "sids": self.sids,
+                    "names": self.names, "selected": self.sids[2], "apiSids": self.api_sids, "shots": ""}   # session 3 (web-03): visible under #only=web, not in the api section
+            tgt = lab_result.target(self.lab, "diet")   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": self.sids[0], "sids": self.sids,
-                           "names": self.names, "selected": self.sids[2], "apiSids": self.api_sids, "shots": ""}, f)   # session 3 (web-03): visible under #only=web, not in the api section
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "diet.mjs")
             Path(driver).write_text(DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=400,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
-                type(self)._fail = "the driver produced no RESULT (stderr: %s)" % p.stderr[-2000:]
+            try:
+                type(self)._r = lab_result.read(p, tgt)
+            except lab_result.ResultError as e:
+                type(self)._fail = "the driver produced no result: %s" % e
                 self.fail(type(self)._fail)
-            type(self)._r = json.loads(line[len("RESULT:"):])
         print("DIET:", json.dumps(self._r), file=sys.stderr)   # every test's call: pytest shows the failing test's captured stderr alone
         return self._r
 
@@ -477,21 +483,22 @@ class ColdBootDiet(unittest.TestCase):
             type(self)._boot_kernel()
             cfg = os.path.join(self.lab, "outline.json")
             base = "http://127.0.0.1:%d" % self.port
+            tgt = lab_result.target(self.lab, "outline")   # this drive's result file and nonce (tests/lab_result.py)
             with open(cfg, "w") as f:
                 json.dump({"chat": base + "/chat?token=" + self.token, "fleet": base + "/fleet?token=" + self.token, "perf": base + "/perf?token=" + self.token,
                            "rawWs": "ws://127.0.0.1:%d/ws?app=fleet&delta=1&iid=lab-unflagged&token=%s" % (self.port, self.token),
-                           "sids": self.sids, "selected": sid_of(SELECTED_I), "click": sid_of(GOAL_I)}, f)
+                           "sids": self.sids, "selected": sid_of(SELECTED_I), "click": sid_of(GOAL_I), **tgt}, f)
             driver = os.path.join(self.lab, "outline.mjs")
             Path(driver).write_text(OUTLINE_DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=400,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if line is None:
-                type(self)._fail_o = "the Outline driver produced no RESULT (stderr: %s)" % p.stderr[-2000:]
+            try:
+                type(self)._ro = lab_result.read(p, tgt)
+            except lab_result.ResultError as e:
+                type(self)._fail_o = "the Outline driver produced no result: %s" % e
                 self.fail(type(self)._fail_o)
-            type(self)._ro = json.loads(line[len("RESULT:"):])
         print("OUTLINE:", json.dumps(self._ro), file=sys.stderr)
         return self._ro
 

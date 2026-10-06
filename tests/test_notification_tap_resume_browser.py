@@ -52,6 +52,7 @@ import itertools
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -85,6 +86,7 @@ SID_D = "dddddddd-1111-2222-3333-444444444444"   # docs: likewise
 SETTLE_S = 30.0
 DEADLINE_MS = int(SETTLE_S * 1000)   # the same ceiling inside the browser drivers (waitForFunction / the ledger waits)
 ENDPOINT_SEQ = itertools.count(1)    # a distinct tail for each device endpoint the run subscribes (a number, not a port)
+DRIVE_SEQ = itertools.count(1)       # a distinct result file for each drive in the one lab (tests/lab_result.py target)
 
 
 # the click road (Chrome): the REAL push handler on the declarative JSON as e.data, the REAL click handler on the
@@ -95,6 +97,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -144,7 +147,7 @@ out.worker = await sw.evaluate(async (payload) => {
 out.landed = await chat.waitForFunction((sid) => (document.querySelector("#tabs .tab.active") || {}).dataset?.id === sid, cfg.sidB, { timeout: DEADLINE }).then(() => true).catch(() => false);
 out.after = await active();
 for (let i = 0; i < DEADLINE / 50 && !out.ledger.length; i++) await page.waitForTimeout(50);   // the settle rides after the /reveal; bounded by the deadline
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -157,6 +160,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -206,7 +210,7 @@ out.after2 = await active();
 for (let i = 0; i < DEADLINE / 50 && !out.ledger.length; i++) await page.waitForTimeout(50);
 out.urlAfterShow = page.url();
 out.later = { reveals: out.reveals.slice(), ledger: out.ledger.slice() };
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -224,6 +228,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium, devices } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -268,7 +273,7 @@ out.boot = { reveals: out.reveals.slice(), ledger: out.ledger.slice() };
 out.urlAfterBoot = page.url();
 out.strip = await chat.evaluate(() => Array.from(document.querySelectorAll("#tabs .tab[data-id]")).map((t) => ({ id: t.dataset.id, skeleton: t.classList.contains("tab-skeleton"), active: t.classList.contains("active") })));
 out.wire = await page.evaluate(() => (window.__wire || []).slice());
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -286,6 +291,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium, devices } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -327,7 +333,7 @@ out.later = await read();
 out.mobileShell = await page.evaluate(() => !!document.getElementById("mtabs") && getComputedStyle(document.getElementById("mtabs")).display !== "none");
 out.chatFrames = page.frames().map((f) => f.url()).filter((u) => /\/chat/.test(u));
 out.wire = await page.evaluate(() => (window.__wire || []).slice());
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -347,6 +353,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium, devices } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -428,7 +435,7 @@ out.tapLoaded = await chat.waitForFunction((sid) => { const t = document.querySe
 out.tapStrip = await strip();
 out.tapLoader = await chat.evaluate(() => { const c = document.getElementById("content"); return c ? (c.textContent || "").indexOf("loading ") >= 0 : null; });
 out.wire = await page.evaluate(() => (window.__wire || []).slice());
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -441,6 +448,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -497,7 +505,7 @@ async function pass(name, displayed, landsOn, settles) {
 await pass("twoOfThree", [cfg.pids[1], cfg.pids[2]], cfg.sidB, 1);   // api's notification is gone: the one tap — it lands
 await pass("allThree", cfg.pids.slice(), null, 0);                    // everything on the screen: nothing
 await pass("oneOfThree", [cfg.pids[0]], null, 2);                     // tests' and docs' gone at once: nothing lands, both rows dropped
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -567,8 +575,11 @@ class ServedTapLanding(unittest.TestCase):
     def _drive(self, driver_src, **extra):
         base = "http://127.0.0.1:%d" % self.port
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = dict({"origin": base, "landing": base + "/?token=" + self.token, "token": self.token, "sidA": SID_A, "sidB": SID_B}, **extra)
+        tgt = lab_result.target(self.lab, "drive%d" % next(DRIVE_SEQ))   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump(dict({"origin": base, "landing": base + "/?token=" + self.token, "token": self.token, "sidA": SID_A, "sidB": SID_B}, **extra), f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(driver_src.replace("__DEADLINE_MS__", str(DEADLINE_MS)))
@@ -577,9 +588,7 @@ class ServedTapLanding(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served tap needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        return json.loads(line[len("RESULT:"):])
+        return lab_result.read(p, tgt)
 
     def _kernel(self, method, path, body=None):
         """one call to the hermetic kernel with the serve token: (status, parsed JSON or the text)"""

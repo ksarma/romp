@@ -25,6 +25,7 @@ All fixtures synthetic.
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -76,6 +77,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -115,9 +117,9 @@ await page.waitForFunction(() => window.__t.chipOff !== null, null, { timeout: 3
 await page.waitForFunction(() => window.__t.boxOff !== null, null, { timeout: 15000 }).catch(() => {});
 const all = await page.evaluate(() => window.__t);
 const r = (a, b) => (a === null || b === null) ? null : Math.round(b - a);
-fs.writeSync(1, "RESULT:" + JSON.stringify({ chipText: all.chipText, boxText: all.boxText, detail,
+lab.writeResult(cfg, { chipText: all.chipText, boxText: all.boxText, detail,
   boxLagMs: r(all.chipOn, all.boxOn), boxAppeared: all.boxOn !== null, chipAppeared: all.chipOn !== null,
-  clearLagMs: r(all.chipOff, all.boxOff), boxCleared: all.boxOff !== null, chipCleared: all.chipOff !== null }) + "\n");
+  clearLagMs: r(all.chipOff, all.boxOff), boxCleared: all.boxOff !== null, chipCleared: all.chipOff !== null });
 await browser.close();
 process.exit(0);
 """
@@ -182,10 +184,13 @@ class ServedSync(unittest.TestCase):
 
     def test_the_box_shows_within_one_frame_of_the_chip_and_clears_with_it(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+                "states": os.path.join(self.state, "states", SID + ".jsonl"),
+                "shots": os.environ.get("AWAITING_SYNC_SHOTS", "")}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
-                       "states": os.path.join(self.state, "states", SID + ".jsonl"),
-                       "shots": os.environ.get("AWAITING_SYNC_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -194,9 +199,7 @@ class ServedSync(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served sync needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         self.assertTrue(r["chipAppeared"], "the overlay row must flip the chip: %r" % r)
         self.assertEqual(r["chipText"], "Awaiting agent", "one agent → singular (T225 rider): %r" % r)
         # THE FIX: the box renders from the SAME status frame — pre-fix it never appeared here at all

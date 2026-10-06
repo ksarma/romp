@@ -27,6 +27,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -75,6 +76,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const { chromium } = createRequire(import.meta.url)(cfg.pw);
+const lab = createRequire(import.meta.url)(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 const browser = await chromium.launch();
 const NAMES = cfg.names;
 const measure = ({ names, web }) => ({
@@ -142,7 +144,8 @@ for (const pass of [{ name: "dark", theme: "dark", on: true }, { name: "light", 
   await ctx.close();
 }
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify(results) + "\n", () => process.exit(0));
+lab.writeResult(cfg, results);
+process.exit(0);
 """
 
 
@@ -218,9 +221,12 @@ class ServedGroupByTag(unittest.TestCase):
         if cls._r is not None:
             return cls._r
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"url": "http://127.0.0.1:%d/timeline?token=%s" % (self.port, self.token), "names": NAMES, "web": WEB,
+                "pw": os.path.join(EXT, "node_modules", "playwright"), "shots": os.environ.get("T399_SHOTS", "")}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"url": "http://127.0.0.1:%d/timeline?token=%s" % (self.port, self.token), "names": NAMES, "web": WEB,
-                       "pw": os.path.join(EXT, "node_modules", "playwright"), "shots": os.environ.get("T399_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         Path(driver).write_text(DRIVER)
         # the cap covers the driver's own bounds (three first-read waits of 90 s and three fold waits of 20 s, 330 s) with room, so
@@ -228,8 +234,7 @@ class ServedGroupByTag(unittest.TestCase):
         p = subprocess.run(["node", driver, cfg], capture_output=True, text=True, timeout=420)
         klog = Path(self.klog).read_text()[-3000:] if os.path.exists(self.klog) else ""
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + "\n" + p.stderr[-3000:] + "\nkernel:\n" + klog)
-        line = [ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")][-1]
-        cls._r = json.loads(line[len("RESULT:"):])
+        cls._r = lab_result.read(p, tgt)
         return cls._r
 
     def _lane_y(self, i):

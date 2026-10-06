@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -43,6 +44,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch({}); } catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1400, height: 800 } });
@@ -70,7 +72,7 @@ const loaded = await page.evaluate(() => {
   return { tabs: out, swirlsInStrip: document.querySelectorAll("#tabs .tab-ph-swirl").length };
 });
 const ph = await page.evaluate(() => window.__ph);
-process.stdout.write("RESULT:" + JSON.stringify({ ph, loaded, errors }) + "\n");
+lab.writeResult(cfg, { ph, loaded, errors });
 await browser.close();
 """
 
@@ -139,19 +141,22 @@ class TabPlaceholderWidthServed(unittest.TestCase):
         if self._r is None:
             cfg = os.path.join(self.lab, "tabph.json")
             base = "http://127.0.0.1:%d" % self.port
+            conf = {"chat": base + "/chat?token=" + self.token, "token": self.token, "count": len(NAMES)}   # the chat page, where the strip lives
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"chat": base + "/chat?token=" + self.token, "token": self.token, "count": len(NAMES)}, f)   # the chat page, where the strip lives
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "tabph.mjs")
             Path(driver).write_text(DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=400,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            if not line:
-                type(self)._fail = "the driver produced no RESULT (stderr: %s; kernel: %s)" % (p.stderr[-2000:], open(self.klog).read()[-1500:])
+            try:
+                type(self)._r = lab_result.read(p, tgt)
+            except lab_result.ResultError as e:
+                type(self)._fail = "the driver produced no result (%s; kernel: %s)" % (e, open(self.klog).read()[-1500:])
                 self.fail(type(self)._fail)
-            type(self)._r = json.loads(line[len("RESULT:"):])
         return self._r
 
     def test_a_loading_tab_is_as_wide_as_the_loaded_one_and_its_swirl_rides_the_dot_slot_then_yields_to_the_dot(self):
