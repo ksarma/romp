@@ -542,6 +542,13 @@ def _states_problems(engine, acts):
             or (st.get("noneClosed") or {}).get("cardHidden") is not True:
         out.append("%s: the closed half's premise (the hosts back up and the card's glyph lit, then the card closed when the "
                    "poll with no host came): %r" % (where, st))
+    # The closed-then-opened line has two redundant sites behind it, so it goes red only under the mutant of both (accepted by
+    # romp-manager after PR 976's round 1). The poll paints the card's copy through mnet even while the card is closed
+    # (paintIcon's toggle of 'on'), and the opening copies the rail icon's live 'on' onto it (the settings listener's toggle),
+    # each taking 'on' off when no host is up. With the poll's toggle made add-only, the closed copy keeps 'on' and the
+    # opening's copy, reading the rail icon, takes it off; with the opening's copy made add-only, the poll has already taken
+    # it off while the card was closed. Each one-site mutant leaves the copy unlit at the opening, so each is equivalent on
+    # this line; the open line above is the one red under the poll's alone
     reo = st.get("noneReopened") or {}
     rc = reo.get("card") or {}
     if not rc or rc.get("cardHidden") is not False or "on" in cls(rc.get("cls")) or "on" in cls(reo.get("rail")):
