@@ -337,10 +337,13 @@ elif act == "tree-edit":                         # a tracked file changed in the
 elif act == "tree-restore":
     subprocess.run(["git", "-C", ctl["tree"], "checkout", "-q", "--", "README.md"], check=True,
                    env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"))
-elif act == "spawn":                             # two writers into TMPDIR, one in the leg's group, one under setsid
+elif act == "spawn":                             # two writers into TMPDIR, one in the leg's group, one under setsid;
+    # the group writer takes half a second on SIGTERM before it records it, standing for a cleanup, so a runner that
+    # SIGKILLs the group once the leg itself has exited, before the group has, kills it first
     writer = ("import os, signal, sys, time\n"
               "tmp, mark, tag = sys.argv[1:4]\n"
               "def term(*_):\n"
+              "    time.sleep(0.5)\n"
               "    open(mark + '.term', 'w').write(str(os.getpid()))\n"
               "    os._exit(0)\n"
               "signal.signal(signal.SIGTERM, term if tag == 'group' else signal.SIG_IGN)\n"
@@ -2411,7 +2414,9 @@ class Checkout(_Base):
 
     def test_a_stop_signal_stops_the_leg_its_descendants_and_removes_tmpdir_and_the_checkout(self):
         """A5: a stop signal during a leg whose children write into TMPDIR, one in the leg's process group and one under
-        setsid. The group gets SIGTERM first (the group writer records it), the subreaper kills the setsid writer, and
+        setsid. The group gets SIGTERM first and the time to act on it (the group writer records the SIGTERM after a
+        half-second pause that stands for a cleanup; before stop_leg waited for the group, a group member had a few
+        milliseconds before the SIGKILL, and a CI run lost the record), the subreaper kills the setsid writer, and
         TMPDIR and the checkout are gone afterwards and stay gone. Once per stop signal (round 2, extra5-1 and decision
         14): SIGTERM, SIGHUP and SIGINT each exit 128 plus the signal's number and say so; before round 2 SIGINT raised
         KeyboardInterrupt, a traceback and death by the signal, and a runner that handles SIGTERM alone dies by SIGHUP
