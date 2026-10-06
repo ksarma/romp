@@ -87,8 +87,8 @@ test("every write of the keep offset writes the reader's line beside it, in the 
   // its longhand, can keep a line from an earlier keep, and a destructuring that names it only as a key or a default writes another
   // variable. What it guards is the declaration's rule: a line left from an earlier keep is never READ while the offset is null
   // (scrollToAnchor reads it only under a non-null offset, and every write of a non-null offset writes the line too, which this census
-  // also holds), so a miss is a broken invariant, not a misplaced reader; the line's landing itself executes in
-  // scroll-to-anchor-roads.test.ts and land-active-keep.test.ts
+  // also holds, within the limits setsLine states), so a miss is a broken invariant, not a misplaced reader; the line's landing itself
+  // executes in scroll-to-anchor-roads.test.ts and land-active-keep.test.ts
   const sf = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const bare = (e: ts.Node): ts.Node => { let x = e; while (ts.isParenthesizedExpression(x) || ts.isAsExpression(x) || ts.isNonNullExpression(x) || ts.isTypeAssertionExpression(x) || ts.isSatisfiesExpression(x)) x = x.expression; return x; };
   /** Whether an assignment target writes `name`: the name itself, or a destructuring pattern naming it anywhere (a key or a default
@@ -114,12 +114,17 @@ test("every write of the keep offset writes the reader's line beside it, in the 
     while (x.parent && (ts.isParenthesizedExpression(x.parent) || (ts.isBinaryExpression(x.parent) && x.parent.operatorToken.kind === ts.SyntaxKind.CommaToken))) x = x.parent;
     return x.parent && ts.isExpressionStatement(x.parent) && LIST(x.parent.parent) ? x.parent : null;
   };
-  /** The line's side counts only an assignment that always sets the line: a plain `=` whose target, bare, is pendingAnchorKeepAt
-   *  and whose right-hand side does not name it. A `??=` or `||=` can leave the line from an earlier keep in place, and so can its
-   *  longhand (`pendingAnchorKeepAt = pendingAnchorKeepAt ?? x`, `= pendingAnchorKeepAt || x`); a `&&=` assigns only over a line
-   *  already set, a compound operator computes the new value from the old line, and a destructuring that names it as a key, a default
-   *  or a property target writes something else; one whose target is the name itself is refused too, the safe side, as is a right-hand
-   *  side that names it anywhere, even as a property or a key, whether or not it reads the old line. */
+  /** The line's side counts only a plain `=` whose target, bare, is pendingAnchorKeepAt and whose right-hand side does not name it.
+   *  A `??=` or `||=` can leave the line from an earlier keep in place, and so can its longhand
+   *  (`pendingAnchorKeepAt = pendingAnchorKeepAt ?? x`, `= pendingAnchorKeepAt || x`); a `&&=` assigns only over a line already set, a
+   *  compound operator computes the new value from the old line, and a destructuring that names it as a key, a default or a property
+   *  target writes something else; one whose target is the name itself is refused too, the safe side, as is a right-hand side that
+   *  names it anywhere as an identifier, even as a property or a key (a quoted key is a string and does not count), whether or not it
+   *  reads the old line. A write of the counted shape can still leave the line from an earlier keep in place, and setsLine, which looks
+   *  at the assignment alone, counts it: for example, a right-hand side that carries the old line under another name (a local copied
+   *  or destructured from it, a call that returns it), or a write of a local that shadows the name. render.ts has neither of those
+   *  now: every assignment of the name has null or `rs.anchor.at ?? null` on its right, and the name is declared once, at module
+   *  level. That was read from the file when this was written; nothing here enforces it. */
   const namesLine = (n: ts.Node): boolean => { let hit = false; const walk = (m: ts.Node): void => { if (ts.isIdentifier(m) && m.text === "pendingAnchorKeepAt") hit = true; ts.forEachChild(m, walk); }; walk(n); return hit; };
   const setsLine = (n: ts.Node): boolean => { if (!ts.isBinaryExpression(n) || n.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false; const t = bare(n.left); return ts.isIdentifier(t) && t.text === "pendingAnchorKeepAt" && !namesLine(n.right); };
   const keepY: ts.Node[] = [];
