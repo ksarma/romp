@@ -134,7 +134,10 @@ var GEAR_HTML =
   '<div class=rs-pacts id=rs-pacts hidden>' +
   // Usage carries its sub-line for the state with no reading yet (usageAct below shows it and disables the button)
   '<button type=button class=rs-pact id=rs-pact-usage data-pact=usage title=Usage>' + PACT_USAGE_SVG +
-  '<span class=rs-pact-txt><span>Usage</span><span class=rs-pact-none id=rs-pact-usage-none hidden>No reading yet</span></span></button>' +
+  // and, in the same place, the romp loader while the card's opening asks the shell for a fresh reading (usagePull below)
+  '<span class=rs-pact-txt><span>Usage</span><span class=rs-pact-none id=rs-pact-usage-none hidden>No reading yet</span>' +
+  '<span class=rs-pact-wait id=rs-pact-usage-wait hidden aria-hidden=true><span class=rs-pact-swirl></span><span>romp</span>' +
+  '<i class=rs-pact-dot></i><i class=rs-pact-dot></i><i class=rs-pact-dot></i></span></span></button>' +
   '<button type=button class=rs-pact id=rs-pact-net data-pact=net title="Remote kernels">' + PACT_NET_SVG + '<span>Remote kernels</span></button>' +
   '<button type=button class=rs-pact data-pact=restart title="Restart kernel">' + PACT_RESTART_SVG + '<span>Restart kernel</span></button>' +
   '</div>' +
@@ -2154,18 +2157,47 @@ function initGear(post, opts) {
   // Usage with no reading (iOS item 4g; romp-manager's call, explain rather than hide). The shell's usage panel opens only over a
   // reading (kernel _LANDING_USAGE_JS: __rompUsagePanel's openIt returns on an empty tipHTML), so a tap on Usage before the
   // first reading closed this card and opened nothing. The readings sit in the shell's usage script (its LAST), which this
-  // document cannot read; that script answers through __rompUsageReading, its own test over them, and the card asks at each
-  // open (as phoneShell asks for the layout): Usage enabled where the panel has something to open, disabled with its sub-line
-  // (No reading yet) where it has not. A disabled button takes no tap, so the card stays open and the line says why. A shell
-  // that cannot be asked (no __rompUsageReading, or one that throws) is not a shell with no reading (PR 976's round 1,
-  // kernel-1): Usage stays as its bar button always was, enabled with no line, and its tap runs the shell's own handler.
+  // document cannot read; that script answers through __rompUsageReading, its own test over them: Usage enabled where the
+  // panel has something to open, disabled with its sub-line (No reading yet) where it has not. A disabled button takes no
+  // tap, so the card stays open and the line says why. A shell that cannot be asked (no __rompUsageReading, or one that
+  // throws) is not a shell with no reading (PR 976's round 1, kernel-1): Usage stays as its bar button always was, enabled
+  // with no line, and its tap runs the shell's own handler.
+  // The answer reads the source the panel's opener reads (PR 976's round 1, correctness-1, extra6-1 and ui-2): each opening
+  // asks the shell for a fresh pull first (usagePull), and until it settles Usage shows the romp loader in its sub-line's place
+  // and takes no tap (the waiting rule, ui/CLAUDE.md: never a guess); and the shell tells an open card whenever its readings
+  // change (its renderRows calls window.__rompUsageAct below), so the line never outlives the readings it describes.
+  var usageWait = 0, usageSeq = 0;   // the opening's pull in flight: its number, 0 when none is
   function usageAct() {
-    var b = document.getElementById('rs-pact-usage'), none = document.getElementById('rs-pact-usage-none'), asked = false, has = false;
+    var b = document.getElementById('rs-pact-usage'), none = document.getElementById('rs-pact-usage-none'),
+      wait = document.getElementById('rs-pact-usage-wait'), asked = false, has = false;
+    if (usageWait) {   // asking: the loader, the button inert, no claim either way
+      if (b) { b.disabled = true; b.setAttribute('aria-busy', 'true'); }
+      if (none) none.hidden = true;
+      if (wait) wait.hidden = false;
+      return;
+    }
+    if (b) b.removeAttribute('aria-busy');
+    if (wait) wait.hidden = true;
     try { var w = window.parent; if (w !== window && typeof w.__rompUsageReading === 'function') { has = !!w.__rompUsageReading(); asked = true; } } catch (e) { asked = false; }
     var no = asked && !has;   // the shell answered, and it holds no reading
     if (b) b.disabled = no;
     if (none) none.hidden = !no;
   }
+  // the opening's ask: the shell's pull (__rompUsagePull, kernel _LANDING_USAGE_JS, the fetch the panel's opener runs), the
+  // loader up until its promise settles either way, then the answer; a later ask (the card closed and opened again) outdates an
+  // earlier one, whose settling then changes nothing. A shell without the pull is asked at once, as before.
+  function usagePull() {
+    var w = null, ask = null;
+    try { w = window.parent; if (w !== window && typeof w.__rompUsagePull === 'function') ask = w.__rompUsagePull; } catch (e) { ask = null; }
+    if (!ask) { usageWait = 0; usageAct(); return; }
+    var n = usageWait = ++usageSeq;
+    usageAct();
+    var done = function () { if (usageWait !== n) return; usageWait = 0; usageAct(); };
+    try { Promise.resolve(ask.call(w)).then(done, done); } catch (e) { done(); }
+  }
+  // the shell's tell (its renderRows, on every write of its readings): re-read Usage while the card is open with the row shown;
+  // a closed card asks afresh at its next opening
+  window.__rompUsageAct = function () { var r = document.getElementById('rs-pacts'); if (!p.hidden && r && !r.hidden) usageAct(); };
   function openSettings(tab, section) {
     if (raBack && !raBack.hidden) raHide();   // the Token usage panel up: down first, so the card is what this open shows, never the card under the layer (the read of the panel's close fix)
     if (tab === 'appearance' && !section) section = 'appearance';   // the former Appearance tab is General's section (T404)
@@ -2173,7 +2205,7 @@ function initGear(post, opts) {
     selectTab(tab);
     var pacts = document.getElementById('rs-pacts');
     if (pacts) pacts.hidden = !(phoneShell() && shellActs());   // the phone's moved actions (iOS item 4g): the layout (and the shell's marker) read at each open, so a rotation across the breakpoint between opens is followed
-    if (pacts && !pacts.hidden) usageAct();   // ...and whether Usage has a reading to open, at each open too
+    if (pacts && !pacts.hidden) usagePull();   // ...and whether Usage has a reading to open, from a fresh pull at each open too
     // Signal the SHELL first, then measure (the picker's order, adopted 2026-08-09): feedFull posts
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the

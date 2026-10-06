@@ -71421,9 +71421,15 @@ var RAIL_HOME=(function(){var c=document.getElementById('rail-api');return c?c.p
 function moveApiCell(c,into){var had=document.activeElement===c,mv=window.__rompApiCellMoving;if(mv)mv(true);
 into();if(had){try{c.focus({preventScroll:true});}catch(e){}}if(mv)mv(false);}
 function parkApiCell(){var c=document.getElementById('rail-api');if(c&&el.contains(c)&&RAIL_HOME)moveApiCell(c,function(){RAIL_HOME.insertBefore(c,el.nextSibling);});}
+// The settings card's Usage button (gear.js usageAct, the phone's Usage since iOS item 4g) says whether there is a reading to
+// open, which only LAST knows; renderRows is LAST's one writer, so every renderRows tells an open card, as it empties LAST
+// and as it fills it, and the button's state never outlives the readings it describes (PR 976's round 1, correctness-1 and
+// ui-2). The tell is a call into the settings document (same origin, as mnet reaches the card's Remote kernels glyph); the
+// card's hook does nothing while the card is closed, since each opening asks afresh (__rompUsagePull below).
+function cardTell(){try{var f=document.getElementById('f-settings'),w=f&&f.contentWindow;if(w&&typeof w.__rompUsageAct==='function')w.__rompUsageAct();}catch(e){}}
 function renderRows(rows,selfHost){ROWS=rows||[];LAST=[];parkApiCell();
 var live=ROWS.filter(function(r){return hasBars(r.usage)||hasSpend(r.usage);});
-if(!live.length){el.innerHTML='';tip.style.display='none';return;}
+if(!live.length){el.innerHTML='';tip.style.display='none';cardTell();return;}
 shareFreshest(live);
 LAST=live.map(function(r){var det={};det._t=(typeof r.usage.t==='number')?r.usage.t:null;
 winDet(r.usage,det);spendDet(r.usage,det);
@@ -71441,7 +71447,8 @@ if(tip.style.display==='block'&&!tip.classList.contains('ru-modal')){var th=tipH
 if(th){tip.innerHTML=th;var rr=el.getBoundingClientRect();
 tip.style.top=Math.max(6,rr.top-tip.offsetHeight-8)+'px';}}
 // the spend modal's Totals section is these same rows: an open modal follows every landing too (T247)
-if(typeof SP!=='undefined'&&SP.open&&SP.data){var ts=document.getElementById('rsp-totals');if(ts)ts.innerHTML=totalsHTML(SP.data);}}
+if(typeof SP!=='undefined'&&SP.open&&SP.data){var ts=document.getElementById('rsp-totals');if(ts)ts.innerHTML=totalsHTML(SP.data);}
+cardTell();}
 // The single-payload path the timeline still posts (and the mobile panel's own fetch): treat it as this
 // machine's row, leaving any other account's bars alone.
 function render(u){notices(u);
@@ -71636,9 +71643,16 @@ back.onclick=off;}
 pullFleet().then(openIt,openIt);};
 // whether the panel above has anything to open (iOS item 4g, 2026-10-05): openIt's own test, a non-empty tipHTML over the readings
 // in LAST, for the phone's Usage button in the settings card (gear.js usageAct). That button lives in the #f-settings document,
-// out of this script's reach, so the card asks this each time it opens: Usage enabled where a tap opens the panel, disabled with
-// a line saying there is no reading yet where it would open nothing
+// out of this script's reach, so the card asks this: Usage enabled where a tap opens the panel, disabled with a line saying
+// there is no reading yet where it would open nothing
 window.__rompUsageReading=function(){return !!tipHTML();};
+// ...and the source behind that answer, read fresh as the panel's opener reads it (PR 976's round 1, correctness-1 and
+// extra6-1): the card calls this at each opening (gear.js usagePull) and shows the romp loader on Usage until the promise
+// settles, then asks __rompUsageReading. It runs the script's own fetch of the readings directly, the one the panel's opener
+// runs, never pull(), which returns at once while a pull it started is in flight and would leave the card on the answer before. A pull that lands writes LAST through renderRows, which tells the
+// card; one whose request fails leaves LAST as it was. Either way the card's answer is the one the panel's opener, which runs
+// the same fetch and then openIt whichever way it ends, would open over at that moment
+window.__rompUsagePull=function(){return pullFleet();};
 // the API-health dot sits inside this cell (T301): a pointer arriving on the DOT gets the dot's own tip, not this one
 el.addEventListener('mouseenter',function(ev){var c=document.getElementById('rail-api');
 if(c&&ev&&typeof ev.clientX==='number'){var at=document.elementFromPoint(ev.clientX,ev.clientY);if(at&&(at===c||c.contains(at)))return;}showTip(ev);});

@@ -64,6 +64,17 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-pact:disabled svg { opacity: .4; }
 #rsettings .rs-pact-txt { display: flex; flex-direction: column; align-items: flex-start; }
 #rsettings .rs-pact-none { font-size: 11px; line-height: 1.35; color: var(--text-muted, #9aa0a6); }
+/* ...and in the sub-line's place while the card asks the shell for a fresh reading (gear.js usagePull, PR 976's round 1): the
+   romp loader, per the waiting rule (ui/CLAUDE.md), the swirl, the wordmark and three pulsing accent dots, at the sub-line's
+   size and colour; the keyframes are feed.css's own for its loaders (fask-swirl-spin, fileview-pulse), which this page loads */
+#rsettings .rs-pact-wait { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1.35; color: var(--text-muted, #9aa0a6); }
+#rsettings .rs-pact-wait[hidden] { display: none; }
+#rsettings .rs-pact-swirl { width: 11px; height: 11px; flex: none; background: url(../media/romp-swirl-glyph.svg) center / contain no-repeat;
+  animation: fask-swirl-spin 7s linear infinite; }
+#rsettings .rs-pact-dot { width: 3px; height: 3px; flex: none; border-radius: 50%; background: var(--accent, #9cd2ff);
+  animation: fileview-pulse 1.1s ease-in-out infinite; }
+#rsettings .rs-pact-dot:nth-of-type(2) { animation-delay: 0.18s; }
+#rsettings .rs-pact-dot:nth-of-type(3) { animation-delay: 0.36s; }
 /* the Remote kernels glyph's live state, painted here by the shell's poll as it painted the bar's button (kernel
    _LANDING_REMOTES_JS paintIcon through mnet): the accent when a host is connected and while one attaches, the connector
    dashes marching while it attaches, each node's colour (connected, dialing, needs you) and the red flash when a host drops

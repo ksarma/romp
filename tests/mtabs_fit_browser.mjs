@@ -26,14 +26,19 @@
 // and the glyph read two frames after the card shows again.
 // Then Usage with no reading, on a page of its own at cfg.actsViewport: the shell's usage pull (the main frame's GET under
 // /usage/) answers no rows, so the shell holds no reading (the rail's readout, which renders over the readings, read empty as
-// the premise); the card opened from the bar's Settings, its Usage button read (disabled, its sub-line), a click at its
-// centre, and after a settle (an absence has no event to wait on) the card, the Usage modal and the phoneAct messages the
-// shell heard read; then a reading arrives (the lab's own GET /usage payload posted to the shell as the timeline posts it,
-// the shell's later pulls let through), the card closed and opened again, Usage read again, and one click on it, its effect
-// read.
+// the premise); the card opened from the bar's Settings, its Usage button read once the opening's ask has ended (disabled,
+// its sub-line), a click at its centre, and after a settle (an absence has no event to wait on) the card, the Usage modal
+// and the phoneAct messages the shell heard read; then, the card still open, a reading arrives (the lab's own GET /usage
+// payload posted to the shell as the timeline posts it, the shell's later pulls let through), Usage read again in the open
+// card; then the readings emptied (a payload with no window and no spend, posted the same way) and filled again, Usage read
+// after each, and one click on it, its effect read.
+// Then a reading the kernel holds and the shell has not pulled, on a page of its own at cfg.actsViewport: the shell's boot
+// pull answers no rows and every later one goes to the lab, the Sessions pane unloaded (read as the premise); the card
+// opened, its ask for a fresh pull held while Usage is read (the romp loader in the sub-line's place, its animations, the
+// button disabled and busy), then let through, Usage read once the ask has ended, and one click on it, its effect read.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
-// the phone layout and no marker), and Usage at one with the marker back and the usage script's answer deleted (a shell that
+// the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
 // cannot be asked for a reading).
 // Then the Remote kernels glyph's colours, on a page of its own per theme (cfg.themes: the theme written to the store before
 // the page parses, as the gear writes it) at cfg.actsViewport: the card opened from the bar's Settings, and in it the card's
@@ -219,9 +224,12 @@ try {
       await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
       await frames(page);
       const lift = await page.evaluate(() => { const r = document.getElementById("f-settings").getBoundingClientRect(); return { left: r.left, top: r.top }; });
-      // the glyph's colour fades over the dress's transition when the opening paints it: read it once those transitions end
-      await sf.evaluate(() => { const n = document.getElementById("rs-pact-net");
-        const fades = n && n.getAnimations ? n.getAnimations().filter((a) => typeof CSSTransition !== "undefined" && a instanceof CSSTransition) : [];
+      // the opening's ask for a fresh reading (Usage wears the romp loader, disabled, until it ends): read the row after it
+      await sf.waitForFunction(() => { const w = document.getElementById("rs-pact-usage-wait"); return !w || w.hidden; }, null, { timeout: 10000 }).catch(() => null);
+      // the glyph's colour fades over the dress's transition when the opening paints it, and Usage's when its ask ends (from the
+      // disabled grey): read the row once those transitions end
+      await sf.evaluate(() => { const fades = [];
+        document.querySelectorAll("#rs-pacts .rs-pact").forEach((n) => { if (n.getAnimations) n.getAnimations().forEach((a) => { if (typeof CSSTransition !== "undefined" && a instanceof CSSTransition) fades.push(a); }); });
         return Promise.all(fades.map((a) => a.finished.catch(() => null))).then(() => fades.length); });
       run.card = await sf.evaluate((ctx) => {
         const r = (x) => Math.round(x * 100) / 100;
@@ -353,7 +361,45 @@ try {
     out.acts = acts;
     await context.close();
   }
-  // Usage with no reading, then with one: the card asks the shell at each opening
+  // the Usage legs' tools on one page: the card opened from the bar's Settings at its centre, Usage read (by its act, so a tree
+  // without its states still yields a box to click; in the shell's coordinates), the shell's side read (the card, the Usage
+  // modal, the phoneAct messages heard since the record was armed), and the end of the opening's ask awaited (the loader gone,
+  // or never there), its outcome recorded
+  const usageKit = async (page, leg) => {
+    await page.evaluate(() => { window.__mtabsActs = []; window.addEventListener("message", (e) => { if (e.data && e.data.romp === "phoneAct") window.__mtabsActs.push(e.data.act); }); });
+    const gear = (await read(page)).controls.find((c) => c.key === "settings");
+    if (!gear) throw new Error("no Settings on the bar (" + leg + ")");
+    const openCard = async () => {
+      await page.mouse.click(gear.left + gear.w / 2, gear.top + gear.h / 2);
+      await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
+      const sf = settingsFrameOf(page);
+      if (!sf) throw new Error("no settings frame after the click (" + leg + ")");
+      await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+      await frames(page);
+      return sf;
+    };
+    const usageNow = async (sf) => {
+      const lift = await page.evaluate(() => { const r = document.getElementById("f-settings").getBoundingClientRect(); return { left: r.left, top: r.top }; });
+      return sf.evaluate((ctx) => {
+        const r = (x) => Math.round(x * 100) / 100;
+        const b = document.querySelector("#rs-pacts [data-pact=usage]"), un = document.getElementById("rs-pact-usage-none"), wt = document.getElementById("rs-pact-usage-wait");
+        if (!b) return null;
+        const c = b.getBoundingClientRect();
+        return { disabled: b.disabled, busy: b.getAttribute("aria-busy"), left: r(c.left + ctx.left), top: r(c.top + ctx.top), w: r(c.width), h: r(c.height),
+                 line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none", text: un.textContent.trim() } : null,
+                 wait: wt ? { shown: !wt.hidden && getComputedStyle(wt).display !== "none", text: wt.textContent.trim(),
+                              anims: wt.getAnimations ? wt.getAnimations({ subtree: true }).map((a) => a.animationName || "?") : null } : null };
+      }, lift);
+    };
+    const shellNow = async (sf) => ({ settingsOpen: await page.evaluate(() => document.body.classList.contains("settings-open")),
+      cardHidden: await sf.evaluate(() => { const p = document.getElementById("rsettings"); return !p || p.hidden; }),
+      usage: await page.evaluate(() => { const b = document.getElementById("ru-back"); return !!b && b.classList.contains("on"); }),
+      acts: await page.evaluate(() => window.__mtabsActs.slice()) });
+    const askEnded = (sf) => sf.waitForFunction(() => { const w = document.getElementById("rs-pact-usage-wait"); return !w || w.hidden; }, null, { timeout: 10000 }).then(() => true, () => false);
+    const modalUp = () => page.waitForFunction(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip"); return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }, null, { timeout: 10000 }).then(() => true, () => false);
+    return { openCard, usageNow, shellNow, askEnded, modalUp };
+  };
+  // Usage with no reading, then a reading landing while the card is open: the shell tells the open card
   {
     // the shell's usage pull is its one GET under /usage/ (the route the usage script's pull reads); /usage itself is let through
     let empty = true, pulls = 0;
@@ -372,74 +418,99 @@ try {
     for (let i = 0; i < 150 && pulls < 1; i++) await sleep(100);
     await frames(page);
     nr.premise = { pulls, readout: await page.evaluate(() => { const r = document.getElementById("rail-usage"); return r ? r.innerHTML : null; }) };
-    await page.evaluate(() => { window.__mtabsActs = []; window.addEventListener("message", (e) => { if (e.data && e.data.romp === "phoneAct") window.__mtabsActs.push(e.data.act); }); });
-    const gear = (await read(page)).controls.find((c) => c.key === "settings");
-    if (!gear) throw new Error("no Settings on the bar (the no-reading leg)");
-    const openCard = async () => {
-      await page.mouse.click(gear.left + gear.w / 2, gear.top + gear.h / 2);
-      await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });
-      const sf = settingsFrameOf(page);
-      if (!sf) throw new Error("no settings frame after the click (the no-reading leg)");
-      await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
-      await frames(page);
-      return sf;
-    };
-    const closeCard = async () => {
-      if (await page.evaluate(() => document.body.classList.contains("settings-open"))) {
-        await page.evaluate(() => window.__rompOpenSettings && window.__rompOpenSettings());
-        await page.waitForFunction(() => !document.body.classList.contains("settings-open"), null, { timeout: 10000 });
-      }
-      await frames(page);
-    };
-    // the Usage button (by its act, so a tree without its state still yields a box to click), in the shell's coordinates
-    const usageNow = async (sf) => {
-      const lift = await page.evaluate(() => { const r = document.getElementById("f-settings").getBoundingClientRect(); return { left: r.left, top: r.top }; });
-      return sf.evaluate((ctx) => {
-        const r = (x) => Math.round(x * 100) / 100;
-        const b = document.querySelector("#rs-pacts [data-pact=usage]"), un = document.getElementById("rs-pact-usage-none");
-        if (!b) return null;
-        const c = b.getBoundingClientRect();
-        return { disabled: b.disabled, left: r(c.left + ctx.left), top: r(c.top + ctx.top), w: r(c.width), h: r(c.height),
-                 line: un ? { shown: !un.hidden && getComputedStyle(un).display !== "none", text: un.textContent.trim() } : null };
-      }, lift);
-    };
-    const shellNow = async (sf) => ({ settingsOpen: await page.evaluate(() => document.body.classList.contains("settings-open")),
-      cardHidden: await sf.evaluate(() => { const p = document.getElementById("rsettings"); return !p || p.hidden; }),
-      usage: await page.evaluate(() => { const b = document.getElementById("ru-back"); return !!b && b.classList.contains("on"); }),
-      acts: await page.evaluate(() => window.__mtabsActs.slice()) });
-    let sf = await openCard();
-    nr.first = await usageNow(sf);
+    const kit = await usageKit(page, "the no-reading leg");
+    const sf = await kit.openCard();
+    nr.firstAsked = await kit.askEnded(sf);
+    nr.first = await kit.usageNow(sf);
     if (nr.first) {
       await page.mouse.click(nr.first.left + nr.first.w / 2, nr.first.top + nr.first.h / 2);
       await frames(page);
       await sleep(3 * (cfg.settleMs || 100));
       await frames(page);
-      nr.tapped = await shellNow(sf);
-      nr.afterTap = await usageNow(sf);
+      nr.tapped = await kit.shellNow(sf);
+      nr.afterTap = await kit.usageNow(sf);
     }
-    await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) {} });
-    await closeCard();
-    // a reading arrives: the lab's own payload, posted as the timeline posts it; the shell's pulls go to the lab from here
+    // a reading arrives with the card still open: the lab's own payload, posted as the timeline posts it (the shell's pulls go
+    // to the lab from here); the open card's Usage read again, then clicked
     empty = false;
     await page.evaluate(async () => { const u = await (await fetch("/usage", { cache: "no-store" })).json(); window.postMessage({ romp: "usage", usage: u }, "*"); });
     nr.arrived = await page.waitForFunction(() => { const r = document.getElementById("rail-usage"); return !!r && r.innerHTML !== ""; }, null, { timeout: 10000 }).then(() => true, () => false);
     await frames(page);
-    sf = await openCard();
-    nr.second = await usageNow(sf);
-    if (nr.second) {
-      await page.mouse.click(nr.second.left + nr.second.w / 2, nr.second.top + nr.second.h / 2);
-      nr.opened = await page.waitForFunction(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip"); return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }, null, { timeout: 10000 }).then(() => true, () => false);
+    nr.stillOpen = await kit.shellNow(sf);
+    nr.second = await kit.usageNow(sf);
+    // ...and the readings emptying with the card still open (a payload with no window and no spend, posted the same way), then
+    // filling again (the lab's payload once more), Usage read after each
+    const post = (empty) => page.evaluate(async (none) => { const u = none ? {} : await (await fetch("/usage", { cache: "no-store" })).json(); window.postMessage({ romp: "usage", usage: u }, "*"); }, empty);
+    const readout = (filled) => page.waitForFunction((f) => { const r = document.getElementById("rail-usage"); return !!r && (r.innerHTML !== "") === f; }, filled, { timeout: 10000 }).then(() => true, () => false);
+    await post(true);
+    nr.emptiedReadout = await readout(false);
+    await frames(page);
+    nr.emptied = await kit.usageNow(sf);
+    await post(false);
+    nr.refilledReadout = await readout(true);
+    await frames(page);
+    nr.refilled = await kit.usageNow(sf);
+    if (nr.refilled) {
+      await page.mouse.click(nr.refilled.left + nr.refilled.w / 2, nr.refilled.top + nr.refilled.h / 2);
+      nr.opened = await kit.modalUp();
       await frames(page);
-      nr.clicked = await shellNow(sf);
+      nr.clicked = await kit.shellNow(sf);
     }
     out.noReading = nr;
+    await context.close();
+  }
+  // a reading the kernel holds and the shell has not pulled (PR 976's round 1, extra6-1): the shell's boot pull answers no
+  // rows, every later pull goes to the lab (whose usage.json is a reading), and the Sessions pane stays unloaded (the phone's
+  // lazy panes), so no timeline forwards the reading. The card's opening asks the shell for a fresh pull: that request is held
+  // while Usage is read (the romp loader, no claim either way), then let through, and Usage read once the ask has ended, then
+  // clicked
+  {
+    let boots = 0, hold = false;
+    const held = [];
+    const { context, page } = await boot(false, (pg) => pg.route((url) => url.pathname.startsWith("/usage/"), (route) => {
+      if (route.request().frame() !== pg.mainFrame()) return route.continue();
+      if (boots === 0) { boots++; return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rows: [], host: "" }) }); }
+      if (hold) { held.push(route); return undefined; }
+      return route.continue();
+    }));
+    const [w, h] = cfg.actsViewport;
+    await page.setViewportSize({ width: w, height: h });
+    await frames(page);
+    await sleep(cfg.settleMs || 100);
+    await frames(page);
+    const up = { vp: [w, h] };
+    for (let i = 0; i < 150 && boots < 1; i++) await sleep(100);
+    await frames(page);
+    up.premise = { boots, readout: await page.evaluate(() => { const r = document.getElementById("rail-usage"); return r ? r.innerHTML : null; }),
+                   sessionsLoaded: await page.evaluate(() => { const f = document.getElementById("f-timeline"); return !!f && !!f.getAttribute("src"); }) };
+    const kit = await usageKit(page, "the unpulled-reading leg");
+    hold = true;
+    const sf = await kit.openCard();
+    for (let i = 0; i < 50 && !held.length; i++) await sleep(100);
+    up.asked = held.length;
+    await frames(page);
+    up.during = await kit.usageNow(sf);
+    hold = false;
+    for (const route of held.splice(0)) await route.continue();
+    up.ended = await kit.askEnded(sf);
+    await frames(page);
+    up.readout = await page.evaluate(() => { const r = document.getElementById("rail-usage"); return !!r && r.innerHTML !== ""; });
+    up.after = await kit.usageNow(sf);
+    if (up.after) {
+      await page.mouse.click(up.after.left + up.after.w / 2, up.after.top + up.after.h / 2);
+      up.opened = await kit.modalUp();
+      await frames(page);
+      up.clicked = await kit.shellNow(sf);
+    }
+    out.unpulled = up;
     await context.close();
   }
   // the deploy skew (PR 976's round 1, kernel-1): the card shows its row only where the shell publishes the marker beside the
   // listener that runs the row's taps (window.__rompPhoneActs). On a page of its own at cfg.actsViewport: the shell's marker
   // read, the card opened from the bar's Settings and its row read; the marker deleted (a parent with the phone layout and no
   // marker, as a shell from before the move is) and the card opened and read again; then the marker put back and the usage
-  // script's answer deleted (__rompUsageReading: a shell that cannot be asked for a reading) and Usage read at the next opening
+  // script's two names deleted (__rompUsageReading and __rompUsagePull: a shell that cannot be asked for a reading) and Usage
+  // read at the next opening, once its ask has ended
   {
     const { context, page } = await boot(false);
     const [w, h] = cfg.actsViewport;
@@ -455,6 +526,7 @@ try {
       const sf = settingsFrameOf(page);
       if (!sf) throw new Error("no settings frame after the click (the skew leg)");
       await sf.waitForFunction(() => { const p = document.getElementById("rsettings"); return !!p && !p.hidden; }, null, { timeout: 10000 });
+      await sf.waitForFunction(() => { const w = document.getElementById("rs-pact-usage-wait"); return !w || w.hidden; }, null, { timeout: 10000 }).catch(() => null);
       await frames(page);
       const got = await sf.evaluate(() => { const row = document.getElementById("rs-pacts"), ub = document.getElementById("rs-pact-usage"), un = document.getElementById("rs-pact-usage-none");
         return { rowShown: !!row && !row.hidden && getComputedStyle(row).display !== "none",
@@ -470,7 +542,7 @@ try {
     sk.head = await openRead();
     await page.evaluate(() => { delete window.__rompPhoneActs; });
     sk.older = await openRead();
-    await page.evaluate(() => { window.__rompPhoneActs = true; delete window.__rompUsageReading; });
+    await page.evaluate(() => { window.__rompPhoneActs = true; delete window.__rompUsageReading; delete window.__rompUsagePull; });
     sk.cannotAsk = await openRead();
     out.skew = sk;
     await context.close();

@@ -39,9 +39,11 @@ wrap only where it still cannot.
   opens, where it would otherwise play the flash late. Usage explains rather than hides when it has nothing to show
   (romp-manager's call 6): the shell's usage panel opens only over a reading, so with none the card shows Usage disabled
   with the line "No reading yet" under its name, and a tap on it leaves the card open; with a reading, Usage is enabled and
-  opens the panel. The card asks the shell at each opening, through the usage script's own test over its readings
-  (window.__rompUsageReading, the check the panel's opener makes), so a reading that arrives between two openings shows at
-  the second; a shell that cannot be asked leaves Usage enabled with no line, as its bar button was. The Remote kernels glyph sits on its button's own fill, and every colour it wears reads at 3:1 or more (a
+  opens the panel. The card reads the source the panel's opener reads: each opening asks the shell for a fresh pull
+  (window.__rompUsagePull, the usage script's own fetch of its readings), Usage shows the romp loader and takes no tap until it ends, and
+  then the card asks the usage script's own test over its readings (window.__rompUsageReading, the check the panel's opener
+  makes); the shell's renderRows, the one writer of those readings, tells an open card on every change, so a reading that
+  lands while the card is open shows at once; a shell that cannot be asked leaves Usage enabled with no line, as its bar button was. The Remote kernels glyph sits on its button's own fill, and every colour it wears reads at 3:1 or more (a
   graphic, romp-manager's call 7) on the card and on that fill in both themes: in the light theme its dialing grey and
   needs-you red are darker than the shell's (feed.css's --rn-wait and --rn-warn, #777777 and #dc3f46 where the shell has
   #8a8a8a and #e5484d, which read 2.59 and 2.94:1 on that theme's button fill, #e7ded2).
@@ -88,14 +90,22 @@ shell), the host drops while the panel is up, the panel closes (#ra-close), and 
 glyph carries no flash. Then
 Usage with no reading, on a page whose shell's usage pull (its GET under /usage/) answers no rows (the rail's readout, which
 renders over the readings, read empty as the leg's premise): the card opened from the bar's Settings shows Usage disabled
-with the line USAGE_NONE; a click at its centre leaves the card open, opens no Usage modal and posts no phoneAct (read after
-a settle: an absence has no event to wait on), and the line still shows; then a reading arrives (the lab's own GET /usage
-payload posted to the shell as the timeline posts it, the shell's later pulls let through), and at the card's next opening
-Usage is enabled with no line, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then the
+with the line USAGE_NONE once the opening's ask for a fresh reading has ended; a click at its centre leaves the card open,
+opens no Usage modal and posts no phoneAct (read after a settle: an absence has no event to wait on), and the line still
+shows; then, the card still open, a reading arrives (the lab's own GET /usage payload posted to the shell as the timeline
+posts it, the shell's later pulls let through), and the open card shows Usage enabled with no line; the readings emptied (a
+payload with no window and no spend, posted the same way) show it disabled with its line in the open card, filled again
+enabled with no line; and one click closes the card, posts phoneAct usage and opens the Usage modal. Then a reading the kernel holds and the shell has not pulled, on a page
+of its own at 390px: the shell's boot pull answers no rows and every later pull reaches the lab, with the Sessions pane
+unloaded so no timeline forwards a reading (both read as the premise); the card's opening asks the shell for a pull (a GET
+under /usage/ after the opening), and while that request is held Usage shows the romp loader in its sub-line's place (the
+swirl spinning, the wordmark, the dots pulsing), disabled and busy, with no line; let through, the ask ends with Usage
+enabled, no line and no loader, and one click closes the card, posts phoneAct usage and opens the Usage modal. Then the
 deploy skew, on a page of its own at 390px: the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
 move has) the card opened shows no row (not displayed, its buttons boxless); and with the marker back and the usage script's
-answer deleted (__rompUsageReading, a shell that cannot be asked) the card's Usage is enabled with no line. Then the
+two names deleted (__rompUsageReading and __rompUsagePull, a shell that cannot be asked) the card's Usage is enabled with no
+line. Then the
 Remote kernels glyph's colours in the dark and the light theme (THEMES), each on a page of its own at 390px: in the card
 opened from the bar's Settings, every colour the glyph can wear (GLYPH: the button lit and attaching, a node connected,
 dialing and needs you) reads at GLYPH_FLOOR or more against the card's background and against the button's fill, each
@@ -111,8 +121,9 @@ its bar shows Restart, its Files set wraps at 375px, and its card has no Restart
 under the listener's old accepted set (net and usage alone): the card's Restart kernel closes the card and no POST /restart
 follows. The button dress's pin is red at the menu dress the row wore before (the menu card's fill, a 6px radius, 5px 10px
 of padding, 12px text). The no-reading pins are red at the card without that state (Usage enabled with no reading, and its
-tap closing the card to open nothing) and under a mutant that reads the state once, at the card's first opening, where the
-reading that arrived later never enables Usage. The fallback's pin is red under the old rule restored (no wrap), and the
+tap closing the card to open nothing); the reading landing in the open card is red where the card reads the state only when
+it opens, and the emptying where the shell's renderRows tells the card only as it fills its readings; the unpulled reading is red where the card answers from the shell's cached readings without a pull (Usage
+disabled with its line, no loader, the tap opening nothing). The fallback's pin is red under the old rule restored (no wrap), and the
 rail's under the move applied to the rail as well; the desktop card's under a mutant that shows the row on every layout
 (romp-manager's call 8). The drop cue's pin is red at the commit before its fix, where a drop that came while the card was
 closed flashed the glyph at the card's next opening; the Token usage panel's is red without the panel close's clear of the
@@ -404,13 +415,17 @@ def _acts_problems(engine, acts):
 
 
 def _no_reading_problems(engine, nr):
-    """Usage with no reading: disabled with its line, a tap leaving the card open and posting nothing; after a reading arrives,
-    the card's next opening shows Usage enabled, and one click opens the Usage modal (the card asks the shell at each open)."""
+    """Usage with no reading: disabled with its line once the opening's ask has ended, a tap leaving the card open and posting
+    nothing; then a reading landing while the card is still open enables Usage there with no line (the shell tells the open
+    card), the readings emptying disable it with its line again and filling enable it again, and one click opens the Usage
+    modal."""
     out = []
     where = "%s Usage with no reading at %dx%d" % (engine, nr["vp"][0], nr["vp"][1])
     pre = nr.get("premise") or {}
     if pre.get("pulls", 0) < 1 or pre.get("readout") != "":
         out.append("%s: the shell holds a reading before the card opens (the leg's premise): %r" % (where, pre))
+    if not nr.get("firstAsked"):
+        out.append("%s: the opening's ask for a fresh reading never ended (the romp loader still up): %r" % (where, nr.get("first")))
     first = nr.get("first")
     if not first or first.get("disabled") is not True or not first.get("line") or first["line"].get("shown") is not True \
             or first["line"].get("text") != USAGE_NONE:
@@ -425,13 +440,54 @@ def _no_reading_problems(engine, nr):
         out.append("%s: after the tap the line saying there is no reading yet is not shown: %r" % (where, after))
     if not nr.get("arrived"):
         out.append("%s: the reading never reached the shell's readout (the second half's premise)" % where)
+    still = nr.get("stillOpen") or {}
+    if not still.get("settingsOpen") or still.get("cardHidden") is not False:
+        out.append("%s: the card was not open when the reading landed (the second half's premise): %r" % (where, still))
     second = nr.get("second")
     if not second or second.get("disabled") is not False or not second.get("line") or second["line"].get("shown") is not False:
-        out.append("%s: once a reading has arrived, the card's next opening does not show Usage enabled without its line: %r" % (where, second))
+        out.append("%s: a reading landed while the card was open, and the open card does not show Usage enabled without its line: %r" % (where, second))
+    if not nr.get("emptiedReadout") or not nr.get("refilledReadout"):
+        out.append("%s: the shell's readout did not follow the emptying and the refilling (their premise): %r, %r" % (
+            where, nr.get("emptiedReadout"), nr.get("refilledReadout")))
+    emptied = nr.get("emptied")
+    if not emptied or emptied.get("disabled") is not True or not emptied.get("line") or emptied["line"].get("shown") is not True:
+        out.append("%s: the readings emptied while the card was open, and the open card does not show Usage disabled with its line: %r" % (where, emptied))
+    refilled = nr.get("refilled")
+    if not refilled or refilled.get("disabled") is not False or not refilled.get("line") or refilled["line"].get("shown") is not False:
+        out.append("%s: the readings filled again while the card was open, and the open card does not show Usage enabled without its line: %r" % (where, refilled))
     clicked = nr.get("clicked") or {}
     if not nr.get("opened") or clicked.get("settingsOpen") or clicked.get("cardHidden") is not True or clicked.get("acts") != ["usage"]:
         out.append("%s: with the reading, one click on Usage did not close the card and open the Usage modal: opened %r, %r" % (
             where, nr.get("opened"), clicked))
+    return out
+
+
+def _unpulled_problems(engine, up):
+    """A reading the kernel holds and the shell has not pulled: the card's opening asks the shell for a fresh pull, shows the
+    romp loader on Usage while it is in flight (the button disabled, no line), and once it ends shows Usage enabled with no
+    line; one click opens the Usage modal (PR 976's round 1, correctness-1 and extra6-1)."""
+    out = []
+    where = "%s Usage over an unpulled reading at %dx%d" % (engine, up["vp"][0], up["vp"][1])
+    pre = up.get("premise") or {}
+    if pre.get("boots", 0) < 1 or pre.get("readout") != "" or pre.get("sessionsLoaded") is not False:
+        out.append("%s: the leg's premise (the boot pull answered no rows, the readout empty, the Sessions pane unloaded): %r" % (where, pre))
+    if not up.get("asked"):
+        out.append("%s: the card's opening asks the shell for no fresh reading (no pull under /usage/ after the opening)" % where)
+    d = up.get("during")
+    if not d or d.get("disabled") is not True or d.get("busy") != "true" or not d.get("line") or d["line"].get("shown") is not False \
+            or not d.get("wait") or d["wait"].get("shown") is not True or d["wait"].get("text") != "romp" \
+            or not {"fask-swirl-spin", "fileview-pulse"} <= set(d["wait"].get("anims") or []):
+        out.append("%s: while the opening's pull is in flight, Usage does not show the romp loader (spinning, its dots pulsing), "
+                   "disabled and busy, with no line: %r" % (where, d))
+    if not up.get("ended") or not up.get("readout"):
+        out.append("%s: the opening's pull did not land (the ask ended %r, the readout filled %r)" % (where, up.get("ended"), up.get("readout")))
+    a = up.get("after")
+    if not a or a.get("disabled") is not False or a.get("busy") is not None or not a.get("line") or a["line"].get("shown") is not False \
+            or (a.get("wait") or {}).get("shown") is not False:
+        out.append("%s: after the opening's pull, Usage is not enabled with no line and no loader: %r" % (where, a))
+    clicked = up.get("clicked") or {}
+    if not up.get("opened") or clicked.get("settingsOpen") or clicked.get("cardHidden") is not True or clicked.get("acts") != ["usage"]:
+        out.append("%s: one click on Usage did not close the card and open the Usage modal: opened %r, %r" % (where, up.get("opened"), clicked))
     return out
 
 
@@ -657,6 +713,7 @@ class MtabsFit(unittest.TestCase):
         problems += _problems(where, d["after"])
         problems += _acts_problems(engine, r["acts"])
         problems += _no_reading_problems(engine, r.get("noReading") or {"vp": list(ACTS)})
+        problems += _unpulled_problems(engine, r.get("unpulled") or {"vp": list(ACTS)})
         problems += _skew_problems(engine, r.get("skew") or {"vp": list(ACTS)})
         problems += _contrast_problems(engine, r.get("contrast") or {})
         self.assertEqual([tuple(x["vp"]) for x in r["rail"]], list(RAIL), engine + ": every rail width was read")
