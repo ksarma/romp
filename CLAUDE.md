@@ -391,7 +391,10 @@ broad `git add` will sweep up your work). Conventions:
   run of each push whose commit carries `secret-scan.yml` (that workflow's push trigger has no
   branch filter, and it has had no pull request trigger since 2026-10-04; the credentials section
   above says which pushes start none), the tier-label check (next bullet) after the PR opens or
-  reopens or its labels change, and Tier policy's skipped rows, which evaluate nothing on the fork.
+  reopens or its labels change, Tier policy's skipped rows, which evaluate nothing on the fork, and,
+  on a PR that touches the site's inputs (`docs/`, `mkdocs.yml`, `overrides/` or `docs.yml` itself),
+  `docs.yml`'s `build` check (a strict `mkdocs build`) and its `deploy` row, which always skips on a
+  pull request.
   GitHub's CI (`ci.yml`) runs once
   per batch, on the push to `batch/<name>`, and not on the merge to `main`. The landing
   gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
