@@ -1016,8 +1016,10 @@ and unittest's `--locals` print every local of a failing frame, an
 environment copy included, whatever the assertion renders. In that output, as
 in the rest of a failure's text and its captured output, the hook redacts
 values of 16 characters or more; shorter values, and every value under
-unittest, print in the clear. A subTest's message and parameters, which pytest
-prints in the subtest header and summary line, it does not redact.
+unittest, print in the clear. It does not redact a subtest's message and
+parameters, which pytest prints in the subtest header and summary line, whether
+the subtest is unittest's subTest or pytest's subtests fixture, nor the output a
+subtests.test block captures.
 
 **A lab kernel's environment is built from a list of names, and the file a
 relaunch reads from carries a shorter list.** Every module that boots a hermetic

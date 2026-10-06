@@ -253,11 +253,14 @@ The census also cannot see:
   Python inside a string (a planted module a test writes and runs, whose bare assert over os.environ renders under
   that run's own conftest);
   a mapping printed by print(), logging, a raise or a subprocess's output a test asserts on;
-  a mapping, a holder or a container handed to subTest, as its message or a keyword parameter (with
-  self.subTest(env=env)): a failure inside the block prints the parameters in unittest's FAIL header and in pytest's
-  subtest header and SUBFAILED summary line (pytest cuts a keyword parameter's repr to 240 characters). pytest builds
-  both from the subtest's parameters, not the report's longrepr, so tests/conftest.py's net does not redact them under
-  pytest either. On 2026-10-06 no subTest call in the tree passes one;
+  a mapping, a holder or a container handed to a subtest as its message or a keyword parameter, through unittest's
+  subTest (with self.subTest(env=env)) or pytest's built-in subtests fixture (with subtests.test(msg, env=env)): a
+  failure inside the block prints the parameters in pytest's subtest header and SUBFAILED summary line, and a subTest
+  in unittest's FAIL header too (pytest cuts a keyword parameter's repr to 240 characters). pytest builds both from the
+  subtest's parameters, not the report's longrepr, so tests/conftest.py's net does not redact them under pytest
+  either, nor, in a subtests.test block, the stdout, stderr and log captured inside it, which pytest adds to the
+  report after the hook runs. On 2026-10-06 no subTest call in the tree passes one, and the tree has no subtests.test
+  call;
   a local variable shown in a traceback: pytest's -l (--showlocals) prints the locals of every frame a failure passes
   through, and unittest's --locals does the same, so a frame that holds an environment copy (HostProcess._start's
   env = _host_env(...) in tests/test_session_host.py) prints it whatever its assertion renders. The conftest net
