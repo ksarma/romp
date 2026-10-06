@@ -84,13 +84,25 @@ def _proc(pid):
     return rest[0], int(rest[1]), int(rest[2]), int(rest[3]), rest[19]
 
 
+# The /proc states of a process that has exited and not yet gone from /proc: 'Z', a zombie whose parent has not
+# reaped it, and 'X', dead with its parent's reaping wait under way.
+_ENDED_STATES = ("Z", "X")
+
+
+def _runs_now(st):
+    """Whether the _proc() reading `st` is of a process that runs: there is one, and it is in neither ended state."""
+    return st is not None and st[0] not in _ENDED_STATES
+
+
 def _still_running(pid, wait_s=1.0):
     """Whether `pid` still runs once its exit has been waited for, up to wait_s: a ceiling only a process that is left
     pays, far longer than a process SIGKILLed before the call returned takes to exit, and shorter than what the hung
     helpers here have left to sleep, so one the kill missed is still running at the ceiling. On Linux the exit is an
-    event, the pidfd turning readable, and /proc/<pid>/stat then says what is there: nothing (reaped), or a zombie
-    ('Z': exited, its parent not yet done reaping it), both ended because both are shown not to run. Without
-    pidfd_open, os.kill(pid, 0) is polled and a pid no process has is ended."""
+    event, the pidfd turning readable, and /proc/<pid>/stat then says one of three things, each ended because each is
+    shown not to run: nothing (reaped); a zombie ('Z': exited, its parent not yet reaping it); or 'X' (dead, its
+    parent's reaping wait under way). 'X' is brief but not rare: of reads taken as soon as the pidfd turned readable
+    after SIGKILL to a process the user manager reaps, about 2% showed it. Without pidfd_open, os.kill(pid, 0) is
+    polled and a pid no process has is ended."""
     if hasattr(os, "pidfd_open"):
         try:
             fd = os.pidfd_open(pid)
@@ -103,8 +115,7 @@ def _still_running(pid, wait_s=1.0):
                 select.select([fd], [], [], wait_s)
             finally:
                 os.close(fd)
-            st = _proc(pid)
-            return st is not None and st[0] != "Z"
+            return _runs_now(_proc(pid))
     deadline = time.monotonic() + wait_s
     while True:
         try:
@@ -124,12 +135,12 @@ def _recorded(test, pidfile):
         recs = [(ln.split()[0], int(ln.split()[1])) for ln in Path(pidfile).read_text().splitlines() if ln.strip()]
     except OSError:
         recs = []
-    starts = {pid: st[4] for _role, pid in recs for st in [_proc(pid)] if st is not None and st[0] != "Z"}
+    starts = {pid: st[4] for _role, pid in recs for st in [_proc(pid)] if _runs_now(st)}
 
     def end_the_left():
         for pid, start in starts.items():
             st = _proc(pid)
-            if st is not None and st[0] != "Z" and st[4] == start:
+            if _runs_now(st) and st[4] == start:
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
@@ -560,7 +571,7 @@ class HelperTimeoutEndsTheGroup(_Settings):
         self.assertLess(elapsed, 2 + cred.HELPER_DRAIN_S + 1.0, "and no longer: the drain is bounded")
         self.assertFalse(_still_running(recs["shell"], 0), "the shell was in the group")
         st = _proc(recs["escaped"])
-        self.assertTrue(st is not None and st[0] != "Z", "the process that left the group runs on: %r" % (st,))
+        self.assertTrue(_runs_now(st), "the process that left the group runs on: %r" % (st,))
         self.assertEqual((st[2], st[3]), (recs["escaped"], recs["escaped"]), "in a session and a group of its own")
 
     def test_an_exception_that_cuts_the_wait_ends_the_group_too_and_goes_on_unchanged(self):
@@ -620,7 +631,7 @@ class HelperTimeoutEndsTheGroup(_Settings):
         self.assertFalse(_still_running(recs["shell"], 0), "the shell was in the group")
         self.assertFalse(_still_running(recs["sleep"]), "and so was its sleep")
         st = _proc(recs["daemon"])
-        self.assertTrue(st is not None and st[0] != "Z", "the daemon runs on: %r" % (st,))
+        self.assertTrue(_runs_now(st), "the daemon runs on: %r" % (st,))
         self.assertEqual(st[3], st[2], "in a session of its own")
         self.assertNotEqual(st[3], recs["shell"], "not the helper's")
 
