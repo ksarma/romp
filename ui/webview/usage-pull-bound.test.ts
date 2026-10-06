@@ -13,7 +13,9 @@
 // override too, and a pull that ends first clears it.
 // Then PR 976's round 2. Every read of the readings goes through the script's one bounded helper (boundedPull): a census of
 // the script's code finds the read's name in its declaration and in the helper alone, so no caller reaches the read unbounded,
-// and the card's name and the panel's opener reach the helper.
+// and the card's name and the panel's opener reach the helper. The timeline's forward (render) is a read in the same order: a
+// pull started before a forward and failing after it, in transit or with an error status, leaves the flag clear and the
+// readings as the forward wrote them.
 import { test, mock } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -47,17 +49,18 @@ const note = () => between(USAGE, "// ...and the source behind those answers", "
 
 type Answer = { ok: boolean; rows: unknown[] } | "fail";
 type Pending = { url: string; signal: AbortSignal | null; end: (a: Answer) => void };
-type World = { pull: () => Promise<unknown>; failed: () => boolean; reading: () => boolean; read: () => Promise<unknown>;
-  win: Record<string, unknown>; fetches: Pending[]; tells: number; renders: number; last: unknown[] };
+type World = { pull: () => Promise<unknown>; failed: () => boolean; reading: () => boolean; render: (u: unknown) => void;
+  read: () => Promise<unknown>; win: Record<string, unknown>; fetches: Pending[]; tells: number; renders: number; last: unknown[] };
 // the pull's code in a world of its own: the read, __rompUsageFailed and __rompUsageReading as kernel.py has them, with the
-// bounded helper where a case asks for it, over a fetch that
+// bounded helper and the timeline's forward (render, its code from kernel.py) where a case asks for them, over a fetch that
 // answers ok with no rows ("ok"), never answers and rejects when its signal aborts, as a real fetch does ("hang"), or waits
 // for the case to end it ("held": an ok answer with rows, an error status, or a failure in transit). renderRows stands for the
 // script's own: it keeps each row that has a usage as the readings (tipHTML then says there is a reading) and tells the card;
 // the card's tell is counted, and a case can hook it
-function world(answer: "ok" | "hang" | "held", parts: { helper?: boolean } = { helper: true }, onTell?: () => void): World {
-  const w: World = { pull: () => Promise.resolve(), failed: () => false, reading: () => false, read: () => Promise.resolve(),
-    win: {}, fetches: [], tells: 0, renders: 0, last: [] };
+function world(answer: "ok" | "hang" | "held", parts: { helper?: boolean; render?: boolean } = { helper: true },
+  onTell?: () => void): World {
+  const w: World = { pull: () => Promise.resolve(), failed: () => false, reading: () => false, render: () => undefined,
+    read: () => Promise.resolve(), win: {}, fetches: [], tells: 0, renders: 0, last: [] };
   const tell = () => { w.tells++; if (onTell) onTell(); };
   const renderRows = (rows: unknown[]) => { w.renders++; w.last = (rows || []).filter((r) => !!(r && (r as { usage?: unknown }).usage)); tell(); };
   const fetchStub = (url: string, opts?: { signal?: AbortSignal }) => {
@@ -73,15 +76,17 @@ function world(answer: "ok" | "hang" | "held", parts: { helper?: boolean } = { h
     });
   };
   const made = new Function("window", "fetch", "renderRows", "notices", "cardTell", "tipHTML",
-    "var READ_FAILED=false,PULLS=0,PULL_ENDED=0,SELF='';\n" + READ + "\n" + FAILED + "\n" + READING + "\n" +
+    "var READ_FAILED=false,PULLS=0,PULL_ENDED=0,SELF='',ROWS=[];\n" + READ + "\n" + FAILED + "\n" + READING + "\n" +
+    (parts.render ? between(USAGE, "function render(u){", "// ONE shared tooltip for BOTH windows") + "\n" : "") +
     (parts.helper ? pullCode() + "\n" : "") +
     "return { pull: window.__rompUsagePull, failed: window.__rompUsageFailed, reading: window.__rompUsageReading," +
-    " read: " + READ_NAME + " };")(
+    " read: " + READ_NAME + (parts.render ? ", render: render" : "") + " };")(
     w.win, fetchStub, renderRows, () => undefined, tell, () => (w.last.length ? "a reading" : ""));
   w.pull = made.pull;
   w.failed = made.failed;
   w.reading = made.reading;
   w.read = made.read;
+  if (made.render) w.render = made.render;
   return w;
 }
 
@@ -259,3 +264,27 @@ test("every read of the readings goes through the one bounded helper: no caller 
   const pullFn = code.slice(pullAt, bodyEnd(code, pullAt + "function pull(ack)".length));
   assert.ok(/boundedPull\(\)\.then\(done,/.test(pullFn), "pull() pulls through the helper");
 });
+
+// The timeline's forward is a read in the same order (PR 976's round 2, romp-manager's second rule; correctness-2,
+// regression-1): a pull started before it is outdated when it ends. The script's own read and forward, over a fetch the case
+// holds: the pull starts, the forward lands (a reading), then the pull ends in a failure in transit or with an error status
+for (const [end, what] of [["fail", "a failure in transit"], [{ ok: false, rows: [] }, "an error status"]] as [Answer, string][]) {
+  test("a pull started before the timeline's forward and ending after it in " + what + " leaves the flag clear and the forward's reading as it was", async () => {
+    const w = world("held", { render: true });
+    const s = track(w.read());
+    await flush();
+    assert.equal(w.fetches.length, 1, "the pull is out");
+    w.render({ fiveHour: { pct: 12 } });
+    await flush();
+    assert.equal(w.renders, 1, "the forward wrote the readings");
+    assert.equal(w.failed(), false, "and the flag is clear");
+    assert.ok(w.reading(), "a reading");
+    w.fetches[0].end(end);
+    await flush();
+    assert.ok(s.done, "the pull ended");
+    assert.equal(w.failed(), false, "the outdated pull leaves __rompUsageFailed false");
+    assert.equal(w.renders, 1, "and writes nothing: the readings stay the forward's");
+    assert.ok(w.reading(), "the forward's reading is still there");
+    assert.equal(w.tells, 1, "and the card is told nothing more");
+  });
+}

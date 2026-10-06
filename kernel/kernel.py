@@ -71245,8 +71245,16 @@ var WINS=[['fiveHour',5*3600,'5 hours'],
 // tooltip detail for the ones drawn into the aggregate; SELF names this machine for its hover heading
 // when there is more than one host.
 var ROWS=[],LAST=[],SELF='';
-var READ_FAILED=false;   // whether the newest read of the readings that has ended failed (pullFleet sets it; the settings card reads it, __rompUsageFailed)
-var PULLS=0,PULL_ENDED=0;   // pullFleet's reads: how many have started, and the number of the newest one that has ended
+var READ_FAILED=false;   // whether the newest read of the readings that has ended failed (its writers below; the settings card reads it, __rompUsageFailed)
+var PULLS=0,PULL_ENDED=0;   // the reads of the readings: how many have started, and the number of the newest one that has ended
+// Every writer of the readings is a read, and the reads keep one order (PR 976's round 2). The writers, derived from this
+// script: LAST has one, renderRows, which three callers run: pullFleet's answer (the kernel answered the read), render (the
+// timeline's forward) and pull's failed path (a repaint of the rows renderRows already holds, so no new reading); READ_FAILED
+// has three, pullFleet's answer and its failure, each only where no later read has ended, and render. pullFleet numbers each
+// read as it starts (PULLS) and marks the newest to end (PULL_ENDED); render is a read that ends as it starts, so it takes the
+// next number and marks itself ended at once. A pull started before a forward is then outdated when it ends: its failure and
+// its error status write nothing, and its ok answer still writes the readings, as every ok answer does (romp-manager's
+// decisions on PR 976's round 1 builds, 5 and 6).
 // Limit / judge-degraded SIGNATURES (the user 2026-07-03; reshaped 2026-07-27): these used to gate fixed
 // top banners with a ✕ dismissal; the banners are gone — the same situations now log ONE entry each in
 // the shell's notification center (the bell, _LANDING_ERRS_JS). The stored signature means "this exact
@@ -71455,8 +71463,9 @@ else if(tip.style.display==='block'){var mh=tipHTML();if(mh)modalPaint(mh);}
 if(typeof SP!=='undefined'&&SP.open&&SP.data){var ts=document.getElementById('rsp-totals');if(ts)ts.innerHTML=totalsHTML(SP.data);}
 cardTell();}
 // The single-payload path the timeline still posts (and the mobile panel's own fetch): treat it as this
-// machine's row, leaving any other account's bars alone.
-function render(u){notices(u);READ_FAILED=false;
+// machine's row, leaving any other account's bars alone. It is a read that ends as it starts (the writers' list at the top of
+// this script): it takes the next number and marks it ended, and clears the flag, since a reading arrived.
+function render(u){notices(u);READ_FAILED=false;PULL_ENDED=++PULLS;
 var rest=ROWS.filter(function(r){return r.host;});
 renderRows([{host:'',acct:(u&&u.acct)||'',usage:u}].concat(rest),SELF);}
 // ONE shared tooltip for BOTH windows: per window, the used bar (colormap) over the elapsed bar (slate) +
@@ -71662,11 +71671,13 @@ boundedPull().then(openIt,openIt);};
 window.__rompUsageReading=function(){return !!tipHTML();};
 // ...and whether the newest read of the readings that has ended failed (romp-manager's ruling after PR 976's round 1: a read
 // that failed is not a read that found no reading, so the card says it could not load where it would otherwise say No reading
-// yet). READ_FAILED is set by each pull, pullFleet below, that ends before any pull started after it has ended: true where the
+// yet). READ_FAILED is set by each pull, pullFleet below, that ends before any read started after it has ended: true where the
 // kernel answered with an error status (the fetch reads that answer as no rows, so LAST empties and the panel's opener opens
 // nothing), where the request got no answer, was aborted, or had a body that does not parse (LAST left as it was); false where
-// an ok answer parsed. A pull that ends after a later one has ended leaves it as it was (pullFleet says why). The timeline's
-// forward (render) is a reading that arrived, so it clears it too. The card asks this at every answer, with a reading or
+// an ok answer parsed. A pull that ends after a later read has ended leaves it as it was (pullFleet says why). The timeline's
+// forward (render) is a read too, one that ends as it starts: it clears the flag, a reading having arrived, and takes a place
+// in the reads' order, so a pull started before it changes the flag no more when it ends (the writers' list at the top of
+// this script; PR 976's round 2). The card asks this at every answer, with a reading or
 // without one (romp-manager's decision on PR 976's round 1 builds): with no reading, Usage is disabled and says Couldn't load;
 // with one, which a request with no answer leaves in LAST, Usage stays enabled beside that line and opens the panel over the
 // reading at once, whose age lines keep climbing while the reads fail (pull's failed path)
@@ -71721,11 +71732,14 @@ var _ruBusy=false;
 // sig is the abort signal the fetch carries, the bound of boundedPull above, which is the one caller (PR 976's round 2);
 // READ_FAILED (__rompUsageFailed above) says how the read ended, set before renderRows tells the settings card, and on a failure
 // the card is told here, since no renderRows runs; the failure still rejects, so pull() and the panel's opener take their failed
-// paths as before. Each read is numbered as it starts (PULLS), and the newest to end so far is marked (PULL_ENDED). A read that
-// fails after a later read has ended changes nothing: not the flag, not the readings (an error status would empty them), not the
-// card. The card's reopen starts a pull while the one before may still be out, and that older pull failing late would
-// otherwise turn the answer the newer one had shown into Couldn't load (the check of PR 976's decisions after round 1). An ok
-// answer such a read gets still writes the readings, as every ok answer does, and leaves the flag as the later read set it
+// paths as before. Each read is numbered as it starts (PULLS), and the newest to end so far is marked (PULL_ENDED); the timeline's
+// forward (render) takes a number as well, a read that ends as it starts (the writers' list at the top of this script), so a
+// pull started before a forward is outdated when it ends (PR 976's round 2). A read that fails after a later read has ended
+// changes nothing: not the flag, not the readings (an error status would empty them), not the card. The card's reopen starts a
+// pull while the one before may still be out, and that older pull failing late would otherwise turn the answer the newer one
+// had shown into Couldn't load (the check of PR 976's decisions after round 1), as a pull failing after a forward would turn
+// the forward's reading into Couldn't load, or with an error status empty it. An ok answer such a read gets still writes the
+// readings, as every ok answer does, and leaves the flag as the later read set it
 function pullFleet(sig){var ok=false,n=++PULLS;
 var newest=function(){if(n<PULL_ENDED)return false;PULL_ENDED=n;return true;};   // whether no later read has ended; marks this one
 return fetch('/usage/fleet',sig?{cache:'no-store',signal:sig}:{cache:'no-store'}).then(function(r){ok=r.ok;return r.ok?r.json():null;})

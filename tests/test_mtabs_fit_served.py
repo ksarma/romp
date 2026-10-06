@@ -153,8 +153,10 @@ after that one. The later pull answered with no rows and the held one failed in 
 and the held one answered ok with no rows; the later one reached the lab and the held one answered with ERROR_STATUS. In
 each, once the held pull's end has run in the shell, Usage keeps the later pull's answer: USAGE_NONE alone, USAGE_ERR
 alone, enabled with neither line (a wrapper over window.__rompUsagePull records the order the two end in, and RACE_MS set
-on the shell keeps the held pull from ending on its own bound). And an opening whose
-pull reaches the lab then shows Usage enabled with neither line; then, the shell holding that reading, an opening whose
+on the shell keeps the held pull from ending on its own bound). Then an opening over ERROR_STATUS (the readings emptied,
+Usage disabled beside USAGE_ERR), the card left open, and the lab's own GET /usage payload posted to the shell as the
+timeline posts it: once the readout fills, Usage is enabled with neither line, the forward being a read too. And an
+opening whose pull reaches the lab then shows Usage enabled with neither line; then, the shell holding that reading, an opening whose
 pull fails in transit shows Usage enabled with the line USAGE_ERR beside its name, seen, and not USAGE_NONE, the card open
 and nothing posted,
 and one click on Usage closes the card, posts phoneAct usage and opens the Usage modal over that reading. Then the tap
@@ -229,7 +231,8 @@ Couldn't load only over no reading (Usage enabled with neither line). The reopen
 and an error status empties the readings, whichever later read has ended: Usage turns from No reading yet to Couldn't
 load, from Couldn't load to No reading yet, and from enabled to Couldn't load; and each turn is red under a mutant that
 drops one of the three checks, the failed path's (the first turn), the answer's flag write (the second) and the error
-status's return (the third, No reading yet: the readings emptied). The row and the tabs are red where Usage keeps two
+status's return (the third, No reading yet: the readings emptied). The forward after a failed read is red without the
+forward's clear of the flag (Usage enabled beside USAGE_ERR once the readout fills, in Chromium). The row and the tabs are red where Usage keeps two
 lines' height in every state (Usage 43.64px tall, 43.65 in Firefox, where Restart kernel is 28.8, at every width in both
 themes); under a
 mutant that lays the loader out only while it shows (Usage 106px wide loading and 82 with a reading at every width, and at
@@ -764,11 +767,12 @@ def _failed_problems(engine, fr):
     set to HANG_MS on the shell here) each end with Usage disabled and the line USAGE_ERR, never USAGE_NONE, and the card
     open; after each of them, an opening whose pull the kernel answers ok with no rows shows Usage disabled with USAGE_NONE
     alone; in the reopen race, the card's earlier pull ending after the reopened card's pull (failed in transit, answered ok
-    with no rows, or answered with ERROR_STATUS) leaves Usage on the later pull's answer; a later opening whose pull reads
-    the lab's reading shows Usage enabled with neither line; and then, with that reading cached, an opening whose pull fails in
-    transit shows Usage enabled with USAGE_ERR, one click opening the Usage modal; and, the shell holding a window reading of
-    its own and the card's pull ended by its bound, a tap whose own pull is held opens the Usage modal within 1 s over that
-    reading with its age, and the open modal follows the held pull's fresher answer (PR 976's round 2)."""
+    with no rows, or answered with ERROR_STATUS) leaves Usage on the later pull's answer; after an opening over ERROR_STATUS,
+    a reading the timeline forwards to the shell shows Usage enabled with neither line (PR 976's round 2); a later opening
+    whose pull reads the lab's reading shows Usage enabled with neither line; and then, with that reading cached, an opening
+    whose pull fails in transit shows Usage enabled with USAGE_ERR, one click opening the Usage modal; and, the shell holding a
+    window reading of its own and the card's pull ended by its bound, a tap whose own pull is held opens the Usage modal
+    within 1 s over that reading with its age, and the open modal follows the held pull's fresher answer (PR 976's round 2)."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -849,6 +853,20 @@ def _failed_problems(engine, fr):
                        % (where, what, b_state, rc.get("afterA")))
         if card_closed(rc.get("shell") or {}):
             out.append("%s: the reopen race's card closed or reached the shell: %r" % (where, rc.get("shell")))
+    # the timeline's forward after a failed read (PR 976's round 2, tests-3): an opening over ERROR_STATUS (the readings emptied,
+    # Usage disabled beside USAGE_ERR), the card left open, then the lab's reading posted as the timeline posts it: the readout
+    # fills, and Usage is enabled with neither line, since the forward is a read that ended and clears the failure
+    fw = fr.get("forward") or {}
+    if not fw.get("asked") or not_failed(fw.get("before")):
+        out.append("%s: the forward's premise (an opening over an error status, Usage disabled with the line %r): asked %r, %r" % (
+            where, USAGE_ERR, fw.get("asked"), fw.get("before")))
+    if not fw.get("filled"):
+        out.append("%s: the lab's reading posted as the timeline posts it never filled the shell's readout (the forward's premise)" % where)
+    if not_enabled(fw.get("after")):
+        out.append("%s: after a failed read, a reading the timeline forwards does not show Usage enabled with neither line: %r" % (
+            where, fw.get("after")))
+    if card_closed(fw.get("shell") or {}):
+        out.append("%s: the forward's card closed or reached the shell: %r" % (where, fw.get("shell")))
     lab = fr.get("lab") or {}
     u = lab.get("usage")
     if not lab.get("asked") or not u or u.get("disabled") is not False or (u.get("line") or {}).get("shown") is not False \
