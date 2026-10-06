@@ -2443,14 +2443,19 @@ def shard_repo_path(path):
 
 
 def parse_shard(text):
-    """The shard a value of SHARD_ENV names: None for an unset or empty value (every file runs), else an integer from
-    1 to SHARD_COUNT. Any other value raises ValueError, naming it: a shard that does not exist would collect nothing,
-    and a misspelled one must not pass for no shard."""
+    """The shard a value of SHARD_ENV names: None for an unset or empty value (every file runs), else the integer
+    named by one of the values "1" to str(SHARD_COUNT), compared as written: ASCII digits, with no sign, space or
+    leading zero. Any other value raises ValueError, naming the variable and the value: a shard that does not exist
+    would collect nothing, and a misspelled one must not pass for no shard. The test is that set of values, not
+    str.isdigit and int(): str.isdigit takes non-ASCII digits, which int() either reads as a shard (an Arabic-Indic or
+    a fullwidth digit) or refuses with its own message, which names neither the variable nor this file (a superscript
+    digit), and int() reads "01" as 1."""
     if text is None or text == "":
         return None
-    if not text.isdigit() or not 1 <= int(text) <= SHARD_COUNT:
-        raise ValueError("%s=%r names no shard: it must be empty or a whole number from 1 to %d (tests/conftest.py, "
-                         "CI's shards)" % (SHARD_ENV, text, SHARD_COUNT))
+    names = tuple(str(k) for k in range(1, SHARD_COUNT + 1))
+    if text not in names:
+        raise ValueError("%s=%r names no shard: it must be empty or one of %s, in ASCII digits (tests/conftest.py, "
+                         "CI's shards)" % (SHARD_ENV, text, ", ".join(names)))
     return int(text)
 
 

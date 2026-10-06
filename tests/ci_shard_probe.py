@@ -8,7 +8,15 @@ after pytest_ignore_collect (where tests/conftest.py drops another shard's files
 Here that call returns a file node holding one placeholder item instead of the module, so nothing is imported, and
 `pytest --collect-only -q` lists one line per collected file, `<path>::ci-shard-probe`. Every step before it, the
 conftest's selection among them, runs as it does in CI's run.
+
+The census's run legs (2026-10-06) run the items rather than list them, `pytest -rA` with and without -n 1, since xdist
+does not hand a collect-only run to its worker, and read one `PASSED <path>::ci-shard-probe` line per file the process
+that runs tests collected. Each item, when run, asserts that ROMP_TESTS_SHARD is absent from its process's environment:
+tests/conftest.py removes the variable in every process that runs tests, so no process a test starts inherits it, and an
+item that finds it fails, naming its value.
 """
+import os
+
 import pytest
 
 PROBE_ITEM = "ci-shard-probe"
@@ -16,7 +24,10 @@ PROBE_ITEM = "ci-shard-probe"
 
 class _ProbeItem(pytest.Item):
     def runtest(self):
-        pass
+        # the variable spelled out, as tests/conftest.py spells it where it reads it (SHARD_ENV there)
+        assert "ROMP_TESTS_SHARD" not in os.environ, (
+            "ROMP_TESTS_SHARD=%r is in the environment of the process that runs this item: tests/conftest.py's "
+            "_stash_run_shard removes it in every process that runs tests" % os.environ["ROMP_TESTS_SHARD"])
 
 
 class _UnimportedFile(pytest.File):

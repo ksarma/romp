@@ -14,6 +14,16 @@ Two kinds of pin:
    puts a file in two shards, or that is absent (every shard collects every file), and when a module tests/conftest.py's
    HEAVY_MODULES lists (the weighted rule's short list) runs anywhere but its listed shard. TheRule holds the list in
    process: each entry an existing test file, at most one to a shard, and every other path placed by the hash.
+   The census runs in CI's form too (round 1 of fork PR 986, 2026-10-06), since a collect-only run with no -n never
+   reaches tests/conftest.py's handling of the variable in an xdist controller. ShardsRunInCIsForms runs each shard's
+   probe items, under -n 1 (an xdist controller and one worker, the Linux cells' form) and with no -n, and holds the
+   files whose item passed to that shard's collected files; each item asserts the variable is absent from its
+   process's environment. TheShardEnvironmentInCIsForm runs synthetic test files in a temporary directory outside the
+   checkout under -n 1 and -n 0, and holds that only the named shard's files run and that neither a test nor a process
+   it starts sees the variable. Both are red when the controller removes the variable before its worker starts (the
+   worker then runs every file) and when a process that runs tests keeps it. AValueThatNamesNoShard runs the census's
+   child with values that name no shard: each ends in pytest's usage error, naming the variable and the value, with no
+   file collected.
 2. Source pins over ci.yml, read by line shape with no YAML library, as tests/test_ci_workflow_concurrency.py reads it
    (ShardMatrix): the python job's shard axis lists 1 to SHARD_COUNT; a batch push runs each interpreter as
    SHARD_COUNT Linux jobs, one per shard, and a dispatch with its macos input on (tests/test_ci_macos_input.py) adds one
@@ -44,11 +54,16 @@ Two kinds of pin:
    as the default.
 """
 import itertools
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
+
+import pytest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -107,11 +122,34 @@ def partition_faults(collected, shards):
     return {k: v for k, v in faults.items() if v}
 
 
+_COLLECTED = {}
+
+
+def collected_files(shard):
+    """probe_files(shard), run once a process: the census's classes share the collect-only runs."""
+    if shard not in _COLLECTED:
+        _COLLECTED[shard] = frozenset(probe_files(shard))
+    return _COLLECTED[shard]
+
+
+def probe_child_env(shard):
+    """A child pytest's environment, built as tests/test_hermetic_kernel_postal.py's _proof_child_env builds one: this
+    process's, less PYTEST_CURRENT_TEST, the variables pytest-xdist sets in a worker (PYTEST_XDIST_*: this process's,
+    when it is a worker, would otherwise reach the child's controller and its worker) and PYTEST_ADDOPTS (options a
+    caller exported would join the child's command line), with SHARD_ENV set to `shard`, a string, or absent for None."""
+    env = {k: v for k, v in os.environ.items()
+           if k != "PYTEST_CURRENT_TEST" and not k.startswith("PYTEST_XDIST_") and k != "PYTEST_ADDOPTS"}
+    env.pop(SHARD_ENV, None)
+    if shard is not None:
+        env[SHARD_ENV] = shard
+    return env
+
+
 class ShardsPartitionTheCollectedFiles(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.collected = probe_files(None)
-        cls.shards = {k: probe_files(k) for k in range(1, SHARD_COUNT + 1)}
+        cls.collected = collected_files(None)
+        cls.shards = {k: collected_files(k) for k in range(1, SHARD_COUNT + 1)}
 
     def test_the_collected_files_are_the_trees_test_files(self):
         # the derivation is not empty or partial: every tests/test_*.py file is collected, this one and the SDK pin's
@@ -144,6 +182,175 @@ class ShardsPartitionTheCollectedFiles(unittest.TestCase):
                 self.assertIn(path, self.collected, "a HEAVY_MODULES entry the run with no shard does not collect")
                 self.assertEqual(sorted(j for j, files in self.shards.items() if path in files), [k],
                                  "%s is listed for shard %d, and the shards that collect it are not that one alone" % (path, k))
+
+
+PROBE_PASSED_RE = re.compile(r"^PASSED (\S+)::%s$" % re.escape(PROBE_ITEM), re.M)
+
+
+def probe_run(shard, workers):
+    """Run the probe's items for `shard` as CI's cells run the suite, from the repository root with no path: `pytest
+    -rA` with tests/ci_shard_probe.py loaded, under -n `workers` (an xdist controller and that many workers) or with no
+    -n when `workers` is None, and SHARD_ENV set to the shard (probe_child_env). The items run, since xdist hands a
+    collect-only run to no worker, and each asserts the variable is absent from its process's environment. Returns
+    (the exit status, the files whose item passed, the summary's FAILED and ERROR lines, the output's tail)."""
+    argv = [sys.executable, "-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", "-p", "no:anyio",
+            "-p", "tests.ci_shard_probe"]
+    if workers is not None:
+        argv += ["-n", str(workers)]
+    p = subprocess.run(argv, cwd=ROOT, env=probe_child_env(str(shard)), capture_output=True, text=True, timeout=600)
+    passed = PROBE_PASSED_RE.findall(p.stdout)
+    if len(set(passed)) != len(passed):
+        raise AssertionError("the probe's run of shard %r under -n %r passed a file's item twice: %r"
+                             % (shard, workers, sorted(f for f in set(passed) if passed.count(f) > 1)))
+    failed = [line for line in p.stdout.splitlines() if line.startswith(("FAILED ", "ERROR "))]
+    return p.returncode, set(passed), failed, (p.stdout + p.stderr)[-3000:]
+
+
+class ShardsRunInCIsForms(unittest.TestCase):
+    """The census in CI's form (round 1 of fork PR 986, 2026-10-06). tests/conftest.py's _stash_run_shard keeps
+    SHARD_ENV in an xdist controller, whose worker inherits the controller's environment and applies the shard, and
+    removes it in every process that runs tests, so no process a test starts inherits it. ShardsPartitionTheCollectedFiles
+    collects with no -n, so neither half of that conditional ran in it. Here each shard's probe items run under -n 1, the
+    Linux cells' form, and with no -n: the files whose item passed are that shard's collected files, and no item failed.
+    Red under a mutant of either half: a controller that removes the variable (its one worker runs every file, under
+    -n 1), and a process that runs tests and keeps it (every item fails its assert, in both forms)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.collected = {k: collected_files(k) for k in range(1, SHARD_COUNT + 1)}
+        cls.runs = {(k, w): probe_run(k, w) for k in range(1, SHARD_COUNT + 1) for w in (1, None)}
+
+    def hold_each_shard(self, workers, form):
+        for k in range(1, SHARD_COUNT + 1):
+            with self.subTest(shard=k, form=form):
+                rc, passed, failed, tail = self.runs[(k, workers)]
+                want = self.collected[k]
+                self.assertEqual(failed[:5], [], "shard %d %s: %d probe items failed, each finding %s in the environment of "
+                                 "the process that runs it (tests/conftest.py's _stash_run_shard removes it in every "
+                                 "process that runs tests): %s" % (k, form, len(failed), SHARD_ENV, tail))
+                beyond, short = sorted(passed - want), sorted(want - passed)
+                self.assertEqual((beyond, short), ([], []),
+                                 "shard %d %s ran the items of %d files where its collect-only run lists %d: %d beyond those "
+                                 "and %d short of them (the lists above); under -n 1 the xdist controller must keep %s for "
+                                 "its worker" % (k, form, len(passed), len(want), len(beyond), len(short), SHARD_ENV))
+                self.assertEqual(rc, 0, "shard %d %s exited %d: %s" % (k, form, rc, tail))
+
+    def test_under_one_worker_each_shard_runs_its_collected_files_and_no_item_sees_the_variable(self):
+        self.hold_each_shard(1, "under -n 1")
+
+    def test_with_no_workers_each_shard_runs_its_collected_files_and_no_item_sees_the_variable(self):
+        self.hold_each_shard(None, "with no -n")
+
+
+# A synthetic test file for TheShardEnvironmentInCIsForm, written outside the checkout: it records the shard variable as
+# its test sees it and as a process the test starts sees it, in a file named for itself under @RECORDS@
+SHARD_ENV_PROBE = '''\
+import json
+import os
+import subprocess
+import sys
+
+RECORDS = @RECORDS@
+
+
+def test_records_the_shard_variable():
+    child = subprocess.run([sys.executable, "-c", "import json, os; print(json.dumps(os.environ.get('ROMP_TESTS_SHARD')))"],
+                           capture_output=True, text=True, timeout=120)
+    record = {"own": os.environ.get("ROMP_TESTS_SHARD"), "child": child.stdout.strip(), "child_rc": child.returncode}
+    with open(os.path.join(RECORDS, os.path.basename(__file__) + ".json"), "w") as fh:
+        json.dump(record, fh)
+'''
+
+
+class TheShardEnvironmentInCIsForm(unittest.TestCase):
+    """tests/conftest.py's handling of SHARD_ENV, run in CI's forms (round 1 of fork PR 986, 2026-10-06): a child
+    `pytest -n 1` (the Linux cells' form, an xdist controller and one worker) and a child `pytest -n 0` (the macOS
+    cells' form, in process), each with SHARD_ENV set to a shard k, over synthetic test files written to a temporary
+    directory outside the checkout, under the checkout's conftest loaded as a plugin (-p tests.conftest, from the
+    repository root: tests/test_sdk_singleton_ratchet.py's nested_run shape). Outside, because a test file written under
+    tests/ during a run would join tests/test_thread_stop_census.py's stray check and this module's census, which
+    collects from the root, on another worker at the same moment. Each file records the variable as its test sees it
+    and as a process the test starts sees it. Held: exactly the files the rule puts in shard k ran (shard_of over each
+    file's path, which depends on the temporary path, so k is the first file's shard and files are added until another
+    shard holds one), and every record reads None in both views. Red under -n 1 when the xdist controller removes the
+    variable (its worker then runs every file), and in both forms when the process that runs tests keeps it (both
+    views read k)."""
+
+    def run_ci_form(self, workers):
+        base = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, True)
+        self.assertFalse(base == ROOT or base.startswith(ROOT + os.sep),
+                         "the synthetic files' directory %s is inside the checkout" % base)
+        case, records, tmp = (os.path.join(base, d) for d in ("case", "records", "tmp"))
+        for d in (case, records, tmp):
+            os.makedirs(d)
+        text = SHARD_ENV_PROBE.replace("@RECORDS@", repr(records))
+        shards = {}
+        while len(shards) < 4 or set(shards.values()) == {shards["test_shard_env_0.py"]}:
+            self.assertLess(len(shards), 64, "64 synthetic files all landed in one shard")
+            name = "test_shard_env_%d.py" % len(shards)
+            path = os.path.join(case, name)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            shards[name] = shard_of(shard_repo_path(path))
+        k = shards["test_shard_env_0.py"]
+        want = {n for n, j in shards.items() if j == k}
+        others = {n for n, j in shards.items() if j != k}
+        self.assertTrue(want and others, "the synthetic files must put one file in shard %d and one in another shard" % k)
+        env = probe_child_env(str(k))
+        env["TMPDIR"] = tmp
+        p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "tests.conftest", "-p", "no:cacheprovider",
+                            "-p", "no:anyio", "--rootdir", case, "-n", workers, case],
+                           cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
+        tail = (p.stdout + p.stderr)[-3000:]
+        got = {}
+        for n in sorted(shards):
+            rec = os.path.join(records, n + ".json")
+            if os.path.exists(rec):
+                with open(rec, encoding="utf-8") as fh:
+                    got[n] = json.load(fh)
+        views = {}
+        for n, r in sorted(got.items()):
+            child = json.loads(r["child"]) if r["child_rc"] == 0 else "child exited %d" % r["child_rc"]
+            if (r["own"], child) != (None, None):
+                views[n] = (r["own"], child)
+        self.assertEqual({"ran beyond shard k's files": sorted(set(got) - want), "short of them": sorted(want - set(got)),
+                          "views (the test's own, a child's) that are not None": views},
+                         {"ran beyond shard k's files": [], "short of them": [],
+                          "views (the test's own, a child's) that are not None": {}},
+                         "pytest -n %s with %s=%d over %d synthetic files (%d of them in shard %d) exited %d: %s"
+                         % (workers, SHARD_ENV, k, len(shards), len(want), k, p.returncode, tail))
+        self.assertEqual(p.returncode, 0, tail)
+
+    def test_under_one_worker_only_the_shards_files_run_and_no_view_sees_the_variable(self):
+        self.run_ci_form("1")
+
+    def test_in_process_only_the_shards_files_run_and_no_view_sees_the_variable(self):
+        self.run_ci_form("0")
+
+
+class AValueThatNamesNoShard(unittest.TestCase):
+    """An executed run with a SHARD_ENV value that names no shard (round 1 of fork PR 986, 2026-10-06). TheRule holds
+    parse_shard in process; this holds the wiring in tests/conftest.py's _stash_run_shard that turns its ValueError into
+    pytest's usage error before collection starts, for a value set by hand on a local run and for a later edit of that
+    except clause, either of which would otherwise let the run collect every file, as a run with no shard does. (A shard
+    axis in ci.yml that lists a value past SHARD_COUNT is ShardMatrix's red already.) The census's child command, run
+    from the repository root with each value: pytest's usage-error exit, the variable and the value named in the output,
+    and no file listed."""
+
+    def test_each_value_ends_in_a_usage_error_naming_it_with_no_file_collected(self):
+        for bad in (str(SHARD_COUNT + 1), "x", "0"):
+            with self.subTest(value=bad):
+                p = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+                                    "-p", "no:anyio", "-p", "tests.ci_shard_probe"],
+                                   cwd=ROOT, env=probe_child_env(bad), capture_output=True, text=True, timeout=600)
+                out = p.stdout + p.stderr
+                listed = [line for line in out.splitlines() if line.endswith("::" + PROBE_ITEM)]
+                self.assertEqual({"exit": p.returncode, "names the variable and the value": "%s=%r" % (SHARD_ENV, bad) in out,
+                                  "files listed": len(listed)},
+                                 {"exit": int(pytest.ExitCode.USAGE_ERROR), "names the variable and the value": True,
+                                  "files listed": 0},
+                                 "%s=%r: %s" % (SHARD_ENV, bad, out[-3000:]))
 
 
 class PartitionFaultsReadsEachFault(unittest.TestCase):
@@ -235,10 +442,15 @@ class TheRule(unittest.TestCase):
         self.assertIsNone(parse_shard(""))
         for k in range(1, SHARD_COUNT + 1):
             self.assertEqual(parse_shard(str(k)), k)
-        for bad in ("0", str(SHARD_COUNT + 1), "1/2", "x", " 1", "-1"):
+        # the ASCII values 1 to SHARD_COUNT and no other: a superscript two, which str.isdigit takes and int() refuses
+        # with its own message; an Arabic-Indic one and a fullwidth two, which int() reads as 1 and 2; and a leading
+        # zero, which int() reads. Each refusal names the variable and the value
+        for bad in ("0", str(SHARD_COUNT + 1), "1/2", "x", " 1", "-1", "01", "\u00b2", "\u0661", "\uff12"):
             with self.subTest(value=bad):
-                with self.assertRaises(ValueError):
+                with self.assertRaises(ValueError) as caught:
                     parse_shard(bad)
+                self.assertIn("%s=%r" % (SHARD_ENV, bad), str(caught.exception),
+                              "the refusal does not name the variable and the value")
 
     def test_a_test_file_is_one_pytest_makes_a_test_module_of(self):
         # pytest's default patterns (the census above holds them to what pytest collects); a pattern with a separator is
