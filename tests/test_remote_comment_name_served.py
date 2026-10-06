@@ -18,6 +18,7 @@ SYNTHETIC fixtures only (host TESTHOST, session web, the notes-api demo world)."
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -52,6 +53,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -103,7 +105,7 @@ await page.fill("#cmt-pop .cmt-input", "why jitter at all?");
 await page.press("#cmt-pop .cmt-input", "Enter");
 await page.waitForFunction(() => (window.__frames || []).length > 0, null, { timeout: 10000 });
 const frames = await page.evaluate(() => window.__frames);
-fs.writeSync(1, "RESULT:" + JSON.stringify({ info, dialog, frames }) + "\n");
+lab.writeResult(cfg, { info, dialog, frames });
 await browser.close();
 process.exit(0);
 """.replace("REPLY_PLACEHOLDER", json.dumps(REPLY))
@@ -215,8 +217,11 @@ class ServedRemoteCommentName(unittest.TestCase):
 
     def test_a_comment_on_a_remote_session_prefills_the_bare_name_and_sends_an_empty_one_to_the_owner(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.hport, self.htoken)}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.hport, self.htoken)}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -226,9 +231,7 @@ class ServedRemoteCommentName(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
                          + "\nhub:\n" + open(self.hlog).read()[-1500:] + "\nremote:\n" + open(self.rlog).read()[-800:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         d, frames = r["dialog"], r["frames"]
         self.assertEqual(d["title"], "New comment:", "the dialog is the CREATE dialog: %r" % r["info"])
         self.assertEqual(d["value"], "web-comment-1", "the prefill wears the BARE session name, never the viewer's host label: %r" % d)

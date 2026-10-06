@@ -16,6 +16,7 @@ Synthetic only: placeholder uuids, hostname TESTHOST, invented transcript text.
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -97,6 +98,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -144,7 +146,7 @@ try {
   out.died = String(e).slice(0, 400);
   try { out.turnCount = await turns(); out.sent = await page.evaluate(() => window.__sent.slice(-40)); out.frames = await page.evaluate(() => window.__frames.slice(-40)); } catch (e2) {}
 }
-console.log("RESULT:" + JSON.stringify(out));
+lab.writeResult(cfg, out);
 await browser.close();
 """
 
@@ -203,9 +205,12 @@ class FederatedHistoryScroll(unittest.TestCase):
     @classmethod
     def _drive(cls):
         cfg = os.path.join(cls.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?skeleton=1&wid=%s&token=%s" % (cls.hport, WID, cls.htoken),
+                "remote": REMOTE}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?skeleton=1&wid=%s&token=%s" % (cls.hport, WID, cls.htoken),
-                       "remote": REMOTE}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(cls.DRIVER)
@@ -220,11 +225,10 @@ class FederatedHistoryScroll(unittest.TestCase):
         if p.returncode != 0:
             cls.driver_error = "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
             return
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        if line is None:
-            cls.driver_error = "driver printed no result:\n" + p.stdout[-3000:] + p.stderr[-3000:]
-            return
-        cls.result = json.loads(line[len("RESULT:"):])
+        try:
+            cls.result = lab_result.read(p, tgt)
+        except lab_result.ResultError as e:
+            cls.driver_error = str(e)
 
     @classmethod
     def tearDownClass(cls):
@@ -260,6 +264,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -316,7 +321,7 @@ try {
   out.died = String(e).slice(0, 400);
   try { out.turnCount = await turns(); out.sent = await page.evaluate(() => window.__sent.slice(-40)); out.frames = await page.evaluate(() => window.__frames.slice(-40)); } catch (e2) {}
 }
-console.log("RESULT:" + JSON.stringify(out));
+lab.writeResult(cfg, out);
 await browser.close();
 """
 

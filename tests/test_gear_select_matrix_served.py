@@ -28,6 +28,7 @@ All fixtures synthetic.
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import shutil
 import subprocess
@@ -100,6 +101,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -133,7 +135,7 @@ for (const round of cfg.rounds) {
   }, round.expect));
 }
 await browser.close();
-console.log("MATRIX:" + JSON.stringify(out));
+lab.writeResult(cfg, out);   // the matrix (one entry per round) to this drive's result file, one short RESULT: line naming it
 """
 
 
@@ -181,9 +183,12 @@ class ServedMatrix(unittest.TestCase):
                 expect[sel_id] = v
             rounds.append({"files": files, "expect": expect})
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"stateDir": self.state, "rounds": rounds,
+                "url": "http://127.0.0.1:%d/settings?token=%s" % (self.port, self.token)}   # the page that hosts the gear (2026-09-10)
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"stateDir": self.state, "rounds": rounds,
-                       "url": "http://127.0.0.1:%d/settings?token=%s" % (self.port, self.token)}, f)   # the page that hosts the gear (2026-09-10)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -192,9 +197,7 @@ class ServedMatrix(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the matrix needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-2000:] + p.stderr[-2000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("MATRIX:")), None)
-        self.assertIsNotNone(line, "driver printed no matrix:\n" + p.stdout[-2000:])
-        results = json.loads(line[len("MATRIX:"):])
+        results = lab_result.read(p, tgt)
         bad = []
         for r, (round_cfg, got) in enumerate(zip(rounds, results)):
             for sel_id, want in round_cfg["expect"].items():

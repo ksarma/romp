@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -65,6 +66,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -111,7 +113,7 @@ const run = async (theme) => {
 };
 const dark = await run("yatharth");
 const lightRun = await run("yatharth-light");
-process.stdout.write("RESULT:" + JSON.stringify({ dark, light: lightRun, pageEvents: pageEvents.slice(0, 6) }) + "\n");
+lab.writeResult(cfg, { dark, light: lightRun, pageEvents: pageEvents.slice(0, 6) });
 await browser.close();
 """
 
@@ -223,16 +225,17 @@ class ToolRowsVocab(unittest.TestCase):
                 os.makedirs(drops, exist_ok=True)
                 print("T418 shots:", drops, file=sys.stderr)
             cfg = os.path.join(self.lab, "rows.json")
+            conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID, "drops": drops}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID, "drops": drops}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "rows.mjs")
             Path(driver).write_text(DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300, env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 self._skip("no playwright browser on this box")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            self.assertIsNotNone(line, "the driver produced no RESULT (stderr: %s)" % p.stderr[-2000:])
-            type(self)._r = json.loads(line[len("RESULT:"):])
+            type(self)._r = lab_result.read(p, tgt)
         print("ROWS:", json.dumps(self._r), file=sys.stderr)
         return self._r
 

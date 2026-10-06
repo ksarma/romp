@@ -19,6 +19,7 @@ skips loudly without the extension deps or a Playwright browser.
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -54,6 +55,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -142,7 +144,7 @@ const nearStart = await measure();
 await inject(without(base)); await painted(); const nearTaken = await measure();
 await inject(landed(base, "echo:m4", "am4")); await painted(); const nearLanded = await measure();
 const rows = await page.evaluate(() => window.__rows);
-fs.writeSync(1, "RESULT:" + JSON.stringify({ start, idPath, textPath, offStart, off, nearStart, nearTaken, nearLanded, rows: rows.slice(-40), baseType: base.type, baseEvents: base.events.length }) + "\n");
+lab.writeResult(cfg, { start, idPath, textPath, offStart, off, nearStart, nearTaken, nearLanded, rows: rows.slice(-40), baseType: base.type, baseEvents: base.events.length });
 await browser.close();
 process.exit(0);
 """
@@ -238,9 +240,12 @@ class ServedQueuedCopyHeld(unittest.TestCase):
         step = {"type": "assistant", "timestamp": iso(self.t0 + 60), "uuid": "a3", "parentUuid": "tr1", "sessionId": SID,
                 "message": {"role": "assistant", "model": "claude-fable-5-1", "stop_reason": "end_turn",
                             "content": [{"type": "text", "text": "Removed the import."}]}}
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "transcript": self.transcript,
+                "sid": SID, "step": step, "mail": MAIL}
+        tgt = lab_result.target(self.lab, self._testMethodName)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "transcript": self.transcript,
-                       "sid": SID, "step": step, "mail": MAIL}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -249,9 +254,7 @@ class ServedQueuedCopyHeld(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(self.klog).read()[-1500:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         return r
 
     def test_a_taken_but_unlanded_copy_keeps_its_slot_so_the_reader_never_moves(self):
@@ -312,8 +315,11 @@ class ServedQueuedCopyHeld(unittest.TestCase):
         # that took none from the press), so the copies are read by text; the frames under the pressed id are the
         # unit tests'.
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "text": "and also update the docstring"}
+        tgt = lab_result.target(self.lab, "fed")   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "text": "and also update the docstring"}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver-fed.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER_FED)
@@ -322,9 +328,7 @@ class ServedQueuedCopyHeld(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         print("T262M:", json.dumps(r))
         self.assertEqual(r["dropped"], 1, "the send was dropped at the socket: the pane's bubble is the only copy of ours")
         self.assertEqual((r["pressed"]["bubbles"], r["pressed"]["users"]), (1, 0), "our bubble at the press: %r" % r["pressed"])
@@ -342,6 +346,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -396,7 +401,7 @@ const fed2 = await measure();
 await inject({ ...base, type: "update", events: [...base.events, { kind: "user", md: cfg.text, uuid: "am9", ts: new Date().toISOString(), qid: "echo:m9", human: true }] });
 await painted();
 const landed = await measure();
-fs.writeSync(1, "RESULT:" + JSON.stringify({ pressed, posted, bubbleQid, queued, fed, fed2, landed, dropped: await page.evaluate(() => window.__dropped) }) + "\n");
+lab.writeResult(cfg, { pressed, posted, bubbleQid, queued, fed, fed2, landed, dropped: await page.evaluate(() => window.__dropped) });
 await browser.close();
 process.exit(0);
 """

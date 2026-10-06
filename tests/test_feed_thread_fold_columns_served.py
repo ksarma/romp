@@ -17,6 +17,7 @@ executed key rules ui/webview/feed-view-state.test.ts. All fixtures synthetic (t
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import shutil
 import subprocess
@@ -43,6 +44,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -108,7 +110,7 @@ await deliver(payload);
 await page.waitForSelector(`[data-key="a:${cfg.working}"]`, { timeout: 10000 });
 await page.waitForTimeout(300);
 const reloaded = await survey();
-fs.writeSync(1, "RESULT:" + JSON.stringify({ before, folded, reloaded, errors }) + "\n");
+lab.writeResult(cfg, { before, folded, reloaded, errors });
 await browser.close();
 process.exit(0);
 """
@@ -120,6 +122,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -165,7 +168,7 @@ const folded = await survey();
 await deliver({ romp: "revealCard", itemId: cfg.m2, sid: cfg.sid });
 await page.waitForTimeout(500);
 const jumped = await survey();
-fs.writeSync(1, "RESULT:" + JSON.stringify({ before, folded, jumped, groupCol: before.groupCol, soloCol: before.soloCol, errors }) + "\n");
+lab.writeResult(cfg, { before, folded, jumped, groupCol: before.groupCol, soloCol: before.soloCol, errors });
 await browser.close();
 process.exit(0);
 """
@@ -207,10 +210,13 @@ class ServedFoldIsPerColumn(unittest.TestCase):
         # jump must unfold that run — keying by the member's own column opened the unrelated Completed run and
         # left the group's Blocked run shut (red on the first cut)
         cfg = os.path.join(self.lab, "cfg-group.json")
+        conf = {"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token), "sid": SID,
+                "m1": "eeeeeeee-1111-2222-3333-000000000001", "m2": "eeeeeeee-1111-2222-3333-000000000002",
+                "c3": "eeeeeeee-1111-2222-3333-000000000003"}
+        tgt = lab_result.target(self.lab, "group")   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token), "sid": SID,
-                       "m1": "eeeeeeee-1111-2222-3333-000000000001", "m2": "eeeeeeee-1111-2222-3333-000000000002",
-                       "c3": "eeeeeeee-1111-2222-3333-000000000003"}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver-group.mjs")
         with open(driver, "w") as f:
             f.write(GROUP_DRIVER)
@@ -219,9 +225,7 @@ class ServedFoldIsPerColumn(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         self.assertEqual(r.get("errors"), [], "the page threw nothing: %r" % r.get("errors"))
         gcol, scol = r["groupCol"], r["soloCol"]
         self.assertEqual(gcol, "col-needsInput-list", "the mixed-state group renders in Blocked, its worst member's column: %r" % r["before"])
@@ -238,9 +242,12 @@ class ServedFoldIsPerColumn(unittest.TestCase):
 
     def test_folding_a_session_in_one_column_leaves_its_other_column_open_and_persists(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token), "sid": SID,
+                "blocked": BLOCKED, "working": WORKING, "shots": os.environ.get("FEED_FOLD_SHOTS", "")}
+        tgt = lab_result.target(self.lab, "fold")   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token), "sid": SID,
-                       "blocked": BLOCKED, "working": WORKING, "shots": os.environ.get("FEED_FOLD_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -249,9 +256,7 @@ class ServedFoldIsPerColumn(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         b, f_, rl = r["before"], r["folded"], r["reloaded"]
         self.assertEqual(r.get("errors"), [], "the page threw nothing (an exception mid-render would skip the view-state write): %r" % r.get("errors"))
         # the world: the two cards sit in different columns, each under a header for the one session

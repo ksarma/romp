@@ -9,9 +9,11 @@ Pinned by execution through the module's own code, except the driver's half, whi
 other test points HOME at a private temp home that holds a romp state root (as a machine running romp does) and ROMP_STATE_DIR and
 XDG_STATE_HOME into a separate private temp tree, loads the browser module afresh under a private name, and calls
 ToolRowsVocab._result, the method that picks the directory, creates it and hands it to the browser driver. Only the driver is
-stubbed: the stub saves one file per shot the driver takes into the directory the driver was handed. Those tests compare every
-file and directory under the temp home and the temp tree before the load and after the call. _result's own config and driver
-files go to a third directory, its lab, which no assertion reads.
+stubbed: the stub saves one file per shot the driver takes into the directory the driver was handed, and hands its record back
+the way tests/lab_result.cjs does (the record to the drive's result file, one RESULT: line naming it), so _result's read
+through tests/lab_result.py passes. Those tests compare every file and directory under the temp home and the temp tree before
+the load and after the call. _result's own config and driver files, and the stub's result file, go to a third directory, its
+lab, which no assertion reads.
 
 The last test holds DRIVER to the stub's behaviour by reading it: its one page.screenshot call writes at cfg.drops, a slash and a
 file name, inside `if (cfg.drops)`. That is a read of the source, not an execution. No test in CI runs the real driver with shots
@@ -118,7 +120,12 @@ class ShotsStayInTheStateRoot(unittest.TestCase):
                         with open(path, "wb") as f:
                             f.write(b"synthetic png")
                         self.saved.append(path)
-            return types.SimpleNamespace(returncode=0, stdout="RESULT:{}\n", stderr="")
+            # the shared helper's protocol (tests/lab_result.cjs writeResult): the record, with the drive's nonce, to the
+            # result file the cfg names, then one RESULT: line naming the file and the nonce
+            with open(cfg["resultPath"], "w") as f:
+                json.dump({"nonce": cfg["resultNonce"], "record": {}}, f)
+            line = {"resultPath": cfg["resultPath"], "nonce": cfg["resultNonce"]}
+            return types.SimpleNamespace(returncode=0, stdout="\nRESULT:" + json.dumps(line) + "\n", stderr="")
 
         mod.subprocess = types.SimpleNamespace(run=driver)   # the private module's own binding, nobody else's
         return mod, len(themes) * len(shots)

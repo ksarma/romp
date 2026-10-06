@@ -23,6 +23,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -55,6 +56,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -97,7 +99,7 @@ await page.hover(sel("plots/remote-figure.png", null));
 await page.waitForFunction(() => { const i = document.querySelector("#file-preview-pop .fp-img"); return !!i && i.naturalWidth > 0; }, null, { timeout: 8000 }).catch(() => {});
 out.img = { card: await card(), requests: fileRequests.slice(-3) };
 if (cfg.shots) { fs.mkdirSync(cfg.shots, { recursive: true }); await page.screenshot({ path: cfg.shots + "/romp_chat-file-preview-remote.png" }); }
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -211,8 +213,11 @@ class ServedRemoteFilePreview(unittest.TestCase):
 
     def test_a_remote_sessions_links_preview_through_the_hosts_relay(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.hport, self.htoken), "shots": os.environ.get("PV_SHOTS", "")}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.hport, self.htoken), "shots": os.environ.get("PV_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -222,9 +227,7 @@ class ServedRemoteFilePreview(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
                          + "\nhub:\n" + open(self.hlog).read()[-1500:] + "\nremote:\n" + open(self.rlog).read()[-800:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         self.assertEqual(r["active"], "TESTHOST:" + SID, "the remote session's tab is active, under its host prefix")
         # the REMOTE kernel built the events and judged its own files: every link carries a preview kind
         by = {l["path"]: l for l in r["links"]}

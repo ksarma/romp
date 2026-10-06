@@ -24,6 +24,7 @@ placeholder uuid, hostname TESTHOST, no real data). Synthetic only."""
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -88,7 +89,8 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
-const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));   // {url}
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));   // {url} and this drive's result target
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -129,7 +131,7 @@ try {
   out.dsf2 = await measureAt(2);
   out.dsf1 = await measureAt(1);
 } catch (e) { out.died = String(e).slice(0, 500); }
-process.stdout.write("RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 """
 
@@ -195,17 +197,18 @@ class ChatLineRaster(unittest.TestCase):
     def _result(self):
         if type(self)._cache is None:
             cfg = os.path.join(self.lab, "cfg.json")
+            conf = {"url": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token)}
+            tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+            conf.update(tgt)
             with open(cfg, "w") as f:
-                json.dump({"url": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token)}, f)
+                json.dump(conf, f)
             driver = os.path.join(self.lab, "driver.mjs")
             Path(driver).write_text(DRIVER)
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
             if "browser-launch-failed" in p.stderr:
                 raise unittest.SkipTest("no playwright browser")
-            line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-            self.assertIsNotNone(line, "no RESULT (stderr: %s)" % p.stderr[-1500:])
-            type(self)._cache = json.loads(line[len("RESULT:"):])
+            type(self)._cache = lab_result.read(p, tgt)
         r = type(self)._cache
         self.assertIsNone(r.get("died"), "driver error: %s" % r.get("died"))
         return r

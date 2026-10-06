@@ -26,6 +26,7 @@ Playwright browser, and for nothing else (ROMP_SERVED_TESTS_REQUIRE=1 turns the 
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -110,6 +111,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -181,7 +183,7 @@ await page.waitForTimeout(800);
 await page.evaluate(() => { window.__rompTimelineCompact("web"); });
 await page.waitForTimeout(2000);
 if (cfg.shots) { fs.mkdirSync(cfg.shots, { recursive: true }); await page.screenshot({ path: cfg.shots + "/timeline-same-name.png" }); }
-fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+lab.writeResult(cfg, out);
 await browser.close();
 process.exit(0);
 """
@@ -270,10 +272,13 @@ class ServedTimelineSameName(unittest.TestCase):
     @classmethod
     def _drive(cls):
         cfg = os.path.join(cls.lab, "cfg.json")
+        conf = {"timeline": "http://127.0.0.1:%d/timeline?token=%s" % (cls.hport, cls.htoken),
+                "ids": {"lweb": SID_L_WEB, "rweb": "%s:%s" % (HOST, SID_R_WEB), "rapi": "%s:%s" % (HOST, SID_R_API)},
+                "shots": os.environ.get("TL_SAME_NAME_SHOTS", "")}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"timeline": "http://127.0.0.1:%d/timeline?token=%s" % (cls.hport, cls.htoken),
-                       "ids": {"lweb": SID_L_WEB, "rweb": "%s:%s" % (HOST, SID_R_WEB), "rapi": "%s:%s" % (HOST, SID_R_API)},
-                       "shots": os.environ.get("TL_SAME_NAME_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -282,9 +287,7 @@ class ServedTimelineSameName(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box: the served leg needs one (CI installs none)")
         assert p.returncode == 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:]
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        assert line, "driver printed no result:\n" + p.stdout[-3000:]
-        cls.r = json.loads(line[len("RESULT:"):])
+        cls.r = lab_result.read(p, tgt)
         if os.environ.get("TL_SAME_NAME_SHOTS"):
             with open(os.path.join(os.environ["TL_SAME_NAME_SHOTS"], "result.json"), "w") as f:
                 json.dump({"r": cls.r, "hub_ops": cls._ops(cls.hstate), "remote_ops": cls._ops(cls.rstate)}, f, indent=1)

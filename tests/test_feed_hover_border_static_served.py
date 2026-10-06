@@ -15,6 +15,7 @@ synthetic (the notes-api demo world).
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import shutil
 import subprocess
@@ -41,6 +42,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -77,7 +79,7 @@ await page.waitForSelector(`[data-key="a:${cfg.top}"].focused`, { timeout: 5000 
 await page.waitForTimeout(200);   // the box-shadow transition is 0.12 s
 const hover = await measure();
 if (cfg.shots) await page.screenshot({ path: cfg.shots + "-hover.png", clip: { x: 0, y: 0, width: 420, height: 320 } });
-fs.writeSync(1, "RESULT:" + JSON.stringify({ rest, hover, errors }) + "\n");
+lab.writeResult(cfg, { rest, hover, errors });
 await browser.close();
 process.exit(0);
 """
@@ -115,9 +117,12 @@ class ServedHoverKeepsTextStill(unittest.TestCase):
 
     def test_hovering_a_card_bolds_its_border_colour_without_moving_its_text_or_the_card_below(self):
         cfg = os.path.join(self.lab, "cfg.json")
+        conf = {"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token), "sid": SID,
+                "top": TOP, "below": BELOW, "shots": os.environ.get("FEED_HOVER_SHOTS", "")}
+        tgt = lab_result.target(self.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"feed": "http://127.0.0.1:%d/feed?token=%s" % (self.port, self.token), "sid": SID,
-                       "top": TOP, "below": BELOW, "shots": os.environ.get("FEED_HOVER_SHOTS", "")}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -126,9 +131,7 @@ class ServedHoverKeepsTextStill(unittest.TestCase):
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         rest, hover = r["rest"], r["hover"]
         self.assertEqual(r.get("errors"), [], "the page threw nothing: %r" % r.get("errors"))
         # the hover cue is on: the border colour bolds to full alpha and the shadow lifts — paint only
