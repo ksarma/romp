@@ -680,5 +680,48 @@ class SettingsCardGlyphAtTheOpening(_PanelHarness, unittest.TestCase):
         self._check(self._run(drive=self.SETUP + "attachNow(); loadCard(); opening();"))
 
 
+class SettingsCardOpeningReadsItsSource(_PanelHarness, unittest.TestCase):
+    """The shell's settings-open listener acts on the card's opening only when the word comes from the settings frame's own
+    window (PR 976's round 1, correctness-3 and kernel-2), as the phoneAct listener reads its acts. Executed in node against
+    the DOM stub of SettingsCardGlyphAtTheOpening: the card's page loads after the first poll, so its copy of the glyph is
+    unpainted, and a drop's class is put on it (a host that dropped while the card was closed). The word gear.js posts,
+    {romp:'settings',on:true}, then arrives from the chat pane's window, from the shell's own window, with no source, and from a
+    window that is no frame's: each leaves the copy as it was, the drop's class on, unlit and its nodes unpainted, and the
+    rail as the poll left it. The same word from the settings frame's window then brings the copy in step with the rail (the
+    drop's class off, lit, the poll's node colours): the listener still runs for its own frame."""
+
+    DRIVE = SettingsCardGlyphAtTheOpening.SETUP + r"""
+    const CHATWIN = {}, STRAY = {}, SEEN = {};
+    ELS['f-chat'] = mkEl('f-chat'); ELS['f-chat'].contentWindow = CHATWIN;
+    function deliver(src, none){ (window._l.message||[]).forEach(function(l){ l(none ? {data:{romp:'settings',on:true}} : {data:{romp:'settings',on:true}, source:src}); }); }
+    function cardNow(){ return {cls:CARD.className, nodes:[NODES['.rn-me'].cls, NODES['.rn-a'].cls, NODES['.rn-b'].cls]}; }
+    function railNow(){ const i=ELS['rail-net']; return {on:i.classList.contains('on'), busy:i.classList.contains('busy'), cls:i.className}; }
+    loadCard(); CARD.classList.add('rn-drop');
+    SEEN.before = cardNow(); SEEN.railBefore = railNow();
+    deliver(CHATWIN); SEEN.chat = cardNow();
+    deliver(window); SEEN.shell = cardNow();
+    deliver(null, true); SEEN.none = cardNow();
+    deliver(STRAY); SEEN.stray = cardNow();
+    SEEN.railAfter = railNow();
+    deliver(SFWIN); SEEN.settings = cardNow();
+    PROBE_FN = function(){ return SEEN; };
+    """
+
+    def test_a_post_from_any_window_but_the_settings_frames_leaves_the_cards_copy_untouched(self):
+        out = self._run(drive=self.DRIVE)
+        self.assertEqual(out.get("errors"), [], "the refresh must not report a failure")
+        s = out["probe"]
+        unpainted = {"cls": "rn-drop", "nodes": ["rn-me", "rn-a", "rn-b"]}
+        self.assertEqual(s["before"], unpainted, "the premise: the copy loaded after the poll, unpainted, the drop's class on it")
+        self.assertEqual(s["railBefore"]["on"], True, "the premise: the poll lit the rail (a host is connected)")
+        # one comparison, so a red names every source that reached the copy
+        self.assertEqual({k: s[k] for k in ("chat", "shell", "none", "stray")},
+                         {"chat": unpainted, "shell": unpainted, "none": unpainted, "stray": unpainted},
+                         "the word from another window repainted the card's copy")
+        self.assertEqual(s["railAfter"], s["railBefore"], "the rail is as the poll left it")
+        self.assertEqual(s["settings"], {"cls": "on", "nodes": ["rn-me rn-ok", "rn-a rn-ok", "rn-b rn-ok"]},
+                         "the settings frame's own word brings the copy in step with the rail")
+
+
 if __name__ == "__main__":
     unittest.main()

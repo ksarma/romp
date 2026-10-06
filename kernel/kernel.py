@@ -72969,7 +72969,12 @@ var m=mnet();if(m){m.classList.toggle('on',up);m.classList.toggle('busy',busy);p
 // A drop's flash is cleared first: a host that dropped while the card was closed left rn-drop on the button (flashDrop
 // below) in a document that runs no animation then, so no animationend took it off, and the flash would play now, at the
 // opening, however long after the drop. The cue shows at the drop or not at all; the node colours carry the state after it.
+// Only the settings frame's own window opens the card (PR 976's round 1, correctness-3 and kernel-2), so the word is read
+// from it alone, as the phoneAct listener reads its acts (_LANDING_MOBILE_JS): a post from another pane's window, from this
+// window or from no window at all leaves the card's copy as it is. A shell whose listeners read window.__rompPaneSourceOk
+// first keeps this check after that one, never in its place: that check admits every same-origin pane.
 window.addEventListener('message',function(e){var m=e.data;if(!m||m.romp!=='settings'||!m.on)return;
+var sf=document.getElementById('f-settings');if(!sf||e.source!==sf.contentWindow)return;
 var c=mnet();if(!c)return;c.classList.remove('rn-drop');
 c.classList.toggle('on',icon.classList.contains('on'));c.classList.toggle('busy',icon.classList.contains('busy'));
 if(lastPaint)paintNodes(c,lastPaint[2]);});
