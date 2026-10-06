@@ -29,16 +29,18 @@ THE RULE. No assertion renders an environment mapping (THE MAPPINGS, below). Rea
      is falsy, and a falsy mapping is empty; assertIsNotNone prints "unexpectedly None". assertRaises and its relatives
      render their message keyword alone. Any other method whose name begins with `assert` (a helper a module defines)
      is read as rendering every argument it is handed. An absent-value check over one variable's read renders the
-     VALUE (_absent_value_reads): assertIsNone(R), assertFalse(R), assertEqual(R, None) and assertIs(R, None), either
-     operand order, fail exactly when the variable is present, and then print it. R is X.get(k), X.pop(k[, d]) or
-     X.setdefault(k[, d]) of an environment mapping X, os.getenv(k) by any spelling of the os module, or getenv(k)
-     imported from os.
+     VALUE (_absent_value_reads): assertIsNone(R), assertFalse(R), assertEqual(R, M) and assertIs(R, M) in either
+     operand order, where M is an absent marker (None or ""), and assertIn(R, D), where D is a tuple, list or set
+     display of markers such as (None, ""), fail when the variable holds a value, and then print it. R is X.get(k[, d]),
+     X.pop(k[, d]) or X.setdefault(k[, d]) of an environment mapping X, os.getenv(k[, d]) by any spelling of the os
+     module, or getenv(k) imported from os.
   F  fail and skipTest render their message (pytest.fail's reason included).
   B  a bare assert renders every environment mapping anywhere in its test or its message: pytest's rewrite explains a
      call by printing its arguments and an attribute by printing its receiver, so even `assert env.get(n) is None`
      prints the mapping, as the receiver of the bound method it explains. A getenv read holds no mapping, but pytest
-     prints the value it returns: `assert os.getenv(n) is None`, `assert None == getenv(n)` and
-     `assert not os.getenv(n)` each print it (_bare_absent_getenv).
+     prints the value it returns: `assert os.getenv(n) is None`, `assert None == getenv(n)`,
+     `assert os.getenv(n) == ""`, `assert os.getenv(n) in (None, "")` and `assert not os.getenv(n)` each print it
+     (_bare_absent_getenv).
 An argument renders a mapping when it IS one, or holds one where the failure prints it: an element of a tuple, list,
 set or dict display, a value formatted into a string (an operand of % or +, an f-string's field, an argument of str,
 repr, ascii, format, pformat, dumps or a .format() call), the value a slice is taken of (repr(env)[:80] prints part of
@@ -72,11 +74,12 @@ THE MAPPINGS, read by is_env():
   counts);
   an attribute name or a string key a module assigns an environment mapping to anywhere in the module
   (self.saved = dict(os.environ) makes every .saved read in that module one, seen["child"] = env every ["child"]);
-  every subscript of X, under any key, where an assignment X[k] = M stores an environment mapping M under a key k that
-  is not a string constant: a capture helper's seen[slot] = dict(kwargs["env"]) makes seen["probe"] and seen[slot]
-  one. A name X is matched to the scope that binds it, as Python resolves the name at the assignment (the helper's
-  seen is the test's seen); an attribute X is matched by its name, module-wide. X itself, printed whole, is not read
-  (WHAT IT CANNOT SEE);
+  every subscript of X, under any key, and X.get(k), X.pop(k) and X.setdefault(k) under any key, where an assignment
+  X[k] = M stores an environment mapping M under a key k that is not a string constant: a capture helper's seen[slot]
+  = dict(kwargs["env"]) makes seen["probe"], seen[slot] and seen.get("probe") one, and seen.get("probe").get(name)
+  an absent-value check's read. A name X is matched to the scope that binds it, as Python resolves the name at the
+  assignment (the helper's seen is the test's seen); an attribute X is matched by its name, module-wide. X itself,
+  printed whole or through a view, is not read (WHAT IT CANNOT SEE);
   a copy or view of a mapping: dict(M, ...), dict(**M), copy.copy, copy.deepcopy, OrderedDict, ChainMap and
   MappingProxyType of M, M.copy(), M.items(), M.values(), {**M, ...}, M | other and other | M, a dict comprehension
   over M or its items, any comprehension over M.items() or M.values(), and sorted, list, tuple or set of M.items() or
@@ -107,8 +110,8 @@ a session's launch shape; a host spawn spec; a registry entry, which stores a se
   one);
   an attribute name or a string key a module assigns a holder to or shows is one the same way (s._launching = {...,
   "env": {}}; s._launching["env"]), read module-wide like the mapping attributes above;
-  every subscript of X where X[k] = H stores a holder H under a key that is not a string constant, read as THE
-  MAPPINGS read X[k] = M;
+  every subscript of X, and X.get(k), X.pop(k) and X.setdefault(k), where X[k] = H stores a holder H under a key that
+  is not a string constant, read as THE MAPPINGS read X[k] = M;
   a call: of a function of the tree that returns a holder, or that the text shows returns one (by function: self.f()
   resolves to the enclosing class's own method first, so two classes' _reg helpers stay apart), whose own return is
   then shown in turn (a _reg helper returning sb.read_reg(...) shows read_reg's return); of a product function
@@ -169,8 +172,11 @@ The census also cannot see:
   a mapping or a holder reached through a parameter (a helper handed env by its caller), a list index
   (captured.append(env); captured[0]), getattr, or an attribute or key whose name is neither an env word nor assigned
   an environment mapping in the module (s.env_vars, a per-session overlay, is not read);
-  the container X itself, printed whole, where X[k] = M stores mappings under keys that are not string constants
-  (assertEqual(seen, {...}) after seen[slot] = dict(kwargs["env"])): its subscripts are read, not X;
+  the container X itself, printed whole or through a view, where X[k] = M stores mappings under keys that are not
+  string constants (assertEqual(seen, {...}) or assertEqual(list(seen.values()), [...]) after seen[slot] =
+  dict(kwargs["env"])): its subscripts and keyed reads are read, not X;
+  a read wrapped in `or` before an absent-value check (assertEqual(os.getenv(k) or "", ""), assertIsNone(env.get(k)
+  or None)): the check prints the value when the variable is set, and the census reads only a bare read;
   an object that holds the environment as an attribute its repr prints (the SDK's options object, opts.env, built by a
   constructor the census does not know; SimpleNamespace is read): no assertion prints one whole on 2026-10-05;
   a holder known only by a membership test, where the module never reads it by a string key or a view
@@ -199,8 +205,9 @@ PLANTS pins each shape it reads, red or green, and the stated limits a reader wo
 a list index, a mapping read back from a child's dump, a for target over captured pairs, mock's assert_called* family,
 a view bound to a name, values read through the keys, a formatted mapping passed through another call, an options
 object holding the environment as an attribute, a holder known only by a membership test, a holder bound as a tuple
-element that only another test shows, the container of mappings stored under keys that are not string constants, and
-Python a test writes as a string, in both idioms the tree uses: a written constant and a textwrap.dedent module).
+element that only another test shows, the container of mappings stored under keys that are not string constants,
+printed whole or through a view, a read wrapped in `or` before an absent-value check, and Python a test writes as a
+string, in both idioms the tree uses: a written constant and a textwrap.dedent module).
 
 THE PARSE (2026-10-06; the shape tests/test_obsidian_state_routes.py's census calls E, and this module's exception to
 tests/parse_cache.py's rule that the AST censuses under tests/ parse through its one process-wide cache). The census
@@ -214,34 +221,44 @@ run in four attempts of five at that head (the other was cancelled), where the l
 to the end. Now census() returns facts alone (strings, numbers and the lists, tuples and dicts around them), and its
 _Module records, their scopes and the Reader refer to their trees and never back to themselves, so every tree is
 freed by reference count when census() returns. The whole-tree build (_build_census) runs once per module run, in the
-first test that reads it, and EnvMappingAssertCensus.held keeps its facts until the class's tearDownClass. Measured in
-one cold process on Python 3.11.15, three runs per tree: the module's tests leave the resident set 493 to 503 MiB
-above where they found it (388 to 399 after a gc.collect()), against 1815 to 1827 MiB at 99c9ea824. The peak inside
-the build is unchanged, about 1.9 GiB, and what stays is the allocator's arenas that still hold a live block each,
-not trees.
+first test that reads it, and EnvMappingAssertCensus.held keeps its facts until the class's tearDownClass. What the
+module's tests leave in the process depends on the interpreter: about 0.5 GiB on Python 3.11, about 1.3 GiB on 3.12 to
+3.14 and about 1.5 GiB on 3.14 free-threaded, against about 1.8, 1.9 and 2.0 GiB at 99c9ea824. In MiB above the
+resident set the tests found, one cold process per run, each range over every run measured: on 3.11.15, 491 to 522 (380
+to 407 after a gc.collect()), against 1815 to 1827; on 3.12.3, 3.13.14 and 3.14.6, 1267 to 1321, against 1882 to 1905;
+on 3.14.6 free-threaded, 1514 to 1563, against 2050 to 2055. On every interpreter no tree is alive afterwards: what
+stays is the allocator's arenas that still hold a live block each, and the peak inside the build is unchanged (about 1.9
+GiB on 3.11). 3.12 and later keep more because the identifiers the parser interns outlive the trees that held them and
+keep those arenas: sys.intern of a rebuilt copy returns the parser's object on 3.12, 3.13 and 3.14, and 3.14's
+sys._is_immortal reports it immortal. Parsing every tests/, kernel/, postal/ and cli/ file, dropping the trees and
+running a gc.collect() leaves 50,444 to 50,838 more live blocks and 1044 to 1078 MiB on 3.12 to 3.14 (50,921 to 50,957
+blocks and 1568 to 1650 MiB on 3.14t), against 232 to 306 blocks and 254 to 313 MiB on 3.11, where the identifiers go
+with the trees. On 3.11, keeping only the tree's 51,894 identifier strings alive after dropping the trees leaves 968 MiB
+(one run).
 THE COLLECTOR is left as the process has it, as the obsidian census leaves it (the reviewer's ruling on round 1 of fork
 PR #909: no gc.freeze or gc.disable, which change the collector's state for the whole process, and no gc.collect, which
 walks every tracked object). The cost is time, since the automatic collections walk the trees while the build allocates
-them: the module's tests took 32.6 to 33.0 s in the same runs, against 12.1 to 12.6 s at 99c9ea824, where derived() held
-the collector off for the build, and 13.4 to 13.8 s with the collector held off for census() alone, which leaves the
-same memory behind (484 to 508 MiB). What the exception costs besides: tests/test_ephemeral_port_census.py and
-tests/test_lab_ports_census.py read some of the tests/ modules through tests/parse_cache.py by the same import road
+them: the module's tests took 32.6 to 33.0 s in the same 3.11.15 runs, against 12.1 to 12.6 s at 99c9ea824, where
+derived() held the collector off for the build, and 13.4 to 13.8 s with the collector held off for census() alone, which
+leaves the same memory behind (484 to 508 MiB). What the exception costs besides: tests/test_ephemeral_port_census.py
+and tests/test_lab_ports_census.py read some of the tests/ modules through tests/parse_cache.py by the same import road
 (`import parse_cache`), so in a process that runs them after this module they parse those files themselves, as they did
 before this census existed. tests/test_thread_stop_census.py imports the cache as tests.parse_cache under pytest, a
 module object of its own, so it never shared this census's trees there. In one process running this module, those two
-and the thread-stop census in collection order on Python 3.11.15, the two parsed 286 files themselves and added 273
-MiB, and the resident set after the last of the four was 2756 MiB, against 3642 at 99c9ea824.
+and the thread-stop census in collection order on Python 3.11.15, the two parsed 286 files themselves and added 273 MiB,
+and the resident set after the last of the four was 2756 MiB, against 3642 at 99c9ea824.
 THE RULE FOR THE BUILD: it leaves no cycle behind, so that the trees go by reference count with no collection. Measured
 over the whole tree on Python 3.10, 3.11, 3.12 and 3.13, with the collector off from before census() to after the
 reads: no tree was alive once census() had returned, and a collection then found nothing unreachable.
 THE PINS: test_the_census_is_built_once_from_its_own_parse_and_holds_no_tree (nothing built or parsed before the
 module's first test, one build in the module's run, every tests/*.py and each file the build read parsed once by its own
-parse, and no tree alive once census() had returned, read through weak references that the build drops before it
-returns), and tearDownModule (no freeze in the module's run, and the facts gone after the class, a weak reference read
-with no collection). The singleton check that derived() ran around the build still runs around it (_build_census).
-What no pin sees, both measurements only: a record of the parse kept past the build, which holds no tree and costs the
-allocator's arenas (_build_census gives the figure), and the collector held off around the build and given back, which
-changes no count a pin reads (the 13.4 to 13.8 s runs above passed every test).
+parse, the facts plain data with no node in them, and no tree alive once census() had returned, read through weak
+references that the build drops before it returns), and tearDownModule (no freeze in the module's run, and the facts
+gone after the class, a weak reference read with no collection). The singleton check that derived() ran around the
+build still runs around it (_build_census). What no pin sees, both measurements only: a record of the parse kept past
+the build, which holds no tree and, on 3.11, costs the allocator's arenas (_build_census gives the figures), and the
+collector held off around the build and given back, which changes no count a pin reads (the 13.4 to 13.8 s runs above
+passed every test).
 
 Synthetic: reads the tree only; no environment value is read or printed.
 """
@@ -755,10 +772,15 @@ class Reader:
             return x.attr
         return None
 
+    def _slotted(self, x, scope, names, attrs):
+        """X is marked in `names` (a name) or `attrs` (an attribute's name): X[k] = V stored one under a key that is not
+        a string constant."""
+        k = self.slot_key(x, scope)
+        return k is not None and (k in names if isinstance(x, ast.Name) else k in attrs)
+
     def _slot(self, node, scope, names, attrs):
-        """node is X[...], any key, and X is marked in `names` (a name) or `attrs` (an attribute's name)."""
-        k = self.slot_key(node.value, scope)
-        return k is not None and (k in names if isinstance(node.value, ast.Name) else k in attrs)
+        """node is X[...], any key, and X is marked (_slotted)."""
+        return self._slotted(node.value, scope, names, attrs)
 
     def is_env(self, node, module, scope):
         if node is None:
@@ -819,6 +841,9 @@ class Reader:
             if f.attr in KEYED and node.args:
                 key = _str_const(node.args[0])
                 if key is not None and (env_word(key) or key in module.keys):
+                    return True
+                # X.get(k), X.pop(k), X.setdefault(k) of X whose every entry is one (X[k] = M under a variable key)
+                if self._slotted(f.value, scope, self.env_slots, module.slot_attrs):
                     return True
             # keys() too: os.environ's keys view renders as the whole environ, values included (a KeysView's repr is its
             # mapping's), while a dict copy's renders names only; the census cannot tell the two apart through a capture
@@ -925,7 +950,8 @@ class Reader:
                 return self.is_holder(f.value, module, scope)
             if f.attr in KEYED and node.args:
                 key = _str_const(node.args[0])
-                return key is not None and key in module.holder_keys
+                return (key is not None and key in module.holder_keys) or \
+                    self._slotted(f.value, scope, self.holder_slots, module.holder_slot_attrs)
             if f.attr in MAPPING_METHODS + ("keys",) + VIEWS:
                 # a mapping's own method: one value, its names, a view, or None, never the holder itself; a holder's
                 # items() or values() view still carries the environment it holds and renders it (_holder_view)
@@ -1230,33 +1256,49 @@ def _getenv_read(node, module):
             or (isinstance(f, ast.Name) and f.id in module.getenv_names))
 
 
+def _absent_marker(node):
+    """A value an absent-value check compares a read with to mean "not set": the constant None or the empty string."""
+    return isinstance(node, ast.Constant) and (node.value is None or node.value == "")
+
+
+def _absent_markers(node):
+    """A non-empty tuple, list or set display made only of absent markers: (None, ""), [""]."""
+    return isinstance(node, (ast.Tuple, ast.List, ast.Set)) and bool(node.elts) and all(map(_absent_marker, node.elts))
+
+
 def _absent_value_reads(call, module, scope, reader):
     """The reads of one variable that an absent-value check prints: X.get(k), X.pop(k[, d]) and X.setdefault(k[, d]) of
     an environment mapping X, and os.getenv(k) or getenv(k) (_getenv_read), under assertIsNone, assertFalse,
-    assertEqual(..., None) and assertIs(..., None), either operand order. Each fails when the variable is PRESENT and
-    then prints its value (THE RULE, A)."""
+    assertEqual(..., M) and assertIs(..., M) with an absent marker M (None or ""), either operand order, and
+    assertIn(..., (None, "")) with a display of markers. Each fails when the variable holds a value and then prints
+    it (THE RULE, A)."""
     method, operands = call.func.attr, []
     if method in ABSENT_CHECKS:
         operands = list(call.args[:1]) + [k.value for k in call.keywords if k.arg in RENDERS[method][1]]
-    elif method in ABSENT_EQUALS:
-        pair = list(call.args[:2]) + [k.value for k in call.keywords if k.arg in RENDERS[method][1]]
-        if len(pair) == 2:
-            operands = [b for a, b in (pair, pair[::-1]) if isinstance(a, ast.Constant) and a.value is None]
+    elif method in ABSENT_EQUALS or method == "assertIn":
+        # the keywords in their parameters' order, so assertIn(container=..., member=R) pairs as assertIn(R, ...)
+        pair = list(call.args[:2]) + [k.value for kw in RENDERS[method][1] for k in call.keywords if k.arg == kw]
+        if len(pair) == 2 and method == "assertIn":
+            operands = [pair[0]] if _absent_markers(pair[1]) else []
+        elif len(pair) == 2:
+            operands = [b for a, b in (pair, pair[::-1]) if _absent_marker(a)]
     return [o for o in operands if _getenv_read(o, module) or (
         isinstance(o, ast.Call) and isinstance(o.func, ast.Attribute) and o.func.attr in KEYED and o.args
         and reader.is_env(o.func.value, module, scope) and not reader.is_env(o, module, scope))]
 
 
 def _bare_absent_getenv(test, module):
-    """The getenv read (_getenv_read) a bare absent-value assert prints: `assert G is None`, `assert G == None` (either
-    order) or `assert not G` (THE RULE, B: pytest explains the call by printing its value). An X.get(k), X.pop(k) or
-    X.setdefault(k) read there is already read, as its receiver X."""
+    """The getenv read (_getenv_read) a bare absent-value assert prints: `assert G is M`, `assert G == M` (either order)
+    with an absent marker M (None or ""), `assert G in (None, "")` with a display of markers, or `assert not G` (THE
+    RULE, B: pytest explains the call by printing its value). An X.get(k), X.pop(k) or X.setdefault(k) read there is
+    already read, as its receiver X."""
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
         return [test.operand] if _getenv_read(test.operand, module) else []
     if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], (ast.Is, ast.Eq)):
         pair = (test.left, test.comparators[0])
-        return [b for a, b in (pair, pair[::-1]) if isinstance(a, ast.Constant) and a.value is None
-                and _getenv_read(b, module)]
+        return [b for a, b in (pair, pair[::-1]) if _absent_marker(a) and _getenv_read(b, module)]
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.In):
+        return [test.left] if _absent_markers(test.comparators[0]) and _getenv_read(test.left, module) else []
     return []
 
 
@@ -1367,7 +1409,9 @@ def _build_census():
     only those plain facts and drops the record before it returns: a record kept past the build would hold, for each
     file, a small object allocated beside that file's tree, and the allocator then keeps nearly every arena the trees
     took (one cold process on Python 3.11.15, after the same 1.9 GiB peak: 1137 MiB resident after the module's tests
-    with such a record kept for the process, 533 to 543 MiB with it dropped here). THE SINGLETON CHECK
+    with such a record kept for the process, 533 to 546 MiB with it dropped here). That holds on 3.11 alone: on 3.12
+    and 3.13, where the parser's identifiers hold those arenas anyway (THE PARSE), the module's tests left 1303 to 1306
+    MiB above where they started with the record kept and 1267 to 1312 with it dropped. THE SINGLETON CHECK
     (tests/parse_cache.py's check_singletons, which parse_cache.derived ran around this build until THE PARSE took
     derived() out of this module): before the build (a writer that ran earlier: the build neither runs nor counts) and
     after it, on the returning road and on the raising road (the build itself wrote on a node the parser shares with
@@ -1525,6 +1569,15 @@ PLANTS = {
     "absent-value-bare-getenv": (_body('assert os.getenv("X") is None', 'assert None == os.getenv("X"), "X"',
                                        'from os import getenv', 'assert not getenv("X"), "X"'),
                                  ['os.getenv("X")', 'os.getenv("X")', 'getenv("X")']),
+    # the empty string marks absence as None does: each fails when the variable holds a value, and prints it
+    "absent-value-empty-marker": (_body('env = dict(os.environ)', 'self.assertEqual(env.get("X", ""), "")',
+                                        'self.assertEqual("", os.getenv("X", ""), "X")',
+                                        'self.assertIn(os.getenv("X"), (None, ""))', 'assert os.getenv("X") == ""',
+                                        'assert os.getenv("X") in (None, ""), "X"',
+                                        'self.assertIn(os.environ.get("X"), ["", None], "X")',
+                                        'self.assertIn(container=(None, ""), member=os.getenv("X"))'),
+                                  ['env.get("X", "")', 'os.getenv("X", "")', 'os.getenv("X")', 'os.getenv("X")',
+                                   'os.getenv("X")', 'os.environ.get("X")', 'os.getenv("X")']),
     "prebuilt-message": (_body('msg = "%r" % (os.environ,)', 'self.assertTrue(False, msg)', 'env = dict(os.environ)',
                                'text = ", ".join(env.values())', 'assert False, text'), ["msg", "text"]),
     # the holders: a container that holds an environment mapping under an env key, one plant per way the text shows it
@@ -1596,12 +1649,39 @@ PLANTS = {
                                    "        self.assertNotIn('X', seen['probe'], 'm')\n    def test_b(self):\n"
                                    "        seen = {'probe': 'a b'}\n        self.assertIn('a', seen['probe'])\n",
                                    ["seen['probe']"]),
+    # the same X read by key without a subscript: X.get(k), X.pop(k), X.setdefault(k), and an absent-value check
+    # through one, for an environment mapping stored under a variable key and for a holder
+    "variable-key-keyed-reads": (_body('seen = {}', 'def capture(slot):', '    def side_effect(*args, **kwargs):',
+                                       '        seen[slot] = dict(kwargs["env"])', '    return side_effect',
+                                       'self.assertNotIn("X", seen.get("probe"), "m")',
+                                       'self.assertNotIn("X", seen.pop("probe"))',
+                                       'self.assertIsNone(seen.get("probe").get("X"))',
+                                       'self.assertEqual(seen.setdefault("probe", {}), {})',
+                                       'self.assertFalse("X" in seen.get("probe"), "m")'),
+                                 ['seen.get("probe")', 'seen.pop("probe")', 'seen.get("probe").get("X")',
+                                  'seen.setdefault("probe", {})']),
+    "variable-key-holder-keyed-reads": (_body('opts = {}', 'for name in ("a", "b"):',
+                                              '    opts[name] = dict(model="m", env=dict(os.environ))',
+                                              'self.assertIn("model", opts.get("a"))', 'self.box = {}',
+                                              'self.box[0] = dict(os.environ)',
+                                              'self.assertNotIn("X", self.box.get(0))',
+                                              'self.assertEqual(opts.get("a")["model"], "m")', 'self.shapes = {}',
+                                              'self.shapes[1] = dict(model="m", env={})',
+                                              'self.assertIn("model", self.shapes.get(1))'),
+                                        ['opts.get("a")', "self.box.get(0)", "self.shapes.get(1)"]),
     # the clean shapes: what a failure prints is one value, a bool, or names
     "clean-get-read": (_body('seen = {}', 'self.assertEqual(seen["env"].get("X"), "1")',
                              'self.assertTrue(seen["env"].get("X") is None, "X")'), []),
     "clean-getenv-and-pop": (_body('self.assertTrue(os.getenv("X") is None, "X")', 'self.assertEqual(os.getenv("X"), "1")',
                                    'cache = {"k": 1}', 'self.assertIsNone(cache.pop("k", None))',
                                    'assert os.getenv("X") == "1"', 'assert os.getenv("X") is not None'), []),
+    # beside the empty-string marker: an expected value, a display with one, and the checks that fail when it is absent
+    "clean-empty-marker-neighbours": (_body('self.assertEqual(os.getenv("X", ""), "1")',
+                                            'self.assertIn(os.getenv("X"), ("a", ""))',
+                                            'self.assertNotIn(os.getenv("X"), (None, ""))',
+                                            'self.assertNotEqual(os.getenv("X", ""), "")',
+                                            'assert os.getenv("X") != ""',
+                                            'assert os.getenv("X") not in (None, "")'), []),
     "clean-holder-fields": (_body('import json', 'kw = dict(model="m", env={})', 'self.assertEqual(kw["model"], "m")',
                                   'self.assertTrue("settings" in kw, "settings")', 'self.assertFalse("x" in kw, "x")',
                                   'self.assertEqual(sorted(kw), ["env", "model"])',
@@ -1672,7 +1752,12 @@ PLANTS = {
                                    'run.assert_not_called()', 'run.assert_called_once()',
                                    'run.assert_called_once_with(["claude"])'), []),
     "limit-variable-key-container": (_body('seen = {}', 'def capture(slot):', '    seen[slot] = dict(os.environ)',
-                                           'self.assertEqual(seen, {})'), []),
+                                           'self.assertEqual(seen, {})', 'self.assertEqual(list(seen.values()), [])',
+                                           'self.assertIn("X", seen.items())'), []),
+    "limit-or-wrapped-absent-read": (_body('self.assertEqual(os.getenv("X") or "", "")',
+                                           'self.assertIsNone(os.getenv("X") or None)', 'env = dict(os.environ)',
+                                           'self.assertEqual(env.get("X") or "", "", "X")',
+                                           'assert (os.getenv("X") or "") == ""'), []),
     # Python a test writes as a string, in the two idioms the tree uses: a written constant, a textwrap.dedent module
     "limit-written-module-string": (_body('src = "import os\\ndef test_child():\\n    assert os.environ.get(\'X\') is None\\n'
                                           '    assert \'X\' not in os.environ\\n"',
@@ -1755,17 +1840,33 @@ class EnvMappingAssertCensus(unittest.TestCase):
         one build). Two reads of the facts are one object and one build in the module's run (_CENSUS_BUILDS; a build
         per read or per test reds here). The build parsed every tests/*.py, and each file it read (the tests/ modules
         and the product modules its callees reach) once, by its own parse (the build's record, _Census.parsed; a second
-        parse reds, and a file read through tests/parse_cache.py is missing from the record). And no tree the build
-        parsed was alive once census() had returned (_Census.outlived, read through weak references with no
-        gc.collect()): census() returns facts alone and builds no cycle, so the trees go when it returns, not at the
-        module's end. Red under a module-scope cache of the _Module records or the Reader, under a fact that holds a
-        node, and under a cycle that holds a tree, which only a collection frees. That the module froze nothing and
-        that the facts are gone after the class are read in tearDownModule (pins 1 and 2)."""
+        parse reds, and a file read through tests/parse_cache.py is missing from the record). Walking the facts finds
+        only plain data (strings, numbers, None, and the lists, tuples and dicts around them), the contract census()
+        states: no tree and no node. And no tree the build parsed was alive once census() had returned
+        (_Census.outlived, read through weak references with no gc.collect()): census() returns facts alone and builds
+        no cycle, so the trees go when it returns, not at the module's end. Red under a module-scope cache of the
+        _Module records or the Reader, under a fact that holds a node (the walk names its type; the weak-reference read
+        sees only a tree's root, since a node below it keeps its own subtree and no tree alive), and under a cycle that
+        holds a tree, which only a collection frees. That the module froze nothing and that the facts are
+        gone after the class are read in tearDownModule (pins 1 and 2)."""
         first = _census_here()
         same = _census_here() is first
         parsed, outlived = first.parsed, first.outlived
+        not_plain, stack = set(), [first.files, first.offences, first.stats, parsed, outlived]
+        while stack:
+            v = stack.pop()
+            if isinstance(v, dict):
+                stack += list(v.keys()) + list(v.values())
+            elif isinstance(v, (list, tuple)):
+                stack += list(v)
+            elif v is not None and not isinstance(v, (str, int, float)):
+                not_plain.add(type(v).__name__)
         del first   # no local keeps the held object, so a red here leaves pin (2) reading the class's release, not this frame
         self.assertTrue(same, "two reads in the module's run are the one held object")
+        self.assertEqual(sorted(not_plain), [], "the census's facts are plain data (strings, numbers, None and the "
+                         "lists, tuples and dicts around them): a fact of another type keeps what it refers to (a "
+                         "_Module its tree, an AST node its subtree), and a node below a tree's root keeps no tree "
+                         "alive, so the weak references read below cannot see it")
         self.assertEqual(_BUILT_BEFORE, (0, 0), "(censuses built, files parsed) before the module's first test, as "
                          "setUpModule read them: none, since a census or a tree made at import is held through every "
                          "module that sorts before this one")
@@ -1781,7 +1882,7 @@ class EnvMappingAssertCensus(unittest.TestCase):
         self.assertEqual(sorted("%s parsed %d times" % (f, n) for f, n in parsed.items() if n != 1), [],
                          "each file the build read, parsed once in this module's run")
         self.assertEqual(len(outlived), 0, "%d trees the build parsed were alive once census() had returned, for "
-                         "example %s: a fact holds a node, something else keeps the trees, or a cycle holds them"
+                         "example %s: a fact holds a tree, something else keeps the trees, or a cycle holds them"
                          % (len(outlived), outlived[:5]))
 
     def test_the_population_is_derived_and_watched(self):
