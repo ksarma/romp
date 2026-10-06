@@ -335,7 +335,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3478,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3481,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -414,6 +414,9 @@ COUNTS = {
     #                                df34f7f25, batch 2026-10-03a) as 3478, both sides' functions kept (the slice's 53 over 3409,
     #                                and the lock's 16 named above; kernel/kernel.py 2670 to 2686), the census's own derivation on
     #                                the merged tree; sdk_backend.py (764) and credentials.py did not move, and no other entry
+    #                                moved; then on the chat signature memos' branch as 3481, over fork main 0cfb961f0's 3478:
+    #                                the branch adds _names_scope_digest, _postal_card_deps_memo and its nested _caps to
+    #                                kernel/kernel.py (2686 to 2689), the census's own derivation; no lambda and no other entry
     #                                moved
 }
 CALLS_BY_KIND = {"self": 210, "typed": 128, "bound-self": 7, "param": 36, "alias": 5}   # the 386's derivation, an equality each
