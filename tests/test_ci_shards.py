@@ -266,7 +266,9 @@ class BothSidesReadOneEnvironment(unittest.TestCase):
     2026-10-06): an option exported in PYTEST_ADDOPTS would otherwise reach the collect-only run alone, and the class
     would be red with no defect in tests/conftest.py. The file-set message names the xdist controller only for the -n 1
     form, the one form that has a controller. Red at the commit before: the collect-only run read the exported option,
-    and the message of the form with no -n named the controller."""
+    and the message of the form with no -n named the controller. The run of the probe's items has read probe_child_env's
+    environment since round 1, so its leg was green at the commit before; it is red under a mutant where probe_run reads
+    this process's environment, which drops tests/test_ci_shards.py's item from that run."""
 
     def test_the_collect_only_run_does_not_read_an_exported_pytest_addopts(self):
         # probe_files directly, never collected_files, so the run under the option does not enter the cache the census's
@@ -277,6 +279,20 @@ class BothSidesReadOneEnvironment(unittest.TestCase):
         os.environ["PYTEST_ADDOPTS"] = "--ignore=tests/test_ci_shards.py"
         self.assertIn("tests/test_ci_shards.py", probe_files(None), "the collect-only run read PYTEST_ADDOPTS from this "
                       "process's environment, which probe_run's run does not read, so the two can list other files")
+
+    def test_the_run_of_the_probes_items_does_not_read_an_exported_pytest_addopts(self):
+        # probe_run with no -n, so this leg needs no pytest-xdist; shard_of puts tests/test_ci_shards.py in one shard,
+        # whose run passes its item (ShardsRunInCIsForms holds that). assertTrue rather than assertIn, whose message
+        # would print the shard's whole file set
+        path = "tests/test_ci_shards.py"
+        old = os.environ.get("PYTEST_ADDOPTS")
+        self.addCleanup(lambda: os.environ.pop("PYTEST_ADDOPTS", None) if old is None
+                        else os.environ.__setitem__("PYTEST_ADDOPTS", old))
+        os.environ["PYTEST_ADDOPTS"] = "--ignore=" + path
+        rc, passed, failed, tail = probe_run(shard_of(path), None)
+        self.assertTrue(path in passed, "the run of the probe's items read PYTEST_ADDOPTS from this process's "
+                        "environment, which the collect-only run does not read, so the two can run and list other "
+                        "files: %s" % tail)
 
     def test_the_file_set_message_names_the_controller_for_the_one_worker_form_alone(self):
         for workers, form, names in ((None, "with no -n", False), (1, "under -n 1", True)):

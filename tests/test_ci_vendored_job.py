@@ -4,8 +4,8 @@
 The step "Vendored tooling and host-script tests (node --test)" ran at the end of the Shell job. At the fork's main 1d591384e
 (run 36388144219) the Shell job took 31 min 50 s of its 35-minute cap: Run bats 700 s, then this step 1180 s, where at
 ffab236bd (run 36308512751) the step took 67 s. The growth is fork PR #780's tracked-changes bash guard: batch 925 added
-27,628 lines under tools/ and vendor/track-changents/, about 25,700 of them #780's. In that run, on the public runner's 4
-CPUs, node --test ran files side by side and a file's tests one after another, and the tests of one file,
+27,628 lines under tools/ and vendor/track-changents/, about 25,700 of them #780's. In run 36388144219, on the public
+runner's 4 CPUs, node --test ran files side by side and a file's tests one after another, and the tests of one file,
 tools/romp-track-bash-guard.test.mjs, add up to about 1100 s in that run's log (the slowest single test 222 s). With the
 step inside the Shell job, a PR that added more than about three
 minutes of bats time (the job's margin at 1d591384e was 190 s) ran the job past its cap. Raising the Shell cap was declined,
