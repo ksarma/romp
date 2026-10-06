@@ -5371,10 +5371,17 @@ document stands on its own, each with the reasoning it was given.
     stays open, pre-existing, is disclosed with witness rows, each allowed at base, head and rule B while bash, zsh and
     dash write: a `cp -r` directory copy, where only the top directory is bound (AS8-residual-ruleB-cp-r-dir); `dd of=` and
     `tee` writers under a readable PATH, outside the binding model (AS8-residual-ruleB-dd, AS8-residual-ruleB-tee); and a
-    failed `ln -s` onto an existing name (AS8-residual-ruleB-failed-lns-exist). A relative symlink moved with `mv` or
-    copied with `cp -a`, whose text re-resolves against the new directory while rule B resolves it at the move through the
-    old location, is a residual follow-up, not a committed row: its write-through shape depends on the new directory
-    holding a writer of the link's relative name, which the synthetic world does not stage.
+    failed `ln -s` onto an existing name (AS8-residual-ruleB-failed-lns-exist). THE MOVED LINK RE-RESOLVES (fork PR 975's
+    round 2 gap pass, R3): a command-made RELATIVE symlink carried unchanged into a directory on a readable PATH by a
+    preserving op (mv, a hard `ln`, cp -a/-P/-r) has text that re-resolves against the NEW directory; rule B first bound
+    the link's OLD target (not a path the command made) and let the moved name pass, while a real bash, zsh and dash ran
+    the cp the link's relative name finds in its new home and wrote the tracked file. The earlier pass named this a
+    residual the synthetic world could not stage; the command stages it itself (`cp /usr/bin/cp scratch/realcp` is the
+    writer the moved link's relative name resolves to), so under M3 (fork main refuses) it is a false allow this PR
+    introduced, fixed here: bindWrite resolves a preserving op's link text against the destination's directory
+    (linkTexts holds each command-made link's raw text), so the made copy there refuses by name. Rows
+    AS8-ruleB-relsym-mv, -hardln, -cpa, -cpP, -cpr and the two out twins, red at the pre-round-2 head, with real writes
+    in all three shells.
     THE BUILTIN EXEMPTION TAKEN OUT (fork PR 975's round 2, R2): the sixth verify round's tg-t6-3 had exempted a bare
     name that is a builtin or a keyword in bash, zsh and dash alike (ALL_SHELL_BUILTINS, checked against the shells and
     against per-shell lists committed beside the rows test, SHELL_OWN_DERIVED) from the bound-name refusal, as the name

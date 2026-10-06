@@ -5815,12 +5815,21 @@ function extractIn(command, ctx) {
   // RULE B: one bind helper. Key: the made path, resolved (links this command made followed) and spelled, absolute, against the cwd now. Value: the
   // source resolved now (a symbolic link's text against the link's own directory), or null where it is not literal or cannot be resolved. Monotonic:
   // a key keeps every value it was given.
-  const bindWrite = (destText, srcW, symbolic, cwdAt) => {
+  const bindWrite = (destText, srcW, symbolic, cwdAt, preserve = false) => {
     if (!cwdAt) return;
     let value = null;
     if (srcW && srcW.literal && srcW.text && !srcW.text.includes('\0')) {
       if (symbolic) { const parent = literalPath(path.dirname(destText), cwdAt); value = parent ? literalPath(srcW.text, parent) : null; }
-      else value = literalPath(srcW.text, cwdAt);
+      else {
+        // RULE B (fork PR 975's round 2 gap pass, R3, 2026-10-06): a preserving op (mv, a hard `ln`, `link`, cp -a/-P/-d/-r) of a command-made RELATIVE
+        // symlink carries the link's OWN text, which re-resolves against the DESTINATION's directory, not the source's. Binding the followed source (the
+        // link's old target) let a made path the moved link now names pass the by-name lookup; resolve the link's text against the destination's directory
+        // so a made path it now names refuses. A regular-file source, or an absolute-target link, keeps the followed resolution (unchanged).
+        const linkSelf = (() => { const a = activeLinks; activeLinks = null; try { return literalPath(srcW.text, cwdAt); } finally { activeLinks = a; } })();
+        const rawText = preserve && linkSelf && linkTexts.has(linkSelf) ? linkTexts.get(linkSelf) : null;
+        if (rawText != null && !path.isAbsolute(rawText)) { const destDir = literalPath(path.dirname(destText), cwdAt); value = destDir ? literalPath(rawText, destDir) : null; }
+        else value = literalPath(srcW.text, cwdAt);
+      }
     }
     const saved = activeLinks; let spelled = null; activeLinks = null; try { spelled = literalPath(destText, cwdAt); } finally { activeLinks = saved; }
     for (const k of [literalPath(destText, cwdAt), spelled]) if (k) { let set = bound.get(k); if (!set) bound.set(k, (set = new Set())); set.add(value); }
@@ -6830,6 +6839,7 @@ function extractIn(command, ctx) {
   // same-command path change (a hard link, `cp -l`/`cp -s`, a non-literal `ln -s`, or a name/source an earlier
   // rm/mv/ln mutated) is a family-3 mutation and refuses, since the hook cannot resolve it after the fact.
   const links = ctx.links || new Map();
+  const linkTexts = ctx.linkTexts || new Map();   // RULE B (R3): a command-made symlink's absolute path -> its OWN raw target text, so a later preserving op (mv, hard ln, link, cp -a/-P/-d/-r) of that link rebinds the destination to the text resolved against its new directory (bindWrite)
   // Class 'mutated' (the walk-around lens second pass, family 3, 2026-09-19): a command earlier in the line that REMOVES, RENAMES or makes a
   // hard/symbolic LINK at a path changes what a later word under that path resolves to, so the hook's hook-time view is
   // stale and a later literal target there is unreadable. `mutated` maps an absolute prefix to the verb that touched it.
@@ -6881,7 +6891,12 @@ function extractIn(command, ctx) {
         const ops = parsed.operands || [];
         const srcText = (w) => w;   // RULE B: the source WORD, resolved by bindWrite at this moment
         const symbolicLn = name === 'ln' && args.some((a) => a.literal && (a.text === '--symbolic' || (/^-[^-]/.test(a.text) && a.text.includes('s'))));
-        const bind = (text, src) => bindWrite(text, src, symbolicLn, cwd);
+        // RULE B (R3): an op that carries a symlink unchanged (does not dereference it) re-resolves its text against the new directory: mv, a hard `ln`,
+        // `link`, and cp with -a/--archive, -P/--no-dereference, -d or -r/-R. A plain cp or install dereferences, so the copy is of the target's bytes and
+        // the followed resolution stands (preserve false). Favouring preserve where both -P and -L appear only adds refusals, never a false allow.
+        const cpPreserve = name === 'cp' && args.some((a) => a.literal && ((/^-[^-]/.test(a.text) && /[aPdrR]/.test(a.text)) || a.text === '--archive' || a.text === '--no-dereference'));
+        const preserve = name === 'mv' || name === 'link' || (name === 'ln' && !symbolicLn) || cpPreserve;
+        const bind = (text, src) => bindWrite(text, src, symbolicLn, cwd, preserve);
         // THE BOUND NAME binds the file the writer makes (fork PR 975's round 1, C, 2026-10-05; the round's fresh-1: `cp <tool> <dir>; PATH=<dir>:$PATH; <tool's
         // name>` bound `<dir>` alone, so the name met no bound path and passed while bash, zsh and dash ran the tool, where fork main refused every bare name
         // once a path was bound; mv, install, ln and ln -s alike): with two operands and no `-T`, a destination that is a directory now takes the source
@@ -6990,6 +7005,7 @@ function extractIn(command, ctx) {
       const srcAbs = src.literal ? (path.isAbsolute(src.text) ? src.text : literalPath(src.text, path.dirname(dstAbs))) : null;
       if (!srcAbs || underMutated(dstAbs) || underMutated(srcAbs)) { markMutated(dstAbs, 'ln -s', { alias: true }); return; }   // rule (c): the name is unknown, and what it aliases is not read (B1)
       links.set(dstAbs, srcAbs);
+      linkTexts.set(dstAbs, src.text);   // RULE B (R3): the link's raw text, so a later preserving move/copy of it re-resolves against its new directory (bindWrite)
     };
     if (parsed.targetDir) {
       if (!parsed.targetDir.literal) return;   // the ln's own target, refused by copyTargets
@@ -7527,7 +7543,7 @@ function extractIn(command, ctx) {
     // reassigned, so `HOME=<dir>; sh -c 'echo > ~/x'` writes under <dir> (measured in bash, zsh and dash, the seventh pass)
     const homeValue = vars.has('HOME') && vars.get('HOME') != null ? [['HOME', vars.get('HOME')]] : [];
     const sub = extract(text, {
-      dir, unknownDir, unknownWhy, heldDir, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
+      dir, unknownDir, unknownWhy, heldDir, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, linkTexts, cdFunctions, mutated, keywordMode,
       ifsNamed, candidates, unreadValues, unreadValueWhy, vanishedValues, namerefs, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES (THE VANISHED VALUE and THE NAMEREF with them) and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
       aliases: fresh ? new Map() : aliases, hashes: fresh ? new Map() : hashes, aliasState: fresh ? { unread: null } : aliasState, bound, builtinsOff, headPoison, headGate, aliasChain: chain, headSplice: spliced,   // THE ALIAS ROAD: a fresh shell starts with no alias or hash; the paths made are on the filesystem for every shell
       ruleSafe: fresh ? ruleSafeOf(text, sh) : ruleSafe,   // RULE S (R1): a fresh shell is its own command, judged on its own script; a text this shell runs inherits the whole command's verdict

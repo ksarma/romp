@@ -1199,10 +1199,23 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // correctness-4 (the existing-directory ln -s of a bound source, a false allow this PR introduced, and an empty PATH entry read as the cwd)
       ['AS8-ruleB-corr4-lns-existdir', 'na', 'mkdir -p {OUT}/d; cp /usr/bin/cp {OUT}/c2; ln -s {OUT}/c2 {OUT}/d; PATH={OUT}/d:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
       ['AS8-ruleB-corr4-empty-path', 'na', 'cp /usr/bin/cp {OUT}/scratch/c2; cd {OUT}/scratch; PATH=:/usr/bin:/bin; c2 {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      // fork PR 975's gap pass (R3, 2026-10-06): a preserving op (mv, a hard `ln`, cp -a/-P/-r) of a command-made RELATIVE symlink into a directory on a
+      // readable PATH, then run by its bare name. The moved link's text re-resolves against its NEW directory, where this command stages a copy of cp, so a
+      // real bash, zsh and dash each run the cp and write the tracked file. Fork main refuses (a mention taints PATH, every bound name refuses); the PR's
+      // rule B bound the link's OLD target (not a made path) and allowed it; the fix resolves the link's text against the destination's directory, the made
+      // copy there, so the bare name refuses. Base refused; the pre-round-2 head allowed. The ruling named this class a residual the world could not stage;
+      // the command stages it (`cp /usr/bin/cp scratch/realcp` is the writer the moved link's relative name finds), so under M3 (fork main refuses) it is an
+      // introduced false allow fixed here, not a residual. From the project directory (the `grep` makes fork main taint PATH) and from a cwd in no project.
+      ['AS8-ruleB-relsym-mv', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; mv stage_s scratch; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; stage_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-hardln', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; ln stage_s scratch/h_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; h_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-cpa', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -a stage_s scratch/a_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; a_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-cpP', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -P stage_s scratch/p_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; p_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-cpr', 'na', 'cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -r stage_s scratch/r_s; grep -q PATH base/report.md; PATH={NA}/scratch:/usr/bin:/bin; r_s base/report.md docs/report.md', A, 'name'],
+      ['AS8-ruleB-relsym-mv-out', 'out', 'cd {OUT}; cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; mv stage_s scratch; grep -q PATH {NA}/base/report.md; PATH={OUT}/scratch:/usr/bin:/bin; stage_s {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
+      ['AS8-ruleB-relsym-cpa-out', 'out', 'cd {OUT}; cp /usr/bin/cp scratch/realcp; ln -s realcp stage_s; cp -a stage_s scratch/a_s; grep -q PATH {NA}/base/report.md; PATH={OUT}/scratch:/usr/bin:/bin; a_s {NA}/base/report.md {NA}/docs/report.md', A, 'name', 'name'],
       // DISCLOSED, PRE-EXISTING (base, head and rule B all allow; decision 47): writers rule B's binding model does not reach under a readable PATH, each
       // allowed while bash, zsh and dash write: a `cp -r` directory copy (only the top directory is bound), a `dd of=` and a `tee` writer, and a failed
-      // `ln -s` onto an existing name. The relative-symlink move and `cp -a` copy class, whose text re-resolves against the new directory, is a residual
-      // named in decision 47 (its write-through shape is not reproduced as a committed row)
+      // `ln -s` onto an existing name
       ['AS8-residual-ruleB-cp-r-dir', 'na', 'mkdir -p {OUT}/d; cp /usr/bin/cp {OUT}/d/zc; cp -r {OUT}/d {OUT}/scratch/d2; PATH={OUT}/scratch/d2:/usr/bin:/bin; zc {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
       ['AS8-residual-ruleB-dd', 'na', 'cp /usr/bin/cp zc; dd if=zc of={OUT}/scratch/zc2 status=none; chmod +x {OUT}/scratch/zc2; PATH={OUT}/scratch:/usr/bin:/bin; zc2 {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
       ['AS8-residual-ruleB-tee', 'na', 'cp /usr/bin/cp zc; tee {OUT}/scratch/zc2 < zc > /dev/null; chmod +x {OUT}/scratch/zc2; PATH={OUT}/scratch:/usr/bin:/bin; zc2 {NA}/base/report.md {NA}/docs/report.md', A, 'allow'],
@@ -1487,6 +1500,8 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       ...Object.fromEntries(['AS8-ruleB-extra4-cp', 'AS8-ruleB-extra4-mv', 'AS8-ruleB-extra4-ln', 'AS8-ruleB-extra4-install', 'AS8-ruleB-extra4-catredir',
         'AS8-ruleB-extra4-filedst', 'AS8-ruleB-extra4-out', 'AS8-residual-ruleB-cp-r-dir'].map((id) => [id, { zc: CP }])),
       ...Object.fromEntries(['AS8-ruleB-tests2-cp', 'AS8-ruleB-tests2-mv', 'AS8-ruleB-tests2-install', 'AS8-ruleB-tests2-cpt'].map((id) => [id, { c2x: CP }])),
+      'AS8-ruleB-relsym-mv': { stage_s: CP }, 'AS8-ruleB-relsym-mv-out': { stage_s: CP }, 'AS8-ruleB-relsym-hardln': { h_s: CP },
+      'AS8-ruleB-relsym-cpa': { a_s: CP }, 'AS8-ruleB-relsym-cpa-out': { a_s: CP }, 'AS8-ruleB-relsym-cpP': { p_s: CP }, 'AS8-ruleB-relsym-cpr': { r_s: CP },
       'AS8-alias-unread-operand-cp': { g: CP },   // the alias the file names, of cp
       'AS8-residual-backup-explicit-path': { '{OUT}/scratch/xzz': CP },   // the backup of a copy of cp, run by its full path
     };
@@ -1604,7 +1619,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# RESTS_ON_PROBES: ${RESTS_ON_PROBES.size} rows whose rebinding the gate cannot know; ${ranHere.size} of ${rows.length} rows ran their legs here; the rest ran none here: ${rows.map((r) => r[0]).filter((id) => !ranHere.has(id) && !RESTS_ON_PROBES.has(id) && !guardOnly.includes(id)).join(', ') || 'none'}`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 284 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 68, AS6: 19, AS7: 17, AS8: 291 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived
