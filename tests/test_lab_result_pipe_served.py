@@ -17,7 +17,10 @@ THE PINS.
      fs.writeSync) leaves exactly the pipe's 8192 bytes, and the reader refuses the cut line.
   2. A pipe already full when the driver writes its line: the driver waits (alive, its file already written) until the
      reader drains, and the line then arrives whole behind the bytes that filled the pipe. A writer that gave up on
-     EAGAIN or kept a partial write would print no whole line, and the reader would refuse.
+     EAGAIN would print no line, and the reader would refuse. The writer under the line, writeAll, also resumes each
+     partial write: a text four times the pipe's size arrives whole while the reader drains (a non-blocking write past
+     PIPE_BUF puts in what fits and returns the count). And the line starts its own line after a partial line
+     another write left on stdout.
   3. The helper's own refusals, by execution: a target whose directory does not exist, no target at all, and a record
      JSON cannot serialize each print a line with resultWriteError and no file, and the reader refuses each with the
      error; a died reason rides on the line from the record or from opts; an array record round-trips; no temp file
@@ -60,6 +63,8 @@ else if (c === "died") lab.writeResult(t, { a: 1, died: "the tab strip never mou
 else if (c === "array") lab.writeResult(t, [{ engine: "chromium" }, { engine: "webkit" }], { died: "the webkit leg stopped" });
 else if (c === "bigint") lab.writeResult(t, { n: 10n });
 else if (c === "undefined") lab.writeResult(t, undefined);
+else if (c === "writeall") { lab.writeAll(1, "w".repeat(4 * Number(process.env.PIPE_BYTES)) + "\n"); lab.writeResult(t, { ok: true }); }
+else if (c === "partial") { lab.writeAll(1, "progress with no line feed"); lab.writeResult(t, { ok: true }); }
 else if (c === "lines") {
   lab.writeLine("KPID", 4242);
   const refused = [];
@@ -129,7 +134,7 @@ class EightKiBPipe(unittest.TestCase):
 
     def spawn(self, script, w, case=None, tgt=None):
         env = {k: v for k, v in os.environ.items() if k != "LAB_RESULT"}
-        env.update(LAB_LIB=lab_result.LIB, PLANT_BYTES=str(PLANT_BYTES))
+        env.update(LAB_LIB=lab_result.LIB, PLANT_BYTES=str(PLANT_BYTES), PIPE_BYTES=str(PIPE))
         if case:
             env["CASE"] = case
         if tgt is not None:
@@ -201,6 +206,24 @@ class EightKiBPipe(unittest.TestCase):
         err.seek(0)
         self.assertTrue(out.startswith(filler.decode()), "the bytes that filled the pipe come first, untouched")
         self.assertEqual(lab_result.read(self.proc(out, err.read().decode()), tgt), {"ok": True})
+
+    def test_write_all_resumes_partial_writes_while_the_reader_drains(self):
+        tgt = lab_result.target(self.lab, "writeall")
+        r, w = self.small_pipe()
+        p, err = self.spawn("driver.cjs", w, "writeall", tgt)
+        out = _drain(r).decode()   # read while the driver writes: each write past the pipe's room is partial
+        self.assertEqual(p.wait(timeout=NODE_TIMEOUT), 0)
+        err.seek(0)
+        lines = out.split("\n")
+        self.assertEqual(lines[0], "w" * (4 * PIPE), "the text four times the pipe's size arrived whole")
+        self.assertEqual(lab_result.read(self.proc(out, err.read().decode()), tgt), {"ok": True})
+
+    def test_the_line_starts_its_own_line_after_a_partial_line(self):
+        tgt = lab_result.target(self.lab, "partial")
+        rc, out, err = self.run_after_exit("driver.cjs", "partial", tgt)
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out.startswith("progress with no line feed\n" + lab_result.PREFIX), out[:200])
+        self.assertEqual(lab_result.read(self.proc(out, err), tgt), {"ok": True})
 
     # 3. the helper's refusals and its fields, by execution
     def refused(self, case, tgt, *needles):
