@@ -3168,16 +3168,18 @@ def wait_leg(p):
 
 
 def stop_leg(p):
-    """A leg's process group gets SIGTERM, five seconds, then SIGKILL; then its reparented descendants are killed."""
-    for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, None)):
-        try:
-            os.killpg(p.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            pass
-        try:
-            p.wait(timeout=wait)
-        except subprocess.TimeoutExpired:
-            pass
+    """A leg's process group gets SIGTERM, then up to five seconds until the group is gone (the leg exited and reaped and
+    no process left in its group: _group_left, the wait _end_git gives a git's group), then SIGKILL for what is left of
+    it; then its reparented descendants are killed. The wait is for the group, not the leg alone: waiting for the leg
+    alone, a leg that died of SIGTERM at once (one with no handler for it) left the rest of its group a few milliseconds
+    (1 to 10 ms measured) to act on the SIGTERM before the SIGKILL."""
+    _signal_group(p.pid, signal.SIGTERM)
+    end = time.monotonic() + 5
+    while _group_left(p) and time.monotonic() < end:
+        time.sleep(0.01)
+    if _group_left(p):
+        _signal_group(p.pid, signal.SIGKILL)
+    p.wait()
     reap_descendants()
 
 
