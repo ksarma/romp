@@ -170,7 +170,7 @@ synthetic five-hour window reported ten minutes before, read at an opening), the
 which the bound ends (Usage enabled beside USAGE_ERR, the reading kept), the bound raised to RACE_MS, and Usage clicked
 with the tap's own pull held: the Usage modal is up within 1 s of the click over that reading, its window section and its
 age line (updated 10m ago), and once the held pull is answered with a fresher reading of the same window, reported then,
-the open modal follows it (updated just now). Then the deploy
+the open modal follows it (updated just now), its By session button the node it was before. Then the deploy
 skew, on a page of its own at 390px:
 the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
@@ -243,7 +243,11 @@ reading yet: the readings emptied). The second turn is red too under a mutant th
 (`else return;`: the readout empty and Usage disabled beside Couldn't load), and the first turn's read through the card's
 surface under one whose late failure sets the flag and skips only the card's tell (Couldn't load there and the flag true,
 where the card's own read still shows No reading yet), in Chromium. The forward after a failed read is red without the
-forward's clear of the flag (Usage enabled beside USAGE_ERR once the readout fills, in Chromium). The row and the tabs are red where Usage keeps two
+forward's clear of the flag (Usage enabled beside USAGE_ERR once the readout fills, in Chromium). The tap opening at once
+is red where the tap's own pull ran before the panel opened, with no bound (nothing open 1 s after the click, in
+Chromium, WebKit and Firefox); its follow under a mutant whose renderRows leaves an open panel as it is (the modal still
+says updated 10m ago); and its button where the repaint rebuilds the whole panel (the By session button replaced), in
+Chromium. The row and the tabs are red where Usage keeps two
 lines' height in every state (Usage 43.64px tall, 43.65 in Firefox, where Restart kernel is 28.8, at every width in both
 themes); under a
 mutant that lays the loader out only while it shows (Usage 106px wide loading and 82 with a reading at every width, and at
@@ -794,7 +798,7 @@ def _failed_problems(engine, fr):
     with USAGE_ERR beside its name, past the name's right edge, with the loader out of the layout (PR 976's round 2), one
     click opening the Usage modal; and, the shell holding a window reading of its own and the card's pull ended by its bound,
     a tap whose own pull is held opens the Usage modal within 1 s over that reading with its age, and the open modal follows
-    the held pull's fresher answer (PR 976's round 2)."""
+    the held pull's fresher answer with its By session button left in place (PR 976's round 2)."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -967,6 +971,11 @@ def _failed_problems(engine, fr):
     if not at.get("followed") or af.get("up") is not True or "just now" not in (af.get("age") or ""):
         out.append("%s: the tap's held pull ended with a fresher reading, and the open Usage modal did not follow it: followed %r, "
                    "%r" % (where, at.get("followed"), af))
+    # ...and the repaint left the modal's By session button in place, the same node (ui/CLAUDE.md: a button a re-render rebuilds
+    # loses the click pressed on it, and the refresh can land during that press)
+    if at.get("followed") and at.get("keptButton") is not True:
+        out.append("%s: the open Usage modal's repaint replaced its By session button (a press on it as the refresh landed would be "
+                   "lost): %r" % (where, at.get("keptButton")))
     return out
 
 

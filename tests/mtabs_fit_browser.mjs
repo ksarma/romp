@@ -58,7 +58,8 @@
 // window reading of its own (a pull answered with a synthetic one, read at an opening), the card opened over a pull held past
 // cfg.hangMs (the bound set on the shell) and Usage read, the bound raised to cfg.raceMs, Usage clicked with the tap's own pull
 // held, the Usage modal awaited for 1 s and its content read (its window section, its age line), then the held pull answered
-// with a fresher synthetic reading and the open modal read once its age line follows.
+// with a fresher synthetic reading and the open modal read once its age line follows, its By session button the node it was
+// before.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -915,6 +916,8 @@ try {
         at.tapHeld = held.length;
         at.clicked = await kit.shellNow(sf);
         at.before = await modalNow();
+        // the By session button, marked before the follow: the open modal's repaint must leave the same node in place
+        await page.evaluate(() => { const b = document.getElementById("ru-bysession"); if (b) b.__mtabsKept = true; });
         mode = "lab";
         for (const route of held.splice(0)) {
           try { await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(barsReading(true)) }); } catch (e) { /* the page ended it first */ }
@@ -924,6 +927,8 @@ try {
           return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block" && !!age && /just now/.test(age.textContent); },
         null, { timeout: 10000 }).then(() => true, () => false);
         at.after = await modalNow();
+        at.keptButton = await page.evaluate(() => { const all = document.querySelectorAll("#ru-bysession");
+          return all.length === 1 && all[0].__mtabsKept === true; });
         await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } });
       }
       await page.evaluate(() => { delete window.__rompUsagePullMs; });

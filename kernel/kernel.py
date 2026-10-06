@@ -71646,8 +71646,11 @@ tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
 // nothing on screen). Every other tap pulls first and opens on the pull's end, as before. Both pulls are bounded (boundedPull).
 // The panel's content, h being tipHTML over the readings: the windows and spend, and under them the deeper level, one tap away
 // here too (T247): the rail and its click do not exist on a phone, and a compact view must never dead-end (progressive
-// disclosure). openIt paints it, and renderRows repaints it on each write while the panel is open.
-function modalPaint(h){
+// disclosure). openIt paints it, and renderRows repaints it on each write while the panel is open. A repaint replaces the
+// readings above the By session row and leaves the row in place: a button a re-render rebuilds loses the click pressed on
+// it (ui/CLAUDE.md, buttons stay click-safe across re-renders), and a refresh can land while that button is pressed.
+function modalPaint(h){var more=tip.querySelector('.ru-tip-more');
+if(more&&more.parentNode===tip){while(tip.firstChild&&tip.firstChild!==more)tip.removeChild(tip.firstChild);more.insertAdjacentHTML('beforebegin',h);return;}
 tip.innerHTML=h+'<div class=ru-tip-more><button class=rsp-btn id=ru-bysession>By session \u2192</button></div>';   // its own row, the hover's button size (T247b review: inside .ru-tip-age it read as a 10px annotation at .55)
 var bs=document.getElementById('ru-bysession');if(bs)bs.onclick=function(e){e.stopPropagation();var off=window.__rompUsageClose;if(off)off();openSpend();};}
 window.__rompUsagePanel=function(){
