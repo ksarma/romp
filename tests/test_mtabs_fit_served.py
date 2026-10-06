@@ -172,7 +172,10 @@ synthetic five-hour window reported ten minutes before, read at an opening), the
 which the bound ends (Usage enabled beside USAGE_ERR, the reading kept), the bound raised to RACE_MS, and Usage clicked
 with the tap's own pull held: the Usage modal is up within 1 s of the click over that reading, its window section and its
 age line (updated 10m ago), and once the held pull is answered with a fresher reading of the same window, reported then,
-the open modal follows it (updated just now), its By session button the node it was before. Then the deploy
+the open modal follows it (updated just now), its By session button the node it was before. And the refresh behind that
+panel never opens it: the card's pull held past HANG_MS again (Usage enabled beside USAGE_ERR), Usage clicked with the
+tap's own pull held, the modal up within 1 s and then closed while that pull is held, and once the pull's fresher answer
+has run in the shell (its flag cleared) the modal is still closed, the backdrop off. Then the deploy
 skew, on a page of its own at 390px:
 the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
@@ -249,7 +252,10 @@ forward's clear of the flag (Usage enabled beside USAGE_ERR once the readout fil
 is red where the tap's own pull ran before the panel opened, with no bound (nothing open 1 s after the click, in
 Chromium, WebKit and Firefox); its follow under a mutant whose renderRows leaves an open panel as it is (the modal still
 says updated 10m ago); and its button where the repaint rebuilds the whole panel (the By session button replaced), in
-Chromium. The row and the tabs are red where Usage keeps two
+Chromium. The closed panel is red under a mutant whose refresh behind the panel opens it on its end (the modal up again
+once the held pull's answer has run, in Chromium), and where the tap's own pull ran before the panel opened, with no
+bound (nothing open 1 s after the click, then the modal opened by that pull's answer, in Chromium, WebKit and Firefox).
+The row and the tabs are red where Usage keeps two
 lines' height in every state (Usage 43.64px tall, 43.65 in Firefox, where Restart kernel is 28.8, at every width in both
 themes); under a
 mutant that lays the loader out only while it shows (Usage 106px wide loading and 82 with a reading at every width, and at
@@ -800,7 +806,8 @@ def _failed_problems(engine, fr):
     with USAGE_ERR beside its name, past the name's right edge, with the loader out of the layout (PR 976's round 2), one
     click opening the Usage modal; and, the shell holding a window reading of its own and the card's pull ended by its bound,
     a tap whose own pull is held opens the Usage modal within 1 s over that reading with its age, and the open modal follows
-    the held pull's fresher answer with its By session button left in place (PR 976's round 2)."""
+    the held pull's fresher answer with its By session button left in place (PR 976's round 2); and, the panel opened that way
+    again and closed while the tap's pull is held, that pull's answer leaves it closed (PR 976's round 2)."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -978,6 +985,29 @@ def _failed_problems(engine, fr):
     if at.get("followed") and at.get("keptButton") is not True:
         out.append("%s: the open Usage modal's repaint replaced its By session button (a press on it as the refresh landed would be "
                    "lost): %r" % (where, at.get("keptButton")))
+    # ...and the refresh behind that panel never opens the panel itself (PR 976's round 2, romp-manager's first rule): the card's
+    # pull again ended by its bound over the reading, a tap whose own pull is held opens the modal within 1 s, the modal is
+    # closed while that pull is held, and once the pull's fresher answer has run in the shell the modal is still closed, the
+    # backdrop off
+    cf = fr.get("closedFirst") or {}
+    if not cf.get("cardHeld") or not cf.get("cardEnded") or cf.get("reading") is not True or not_enabled_failed(cf.get("usage")):
+        out.append("%s: the closed panel's premise (the card's pull held and ended by its bound, the reading kept, Usage enabled "
+                   "beside %r): %r" % (where, USAGE_ERR, {k: cf.get(k) for k in ("cardHeld", "cardEnded", "reading", "usage")}))
+    ck = cf.get("clicked") or {}
+    if not cf.get("opened") or not cf.get("tapHeld") or ck.get("settingsOpen") or ck.get("cardHidden") is not True \
+            or ck.get("acts") != ["usage"]:
+        out.append("%s: the closed panel's premise (a tap whose own pull is held, closing the card, posting phoneAct usage and "
+                   "opening the Usage modal within 1 s): opened %r, held %r, %r" % (where, cf.get("opened"), cf.get("tapHeld"), ck))
+    cl = cf.get("closed") or {}
+    if cl.get("up") is not False or cl.get("backOn") is not False or cl.get("closeSet") is not False:
+        out.append("%s: the closed panel's premise (the Usage modal closed while the tap's pull is held): %r" % (where, cl))
+    ca = cf.get("after") or {}
+    if not cf.get("answered"):
+        out.append("%s: the tap's held pull was answered with a reading and the shell's flag never cleared (the answer never ran in "
+                   "the shell, the closed panel's premise): %r" % (where, ca))
+    elif ca.get("up") is not False or ca.get("backOn") is not False or ca.get("closeSet") is not False:
+        out.append("%s: the Usage modal was closed while the tap's pull was held, and that pull's answer opened it again: %r" % (
+            where, ca))
     return out
 
 

@@ -59,7 +59,9 @@
 // cfg.hangMs (the bound set on the shell) and Usage read, the bound raised to cfg.raceMs, Usage clicked with the tap's own pull
 // held, the Usage modal awaited for 1 s and its content read (its window section, its age line), then the held pull answered
 // with a fresher synthetic reading and the open modal read once its age line follows, its By session button the node it was
-// before.
+// before; then the card opened again over a pull held past cfg.hangMs, Usage clicked with the tap's own pull held, the modal
+// awaited for 1 s and closed, the held pull answered with a fresher synthetic reading, and the modal read once that answer
+// has run in the shell.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -933,6 +935,51 @@ try {
       }
       await page.evaluate(() => { delete window.__rompUsagePullMs; });
       fr.atOnce = at;
+    }
+    // ...and the refresh behind that panel never opens the panel itself (PR 976's round 2, romp-manager's first rule): the card
+    // opened again over a pull held past cfg.hangMs, which the bound ends (the newest read failed, the shell's reading kept),
+    // the bound raised to cfg.raceMs, Usage clicked with the tap's own pull held and the modal awaited for 1 s, then the modal
+    // closed (window.__rompUsageClose, what a tap on the backdrop runs) while that pull is still held. The held pull is then
+    // answered with a fresher reading, and the modal read once the answer has run in the shell: the shell's flag cleared, which
+    // the answer writes before the readings, and in the same task as whatever runs on the pull's end
+    {
+      const cf = {};
+      // the modal's state: up (the backdrop on, the tip a modal and shown), the backdrop alone, and the close hook set
+      const modalState = () => page.evaluate(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip");
+        return { up: !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block",
+                 backOn: !!b && b.classList.contains("on"), closeSet: typeof window.__rompUsageClose === "function" }; });
+      await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } window.__mtabsActs.length = 0; });
+      mode = "hang";
+      await page.evaluate((ms) => { window.__rompUsagePullMs = ms; }, cfg.hangMs);
+      const sf = await kit.openCard();
+      for (let i = 0; i < 50 && !held.length; i++) await sleep(100);
+      cf.cardHeld = held.length;
+      cf.cardEnded = await sf.waitForFunction(() => { const x = document.getElementById("rs-pact-usage-wait"); return !!x && x.hidden; }, null, { timeout: cfg.hangWaitMs }).then(() => true, () => false);
+      await frames(page);
+      for (const route of held.splice(0)) { try { await route.abort(); } catch (e) { /* the page aborted it first */ } }
+      cf.usage = await kit.usageNow(sf);
+      cf.reading = await page.evaluate(() => typeof window.__rompUsageReading === "function" && window.__rompUsageReading());
+      await page.evaluate((ms) => { window.__rompUsagePullMs = ms; }, cfg.raceMs);
+      if (cf.usage) {
+        await page.mouse.click(cf.usage.left + cf.usage.w / 2, cf.usage.top + cf.usage.h / 2);
+        cf.opened = await page.waitForFunction(() => { const b = document.getElementById("ru-back"), t = document.getElementById("ru-tip");
+          return !!b && b.classList.contains("on") && !!t && t.classList.contains("ru-modal") && t.style.display === "block"; }, null, { timeout: 1000 }).then(() => true, () => false);
+        for (let i = 0; i < 20 && !held.length; i++) await sleep(50);
+        cf.tapHeld = held.length;
+        cf.clicked = await kit.shellNow(sf);
+        await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } });
+        await frames(page);
+        cf.closed = await modalState();
+        mode = "lab";
+        for (const route of held.splice(0)) {
+          try { await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(barsReading(true)) }); } catch (e) { /* the page ended it first */ }
+        }
+        cf.answered = await page.waitForFunction(() => typeof window.__rompUsageFailed === "function" && window.__rompUsageFailed() === false, null, { timeout: 10000 }).then(() => true, () => false);
+        await frames(page);
+        cf.after = await modalState();
+      }
+      await page.evaluate(() => { try { window.__rompUsageClose && window.__rompUsageClose(); } catch (e) { /* no modal */ } delete window.__rompUsagePullMs; });
+      fr.closedFirst = cf;
     }
     out.failedReads = fr;
     await context.close();
