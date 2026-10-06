@@ -200,7 +200,7 @@ on:
   # The weekly macOS run stays PAUSED (2026-10-04) until the first month's bill on the private runner is
   # read, in both shapes: on a private repository every run is billed, and the macOS cells bill at
   # about ten times the Linux rate (about 1,320 Linux minutes' worth in run 36716348831, the header's
-  # figure). No matrix expression below names the schedule event, so the smaller shape's weekly run
+  # figure). No matrix job's os: expression names the schedule event, so the smaller shape's weekly run
   # takes no macOS cell; bringing them back is a change to the three os: expressions
   # (tests/test_ci_macos_schedule.py holds the schedule lines and the pause). From 2026-09-16 to
   # 2026-10-04 the macOS cells ran ONCE A WEEK on their own: with the manual switch alone the release
@@ -454,9 +454,15 @@ jobs:
         # the constant. A second residual, of the interpreter having the SDK: on the 3.10 to 3.13 cells (and
         # the two macOS cells; not 3.14t, which defers annotations) tests/test_session_host.py run ALONE fails
         # 8 SpawnSecrets tests, its Popen patch live when the module first imports the SDK and mcp's win32
-        # utilities evaluate subprocess.Popen[bytes] at class definition; the one pytest invocation below
-        # collects an SDK-importing module first and is green. Pre-existing on any such interpreter; the
-        # class's docstring has the detail; a follow-up.
+        # utilities evaluate subprocess.Popen[bytes] at class definition. It is green when the pytest process
+        # that runs it also collects a module that imports the SDK, wherever that module sorts, since pytest
+        # collects every file before any test runs: each macOS cell's one invocation collects the whole suite,
+        # and on Linux the shard that holds tests/test_session_host.py collects such modules, today shard 2,
+        # with tests/test_host_transport.py among them. That is where tests/conftest.py's rule (its CI's shards
+        # section) puts the files today, and nothing keeps an SDK importer in that file's shard: a change to the
+        # shards that leaves it in a shard with none turns the 3.10 to 3.13 shard jobs that run it red with
+        # these 8 SpawnSecrets failures. Pre-existing on any such interpreter; the class's docstring has the
+        # detail; a follow-up.
         # The constant pins the SDK alone. Its dependency closure resolves fresh on every run (26 packages on
         # 2026-09-20: the 3.12 cell's pip line on run 35518107329 lists 27 names with the SDK, anyio among
         # them), so a red that no commit explains is a transitive release, and the pin test below does not

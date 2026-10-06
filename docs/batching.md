@@ -76,9 +76,12 @@ reached main (`finish` runs it, and it also runs on every push to main).
    (`Secret scan on push (gitleaks)`, one for the push when its commit carries
    `.github/workflows/secret-scan.yml`, which a branch cut from main before that file landed does
    not until it merges main), the tier-label check after
-   the PR opens or reopens or its labels change, not after a push, and Tier policy's skipped rows,
-   which evaluate nothing on the fork. The tests run in your own sweep at your head (item 3), in the
-   batch's sweep at the batch head, and in the one CI run on the batch branch.
+   the PR opens or reopens or its labels change, not after a push, Tier policy's skipped rows,
+   which evaluate nothing on the fork, and, on a PR that touches the site's inputs (`docs/`,
+   `mkdocs.yml`, `overrides/` or `docs.yml` itself), `docs.yml`'s `build` check (a strict
+   `mkdocs build`) and its `deploy` row, which always skips on a pull request. The tests run in
+   your own sweep at your head (item 3), in the batch's sweep at the batch head, and in the one CI
+   run on the batch branch.
 
 ## If you are the maintainer
 

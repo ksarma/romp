@@ -2368,9 +2368,10 @@ def pytest_collectreport(report):
 # THE RULE (weighted, 2026-10-05): a test file named in HEAVY_MODULES is in the shard the list gives it; every other test
 # file's shard is the SHA-256 digest of its path relative to the repository root, written with forward slashes
 # ("tests/test_x.py"), its first eight bytes read as a big-endian integer, modulo SHARD_COUNT, plus one (hash_shard).
-# shard_of applies both. It is a function of the path alone, so a new test file always lands in exactly one shard, and
-# adding, removing or renaming a file moves no other file. Python's built-in hash() is not used: it is salted per
-# process for strings, so two processes could disagree.
+# shard_of applies both. It is a function of the path alone, so a new test file under tests/ always lands in exactly one
+# shard (WHERE IT ACTS below says why one outside tests/ does not), and adding, removing or renaming a file moves no
+# other file. Python's built-in hash() is not used: it is salted per process for strings, so two processes could
+# disagree.
 # Why a hash for most files: what a worker holds grows over its process's life (every module it imports stays
 # imported, and the run's caches only grow; a collection of the whole suite alone held more than 5 GB on 2026-10-04,
 # and of one shard about 3.2 GB), so a shard's peak depends on which files, and how many, its one process collects and
@@ -2408,7 +2409,10 @@ HEAVY_MODULES = {
 # such as a census that collects the tree, would otherwise collect one shard of it). It leaves it in the environment of
 # an xdist controller, which runs no test and whose workers inherit its environment when it starts them; each worker
 # reads it at its own import and removes it in its own configure. A file named on the command line is not asked about:
-# pytest consults pytest_ignore_collect only for the paths it finds under the ones it was handed.
+# pytest consults pytest_ignore_collect only for the paths it finds under the ones it was handed. Nor is a test file
+# outside tests/: pytest consults this file's hooks only for paths under tests/, so every shard collects such a file
+# (ci.yml's Run pytest step collects from the repository root), and tests/test_ci_shards.py's census goes red on it,
+# naming it among the files in two or more shards. git ls-files lists no test file outside tests/ (2026-10-06).
 # tests/test_ci_shards.py holds the shards to a partition of the collected test files, each in one shard, none in two,
 # none left out.
 # The rule lives in this file rather than a module of its own because this file imports no module of the repository

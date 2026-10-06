@@ -581,12 +581,15 @@ PYTHON_REMEDY = ("<python>: a Python of the version CI's served step runs, or pa
 
 # The pytest command the runner builds (pytest_cmd): `<python> -m pytest tests -n <workers>`, then these flags, then
 # PYTEST_ISOLATION and one --ignore per PYTEST_IGNORED entry. Against CI's Run pytest step (.github/workflows/ci.yml,
-# `python -m pytest -q -n <2 or 0> -p no:anyio --durations=10 --timeout=600 --timeout-method=thread`, collecting from
-# the root, where test modules live only under tests/) the differences are: -n at this machine's idle cores; -p
+# `python -m pytest -q -n <1 or 0> -p no:anyio --durations=10 --timeout=600 --timeout-method=thread`, collecting from
+# the root, where test modules live only under tests/) the differences are: -n at this machine's idle cores; the
+# shard, since each of CI's Linux Python cells collects only its shard's test files (ROMP_TESTS_SHARD in the step's
+# env, read by tests/conftest.py, its CI's shards section), where the leg sets no shard and collects every file; -p
 # no:cacheprovider, so nothing is written to a .pytest_cache in the checkout; -rfEs --no-fold-skipped, which print
 # every skip with its node id and reason in the short summary beside pytest's default failures and errors (a bare -rs
 # would replace those), a subtest's skip as a SUBSKIPPED line naming its test, where the runner reads, closed, the tests
-# the leg skipped for want of the deps (deps_skipped); PYTEST_ISOLATION; and the PYTEST_IGNORED list. The served globs'
+# the leg skipped for want of the deps (deps_skipped); PYTEST_ISOLATION; the PYTEST_IGNORED list; and PYTHON_GIL=0,
+# which CI's free-threaded cell sets in the step's env and the leg does not (the module docstring). The served globs'
 # files are collected, as CI's Python cells collect them: the leg runs with no node_modules and no browser, so the
 # browser-backed tests skip there as in CI and the others in those files run with the SDK. tests/test_sweep_runner.py
 # (CiParity) holds the two sides to exactly these differences.

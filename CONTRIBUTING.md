@@ -129,7 +129,7 @@ of it (`docs/batching.md`). Each Linux interpreter
 runs as four jobs, one for each shard of the test files, each with one pytest
 worker: one worker running the whole suite does not fit the private runner's
 8 GB. `tests/conftest.py` (its CI's shards section) states the rule that puts
-each test file in one shard, so a new test file needs nothing to join one, and a run whose
+each test file under `tests/` in one shard, so a new test file there needs nothing to join one, and a run whose
 `ROMP_TESTS_SHARD` is unset, every local run, runs every file. The macOS cells
 never run on a batch push. A manual run of CI runs the Linux jobs alone unless you
 ask for macOS: tick the `macos` box in the Actions tab's "Run workflow" form, or
