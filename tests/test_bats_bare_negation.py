@@ -400,7 +400,8 @@ cell since that commit; since fork PR 940's narrow re-check, whose split of the 
 needs no bats, `43 passed, 18 skipped, 1 warning in 65.77s (0:01:05)` without, under nice 19 on a loaded box), on cells whose
 margin under their 25-minute cap was 4 to 8 minutes in fork PR #871's own CI run at the ninth commit (3.10 in 20m42s, 3.11 in
 20m13s, 3.12 in 17m07s, 3.13 in 18m20s, 3.14t in 20m45s, read off that run's job times), for a bats install of 4 s; the shell
-job carries the validation inside its 35 minutes (11m02s in that run). The polluted shape, pytest over the whole tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the eleventh commit
+job carries the validation inside the 35 minutes it had then (11m02s in that run). The polluted shape, pytest over the whole
+tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the eleventh commit
 the wrapper runs the routes pin too (seconds; bash and bats are all it needs), and not the child pytest pin, which needs pytest
 importable by the runner's python3, which the shell job does not install: it skips there saying so, and a skipping test in the
 wrapper would pin nothing (a pytest install in that job is a workflow change, not made here).

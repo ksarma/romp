@@ -682,10 +682,10 @@ class UnownedSendRefuses(_Root):
 
 class MetaCommandRefused(_Root):
     """A /model, /effort or /fast to a sid no backend owns is refused before any stamp or park (review find):
-    the meta-command arm runs ahead of the send refusal on both routes. The client hears it on the timeline's own
-    settingRefused frame (gesture command, the sid, the flag from the command head), never a bare warn, which the
-    timeline page drops and the chat reads as an in-flight create's verdict (the catch-up fold's delta review,
-    2026-09-18)."""
+    the meta-command arm runs ahead of the send refusal on both routes. The client hears the refusal on the
+    settingRefused frame (gesture command, the sid, the command head's word as the flag), never a bare warn:
+    the timeline page renders no warn, and the chat reads one arriving during a create as that create's
+    verdict."""
 
     def setUp(self):
         super().setUp()

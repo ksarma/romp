@@ -288,7 +288,20 @@ ROWS = [
 # plus _ensure_road from the fold's first review round) added 21 kernel/kernel.py functions and removed 2, named on the
 # functions entry: functions 3261 to 3280, and no other entry moved; re-derived in batch 2026-09-27a (fork PR #925), where
 # fork PR #919 added 18 functions and removed 1, named on the functions entry: functions 3261 to 3278; re-derived at fold
-# 3's merge of fork main at batch 925, both sides' functions kept: 3280 and 3278 to 3297, and no other entry moved). Until round 8 these were FLOORS, and a floor
+# 3's merge of fork main at batch 925, both sides' functions kept: 3280 and 3278 to 3297, and no other entry moved;
+# re-derived at fold 4 slice 1's merge of upstream 944537e9f into fork main 919fde73b, where the upstream side grew the
+# population: upstream PR 1849's three re-exec problem rows in kernel/sdk_backend.py (problem_row sites 14 to 17,
+# door-value sites 21 to 24), upstream PR 1876's two held-working rows through _spend_guard_row in kernel/kernel.py
+# (_spend_guard_row sites 2 to 4), and the slice's other writer calls (calls reaching the writer 359 to 384: self 202 to
+# 210, typed 109 to 126): doors 443 to 476, functions 3316 to 3409, and no other entry moved; re-derived at fold 4 slice
+# 2's merge of upstream cbc1de1e3 into slice 1's head 815badebb, where upstream PR 1889 (this fork's queued-sends offer,
+# landed) added two writer calls in kernel/sdk_backend.py, SdkSession._release_hold_at_exit's row for a thread exit the CLI
+# survives under its host and SdkSession._run's row for a failed exit release (calls reaching the writer 384 to 386: typed
+# 126 to 128; neither env-tainted, so content rows stay 13), and the slice's upstream side added 53 kernel/kernel.py
+# functions, named on the functions entry: doors 476 to 478, functions 3409 to 3462, and no other entry moved; re-derived
+# at fold 4 slice 2's merge of slice 1's merged head 2ce23298b, whose side brought fork PR 947's kernel instance lock and
+# its 16 kernel/kernel.py functions, named on the functions entry: functions 3462 to 3478, and no other entry moved). Until
+# round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
 # 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
 # head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
@@ -300,28 +313,29 @@ ROWS = [
 #   print(json.dumps(c.counts, sort_keys=True)); print(json.dumps(c.by_kind, sort_keys=True))
 #   print(len(c.existence_rows), len(c.mods["credentials.py"].fns))'
 COUNTS = {
-    "doors": 443,                  # 1 appender + 359 calls reaching it + 47 conduit and feeder call sites (_log_quietly 21,
-    #                                problem_row 14, _sdk_problem 8, _spend_guard_row 2, _note_ws_drop 2) + 21 door-as-argument
+    "doors": 478,                  # 1 appender + 386 calls reaching it + 52 conduit and feeder call sites (_log_quietly 21,
+    #                                problem_row 17, _sdk_problem 8, _spend_guard_row 4, _note_ws_drop 2) + 24 door-as-argument
     #                                sites + 10 parameter-bound functions + 2 feeder appends + 3 merge reads
-    "calls_reaching_writer": 359,  # self._log in SdkBackend 202, another receiver 109, ApiHealth's bound self._log 7,
+    "calls_reaching_writer": 386,  # self._log in SdkBackend 210, another receiver 128, ApiHealth's bound self._log 7,
     #                                a log= parameter 36, a local alias 5
     "log_param_fns": 10,           # problem_row, ApiHealth.__init__, flag_settings_path, cli_scope_supported, cli_scope_limits and
     #                                its pass-through _cli_scope_settle, helper_fast_org_env and its pass-through key_fast_org_env,
     #                                relocate_transcripts, sweep_dead_test_roots
-    "door_value_sites": 21,        # call sites passing a door as an argument: 14 problem_row (one in kernel.py, through getattr),
+    "door_value_sites": 24,        # call sites passing a door as an argument: 17 problem_row (one in kernel.py, through getattr),
     #                                ApiHealth, cli_scope_supported, cli_scope_limits, sweep_dead_test_roots, flag_settings_path,
     #                                helper_fast_org_env, relocate_transcripts
-    "problem_row_sites": 14,       # the problem_row calls that pass log= (13 in sdk_backend.py, 1 in kernel.py through getattr): the
-    #                                same 14 the door_value_sites entry credits to problem_row. 17 problem_row calls in the three files;
+    "problem_row_sites": 17,       # the problem_row calls that pass log= (16 in sdk_backend.py, 1 in kernel.py through getattr): the
+    #                                same 17 the door_value_sites entry credits to problem_row. 20 problem_row calls in the three files;
     #                                the 3 that pass no log= (main's two refused-launch sites and the directory-refused row's) bind the
     #                                conduit's door to None and are sites of NEITHER count (env_ring_census's rule: such a site files
-    #                                nothing through the conduit and is no site of it), so both entries read 14 = 17 - 3 (round 9)
+    #                                nothing through the conduit and is no site of it), so both entries read 17 = 20 - 3 (round 9;
+    #                                re-derived at fold 4 slice 1's merge, upstream PR 1849 adding three log= calls)
     "sdk_problem_sites": 8,
     "feeder_appends": 2,           # _SDK_BOOT_PROBLEMS in _sdk_problem, _WS_DROPS in _note_ws_drop
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3332,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3478,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -362,19 +376,47 @@ COUNTS = {
     #                                _remember_faulted_end, _unread_place_kind, _unread_place_reads and _release_end to
     #                                kernel/kernel.py; then at its merge of fork PR #910's head 0e437ac8b as 3316, that head's 3304
     #                                and this pull request's twelve, the census's own derivation on the merged tree; no lambda and
-    #                                no other entry moved; then on the kernel instance lock's branch as 3328, over fork main
-    #                                e015c014e's 3316: the lock adds _kernel_lock_path, _kernel_lock_write, _kernel_lock_read,
-    #                                _kernel_lock_pid_alive, _kernel_lock_when, _kernel_lock_wait with its nested _expired,
-    #                                _kernel_lock_refusal, _kernel_lock_holder_why, _kernel_lock_acquire, _kernel_lock_refuse and
+    #                                no other entry moved; then at fold 4 slice 1's merge of upstream 944537e9f into fork main
+    #                                919fde73b as 3409, the upstream side's net 63 in kernel/kernel.py (2554 to 2617) and 30 in
+    #                                kernel/sdk_backend.py (734 to 764), the census's own derivation on the merged tree;
+    #                                credentials.py did not move, and no other entry moved; then at fold 4 slice 2's merge of
+    #                                upstream cbc1de1e3 into slice 1's head 815badebb as 3462, the upstream side's 53 in
+    #                                kernel/kernel.py (2617 to 2670), each a function cbc1de1e3 has and 944537e9f lacks: PR 1911's
+    #                                _artifacts_items, _artifacts_list, _artifacts_page, _artifacts_walk and its nested absolute;
+    #                                PR 1925's _artifacts_mentions, _artifacts_signal and _artifacts_version; PR 1951's
+    #                                _active_chat_audience, _artifacts_admit and the artifactsSignal job's lambda in
+    #                                _pusher_cycle_jobs; the lambdas in _artifacts_items and _artifacts_mentions; PR 1919's
+    #                                _data_pane_css, _data_pane_markup, _data_panes, _pane_check, _pane_dir, _pane_order,
+    #                                _pane_path, _pane_served_src, _pane_source_kind, _panes_attr, _panes_data, _panes_rev,
+    #                                _panes_snapshot, define_pane and remove_pane; PR 1922's _data_pane_mobile_css and
+    #                                _generic_panes; PR 1867's _codex_agents_text, _codex_hhmm, _codex_inbox_text,
+    #                                _codex_postal_call, _codex_postal_fault, _codex_postal_http, _codex_postal_log,
+    #                                _codex_postal_send, _codex_postal_tools_on, _codex_recall_text, _codex_receipts_text and
+    #                                _codex_sender_disp; PR 1880's _codex_clear_command, _parked_clear_op and _slash_alone; PR
+    #                                1958's _chat_delivery and _note_chat_handed; PR 1954's _chat_prior_n and
+    #                                _PerfStats.build_chat_baseline_raced and build_chat_baseline_repaired; PR 1912's
+    #                                _key_in_transcript; PR 1910's _scoped_pin_after and _unpin_to_synchronized; none removed;
+    #                                sdk_backend.py (764) and credentials.py did not move, and no other entry moved; then on the
+    #                                kernel instance lock's branch as 3328, over fork main e015c014e's 3316: the lock adds
+    #                                _kernel_lock_path, _kernel_lock_write, _kernel_lock_read, _kernel_lock_pid_alive,
+    #                                _kernel_lock_when, _kernel_lock_wait with its nested _expired, _kernel_lock_refusal,
+    #                                _kernel_lock_holder_why, _kernel_lock_acquire, _kernel_lock_refuse and
     #                                _kernel_lock_announce_drain to kernel/kernel.py, the census's own derivation; no lambda and no
-    #                                other entry moved; then at fork PR 947's round-1 fix as 3331: every failure of the lock step
-    #                                a named refusal adds _kernel_lock_parse, _kernel_lock_fault and _kernel_lock_label to
+    #                                other entry moved; then at fork PR 947's round-1 fix as 3331: every failure of the lock step a
+    #                                named refusal adds _kernel_lock_parse, _kernel_lock_fault and _kernel_lock_label to
     #                                kernel/kernel.py, the census's own derivation; no lambda and no other entry moved; then at
     #                                fork PR 947's round-1 closing fix as 3332: making the lock step's stderr lines best-effort
-    #                                adds _kernel_lock_say to kernel/kernel.py, the census's own derivation; no lambda and no
-    #                                other entry moved
+    #                                adds _kernel_lock_say to kernel/kernel.py, the census's own derivation; no lambda and no other
+    #                                entry moved; then at fold 4 slice 1's merge of fork main at batch 2026-10-03a as 3425, both
+    #                                sides' functions kept (the fold's 93 and the lock's 16 over 3316; kernel/kernel.py 2617 to
+    #                                2633), the census's own derivation on the merged tree; no lambda and no other entry moved;
+    #                                then at fold 4 slice 2's merge of slice 1's merged head 2ce23298b (slice 1 with fork main
+    #                                df34f7f25, batch 2026-10-03a) as 3478, both sides' functions kept (the slice's 53 over 3409,
+    #                                and the lock's 16 named above; kernel/kernel.py 2670 to 2686), the census's own derivation on
+    #                                the merged tree; sdk_backend.py (764) and credentials.py did not move, and no other entry
+    #                                moved
 }
-CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
+CALLS_BY_KIND = {"self": 210, "typed": 128, "bound-self": 7, "param": 36, "alias": 5}   # the 386's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
 #                          re-derived unchanged at both round-8 merges of main; the vocabulary test holds the count exactly (a
 #                          floor of 20 stood here until round 8)
@@ -1547,14 +1589,14 @@ class EnvRowsPopulation(unittest.TestCase):
     def test_the_negative_half_finds_the_kernels_doors_before_asserting_none_carries_env_taint(self):
         """Round 5's regression-1: the earlier negative half passed because kernel.py contains no call named _log. The
         census finds the kernel's real doors first (the eight _sdk_problem sites, the two _note_ws_drop sites, the
-        problem_row call in _spend_guard_row with log=getattr(be, "_log", None) and its own two callers), and only then
-        asserts that none carries env taint; credentials.py has no door, and the census shows it read the file by
+        problem_row call in _spend_guard_row with log=getattr(be, "_log", None) and its own four callers, the spend guard's two
+        and upstream PR 1876's two held-working rows), and only then asserts that none carries env taint; credentials.py has no door, and the census shows it read the file by
         finding its twelve source definitions."""
         c = self.c
         kernel = [dc for dc in c.door_calls if dc.base == "kernel.py"]
         kinds = collections.Counter(dc.kind for dc in kernel)
         self.assertEqual(kinds, collections.Counter({"conduit:_sdk_problem": 8, "feeder:_note_ws_drop": 2, "conduit:problem_row": 1,
-                                                     "conduit:_spend_guard_row": 2, "feeder-append:_SDK_BOOT_PROBLEMS": 1,
+                                                     "conduit:_spend_guard_row": 4, "feeder-append:_SDK_BOOT_PROBLEMS": 1,
                                                      "feeder-append:_WS_DROPS": 1}), "the kernel's doors, found")
         self.assertEqual(sorted(fn.name for fn, _call, _lst in c.feeder_appends), ["_note_ws_drop", "_sdk_problem"])
         self.assertEqual(sorted(name for _k, name, _ln in c.merge_reads), ["_SDK_BOOT_PROBLEMS", "_WS_DROPS", "problems"])
@@ -1599,8 +1641,8 @@ class EnvRowsPopulation(unittest.TestCase):
         with_log = [(b, ln, kl) for b, ln, kl in calls if kl is not None]
         without = [(b, ln) for b, ln, kl in calls if kl is None]
         per_file = collections.Counter(b for b, _ln, _kl in with_log)
-        self.assertEqual((len(calls), len(with_log), len(without)), (17, 14, 3), "17 problem_row calls, 14 passing log=, 3 not: %r" % (calls,))
-        self.assertEqual(per_file, {"sdk_backend.py": 13, "kernel.py": 1})
+        self.assertEqual((len(calls), len(with_log), len(without)), (20, 17, 3), "20 problem_row calls, 17 passing log=, 3 not: %r" % (calls,))
+        self.assertEqual(per_file, {"sdk_backend.py": 16, "kernel.py": 1})
         self.assertEqual({b for b, _ln in without}, {"sdk_backend.py"}, "the three without log= are sdk_backend.py's: %r" % (without,))
         sites = sorted((dc.base, dc.lineno) for dc in c.conduit_calls if dc.kind == "conduit:problem_row")
         self.assertEqual(sites, sorted((b, ln) for b, ln, _kl in with_log), "the conduit's sites are exactly the log=-passing calls")
@@ -1608,7 +1650,7 @@ class EnvRowsPopulation(unittest.TestCase):
         self.assertEqual(len(sites), COUNTS["problem_row_sites"])
         door_value = sorted((b, ln) for b, ln, how, _f in c.door_value_sites if how == "parameter log of problem_row")
         self.assertEqual(door_value, sorted((b, kl) for b, _ln, kl in with_log),
-                         "the door-value entry credits problem_row with the same 14 calls, by the log= keyword's line")
+                         "the door-value entry credits problem_row with the same 17 calls, by the log= keyword's line")
         for b, ln in without:
             self.assertNotIn((b, ln), sites, "a call without log= is no site of the conduit")
             self.assertNotIn((b, ln), door_value, "and no door-as-argument site")

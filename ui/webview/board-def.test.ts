@@ -6,8 +6,9 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { FEED_BOARD, FEED_KINDS, FEED_LOCAL_KEY, CHIPS, SORT_FIELDS, KIND_IDS, RESERVED_BOARD_IDS,
-         kindOf, columnOf, columnTable, feedColumns, isNeedsYou, boardCheck, defaultBoard } from "./board-def";
+import { ORDER_RULES, FEED_BOARD, FEED_KINDS, FEED_LOCAL_KEY, CHIPS, SORT_FIELDS, KIND_IDS, RESERVED_BOARD_IDS,
+         kindOf, columnOf, columnTable, feedColumns, isNeedsYou, boardCheck, defaultBoard, adoptBoards, boardOf, knownBoards, boardById, type Board } from "./board-def";
+import { mergeHostFeeds } from "./federation";
 import { FEED_COLUMNS } from "./feed-view-state";
 
 const read = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", ...p), "utf8");
@@ -61,25 +62,46 @@ test("the sort, the grouping and the notification set equal the sources' literal
   assert.match(feedTable, /"needsYou": "needs_input"/);
   assert.equal(FEED_BOARD.needsYou, "needs_input");
   assert.match(KERNEL, /_NOTIFY_COLUMNS = tuple\(_CODE_BOARDS\["feed"\]\["notify"\]\)/, "the feed's notify set is read from the table");
-  // the kernel spells the needs-you test either as the project does (== against the board helper inline) or as this fork
-  // does in its user-todo count (the helper bound to _ny first, the skip spelled !=): the same property, either pair
-  assert.ok(/a\.get\("category", a\.get\("column"\)\) == _board_needs_you\(a\.get\("board"\)\)/.test(KERNEL)
-    || (/_ny = _board_needs_you\(a\.get\("board"\)\)/.test(KERNEL) && /a\.get\("category", a\.get\("column"\)\) != _ny/.test(KERNEL)),
-    "_needs_you_count counts the board's badge category, the column from an older card");
+  // _needs_you_count reads the one predicate (the 1861 read). The project spells the read on one line (count a card that is not
+  // provisional and passes the predicate); this fork's user-todo count spells it as the skip (`or not`) inside its per-session
+  // loop: the same property, either spelling
+  assert.ok(/if not a\.get\("provisional"\) and _card_needs_you\(a\)\)/.test(KERNEL)
+    || /if a\.get\("provisional"\) or not _card_needs_you\(a\):/.test(KERNEL),
+    "_needs_you_count reads the one predicate (the 1861 read)");
+  assert.match(KERNEL, /return nb is not None and a\.get\("category", a\.get\("column"\)\) == nb/, "the predicate: the card's own board's badge category, the column from an older card");
+  assert.match(KERNEL, /if _card_needs_you\(a\) and a\.get\("sid"\)\)/, "the ring's sids read the same predicate");
   assert.deepEqual([...FEED_BOARD.kinds], [...KIND_IDS]);
-  assert.deepEqual([...FEED_BOARD.rules], []); assert.deepEqual([...FEED_BOARD.order], []); assert.deepEqual([...FEED_BOARD.subSorts], []);
+  assert.deepEqual([...FEED_BOARD.rules], []); assert.deepEqual([...FEED_BOARD.order], ["ownerRank"]); assert.deepEqual([...FEED_BOARD.subSorts], []);   // the owner rank is what feed.ts applies (PR 1831)
 });
 
 test("feed.ts reads the definition at the section-4 sites and nowhere else", () => {
-  assert.match(FEED, /import \{ FEED_BOARD, columnOf, columnTable, feedColumns, isNeedsYou, type FeedCategory \} from "\.\/board-def";/);
+  assert.match(FEED, /import \{ FEED_BOARD, columnOf, columnTable, feedColumns, isNeedsYou, adoptBoards, boardOf, boardById, knownBoards, type Board, type FeedCategory \} from "\.\/board-def";/);
   assert.match(FEED, /column: FeedCategory;/, "the record's column is typed to the feed board's category ids");
   assert.match(FEED, /board\?: string;[^\n]*\n\s*category\?: string;/, "the record carries its board and category (phase two), optional for an older kernel's frame");
-  assert.match(FEED, /return columnOf\(FEED_BOARD, it\.category \?\? it\.column\);/, "askColumn is the definition's table over the category, the column as the older frame's fallback");
-  assert.match(FEED, /\|\| isNeedsYou\(FEED_BOARD, a\.category \?\? a\.column\)\);/, "the lens's breakthrough is the board's badge category, not a literal (the 1834 read, low 2)");
+  assert.match(FEED, /return columnOf\(boardOf\(it\), it\.category \?\? it\.column\);/, "askColumn is the card's OWN board's table over the category, the column as the older frame's fallback (phase four: a feed card keeps its key whatever board shows)");
+  assert.match(FEED, /\|\| isNeedsYou\(boardOf\(a\), a\.category \?\? a\.column\)\);/, "the lens's breakthrough is the card's OWN board's badge category, not a literal nor the feed's (the 1834 read, low 2; the 1861 read, medium)");
   assert.doesNotMatch(FEED, /\.column === "needs_input"/, "no hand comparison against the raw category id remains");
-  assert.equal((FEED.match(/for \(const \[key, label, chip\] of columnTable\(FEED_BOARD\)\)/g) || []).length, 2, "ensureCols and the focused section's twin");
-  assert.equal((FEED.match(/of feedColumns\(FEED_BOARD\)\)/g) || []).length, 4, "the four column loops (the stack, the focused layout, the order flip, the freeze badges)");
-  assert.match(FEED, /const FLY_COLS: readonly \("asks" \| "needsInput" \| "completed"\)\[\] = feedColumns\(FEED_BOARD\);/);
+  assert.equal((FEED.match(/for \(const \[key, label, chip\] of columnTable\(activeBoard\(\)\)\)/g) || []).length, 2, "ensureCols and the focused section's twin build the ACTIVE board's columns (phase four)");
+  assert.doesNotMatch(FEED, /columnTable\(FEED_BOARD\)/, "no column builder reads the feed constant by name");
+  // the fly capture and the fly walk `which`, the columns render() found differing, taken out of the active board's (this fork's
+  // per-column FLIP gate, feed-flip.test.ts): render's gate is where they read activeCols(), so the loop count is eight, not ten
+  assert.equal((FEED.match(/of activeCols\(\)\)/g) || []).length, 8, "the column loops read the active board: the stack, the focused layout, the order flip, the column builder's return, the buckets, the reconcile, the counts, the freeze badges");
+  assert.equal((FEED.match(/for \(const key of which\) \{\n\s*const colEl = cols\.lists\[key\];/g) || []).length, 2, "the fly capture and the fly walk the differing columns, each read through the active board's lists");
+  assert.match(FEED, /const differing = skipFlipOnce \? \[\] : activeCols\(\)\.filter\(/, "and the differing set is taken over the active board's columns");
+  assert.match(FEED, /const activeCols = \(\): readonly Column\[\] => feedColumns\(activeBoard\(\)\);/, "one read of the definition's column list");
+  assert.doesNotMatch(FEED, /feedColumns\(FEED_BOARD\)/);
+  assert.doesNotMatch(FEED, /FLY_COLS/, "the fly walks the active board's columns (phase four)");
+  // the census reaches every file that names the feed's columns (the 1886 read): the focused section (feed-focus.ts) stays the
+  // feed's and is gated on it, so its three literal keys are never asked of a data board's buckets; the view state's fold gate
+  // admits a data board's `<board>:<category>` keys beside the feed's three, and its order gate the feed's three alone
+  const FOCUS = read("ui", "webview", "feed-focus.ts"), VS = read("ui", "webview", "feed-view-state.ts");
+  assert.match(FEED, /const focusBuckets = showFocused && board === FEED_BOARD \? focusedEntries\(buckets, focusedSid, entrySid\) : null;/, "the section shows on the feed alone");
+  assert.match(FOCUS, /for \(const col of FEED_COLUMNS\) out\[col\] = buckets\[col\]/, "the section's entries read the feed's keys (feed-only by the gate above)");
+  assert.match(VS, /cols: foldKeys\(o\.cols\), order: col\(o\.order\)/, "folds admit a data board's keys; the order stays the feed's (phase five's for a data board)");
+  assert.match(FEED, /const foldKey = \(key: string\): string => \(activeBoard\(\) === FEED_BOARD \? key : activeBoard\(\)\.id \+ ":" \+ key\);/, "one fold-key helper");
+  assert.equal((FEED.match(/collapsedCols\.has\(foldKey\(key\)\)/g) || []).length, 2, "the fold click and the paint read it");
+  assert.match(FEED, /collapsedCols\.delete\(foldKey\(key\)\); else collapsedCols\.add\(foldKey\(key\)\);/, "and the click writes it");
+  assert.match(FEED, /if \(board === FEED_BOARD\) \{ name\.title = "drag to reorder"; wireColDrag\(name, col, key\); \}/, "the drag affordance is the feed's; a data board's chip is static");
   assert.doesNotMatch(FEED, /\[\["asks", "Working", "working"\]/, "the literal header table is gone from the renderer");
   assert.doesNotMatch(FEED, /for \(const key of \["asks", "needsInput", "completed"\]\)/, "no column loop spells the keys by hand");
   // what stays a literal in feed.ts on purpose (pinned there; asserted equal above): the two CSS default orders, the sort
@@ -167,4 +189,60 @@ test("a first-use board takes the plan's defaults and passes the check", () => {
     rules: [], sort: { key: "t", dir: "desc" }, subSorts: [], groupBy: null, order: [], notify: [], needsYou: null, kinds: ["notice"] });
   assert.equal(defaultBoard("scratch").categories[0].id, "notes", "no category named: one called notes");
   assert.match(BOARD_SRC, /^export function boardCheck\(/m, "one validator, the client half");
+});
+
+test("the feed board's order rule is the owner rank feed.ts applies: the definition says what the code does", () => {
+  // PR 1831: the owner-less notice run ranks before every session run (a stable sort after the time sort in both modes, and a
+  // rank before the session order in grouped mode); the definition names the rule the code applies, never a rank of its own
+  assert.deepEqual([...FEED_BOARD.order], ["ownerRank"]);
+  assert.match(FEED, /const ownerRank = \(sid: string\): number => isOwnerless\(sid\) \? 0 : 1;/, "the rank helper");
+  assert.match(FEED, /buckets\[k\]\.sort\(\(x, y\) => ownerRank\(entrySid\(x\)\) - ownerRank\(entrySid\(y\)\)\);/, "applied to every column after the time sort");
+  assert.match(FEED, /return isOwnerless\(s\) \? -1 : rank\.has\(s\)/, "and before the session order in grouped mode");
+  assert.ok(ORDER_RULES.includes("ownerRank"), "the rule is one the schema names");
+});
+
+// ── phase three: the data-defined boards the frame carries ──────────────────────────────────────────────────────────────
+const NOTES = { id: "notes", title: "Notes", categories: [{ id: "new", title: "New", chip: "neutral" }, { id: "kept", title: "Kept", chip: "working" }],
+  defaultCategory: "new", rules: [{ when: { needsYou: true }, category: "new" }], sort: { key: "t", dir: "desc" }, subSorts: [], groupBy: null, order: [],
+  notify: ["new"], needsYou: "new", kinds: ["notice"] };
+
+test("the frame's boards are held only after the client half of the check; a reserved id, a refused definition or a mismatched id is skipped", () => {
+  assert.equal(adoptBoards(null), 0); assert.equal(adoptBoards([NOTES]), 0, "a list is no map");
+  const n = adoptBoards({ notes: NOTES, feed: { ...NOTES, id: "feed" }, bad: { ...NOTES, id: "bad", categories: [] }, other: { ...NOTES, id: "notes2" } });
+  assert.equal(n, 1, "notes alone: the feed is code, bad fails the check (no categories), other names another id");
+  assert.deepEqual(knownBoards().map((b) => b.id), ["feed", "notes"], "code first");
+  assert.equal(boardOf({ board: "notes" }), knownBoards()[1]);
+  assert.equal(boardOf({ board: "feed" }), FEED_BOARD); assert.equal(boardOf({}), FEED_BOARD); assert.equal(boardOf({ board: "gone" }), FEED_BOARD, "an unknown id reads as the feed's");
+  assert.equal(adoptBoards({}), 0, "the map is replaced whole: a frame without boards clears the held set");
+  assert.equal(boardOf({ board: "notes" }), FEED_BOARD);
+  assert.match(FEED, /^  adoptBoards\(m\.boards\);/m, "the frame handler's read: every frame's word, a frame without the field holding none");
+});
+
+test("the federation merge folds every host's boards, the local host's definition winning on an id", () => {
+  const remoteNotes = { ...NOTES, title: "Remote notes" };
+  const merged = mergeHostFeeds({ "": { type: "feed", now: 7, boards: { notes: NOTES } }, HOSTA: { type: "feed", now: 8, boards: { notes: remoteNotes, lab: { ...NOTES, id: "lab" } } } },
+                                ["", "HOSTA"], [], [], { "": 3, HOSTA: 9 });
+  assert.deepEqual(Object.keys(merged.boards).sort(), ["lab", "notes"]);
+  assert.equal(merged.boards.notes.title, "Notes", "the local definition wins");
+  assert.equal(merged.boards.lab.id, "lab", "a remote-only board keeps the remote's definition");
+  const bare = mergeHostFeeds({ "": { type: "feed", now: 7 } }, [""]);
+  assert.deepEqual(bare.boards, {}, "no host shipped boards: an empty map, never undefined");
+});
+
+test("the cardPredict fan-back reads the card through askColumn (the 1837 round-two read, low 1)", () => {
+  assert.match(FEED, /if \(top && askColumn\(top\) !== "asks"\) \{ optimisticFollowMove\(top\.itemId, kind\); moved = true; \}/);
+  assert.doesNotMatch(FEED, /top\.column !== "working"/);
+});
+
+// ── phase four: a data board's column keys and the switch's lookup ──────────────────────────────────────────────────
+test("a data board's column key is its category id, an unknown category the board's default; the feed keeps its CSS names; boardById reads the held set", () => {
+  const FIG = { ...NOTES, id: "figures", title: "Figures" } as Board;
+  assert.equal(adoptBoards({ figures: FIG }), 1);
+  assert.equal(columnOf(FIG, "new"), "new"); assert.equal(columnOf(FIG, "kept"), "kept");
+  assert.equal(columnOf(FIG, "working"), "new", "a category the board lacks files under its default");
+  assert.equal(columnOf(FEED_BOARD, "working"), "asks", "the feed's keys are unchanged");
+  assert.deepEqual([...feedColumns(FIG)], ["new", "kept"]); assert.deepEqual(columnTable(FIG).map((t) => t[0]), ["new", "kept"]);
+  assert.equal(boardById("figures"), knownBoards()[1]); assert.equal(boardById("feed"), FEED_BOARD); assert.equal(boardById(""), FEED_BOARD);
+  assert.equal(boardById("gone"), null, "a board the frame does not carry is null: the renderer falls back and says so");
+  adoptBoards({});
 });

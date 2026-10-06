@@ -24,7 +24,9 @@ const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
 const plan = read('plans', 'file-review.md');
 const panel = read('ui', 'webview', 'file-comments.ts');
 const model = read('ui', 'webview', 'file-comments-model.ts');
-const guide = read('docs', 'guide.md');
+// the guide's Files text: the fork's paragraphs live in docs/reference.md since fold 4 moved them out of docs/guide.md (the front
+// pages are the project's, CLAUDE.md "The documentation front pages"), so `guide` reads the reference and the pins hold there
+const guide = read('docs', 'reference.md');
 const seenFixes = read('ui', 'webview', 'file-comments-seen-fixes.test.ts');
 const modelSeen = read('ui', 'webview', 'file-comments-model-seen.test.ts');
 const sendSeen = read('ui', 'webview', 'file-comments-send-seen.test.ts');

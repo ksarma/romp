@@ -242,7 +242,8 @@ class HostDirs:
     absolute state root in it, written into the link's target). The spawn wait's poll of the published socket takes the
     NAME under `hosts` too (host_sock_present; the round-7 second addendum, 2026-09-20, which also moved the connect
     road's, the orphan road's and the served road's reads onto the descriptors of open_host_dirs_if_present). What
-    still takes a PATH after the wait is the connect itself, HostTransport.connect's asyncio.open_unix_connection: a
+    still takes a PATH after the wait is the connect itself, HostTransport.connect's asyncio.open_unix_connection (in
+    connect_host_socket since PR 1849, the one connect that road and the re-exec's two share): a
     Unix socket is connected by a path in its address and no descriptor-relative form exists for it, so a hosts/
     re-pointed between the poll and the connect is connected through the link (a connect, no write). That site is
     named a PERMANENT residual at its line and in the PR's record (the round-7 fourth addendum, 2026-09-20: connect(2)
@@ -587,9 +588,11 @@ def read_journal_dir(dirs: HostDirs, offset: int = 0, refused=None):
     globs in kernel/sdk_backend.py (_host_lease_applies, whether a host held the session, asked with hosts off;
     _host_orphan_recover, whether a tail stands past the acknowledged offset). The host process never called the
     predecessor: the host reads its journal through sh.Journal.read_from, off the in-memory index of the segments it
-    wrote itself under a directory sh.owner_only_dir verified (0700, its own uid), and lists the directory for nothing
-    (tests/test_session_host.py pins both by execution and by structure), so the host side has no caller to convert and
-    asks no owner question of its own directory.
+    wrote itself under a directory sh.owner_only_dir verified (0700, its own uid). It lists the directory once, in
+    sh.Journal.reopen (upstream PR 1849's re-exec road, taken in the 2026-10-02 fold), on sh.owner_only_dir's return, to
+    rebuild the index from the segments it wrote before the exec; the host side still has no caller of the orphan reader
+    to convert and asks no owner question of its own directory (tests/test_session_host.py JournalRules pins both by
+    execution and by structure, that one listing included).
     THE MECHANISM. The caller hands the HostDirs its read descent holds (open_host_dirs_if_present: hosts/ and <sid>
     each opened O_DIRECTORY|O_NOFOLLOW and fstat-verified a directory of this uid), never a path. The listing is a
     scandir OFF THE <sid> DESCRIPTOR with a name match on the segment shape (journal_segments), so a `<sid>/` renamed
@@ -612,7 +615,8 @@ def read_journal_dir(dirs: HostDirs, offset: int = 0, refused=None):
     loose hosts/<sid>/ of ours, under a state root the peer can traverse; not a peer-writable root). A re-point of
     `<sid>` landing between a read road's descent and its listing, which the globs took through the link; and a
     journal file a peer planted under a loose `<sid>/` of ours, which the predecessor read with no owner check. WHAT
-    REMAINS by path under hosts/: the connect to the published socket (HostTransport.connect), permanent while the
+    REMAINS by path under hosts/: the connect to the published socket (HostTransport.connect; connect_host_socket, the
+    one connect, since PR 1849's re-exec added two roads to it), permanent while the
     transport is a Unix socket (connect(2) has no dir_fd form), and the sites the census lists under its other roles
     (the two directory helpers before the spawn road's descent, the descent's own first open, the host's own writes).
     `refused` None: a foreign entry raises, so a caller with no row to file gets the refusal and never a silent skip.
@@ -680,7 +684,8 @@ def host_sock_present(dirs: HostDirs, name: str) -> bool:
     hosts/ re-pointed during the wait was polled through the link and a peer's entry at the name ended the wait). The
     question is existence, as the poll asked it by path: the spawn road unlinks the name under this descriptor before
     it spawns, and the host publishes by renaming its bound socket onto it; what stands there is connected to next, by
-    path (HostTransport.connect, the one site left on a path), and a non-socket fails that connect loudly."""
+    path (HostTransport.connect through connect_host_socket, the one site left on a path), and a non-socket fails that
+    connect loudly."""
     try:
         os.stat(name, dir_fd=dirs.hosts, follow_symlinks=False)
     except OSError:
@@ -1308,6 +1313,52 @@ def host_lease_state(lease, now: float, start=None) -> str:
 
 
 # ── the transport ──────────────────────────────────────────────────────────────────────────────
+async def connect_host_socket(sock_path):
+    """(reader, writer) on the host's published socket: THE ONE CONNECT the kernel makes to a host, by PATH. Every road
+    that connects goes through here: HostTransport.connect (the attach by lease, the first connect after the spawn wait,
+    the end by lease), request_reexec (the re-exec request) and SdkBackend._host_socket_accepts (the probe of the
+    re-executed host's listener; both PR 1849's). PERMANENT RESIDUAL, closed as an open item (the round-7 fourth addendum
+    of fork PR #814's review, 2026-09-20): a Unix socket is connected by the path in its address, and connect(2) has no
+    dir_fd form, so this stays by path for as long as the transport is a Unix socket; the reasoning and its
+    precondition are stated at HostTransport.connect. One function so tests/test_hosts_path_census.py holds the
+    permanent set at exactly one site: a connect written anywhere else is an unlisted by-path syscall there."""
+    return await asyncio.open_unix_connection(sock_path)       # as each caller hands it (request_reexec's str(), the transport's own)
+
+
+async def request_reexec(sock_path, python: str, launcher: str, version: str, timeout: float = 10.0) -> dict:
+    """Ask the host behind `sock_path` to re-exec itself into the code at `launcher` under `python` (the kernel's own):
+    one connection, one `reexec` frame, one answer, then closed. The answer is the host's `reexec` frame ({"ok": True,
+    "when": "now" | "at-turn-end"} or {"ok": False, "reason"}); a host that closes without one, one older than the frame
+    (a `fault` answer), or no answer within `timeout` reads as {"ok": False, "reason": ...}. Never raises."""
+    try:
+        reader, writer = await asyncio.wait_for(connect_host_socket(str(sock_path)), timeout)   # the one connect, by path
+    except Exception as e:
+        return {"ok": False, "reason": "connect: %s" % type(e).__name__}
+    try:
+        writer.write(sh.encode_frame({"t": "reexec", "python": str(python), "launcher": str(launcher), "version": str(version)}))
+        await writer.drain()
+        fr = sh.FrameReader()
+        deadline = time.time() + timeout
+        while time.time() < deadline:                      # loop-ok: a bounded read for the one answer frame
+            try:
+                chunk = await asyncio.wait_for(reader.read(65536), max(0.05, deadline - time.time()))
+            except asyncio.TimeoutError:
+                break
+            if not chunk:
+                return {"ok": False, "reason": "the host closed the socket without an answer"}
+            for f in fr.feed(chunk):
+                if f.get("t") == "reexec":
+                    return {"ok": bool(f.get("ok")), "when": f.get("when"), "reason": f.get("reason")}
+                if f.get("t") == "fault":
+                    return {"ok": False, "reason": "the host does not know the request (%s)" % f.get("kind")}
+        return {"ok": False, "reason": "no answer within %.0f s" % timeout}
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+
 class HostTransport(_Base):
     """The SDK's Transport over the host's socket (live) or over an orphan journal (replay).
 
@@ -1326,7 +1377,8 @@ class HostTransport(_Base):
     The session's receive loop is the same either way, which is the point."""
 
     def __init__(self, sock_path=None, *, kernel=None, ack=sh.ACK_NONE, end_grace=sh.END_GRACE_DEFAULT_S,
-                 on_ack=None, on_hello=None, on_stderr=None, on_exit=None, on_fault=None, journal_dirs=None, on_refused=None):
+                 on_ack=None, on_hello=None, on_stderr=None, on_exit=None, on_fault=None, journal_dirs=None, on_refused=None,
+                 on_reexec=None):
         self.sock_path = str(sock_path) if sock_path else None
         # replay mode holds the read descent's HostDirs on the orphan's hosts/<sid>/ (the fork PR that follows #814,
         # 2026-09-21; a directory PATH through #814): the records are read by name under its descriptor
@@ -1346,6 +1398,7 @@ class HostTransport(_Base):
         #                                 transport's current offset is never the handled record's; the tag is
         self.end_grace = float(end_grace)
         self.on_ack, self.on_hello, self.on_stderr, self.on_exit, self.on_fault = on_ack, on_hello, on_stderr, on_exit, on_fault
+        self.on_reexec = on_reexec      # the host's `reexec-now`: it is about to exec into the kernel's code and close this socket
         self.journal_dir = str(journal_dirs.path) if journal_dirs is not None else None
         self.detach_mode = False
         self.hello = None
@@ -1389,8 +1442,9 @@ class HostTransport(_Base):
         # the link, no write; the peer's server then holds the attach frame (the kernel's identity and an offset) and
         # can answer hello. Its precondition is a state root a peer can WRITE: the swap of hosts/ is a rename in the
         # root, and the spawn road's helpers have tightened hosts/ itself to 0700 before the unlink, the spawn and the
-        # poll, so a peer's entry at the published name inside our hosts/ is not constructible by then.
-        self._reader, self._writer = await asyncio.open_unix_connection(self.sock_path)
+        # poll, so a peer's entry at the published name inside our hosts/ is not constructible by then. The syscall is
+        # connect_host_socket's, the one connect every road takes (PR 1849's re-exec request and listener probe too).
+        self._reader, self._writer = await connect_host_socket(self.sock_path)
         self._writer.write(sh.encode_frame({"t": "attach", "kernel": self.kernel, "ack": self.ack_offset}))
         await self._writer.drain()
         fr = sh.FrameReader()
@@ -1528,6 +1582,8 @@ class HostTransport(_Base):
                 self.on_exit(f)
         elif t == "fault" and self.on_fault:
             self.on_fault(f)
+        elif t == "reexec-now" and self.on_reexec:
+            self.on_reexec(f)
         return None
 
     def _advance(self, out: dict) -> None:

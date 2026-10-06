@@ -22,7 +22,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { FEED_BOARD, columnOf } from "./board-def";   // the board definition the lifted askColumn reads (the boards' phase two)
+import { FEED_BOARD, columnOf, boardOf } from "./board-def";   // the board definition the lifted askColumn reads (the boards' phase two)
 
 const requireCjs = createRequire(__filename);
 const F = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
@@ -60,14 +60,14 @@ test("the shared-reference premise holds: the merge reuses cached frame elements
 
 // Executed on feed.ts's OWN lines: predictFollowMoves and applyFollowMove, lifted from the source above and run under
 // esbuild with the module's three Maps stood in (pendingFollowMove, pendingMoveKind, predictedFrom), and askColumn, the skip's read
-// since the boards' phase two, lifted with them over board-def's FEED_BOARD and columnOf. The exact scenario
-// off the diagnosed trail: a cached host frame holds the blocked card; the merge serves its elements by reference; the
-// pane predicts and renders. The cache must still read needs_input afterwards; else the next re-emit "confirms" the
+// since the boards' phase two, lifted with them over board-def's boardOf and columnOf (upstream 1886: the card's own board).
+// The exact scenario off the diagnosed trail: a cached host frame holds the blocked card; the merge serves its elements by
+// reference; the pane predicts and renders. The cache must still read needs_input afterwards; else the next re-emit "confirms" the
 // prediction the pane itself painted.
 function lifted() {
   const js = requireCjs("esbuild").transformSync(askColumnBody + "\n" + predictBody + "\n" + applyBody, { loader: "ts" }).code;
-  const prelude = "const FEED_BOARD = M.FEED_BOARD, columnOf = M.columnOf;\nconst pendingFollowMove = new Map(), pendingMoveKind = new Map(), predictedFrom = new Map();\n";
-  return new Function("M", prelude + js + "\nreturn { apply: (list) => applyFollowMove(list), pending: (id, kind) => { pendingFollowMove.set(id, true); pendingMoveKind.set(id, kind); }, predictedFrom };")({ FEED_BOARD, columnOf }) as
+  const prelude = "const FEED_BOARD = M.FEED_BOARD, columnOf = M.columnOf, boardOf = M.boardOf;\nconst pendingFollowMove = new Map(), pendingMoveKind = new Map(), predictedFrom = new Map();\n";
+  return new Function("M", prelude + js + "\nreturn { apply: (list) => applyFollowMove(list), pending: (id, kind) => { pendingFollowMove.set(id, true); pendingMoveKind.set(id, kind); }, predictedFrom };")({ FEED_BOARD, columnOf, boardOf }) as
     { apply(list: any[]): void; pending(id: string, kind: "followup" | "answer"): void; predictedFrom: Map<string, any> };
 }
 test("rendering a predicted card leaves the cached frame untouched, so a re-emit cannot false-confirm", () => {

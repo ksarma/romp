@@ -612,10 +612,14 @@ class LiveTail(unittest.TestCase):
         # flagged); the loop stamps nothing of its own
         import inspect
         src = inspect.getsource(sb.SdkBackend._options)
-        self.assertIn("fast_opt = sess.fast_opt", src)
+        # the one read is the effective ask (upstream PR 1827, 2026-09-17: the session's own ask, or the machine's
+        # Always fast switch), with the switch file read before the hold, so the file and the stamp still share it
+        self.assertIn("fast_opt = sess.fast_effective(switch_on=always_fast)", src)
         self.assertIn("fast=fast_opt,", src)
         self.assertIn("sess._fast_unlocked = fast_opt", src)
-        self.assertNotIn("self._fast_unlocked = self.fast_opt", inspect.getsource(sb.SdkSession._amain))
+        amain = inspect.getsource(sb.SdkSession._amain)
+        self.assertNotIn("self._fast_unlocked = self.fast_opt", amain)
+        self.assertNotIn("self._fast_unlocked = self.fast_effective()", amain)
 
     def test_set_fast_refuses_bad_values_and_unknown_sids(self):
         d = tempfile.mkdtemp()
@@ -3946,6 +3950,18 @@ class OptionsAssembly(unittest.TestCase):
                          "no cap → the flag changes only the display; nothing to announce")
 
 
+# One retry storm as the CLI's api_retry frames report it, field for field (the values are invented):
+# attempt / max_retries / retry_delay_ms / error_status / error, where `error` is a category string from the
+# CLI's own classifier and error_status is null for a connection error that got no HTTP response. First a
+# 529, then a connection error on the next attempt.
+WIRE_RETRY_FRAMES = (
+    {"attempt": 4, "max_retries": 10, "retry_delay_ms": 2000, "error_status": 529, "error": "overloaded",
+     "uuid": "11111111-2222-3333-4444-0000000000a4", "session_id": "11111111-2222-3333-4444-555555555555"},
+    {"attempt": 5, "max_retries": 10, "retry_delay_ms": 4000, "error_status": None, "error": "unknown",
+     "uuid": "11111111-2222-3333-4444-0000000000a5", "session_id": "11111111-2222-3333-4444-555555555555"},
+)
+
+
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
 class FastModeReportedState(unittest.TestCase):
     """What fast mode is DOING comes from the CLI's init message, not from what romp asked for. The two
@@ -4061,20 +4077,19 @@ class ApiRetryState(unittest.TestCase):
     silent 'working', so a stall reads as an API issue (the user 2026-06-23). Cleared on real output."""
 
     def setUp(self):
-        # the settle (a ResultMessage) schedules the context refresh on the CURRENT loop, as it does inside the
-        # session's own loop in production; give this thread one to schedule onto (never run to completion: the
-        # coroutine is irrelevant here) so _on_message can be driven synchronously. Without it Python 3.12's
-        # get_event_loop raises "no current event loop" once any earlier set_event_loop in the process
-        # (FastModeReportedState's tearDown, an asyncio.run) has marked the policy, so the bare-payload case
-        # below was red whenever the SDK was importable (2026-09-16).
+        # A turn-end ResultMessage takes the real settle branch, which schedules the context refresh with
+        # asyncio.ensure_future on the CURRENT event loop (the session's own loop in production). This
+        # thread gets one to schedule onto; it is never run, so the refresh never executes and _on_message
+        # can be driven synchronously. Without it, once any earlier asyncio.run in the process has marked
+        # the policy, get_event_loop raises "no current event loop" on the main thread and the bare-payload
+        # case below is red whenever this class runs.
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
 
     def tearDown(self):
         pending = asyncio.all_tasks(self._loop)
         for t in pending:
-            t.cancel()   # cancelled before its first step: the coroutine never runs, and the loop closes with
-            #              nothing pending (no destroyed-task warning at collection)
+            t.cancel()   # never stepped, so the refresh coroutine does not run
         if pending:
             self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         asyncio.set_event_loop(None)
@@ -4138,29 +4153,66 @@ class ApiRetryState(unittest.TestCase):
         self.assertIsNone(sess.snapshot()["retryInfo"])
 
     def test_the_installed_clis_wire_frame_fills_the_attempt_and_the_error(self):
-        # the frame the CLI itself emits (its embedded SDKAPIRetryMessage schema, read from the 2.1.266 binary):
-        # attempt / max_retries / retry_delay_ms / error_status (null for a connection error) / error (a category
-        # STRING such as "overloaded" or "rate_limit") / no_response (optional). Until 2026-09-16 the detail read
-        # neither `attempt` (the local tally stood in) nor the string `error` (the card's reason stayed blank on
-        # every live storm); tests/test_api_health.py's ring read both all along.
+        # The frame the CLI emits for a retry attempt, field for field (WIRE_RETRY_FRAMES). The detail read
+        # neither `attempt` (the local per-frame tally stood in for it) nor the string `error` (the reason
+        # stayed blank), while the API-health ring (_ah_note_retry) read error_status and the string `error`
+        # from the same frame all along.
         d = tempfile.mkdtemp()
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
         sess = sb.SdkSession(be, {"sid": "r4", "name": "n", "cwd": d, "mode": "acceptEdits"})
         sess.inflight = 1
-        sess._on_message(_sdk.SystemMessage("api_retry", {"attempt": 4, "max_retries": 10, "retry_delay_ms": 2000,
-                                                          "error_status": 529, "error": "overloaded"}),
+        overloaded, connection = WIRE_RETRY_FRAMES
+        sess._on_message(_sdk.SystemMessage("api_retry", dict(overloaded)),
                          _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
         info = sess.snapshot()["retryInfo"]
-        self.assertEqual(info["attempt"], 4, "the CLI's own attempt number, not the local tally (1 here)")
+        self.assertEqual(info["attempt"], 4, "the CLI's attempt number, not the local tally (1 here)")
         self.assertEqual((info["max"], info["status"]), (10, 529))
-        self.assertEqual(info["error"], "overloaded", "the wire's category string is the card's reason")
-        sess._on_message(_sdk.SystemMessage("api_retry", {"attempt": 5, "max_retries": 10, "retry_delay_ms": 4000,
-                                                          "error_status": None, "error": "unknown"}),
+        self.assertEqual(info["error"], "overloaded", "the wire's category string is the reason shown")
+        sess._on_message(_sdk.SystemMessage("api_retry", dict(connection)),
                          _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
         info = sess.snapshot()["retryInfo"]
         self.assertEqual(info["attempt"], 5)
         self.assertIsNone(info["status"], "a connection error has no HTTP status: null on the wire, None here")
         self.assertEqual(info["error"], "unknown")
+
+
+class ApiRetryWireFrame(unittest.TestCase):
+    """The same frames through the same handler as ApiRetryState's wire-frame case, with a duck-typed frame
+    class in place of the SDK's SystemMessage (the handler matches on the classes it is handed), so the read
+    is checked where claude_agent_sdk is absent too, CI included."""
+
+    class _Sys:
+        def __init__(self, subtype, data): self.subtype, self.data = subtype, data
+
+    def _session(self, sid):
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sess = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": d, "mode": "acceptEdits"})
+        sess.inflight = 1
+        return sess
+
+    def _feed(self, sess, frame):
+        sess._on_message(self._Sys("api_retry", dict(frame)), _AssistantMessage, _ResultMessage, self._Sys)
+        return sess.snapshot()["retryInfo"]
+
+    def test_the_wire_frame_fills_the_attempt_and_the_error_without_the_sdk(self):
+        sess = self._session("r5")
+        for frame in WIRE_RETRY_FRAMES:
+            info = self._feed(sess, frame)
+            self.assertEqual(info["attempt"], frame["attempt"], "the CLI's attempt number, not the local tally")
+            self.assertEqual(info["max"], frame["max_retries"])
+            self.assertEqual(info["status"], frame["error_status"])
+            self.assertEqual(info["error"], frame["error"], "the wire's category string is the reason shown")
+
+    def test_the_wires_name_wins_over_the_other_spellings_of_the_same_field(self):
+        # Each read accepts three spellings of its field (the wire's, the transcript twin's, an old guess) and
+        # takes the first present. No frame the CLI sends carries two of them, so a frame built to carry them
+        # all with different values pins the precedence the reads promise: the wire's name leads.
+        mixed = dict(WIRE_RETRY_FRAMES[0], retry_attempt=7, retryAttempt=8, number=9,
+                     display_message="529 Overloaded", message="raw envelope")
+        info = self._feed(self._session("r6"), mixed)
+        self.assertEqual(info["attempt"], 4, "`attempt` before retry_attempt / retryAttempt / number")
+        self.assertEqual(info["error"], "overloaded", "the string `error` before display_message / message")
 
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
@@ -4689,8 +4741,8 @@ class ReconnectReconcilesInflight(unittest.TestCase):
             async def receive_messages(self):
                 # the CLI's init opens a TURN (one per turn, none on a turn-less connect: _on_message's init
                 # branch says so), so the fake streams it with the first dequeued turn. Streamed at connect, the
-                # SECOND client's init read as a turn the CLI started (a turn frame at inflight 0 counts as one
-                # since 2026-09-08) and held inflight at 1: red whenever the SDK was importable (2026-09-16).
+                # SECOND client's init read as a turn the CLI started (a turn frame at inflight 0 counts as one,
+                # the CLI-owned-turn count) and held inflight at 1 for the stall's whole life.
                 while True:
                     turn = await self._turnq.get()
                     StallClient.received.append(turn["message"]["content"][0]["text"])
@@ -5714,6 +5766,19 @@ class PushSessionCallback(unittest.TestCase):
         be._push_session(self.SID)
         self.assertTrue(done.wait(5), "the callback fires, on its own thread")
         self.assertEqual(got, [self.SID])
+
+    def test_the_hand_off_to_the_cli_pushes_its_one_session(self):
+        # The pop in inputs() is the moment a queued copy leaves _pending for the CLI's stdin, where no recall
+        # exists: the chat's bubble must flip from "sending… ✎" to "taken by the session" NOW, not at the next
+        # full cycle (the user 2026-09-19: the ✎ stayed for the whole wait and answered "too late"). Source-
+        # pinned like the other inputs() rules (a nested closure); the callback's mechanics are the tests here.
+        import inspect
+        src = inspect.getsource(sb.SdkSession)
+        i = src.index("self._inflight_texts.append(item)")
+        k = src.index('yield {"type": "user",', i)
+        j = src.find("self.backend._push_session(self.sid)", i, k)
+        self.assertGreater(j, 0, "the targeted push sits between the pop and the yield that hands the text to the CLI")
+        self.assertIn("self.backend._poke()", src[i:j], "…after the poke that wakes the fleet cycle")
 
     def test_without_the_callback_it_falls_back_to_the_pusher_wake(self):
         # an older kernel (or a test) that didn't wire push_session still gets the pre-existing
@@ -9078,6 +9143,9 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
                                  #                                 and since round 1 of the review the attach landing) asks as
                                  #                                 set_auth asks, its pick named, so a request that raced the
                                  #                                 landing is served by the landed process the same way
+                                 "_try_switch_reconnect": [None],   # upstream's Always fast / Retry upgrades switch (PR 1827,
+                                 #                                    the 2026-10-02 fold): a machine switch's reconnect at a quiet
+                                 #                                    moment, a mechanism's reconnect, no pick
                                  "_ask_parked_pick": ["auth"]})  # the picked closer's ask at the CLI's first init (round 5 of the
         #                                                          reviewer's review, 2026-09-19): a pick the init finds unserved with
         #                                                          no arm standing is asked as set_auth asks, its pick named
