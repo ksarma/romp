@@ -47,24 +47,25 @@ class Host {
 }
 
 type Ev = { kind: string; uuid: string };
-type Opts = { resident?: string[]; events: Ev[]; rendersOnBuild?: boolean; intent?: string | null; keepY?: number | null; keepAt?: unknown; lineShift?: (a: any) => number | null; headFrom?: number; proto?: number; older?: boolean; parked?: boolean };
-type World = { host: Host; calls: any[]; writes: any[]; rows: any[]; toasts: string[]; state: () => { pendingAnchor: string | null; pendingAnchorIntent: string | null; pendingAnchorKeepY: number | null; pendingAnchorKeepAt: unknown; anchorPendingOlder: boolean; landTrail: string[] }; jump: (uuid: string) => boolean; parked: () => boolean };
+type Opts = { resident?: string[]; events: Ev[]; rendersOnBuild?: boolean; intent?: string | null; keepY?: number | null; keepAt?: unknown; keepReload?: boolean; lineShift?: (a: any) => number | null; headFrom?: number; proto?: number; older?: boolean; parked?: boolean };
+type World = { host: Host; calls: any[]; writes: any[]; rows: any[]; toasts: string[]; state: () => { pendingAnchor: string | null; pendingAnchorIntent: string | null; pendingAnchorKeepY: number | null; pendingAnchorKeepAt: unknown; pendingAnchorKeepReload: boolean; anchorPendingOlder: boolean; landTrail: string[] }; jump: (uuid: string) => boolean; parked: () => boolean };
 
 /** A view holding `resident` uuids as rows, over a session of `events` (a unit per event); the stubbed renderWindowItems records the
  *  flag it is handed and, when `rendersOnBuild`, gives the anchor its row (the re-query then finds it); `intent` is the kind guard's,
- *  `keepY` a re-land's kept offset and `keepAt` the reader's line a reload's keep carries, `lineShift` the stubbed readingLineShift's answer
+ *  `keepY` a re-land's kept offset, `keepAt` the reader's line a reload's keep carries and `keepReload` whether the keep is the reload
+ *  restore's (render.ts pendingAnchorKeepReload), `lineShift` the stubbed readingLineShift's answer
  *  (how far that line has moved, or null when the row no longer holds it); `headFrom` and `older` shape the older-than-the-tail branch. */
 function world(o: Opts): World {
   const host = new Host();
   for (const u of o.resident ?? []) host.children.push(new Row("turn " + (o.events.find((e) => e.uuid === u)?.kind === "user" ? "turn-user" : "turn-assistant"), u));
   const s: any = { id: "A", events: o.events, status: { state: "working" }, proto: o.proto ?? 1, headFrom: o.headFrom ?? 0, regions: undefined };
   const v: any = { el: host };
-  const H: any = { host, s, v, calls: [] as any[], writes: [] as any[], rows: [] as any[], toasts: [] as string[], intent: o.intent ?? null, keepY: o.keepY ?? null, keepAt: o.keepAt ?? null, lineShift: o.lineShift, older: !!o.older, parked: o.parked ?? true,
+  const H: any = { host, s, v, calls: [] as any[], writes: [] as any[], rows: [] as any[], toasts: [] as string[], intent: o.intent ?? null, keepY: o.keepY ?? null, keepAt: o.keepAt ?? null, keepReload: !!o.keepReload, lineShift: o.lineShift, older: !!o.older, parked: o.parked ?? true,
                    build: (uuid: string) => { if (o.rendersOnBuild) { const ev = o.events.find((e) => e.uuid === uuid); host.children.push(new Row("turn " + (ev?.kind === "user" ? "turn-user" : "turn-assistant"), uuid)); } } };
   const js = liftBetween("function scrollToAnchor(uuid: string): boolean {", "/** The atoms of the transcript turn");
   const prelude = `
     const H = HOOKS;
-    let anchorPendingOlder = false, pendingAnchor = null, pendingAnchorIntent = H.intent, pendingAnchorKeepY = H.keepY, pendingAnchorKeepAt = H.keepAt, pendingAnchorClick = false, pendingAnchorQuote = null, landTrail = [];
+    let anchorPendingOlder = false, pendingAnchor = null, pendingAnchorIntent = H.intent, pendingAnchorKeepY = H.keepY, pendingAnchorKeepAt = H.keepAt, pendingAnchorKeepReload = H.keepReload, pendingAnchorClick = false, pendingAnchorQuote = null, landTrail = [];
     const activeId = "A"; const views = new Map([["A", H.v]]);
     const liveSession = () => H.s;
     const displayItems = (s) => s.events.map((e, i) => ({ kind: "event", index: i }));
@@ -83,6 +84,7 @@ function world(o: Opts): World {
     const scrollDiagRow = (kind, row) => { H.rows.push([kind, row]); };
     const document = { getElementById: (id) => (id === "content" ? { scrollTop: 500, getBoundingClientRect: () => ({ top: 0 }) } : null) };
     const writeScroll = (c, top, writer) => { H.writes.push([writer, top]); H.calls.push(["write", writer]); };
+    const rebaseBoxesAbove = () => { H.calls.push(["rebase"]); };   // the box-resize observer's baseline re-based to the layout the landing measured
     const applyCommentMarks = (sid) => { H.calls.push(["marks", sid]); };   // the window's marks, branch chips and fork spots (comments.test.ts and the served legs execute the real one)
     const highlightCiteSpan = () => null; const firstTextAtomBelow = () => null;
     const landOn = (target, uuid) => { H.calls.push(["landOn", target.dataset.uuid, uuid]); };
@@ -90,7 +92,7 @@ function world(o: Opts): World {
   `;
   const epilogue = `
     return { jump: (uuid) => { building = uuid; return scrollToAnchor(uuid); },
-             state: () => ({ pendingAnchor, pendingAnchorIntent, pendingAnchorKeepY, pendingAnchorKeepAt, anchorPendingOlder, landTrail: landTrail.slice() }) };
+             state: () => ({ pendingAnchor, pendingAnchorIntent, pendingAnchorKeepY, pendingAnchorKeepAt, pendingAnchorKeepReload, anchorPendingOlder, landTrail: landTrail.slice() }) };
   `;
   const api = new Function("HOOKS", prelude + js + epilogue)(H) as { jump: (uuid: string) => boolean; state: World["state"] };
   return { host, calls: H.calls, writes: H.writes, rows: H.rows, toasts: H.toasts, state: api.state, jump: api.jump, parked: () => H.parked };
@@ -123,14 +125,26 @@ test("a target the window does not hold, in the events: the flagged build (the t
   assert.deepEqual(w.state().landTrail, ["pointer-exact"]); assert.equal(w.state().pendingAnchor, null);
 });
 
-test("a keep-offset re-land (keepPlaceAcrossWindow's, or the reload restore's): the row back at its kept offset, no landOn, no flash", () => {
-  const w = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, keepY: -50 });
-  assert.equal(w.jump(U(4)), true);
-  assert.deepEqual(builds(w), [["renderWindowItems", 0, 4, true]]);
-  assert.deepEqual(lands(w), [], "a restore, not a jump");
-  assert.deepEqual(w.writes, [["keep-offset", 100 + 500 + 50]], "the row's top in scroll space less the kept offset");
-  assert.deepEqual(w.state().landTrail, ["pointer-keep-offset"]); assert.equal(w.state().pendingAnchorKeepY, null, "the offset is consumed");
-  assert.deepEqual(w.calls.filter((c) => c[0] === "line"), [], "a keep with no line reads none");
+test("a keep-offset re-land (keepPlaceAcrossWindow's, or the reload restore's): the row back at its kept offset, no landOn, no flash; the boxes-above observer re-based after the reload restore's keep alone", () => {
+  for (const keepReload of [false, true]) {
+    const w = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, keepY: -50, keepReload });
+    const road = keepReload ? "the reload restore's keep" : "keepPlaceAcrossWindow's keep";
+    assert.equal(w.jump(U(4)), true);
+    assert.deepEqual(builds(w), [["renderWindowItems", 0, 4, true]]);
+    assert.deepEqual(lands(w), [], "a restore, not a jump: " + road);
+    assert.deepEqual(w.writes, [["keep-offset", 100 + 500 + 50]], "the row's top in scroll space less the kept offset: " + road);
+    assert.deepEqual(w.state().landTrail, ["pointer-keep-offset"]); assert.equal(w.state().pendingAnchorKeepY, null, "the offset is consumed");
+    assert.equal(w.state().pendingAnchorKeepReload, false, "the reload flag is consumed with it: " + road);
+    assert.deepEqual(w.calls.filter((c) => c[0] === "line"), [], "a keep with no line reads none");
+    // render.ts rebaseBoxesAbove. The reload restore's keep is a place saved in the last page life, written in the layout it measured, so a
+    // growth of the boxes above whose notice arrives after this landing is in the place already, and the box-resize observer measures from
+    // here. A re-render's keep (keepPlaceAcrossWindow) was captured in the current layout, where the observer's move for a growth it has not
+    // heard of keeps the line read on screen, so no re-base. This scene is the one pin of the reload keep's re-base alone (the served
+    // keep-offset case for a reload, tests/test_math_chunk_served.py, lands inside the reload restore's pass, whose own re-base covers it
+    // too); the served settings re-render case executes the other side, red when this landing re-bases
+    assert.deepEqual(w.calls.filter((c) => c[0] === "write" || c[0] === "rebase").map((c) => c[0]), keepReload ? ["write", "rebase"] : ["write"],
+      keepReload ? "the keep-offset write, then the boxes-above baseline re-based" : "the keep-offset write, the boxes-above baseline left alone");
+  }
 });
 
 test("a reload's keep-offset re-land that carries the reader's LINE (the review of iOS item 6, round two): one write by the line's displacement, not the row's top; a line the row no longer holds lands the row's top as before; both consumed", () => {
@@ -138,7 +152,7 @@ test("a reload's keep-offset re-land that carries the reader's LINE (the review 
   // landActive); the record was taken over laid-out formulas and the row lands over formulas waiting for the math renderer, so the row's top
   // alone put the reader's line 117 px off in Chromium on a phone (the round-two lab) and the swap kept it there
   const at = { block: 18, char: 0, y: 80 };
-  const w = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, keepY: -50, keepAt: at, lineShift: () => -117 });
+  const w = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, keepY: -50, keepAt: at, keepReload: true, lineShift: () => -117 });
   assert.equal(w.jump(U(4)), true);
   assert.deepEqual(lands(w), [], "a restore, not a jump");
   assert.deepEqual(w.calls.filter((c) => c[0] === "line"), [["line", { uuid: U(4), y: -50, at }]], "the line read inside the anchor's row, after the window build rendered it");
@@ -148,7 +162,8 @@ test("a reload's keep-offset re-land that carries the reader's LINE (the review 
     "the build, its marks and fork spots, then the line read in the layout they make, then the write");
   assert.deepEqual(w.state().landTrail, ["pointer-keep-offset"]);
   assert.equal(w.state().pendingAnchorKeepY, null); assert.equal(w.state().pendingAnchorKeepAt, null, "the line is consumed with the offset");
-  const gone = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, keepY: -50, keepAt: at, lineShift: () => null });
+  assert.deepEqual(w.calls.filter((c) => c[0] === "write" || c[0] === "rebase").map((c) => c[0]), ["write", "rebase"], "the reload's keep: the write, then the boxes-above baseline re-based");
+  const gone = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, keepY: -50, keepAt: at, keepReload: true, lineShift: () => null });
   assert.equal(gone.jump(U(4)), true);
   assert.deepEqual(gone.writes, [["keep-offset", 100 + 500 + 50]], "the row's top less the kept offset when the row lacks the line");
   assert.equal(gone.state().pendingAnchorKeepAt, null);

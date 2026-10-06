@@ -163,7 +163,7 @@ class Host {
 
 type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void; preJump?: number; fetch?: boolean; readingShift?: (turn: Node, p: unknown) => number | null };
 type Opts = { spacerH?: number; n?: number; rowH?: number; clientHeight?: number; saved: number; scrollTop?: number; shown?: boolean; stick?: boolean; parked?: boolean; bottomSpacerH?: number; gap?: boolean };
-type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; geometryAt: Record<string, string[]>; land: (content: Content | null, v: any, scrollerHolds?: boolean) => void; parked: () => boolean; armed: { keepY: number | null; keepAt: unknown }[]; keepAt: () => unknown };
+type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; geometryAt: Record<string, string[]>; land: (content: Content | null, v: any, scrollerHolds?: boolean) => void; parked: () => boolean; armed: { keepY: number | null; keepAt: unknown; reload: boolean }[]; keepAt: () => unknown; keepReload: () => boolean };
 const D = 300;   // the take's delta: the head spacer re-sized by the re-measured figure over the head gap's turns
 
 /** A view of `n` rows of `rowH` under a head spacer of `spacerH` (uuids r0..), in a scroller of `clientHeight`; `saved` is the view's
@@ -250,7 +250,7 @@ function world(o: Opts, arm: Arm = {}): World {
   const prelude = `"use strict";
     const H = HOOKS;
     let pendingAnchor = H.arm.anchor ?? null, pendingAnchorT = H.arm.t ?? null, pendingAnchorIntent = null, pendingAnchorKind = null;
-    let pendingAnchorKeepY = H.arm.keepY ?? null, pendingAnchorKeepAt = null, pendingAnchorClick = false, pendingReloadScroll = H.arm.reload ?? null;
+    let pendingAnchorKeepY = H.arm.keepY ?? null, pendingAnchorKeepAt = null, pendingAnchorKeepReload = false, pendingAnchorClick = false, pendingReloadScroll = H.arm.reload ?? null;
     let seek = H.arm.seek ?? null, landTrail = [], landSettling = null, anchorPendingOlder = false;
     let landingNoticeSid = null; const liveWindowAsk = () => false; const hideLandingNotice = () => {};   // upstream 1896's landing notice: none shown in these scenes
     const activeId = "A"; const views = new Map([["A", H.v]]); const sessions = new Map([["A", { name: "web" }]]);
@@ -263,18 +263,19 @@ function world(o: Opts, arm: Arm = {}): World {
     const untakeMeasure = (v, fig) => { H.calls.push("untakeMeasure"); H.trace.push("untake"); if (!fig.parked || H.parked) return false; H.parked = true; H.spacer.h -= H.delta; return true; };   // the take undone: the figures parked again, the spacer back
     const redrawGapUnits = () => { H.calls.push("redrawGapUnits"); H.trace.push("redrawGapUnits"); };
     const sizeSpacers = () => { H.calls.push("sizeSpacers"); H.trace.push("sizeSpacers"); };
-    const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid]); H.armed.push({ keepY: pendingAnchorKeepY, keepAt: pendingAnchorKeepAt }); anchorPendingOlder = false; const hit = H.land(uuid); if (!hit && H.arm.fetch) anchorPendingOlder = true; return hit; };
+    const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid]); H.armed.push({ keepY: pendingAnchorKeepY, keepAt: pendingAnchorKeepAt, reload: pendingAnchorKeepReload }); anchorPendingOlder = false; const hit = H.land(uuid); if (!hit && H.arm.fetch) anchorPendingOlder = true; return hit; };
     const landNearestMoment = (t) => { H.calls.push(["landNearestMoment", t]); return H.landT(t); };
     const revealProgressTick = () => {}; const clearSeek = () => { H.calls.push("clearSeek"); }; const showSeekNote = () => { H.calls.push("showSeekNote"); };
     const settleSample = () => {}; const landToast = (m) => { H.toasts.push(m); }; const notifyShell = () => {};
     const writeScroll = H.writeScroll;
+    const rebaseBoxesAbove = () => { H.trace.push("rebase"); };   // the box-resize observer's baseline re-based, traced (assertRebase below)
     const scheduleRailSticky = () => {}; const updateJumpBtn = () => {}; const cssEscape = (s) => s;
     // reading-point.ts over the model: a world that records the reader's line says how far it has moved (readingShift), else the line is gone
     const readingPointShift = (sc, turn, p) => { H.trace.push("line"); return H.arm.readingShift ? H.arm.readingShift(turn, p) : null; };
     const captureReadingPoint = () => null;
   `;
-  const lifted = new Function("HOOKS", prelude + js + "\nreturn { landActive, keepAt: () => pendingAnchorKeepAt };")(H) as { landActive: (content: Content | null, v: any, scrollerHolds?: boolean) => void; keepAt: () => unknown };
-  return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, trace: H.trace, geometryAt: H.geometryAt, land: lifted.landActive, parked: () => H.parked, armed: H.armed, keepAt: lifted.keepAt };
+  const lifted = new Function("HOOKS", prelude + js + "\nreturn { landActive, keepAt: () => pendingAnchorKeepAt, keepReload: () => pendingAnchorKeepReload };")(H) as { landActive: (content: Content | null, v: any, scrollerHolds?: boolean) => void; keepAt: () => unknown; keepReload: () => boolean };
+  return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, trace: H.trace, geometryAt: H.geometryAt, land: lifted.landActive, parked: () => H.parked, armed: H.armed, keepAt: lifted.keepAt, keepReload: lifted.keepReload };
 }
 const takes = (w: World) => w.calls.filter((c) => c === "applyMeasure").length;
 const attemptAfterTake = (w: World) => { const t = w.calls.indexOf("applyMeasure"), a = w.calls.findIndex((c) => Array.isArray(c)); return t >= 0 && a >= 0 && t < a; };
@@ -574,6 +575,20 @@ test("an armed miss whose attempt REBUILT the window around the anchor's unit (s
   assert.equal(w2.spacer.h, 2000 + D, "the take stands: the row was put back over it"); assert.equal(w2.parked(), false);
 });
 
+/** The box-resize observer's baseline (render.ts rebaseBoxesAbove): landActive re-bases it in the reload restore alone, once, after the restore's
+ *  last write, so a growth of the boxes above whose notice comes after the landing is not added to the place it wrote a second time. The
+ *  keep-offset landing of the keep the restore arms re-bases inside scrollToAnchor, for that keep alone (the arm marks it the reload's,
+ *  pendingAnchorKeepReload, asserted on the roads below; scroll-to-anchor-roads.test.ts executes the landing). tests/test_math_chunk_served.py's
+ *  tab strip cases run both reload landings in a browser, each inside the reload restore's pass: the case of the restore's own landing reds
+ *  without this re-base, and the long transcript's keep-offset case reds only without both. */
+function assertRebase(w: World, reload: boolean, why: string): void {
+  const at = w.trace.flatMap((e, i) => (e === "rebase" ? [i] : []));
+  if (!reload) { assert.deepEqual(at, [], why + ": landActive re-bases the boxes-above baseline in the reload restore alone: " + JSON.stringify(w.trace)); return; }
+  const lastWrite = w.trace.reduce((m, e, i) => (e.startsWith("write ") ? i : m), -1);
+  assert.equal(at.length, 1, why + ": the reload restore re-bases the boxes-above baseline once: " + JSON.stringify(w.trace));
+  assert.ok(lastWrite >= 0 && at[0] > lastWrite, why + ": after its last write, in the layout that write landed in: " + JSON.stringify(w.trace));
+}
+
 test("the anchoring roads each take once, before the attempt, and landActive writes nothing of its own when the landing placed the reader: an anchor that hits, a moment, a seek; the reload restore and the bottom land take and write their own", () => {
   const anchor = "11111111-2222-4333-8444-000000000003";
   // an anchor that hits: scrollToAnchor placed the reader (landOn's write, inside the stub); a keep-offset re-land (pendingAnchorKeepY) the same
@@ -583,34 +598,35 @@ test("the anchoring roads each take once, before the attempt, and landActive wri
     assert.equal(takes(w), 1, "one take: " + JSON.stringify(arm)); assert.ok(attemptAfterTake(w), "before the attempt: " + JSON.stringify(arm));
     assert.deepEqual(w.writes, [], "the landing's own write placed the reader; no fallback: " + JSON.stringify(arm));
     assert.equal(w.toasts.length, 0); assert.equal(w.rows_[0].ok, true);
+    assertRebase(w, false, "an anchor that hits " + JSON.stringify(arm));
   }
   // a moment (time-only navigation): no anchor, landNearestMoment lands
   const m = world({ saved: 2350 }, { t: 1700000000, landT: true });
   m.land(m.content, m.v);
   assert.equal(takes(m), 1); assert.ok(attemptAfterTake(m));
   assert.deepEqual(m.calls.filter((c) => Array.isArray(c)), [["landNearestMoment", 1700000000]], "the moment's land, no anchor attempt");
-  assert.deepEqual(m.writes, []);
+  assert.deepEqual(m.writes, []); assertRebase(m, false, "a moment");
   // a durable seek for this tab re-arms the attempt from its uuid; a hit clears the seek
   const s = world({ saved: 2350 }, { seek: { sid: "A", uuid: "11111111-2222-4333-8444-000000000004", kind: "user" }, land: true });
   s.land(s.content, s.v);
   assert.equal(takes(s), 1); assert.ok(attemptAfterTake(s));
   assert.deepEqual(s.calls.filter((c) => Array.isArray(c)), [["scrollToAnchor", "11111111-2222-4333-8444-000000000004"]], "the seek's uuid is the attempt");
-  assert.ok(s.calls.includes("clearSeek"), "the landing event ends the seek"); assert.deepEqual(s.writes, []);
+  assert.ok(s.calls.includes("clearSeek"), "the landing event ends the seek"); assert.deepEqual(s.writes, []); assertRebase(s, false, "a seek that hits");
   // …and a seek that misses this pass keeps searching (no toast) and puts the saved place's row back over the take
   const s2 = world({ saved: 2350 }, { seek: { sid: "A", uuid: "11111111-2222-4333-8444-000000000004", kind: "user" }, land: false });
   s2.land(s2.content, s2.v);
   assert.equal(takes(s2), 1); assert.ok(s2.calls.includes("showSeekNote")); assert.deepEqual(s2.toasts, []);
-  assert.deepEqual(s2.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }]);
+  assert.deepEqual(s2.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }]); assertRebase(s2, false, "a seek that misses, the saved place's row put back");
   // the reload restore, a follow-mode reader: the bottom, after the take
   const r = world({ saved: 2350 }, { reload: { id: "A", top: 2350, stick: true, anchor: null } });
   r.land(r.content, r.v);
   assert.equal(takes(r), 1);
-  assert.deepEqual(r.writes.map((x) => [x.writer, x.stick]), [["reload-restore", true]], "the follow-mode reader lands at the bottom"); assert.equal(r.v.stick, true);
+  assert.deepEqual(r.writes.map((x) => [x.writer, x.stick]), [["reload-restore", true]], "the follow-mode reader lands at the bottom"); assert.equal(r.v.stick, true); assertRebase(r, true, "the reload restore at the bottom");
   // the reload restore with an anchor row the rebuilt DOM holds: the reload's own anchor restore, after the take
   const r2 = world({ saved: 2350, scrollTop: 0 }, { reload: { id: "A", top: 2350, stick: false, anchor: { uuid: "r3", y: -50 } } });
   r2.land(r2.content, r2.v);
   assert.equal(takes(r2), 1);
-  assert.deepEqual(r2.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "the reload's anchor row at its offset over the re-sized spacer");
+  assert.deepEqual(r2.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "the reload's anchor row at its offset over the re-sized spacer"); assertRebase(r2, true, "the reload restore of the row");
   // the same record with the reader's LINE inside that row (reading-point.ts; the review of iOS item 6): the line goes back at its offset, one
   // write by its displacement after the take, and the row's own restore does not run. The model's line sits LINE px inside r3 and was
   // recorded at 20 px under the viewport top, where the row stood at -50 before the reload (its formulas laid out then, taller, so the line
@@ -624,35 +640,37 @@ test("the anchoring roads each take once, before the attempt, and landActive wri
   assert.equal(takes(r3), 1);
   assert.deepEqual(r3.writes, [{ writer: "anchor-restore", top: 2350 + D - 40, stick: false, from: undefined }], "the line at its offset over the re-sized spacer: one write, the row's restore not run");
   assert.equal(r3.rows[3].getBoundingClientRect().top + LINE, 20, "the reader's line where it was before the reload");
-  assert.ok(r3.trace.indexOf("take") < r3.trace.indexOf("line"), "the line is read after the take, in the re-sized layout");
+  assert.ok(r3.trace.indexOf("take") < r3.trace.indexOf("line"), "the line is read after the take, in the re-sized layout"); assertRebase(r3, true, "the reload restore of the line");
   const r4 = world({ saved: 2350, scrollTop: 0 }, { reload: { id: "A", top: 2350, stick: false, anchor: { uuid: "r3", y: -50, at } }, readingShift: () => null });
   r4.land(r4.content, r4.v);
-  assert.deepEqual(r4.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "a line the fresh row lacks: the row at its offset, as before");
+  assert.deepEqual(r4.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "a line the fresh row lacks: the row at its offset, as before"); assertRebase(r4, true, "the reload restore of the row, the line gone");
   // the same record when the fresh page's window lacks its row (the reader was above the tail window): the raw top first, then the deep-link
   // land armed with the row's offset AND the line (the review of iOS item 6, round two: armed with the offset alone, the keep-offset landing put
   // the row's top back over formulas waiting for the math renderer, the line off by their growth, and the swap then kept it there; the
   // keep-offset write by the line is scrollToAnchor's, executed in scroll-to-anchor-roads.test.ts), disarmed once it lands; an older fetch on
-  // the wire keeps both armed for chatHead's re-land
+  // the wire keeps both armed for chatHead's re-land. The arm marks the keep the reload's (pendingAnchorKeepReload), so its keep-offset landing
+  // re-bases the boxes-above observer, in this pass or in chatHead's later one, and no other keep's landing does
   const away = { id: "A", top: 2350, stick: false, anchor: { uuid: "11111111-2222-4333-8444-000000000007", y: -50, at } };
   const r5 = world({ saved: 2350, scrollTop: 0 }, { reload: away, land: true });
   r5.land(r5.content, r5.v);
   assert.deepEqual(r5.writes.map((x) => x.writer), ["reload-restore"], "the raw top, the first guess; the landing's own write is scrollToAnchor's");
-  assert.deepEqual(r5.armed, [{ keepY: -50, keepAt: at }], "one attempt, the restore's (nothing else was armed), carrying the record's offset and its line");
-  assert.equal(r5.keepAt(), null, "disarmed after the landing");
+  assert.deepEqual(r5.armed, [{ keepY: -50, keepAt: at, reload: true }], "one attempt, the restore's (nothing else was armed), carrying the record's offset and its line, marked the reload's keep");
+  assert.equal(r5.keepAt(), null, "disarmed after the landing"); assert.equal(r5.keepReload(), false, "the flag with it"); assertRebase(r5, true, "the reload restore's raw first guess");
   const r6 = world({ saved: 2350, scrollTop: 0 }, { reload: away, land: false, fetch: true });
   r6.land(r6.content, r6.v);
-  assert.deepEqual(r6.armed[r6.armed.length - 1], { keepY: -50, keepAt: at });
-  assert.deepEqual(r6.keepAt(), at, "an older fetch on the wire keeps the line armed with the offset for the arrival's re-land");
+  assert.deepEqual(r6.armed[r6.armed.length - 1], { keepY: -50, keepAt: at, reload: true });
+  assert.deepEqual(r6.keepAt(), at, "an older fetch on the wire keeps the line armed with the offset for the arrival's re-land"); assertRebase(r6, true, "the raw first guess, an older fetch on the wire");
+  assert.equal(r6.keepReload(), true, "…and the keep still marked the reload's, so chatHead's re-land through the keep offset re-bases the boxes-above observer");
   const r7 = world({ saved: 2350, scrollTop: 0 }, { reload: { ...away, anchor: { uuid: away.anchor.uuid, y: -50 } }, land: true });
   r7.land(r7.content, r7.v);
-  assert.deepEqual(r7.armed[r7.armed.length - 1], { keepY: -50, keepAt: null }, "a record with no line arms the offset alone");
+  assert.deepEqual(r7.armed[r7.armed.length - 1], { keepY: -50, keepAt: null, reload: true }, "a record with no line arms the offset alone, the reload's keep all the same");
   // the bottom land: a view not yet shown, and a follow-mode view
   for (const o of [{ saved: 2350, shown: false }, { saved: 2350, stick: true }] as Opts[]) {
     const b = world(o);
     b.land(b.content, b.v);
     assert.equal(takes(b), 1, "the bottom land takes: " + JSON.stringify(o));
     assert.deepEqual(b.writes.map((x) => [x.writer, x.stick]), [["land-bottom", true]], "…and writes the bottom: " + JSON.stringify(o));
-    assert.equal(b.v.shown, true);
+    assert.equal(b.v.shown, true); assertRebase(b, false, "the bottom land " + JSON.stringify(o));
   }
 });
 
@@ -665,7 +683,7 @@ test("a hidden pane with a jump armed defers the whole land (nothing taken, noth
 // ── keepPlaceAcrossWindow: the take over its restores, and the double miss (the maintainer's round 2 ruling, tests-4 and correctness-3) ──────────────
 
 type KeepArm = { land?: boolean; older?: boolean; rebuild?: (host: Host) => void };
-type KeepWorld = { content: Content; host: Host; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; keep: (k: { uuid: string; y: number }) => boolean; state: () => { pendingAnchor: string | null; pendingAnchorKeepY: number | null; relandAsk: boolean }; parked: () => boolean };
+type KeepWorld = { content: Content; host: Host; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; keep: (k: { uuid: string; y: number }) => boolean; state: () => { pendingAnchor: string | null; pendingAnchorKeepY: number | null; relandAsk: boolean }; parked: () => boolean; reloadAt: boolean[]; keepReload: () => boolean };
 /** The reader at `scrollTop` over the same view; `parked` a figure waiting; the stubbed scrollToAnchor answers `land`, marks an older fetch
  *  when `older`, and runs `rebuild` over the host first (the window rebuilt around the anchor's unit: rows leave). */
 function keepWorld(scrollTop: number, arm: KeepArm = {}, parked = true): KeepWorld {
@@ -674,23 +692,24 @@ function keepWorld(scrollTop: number, arm: KeepArm = {}, parked = true): KeepWor
   const rows: Node[] = []; for (let i = 0; i < 10; i++) rows.push(host.add(new Node(100, "turn", "r" + i)));
   content.scrollTop = scrollTop;
   const v: any = { el: host, scrollTop, shown: true, stick: false };
-  const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], parked, delta: D, arm };
+  const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], reloadAt: [] as boolean[], parked, delta: D, arm };
   const js = liftBetween("function keepPlaceAcrossWindow(", "// Scroll/anchor landing + deep-link diagnostics + restamp")
            + liftBetween("function captureScrollAnchor(", "// Live tail-append to the ACTIVE view");
   const prelude = `"use strict";
     const H = HOOKS;
     let pendingAnchor = null, pendingAnchorKeepY = null, pendingAnchorKeepAt = null, relandAsk = false, anchorPendingOlder = false;
+    let pendingAnchorKeepReload = true;   // a reload flag left true, which the re-render's arm must clear: its keep is no reload's (reloadAt below)
     const applyMeasure = (v) => { H.calls.push("applyMeasure"); if (!H.parked) return false; H.parked = false; H.spacer.h += H.delta; return true; };
     const figuresBefore = (v) => ({ parked: H.parked });
     const untakeMeasure = (v, fig) => { H.calls.push("untakeMeasure"); if (!fig.parked || H.parked) return false; H.parked = true; H.spacer.h -= H.delta; return true; };
     const redrawGapUnits = () => { H.calls.push("redrawGapUnits"); };
     const sizeSpacers = () => { H.calls.push("sizeSpacers"); };
-    const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid, relandAsk, pendingAnchor, pendingAnchorKeepY]); if (H.arm.rebuild) H.arm.rebuild(H.content.host); if (H.arm.older) anchorPendingOlder = true; return !!H.arm.land; };
+    const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid, relandAsk, pendingAnchor, pendingAnchorKeepY]); H.reloadAt.push(pendingAnchorKeepReload); if (H.arm.rebuild) H.arm.rebuild(H.content.host); if (H.arm.older) anchorPendingOlder = true; return !!H.arm.land; };
     const writeScroll = (c, top, writer, stick = false, from) => { H.writes.push({ writer, top, stick, from }); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
     const cssEscape = (s) => s;
   `;
-  const api = new Function("HOOKS", prelude + js + "\nreturn { keep: (k) => keepPlaceAcrossWindow(H.content, H.v, k), state: () => ({ pendingAnchor, pendingAnchorKeepY, relandAsk }) };")(H);
-  return { content, host, spacer, rows, writes: H.writes, calls: H.calls, keep: api.keep, state: api.state, parked: () => H.parked };
+  const api = new Function("HOOKS", prelude + js + "\nreturn { keep: (k) => keepPlaceAcrossWindow(H.content, H.v, k), state: () => ({ pendingAnchor, pendingAnchorKeepY, relandAsk }), keepReload: () => pendingAnchorKeepReload };")(H);
+  return { content, host, spacer, rows, writes: H.writes, calls: H.calls, keep: api.keep, state: api.state, parked: () => H.parked, reloadAt: H.reloadAt, keepReload: api.keepReload };
 }
 const keepTakes = (w: KeepWorld) => w.calls.filter((c) => c === "applyMeasure").length;
 
@@ -719,10 +738,14 @@ test("keepPlaceAcrossWindow, the restore missing (the reader's row gone from the
     "the attempt runs with relandAsk raised and the anchor armed with the kept offset (the keep-offset write is scrollToAnchor's own)");
   assert.deepEqual(w.state(), { pendingAnchor: null, pendingAnchorKeepY: null, relandAsk: false }, "disarmed after the land, the flag lowered");
   assert.deepEqual(w.writes, [], "the landing wrote; nothing else does");
+  // the re-render's keep was captured in the current layout, so it is armed as no reload's and its keep-offset landing leaves the boxes-above
+  // observer's baseline alone (render.ts pendingAnchorKeepReload; scroll-to-anchor-roads.test.ts executes the landing's side)
+  assert.deepEqual(w.reloadAt, [false], "the attempt runs with the keep marked no reload's, over a flag left true"); assert.equal(w.keepReload(), false);
   // an older fetch pointed at the anchor keeps the arm for chatHead's arrival
   const w2 = keepWorld(2350, { land: false, older: true });
   assert.equal(w2.keep({ uuid: "11111111-2222-4333-8444-000000000011", y: R3_OFFSET }), false);
   assert.deepEqual(w2.state(), { pendingAnchor: "11111111-2222-4333-8444-000000000011", pendingAnchorKeepY: R3_OFFSET, relandAsk: false }, "armed for the arrival");
+  assert.deepEqual(w2.reloadAt, [false]); assert.equal(w2.keepReload(), false, "…armed as no reload's");
 });
 
 test("keepPlaceAcrossWindow, BOTH restores missing (the reader's row gone and the attempt landing nothing): the take was made, so the row that was under the viewport top goes back at its offset (measured on its own rect), never a take with no write; when the attempt's rebuild dropped that row too, nothing is written and the take is undone (the maintainer's round 3 ruling B: until then the take stood under a reader nothing had placed, disclosed)", () => {

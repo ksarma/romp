@@ -20,11 +20,20 @@ loads at the first formula a page meets through a script tag beside the page's o
     within 1 px, with the scroller's scroll anchoring off and on (render.ts keeps the reader's line inside the anchor turn,
     reading-point.ts; keeping the turn's top let the formulas push the text down by their growth, the review of iOS item 6);
     and a reload in that place, whose record is taken over KaTeX's layout, lands the paragraph within 2 px of where it was
-    while the fresh page's formulas still wait (whole-pixel scroll offsets, written more than once as the fresh page settles),
+    while the fresh page's formulas still wait (the scroller holds whole pixels, so the line lands a fraction of a pixel off),
     and keeps it there through the swap;
   - the same reload in a LONG transcript (the reply followed by more replies than the fresh page's tail window holds, so the
     restore lands the reply through the deep-link land's keep offset: render.ts scrollToAnchor), in both engines on the phone:
     the paragraph within 2 px while the formulas wait and after the swap (the keep offset carries the reader's line too);
+  - the tab strip growing in the landing's own task, for both reloads above, in both engines on the phone: an init script grows #tabbar
+    by 32 px inside the write that lands the paragraph (the reload restore's; in the long transcript the keep offset's, which runs inside
+    the restore's pass, the window around the reply built from the events the fresh page holds), so the notice of that growth reaches the
+    boxes-above observer after the landing on every run; the paragraph stays within 2 px (render.ts re-bases that observer when the reload
+    restore writes, and when the keep-offset landing of the keep it armed does, so the late notice does not add the growth a second time);
+  - the tab strip growing in the same task as a settings re-render of that long transcript, in both engines on the phone: the re-render's
+    keep is captured in the grown layout and lands through the keep offset, and the boxes-above observer's notice then moves the paragraph
+    back up by the growth, so it stays within 2 px of where it was on screen (render.ts re-bases the observer for the reload restore's
+    keep alone: a re-render's keep was captured in the current layout, where the observer's move is right);
   - a hidden tab (a second session, `api`, beside `web`), in both engines on the phone: the reader on the paragraph in `web`, every formula
     above it waiting, switches to `api`; the chunk lands and the swap lays the formulas out while `web` is hidden; back on `web` the
     paragraph is within 1 px of where they left it (render.ts keeps the reader's line at the switch and lands it on the next show).
@@ -590,6 +599,266 @@ await browser.close();
 process.exit(0);
 """
 
+# The tab strip growing in the landing's own task, on a phone: the reader placed as in the two reloads above (cfg.long false: the reply
+# inside the fresh page's tail window, where the reload restore lands the line itself; cfg.long true: the reply above that window but among
+# the events the fresh page's frame holds, where the restore writes its raw first guess and then, in the same pass, builds the window around
+# the reply and lands the line through the keep offset, scrollToAnchor's), then the reload under an init script that grows #tabbar by 32 px
+# inside the first write of #content that puts the paragraph being read on screen. That write is the landing, so no frame comes between the
+# growth and the landing, and the notice of the growth reaches render.ts's boxes-above observer after the landing on every run (the race PR
+# 961's CI met by chance: the strip filled in before the landing and its notice came after it). The script wraps the page's ResizeObserver to
+# count each observer of #tabbar's notices before and after the growth, so the case can show that the observer had measured the strip before
+# it grew and was told of the growth before the measure; it holds the page's incoming kernel frames until every observer of #tabbar has had
+# its first notice, so the first of those holds by construction; and it counts the history asks the page sends before the growth (loadAround,
+# loadOlder, loadTurns), so the case can show that none was sent: with nothing fetched, a keep-offset landing can only run in the reload
+# restore's own pass. The chunk is held across the reload.
+DRIVER_GROW = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const out = {};
+const PENDING = "#content .md-math-inline, #content .md-math-display";
+try {
+  const device = Object.assign({}, pw.devices["iPhone 15"]);
+  delete device.defaultBrowserType;
+  const ctx = await browser.newContext(device);
+  const errors = [];
+  const settle = (page) => page.evaluate(() => fetch("/healthz", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+  const swapped = (page) => page.waitForFunction((sel) => !document.querySelector(sel) && document.querySelectorAll("#content .katex").length > 0, PENDING, { timeout: 30000 });
+  const rendered = (marker) => Array.from(document.querySelectorAll("#content p")).some((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+  const has = (page) => page.evaluate(rendered, cfg.marker);
+  const measure = (page) => page.evaluate((marker) => {
+    const c = document.getElementById("content");
+    const ct = c.getBoundingClientRect().top;
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    return { markerTop: p ? p.getBoundingClientRect().top - ct : null, scrollTop: c.scrollTop,
+      tabbar: document.getElementById("tabbar").getBoundingClientRect().height };
+  }, cfg.marker);
+  const place = (page) => page.evaluate(({ marker, off }) => {
+    const c = document.getElementById("content");
+    c.style.overflowAnchor = "none";
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    if (!p) return "no paragraph starting " + marker;
+    c.scrollTop += p.getBoundingClientRect().top - c.getBoundingClientRect().top - off;
+    return "";
+  }, { marker: cfg.marker, off: cfg.offset });
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => errors.push(e.message));
+  let gate = null;
+  await page.route((u) => u.pathname === "/dist/math-chunk.js", async (route) => { if (gate) await gate.p; await route.continue(); });
+  await page.goto(cfg.chat);
+  await page.waitForFunction((t) => (document.body.innerText || "").includes(t), cfg.lastFiller, { timeout: 30000 });
+  await settle(page);
+  out.boot = { marker: await has(page) };
+  for (let i = 0; i < 120 && cfg.long && !(await has(page)); i++) {   // a long transcript: up to the reply, the window growing as the reader reaches its top
+    await page.evaluate(() => { document.getElementById("content").scrollTop = 0; });
+    await settle(page);
+  }
+  if (!(await has(page))) throw new Error("the reply never rendered");
+  await swapped(page);
+  await settle(page);
+  for (let i = 0; i < 2; i++) {   // twice: the window can still grow under the first placing
+    const placed = await place(page);
+    if (placed) throw new Error(placed);
+    await settle(page);
+  }
+  out.preReload = await measure(page);
+  await page.addInitScript((marker) => {
+    const g = (window.__grow = { writes: 0, grown: false, n: null, at: null, dh: null, observers: 0, seenBefore: false, asked: null, held: 0 });
+    const asks = { loadAround: 0, loadOlder: 0, loadTurns: 0 };   // the history asks the page has sent its kernel: a window, an older page, a gap's page
+    const send = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (d) {
+      try { const t = JSON.parse(d).type; if (Object.prototype.hasOwnProperty.call(asks, t)) asks[t]++; } catch (e) { /* not a frame */ }
+      return send.call(this, d);
+    };
+    const notices = new Map();   // each page observer of #tabbar -> its notices of #tabbar before and after the growth
+    const measured = () => notices.size > 0 && Array.from(notices.values()).every((k) => k[0] > 0);
+    // The page's incoming kernel frames wait until every page observer of #tabbar has had its first notice, and then reach the page in
+    // their order, one per task, so the reload's frame, and the landing it brings, come after the observer has measured the strip. Without
+    // this, a starved CPU could hand the page its frame before its first ResizeObserver delivery, and the premise that the observer had
+    // measured the strip failed with no defect present.
+    const held = [];   // [socket, the page's handler, the event], in arrival order
+    let open = false, releasing = false;
+    const pump = () => { const x = held.shift(); if (x) x[1].call(x[0], x[2]); if (held.length) setTimeout(pump, 0); else { releasing = false; open = true; } };
+    const admit = (ws, fn, ev) => {
+      if (!open && !releasing && held.length === 0 && measured()) open = true;
+      if (open) return fn.call(ws, ev);
+      held.push([ws, fn, ev]); g.held++;
+    };
+    const wrapped = new WeakMap();   // the page's handler -> the wrapper that admits its events
+    const wrap = (fn) => { if (typeof fn !== "function") return fn; let w = wrapped.get(fn); if (!w) { w = function (ev) { return admit(this, fn, ev); }; wrapped.set(fn, w); } return w; };
+    const om = Object.getOwnPropertyDescriptor(WebSocket.prototype, "onmessage");
+    Object.defineProperty(WebSocket.prototype, "onmessage", { configurable: true, enumerable: om.enumerable, get() { return om.get.call(this); }, set(fn) { om.set.call(this, wrap(fn)); } });
+    const add = WebSocket.prototype.addEventListener, remove = WebSocket.prototype.removeEventListener;
+    WebSocket.prototype.addEventListener = function (type, fn, opts) { return add.call(this, type, type === "message" ? wrap(fn) : fn, opts); };
+    WebSocket.prototype.removeEventListener = function (type, fn, opts) { return remove.call(this, type, type === "message" ? wrap(fn) : fn, opts); };
+    const RO = window.ResizeObserver;
+    window.ResizeObserver = class extends RO {
+      constructor(cb) {
+        super((entries, obs) => {
+          const k = notices.get(obs);
+          if (k && entries.some((e) => e.target && e.target.id === "tabbar")) k[g.grown ? 1 : 0]++;
+          if (!open && !releasing && held.length && measured()) { releasing = true; setTimeout(pump, 0); }
+          return cb.call(obs, entries, obs);
+        });
+      }
+      observe(target, options) { if (target && target.id === "tabbar" && !notices.has(this)) notices.set(this, [0, 0]); return super.observe(target, options); }
+    };
+    window.__toldOfGrowth = () => notices.size > 0 && Array.from(notices.values()).every((k) => k[1] > 0);
+    const desc = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    Object.defineProperty(Element.prototype, "scrollTop", { configurable: true, get() { return desc.get.call(this); }, set(v) {
+      desc.set.call(this, v);
+      if (this.id !== "content" || g.grown) return;
+      g.writes++;
+      const ct = this.getBoundingClientRect().top;
+      const p = Array.from(this.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+      const top = p ? p.getBoundingClientRect().top - ct : null;
+      if (top === null || top < 0 || top > this.clientHeight) return;
+      const tb = document.getElementById("tabbar");
+      const h0 = tb.getBoundingClientRect().height;
+      tb.style.minHeight = (parseFloat(getComputedStyle(tb).height) + 32) + "px";
+      Object.assign(g, { grown: true, n: g.writes, at: top, dh: tb.getBoundingClientRect().height - h0, observers: notices.size, asked: Object.assign({}, asks),
+                         seenBefore: measured() });
+    } });
+  }, cfg.marker);
+  gate = {}; gate.p = new Promise((r) => { gate.r = r; });
+  await page.reload();
+  await page.waitForFunction(() => window.__grow && window.__grow.grown && window.__toldOfGrowth(), null, { timeout: 30000 });
+  await settle(page);
+  out.grow = await page.evaluate(() => window.__grow);
+  out.pending = await measure(page);
+  gate.r();
+  out.errors = errors;
+} catch (e) {
+  out.died = String(e && e.message || e);
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+# The tab strip growing in the same task as a settings re-render, on a phone, in one page life: the reader placed on the paragraph of the
+# long transcript as in the reload above (the reply above the fresh page's tail window, so the re-render's rebuilt window holds none of it
+# and the reader's place comes back through the deep-link land's keep offset: render.ts rerenderAll, keepPlaceAcrossWindow, scrollToAnchor),
+# then one task grows #tabbar by 32 px and raises the shared settings event, which re-renders the transcript under the reader. The re-render
+# captures the reader's row in that task, in the grown layout, and its deferred build lands it at the next frame (one requestAnimationFrame,
+# which runs before that frame's resize notices), so the paragraph is back at its offset in #content, 32 px lower on screen; the
+# boxes-above observer's notice of the growth comes after that landing and moves the paragraph back up by the growth. The init script counts
+# each observer of #tabbar's notices before and after the growth and, at the first notice after it, copies the landing trail and reads the
+# paragraph's offset in #content, so the case can show the keep-offset landing wrote, and put the paragraph back, before the observer heard
+# of the growth; it counts the history asks (loadAround, loadOlder, loadTurns) the page sends after the growth. The measure is the
+# paragraph's top in the viewport, the place the observer keeps.
+DRIVER_RERENDER = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const pw = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await pw[cfg.engine].launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const out = {};
+const PENDING = "#content .md-math-inline, #content .md-math-display";
+try {
+  const device = Object.assign({}, pw.devices["iPhone 15"]);
+  delete device.defaultBrowserType;
+  const ctx = await browser.newContext(device);
+  const errors = [];
+  const settle = (page) => page.evaluate(() => fetch("/healthz", { cache: "no-store" }).then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+  const swapped = (page) => page.waitForFunction((sel) => !document.querySelector(sel) && document.querySelectorAll("#content .katex").length > 0, PENDING, { timeout: 30000 });
+  const rendered = (marker) => Array.from(document.querySelectorAll("#content p")).some((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+  const has = (page) => page.evaluate(rendered, cfg.marker);
+  const measure = (page) => page.evaluate((marker) => {
+    const c = document.getElementById("content");
+    const ct = c.getBoundingClientRect().top;
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    return { viewTop: p ? p.getBoundingClientRect().top : null, markerTop: p ? p.getBoundingClientRect().top - ct : null, scrollTop: c.scrollTop,
+      tabbar: document.getElementById("tabbar").getBoundingClientRect().height };
+  }, cfg.marker);
+  const place = (page) => page.evaluate(({ marker, off }) => {
+    const c = document.getElementById("content");
+    c.style.overflowAnchor = "none";
+    const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+    if (!p) return "no paragraph starting " + marker;
+    c.scrollTop += p.getBoundingClientRect().top - c.getBoundingClientRect().top - off;
+    return "";
+  }, { marker: cfg.marker, off: cfg.offset });
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.addInitScript((marker) => {
+    const g = (window.__rr = { armed: false, asks: { loadAround: 0, loadOlder: 0, loadTurns: 0 }, trailAtNotice: null, markerTopAtNotice: null });
+    const send = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (d) {
+      if (g.armed) { try { const t = JSON.parse(d).type; if (Object.prototype.hasOwnProperty.call(g.asks, t)) g.asks[t]++; } catch (e) { /* not a frame */ } }
+      return send.call(this, d);
+    };
+    const notices = new Map();   // each page observer of #tabbar -> its notices of #tabbar before and after the growth
+    const RO = window.ResizeObserver;
+    window.ResizeObserver = class extends RO {
+      constructor(cb) {
+        super((entries, obs) => {
+          const k = notices.get(obs);
+          if (k && entries.some((e) => e.target && e.target.id === "tabbar")) {
+            k[g.armed ? 1 : 0]++;
+            if (g.armed && g.trailAtNotice === null) {   // the first notice of the growth, before the page's observer acts on it
+              g.trailAtNotice = typeof window.__rompLandTrail === "function" ? window.__rompLandTrail() : [];
+              const c = document.getElementById("content");
+              const p = Array.from(c.querySelectorAll("p")).find((e) => e.offsetParent !== null && (e.textContent || "").startsWith(marker));
+              g.markerTopAtNotice = p ? p.getBoundingClientRect().top - c.getBoundingClientRect().top : null;
+            }
+          }
+          return cb.call(obs, entries, obs);
+        });
+      }
+      observe(target, options) { if (target && target.id === "tabbar" && !notices.has(this)) notices.set(this, [0, 0]); return super.observe(target, options); }
+    };
+    window.__rrNotices = () => Array.from(notices.values());
+  }, cfg.marker);
+  await page.goto(cfg.chat);
+  await page.waitForFunction((t) => (document.body.innerText || "").includes(t), cfg.lastFiller, { timeout: 30000 });
+  await settle(page);
+  out.boot = { marker: await has(page) };
+  for (let i = 0; i < 120 && !(await has(page)); i++) {   // up to the reply, the window growing as the reader reaches its top
+    await page.evaluate(() => { document.getElementById("content").scrollTop = 0; });
+    await settle(page);
+  }
+  if (!(await has(page))) throw new Error("the reply never rendered");
+  await swapped(page);
+  await settle(page);
+  for (let i = 0; i < 2; i++) {   // twice: the window can still grow under the first placing
+    const placed = await place(page);
+    if (placed) throw new Error(placed);
+    await settle(page);
+  }
+  out.pre = await measure(page);
+  out.task = await page.evaluate(() => {   // one task: the growth, then the settings re-render (the keep captured here, landed by the deferred build)
+    const tb = document.getElementById("tabbar");
+    const h0 = tb.getBoundingClientRect().height;
+    window.__rr.armed = true;
+    tb.style.minHeight = (parseFloat(getComputedStyle(tb).height) + 32) + "px";
+    const dh = tb.getBoundingClientRect().height - h0;
+    window.dispatchEvent(new Event("romp:settings"));
+    return { dh };
+  });
+  await page.waitForFunction(() => window.__rrNotices().length > 0 && window.__rrNotices().every((k) => k[1] > 0), null, { timeout: 30000 });
+  await settle(page);
+  await settle(page);
+  out.post = await measure(page);
+  out.rr = await page.evaluate(() => window.__rr);
+  out.notices = await page.evaluate(() => window.__rrNotices());
+  out.errors = errors;
+} catch (e) {
+  out.died = String(e && e.message || e);
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
 # Two sessions on a phone: the reader on the paragraph in `web` with the reply's formulas waiting above it, a switch to `api`, the chunk
 # released and the swap done while `web` is hidden, then the switch back. With `failFirst` (the review of iOS item 6, round 2, tests-4) the
 # first chunk request is answered 404, so `web` is left on the paragraph with the failure's sources above it and no formula waiting, and
@@ -1058,9 +1327,12 @@ class ServedMathChunk(unittest.TestCase):
         self.assertEqual(pre["pending"], 0, x + "the place is taken over KaTeX's layout: %r" % pre)
         self.assertLess(pre["lastFormulaBottom"], 0, x + "with the reply's formulas above the viewport top: %r" % pre)
         self.assertEqual(pend["pending"], 3 * n, x + "the fresh page's formulas wait for the chunk: %r" % pend)
-        # within 2 px, not 1: both engines hold the scroller's offset in whole pixels (every scrollTop read here is one), the fresh
-        # page writes it more than once while it settles, and its line sits on another fraction of a pixel than the old page's
-        # (measured: Chromium lands the turn's own top 1 px off this way, so the base's turn restore ended 1 px off too)
+        # within 2 px: the scroller holds its offset in whole pixels (every scrollTop read here is one), so the landing's write is
+        # rounded and the line sits a fraction of a pixel off the old page's (0.41 px in Chromium on the phone). The runs that ended
+        # 1.41 px off were not that rounding but a race: the tab strip filled in after the boxes-above observer's first notice had
+        # caught it one pixel short (31 of its 32 px), and the notice of that last pixel came after the landing and moved the line by
+        # it a second time (32.41 px off when the first notice caught the strip empty). render.ts re-bases that observer when a reload
+        # lands; the tab strip cases below make the late notice happen on every run.
         self.assertLessEqual(abs(pend["markerTop"] - pre["markerTop"]), 2,
                              x + "the fresh page lands the paragraph being read where it was, over the waiting formulas: %r %r" % (pre, pend))
         self.assertGreater(a["turnHeight"] - pend["turnHeight"], 20, x + "the swap grew the turn: %r %r" % (pend, a))
@@ -1184,7 +1456,8 @@ class ServedMathChunk(unittest.TestCase):
         self.assertLess(pre["lastFormulaBottom"], 0, w + "with the reply's formulas above the viewport top: %r" % pre)
         self.assertGreater(pre["markerTop"], 0, w + "and the paragraph being read on screen: %r" % pre)
         self.assertEqual(pend["pending"], 3 * n, w + "the fresh page's formulas wait for the chunk: %r" % pend)
-        # within 2 px, as the in-window reload above (whole-pixel scroll offsets)
+        # within 2 px, as the in-window reload above: the line a fraction of a pixel off; the runs 1.41 px and 32.41 px off (this case's
+        # red on PR 961's CI) were the same race, the boxes-above observer's late notice of the tab strip filling in added after the landing
         self.assertLessEqual(abs(pend["markerTop"] - pre["markerTop"]), 2,
                              w + "the fresh page lands the paragraph being read where it was, over the waiting formulas: %r %r" % (pre, pend))
         self.assertGreater(a["turnHeight"] - pend["turnHeight"], 20, w + "the swap grew the turn: %r %r" % (pend, a))
@@ -1197,6 +1470,105 @@ class ServedMathChunk(unittest.TestCase):
 
     def test_reload_into_a_long_transcript_on_a_phone_webkit(self):
         self._window_reload("webkit")
+
+    def _strip_grows_with_the_landing(self, engine, long):
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        fillers = LONG_FILLERS if long else FILLERS
+        recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
+                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                reply("r1", "u2", self.t0 + 40, ranking_reply())]
+        for i in range(fillers):
+            recs.append(reply("g%d" % i, "r1" if i == 0 else "g%d" % (i - 1), self.t0 + 60 + i, FILLER % i))
+        with open(self.transcript, "a") as f:
+            f.write(jsonl(recs))
+        label = "grow-%s-%s" % ("keep" if long else "restore", engine)
+        cfg = os.path.join(self.lab, "cfg-%s.json" % label)
+        Path(cfg).write_text(json.dumps({
+            "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+            "lastFiller": "Filler reply %d:" % (fillers - 1), "marker": "READ-03", "offset": 80, "long": long}))
+        r = self._run(engine, DRIVER_GROW, cfg, label)
+        w = engine + ": the tab strip grown with the %s landing: " % ("keep offset's" if long else "reload restore's")
+        self.assertNotIn("died", r, w + "the driver stopped early: %r\nkernel:\n%s" % (r.get("died"), Path(self.klog).read_text()[-1500:]))
+        g, pre, pend = r["grow"], r["preReload"], r["pending"]
+        self.assertEqual(r["boot"]["marker"], not long, w + "the fresh page's tail window %s the reply: %r" % ("holds none of" if long else "holds", r["boot"]))
+        self.assertGreater(pre["markerTop"], 0, w + "the paragraph being read is on screen before the reload: %r" % pre)
+        self.assertGreater(g["observers"], 0, w + "the page observes #tabbar: %r" % g)
+        self.assertTrue(g["seenBefore"], w + "every observer of #tabbar had measured the strip before it grew: %r" % g)
+        self.assertAlmostEqual(g["dh"], 32, delta=0.5, msg=w + "the strip grew by 32 px: %r" % g)
+        self.assertLessEqual(abs(g["at"] - pre["markerTop"]), 2, w + "it grew in the landing's own write, the one that put the paragraph back: %r %r" % (g, pre))
+        if long:
+            self.assertGreaterEqual(g["n"], 2, w + "a later write than the reload restore's raw first guess, the keep offset's: %r" % g)
+        else:
+            self.assertEqual(g["n"], 1, w + "the fresh page's first write of the scroller, the reload restore's: %r" % g)
+        self.assertEqual(g["asked"], {"loadAround": 0, "loadOlder": 0, "loadTurns": 0},
+                         w + "no history was asked of the kernel before the landing (no window, no older page, no gap's page): with nothing fetched the "
+                         "landing ran in the reload restore's own pass, where the re-base of landActive's reload branch covers it as well as the keep "
+                         "offset's own (scroll-to-anchor-roads.test.ts pins that one alone): %r" % g)
+        self.assertAlmostEqual(pend["tabbar"] - pre["tabbar"], 32, delta=0.5, msg=w + "the strip is still 32 px taller at the measure: %r %r" % (pre, pend))
+        # the case: the observer's notice of the growth (told after the landing, the driver waits for it) moves nothing, since the landing
+        # already put the paragraph at its place in the grown layout (render.ts re-bases the boxes-above observer when the landing writes)
+        self.assertLessEqual(abs(pend["markerTop"] - pre["markerTop"]), 2,
+                             w + "the paragraph being read stays where the landing put it, the growth not added a second time: %r %r" % (pre, pend))
+        self.assertEqual(r["errors"], [], w + "no page error")
+
+    def test_a_tab_strip_growing_with_the_reload_restores_landing_is_not_added_again_on_a_phone_chromium(self):
+        self._strip_grows_with_the_landing("chromium", False)
+
+    def test_a_tab_strip_growing_with_the_reload_restores_landing_is_not_added_again_on_a_phone_webkit(self):
+        self._strip_grows_with_the_landing("webkit", False)
+
+    def test_a_tab_strip_growing_with_the_keep_offsets_landing_is_not_added_again_on_a_phone_chromium(self):
+        self._strip_grows_with_the_landing("chromium", True)
+
+    def test_a_tab_strip_growing_with_the_keep_offsets_landing_is_not_added_again_on_a_phone_webkit(self):
+        self._strip_grows_with_the_landing("webkit", True)
+
+    def _strip_grows_with_a_re_render(self, engine):
+        declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")
+        if engine != "chromium" and declared and engine not in [e.strip() for e in declared.split(",")]:
+            self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
+        recs = [{"type": "user", "timestamp": iso(self.t0 + 30), "uuid": "u2", "parentUuid": "a1", "promptSource": "typed",
+                 "sessionId": SID, "message": {"role": "user", "content": "walk me through the ranking math"}},
+                reply("r1", "u2", self.t0 + 40, ranking_reply())]
+        for i in range(LONG_FILLERS):
+            recs.append(reply("g%d" % i, "r1" if i == 0 else "g%d" % (i - 1), self.t0 + 60 + i, FILLER % i))
+        with open(self.transcript, "a") as f:
+            f.write(jsonl(recs))
+        label = "rerender-%s" % engine
+        cfg = os.path.join(self.lab, "cfg-%s.json" % label)
+        Path(cfg).write_text(json.dumps({
+            "engine": engine, "chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+            "lastFiller": "Filler reply %d:" % (LONG_FILLERS - 1), "marker": "READ-03", "offset": 80}))
+        r = self._run(engine, DRIVER_RERENDER, cfg, label)
+        w = engine + ": the tab strip grown with a settings re-render's landing: "
+        self.assertNotIn("died", r, w + "the driver stopped early: %r\nkernel:\n%s" % (r.get("died"), Path(self.klog).read_text()[-1500:]))
+        pre, t, post, g, k = r["pre"], r["task"], r["post"], r["rr"], r["notices"]
+        self.assertEqual(r["boot"]["marker"], False, w + "the fresh page's tail window holds none of the reply, so the re-render's rebuilt window holds none of it either: %r" % r["boot"])
+        self.assertGreater(pre["markerTop"], 0, w + "the paragraph being read is on screen: %r" % pre)
+        self.assertTrue(k and all(n[0] > 0 for n in k), w + "every observer of #tabbar had measured the strip before it grew: %r" % k)
+        self.assertAlmostEqual(t["dh"], 32, delta=0.5, msg=w + "the strip grew by 32 px: %r" % t)
+        self.assertEqual((g["trailAtNotice"] or [])[-1:], ["pointer-keep-offset"],
+                         w + "the re-render's keep landed through the keep offset (keepPlaceAcrossWindow, scrollToAnchor) before the observer heard of the growth: %r" % g)
+        self.assertIsNotNone(g["markerTopAtNotice"], w + "the paragraph was rendered when the observer heard of the growth: %r" % g)
+        self.assertLessEqual(abs(g["markerTopAtNotice"] - pre["markerTop"]), 2,
+                             w + "the landing put the paragraph back at its offset in the scroller, in the grown layout: %r %r" % (pre, g))
+        self.assertEqual(g["asks"], {"loadAround": 0, "loadOlder": 0, "loadTurns": 0}, w + "no history was asked of the kernel: %r" % g)
+        self.assertTrue(all(n[1] > 0 for n in k), w + "every observer of #tabbar was told of the growth before the measure: %r" % k)
+        self.assertAlmostEqual(post["tabbar"] - pre["tabbar"], 32, delta=0.5, msg=w + "the strip is still 32 px taller at the measure: %r %r" % (pre, post))
+        # the case: the re-render's keep was captured in the grown layout, so the observer's notice of the growth moves the paragraph back
+        # up by it and the line read is where it was on screen; a landing that re-based the observer (render.ts re-bases it only for the
+        # reload restore's keep) threw that move away and left the paragraph 32 px lower
+        self.assertLessEqual(abs(post["viewTop"] - pre["viewTop"]), 2,
+                             w + "the paragraph being read stays where it was on screen, the observer's move for the growth kept: %r %r" % (pre, post))
+        self.assertEqual(r["errors"], [], w + "no page error")
+
+    def test_a_tab_strip_growing_with_a_settings_re_render_keeps_the_line_read_on_screen_on_a_phone_chromium(self):
+        self._strip_grows_with_a_re_render("chromium")
+
+    def test_a_tab_strip_growing_with_a_settings_re_render_keeps_the_line_read_on_screen_on_a_phone_webkit(self):
+        self._strip_grows_with_a_re_render("webkit")
 
     def _hidden_tab(self, engine):
         declared = os.environ.get("ROMP_SERVED_TESTS_ENGINES", "")

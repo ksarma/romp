@@ -66,10 +66,10 @@ test("landActive's landing consumes the record for the active tab first, then fa
   const body = m![1];
   assert.match(body, /const rs = takeReloadScroll\(pendingReloadScroll, activeId\);\s*\n\s*if \(rs\) \{\s*\n\s*pendingReloadScroll = null;\s*\n\s*v\.stick = rs\.stick;\s*\n\s*if \(rs\.stick\) writeScroll\(content, content\.scrollHeight, "reload-restore", true\);\s*\n\s*else if \(!\(rs\.anchor && \(restoreReadingLine\(content, v, rs\.anchor\) \|\| restoreScrollAnchor\(content, v, rs\.anchor\)\)\)\) \{/, "the reader's line first, the turn when the fresh turn lacks the line (land-active-keep.test.ts executes both roads; tests/test_math_chunk_served.py the landing over waiting formulas)");
   // the anchor turn outside the fresh window: the raw top is the first guess and the deep-link land finishes it
-  assert.match(body, /writeScroll\(content, rs\.top, "reload-restore"\);\s*\n\s*if \(rs\.anchor\) \{\s*\n\s*pendingAnchor = rs\.anchor\.uuid; pendingAnchorKeepY = rs\.anchor\.y; pendingAnchorKeepAt = rs\.anchor\.at \?\? null;/, "the raw top first, then the deep-link land is armed with the row's offset and the reader's line in it (the keep-offset landing writes by the line: scroll-to-anchor-roads.test.ts executes it, land-active-keep.test.ts the arm, tests/test_math_chunk_served.py the landing in a long transcript)");
+  assert.match(body, /writeScroll\(content, rs\.top, "reload-restore"\);\s*\n\s*if \(rs\.anchor\) \{\s*\n\s*pendingAnchor = rs\.anchor\.uuid; pendingAnchorKeepY = rs\.anchor\.y; pendingAnchorKeepAt = rs\.anchor\.at \?\? null; pendingAnchorKeepReload = true;/, "the raw top first, then the deep-link land is armed with the row's offset and the reader's line in it, marked the reload's keep (the keep-offset landing writes by the line and re-bases the boxes-above observer for this keep alone: scroll-to-anchor-roads.test.ts executes it, land-active-keep.test.ts the arm, tests/test_math_chunk_served.py the landing in a long transcript)");
   // …and RUN in the same pass (T374): the pass already made its own attempt before the restore armed anything, and an idle
   // session sends no frame for another; a row outside the fresh window asks its window here and stays armed for the reply
-  assert.match(body, /landTrail = \[\];\s*\n\s*const landedNow = scrollToAnchor\(rs\.anchor\.uuid\);\s*\n\s*if \(landedNow \|\| !anchorPendingOlder\) \{ pendingAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; \}/, "landed or asked at once; the arm is kept only for a window in flight");
+  assert.match(body, /landTrail = \[\];\s*\n\s*const landedNow = scrollToAnchor\(rs\.anchor\.uuid\);\s*\n\s*if \(landedNow \|\| !anchorPendingOlder\) \{ pendingAnchor = null; pendingAnchorKeepY = null; pendingAnchorKeepAt = null; pendingAnchorKeepReload = false; \}/, "landed or asked at once; the arm is kept only for a window in flight");
   // the ordinary rule: the bottom, else the saved place (the row the saved place held, put back over the spacers an armed land's take
   // re-sized, PR E, the maintainer's round 2 ruling; the raw scrollTop when that restore has no row to put back, nothing armed, no row at
   // the saved place or the row gone with the attempt's window build, with the take given back first on the two roads after one, the
@@ -77,7 +77,7 @@ test("landActive's landing consumes the record for the active tab first, then fa
   assert.match(body, /else if \(!v\.shown \|\| v\.stick\) writeScroll\(content, content\.scrollHeight, "land-bottom", true\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*else if \(!\(held && restoreScrollAnchor\(content, v, held\)\) && !\(moved && \(restoreReadingLine\(content, v, moved\) \|\| restoreScrollAnchor\(content, v, moved\)\)\)\) \{ untakeMeasure\(v, figures\); writeScroll\(content, v\.scrollTop, "land-saved"\); \}/);
 });
 
-test("every write of the keep offset writes the reader's line beside it, in the statement next to it (pendingAnchorKeepAt's declaration: set with pendingAnchorKeepY, cleared wherever it is cleared)", () => {
+test("every write of the keep offset writes the reader's line beside it, in the statement next to it (pendingAnchorKeepAt's declaration: set with pendingAnchorKeepY, cleared wherever it is cleared), and the reload flag in the same run, set true only in the reload restore's arm", () => {
   // the census reads render.ts with the TypeScript compiler's parser (writer-census.ts's precedent), so every assignment operator
   // (`=`, `??=`, `||=`, `&&=`, the arithmetic ones), `++`/`--`, a destructuring target and a for-of/for-in target count as writes of
   // pendingAnchorKeepY wherever they sit, and a comment or a string spelling the line's assignment counts as nothing. Each write must
@@ -134,4 +134,31 @@ test("every write of the keep offset writes the reader's line beside it, in the 
     return !lineStmts.some((t) => t === s || (t.parent === s.parent && Math.abs(list.indexOf(t) - i) === 1));
   }).map(shown);
   assert.deepEqual(unpaired, [], "a write of pendingAnchorKeepY that is not a plain statement with a plain `=` of pendingAnchorKeepAt beside it");
+  // …and the reload flag the same way (pendingAnchorKeepReload's declaration: set with pendingAnchorKeepY, cleared wherever it is cleared,
+  // true only at the reload restore's arm). scrollToAnchor reads it only under a non-null offset, to decide whether its keep-offset landing
+  // re-bases the boxes-above observer, so every write of the offset needs a plain `=` of the flag to true or false in the same run of plain
+  // statements (beside the offset's statement, or beside the line's statement paired with it), and exactly one write sets it true, in the
+  // reload restore's arm. A keep armed elsewhere that kept a stale true would re-base where the observer's move is right, the line read
+  // moving by the growth on screen (tests/test_math_chunk_served.py's tab strip case for a settings re-render executes that road)
+  const flagWrites: ts.Node[] = [];
+  const visitFlag = (n: ts.Node): void => { if (writes(n, "pendingAnchorKeepReload")) flagWrites.push(n); ts.forEachChild(n, visitFlag); };
+  visitFlag(sf);
+  /** The flag's value when the write is a plain `=` of the name itself to a boolean literal, else null (refused). */
+  const flagValue = (n: ts.Node): boolean | null => {
+    if (!ts.isBinaryExpression(n) || n.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null;
+    const t = bare(n.left), r = bare(n.right);
+    if (!ts.isIdentifier(t) || t.text !== "pendingAnchorKeepReload") return null;
+    return r.kind === ts.SyntaxKind.TrueKeyword ? true : r.kind === ts.SyntaxKind.FalseKeyword ? false : null;
+  };
+  assert.deepEqual(flagWrites.filter((n) => flagValue(n) === null || !plain(n)).map(shown), [], "every write of pendingAnchorKeepReload is a plain statement, a plain `=` of true or false");
+  const flagStmts = flagWrites.map(plain).filter((s): s is ts.ExpressionStatement => s !== null);
+  const near = (a: ts.Statement, b: ts.Statement): boolean => a === b || (a.parent === b.parent && Math.abs((a.parent as ts.Block).statements.indexOf(a) - (b.parent as ts.Block).statements.indexOf(b)) === 1);
+  const runHasFlag = (s: ts.ExpressionStatement): boolean => { const lines = lineStmts.filter((t) => near(t, s)); return flagStmts.some((f) => near(f, s) || lines.some((t) => near(f, t))); };
+  assert.deepEqual(keepY.filter((w) => { const s = plain(w); return !s || !runHasFlag(s); }).map(shown), [], "a write of pendingAnchorKeepY with no plain `=` of pendingAnchorKeepReload in its run");
+  const setTrue = flagWrites.filter((n) => flagValue(n) === true);
+  assert.equal(setTrue.length, 1, "one write sets the flag true: " + setTrue.map(shown).join(" | "));
+  const reloadArm = keepY.filter((w) => ts.isBinaryExpression(w) && w.right.getText(sf) === "rs.anchor.y").map(plain);
+  assert.equal(reloadArm.length, 1, "the reload restore's arm, pendingAnchorKeepY = rs.anchor.y");
+  const armRun = reloadArm[0]!, trueStmt = plain(setTrue[0])!;
+  assert.ok(near(trueStmt, armRun) || lineStmts.some((t) => near(t, armRun) && near(trueStmt, t)), "…and that write is in the reload restore's arm: " + shown(setTrue[0]));
 });
