@@ -80,10 +80,9 @@ const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one 
 let browser;
 try { browser = await chromium.launch(); } catch (e) { fs.writeSync(2, "no browser: " + e + "\n"); process.exit(3); }
 const out = { roads: {}, errors: [] };
-// die() reaches finish() from the unhandledRejection handler as well as from the drive, so finish() can run twice: the first
-// call alone writes the record (the reader refuses two RESULT: lines)
-let finished = false;
-const finish = async () => { if (finished) return; finished = true; lab.writeResult(cfg, out); await browser.close(); process.exit(0); };
+// no once-guard: a rejection that reaches die() after the record is written (the unhandledRejection handler, while
+// the browser closes) writes a second RESULT: line, which the reader refuses, so the late rejection fails the test
+const finish = async () => { lab.writeResult(cfg, out); await browser.close(); process.exit(0); };
 const die = async (why) => { out.died = why; await finish(); };
 process.on("unhandledRejection", async (e) => { await die("unhandled: " + String(e).split("\n")[0]); });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });

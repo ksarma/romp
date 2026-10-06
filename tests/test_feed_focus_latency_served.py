@@ -117,11 +117,9 @@ const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one 
 let browser;
 try { browser = await chromium.launch(); } catch (e) { fs.writeSync(2, "no browser: " + e + "\n"); process.exit(3); }
 const out = { layouts: {}, errors: [] };
-// die() runs from the unhandledRejection handler as well as from the drive, so finish() can be reached twice in one
-// process; the reader takes exactly one RESULT: line, so the first finish writes the record and a later one waits for the
-// exit the first makes.
-let finishing = false;
-const finish = async () => { if (finishing) return new Promise(() => {}); finishing = true; lab.writeResult(cfg, out); await browser.close(); process.exit(0); };
+// no once-guard: a rejection that reaches die() after the record is written (the unhandledRejection handler, while
+// the browser closes) writes a second RESULT: line, which the reader refuses, so the late rejection fails the test
+const finish = async () => { lab.writeResult(cfg, out); await browser.close(); process.exit(0); };
 const die = async (why) => { out.died = why; await finish(); };
 process.on("unhandledRejection", async (e) => { await die("unhandled: " + String(e).split("\n")[0]); });
 
