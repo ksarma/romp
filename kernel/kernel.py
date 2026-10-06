@@ -71654,9 +71654,10 @@ window.__rompUsageReading=function(){return !!tipHTML();};
 // kernel answered with an error status (the fetch reads that answer as no rows, so LAST empties and the panel's opener opens
 // nothing), where the request got no answer, was aborted, or had a body that does not parse (LAST left as it was); false where
 // an ok answer parsed. A pull that ends after a later one has ended leaves it as it was (pullFleet says why). The timeline's
-// forward (render) is a reading that arrived, so it clears it too. The card asks this only where __rompUsageReading says there
-// is nothing to open: with a reading, Usage opens the panel over it, whose age lines keep climbing while the reads fail (pull's
-// failed path)
+// forward (render) is a reading that arrived, so it clears it too. The card asks this at every answer, with a reading or
+// without one (romp-manager's decision on PR 976's round 1 builds): with no reading, Usage is disabled and says Couldn't load;
+// with one, which a request with no answer leaves in LAST, Usage stays enabled beside that line and opens the panel over the
+// reading, whose age lines keep climbing while the reads fail (pull's failed path)
 window.__rompUsageFailed=function(){return READ_FAILED;};
 // ...and the source behind those answers, read fresh as the panel's opener reads it (PR 976's round 1, correctness-1 and
 // extra6-1): the card calls this at each opening (gear.js usagePull) and shows the romp loader on Usage until the promise
@@ -71666,8 +71667,8 @@ window.__rompUsageFailed=function(){return READ_FAILED;};
 // card's pull carries a bounded abort, so the loader ends on an event even when the kernel never answers (ui/CLAUDE.md's
 // waiting rule: a backstop so the wait can never trap the user; romp-manager's ruling after PR 976's round 1). 10 s: the
 // kernel answers /usage/fleet from usage.json and the tunnel supervisor's cached readings, dialing nothing, so an answer takes
-// well under a second even over a phone's network, and a person looking at the card then sees why Usage is greyed out
-// (Couldn't load) within seconds rather than after the 20 s the spend panel allows its heavier read. The abort rejects the
+// well under a second even over a phone's network, and a person looking at the card then sees Couldn't load within
+// seconds rather than after the 20 s the spend panel allows its heavier read. The abort rejects the
 // fetch, which pullFleet's failed path takes like any request with no answer. window.__rompUsagePullMs, where set, replaces
 // the 10 s (tests/test_mtabs_fit_served.py holds a pull unanswered under a shorter one), as __rompSpendTimeoutMs does for the
 // spend panel. An engine without AbortSignal.timeout (Safari before 16) runs the pull without the bound, as before it

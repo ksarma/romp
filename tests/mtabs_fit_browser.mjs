@@ -50,7 +50,8 @@
 // each of the three over a pull answered ok with no rows, Usage read again; then three times the card opened over a held
 // pull, closed, and opened again over a later pull (answered with no rows, failed in transit, reaching the lab), Usage read
 // before and after the held pull ends (failed in transit, answered ok with no rows, answered with cfg.errorStatus); then over a
-// pull that reaches the lab, Usage read again.
+// pull that reaches the lab, Usage read again; then, that reading in the shell, over a pull failed in transit, Usage read and
+// clicked, its effect read.
 // Then the deploy skew, on a page of its own at cfg.actsViewport: the shell's marker beside its phoneAct listener
 // (window.__rompPhoneActs) read, and the card's row read at an opening with the marker, at one with it deleted (a parent with
 // the phone layout and no marker), and Usage at one with the marker back and the usage script's two names deleted (a shell that
@@ -796,6 +797,27 @@ try {
       await page.evaluate(() => { window.__rompUsagePull = window.__mtabsAsk; delete window.__mtabsAsk; delete window.__rompUsagePullMs; });
     }
     fr.lab = await turn("lab");
+    // ...and a failed read over a cached reading (romp-manager's decision on PR 976's round 1 builds): the shell holds the lab's
+    // reading now, and the card opened over a pull that fails in transit (which leaves the readings as they were), Usage read
+    // once the ask has ended with the shell's side, then one click on it and its effect read. Last on this page: the click
+    // closes the card
+    {
+      const cd = {};
+      mode = "transit";
+      const sf = await kit.openCard();
+      cd.asked = await kit.askEnded(sf);
+      await frames(page);
+      cd.reading = await page.evaluate(() => typeof window.__rompUsageReading === "function" && window.__rompUsageReading());
+      cd.usage = await kit.usageNow(sf);
+      cd.shell = await kit.shellNow(sf);
+      if (cd.usage) {
+        await page.mouse.click(cd.usage.left + cd.usage.w / 2, cd.usage.top + cd.usage.h / 2);
+        cd.opened = await kit.modalUp();
+        await frames(page);
+        cd.clicked = await kit.shellNow(sf);
+      }
+      fr.cached = cd;
+    }
     out.failedReads = fr;
     await context.close();
   }

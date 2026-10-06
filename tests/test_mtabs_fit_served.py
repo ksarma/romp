@@ -49,7 +49,9 @@ wrap only where it still cannot.
   lands while the card is open shows at once; a shell that cannot be asked leaves Usage enabled with no line, as its bar
   button was. A read that failed is not a read that found no reading (romp-manager's rulings after round 1): where the
   shell's last read got an error status, no answer, or no answer before the card's pull's bound (an abort after 10 s,
-  window.__rompUsageFailed telling the card), Usage is disabled with the line "Couldn't load", never "No reading yet".
+  window.__rompUsageFailed telling the card), Usage shows the line "Couldn't load", never "No reading yet": disabled where
+  the shell holds no reading, and enabled where it still holds one (a request with no answer leaves the readings as they
+  were), its tap opening the panel over that reading (romp-manager's decision on round 1's builds).
   Usage is one line tall in every state, as the row's other buttons are, and holds the loader's width (romp-manager's
   decision on round 1's builds), so loading to a reading, the common path, moves neither the row nor the tabs under it,
   and the row is no taller for Usage: the loader shows in the name's place, the two laid out in one cell, so Usage is
@@ -145,7 +147,10 @@ and the held one answered ok with no rows; the later one reached the lab and the
 each, once the held pull's end has run in the shell, Usage keeps the later pull's answer: USAGE_NONE alone, USAGE_ERR
 alone, enabled with neither line (a wrapper over window.__rompUsagePull records the order the two end in, and RACE_MS set
 on the shell keeps the held pull from ending on its own bound). And an opening whose
-pull reaches the lab then shows Usage enabled with neither line. Then the deploy skew, on a page of its own at 390px:
+pull reaches the lab then shows Usage enabled with neither line; then, the shell holding that reading, an opening whose
+pull fails in transit shows Usage enabled with the line USAGE_ERR and not USAGE_NONE, the card open and nothing posted,
+and one click on Usage closes the card, posts phoneAct usage and opens the Usage modal over that reading. Then the deploy
+skew, on a page of its own at 390px:
 the shell publishes its marker (window.__rompPhoneActs) and the card opened
 from the bar's Settings shows its row; with the marker deleted (the phone layout and no marker, as a shell from before the
 move has) the card opened shows no row (not displayed, its buttons boxless); and with the marker back and the usage script's
@@ -197,7 +202,8 @@ are red where an error status reads as no reading and a failure leaves the line 
 error status and after the abort in transit), and the hung pull where the card's pull carries no bound (the loader still
 up). With the ok answers between the failures, the abort in transit and the hung pull are red under a mutant whose failed
 path leaves the flag as it was (No reading yet after each), and the three ok answers under a mutant where an ok answer
-leaves a flag a failure set (Couldn't load after each). The reopen race is red where every read's end writes the flag,
+leaves a flag a failure set (Couldn't load after each). The failed read over a cached reading is red where the card says
+Couldn't load only over no reading (Usage enabled with neither line). The reopen race is red where every read's end writes the flag,
 and an error status empties the readings, whichever later read has ended: Usage turns from No reading yet to Couldn't
 load, from Couldn't load to No reading yet, and from enabled to Couldn't load; and each turn is red under a mutant that
 drops one of the three checks, the failed path's (the first turn), the answer's flag write (the second) and the error
@@ -711,8 +717,8 @@ def _failed_problems(engine, fr):
     open; after each of them, an opening whose pull the kernel answers ok with no rows shows Usage disabled with USAGE_NONE
     alone; in the reopen race, the card's earlier pull ending after the reopened card's pull (failed in transit, answered ok
     with no rows, or answered with ERROR_STATUS) leaves Usage on the later pull's answer; a later opening whose pull reads
-    the lab's reading shows
-    Usage enabled with neither line."""
+    the lab's reading shows Usage enabled with neither line; and then, with that reading cached, an opening whose pull fails in
+    transit shows Usage enabled with USAGE_ERR, one click opening the Usage modal."""
     out = []
     where = "%s Usage over a failed read at %dx%d" % (engine, fr["vp"][0], fr["vp"][1])
     pre = fr.get("premise") or {}
@@ -794,6 +800,24 @@ def _failed_problems(engine, fr):
             or (u.get("err") or {"shown": False}).get("shown") is not False:
         out.append("%s: after the failures, an opening whose pull read the lab's reading does not show Usage enabled with "
                    "neither line: %r" % (where, lab))
+    # a failed read over a cached reading (romp-manager's decision on PR 976's round 1 builds): the shell holds the lab's reading
+    # and the opening's pull fails in transit, which leaves it, so Usage stays enabled with the line USAGE_ERR beside its name
+    # (not USAGE_NONE), and one click opens the Usage modal over the reading the shell still holds
+    cd = fr.get("cached") or {}
+    cu = cd.get("usage")
+    if not cd.get("asked") or cd.get("reading") is not True:
+        out.append("%s: the cached reading's premise (the ask ended, the shell still holding a reading): asked %r, reading %r" % (
+            where, cd.get("asked"), cd.get("reading")))
+    if not cu or cu.get("disabled") is not False or not cu.get("err") or cu["err"].get("shown") is not True \
+            or cu["err"].get("text") != USAGE_ERR or not cu.get("line") or cu["line"].get("shown") is not False:
+        out.append("%s: the opening's pull failed in transit over a cached reading, and Usage is not enabled with the line %r "
+                   "(and without %r): %r" % (where, USAGE_ERR, USAGE_NONE, cu))
+    if card_closed(cd.get("shell") or {}):
+        out.append("%s: the failed read over a cached reading closed the card or reached the shell before the click: %r" % (where, cd.get("shell")))
+    ck = cd.get("clicked") or {}
+    if not cd.get("opened") or ck.get("settingsOpen") or ck.get("cardHidden") is not True or ck.get("acts") != ["usage"]:
+        out.append("%s: over a cached reading with the line %r, one click on Usage did not close the card and open the Usage "
+                   "modal: opened %r, %r" % (where, USAGE_ERR, cd.get("opened"), ck))
     return out
 
 

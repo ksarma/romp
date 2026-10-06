@@ -135,7 +135,7 @@ var GEAR_HTML =
   '<div class=rs-pacts id=rs-pacts hidden>' +
   // Usage carries a line beside its name for the state with no reading yet (usageAct below shows it and disables the button),
   // and in the same place the one for a read that failed (Couldn't load: the shell's newest read of the readings that has ended
-  // got an error status, no answer, or no answer in time; usageAct)
+  // got an error status, no answer, or no answer in time; usageAct shows it with a reading or without one)
   '<button type=button class=rs-pact id=rs-pact-usage data-pact=usage title=Usage>' + PACT_USAGE_SVG +
   '<span class=rs-pact-txt><span class=rs-pact-name>Usage</span><span class=rs-pact-none id=rs-pact-usage-none hidden>No reading yet</span>' +
   '<span class=rs-pact-none id=rs-pact-usage-err hidden>Couldn\'t load</span>' +
@@ -2171,10 +2171,10 @@ function initGear(post, opts) {
   // and takes no tap (the waiting rule, ui/CLAUDE.md: never a guess); and the shell tells an open card whenever its readings
   // change (its renderRows calls window.__rompUsageAct below), so the line never outlives the readings it describes.
   // A read that failed is not a read that found nothing (romp-manager's ruling after PR 976's round 1, as for the shell that
-  // cannot be asked above): where the shell holds no reading and its newest read of them that has ended failed
-  // (__rompUsageFailed: an error status, no answer, or none before the pull's bound), Usage is disabled with its other line,
-  // Couldn't load, and never says No reading yet. With a reading, Usage opens the panel over it whatever the reads did, so
-  // neither line shows.
+  // cannot be asked above): where the shell's newest read of the readings that has ended failed (__rompUsageFailed: an error
+  // status, no answer, or none before the pull's bound), Usage shows its other line, Couldn't load, and never says No reading
+  // yet. With no reading it is disabled; with one it stays enabled and opens the panel over the reading the shell still holds,
+  // whose age the panel shows (romp-manager's decision on PR 976's round 1 builds: a failed read is said whatever is cached).
   var usageWait = 0, usageSeq = 0;   // the opening's pull in flight: its number, 0 when none is
   function usageAct() {
     var b = document.getElementById('rs-pact-usage'), none = document.getElementById('rs-pact-usage-none'),
@@ -2193,14 +2193,14 @@ function initGear(post, opts) {
       var w = window.parent;
       if (w !== window && typeof w.__rompUsageReading === 'function') {
         has = !!w.__rompUsageReading();
-        failed = !has && typeof w.__rompUsageFailed === 'function' && !!w.__rompUsageFailed();
+        failed = typeof w.__rompUsageFailed === 'function' && !!w.__rompUsageFailed();
         asked = true;
       }
     } catch (e) { asked = false; }
     var no = asked && !has;   // the shell answered, and it holds no reading
     if (b) b.disabled = no;
     if (none) none.hidden = !no || failed;
-    if (err) err.hidden = !(no && failed);
+    if (err) err.hidden = !(asked && failed);
   }
   // the opening's ask: the shell's pull (__rompUsagePull, kernel _LANDING_USAGE_JS, the fetch the panel's opener runs), the
   // loader up until its promise settles either way, then the answer; a later ask (the card closed and opened again) outdates an
