@@ -550,6 +550,28 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
       // follow-up, named in decision 47
       ['AS3-residual-nohup-dd-func-held-out', 'out', 'cd {NA}/docs; read c <<< true; f() { nohup -- "$c" x; }; f; echo y > report.md', BZ, 'allow', null],
       ['AS3-residual-nohup-dd-loop-held-out', 'out', 'cd {NA}/docs; read c <<< true; for i in 1; do nohup -- "$c" x; done; echo y > report.md', BZ, 'allow', null],
+      // RULE H (fork PR 975's round 2, R4, 2026-10-06; the round's correctness-2): the held directory ends at a RELATIVE directory change (cd, pushd,
+      // popd, cd -) after an unread program, as the non-held branch does, so `$PWD`, `${PWD}` and `~+` read no held directory and a write through them
+      // refuses. Before, a relative cd under the held directory carried it, so after `nohup -- "$c" x; cd build` (where build is absent at run time, or a
+      // fresh or swapped link) the guard read `$PWD` as the directory the cd named while the real cd failed and the shell stayed, and bash and zsh wrote
+      // the tracked report through `$PWD/report.md`, where base refuses the not-literal target. Behind env --, setsid -- and with pushd alike
+      ['AS3-relcd-pwd', 'nad', 'read c <<< true; nohup -- "$c" x; cd build; echo y > "$PWD/report.md"', BZ, ['text', 'names "$PWD/report.md", which is not a literal path']],
+      ['AS3-relcd-pwd-brace', 'nad', 'read c <<< true; nohup -- "$c" x; cd build; echo y > "${PWD}/report.md"', BZ, ['text', 'names "${PWD}/report.md", which is not a literal path']],
+      ['AS3-relcd-tildeplus', 'nad', 'read c <<< true; nohup -- "$c" x; cd build; echo y > ~+/report.md', BZ, ['text', 'names ~+/report.md, which is not a literal path']],
+      ['AS3-relcd-env-pwd', 'nad', 'read c <<< true; env -- "$c" x; cd build; echo y > "$PWD/report.md"', BZ, ['text', 'names "$PWD/report.md", which is not a literal path']],
+      ['AS3-relcd-setsid-pwd', 'nad', 'read c <<< true; setsid -- "$c" x; cd build; echo y > "$PWD/report.md"', BZ, ['text', 'names "$PWD/report.md", which is not a literal path']],
+      ['AS3-relcd-pushd-pwd', 'nad', 'read c <<< true; nohup -- "$c" x; pushd build; echo y > "$PWD/report.md"', BZ, ['text', 'names "$PWD/report.md", which is not a literal path']],
+      // DISCLOSED, PRE-EXISTING (base, head and rule H all allow; decision 47): a `$PWD` or `~+` write after the relative cd from a cwd in no project is
+      // the B2 residual (the guard reads no cwd there, so the held directory's loss changes nothing), while bash and zsh write the tracked report
+      ['AS3-residual-relcd-pwd-out', 'out', 'cd {NA}/docs; read c <<< true; nohup -- "$c" x; cd build; echo y > "$PWD/report.md"', BZ, 'allow', null],
+      ['AS3-residual-relcd-tildeplus-out', 'out', 'cd {NA}/docs; read c <<< true; nohup -- "$c" x; cd build; echo y > ~+/report.md', BZ, 'allow', null],
+      // and the two cases the held report names as pre-existing allows the lexical-path precondition keeps open (decision 47): a relative cd into a link an
+      // unread program made from a cwd in no project, and an absolute cd through a link swapped at run time; base allows each, and bash and zsh write
+      ['AS3-residual-relcd-abs-ln-task-out', 'out', 'read c <<< ln; nohup -- "$c" -s {NA}/docs build; cd build; cp {OUT}/scratch/keep.md report.md', BZ, 'allow', null],
+      ['AS3-residual-relcd-abs-cd-swaplink-out', 'out', 'read c <<< ln; nohup -- "$c" -sfn {NA}/docs {OUT}/lnk; cd {OUT}/lnk; cp {OUT}/scratch/keep.md report.md', BZ, 'allow', null],
+      // THE COST of rule H (decision 47): from a cwd in no project, a cd into a project then an unread program then a relative cd into an untracked
+      // directory and a relative write there is allowed again, as base allows it, where the held directory had refused it; nothing is written
+      ['AS3-cost-relcd-into-proj-out', 'out', 'cd {NA}; read c <<< true; nohup -- "$c" x; cd scratch; echo y > a.txt', N, 'allow', null],
       // M1's symlink witness (the fourth verify round's S4-2, closed by the restored road): an unread command behind an external wrapper can make a
       // link from an untracked directory into a tracked one, so a later relative write through it is refused as a directory not known; a write by an
       // ABSOLUTE path through such a link is judged by its spelling (the stated precondition: the guard judges a path as spelled where no command it
@@ -1309,7 +1331,7 @@ test("the after-source fixes, the rows: a pattern operand of a command named by 
     console.log(`# THE MADE NAME: ${madeRan.size} of ${Object.keys(MADE).length} rows ran their legs here`);
     const all = [...rows, ...capRows];
     const byItem = Object.fromEntries(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8'].map((p) => [p, all.filter((r) => r[0].startsWith(`${p}-`)).length]));
-    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 186, AS4: 17, AS5: 67, AS6: 19, AS7: 17, AS8: 224 }, 'the population by item');
+    assert.deepEqual(byItem, { AS1: 67, AS2: 36, AS3: 197, AS4: 17, AS5: 67, AS6: 19, AS7: 17, AS8: 224 }, 'the population by item');
     assert.equal(new Set(all.map((r) => r[0])).size, all.length, 'every id once');
     assert.deepEqual(guardOnly, ['AS3-option-refuse-abbrev-sudo', 'AS3-road-sudo-dd', 'AS3-sudoD-flock-script', 'AS3-sudoD-rpt-cp', 'AS3-sudochdir-rpt-cp', 'AS3-time-o-sudo-e-out', 'AS3-time-o-envC-sudo-e-out', 'AS3-time-o-rel-envC-sudo-e-out', ...['again', 'enter', 'resolve'].flatMap((t) => ['short-glued', 'short-separate', 'long-glued', 'long-separate'].map((f) => `AS3-spelled-sudo-${t}-${f}`))], 'the rows asked of the guard alone (no leg runs sudo)');
     // every disclosed residual row is named by id in decision 47, as the header above says (the third verify round's M3-7), the population derived

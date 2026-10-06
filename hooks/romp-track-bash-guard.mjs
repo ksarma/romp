@@ -8666,13 +8666,14 @@ function extractIn(command, ctx) {
         // the tracked file. Where the shell is after it is not known.
         if (!a && name === 'pushd' && !block) block = 'an earlier bare `pushd` exchanges the top two directories of the stack, or fails when there is one (bash; dash has no pushd), or goes to HOME (zsh), so where the shell is after it is not known';
         if (!a && !block && !homeUnreadableNow()) { const hv = valueOf('HOME'); a = word(hv, true, name, { marks: 'q'.repeat(hv.length) }); }
-        // a relative cd under a directory held real (THE HELD DIRECTORY: a program behind an external wrapper moved no shell) carries it
-        const heldBase = heldNow();
+        // RULE H (fork PR 975's round 2, R4): a relative directory change (a bare `cd`/`pushd` to HOME, `cd -`, a non-literal or a relative
+        // literal target) under a directory only held (THE HELD DIRECTORY: a program behind an external wrapper left the directory unknown) ends
+        // the held directory, as every branch below does through moveUnknown/setUnknown (heldDir = null), so `$PWD`, `${PWD}` and `~+` read no held
+        // directory after it: where the real cd fails and the shell stays, the guard no longer reads that held directory as the shell's PWD
         if (!a) { if (block) moveUnknown(block); else moveUnknown(`an earlier bare \`${name}\` goes to HOME, and ${homeUnknownText()}`); }
         else if (a.text === '-') moveUnknown(`an earlier \`${name} -\` returns to a directory this command did not set`);
         else if (homeWord(a)) { moveUnknown(`an earlier \`${name} ${a.raw}\` goes through HOME, and ${homeUnknownText()}`); }
         else if (!a.literal) moveUnknown(`an earlier \`${name}\` names ${a.raw}, a directory the shell fills in when the command runs`);
-        else if (unknownDir && heldBase && !path.isAbsolute(a.text) && !block) { moveUnknown(`an earlier \`${name}\` follows one I could not read`); heldDir = { dir: path.resolve(heldBase.dir, a.text), real: heldBase.real }; }
         else {
           const to = resolveAgainst(a.text, unknownDir ? null : dir);
           if (to == null) moveUnknown(`an earlier \`${name}\` follows one I could not read`);

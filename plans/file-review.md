@@ -5057,7 +5057,20 @@ document stands on its own, each with the reasoning it was given.
     chdir wrapper's command (the reviewer's mut F2: AS3-nohup-dd-held-*-out, AS3-env-dd-held-*-out), save where the
     program itself runs in a function call or a loop body (a follow-up below); after a cd through a value a command
     named by a variable hid, $PWD and $OLDPWD are read as fork main read them (THE TWO WALKS below, the reviewer's t8-2:
-    AS5-read-through-pwd-out, AS5-read-through-oldpwd-out). A
+    AS5-read-through-pwd-out, AS5-read-through-oldpwd-out). THE HELD DIRECTORY ends at a RELATIVE directory change (rule H,
+    fork PR 975's round 2, R4): a `cd`, `pushd`, `popd` or `cd -` whose destination is relative, after an unread program,
+    leaves the cwd unknown to every reader, as the non-held branch does, so `$PWD`, `${PWD}` and `~+` read no held
+    directory and a write through them refuses as a target that is not a literal path, behind `nohup --`, `env --`,
+    `setsid --` and with `pushd` alike (AS3-relcd-pwd, AS3-relcd-pwd-brace, AS3-relcd-tildeplus, AS3-relcd-env-pwd,
+    AS3-relcd-setsid-pwd, AS3-relcd-pushd-pwd); before rule H the relative cd carried the held directory, so where the real
+    cd failed and the shell stayed, the guard read `$PWD` as the directory the cd named and bash and zsh wrote the tracked
+    report through it. Its cost, listed here: from a cwd in no project, a `cd` into a project then an unread program then a
+    relative `cd` into an untracked directory and a relative write there is allowed again, as base allows it and nothing is
+    written, where the held directory had refused it (AS3-cost-relcd-into-proj-out). The pre-existing allows the lexical-path
+    precondition keeps open stay open, disclosed: a `$PWD` or `~+` write after the relative cd from a cwd in no project
+    (AS3-residual-relcd-pwd-out, AS3-residual-relcd-tildeplus-out), a relative cd into a link an unread program made from a
+    cwd in no project (AS3-residual-relcd-abs-ln-task-out) and an absolute cd through a link swapped at run time
+    (AS3-residual-relcd-abs-cd-swaplink-out), each allowed at base and head alike while bash and zsh write. A
     write by an ABSOLUTE path through such a link is judged as spelled, a stated precondition: the guard judges a lexical
     path, and a link an unread program makes, reached by an absolute path, is outside the model, the same way fork main
     allows it (AS3-residual-link-nohup-dd-abs). The relative write's own refusal leads there: its one remedy, the target
