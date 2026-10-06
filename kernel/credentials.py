@@ -530,7 +530,9 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
     `timeout_s` overrides the bound for a test; HELPER_TIMEOUT_S otherwise.
 
     The shell starts in a session of its own, and a run that does not finish (the bound, or an exception
-    such as KeyboardInterrupt) ends with SIGKILL to that session's whole process group. subprocess.run's
+    that cuts the wait while the shell is still unreaped) ends with SIGKILL to that session's whole process
+    group; on KeyboardInterrupt, communicate may first reap a shell that has already exited, and then the
+    group is not signalled, as with subprocess.run before. subprocess.run's
     timeout killed the shell alone, and dash, the /bin/sh of Debian and Ubuntu, forks even a lone command:
     the hung command, and every process it had forked, ran on after the timeout with the helper's
     environment, one more each time helper_key asked again. The session makes the group the helper's alone,
@@ -566,8 +568,11 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
             # controlling terminal, so opening /dev/tty to prompt fails at once (the systemd unit gives the
             # kernel no terminal, so there it failed before too; a kernel started in a terminal gave the
             # helper that terminal), and a terminal's Ctrl-C signals the kernel's group, not the helper. A
-            # run on the thread that takes the KeyboardInterrupt ends the group here; a run on another
-            # thread goes on to its bound, and a helper still running when the kernel exits runs on.
+            # KeyboardInterrupt on the thread waiting here ends the group while the shell is still unreaped,
+            # but communicate first waits up to a quarter second for the shell and reaps it if it has exited
+            # by then, and then the group is not signalled, as with subprocess.run before (a member still
+            # holding stdout runs on, and its next write fails once the pipe is closed below). A run
+            # on another thread goes on to its bound, and a helper still running when the kernel exits runs on.
             try:
                 os.killpg(p.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
@@ -579,8 +584,11 @@ def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
                     p.kill()
                 except Exception:
                     pass
-            if p.stdout is not None:
-                p.stdout.close()
+        if p is not None and p.stdout is not None:
+            # Closed whatever the returncode: on the KeyboardInterrupt road above the shell is already
+            # reaped, and the pipe would otherwise stay open until the Popen is collected, where
+            # subprocess.run's Popen.__exit__ closed it at once.
+            p.stdout.close()
     if p.returncode:
         raise CredentialError("%s is not on the manager's PATH (exit 127)" % label if p.returncode == 127
                               else "%s failed (non-zero exit)" % label)

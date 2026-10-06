@@ -166,6 +166,68 @@ def _seen_popen():
     return SeenPopen, seen
 
 
+# The child process the KeyboardInterrupt test runs, so that no SIGINT is ever sent inside the test's own process. It
+# loads credentials.py from argv[1] and runs argv[2] through run_helper with a 10 s bound, keeping the run's Popen and
+# spying on os.killpg; a thread waits for the shell's exit (its pidfd turns readable when the shell exits, reaped or
+# not) and then sends SIGINT to the main thread, which is waiting in communicate. It prints what it saw as JSON.
+_SIGINT_CHILD = r'''
+import importlib.util, json, os, select, signal, subprocess, sys, threading
+if not hasattr(os, "pidfd_open"):
+    print(json.dumps({"skip": "no os.pidfd_open"}))
+    sys.exit(0)
+signal.signal(signal.SIGINT, signal.default_int_handler)
+spec = importlib.util.spec_from_file_location("romp_credentials_sigint_child", sys.argv[1])
+cred = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cred)
+seen, started, sent, killpg_calls = [], threading.Event(), [], []
+
+
+class SeenPopen(subprocess.Popen):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        seen.append(self)
+        started.set()
+
+
+subprocess.Popen = SeenPopen
+real_killpg = os.killpg
+
+
+def killpg(pgid, sig):
+    killpg_calls.append([pgid, int(sig)])
+    return real_killpg(pgid, sig)
+
+
+os.killpg = killpg
+
+
+def interrupt_once_the_shell_has_exited():
+    if not started.wait(10):
+        return
+    fd = os.pidfd_open(seen[0].pid)
+    try:
+        if select.select([fd], [], [], 10)[0]:
+            sent.append(True)
+            signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+    finally:
+        os.close(fd)
+
+
+threading.Thread(target=interrupt_once_the_shell_has_exited, daemon=True).start()
+try:
+    cred.run_helper(sys.argv[2], timeout_s=10)
+    outcome = "returned"
+except KeyboardInterrupt:
+    outcome = "KeyboardInterrupt"
+except cred.CredentialError as e:
+    outcome = str(e)
+p = seen[0] if seen else None
+print(json.dumps({"outcome": outcome, "sent": bool(sent), "shell": p.pid if p else None,
+                  "returncode": p.returncode if p else None, "killpg": killpg_calls,
+                  "stdout_closed": bool(p and p.stdout is not None and p.stdout.closed)}))
+'''
+
+
 class _Settings(unittest.TestCase):
     """A temp cwd with its own .claude/, a temp CLAUDE_CONFIG_DIR, a temp managed file: every settings file
     Claude Code reads, all synthetic, none of them real."""
@@ -655,9 +717,11 @@ class HelperTimeoutEndsTheGroup(_Settings):
                 self.assertEqual(at_kill, [(None, True)], "at the kill, the shell is unreaped and /proc still has it")
 
     def test_an_exception_that_cuts_the_wait_ends_the_group_too_and_goes_on_unchanged(self):
-        # KeyboardInterrupt, or any exception raised while communicate waits, takes the same road as the bound: the
-        # group is ended and the exception goes on as it was raised. A BaseException of the test's own stands in for
-        # it, raised once the tree is up; the drain's own communicate runs as written.
+        # An exception raised while communicate waits and the shell is still unreaped takes the same road as the bound:
+        # the group is ended and the exception goes on as it was raised. A BaseException of the test's own stands in
+        # for it, raised once the tree is up, whose shell still runs; the drain's own communicate runs as written. A
+        # real KeyboardInterrupt differs once the shell has exited: communicate first reaps it, and then no group is
+        # signalled, as with subprocess.run before (the next test runs that road in a child process).
         pids = self._pids()
         cmd = self._tree_cmd(pids)
 
@@ -687,6 +751,32 @@ class HelperTimeoutEndsTheGroup(_Settings):
         self.assertEqual(sorted(role for role, _pid in recs), ["child", "grandchild", "shell"],
                          "the tree was up before the exception")
         self.assertEqual(_left(recs), [], "no process of the tree is left running")
+
+    def test_a_keyboard_interrupt_after_the_shell_exited_signals_no_group_and_closes_the_pipe(self):
+        # The road where an interrupt does not end the group, run in a child process (_SIGINT_CHILD) so that no SIGINT
+        # is sent inside the test's own. The shell exits at once and leaves a sleep of its group holding stdout, so the
+        # run waits on the pipe; once the shell has exited, the child interrupts its own wait. On KeyboardInterrupt,
+        # CPython's communicate first waits up to a quarter second for the shell and reaps it, so the returncode is
+        # set, and run_helper's kill, which runs only while the shell is unreaped, signals no group: the sleep runs on,
+        # as it did with subprocess.run before. The run still closes its end of the pipe at once, as subprocess.run's
+        # Popen.__exit__ did; otherwise it would stay open until the Popen was collected.
+        pids = self._pids()
+        q = shlex.quote(pids)
+        cmd = "sleep 30 & echo sleep $! >> %s; echo shell $$ >> %s" % (q, q)
+        r = subprocess.run([sys.executable, "-c", _SIGINT_CHILD, os.path.join(ROOT, "kernel", "credentials.py"), cmd],
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+        recs = dict((role, pid) for role, pid in _recorded(self, pids))
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        got = json.loads(r.stdout.strip().splitlines()[-1])
+        if "skip" in got:
+            self.skipTest(got["skip"])
+        self.assertEqual(sorted(recs), ["shell", "sleep"], "both were up before the interrupt")
+        self.assertEqual((got["outcome"], got["sent"]), ("KeyboardInterrupt", True),
+                         "interrupted after the shell exited")
+        self.assertEqual((got["shell"], got["returncode"]), (recs["shell"], 0), "communicate reaped the shell first")
+        self.assertEqual(got["killpg"], [], "no group is signalled on this road")
+        self.assertTrue(got["stdout_closed"], "the run closed its end of the pipe at once")
+        self.assertTrue(_runs_now(_proc(recs["sleep"])), "the sleep of the group runs on")
 
     def test_a_daemonizing_helper_is_not_reached_and_costs_nothing(self):
         # The stated limit's other face, planted: a helper that daemonizes (forks twice, takes a session of its own and
