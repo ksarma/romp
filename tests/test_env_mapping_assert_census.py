@@ -27,8 +27,12 @@ THE RULE. No assertion renders an environment mapping (THE MAPPINGS, below). Rea
      forms on both, and every method's message (the msg argument, positional or keyword). RENDERS lists the positions
      per method. assertTrue and assertIsNotNone render only their message: assertTrue prints its argument only when it
      is falsy, and a falsy mapping is empty; assertIsNotNone prints "unexpectedly None". assertRaises and its relatives
-     render their message keyword alone. Any other method whose name begins with `assert` (a helper a module defines)
-     is read as rendering every argument it is handed. An absent-value check over one variable's read renders the
+     render their message keyword alone. Any other method whose name begins with `assert` is read as rendering every
+     argument it is handed: a helper a module defines (assertEnvClean, assert_no_leak), and mock's assert_called_with,
+     assert_called_once_with, assert_any_call and their awaited forms, whose failure can print the expected call's
+     arguments (what it can print of the calls the mock recorded is WHAT IT CANNOT SEE, as are the arguments
+     of a call object, mock.call(...), in the list assert_has_calls takes or in any other assertion method's
+     arguments). An absent-value check over one variable's read renders the
      VALUE (_absent_value_reads): assertIsNone(R), assertFalse(R), assertEqual(R, M) and assertIs(R, M) in either
      operand order, where M is an absent marker (None or ""), and assertIn(R, D), where D is a tuple, list or set
      display of markers such as (None, ""), fail when the variable holds a value, and then print it. R is X.get(k[, d]),
@@ -157,13 +161,17 @@ WHAT IT CANNOT SEE (stated, not closed). Five of these shapes held real sites on
   recorded, then assertNotIn(name, env), which prints the child's whole environment (tests/test_credentials.py,
   JudgesRunOnClaudeCodesOwnCredential.test_the_first_pass_after_boot_runs_keyless_and_latches_nothing; now
   assertFalse(name in env, name)). A for target binds an unknown value, so the census reads no mapping there;
-  mock's assert_called* family (assert_not_called, assert_called_once, assert_called_with and the rest): a failure
-  prints every call the mock recorded with its arguments, so a mock patched over a spawn prints the env= keyword the
-  product handed it, and the assertion's own AST holds no mapping (tests/test_judge_auth_billing.py, run =
-  patch.object(jd.subprocess, "run") in RuntimeJudgeBilling.test_exhausted_login_window_pauses_without_launching,
+  the calls a mock RECORDED, with their arguments: a failure of assert_not_called or assert_called_once prints each
+  recorded call, and a failure of assert_called_with, assert_called_once_with,
+  assert_has_calls or their awaited forms can print them too, beside the expected call (assert_called,
+  assert_not_awaited, assert_awaited_once, assert_any_call and assert_any_await print none), so a mock patched over a
+  spawn prints the env= keyword the product handed it, which no argument of the assertion holds
+  (tests/test_judge_auth_billing.py, run = patch.object(jd.subprocess, "run") in
+  RuntimeJudgeBilling.test_exhausted_login_window_pauses_without_launching,
   RuntimeJudgeBilling.test_codex_call_never_resolves_or_carries_an_anthropic_credential and
-  CredentialErrorNote.test_an_unexpected_env_failure_never_quotes_its_cause_and_never_falls_back_to_ambient_auth; now
-  assertEqual(run.call_count, N, msg), which prints two counts);
+  CredentialErrorNote.test_an_unexpected_env_failure_never_quotes_its_cause_and_never_falls_back_to_ambient_auth, each
+  a form with no argument; now assertEqual(run.call_count, N, msg), which prints two counts). The expected call an
+  argument-taking form is handed is read (THE RULE, A);
   a mapping read back from what a child wrote: seen = json.loads(dump), where the child dumped dict(os.environ)
   (tests/test_login_records.py's whitelist test; now assertFalse(name in seen, name));
   an absent-value check over a capture unpacked from a list index: `cmd, env = self.calls[0]`, then
@@ -190,18 +198,21 @@ The census also cannot see:
   a mapping, a holder or a container reached through a parameter (a helper handed env by its caller), a list index
   (captured.append(env); captured[0]), getattr, or an attribute or key whose name is neither an env word nor assigned
   an environment mapping in the module (s.env_vars, a per-session overlay, is not read);
-  a subscript or a keyed read of a container whose entries are stored under string constants, by a key that is not
-  that constant's text: after byname["child"] = dict(os.environ), byname["child"] and byname.get("child") are read,
-  and byname[k] and byname.get(k) with k = "child" are not, where after seen[slot] = ... every subscript and keyed
-  read of seen is, but not one through a name bound to seen, a copy of seen or a walrus over it (alias = seen, then
-  alias["probe"] or alias.get("probe"); dict(seen)["probe"]; (got := seen)["probe"]), though the same reads of
-  byname by "child" are read, since that key is read module-wide;
+  in an assertion method's arguments, a subscript or a keyed read of a container whose entries are stored under string
+  constants, by a key that is not that constant's text: after byname["child"] = dict(os.environ), byname["child"] and
+  byname.get("child") are read, and byname[k] and byname.get(k) with k = "child" are not, where after seen[slot] = ...
+  every subscript and keyed read of seen is, but not one through a name bound to seen, a copy of seen or a walrus over
+  it (alias = seen, then alias["probe"] or alias.get("probe"); dict(seen)["probe"]; (got := seen)["probe"]), though the
+  same reads of byname by "child" are read, since that key is read module-wide. A bare assert reads the container in
+  each, since its test holds it (B);
   a container the text fills by a road other than an assignment X[k] = V to a name or an attribute (a dict
   comprehension, {k: dict(os.environ) for k in ks}; X.update(...); X.setdefault(k, V); a nested target, X[a][k] = V),
-  a container a call returns (got = self._capture(), where _capture fills and returns its own seen), and a copy
-  rebuilt from a view of a holder or a container (dict(X.items())): none is read, printed whole or through a view. A
-  dict display that holds a mapping, or a name bound to one, is read printed whole, element by element, as THE RULE
-  reads a display; its views and subscripts are not. On 2026-10-06 no assertion in the tree prints one of these;
+  and a container a call returns (got = self._capture(), where _capture fills and returns its own seen): none is read,
+  printed whole or through a view, by an assertion method or a bare assert. In an assertion method's arguments, a copy
+  rebuilt from a view of a holder or a container (dict(X.items())) is not read, and a dict display that holds a mapping,
+  or a name bound to one, is read printed whole, element by element, as THE RULE reads a display, but not through its
+  views and subscripts; a bare assert reads each of these, through the view or the display it holds (B). On 2026-10-06
+  no assertion in the tree prints one of these;
   a container X printed by an assertion method through a spelling the census reads there for a mapping, a holder or
   both, but not for X: a walrus over X, as the operand or inside a formatting road ((got := X),
   "%r" % ((got := X),)); a merge (X | other, other | X) or a dict comprehension over X ({k: X[k] for k in X}), read
@@ -232,9 +243,21 @@ The census also cannot see:
   kw.values()]; one over a mapping's view is read), a join whose comprehension reads the values through the keys
   (", ".join(k + "=" + env[k] for k in env)), and a formatted mapping passed through another call
   (repr(env).replace(...), map(str, env.values()));
+  a mapping, a holder or a container in a call object (mock.call(["claude"], env=env)) in an assertion method's
+  arguments: in the list assert_has_calls or assert_has_awaits takes, whose failure prints each expected call with
+  its arguments, or in an equality or a membership test over the calls a mock recorded
+  (assertEqual(run.call_args, mock.call(...)), assertIn(mock.call(...), run.call_args_list)), whose failure prints
+  the call object. The census reads a list or a tuple as a display but not a call object's arguments; a bare assert
+  reads them (B). On 2026-10-06 no test in the tree calls assert_has_calls or assert_has_awaits, and the one
+  assertion over call objects compares pids (tests/test_restart_cuts.py);
   Python inside a string (a planted module a test writes and runs, whose bare assert over os.environ renders under
   that run's own conftest);
   a mapping printed by print(), logging, a raise or a subprocess's output a test asserts on;
+  a mapping, a holder or a container handed to subTest, as its message or a keyword parameter (with
+  self.subTest(env=env)): a failure inside the block prints the parameters in unittest's FAIL header and in pytest's
+  subtest header and SUBFAILED summary line (pytest cuts a keyword parameter's repr to 240 characters). pytest builds
+  both from the subtest's parameters, not the report's longrepr, so tests/conftest.py's net does not redact them under
+  pytest either. On 2026-10-06 no subTest call in the tree passes one;
   a local variable shown in a traceback: pytest's -l (--showlocals) prints the locals of every frame a failure passes
   through, and unittest's --locals does the same, so a frame that holds an environment copy (HostProcess._start's
   env = _host_env(...) in tests/test_session_host.py) prints it whatever its assertion renders. The conftest net
@@ -243,15 +266,16 @@ The census also cannot see:
   a message built from a mapping in another function, or kept on an attribute or a key (self.msg = "%r" % env): a
   name in scope is the one binding followed.
 PLANTS pins each shape it reads, red or green, and the stated limits a reader would most expect it to see (a parameter,
-a list index, a mapping read back from a child's dump, a for target over captured pairs, mock's assert_called* family,
-a view bound to a name, a comprehension over a holder's or a container's view, values read through the keys, a
-formatted mapping passed through another call, an options object holding the environment as an attribute, a holder
-known only by a membership test, a holder bound as a tuple element that only another test shows, a container filled
-by another road, returned by a call or rebuilt from a view, a container printed through a walrus, a merge, a dict
-comprehension, SimpleNamespace(**X), a copy or a view of another spelling or a view of a copy, or stored in another
-container, a string-key container read by a key that is not its constant or a variable-key one read through an alias, a
-copy or a walrus, a read wrapped in `or` before an absent-value check, and Python a test writes as a string, in both
-idioms the tree uses: a written constant and a textwrap.dedent module).
+a list index, a mapping read back from a child's dump, a for target over captured pairs, the calls a mock recorded, a
+call object in an assertion's arguments, a subTest parameter, a view bound to a name, a comprehension over a holder's or
+a container's view, values read through the keys, a formatted mapping passed through another call, an options object
+holding the environment as an attribute, a holder known only by a membership test, a holder bound as a tuple element
+that only another test shows, a container filled by another road, returned by a call or rebuilt from a view, a dict
+display's view and subscript, a container printed through a walrus, a merge, a dict comprehension, SimpleNamespace(**X),
+a copy or a view of another spelling or a view of a copy, or stored in another container, a string-key container read by
+a key that is not its constant or a variable-key one read through an alias, a copy or a walrus, a read wrapped in `or`
+before an absent-value check, and Python a test writes as a string, in both idioms the tree uses: a written constant and
+a textwrap.dedent module).
 
 THE PARSE (2026-10-06; the shape tests/test_obsidian_state_routes.py's census calls E, and this module's exception to
 tests/parse_cache.py's rule that the AST censuses under tests/ parse through its one process-wide cache). The census
@@ -490,12 +514,16 @@ def _str_const(node):
 
 def _is_site(node):
     """An assertion call (an attribute call of a method in RENDERS or NON_RENDERING, or of any other name beginning with
-    `assert` but not `assert_`, mock's own assertion methods) or a bare assert."""
+    `assert`: a helper a module defines, assertEnvClean or assert_no_leak, and mock's assertion methods, whose
+    argument-taking forms can print the expected call, assert_called_once_with(["claude"], env=E) and the rest) or a
+    bare assert. scan() reads every argument of a call outside RENDERS and NON_RENDERING (THE RULE, A). Mock's forms
+    with no argument (assert_not_called, assert_called_once) leave nothing to read: the calls the mock recorded, which
+    they print, are WHAT IT CANNOT SEE."""
     if isinstance(node, ast.Assert):
         return True
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         m = node.func.attr
-        return m in RENDERS or m in NON_RENDERING or (m.startswith("assert") and not m.startswith("assert_"))
+        return m in RENDERS or m in NON_RENDERING or m.startswith("assert")
     return False
 
 
@@ -1616,6 +1644,17 @@ PLANTS = {
                         ["env", "env", "env"]),
     "fail-message": (_body('self.fail("left %s" % os.environ)'), ["os.environ"]),
     "helper-assert": (_body('kw = {}', 'self.assertEnvClean(kw["env"])'), ['kw["env"]']),
+    # every other name beginning with assert renders every argument (THE RULE, A): mock's argument-taking assertions,
+    # whose failure can print the expected call, over a mapping, a holder and a marked container, and a snake_case
+    # helper
+    "mock-expected-call-and-snake-case-helper": (
+        _body('env = dict(os.environ)', 'run = mock.Mock()', 'run.assert_called_once_with(["claude"], env=env)',
+              'run.assert_any_call(env=os.environ)', 'run.assert_called_once_with(["claude"], env=dict(os.environ))',
+              'kw = dict(model="m", env=dict(os.environ))', 'run.assert_called_once_with(["claude"], options=kw)',
+              'seen = {}', 'def capture(slot):', '    seen[slot] = dict(os.environ)',
+              'run.assert_called_with(["claude"], envs=seen)', 'arun = mock.AsyncMock()',
+              'arun.assert_awaited_once_with(env=env)', 'arun.assert_any_await(**kw)', 'self.assert_no_leak(env)'),
+        ["env", "os.environ", "dict(os.environ)", "kw", "seen", "env", "kw", "env"]),
     "bare-assert": (_body('env = dict(os.environ)', 'assert "X" not in env', 'assert env.get("X") is None'),
                     ["env", "env"]),
     "keys-view": (_body('self.assertIn("X", os.environ.keys())', 'kw = {}', 'self.assertNotIn("X", kw["env"].keys())',
@@ -1813,8 +1852,12 @@ PLANTS = {
         _body('byname = {}', 'byname["child"] = dict(os.environ)', 'self.assertEqual(byname, {})',
               'assert "X" not in byname, "m"', 'self.assertTrue(False, "byname: {}".format(byname))', 'self.reg = {}',
               'self.reg["probe"] = dict(os.environ)', 'self.assertNotIn("X", self.reg)',
-              'self.assertEqual({**self.reg}, {})', 'msg = repr(byname)[:80]', 'self.assertTrue(False, msg)'),
-        ['byname', 'byname', 'byname', 'self.reg', 'self.reg', 'msg']),
+              'self.assertEqual({**self.reg}, {})', 'msg = repr(byname)[:80]', 'self.assertTrue(False, msg)',
+              # a bare assert reads what WHAT IT CANNOT SEE leaves unread in an assertion method's arguments: a
+              # subscript by another key, a copy rebuilt from a view, a dict display's subscript
+              'k = "child"', 'assert byname[k] == {}', 'assert dict(byname.items()) == {}',
+              'shown = {"a": dict(os.environ)}', 'assert shown["a"] == {}'),
+        ['byname', 'byname', 'byname', 'self.reg', 'self.reg', 'msg', 'byname', 'byname.items()', 'shown']),
     "string-key-holder-container-printed-whole": (
         _body('import copy', 'byname = {}', 'byname["a"] = dict(model="m", env=dict(os.environ))',
               'self.assertEqual(byname, {})', 'assert byname == {"a": {}}',
@@ -1919,12 +1962,26 @@ PLANTS = {
     "limit-read-back": (_body('import json', 'seen = json.loads(open("dump.json").read())', 'self.assertNotIn("X", seen)'), []),
     "limit-for-target": (_body('seen = [(["claude"], dict(os.environ))]', 'for cmd, env in seen:',
                                '    self.assertNotIn("X", env)'), []),
+    # the calls a mock recorded, which its assertions print: the forms with no argument, and an argument-taking form
+    # beside the expected call it is handed
     "limit-mock-assertion": (_body('with mock.patch("subprocess.run") as run:', '    run(["claude"], env=dict(os.environ))',
                                    'run.assert_not_called()', 'run.assert_called_once()',
                                    'run.assert_called_once_with(["claude"])'), []),
+    # a call object in an assertion method's arguments (the list assert_has_calls or assert_has_awaits takes, an
+    # equality or a membership test over the recorded calls): a list is read as a display, a call object's arguments
+    # are not
+    "limit-mock-call-object": (_body('env = dict(os.environ)', 'run = mock.Mock()',
+                                     'run.assert_has_calls([mock.call(["claude"], env=env)])',
+                                     'arun = mock.AsyncMock()', 'arun.assert_has_awaits([mock.call(env=env)])',
+                                     'self.assertEqual(run.call_args, mock.call(["claude"], env=env))',
+                                     'self.assertIn(mock.call(env=env), run.call_args_list)'), []),
+    # subTest's parameters, its message and a keyword, which a failure inside the block prints
+    "limit-subtest-param": (_body('env = dict(os.environ)', 'with self.subTest(env=env):',
+                                  '    self.assertTrue("X" in env, "X")', 'with self.subTest("case %r" % (env,)):',
+                                  '    self.assertTrue("X" in env, "X")'), []),
     # a container the text fills by another road (a dict comprehension, update, setdefault, a nested target), one a
     # call returns, and a copy rebuilt from a view; a string-key container read by a key that is not that constant; a
-    # dict display's view and subscript
+    # dict display's view and subscript; the filled containers and the one a call returns by a bare assert too
     "limit-container-other-roads": (
         "import os, unittest\nclass T(unittest.TestCase):\n    def _capture(self):\n        seen = {}\n"
         "        seen['probe'] = dict(os.environ)\n        return seen\n    def test_x(self):\n"
@@ -1938,7 +1995,8 @@ PLANTS = {
         "        kw = dict(model='m', env={})\n        self.assertEqual(dict(kw.items()), {})\n        k = 'child'\n"
         "        self.assertNotIn('X', byname[k])\n        self.assertNotIn('X', byname.get(k))\n"
         "        shown = {'a': dict(os.environ)}\n        self.assertEqual(list(shown.values()), [])\n"
-        "        self.assertNotIn('X', shown['a'])\n",
+        "        self.assertNotIn('X', shown['a'])\n        assert built == {} and filled == {}\n"
+        "        assert nested == {}\n        assert got == {}\n",
         []),
     # a container printed by an assertion method through a spelling the census reads for a mapping or a holder but not
     # for X, one line per form: a walrus (the operand, inside a formatting road), a merge either way round, a dict
