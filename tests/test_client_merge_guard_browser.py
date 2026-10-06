@@ -260,13 +260,13 @@ await page.evaluate(() => { window.__heldRaw = []; if (window.__ws) window.__ws.
 const down4 = await page.waitForFunction(() => { const n = document.querySelector(".tx-landing-notice"); if (n && getComputedStyle(n).display !== "none") return false; const tt = document.querySelector(".locate-toast");
   return { notice: false, trail: (typeof window.__rompLandTrail === "function" ? window.__rompLandTrail() : null), toast: tt ? tt.textContent : null }; }, null, { timeout: 8000 }).then((h) => h.jsonValue()).catch(() => null);
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify({
+lab.writeResult(cfg, {
   r1: { boot: boot1, hadFrame: !!frame1, regions: regions1, dropped: dropped1, landedOnOlder: landedOnOlder1, trail: trail1, notice: notice1, releasedOlder: releasedOlder1, asks: asks1, released: released1, landed: landed1, settled: settled1, target: target1, exactRow: exactRow1, anchorTExpected: cfg.base + 2 * 100, noticeAfter: noticeAfter1, regionsLanded: regionsLanded1, heldIn: heldIn1, r3: r3a },
   wsdown: { hadFrame: !!frame4, regions: regions4, wait: wait4, down: down4 },
   cancel: { hadFrame: !!frame5, regions: regions5, anchor: deep5, anchorTExpected: cfg.base + 2 * 90, wait: wait5, cancelled: cancelled5, releasedOlder: releasedOlder5, landedKeep: landedKeep5, after: after5, target: target5, heldIn: heldIn5, r3: r3d },
   echo: { boot: { proto: boot2.proto, n: boot2.events.length, tailLo: boot2.tailLo }, tail: tail2, records: records2.length, echoHeld: echoHeld2, idx: idx2, frameEvents: events2.length, tailAfter: tailAfter2, behindRows: behindRows2, r3: r3b, echoBubbles: echoBubbles2, seam: seam2,
           kernelTail: { after: kernel2.after, at: kernel2.at, dispatched: kernel2.dispatched, heldIn: heldIn2, asks: asks2 } },
-  behind: { boot: { proto: boot3.proto, n: boot3.events.length, tailLo: boot3.tailLo }, tail: tail3, idx: idx3, frameEvents: events3.length, kept: kept3.length, overlay: overlay3.length, newest: newest3, frameLast: frame3.lastUuid, tailAfter: tailAfter3, behindRows: behindRows3, after: after3, newestInDom: newestInDom3, seam: seam3, heldIn: heldIn3, liveArrived: liveArrived3, r3: r3c, asks: asks3 } }) + "\n");
+  behind: { boot: { proto: boot3.proto, n: boot3.events.length, tailLo: boot3.tailLo }, tail: tail3, idx: idx3, frameEvents: events3.length, kept: kept3.length, overlay: overlay3.length, newest: newest3, frameLast: frame3.lastUuid, tailAfter: tailAfter3, behindRows: behindRows3, after: after3, newestInDom: newestInDom3, seam: seam3, heldIn: heldIn3, liveArrived: liveArrived3, r3: r3c, asks: asks3 } });
 """
 
 

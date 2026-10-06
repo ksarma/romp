@@ -124,11 +124,11 @@ const belowRegions = await regions(); const belowRowAfter = await rowAtTop(); co
 // the transcript's newest row (the synthetic live turn's reply), and the rendered rows stand in transcript order (the file's records, then
 // the injected turn)
 const r3 = await bottomCheck(tail.events[1].uuid, transcriptOrder().concat(tail.events.map((e) => e.uuid)));
-process.stdout.write("RESULT:" + JSON.stringify({ r3, boot: { regions: bootRegions, turns: boot.turns, atBottom: boot.atBottom, notice: boot.notice, strip: boot.strip }, turnsBefore, asks, gapsAsked, regionsAsked, rowBefore, rowAfter, gesturesBefore, gesturesAfter, fills,
+lab.writeResult(cfg, { r3, boot: { regions: bootRegions, turns: boot.turns, atBottom: boot.atBottom, notice: boot.notice, strip: boot.strip }, turnsBefore, asks, gapsAsked, regionsAsked, rowBefore, rowAfter, gesturesBefore, gesturesAfter, fills,
   filled: { regions: regionsFilled, gaps: filled.gaps, turns: filled.turns, firstUuid: filled.firstUuid, lastUuid: filled.lastUuid, top: filled.top, notice: filled.notice, strip: filled.strip },
   gapPerTurn, runPerTurn,
   rowLive, below: { asks: belowAsks, regions: belowRegions, rowBefore: belowRowBefore, rowAfter: belowRowAfter, gestures: belowGestures, gesturesBefore: belowGesturesBefore },
-  live: { regions: regionsLive, lastUuid: live.lastUuid, atBottom: live.atBottom, notice: live.notice, strip: live.strip, turns: live.turns, top: live.top } }) + "\n");
+  live: { regions: regionsLive, lastUuid: live.lastUuid, atBottom: live.atBottom, notice: live.notice, strip: live.strip, turns: live.turns, top: live.top } });
 await browser.close();
 """
 
@@ -287,7 +287,7 @@ const regionsNow = await page.evaluate(() => (typeof window.__rompRegions === "f
 const writers = await page.evaluate(() => window.__sent.filter((m) => m.what === "scrollwrite" && m.data).map((m) => m.data.writer));   // every attributed scroll write of the session, in order
 // the engine is the LAUNCHED browser's own name (browserType().name()), never the requested variable echoed back, which could not disagree
 // with itself: the class asserts it against the request (the maintainer's round 1 addendum)
-process.stdout.write("RESULT:" + JSON.stringify({ engine: browser.browserType().name(), before, frames, spacers, edges, received, regions: regionsNow, pageEvents: pageEvents.slice(-12), writers }) + "\n");
+lab.writeResult(cfg, { engine: browser.browserType().name(), before, frames, spacers, edges, received, regions: regionsNow, pageEvents: pageEvents.slice(-12), writers });
 await browser.close();
 """
 

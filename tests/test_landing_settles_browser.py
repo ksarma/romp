@@ -301,8 +301,8 @@ if (cfg.shots) await page.screenshot({ path: cfg.shots + "-settled.png" });
 // transcript's newest row (the live reply appended to the file) and the rendered rows stand in the file's record order
 const r3 = await bottomCheck(cfg.liveA, transcriptOrder());
 await browser.close();
-process.stdout.write("RESULT:" + JSON.stringify({ r3, o0, o300, o700, oLive, oLate, liveArrived, rowsAtLand, rowsAll, writes, quoted, anchorBox, rows2, dom2,
-  words3, anchor3, anchor3cls, rows3, rowsBeforeWheel, rowAfterWheelMs, moved4, after4, writes4, rows4, rows5, landed9, moved9, moved9b, after9, writes9, rows9, grab9, landed10, after10, writes10, keyWrites10, rows10, landed11, after11, nav11, navTo11, writes11, rows11, planted12, after12, link12, linkInView12, writes12, rows12, landed13, after13, live13, units13, tailEnd13, writes13, rows13, tail6, rows6, scroll6, rows8, shift8, box8, after: st }) + "\n", () => process.exit(0));
+lab.writeResult(cfg, { r3, o0, o300, o700, oLive, oLate, liveArrived, rowsAtLand, rowsAll, writes, quoted, anchorBox, rows2, dom2,
+  words3, anchor3, anchor3cls, rows3, rowsBeforeWheel, rowAfterWheelMs, moved4, after4, writes4, rows4, rows5, landed9, moved9, moved9b, after9, writes9, rows9, grab9, landed10, after10, writes10, keyWrites10, rows10, landed11, after11, nav11, navTo11, writes11, rows11, planted12, after12, link12, linkInView12, writes12, rows12, landed13, after13, live13, units13, tailEnd13, writes13, rows13, tail6, rows6, scroll6, rows8, shift8, box8, after: st }); process.exit(0);
 """
 
 

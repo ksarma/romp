@@ -20,6 +20,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -60,6 +61,9 @@ const BROWSERS = ["chromium", "firefox", "webkit"];
 if (!BROWSERS.includes(engineName)) { console.error("unknown ROMP_LAB_ENGINE: " + engineName + " (one of " + BROWSERS.join(", ") + ")"); process.exit(1); }
 const engine = playwright[engineName];
 let browser;
+// tests/lab_result.cjs, the record's one road to the Python side; loaded below the engine lines, which the engine checks in
+// tests/test_live_paused_window_browser.py run alone with an empty cfg
+const lab = require(cfg.resultLib);
 try { browser = await engine.launch(cfg.launch || {}); }   // a lab may ask for classic scrollbars (the settle lab's drag road): Playwright hides them headless by default
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const page = await browser.newPage({ viewport: { width: 1000, height: 600 } });
@@ -301,11 +305,14 @@ class WindowLab(unittest.TestCase):
         # exit 3 below is the driver's "no browser" (the launch failed): a skip, or a failure under ROMP_SERVED_TESTS_REQUIRE=1. An unknown
         # engine NAME is not that and exits 1, so it reaches the assertion below with its stderr (the maintainer's round 1 addendum)
         cfg = os.path.join(self.lab, name + ".json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
+                "deepUuid": self.deep_uuid, "deepT": self.deep_t, "base": self.base, "transcript": self.transcript,
+                "toolUuid": self.tool_uuid, "toolT": self.tool_t, "toolQuote": self.tool_quote,
+                "shots": os.environ.get("LIVE_PAUSED_SHOTS", ""), **(extra or {})}
+        tgt = lab_result.target(self.lab, name)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
-                       "deepUuid": self.deep_uuid, "deepT": self.deep_t, "base": self.base, "transcript": self.transcript,
-                       "toolUuid": self.tool_uuid, "toolT": self.tool_t, "toolQuote": self.tool_quote,
-                       "shots": os.environ.get("LIVE_PAUSED_SHOTS", ""), **(extra or {})}, f)
+            json.dump(conf, f)
         driver = os.path.join(self.lab, name + ".mjs")
         with open(driver, "w") as f:
             f.write(script)
@@ -322,9 +329,7 @@ class WindowLab(unittest.TestCase):
         except OSError:
             pass
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + klog)
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
-        r = json.loads(line[len("RESULT:"):])
+        r = lab_result.read(p, tgt)
         if isinstance(r, dict):
             r["_klog"] = klog[-1500:]   # the kernel's own words for the run, beside the measure (a passing run's log is otherwise lost with the lab dir)
         return r
