@@ -63,6 +63,7 @@ from pathlib import Path
 
 import lab_dist
 import lab_ports
+import lab_result
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -94,6 +95,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -385,8 +387,7 @@ await drag("classic packed: trail, 1st tab to the 3rd slot (right part of the 3r
 await drag("classic packed: trail, 4th tab to the 2nd slot (left part of the 2nd)", trail, 3, trail, 1, 0.25);
 await dragToHead("classic packed: trail, 3rd tab to the slot BETWEEN the two folded headers (left part of the second)", trail, 2, groupsC[1], 0.25);
 out.cases = cases;
-fs.writeFileSync(cfg.out, JSON.stringify(out));   // a file, not stdout: the per-case logs outgrow one pipe write
-fs.writeSync(1, "RESULT:" + cfg.out + "\n");
+lab.writeResult(cfg, out);   // a file, not stdout: the per-case logs outgrow one pipe write (one short RESULT: line names it)
 await browser.close();
 process.exit(0);
 """
@@ -480,11 +481,13 @@ class ServedTabDragReorder(unittest.TestCase):
     @classmethod
     def _drive(cls):
         cfg = os.path.join(cls.lab, "cfg.json")
-        out = os.path.join(cls.lab, "result.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (cls.port, cls.token), "count": len(NAMES), "trail": len(TRAIL),
+                "rename": "http://127.0.0.1:%d/rename?token=%s" % (cls.port, cls.token),
+                "shots": os.environ.get("TAB_DRAG_SHOTS", "")}   # TAB_DRAG_SHOTS=<prefix>: strip screenshots of the packed layouts
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (cls.port, cls.token), "count": len(NAMES), "trail": len(TRAIL), "out": out,
-                       "rename": "http://127.0.0.1:%d/rename?token=%s" % (cls.port, cls.token),
-                       "shots": os.environ.get("TAB_DRAG_SHOTS", "")}, f)   # TAB_DRAG_SHOTS=<prefix>: strip screenshots of the packed layouts
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -494,10 +497,7 @@ class ServedTabDragReorder(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         if p.returncode != 0:
             raise AssertionError("driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(cls.klog).read()[-1500:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        if line is None or not os.path.exists(out):
-            raise AssertionError("driver printed no result:\n" + p.stdout[-3000:])
-        result = json.loads(Path(out).read_text())
+        result = lab_result.read(p, tgt)
         if os.environ.get("TAB_DRAG_DUMP"):   # a path: the whole measurement, for reading the cases side by side
             Path(os.environ["TAB_DRAG_DUMP"]).write_text(json.dumps(result, indent=1) + "\n")
         return result

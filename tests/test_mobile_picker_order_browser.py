@@ -25,6 +25,7 @@ placeholder sids). MOBILE_ORDER_DUMP=<path> writes the whole measurement."""
 import json
 import lab_dist
 import lab_ports
+import lab_result
 import os
 import re
 import shutil
@@ -67,6 +68,7 @@ import fs from "node:fs";
 const require = createRequire(process.env.EXT_PKG);
 const { chromium } = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+const lab = require(cfg.resultLib);   // tests/lab_result.cjs: the record's one road to the Python side
 let browser;
 try { browser = await chromium.launch(); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
@@ -159,8 +161,7 @@ await dpage.waitForFunction(() => document.querySelectorAll("#tabs .tab[data-id]
 await dpage.waitForFunction(() => document.querySelectorAll("#tabs .tab-group-head[data-group]").length >= 2, null, { timeout: 15000 }).catch(() => {});
 await dpage.waitForTimeout(300);
 out.desktopFolded = { strip: await readStrip(dpage), ...(await state(dpage)) };
-fs.writeFileSync(cfg.out, JSON.stringify(out));
-fs.writeSync(1, "RESULT:" + cfg.out + "\n");
+lab.writeResult(cfg, out);   // the record to this drive's result file, one short RESULT: line naming it
 await browser.close();
 process.exit(0);
 """
@@ -273,10 +274,12 @@ class ServedMobilePickerOrder(unittest.TestCase):
     @classmethod
     def _drive(cls):
         cfg = os.path.join(cls.lab, "cfg.json")
-        out = os.path.join(cls.lab, "result.json")
+        conf = {"chat": "http://127.0.0.1:%d/chat?token=%s" % (cls.port, cls.token), "count": len(NAMES),
+                "deploy": SIDS["deploy"]}
+        tgt = lab_result.target(cls.lab)   # this drive's result file and nonce (tests/lab_result.py)
+        conf.update(tgt)
         with open(cfg, "w") as f:
-            json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (cls.port, cls.token), "count": len(NAMES), "out": out,
-                       "deploy": SIDS["deploy"]}, f)
+            json.dump(conf, f)
         driver = os.path.join(cls.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
@@ -286,10 +289,7 @@ class ServedMobilePickerOrder(unittest.TestCase):
             raise unittest.SkipTest("no playwright browser on this box — the served guard needs one (CI installs none)")
         if p.returncode != 0:
             raise AssertionError("driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:] + "\nkernel:\n" + open(cls.klog).read()[-1500:])
-        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
-        if line is None or not os.path.exists(out):
-            raise AssertionError("driver printed no result:\n" + p.stdout[-3000:])
-        result = json.loads(Path(out).read_text())
+        result = lab_result.read(p, tgt)
         if os.environ.get("MOBILE_ORDER_DUMP"):
             Path(os.environ["MOBILE_ORDER_DUMP"]).write_text(json.dumps(result, indent=1) + "\n")
         return result

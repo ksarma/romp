@@ -48,12 +48,14 @@
 // layout viewport. These pages are top-level, so that window is the page itself: with the keyboard up the driver stubs
 // its visualViewport.height to its innerHeight less a phone keyboard's 336px, and removes the stub at rest; every window
 // under 900 is the keyboard up unless the step says it is at rest.
-// Writes its result to cfg.resultPath and prints one short `RESULT:` line naming it; exits 3 when the browser does not
-// launch (the Python side turns that into a skip), 4 when the LAB kernel is not healthy (cfg.healthz names the lab port,
-// asserted before any request; never a live kernel). Synthetic sessions and todos only.
+// Hands its record to the Python side through tests/lab_result.cjs (the record to the drive's result file, one short
+// `RESULT:` line naming it); exits 3 when the browser does not launch (the Python side turns that into a skip), 4 when the
+// LAB kernel is not healthy (cfg.healthz names the lab port, asserted before any request; never a live kernel). Synthetic
+// sessions and todos only.
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import http from "node:http";
+import lab from "./lab_result.cjs";
 
 const require = createRequire(process.env.EXT_PKG);
 const playwright = require("playwright");
@@ -78,18 +80,10 @@ let browser;
 try { browser = await playwright[engine].launch(); }
 catch (e) { console.error("browser-launch-failed: " + String(e).split("\n")[0]); process.exit(3); }
 
-// The full result goes to cfg.resultPath and the RESULT: line names it (2026-10-05; the shape of the result file
-// tests/return_from_background_browser.mjs and tests/lazy_pane_layout_flip_browser.mjs already write). Loading playwright
-// leaves stdout non-blocking, so one writeSync to a pipe writes what the pipe has room for and the rest is lost: up to
-// 64 KiB, and 8 KiB on a loaded machine (a user past fs.pipe-user-pages-soft gets minimum-size pipes, pipe(7)), where this
-// driver's record, about 22 KB in a measured run, was cut at 8 KiB and the Python side read a cut line. The line carries
-// the died reason too.
+// the record through the shared helper (its died reason rides on the RESULT: line too), then the browser closed
 const result = async (extra) => {
   Object.assign(out, extra || {});
-  const line = { resultPath: cfg.resultPath || null };
-  if (out.died) line.died = String(out.died).slice(0, 600);
-  try { fs.writeFileSync(cfg.resultPath, JSON.stringify(out)); } catch (e) { line.resultWriteError = String(e).slice(0, 200); }
-  fs.writeSync(1, "RESULT:" + JSON.stringify(line) + "\n");
+  lab.writeResult(cfg, out);
   try { await browser.close(); } catch (e) { /* closing */ }
   process.exit(0);
 };
