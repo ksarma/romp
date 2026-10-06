@@ -40,7 +40,7 @@
 // (#ra-open, #ra-close), Usage read after each close; and one click on it, its effect read.
 // Then a reading the kernel holds and the shell has not pulled, on a page of its own at cfg.actsViewport: the shell's boot
 // pull answers no rows and every later one goes to the lab, the Sessions pane unloaded (read as the premise); the card
-// opened, its ask for a fresh pull held while Usage is read (the romp loader in the sub-line's place, its animations, the
+// opened, its ask for a fresh pull held while Usage is read (the romp loader in the name's place, its animations, the
 // button disabled and busy) and tapped at its centre, the shell's side read after a settle, then let through, Usage read once
 // the ask has ended, and one click on it, its effect read.
 // Then the reads that fail, on a page of its own at cfg.actsViewport: the shell's boot pull answers no rows, and the card is
@@ -68,7 +68,8 @@
 // each read with that class set on the element and the element's transitions off, then put back; then the same with the
 // pointer moved onto the button's centre (its transitions off first): its hovered fill, its colours, and whether :hover holds;
 // then, the pointer moved off, the card opened again over each answer to the opening's pull (held, the lab's reading, no rows,
-// an error status), and in each the row's height, Usage's box, the tabs' offset in the card and the line Usage shows.
+// an error status), the window taken through cfg.heightWidths in each, and at each width the row's height, Usage's box beside
+// Remote kernels' height, the tabs' offset in the card and their top in the window, and the line Usage shows.
 // And the desktop: a plain context (no descriptor, a fine pointer) at cfg.desktopViewport, where the bar must stay hidden,
 // and at each of cfg.railViewports the rail's actions (.rail-acts .rail-act, each shown one): id, box and centre hit; then
 // the rail's gear clicked at its centre and the settings card's row of moved actions read (hidden, displayed, its buttons'
@@ -1054,11 +1055,13 @@ try {
       const hv = await colours(true);
       out.contrast[name].hover = { hovered: hv.hovered, fill: hv.fill, colours: hv.colours };
     }
-    // ...then the row's height in each state of Usage (romp-manager's ruling after PR 976's round 1: the loader takes the row's
-    // final height, so the tabs under it do not move), the pointer moved off the card first: the card closed and opened again
-    // from the bar's Settings over each answer to the opening's pull, held (the loader up), then let through (the lab's reading:
-    // Usage enabled), then no rows (No reading yet), then an error status (Couldn't load). In each: the row's height, Usage's
-    // box, the tabs' offset from the top of the card's content, and which of Usage's lines shows
+    // ...then the row and the tabs in Usage's states at each phone width (romp-manager's decision on PR 976's round 1 builds:
+    // hold the loader's width, so loading to a reading never moves the tabs), the pointer moved off the card first: the card
+    // closed and opened again from the bar's Settings over the opening's pull held (the loader up), the window taken through
+    // cfg.heightWidths with the card open and read at each, the pull let through (the lab's reading: Usage enabled) and the
+    // widths read again; then the same over no rows (No reading yet) and over an error status (Couldn't load). At each: the
+    // window's width, the row's height, Usage's box, its top beside Restart kernel's top and height, the tabs' offset from the
+    // top of the card's content and their top in the window, and which of Usage's lines shows
     {
       const hs = {};
       await page.mouse.move(1, 1);
@@ -1077,37 +1080,53 @@ try {
       const rowRead = () => sf.evaluate(() => {
         const shown = (el) => (el ? !el.hidden && getComputedStyle(el).display !== "none" : null);
         const row = document.getElementById("rs-pacts"), card = document.querySelector("#rsettings .rs-card"), tabs = document.getElementById("rs-tabs");
-        const b = document.getElementById("rs-pact-usage");
+        const b = document.getElementById("rs-pact-usage"), rs = document.querySelector("#rs-pacts [data-pact=restart]");
         if (!row || !card || !b) return null;
         const rr = row.getBoundingClientRect(), cr = card.getBoundingClientRect(), br = b.getBoundingClientRect();
-        return { rowH: rr.height, tabsAt: tabs ? tabs.getBoundingClientRect().top - cr.top + card.scrollTop : null, usageW: br.width, usageH: br.height,
+        return { vw: window.innerWidth, rowShown: !row.hidden && getComputedStyle(row).display !== "none", rowH: rr.height,
+                 tabsAt: tabs ? tabs.getBoundingClientRect().top - cr.top + card.scrollTop : null, tabsTop: tabs ? tabs.getBoundingClientRect().top : null,
+                 usageW: br.width, usageH: br.height, usageTop: br.top, restartH: rs ? rs.getBoundingClientRect().height : null,
+                 restartTop: rs ? rs.getBoundingClientRect().top : null,
                  disabled: b.disabled, wait: shown(document.getElementById("rs-pact-usage-wait")), none: shown(document.getElementById("rs-pact-usage-none")),
                  err: shown(document.getElementById("rs-pact-usage-err")) };
       });
+      const sweep = async () => {
+        const rows = [];
+        for (const x of cfg.heightWidths || []) {
+          await page.setViewportSize({ width: x, height: h });
+          await frames(page);
+          await sleep(cfg.settleMs || 100);
+          await frames(page);
+          rows.push({ w: x, ...(await rowRead()) });
+        }
+        await page.setViewportSize({ width: w, height: h });
+        await frames(page);
+        return rows;
+      };
       await closeC();
+      // the shell's bound set long while the pull is held (cfg.raceMs), so the loader ends when the pull is let through and
+      // never on the bound part way through the widths; then the bound put back
+      await page.evaluate((ms) => { window.__rompUsagePullMs = ms; }, cfg.raceMs);
       usageMode = "hold";
       await openC();
       for (let i = 0; i < 50 && !usageHeld.length; i++) await sleep(100);
       hs.held = usageHeld.length;
-      await frames(page);
-      hs.loading = await rowRead();
+      hs.loading = await sweep();
       usageMode = "lab";
       for (const route of usageHeld.splice(0)) await route.continue();
       hs.readingEnded = await ended();
-      await frames(page);
-      hs.reading = await rowRead();
+      await page.evaluate(() => { delete window.__rompUsagePullMs; });
+      hs.reading = await sweep();
       await closeC();
       usageMode = "empty";
       await openC();
       hs.noneEnded = await ended();
-      await frames(page);
-      hs.none = await rowRead();
+      hs.none = await sweep();
       await closeC();
       usageMode = "error";
       await openC();
       hs.failedEnded = await ended();
-      await frames(page);
-      hs.failed = await rowRead();
+      hs.failed = await sweep();
       out.contrast[name].heights = hs;
     }
     await context.close();

@@ -133,13 +133,13 @@ var GEAR_HTML =
   // layout and its marker at each open, and the card follows the layout while open; the desktop has all three on its rail,
   // an older shell on its bottom bar). A tap closes this card and asks the shell to run the bar button's own handler ({romp:'phoneAct', act}).
   '<div class=rs-pacts id=rs-pacts hidden>' +
-  // Usage carries its sub-line for the state with no reading yet (usageAct below shows it and disables the button), and in
-  // the same place the one for a read that failed (Couldn't load: the shell's newest read of the readings that has ended got an
-  // error status, no answer, or no answer in time; usageAct)
+  // Usage carries a line beside its name for the state with no reading yet (usageAct below shows it and disables the button),
+  // and in the same place the one for a read that failed (Couldn't load: the shell's newest read of the readings that has ended
+  // got an error status, no answer, or no answer in time; usageAct)
   '<button type=button class=rs-pact id=rs-pact-usage data-pact=usage title=Usage>' + PACT_USAGE_SVG +
   '<span class=rs-pact-txt><span class=rs-pact-name>Usage</span><span class=rs-pact-none id=rs-pact-usage-none hidden>No reading yet</span>' +
   '<span class=rs-pact-none id=rs-pact-usage-err hidden>Couldn\'t load</span>' +
-  // and, in the same place again, the romp loader while the card's opening asks the shell for a fresh reading (usagePull below)
+  // and, in the name's place, the romp loader while the card's opening asks the shell for a fresh reading (usagePull below)
   '<span class=rs-pact-wait id=rs-pact-usage-wait hidden aria-hidden=true><span class=rs-pact-swirl></span><span>romp</span>' +
   '<i class=rs-pact-dot></i><i class=rs-pact-dot></i><i class=rs-pact-dot></i></span></span></button>' +
   '<button type=button class=rs-pact id=rs-pact-net data-pact=net title="Remote kernels">' + PACT_NET_SVG + '<span>Remote kernels</span></button>' +
@@ -2162,12 +2162,12 @@ function initGear(post, opts) {
   // reading (kernel _LANDING_USAGE_JS: __rompUsagePanel's openIt returns on an empty tipHTML), so a tap on Usage before the
   // first reading closed this card and opened nothing. The readings sit in the shell's usage script (its LAST), which this
   // document cannot read; that script answers through __rompUsageReading, its own test over them: Usage enabled where the
-  // panel has something to open, disabled with its sub-line (No reading yet) where it has not. A disabled button takes no
+  // panel has something to open, disabled with its line (No reading yet) where it has not. A disabled button takes no
   // tap, so the card stays open and the line says why. A shell that cannot be asked (no __rompUsageReading, or one that
   // throws) is not a shell with no reading (PR 976's round 1, kernel-1): Usage stays as its bar button always was, enabled
   // with no line, and its tap runs the shell's own handler.
   // The answer reads the source the panel's opener reads (PR 976's round 1, correctness-1, extra6-1 and ui-2): each opening
-  // asks the shell for a fresh pull first (usagePull), and until it settles Usage shows the romp loader in its sub-line's place
+  // asks the shell for a fresh pull first (usagePull), and until it settles Usage shows the romp loader in its name's place
   // and takes no tap (the waiting rule, ui/CLAUDE.md: never a guess); and the shell tells an open card whenever its readings
   // change (its renderRows calls window.__rompUsageAct below), so the line never outlives the readings it describes.
   // A read that failed is not a read that found nothing (romp-manager's ruling after PR 976's round 1, as for the shell that

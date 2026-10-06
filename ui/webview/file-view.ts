@@ -5565,7 +5565,7 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
   "pane-gone", "path-full-retry", "path-load-note", "pending", "ph", "picker-action", "picker-be-opt", "picker-browse",
   "picker-dir", "picker-lifted", "rail-day", "rail-sticky", "repeat", "resolved", "rewound", "rl-dots", "romp-acted",
   "romp-bubble", "romp-tl-tip", "rs-dragging", "rs-fastin", "rs-jrow", "rs-login-rm", "rs-off", "rs-pact", "rs-pact-dot",
-  "rs-pact-none", "rs-pact-wait", "rs-pane-gone", "rs-row",
+  "rs-pact-name", "rs-pact-wait", "rs-pane-gone", "rs-row",
   "rs-stale-toast", "rs-widget", "rs-widget-demo", "scroll-mark", "sel", "send-held", "sending", "sess-exit", "slash-arg",
   "slash-key-hint", "sn-applying", "sn-known", "sn-trust", "snap-act", "snap-count", "snap-note", "snap-sess", "st-cleared",
   "tab", "tab-close", "tab-closed", "tab-compacting-fill", "tab-dot", "tab-group-count", "tab-group-head", "tab-label",
