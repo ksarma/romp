@@ -359,7 +359,7 @@ test("the feed bundle carries the sanitizer, the grammar and the fill, with KaTe
   // which brings math.ts (before Slice 4 the feed bundle had neither and a note's formulas showed as bare TeX there); the
   // katex package it brought too until KaTeX became its own chunk, which math.ts loads at the first formula
   // (math-lazy.test.ts); chat-md.ts, the chat's own user-bubble renderer, and render.ts stay the chat bundle's alone
-  // (math-bundles.test.ts holds the same for files.js, waiting.js and render.js).
+  // (math-bundles.test.ts holds the same for files.js, waiting.js, artifacts.js and render.js).
   const EXT = process.cwd();                                      // npm test runs in vscode-extension
   const esbuild = createRequire(path.join(EXT, "package.json"))("esbuild");   // the extension's esbuild, wherever this bundle was written
   const r = esbuild.buildSync({

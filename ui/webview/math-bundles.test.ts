@@ -4,8 +4,9 @@
 // literal TeX in the Files pane and the feed. The check is the plan's own: a metafile of each bundle built with the shipped
 // config (editor-lazy.test.ts's precedent) holds math.ts and md-config.ts among its inputs. KaTeX itself left those bundles
 // for its own on-demand chunk (iOS item 6, 2026-10-02; math-lazy.test.ts pins its absence and the chunk), so the library's
-// own text is checked here in the chunk, and the Waiting pane, which has hosted the viewer since 2026-09-16, is checked with
-// the others. The sizes are recorded in the plan's Slice 4 build note, not pinned: they move with every dependency bump.
+// own text is checked here in the chunk, and the Waiting pane, which has hosted the viewer since 2026-09-16, and the Artifacts
+// pane, whose bundle imports the viewer, are checked with the others (math-lazy.test.ts derives the full list from the build).
+// The sizes are recorded in the plan's Slice 4 build note, not pinned: they move with every dependency bump.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -13,10 +14,10 @@ import * as path from "node:path";
 
 const pkgRequire = createRequire(path.join(process.cwd(), "package.json"));   // npm test runs in vscode-extension
 
-test("files.js, feed.js, waiting.js and render.js each bundle math.ts and md-config.ts, KaTeX's text is in math-chunk.js alone, and the viewer never imports render.ts to get them", { timeout: 120000 }, async () => {
+test("files.js, feed.js, waiting.js, artifacts.js and render.js each bundle math.ts and md-config.ts, KaTeX's text is in math-chunk.js alone, and the viewer never imports render.ts to get them", { timeout: 120000 }, async () => {
   const { webview } = pkgRequire("./esbuild.js") as { webview: Record<string, unknown> };
   const esbuild = pkgRequire("esbuild") as typeof import("esbuild");
-  for (const entry of ["files", "feed", "waiting", "render"]) {
+  for (const entry of ["files", "feed", "waiting", "artifacts", "render"]) {
     const r = await esbuild.build({ ...(webview as object), entryPoints: [`../ui/webview/${entry}.ts`], write: false, metafile: true, logLevel: "silent" });
     const inputs = Object.keys(r.metafile!.inputs);
     assert.ok(inputs.includes("../ui/webview/math.ts"), entry + ".js bundles math.ts (the grammar and the fill)");

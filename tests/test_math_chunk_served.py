@@ -2,9 +2,9 @@
 """KaTeX on demand in the served chat (iOS item 6, 2026-10-02): the chat's bundle carries no KaTeX, the kernel serves the
 chunk like every bundle, and a formula renders once the chunk lands with the reader's place kept.
 
-KaTeX left render.js, feed.js, files.js and waiting.js for its own bundle, dist/math-chunk.js, which math.ts loads at the
-first formula a page meets through a script tag beside the page's own bundle (chunk-url.ts: same directory, same ?v= token).
-Against a hermetic kernel serving the checkout's own build (tests/lab_dist.py), this module checks:
+KaTeX left render.js, feed.js, files.js, waiting.js and artifacts.js for its own bundle, dist/math-chunk.js, which math.ts
+loads at the first formula a page meets through a script tag beside the page's own bundle (chunk-url.ts: same directory, same
+?v= token). Against a hermetic kernel serving the checkout's own build (tests/lab_dist.py), this module checks:
   - the chunk is served as the generic /dist route serves every bundle: text/javascript, gzip when asked, an ETag that a
     revalidation answers with a 304, Cache-Control no-cache, Vary on the encoding; the chat's render.js carries no KaTeX;
     and the dist token every page stamps counts the chunk, so a rebuild that changed the chunk alone still moves the ?v=

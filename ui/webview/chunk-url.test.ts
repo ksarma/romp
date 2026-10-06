@@ -10,7 +10,7 @@ import { chunkSrcFor, chunkScript, BUNDLE_SRC } from "./chunk-url";
 
 const WEBVIEW = path.resolve(process.cwd(), "..", "ui", "webview");
 const W = (f: string) => fs.readFileSync(path.join(WEBVIEW, f), "utf8");
-const HOSTS = ["render", "feed", "files", "waiting"];
+const HOSTS = ["render", "feed", "files", "waiting", "artifacts"];
 
 test("the chunk's URL is the bundle's own with the file name swapped: the kernel's ?v= token and the webview's resource root are kept", () => {
   const K = "http://TESTHOST:29855/dist/", V = "?v=1759363200";

@@ -6,16 +6,17 @@
 //
 // The bundle tag is document.currentScript read while this module initialises, which is while the bundle's classic script
 // runs, so it names the right tag whatever the bundle is called. A bundle that did not run from a tag with a src (a test that
-// inlines its bundle) falls back to the first script whose path ends in one of the four bundles that carry the math grammar,
-// and with neither there is no URL: the caller fails loudly rather than guess.
+// inlines its bundle) falls back to the first script whose path ends in one of the bundles that carry the math grammar
+// (BUNDLE_SRC), and with neither there is no URL: the caller fails loudly rather than guess.
 //
 // math.ts loads the KaTeX chunk (math-chunk.ts) through this. The editor and PDF loaders in file-view.ts keep their own
 // derivation for now.
 
 const OWN: HTMLScriptElement | null = typeof document !== "undefined" ? (document.currentScript as HTMLScriptElement | null) : null;
 
-/** A src whose path ends in one of the bundles that import the math grammar (md-config.ts): the fallback's match. */
-export const BUNDLE_SRC = /\/(?:render|feed|files|waiting)\.js(?=[?#]|$)/;
+/** A src whose path ends in one of the bundles that import the math grammar (md-config.ts): the fallback's match. Those bundles
+ *  are derived from the build in math-lazy.test.ts, which fails when one of them is missing here. */
+export const BUNDLE_SRC = /\/(?:render|feed|files|waiting|artifacts)\.js(?=[?#]|$)/;
 
 /** `bundleSrc` with its file name replaced by `chunk`, its directory and its query or fragment kept; null when the path does not
  *  end in a .js file name. */
